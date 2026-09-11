@@ -244,6 +244,19 @@ coreutils/
                     RFC 1035 A query — for the utilities that resolve
                     the machine's own name (hostid; hostname, uname
                     and who reach for the same pieces)
+  lib/canon.fern    the symbolic-link resolution walk readlink -f/-e/-m
+                    and realpath share: one loop over a name's
+                    components under three existence modes, plus the
+                    no-symlinks variant realpath -s wants. The two
+                    rules that are in no man page live here — a suffix
+                    of `/`, `/.` or `/..` makes the component before it
+                    have to be a searchable directory whatever the mode
+                    says, since a `..` pops lexically and nothing else
+                    ever asks about what it popped; and the loop
+                    detection is a (parent directory, remaining path)
+                    set consulted from the twenty-FIRST link rather
+                    than a depth limit, so a 5000-link chain resolves
+                    and a cycle's residue depends on its LENGTH
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced"),
@@ -1231,6 +1244,16 @@ gethostname(2) on every backend (#8529) — and got it under its own
 capability rather than a one-off syscall on one backend. A gap met later
 gets an issue and a fix, never a corpus carve-out.
 
+**A failed getcwd carries no errno (#9067).** `getcwd()` is a bare string and
+reports failure as the empty one, where every other filesystem builtin is a
+`Result[T, IoError]` carrying glibc's strerror text. `readlink -f` and
+`realpath` on a RELATIVE operand start at the working directory, and GNU names
+what getcwd(2) said when it will not answer — `No such file or directory` for a
+directory that has been removed, `Permission denied` for one whose ancestor lost
+search permission. `lib/canon.fern` can report only the first, and does. The
+corpus cannot reach either: the harness has no way to put both children in the
+same removed or unsearchable directory.
+
 ## Staging
 
 Utilities are grouped by what they need from the Fern runtime, and the
@@ -1264,8 +1287,9 @@ groups are the order of work. Each sub-issue names its group.
   under the new `cwd` and `sysinfo` target capabilities —
   `whoami` `id` `groups` `logname` (done) `users` `who`
   `pinky` (uid, passwd, utmp), `printenv` (done) `env` (the whole
-  environ, exec), `ln` `readlink`
-  `realpath` (link, symlink, readlink; `link` and `unlink` are done),
+  environ, exec), `ln`
+  (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
+  are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` `mv` `cp`
   `install` `touch` `truncate` `mkfifo` `mknod` `mktemp` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
