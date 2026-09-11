@@ -466,6 +466,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "linkat") { return "265"; }
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
+        if (name == "fchmodat") { return "268"; }
+        if (name == "utimensat") { return "280"; }
         if (name == "umask") { return "95"; }
         if (name == "kill") { return "62"; }
         if (name == "getrlimit") { return "97"; }
@@ -514,6 +516,9 @@ pub function sysno(t: string, name: string): string {
         // that does differ.
         if (name == "faccessat") { return "466"; }
         if (name == "fchmodat") { return "467"; }
+        // No utimensat row: XNU has none, and libc builds the call out of
+        // setattrlist(2) instead — see rt_src_set_file_times.
+        if (name == "setattrlist") { return "221"; }
         if (name == "renameat") { return "465"; }
         if (name == "geteuid") { return "25"; }
         if (name == "getegid") { return "43"; }
@@ -1610,6 +1615,58 @@ pub function rt_src_create_symlink(t: string): string {
 // means ENAMETOOLONG (36) rather than a target missing its tail.
 pub function rt_src_read_link(t: string): string {
     return "function __fern_read_link(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_alloc(4096); var n: i32 = __syscall4(" + sysno(t, "readlinkat") + ", " + at_fdcwd(t) + ", pathz, buf, 4096); if (n < 0) { return Err(__fern_io_error(0 - n, __raw_string(pathz, plen))); } if (n >= 4096) { return Err(__fern_io_error(36, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, n)); }";
+}
+
+// rt_src_chmod backs `chmod(path, mode)` (#9059, syscall-leaf) →
+// Result[void, IoError]. fchmodat(AT_FDCWD, path, mode, 0), on an entry that
+// already exists.
+//
+// The mode is masked to its low twelve bits here — the nine rwx plus setuid,
+// setgid and sticky — rather than at the kernel, which answers EINVAL for the
+// rest. The process umask is NOT consulted: a mask filters a creation, and
+// this is not one, so those twelve bits land verbatim.
+//
+// Linux's fchmodat takes three arguments and ignores the fourth register;
+// Darwin's takes a flags word, and 0 is the follow-a-final-symlink behaviour
+// chmod(1) has. One __syscall4 therefore serves both.
+pub function rt_src_chmod(t: string): string {
+    return "function __fern_chmod(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_set_file_times backs `set_file_times(path, atime_sec, atime_nsec,
+// mtime_sec, mtime_nsec, flags)` (#9059, syscall-leaf) → Result[void,
+// IoError].
+//
+// `flags` is Fern's own word: 1 do not follow a final symlink, 2 leave the
+// access time alone, 4 leave the modification time alone. How the last two are
+// spelled is the whole of the per-target difference.
+//
+// Linux is utimensat(AT_FDCWD, path, times, flags): two `struct timespec`s in
+// scratch, access time first, with UTIME_OMIT (1<<30 - 2) in the nanosecond
+// half of either one to be left alone — an omit is a sentinel VALUE, not a
+// flag, and the seconds half is then not read. Bit 0 becomes
+// AT_SYMLINK_NOFOLLOW (0x100).
+//
+// The four halves go out through __store_i64, not __raw_store_ptr, whose value
+// argument is an i32: these are i64 second counts, and anything past the i32
+// range would be truncated on the way into the timespec.
+//
+// XNU has no utimensat syscall at all — libc builds it out of the attribute
+// list calls, and so does this. setattrlist(2) rather than the setattrlistat(2)
+// the native arm64 backend issues inline: the two are the same call for a path
+// resolved against the process's own directory, and setattrlistat takes SIX
+// arguments where the self-host's syscall floor stops at __syscall5. An omitted
+// timestamp is simply not named in the list, which is what makes omitting both
+// a no-op there as it is on Linux. The attributes are packed in ASCENDING
+// attribute-bit order, which puts ATTR_CMN_MODTIME (0x400) before
+// ATTR_CMN_ACCTIME (0x1000) — the reverse of the timespec order Linux wants —
+// and both bits live in byte 5 of the little-endian commonattr word, which is
+// why the flag byte is written straight there. Bit 0 is FSOPT_NOFOLLOW (1).
+pub function rt_src_set_file_times(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var al: i32 = __raw_scratch(64); var z: i32 = 0; while (z < 24) { __raw_store8(al, z, 0); z = z + 1; } __raw_store8(al, 0, 5); var buf: i32 = __raw_addr(al, 32); var n: i32 = 0; var hi: i32 = 0; if ((flags & 4) == 0) { hi = hi + 4; __store_i64(__raw_addr(buf, n), msec); __store_i64(__raw_addr(buf, n + 8), mnsec); n = n + 16; } if ((flags & 2) == 0) { hi = hi + 16; __store_i64(__raw_addr(buf, n), asec); __store_i64(__raw_addr(buf, n + 8), ansec); n = n + 16; } __raw_store8(al, 5, hi); var opt: i32 = 0; if ((flags & 1) != 0) { opt = 1; } var rc: i32 = __syscall5(" + sysno(t, "setattrlist") + ", pathz, al, buf, n, opt); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+    }
+    return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 2) != 0) { a0 = (0 as i64); a1 = (1073741822 as i64); } if ((flags & 4) != 0) { m0 = (0 as i64); m1 = (1073741822 as i64); } var ts: i32 = __raw_scratch(32); __store_i64(ts, a0); __store_i64(__raw_addr(ts, 8), a1); __store_i64(__raw_addr(ts, 16), m0); __store_i64(__raw_addr(ts, 24), m1); var kf: i32 = 0; if ((flags & 1) != 0) { kf = 256; } var rc: i32 = __syscall4(" + sysno(t, "utimensat") + ", " + at_fdcwd(t) + ", pathz, ts, kf); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_umask backs `umask(mask)` (#8883, syscall-leaf) → the previous mask.
@@ -3767,6 +3824,8 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "remove_dir") { return ty_option(ty_unknown()); }
     if (id.name == "create_link") { return ty_option(ty_unknown()); }
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
+    if (id.name == "chmod") { return ty_option(ty_unknown()); }
+    if (id.name == "set_file_times") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
@@ -5719,6 +5778,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_dir", "__fn___fern_remove_dir",
         "__fn___fern_create_link", "__fn___fern_create_symlink",
         "__fn___fern_read_link", "__fn___fern_umask",
+        "__fn___fern_chmod", "__fn___fern_set_file_times",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's

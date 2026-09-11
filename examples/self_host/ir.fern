@@ -629,6 +629,22 @@ pub function op_read_link(): Op { return op0("read_link"); }
 // umask(2), which sets and reads in one uninterruptible step. It cannot
 // fail. Native only: neither WASI preview has a file-mode creation mask.
 pub function op_umask(): Op { return op0("umask"); }
+// The metadata writes on an entry that already exists (#9059). `chmod` takes
+// [path, mode] and pushes Result[void, IoError] — fchmodat(2), which sets the
+// low twelve permission bits verbatim: a umask filters a CREATION, and this is
+// not one. A final symlink is followed, which is what chmod(1) does.
+// Refused on wasm, whose filesystem has no permission bits (capability
+// `fsmode`).
+pub function op_chmod(): Op { return op0("chmod"); }
+// `set_file_times` takes [path, atime_sec, atime_nsec, mtime_sec, mtime_nsec,
+// flags] — six operands, the widest op here — and pushes Result[void,
+// IoError]. Each timestamp is a whole second since the epoch plus a
+// nanosecond remainder, the shape `stat` hands back. `flags` is Fern's own
+// word, not the kernel's: 1 do not follow a final symlink, 2 leave the access
+// time alone, 4 leave the modification time alone. The two omit bits are
+// UTIME_OMIT sentinels in the timespec on Linux, absent attributes on Darwin
+// and cleared fstflags bits on wasm.
+pub function op_set_file_times(): Op { return op0("set_file_times"); }
 // `hostname` takes no operands and pushes ONE fresh string box holding the
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
 // string on wasm, which has no host identity.
@@ -1541,12 +1557,12 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … umask=265): not
-// in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
-// by name), but nameable so module_emits_op_cached / the backends see them.
-// The id space is NOT dense up here: 253..259 are left for slices in flight,
-// which is why the directory and link family starts at 260.
-// NEXT FREE EXTENSION ID: 266 (re-grep rather than trusting this line — it has
+// Extension tags beyond kind_count() (struct_copy=198 … set_file_times=269):
+// not in the 1..kind_count() bijection sweep (ir_kind_run sweeps them
+// separately by name), but nameable so module_emits_op_cached / the backends
+// see them. The id space is NOT dense up here: 253..259 are left for slices in
+// flight, which is why the directory and link family starts at 260.
+// NEXT FREE EXTENSION ID: 273 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1672,6 +1688,7 @@ function kind_id_len5(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "alloc") { return 76; }
     if (c == b'b' && name == "block") { return 152; }
+    if (c == b'c' && name == "chmod") { return 268; }
     if (c == b'd' && name == "div_s") { return 24; }
     if (c == b'd' && name == "div_u") { return 25; }
     if (c == b'f' && name == "fsqrt") { return 57; }
@@ -2026,6 +2043,7 @@ function kind_id_len14(name: string): i32 {
     if (c == b'r' && name == "read_all_stdin") { return 209; }
     if (c == b's' && name == "str_from_bytes") { return 103; }
     if (c == b's' && name == "signal_default") { return 244; }
+    if (c == b's' && name == "set_file_times") { return 269; }
     return 0;
 }
 
@@ -2335,13 +2353,15 @@ function kind_name_4(id: i32): string {
     if (id == 263) { return "create_symlink"; }
     if (id == 264) { return "read_link"; }
     if (id == 265) { return "umask"; }
+    if (id == 268) { return "chmod"; }
+    if (id == 269) { return "set_file_times"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … umask=265)
+// extension tags beyond kind_count() (struct_copy=198 … set_file_times=269)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2468,7 +2488,7 @@ function pops2_mem(t: i32): boolean {
 function pops2_io(t: i32): boolean {
     return t == 170 || t == 226                                          // write_file, write_file_exec
         || t == 237                                                      // access (path, mode)
-        || t == 260 || t == 262 || t == 263                              // create_dir, create_link, create_symlink
+        || t == 260 || t == 262 || t == 263 || t == 268                  // create_dir, create_link, create_symlink, chmod
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213;                                         // writer_write, proc_exec
@@ -2500,6 +2520,7 @@ pub function op_pops(o: Op): i32 {
     if (t == 206) { return 5; }                       // syscall4
     if (t == 245) { return 5; }                       // mismatch: a, ao, b, bo, n
     if (t == 228) { return 6; }                       // syscall5
+    if (t == 269) { return 6; }                       // set_file_times: path + two timespecs + flags
     // Variadic: the immediate is the count. arr_make / struct_make /
     // tuple_make pop their elements; call_direct pops its arguments.
     if (t == 87 || t == 138 || t == 142 || t == 149) { return o.i32_imm; }

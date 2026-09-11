@@ -11938,6 +11938,25 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // lower_call_dirlink, split out so this dispatch does not grow six
     // more arms of the same shape.
     if (is_dirlink_call(cid.name, c.args.len())) { return lower_call_dirlink(c, cid, s); }
+    // Built-in `set_file_times(path, atime_sec, atime_nsec, mtime_sec,
+    // mtime_nsec, flags)` (#9059) — utimensat(2) over the pair `stat`
+    // answers in. The four timestamp halves are i64 in the signature and
+    // every backend helper reads them as one, so they lower through
+    // lower_i64, which widens an i32 leaf rather than bailing the module
+    // off the IR path; the path and the flags word stay 32-bit.
+    if (cid.name == "set_file_times" && c.args.len() == 6) {
+        var sft: LowerState = lower_expr(c.args[0], s);
+        if (!sft.ok) { return sft; }
+        var ti: i32 = 1;
+        while (ti < 5) {
+            sft = lower_i64(c.args[ti], sft);
+            if (!sft.ok) { return sft; }
+            ti = ti + 1;
+        }
+        sft = lower_expr(c.args[5], sft);
+        if (!sft.ok) { return sft; }
+        return sft.emit(ir.op_set_file_times());
+    }
     // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
     // directory, push a fresh Result[string, IoError] box
     // (Ok(path) / Err(_)). The Result type is resolved by
@@ -12356,11 +12375,11 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     return a1.emit(ir.op_access());
 }
 
-// is_dirlink_call recognises the six single-step directory and link
-// primitives. The ARITY is part of the test so a call with the wrong number
-// of arguments falls through to the ordinary named-call path.
+// is_dirlink_call recognises the seven single-step directory, link and
+// permission primitives. The ARITY is part of the test so a call with the
+// wrong number of arguments falls through to the ordinary named-call path.
 function is_dirlink_call(name: string, argc: i32): boolean {
-    if (name == "create_dir") { return argc == 2; }
+    if (name == "create_dir" || name == "chmod") { return argc == 2; }
     if (name == "remove_dir" || name == "read_link" || name == "umask") { return argc == 1; }
     if (name == "create_link" || name == "create_symlink") { return argc == 2; }
     return false;
@@ -12380,6 +12399,7 @@ function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState):
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     if (cid.name == "create_dir") { return a1.emit(ir.op_create_dir()); }
+    if (cid.name == "chmod") { return a1.emit(ir.op_chmod()); }
     if (cid.name == "create_link") { return a1.emit(ir.op_create_link()); }
     return a1.emit(ir.op_create_symlink());
 }
@@ -70598,6 +70618,8 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "remove_dir") { return "Result[void, IoError]"; }
     if (name == "create_link") { return "Result[void, IoError]"; }
     if (name == "create_symlink") { return "Result[void, IoError]"; }
+    if (name == "chmod") { return "Result[void, IoError]"; }
+    if (name == "set_file_times") { return "Result[void, IoError]"; }
     if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }

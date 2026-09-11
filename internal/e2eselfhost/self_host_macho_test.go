@@ -335,6 +335,59 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// if every step round-trips.
 	runCase("fs_builtins_lifecycle", fsBuiltinsProgram, 42)
 
+	// chmod — fchmodat (Darwin BSD 467, where Linux's is 53/268), with the
+	// flags word Linux's three-argument form does not have. The low TWELVE
+	// bits land verbatim, so setuid survives; a backend that masked to 0o777
+	// before the syscall reports 0o755 here. The sticky bit is deliberately
+	// not among them: BSD restricts S_ISVTX on a non-directory to the
+	// superuser, and this runner is not one.
+	chmodPath := filepath.Join(dir, "chmod_target.txt")
+	runCase("chmod_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+chmodPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (chmod("`+chmodPath+`", 2541)) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+chmodPath+`")) { Ok(f) => { if ((f.mode & (4095 as u32)) != (2541 as u32)) { return 3; } }, Err(e) => { return 4; } }
+  match (chmod("`+filepath.Join(dir, "no_such_chmod_zzz")+`", 420)) { Ok(_) => { return 5; }, Err(e) => {} }
+  return 7;
+}`,
+		7)
+
+	// set_file_times — the one primitive with no shared body at all: XNU has
+	// no utimensat syscall, so this lowers to setattrlist (BSD 221) over an
+	// attribute list naming only the timestamps that are not omitted, packed
+	// in ASCENDING attribute-bit order — modification time before access
+	// time, the reverse of the timespec pair Linux wants. Both halves of both
+	// timestamps and the omit bit are read back through stat, so a list built
+	// in the wrong order, a dropped nanosecond half or an ignored omit bit is
+	// a wrong number rather than a plausible one.
+	sftPath := filepath.Join(dir, "sft_target.txt")
+	runCase("set_file_times_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+sftPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (set_file_times("`+sftPath+`", 1111111111, 222333444, 1444555666, 777888999, 0)) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime != (1111111111 as i64)) { return 3; }
+      if (f.atime_nsec != (222333444 as i64)) { return 4; }
+      if (f.mtime != (1444555666 as i64)) { return 5; }
+      if (f.mtime_nsec != (777888999 as i64)) { return 6; }
+    },
+    Err(e) => { return 7; }
+  }
+  match (set_file_times("`+sftPath+`", 9, 9, 1777888999, 864213579, 2)) { Err(e) => { return 8; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime != (1111111111 as i64)) { return 9; }
+      if (f.mtime != (1777888999 as i64)) { return 10; }
+      if (f.mtime_nsec != (864213579 as i64)) { return 11; }
+    },
+    Err(e) => { return 12; }
+  }
+  match (set_file_times("`+filepath.Join(dir, "no_such_sft_zzz")+`", 1, 0, 1, 0, 0)) { Ok(_) => { return 13; }, Err(e) => {} }
+  return 42;
+}`,
+		42)
+
 	// sleep_ms — Darwin has no nanosleep syscall, so this lowers to
 	// select(0, NULL, NULL, NULL, &timeval) (sysno 93). A short sleep
 	// must return normally (a wrong syscall number would SIGILL → runCase
