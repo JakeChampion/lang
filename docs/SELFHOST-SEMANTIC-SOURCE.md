@@ -86,10 +86,14 @@ Unsupported constructs refuse the whole function with a reason.
   `slice_unchecked` on a string. A slice owns its box and borrows the
   source's bytes, so it is a projection anchored to its source and is
   released by the view helper rather than the ordinary string free.
+- Indexing a string, as one byte handed back in an i32. The receiver is read
+  the way a length's is and the result owns nothing, so — unlike the slice
+  beside it — this is NOT a projection: the byte outlives the string it came
+  from, and nothing has to keep the source alive for it.
 
 Refused, each with its own reason: calls of the remaining builtins, local
 function values and void functions, floats in expressions, integer widths
-other than i32, casts, string indexing, string ordering, generic records,
+other than i32, casts, string ordering, generic records,
 destructuring, labelled loops, match guards and the pattern shapes above,
 `defer`, closures, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
@@ -180,10 +184,9 @@ the contract feed leaks five blocks on the same program.
 
 ## Remaining
 
-The producer does not yet admit string indexing, casts, integer widths other
-than i32, floats, the remaining builtins, destructuring, closures or
-generics, so no production consumer is switched and no AST ownership analysis
-is deleted.
+The producer does not yet admit casts, integer widths other than i32, floats,
+the remaining builtins, destructuring, closures or generics, so no production
+consumer is switched and no AST ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,

@@ -269,8 +269,14 @@ function index(ix: ast.ExprIndex, s: State): Value {
     var at: Value = expr(ix.index, container.s, t_i32());
     s = at.s;
     if (!s.ok) { return at; }
+    if (!is_i32(s.values[at.id])) { return refused(s, "array projection contract"); }
+    // A string's element is one byte, handed back as an i32. Nothing is
+    // borrowed, so this is a read of the source rather than a projection of it.
+    if (ssasem.is_string(s.values[container.id])) {
+        return define(s, ssasem.str_index(), [container.id, at.id], 0, "", t_i32());
+    }
     var elem: typeinfo.Type = element_type(s.values[container.id]);
-    if (!is_i32(s.values[at.id]) || !semtypes.concrete(elem, false)) { return refused(s, "array projection contract"); }
+    if (!semtypes.concrete(elem, false)) { return refused(s, "array projection contract"); }
     return define(s, ssasem.array_get(), [container.id, at.id], 0, "", elem);
 }
 
