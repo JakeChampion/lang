@@ -1543,11 +1543,12 @@ function variant_in_unions(name: string, unions: UnionTable): boolean {
 
 // is_nopayload_builtin_variant reports whether `name` is a NO-payload variant
 // of a front-end-injected builtin enum — the only builtin variants that appear
-// bare as a value (`None`, `JNull`, and every `IoError` variant). The payload
-// builtins (`Some` / `Ok` / `Err` / the `J*` data variants) instead appear as
-// constructor CALLS (`Some(3)`), handled in check_call_expr; resolving them
-// bare would mistype a `Some(3)` callee as a value and trip a "calling
-// non-function value" E038 (#4346 piece 2).
+// bare as a value (`None`, `JNull`, and `IoError`'s two unit variants). The
+// payload builtins (`Some` / `Ok` / `Err` / the `J*` data variants / the five
+// `IoError` variants that carry a path) instead appear as constructor CALLS
+// (`Some(3)`, `NotFound(path)`), handled in check_call_expr; resolving one
+// bare would mistype the callee as a value and trip a "calling non-function
+// value" E038 (#4346 piece 2, #9066).
 function is_nopayload_builtin_variant(name: string): boolean {
   if (name == "None") {
     return true;
@@ -1555,7 +1556,7 @@ function is_nopayload_builtin_variant(name: string): boolean {
   if (name == "JNull") {
     return true;
   }
-  if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
+  if (name == "Interrupted" || name == "Unsupported") {
     return true;
   }
   return false;
