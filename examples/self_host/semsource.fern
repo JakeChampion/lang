@@ -404,9 +404,10 @@ function logical(b: ast.ExprBinary, s: State): Value {
 }
 
 // A call is verified against the callee's declared contract: exact argument
-// types, and a result the callee hands over. Only a module function with a
-// contract is a call target; builtins, methods and local function values are
-// outside this boundary.
+// types, and a result the callee hands over. Only a declaration with a
+// contract is a call target — a module function under its own name, a method
+// under <Type>.<method>; builtins and local function values are outside this
+// boundary.
 // A method call names its callee the way the declaration keyed its contract,
 // and the way every backend labels the body: <Type>.<method>. The receiver is
 // argument 0, because the callee declared it as parameter 0.
@@ -1206,7 +1207,7 @@ function close_module(mod: parser.Module, out: Produced[]): Produced[] {
             if (out[i].ok) {
                 for c in out[i].func.calls {
                     var at: i32 = 0;
-                    while (at < mod.funcs.len() && mod.funcs[at].name != c.name) { at = at + 1; }
+                    while (at < mod.funcs.len() && decl_key(mod.funcs[at]) != c.name) { at = at + 1; }
                     if (at < mod.funcs.len() && !out[at].ok && out[i].ok) {
                         out = out.with(i, refuse("call target was refused: " + out[at].why));
                         changed = true;
