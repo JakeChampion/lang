@@ -231,19 +231,32 @@ coreutils/
                     POSIX crc, and sum's bsd and sysv) are std/hash
   lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
                     backend reads them — the lookups by name and by id,
-                    getgrouplist's ordering, and the process's own group
-                    set — for whoami, id, groups and logname
+                    getgrouplist's ordering, the process's own group
+                    set, and the gecos field finger reads as a real name
+                    (`&` is the login name capitalised) — for whoami,
+                    id, groups, logname and pinky
   lib/utmp.fern     the login-accounting record: the fixed-size utmp
-                    entry and the scans over it, for logname today and
-                    users / who / pinky next
+                    entry, the scans over it, and the terminal a ut_line
+                    names — its mode is the message status and its atime
+                    the idle time — for logname, users, who and pinky.
+                    The line itself is lib/tty.fern's ttyname minus the
+                    /dev/ prefix the field does not carry
+  lib/tz.fern       the local time zone as tzset(3) finds it, for the
+                    utilities that print a local timestamp (who, pinky):
+                    TZ read as a FILE name first — absolute, or under
+                    $TZDIR — and as a POSIX rule only when no file
+                    answers, TZif v1/v2/v3 with the footer rule for
+                    times past the transition table, and the POSIX
+                    grammar's three date forms with glibc's clamps
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
   lib/resolv.fern   glibc's IPv4 name lookup — /etc/hosts, the
                     `hosts:` line of nsswitch.conf, resolv.conf and an
-                    RFC 1035 A query — for the utilities that resolve
-                    the machine's own name (hostid; hostname, uname
-                    and who reach for the same pieces)
+                    RFC 1035 A query — and getaddrinfo's AI_CANONNAME
+                    over the same walk, for the utilities that resolve
+                    the machine's own name (hostid) or one a session
+                    recorded (who --lookup)
   lib/canon.fern    the symbolic-link resolution walk readlink -f/-e/-m
                     and realpath share: one loop over a name's
                     components under three existence modes, plus the
@@ -261,7 +274,8 @@ coreutils/
                     readlink first, trusted only when it still stats to
                     the same character device, then a walk of /dev/pts
                     and /dev by device number, for the utilities that
-                    name the terminal on standard input (tty, logname).
+                    name the terminal on standard input (tty, logname,
+                    who -m).
                     /dev/ptmx and /dev/pts/ptmx share a device number,
                     which is why the order matters
   lib/selinux.fern  is_selinux_enabled() and getcon(), which are two
@@ -1061,6 +1075,23 @@ buffer boundaries and `^` anchors in the same places. What differs is
 memory — the input's size rather than a block — and that GNU's
 `failed to create temporary file` is unreachable here, so an unwritable
 `$TMPDIR` under an unprivileged user fails on GNU and succeeds on this.
+**`who` and `pinky` under a TZ that names daylight time but no dates.**
+`TZ=ABC1DEF` — a zone name, an offset, a daylight name and nothing more —
+leaves the changeover dates to the implementation, and so does a TZ whose
+dates are malformed (`TZ=EST5EDT,J0,J300`). glibc reads them from
+`/usr/share/zoneinfo/posixrules`, a copy of America/New_York that upstream
+tzdata stopped shipping in 2020 and Debian still carries as a symlink: it
+applies that file's transition times with the TZ string's offsets
+substituted and a correction that moves the spring change by the
+difference between the two standard offsets, and past the file's own table
+(2037) it abandons the TZ string entirely — `TZ=ABC1DEF date -d @2147483647`
+prints `EST -0500`, not the `ABC` the string names. `lib/tz.fern` applies
+the POSIX default dates instead, the United States rule in force since
+2007, which is what glibc itself uses on a system with no posixrules file.
+The two agree on every date between those dates and 2037 and differ
+outside it; the corpus therefore carries no case of that TZ shape, and
+`who_test.go` says so where a reader will meet it.
+
 **`uname -p` and `-i` print the machine name, as Linux distributions'
 GNU does.** Upstream coreutils can answer neither on Linux — the two
 `#if`s in uname.c are a Solaris `sysinfo(2)` and a BSD `sysctl`, and glibc
@@ -1324,8 +1355,11 @@ groups are the order of work. Each sub-issue names its group.
   (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname)
   — those four done, on `getcwd()`, `cpu_count()` and `uname_field(i)`
   under the new `cwd` and `sysinfo` target capabilities —
-  `whoami` `id` `groups` `logname` (done) `users` `who`
-  `pinky` (uid, passwd, utmp), `printenv` (done) `env` (the whole
+  `whoami` `id` `groups` `logname` `users` `who` `pinky` (done — the
+  family needed NO new primitive: utmp is `read_file_bytes`, who's
+  message-status and idle columns are `stat`, and the local timestamp
+  `who` and `pinky` print is `read_file` plus `env`, which is
+  `lib/tz.fern`), `printenv` (done) `env` (the whole
   environ, exec), `ln`
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
@@ -1334,7 +1368,7 @@ groups are the order of work. Each sub-issue names its group.
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
-  (full stat, statfs, d_type), `date` (strftime, timezone), `timeout` `nice`
+  (full stat, statfs, d_type), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
   plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,
