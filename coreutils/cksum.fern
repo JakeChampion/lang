@@ -16,9 +16,11 @@
 //     program the seven `*sum` utilities are, so the tagged line, the
 //     name escaping, the check-line grammar, `-l` and every
 //     `--quiet` / `--status` / `--strict` rule come from there. What
-//     this file adds to that module is `-a`'s two extra reading rules:
-//     a base64 digest is read as well as a hex one, and with no `-a`
-//     each check line's TAG chooses the algorithm to verify it with.
+//     this file turns on in that module is the half of the grammar that
+//     is cksum's: a base64 digest read wherever a hex one is, the
+//     `-NNN` length taken on every algorithm rather than only on
+//     BLAKE2b, a three-byte minimum line, and — with no `-a` — each
+//     check line's TAG choosing the algorithm to verify it with.
 //
 // The tagged line is the default here and `--untagged` is the reversed
 // form the `*sum` utilities write, which is the opposite way round from
@@ -185,11 +187,12 @@ function plain_raw(sel: i32, p: Plain): u8[] {
 }
 
 // ---- one input ------------------------------------------------------------
-// `Checked` — one operand's answer: the fields a line carries, the raw
-// bytes `--raw` writes, or the error that stopped it.
-struct Checked { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
+// `PlainSum` — one operand's answer from one of the three: the fields a
+// line carries, the raw bytes `--raw` writes, or the error that stopped
+// it. The digests have `digest.Sum` for the same job.
+struct PlainSum { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
 
-function plain_reader(r: Reader, sel: i32, owned: boolean): Checked {
+function plain_reader(r: Reader, sel: i32, owned: boolean): PlainSum {
   var p: Plain = plain_new(sel);
   while (true) {
     match (r.read_chunk(65536)) {
@@ -203,17 +206,17 @@ function plain_reader(r: Reader, sel: i32, owned: boolean): Checked {
         if (owned) {
           r.close();
         }
-        return Checked { fields: "", raw: [], err: Some(e), failed: true };
+        return PlainSum { fields: "", raw: [], err: Some(e), failed: true };
       }
     }
   }
   if (owned) {
     r.close();
   }
-  return Checked { fields: plain_fields(sel, p), raw: plain_raw(sel, p), err: None, failed: false };
+  return PlainSum { fields: plain_fields(sel, p), raw: plain_raw(sel, p), err: None, failed: false };
 }
 
-function plain_path(path: string, sel: i32): Checked {
+function plain_path(path: string, sel: i32): PlainSum {
   if (path == "-") {
     return plain_reader(stdin(), sel, false);
   }
@@ -222,12 +225,12 @@ function plain_path(path: string, sel: i32): Checked {
       return plain_reader(r, sel, true);
     },
     Err(e) => {
-      return Checked { fields: "", raw: [], err: Some(e), failed: true };
+      return PlainSum { fields: "", raw: [], err: Some(e), failed: true };
     }
   }
 }
 
-function checked_error_text(c: Checked): string {
+function plain_error_text(c: PlainSum): string {
   match (c.err) {
     Some(e) => {
       return gnu.io_error_text(e);
@@ -523,9 +526,9 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
     }
     return (true, gnu.put(out, digest.sum_line(a, c.s, digest_text(c, sum.bin), name)));
   }
-  var p: Checked = plain_path(name, c.sel);
+  var p: PlainSum = plain_path(name, c.sel);
   if (p.failed) {
-    return (false, gnu.error_out(out, gnu.quotef(name) + ": " + checked_error_text(p)));
+    return (false, gnu.error_out(out, gnu.quotef(name) + ": " + plain_error_text(p)));
   }
   if (c.raw) {
     return (true, gnu.put(out, string_from_bytes_unchecked(p.raw)));
