@@ -64,7 +64,8 @@ function caller(n: i32): i32[] {
 }
 function noop() { return; }
 function refused_void_call(): i32 { noop(); return 1; }
-function refused_method_call(xs: i32[]): i32 { return xs.len(); }
+function array_length(xs: i32[]): i32 { return xs.len(); }
+function refused_method_call(xs: i32[]): i32[] { return xs.append(1); }
 function refused_transitive(n: i32): i32 { return refused_call(n); }
 struct P { n: i32, xs: i32[] }
 struct Q { name: string, p: P }
@@ -79,7 +80,8 @@ function unwrap(q: Q): i32 {
 function greet(s: string): string { return "hello, " + s; }
 function refused_update(p: P): P { return P { ...p, n: 0 }; }
 function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; return g.v; }
-function refused_string_method(s: string): i32 { return s.len(); }
+function string_length(s: string): i32 { return s.len(); }
+function refused_string_method(s: string): string { return s.trim(); }
 enum Shape { Dot, Line(i32), Full(i32[]), Pair(i32, i32[]) }
 function shape(n: i32): Shape {
     if (n == 0) { return Dot; }
@@ -419,6 +421,25 @@ enum Chain { End, Link(i32, Chain) }
     var h: Holder = Holder { s: shape(n), n: n };
     return measure(h.s) + h.n;
 }
+// .len() on a BORROWED receiver reads without consuming; on a counted one the
+// read is the last use, so the unit is still this function's to release.
+@noinline function size_of(xs: i32[]): i32 { return xs.len(); }
+@noinline function eat_size(own xs: i32[]): i32 { return xs.len(); }
+@noinline function fresh_size(n: i32): i32 { return fill(n).len() + [n, n, n, n].len(); }
+@noinline function text_size(s: string): i32 { return s.len(); }
+@noinline function inner_size(p: P): i32 { return p.xs.len(); }
+@noinline function sum_all(xs: i32[]): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) { total = total + xs[i]; i = i + 1; }
+    return total;
+}
+@noinline function grown_size(n: i32): i32 {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s.len();
+}
 @noinline function greet(n: i32): i32 {
     var s: string = "ab";
     var i: i32 = 0;
@@ -476,6 +497,15 @@ function main(): i32 {
     var ct: Counter = make_counter(6);
     print_int(ct.total()); print("");
     print_int(twice_total(3)); print("");
+    // .len() over every ownership the receiver can have: a borrow, a counted
+    // local, a temporary whose only use is the read, a literal, a field
+    // projection, a loop-carried read, and a string built by concatenation.
+    var lens: i32[] = fill(2);
+    print_int(size_of(lens)); print(""); print_int(sum_all(lens)); print("");
+    print_int(fresh_size(1)); print(""); print_int(eat_size(fill(5))); print("");
+    print_int(text_size("hello")); print(""); print_int(grown_size(3)); print("");
+    var lp: P = P { n: 1, xs: [1, 2] };
+    print_int(grown_size(0)); print(""); print_int(inner_size(lp)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -499,7 +529,12 @@ function main(): i32 {
 // shared donor forks to a fresh box rather than writing through, c.a = 5 and
 // d.b = 2. This is the path the bare-name row makes reachable, and the guard
 // that keeps it safe lives in the reuse emitters, not in the row's gate.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n"
+// size_of(fill(2)) = 3 and sum_all = 2 + 3 + 4 = 9; fresh_size(1) = 3 + 4 = 7;
+// eat_size(fill(5)) = 3; "hello" is 5 bytes; grown_size(3) is "abccc" = 5 and
+// grown_size(0) is "ab" = 2; inner_size reads [1, 2] = 2. The P is a literal
+// main owns rather than a make() result, which an AST caller still leaks by
+// the documented floor in ssarc.box_only_result.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -584,7 +619,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

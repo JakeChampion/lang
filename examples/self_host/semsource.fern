@@ -403,23 +403,32 @@ function logical(b: ast.ExprBinary, s: State): Value {
     return define(open(s, join, [rhs_end, skip]), 8, [right.id, short.id], 0, "", t_bool());
 }
 
+// `.len` is the one builtin method with a contract here: it reads a counted
+// array or string and hands back a fresh i32 that owns nothing. Every other
+// builtin, and every local function value, is still outside this boundary.
+function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    if (fa.field != "len" || c.type_argc > 0 || c.args.len() != 0) { return refused(s, "unsupported call target"); }
+    var t: typeinfo.Type = s.values[recv.id];
+    var sized: boolean = ssasem.is_string(t);
+    if let typeinfo.TypeArray(_) = t { sized = true; }
+    if (!sized) { return refused(s, "unsupported call target"); }
+    return define(s, ssasem.length(), [recv.id], 0, "", t_i32());
+}
+
 // A call is verified against the callee's declared contract: exact argument
-// types, and a result the callee hands over. Only a declaration with a
-// contract is a call target — a module function under its own name, a method
-// under <Type>.<method>; builtins and local function values are outside this
-// boundary.
-// A method call names its callee the way the declaration keyed its contract,
-// and the way every backend labels the body: <Type>.<method>. The receiver is
-// argument 0, because the callee declared it as parameter 0.
+// types, and a result the callee hands over. A method call names its callee
+// the way the declaration keyed its contract, and the way every backend labels
+// the body: <Type>.<method>. The receiver is argument 0, because the callee
+// declared it as parameter 0.
 function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value {
     var recv: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = recv.s;
     if (!s.ok) { return recv; }
     var owner: string = struct_name(s.values[recv.id]);
     if (owner == "") { owner = union_name(s.values[recv.id]); }
-    // A builtin's receiver is an array, a string or a tuple: it names no
-    // declaration this boundary can hold a contract for.
-    if (owner == "") { return refused(s, "unsupported call target"); }
+    // A builtin's receiver names no declaration this boundary can hold a
+    // contract for, so it is matched by shape instead.
+    if (owner == "") { return builtin_call(c, fa, recv, s); }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
     if (at < 0) { return refused(s, "call target has no semantic contract"); }

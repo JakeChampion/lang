@@ -180,6 +180,15 @@ func caller {
 
 refused unsupported expression
 refused unsupported void call
+modes 2 result i32
+v0:i32[] v1:i32
+func array_length {
+  b0:
+    v0 = param 0
+    v1 = length v0
+    ret v1
+}
+
 refused unsupported call target
 refused call target was refused: call target has no semantic contract
 modes 1 result P
@@ -240,6 +249,15 @@ func greet {
 
 refused unsupported record update
 refused unsupported record literal
+modes 2 result i32
+v0:string v1:i32
+func string_length {
+  b0:
+    v0 = param 0
+    v1 = length v0
+    ret v1
+}
+
 refused unsupported call target
 modes 1 result Shape
 v0:i32 v1:i32 v2:boolean v3:Shape v4:i32 v5:boolean v6:Shape v7:i32 v8:boolean v9:i32 v10:i32 v11:i32[] v12:Shape v13:i32[] v14:Shape
