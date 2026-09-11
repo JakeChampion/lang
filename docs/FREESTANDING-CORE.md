@@ -58,6 +58,7 @@ costs a silent failure on the first target that lacks it.
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
 | `proc` | `proc_fork`, `proc_exec`, `proc_waitpid`, `process_alive` | processes |
+| `rlimit` | `rlimit_nofile` | a kernel that enforces ceilings on this process's resources |
 | `subprocess` | `subprocess` | interp-only; no compiled target provides it |
 | `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
 
@@ -195,6 +196,23 @@ memory-model question rather than a capability one. The two dispositions are
 what a utility needs: `tee -i` is SIG_IGN on SIGINT, and its `--output-error`
 family is SIG_IGN on SIGPIPE so a write to a vanished reader returns EPIPE
 instead of killing the process.
+
+**`rlimit` is its own capability, not `proc`.** `proc` is the authority
+to HAVE processes — fork one, exec into one, wait for one — and a host
+can offer all three while enforcing no ceilings on any of them. What
+`rlimit_nofile` needs is the second thing: a kernel keeping a per-process
+budget and willing to report it.
+
+Neither WASI preview has one, and this is the case where the absence of
+an honest constant is easiest to see. "Unlimited" claims the component
+may open descriptors without bound, which no host means; a plausible
+1024 claims a measurement nobody took. Both are the `geteuid`-answers-0
+failure, so E066 refuses it and `sort --batch-size` simply does not
+build for wasm rather than capping itself against a fiction.
+
+The package-capability side leaves it UNGATED, beside `geteuid`: the
+ceiling was chosen by whoever exec'd the program, and a dependency that
+learns how many descriptors it may open gains no reach it did not have.
 
 **`process_alive` is `proc`, and the reason it is not `signal` is the
 whole point of the pair.** It is `kill(pid, 0)` underneath — a signal

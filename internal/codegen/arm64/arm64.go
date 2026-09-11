@@ -184,6 +184,12 @@ var linuxDarwinSysno = map[string][2]int{
 	// `__fern_process_alive`, which passes signal 0: every check kill(2)
 	// makes, with nothing delivered.
 	"kill": {129, 37},
+	// getrlimit(2) — Linux asm-generic 163 (arm64 asks for the
+	// set/get-rlimit pair), Darwin BSD 194. Identical shape:
+	// (resource, &rlimit) over a two-u64 record. Only the RESOURCE
+	// number differs — RLIMIT_NOFILE is 7 on Linux and 8 on Darwin —
+	// and that is an argument the emitter picks.
+	"getrlimit": {163, 194},
 	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
 	// older faccessat (48) has no flags word and so cannot express
 	// AT_EACCESS. Darwin's faccessat (BSD 467) has taken flags since it
@@ -724,6 +730,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
+	}
+	if g.usesRlimitNofile {
+		g.emitRlimitNofileRuntime()
 	}
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
@@ -8363,6 +8372,45 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".ltorg")
 }
 
+// emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft
+// RLIMIT_NOFILE, in x0 as an i64.
+//
+// `getrlimit(RLIMIT_NOFILE, &rlim)` into a two-u64 buffer on the stack,
+// and `rlim_cur` is the answer. Two paths report i64 max instead: a
+// failing call, which for a resource named in the emitter and a buffer
+// it owns has no reachable errno, and a limit whose top bit is set —
+// Linux spells RLIM_INFINITY as all ones, which is not a count anything
+// could hold. Darwin already spells it i64 max, so both arrive as the
+// same answer.
+func (g *generator) emitRlimitNofileRuntime() {
+	resource := 7 // Linux RLIMIT_NOFILE
+	if g.darwin {
+		resource = 8 // Darwin RLIMIT_NOFILE
+	}
+	g.line("")
+	g.line(".global __fern_rlimit_nofile")
+	g.typeDirective("__fern_rlimit_nofile")
+	g.label("__fern_rlimit_nofile")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32") // struct rlimit { u64 cur; u64 max }
+	g.emit("mov x0, #%d", resource)
+	g.emit("mov x1, sp")
+	g.syscall("getrlimit")
+	g.emit("cmp x0, #0")
+	g.emit("b.ne .Lrlim_unlimited")
+	g.emit("ldr x0, [sp]") // rlim_cur
+	g.emit("tbz x0, #63, .Lrlim_done")
+	g.label(".Lrlim_unlimited")
+	g.emit("ldr x0, =0x7fffffffffffffff")
+	g.label(".Lrlim_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_rlimit_nofile")
+	g.line(".ltorg")
+}
+
 // emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a
 // process with that pid exists, 0 when it does not.
 //
@@ -12220,6 +12268,9 @@ type generator struct {
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
+	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
+	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
+	usesRlimitNofile bool
 	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
 	// 1 when the process exists (success or EPERM) and 0 when it does not
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
@@ -16501,6 +16552,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// exists, 0 when it does not.
 			target = "__fern_process_alive"
 			g.usesProcessAlive = true
+		case "rlimit_nofile":
+			// rlimit_nofile(): the soft RLIMIT_NOFILE, i64 in x0.
+			target = "__fern_rlimit_nofile"
+			g.usesRlimitNofile = true
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true

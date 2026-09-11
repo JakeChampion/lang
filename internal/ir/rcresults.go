@@ -430,7 +430,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_arr_push_shared_bytes": true, "__fern_heap_bump_bytes": true,
 	"__fern_idiv_s64": true, "__fern_idiv_u64": true, "__fern_irem_s64": true,
 	"__fern_irem_u64": true, "__fern_monotonic_ns": true, "__fern_now_ns": true,
-	"__fern_now_unix_ms": true, "__load_i64": true,
+	"__fern_now_unix_ms": true, "__load_i64": true, "rlimit_nofile": true,
 
 	// i32 counts, indices, comparisons and booleans.
 	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true,

@@ -1292,6 +1292,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"poll":                          emitPollHelper,
 	"isatty":                        emitIsattyHelper,
 	"process_alive":                 emitProcessAliveHelper,
+	"rlimit_nofile":                 emitRlimitNofileHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
@@ -2016,6 +2017,34 @@ func emitProcessAliveHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_alive_yes:")
 	w("\tmov x0, #1")
+	w("\tret")
+}
+
+// emitRlimitNofileHelper writes rlimit_nofile() -> the soft RLIMIT_NOFILE as
+// an i64 in x0: getrlimit(7, &rlim) into a two-u64 record in a 32-byte frame
+// slot, whose first word is rlim_cur.
+//
+// Two paths answer i64 max instead. A failing call has no reachable errno for
+// a resource this emitter names and a buffer it owns, and a limit with its top
+// bit set is Linux's RLIM_INFINITY (all ones), which is not a count anything
+// could hold.
+func emitRlimitNofileHelper(w func(string, ...any)) {
+	const rlimitNofile = 7
+	w("")
+	w("%s:", fnLabel("rlimit_nofile"))
+	w("\tsub sp, sp, #32") // struct rlimit { u64 cur; u64 max }
+	w("\tmov x0, #%d", rlimitNofile)
+	w("\tmov x1, sp")
+	w("\tmov x8, #%d", sysGetrlimit)
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.ne .Lssa_rlim_unlimited")
+	w("\tldr x0, [sp]") // rlim_cur
+	w("\ttbz x0, #63, .Lssa_rlim_done")
+	w(".Lssa_rlim_unlimited:")
+	movImm64(w, "x0", (1<<63)-1)
+	w(".Lssa_rlim_done:")
+	w("\tadd sp, sp, #32")
 	w("\tret")
 }
 
@@ -7087,7 +7116,9 @@ const (
 	sysClockGettime = 113
 	sysNanosleep    = 101
 	// kill(2), asm-generic 129 — process_alive's zero signal.
-	sysKill        = 129
+	sysKill = 129
+	// getrlimit(2), asm-generic 163 — rlimit_nofile's soft ceiling.
+	sysGetrlimit   = 163
 	clockRealtime  = 0
 	clockMonotonic = 1
 )

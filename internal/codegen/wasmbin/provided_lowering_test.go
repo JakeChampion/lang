@@ -51,6 +51,10 @@ var providedRefusedByPlatform = map[string]bool{
 	"proc_exec":    true,
 	// Liveness of an arbitrary pid, which needs the same process table.
 	"process_alive": true,
+	// `rlimit` — a kernel-enforced ceiling on a process resource.
+	// Neither WASI preview has one, and every constant that could stand
+	// in would be a measurement a component never took.
+	"rlimit_nofile": true,
 	// The arena mark/release pair: a bump-arena discipline the wasm
 	// allocator does not implement.
 	"__heap_mark":       true,

@@ -309,6 +309,11 @@ const (
 	// sends signal 0 — every permission and existence check kill(2)
 	// makes, with nothing delivered.
 	sysKill = 62
+	// getrlimit(2): x86-64 syscall 97. Backs `__fern_rlimit_nofile`.
+	// The 64-bit ABI's `struct rlimit` is two u64s, so the ancient
+	// 32-bit truncation the man page warns about does not apply and
+	// prlimit64 would buy nothing here.
+	sysGetrlimit = 97
 	// rt_sigaction(2): x86-64 syscall 13. Backs `__fern_signal_ignore`
 	// and `__fern_signal_default`.
 	sysRtSigaction = 13
@@ -827,6 +832,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
+	if g.usesRlimitNofile {
+		g.emitRlimitNofileRuntime()
+	}
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
 	}
@@ -1160,6 +1168,9 @@ type generator struct {
 	usesWasmPoll          bool
 	usesWasmBlock         bool
 	usesTimerFd           bool
+	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
+	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
+	usesRlimitNofile bool
 	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
 	// 1 when the process exists (success or EPERM) and 0 when it does not
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
@@ -1760,6 +1771,8 @@ func (g *generator) recordUse(target string) {
 		g.usesTimerFd = true
 	case "process_alive":
 		g.usesProcessAlive = true
+	case "rlimit_nofile":
+		g.usesRlimitNofile = true
 	case "isatty":
 		g.usesIsatty = true
 	case "signal_ignore", "signal_default":
@@ -3391,6 +3404,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_timer_fd"
 		case "process_alive":
 			target = "__fern_process_alive"
+		case "rlimit_nofile":
+			target = "__fern_rlimit_nofile"
 		case "isatty":
 			target = "__fern_isatty"
 		case "signal_ignore":
@@ -12097,6 +12112,41 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
+}
+
+// emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft
+// RLIMIT_NOFILE, in rax as an i64.
+//
+// `getrlimit(RLIMIT_NOFILE, &rlim)` into a two-u64 buffer on the stack,
+// and `rlim_cur` is the answer. Two paths report i64 max instead: a
+// failing call, which for a resource named in the emitter and a buffer
+// it owns has no reachable errno, and a limit whose top bit is set —
+// Linux spells RLIM_INFINITY as all ones, which is not a count anything
+// could hold.
+func (g *generator) emitRlimitNofileRuntime() {
+	const rlimitNofile = 7 // Linux RLIMIT_NOFILE
+	g.line("")
+	g.line(".globl __fern_rlimit_nofile")
+	g.line(".type __fern_rlimit_nofile, @function")
+	g.label("__fern_rlimit_nofile")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32") // struct rlimit { u64 cur; u64 max } + alignment
+	g.emit(fmt.Sprintf("mov edi, %d", rlimitNofile))
+	g.emit("mov rsi, rsp")
+	g.emitSyscall(sysGetrlimit)
+	g.emit("test rax, rax")
+	g.emit("jnz .Lrlim_unlimited")
+	g.emit("mov rax, [rsp]") // rlim_cur
+	g.emit("test rax, rax")
+	g.emit("jns .Lrlim_done")
+	g.label(".Lrlim_unlimited")
+	g.emit("movabs rax, 0x7fffffffffffffff")
+	g.label(".Lrlim_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_rlimit_nofile, .-__fern_rlimit_nofile")
 }
 
 // emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a

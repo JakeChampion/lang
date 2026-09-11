@@ -45,6 +45,12 @@ var gatedBuiltins = map[string]string{
 	// host property fork / exec / waitpid need.
 	"process_alive": "proc",
 
+	// A kernel-enforced ceiling on a process resource. Its own
+	// capability rather than `proc`: that one is the authority to have
+	// processes at all, while this is a property a host can lack while
+	// still having them.
+	"rlimit_nofile": "rlimit",
+
 	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
 	// Native-only: both natives rewind __fern_heap_ptr and snapshot the
 	// freelist heads into a .bss shadow, which wasm's linear-memory

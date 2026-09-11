@@ -143,15 +143,22 @@ var Ungated = map[string]bool{
 	// platforms` DOES gate these, because there the question is
 	// whether the target can answer at all (WASI cannot), not
 	// whether a dependency should be allowed to ask.
-	"geteuid":     true,
-	"getegid":     true,
-	"getuid":      true,
-	"getgid":      true,
-	"getgroups":   true,
-	"target_os":   true,
-	"target_arch": true,
-	"args":        true,
-	"exit":        true,
+	// The limits the kernel enforces on this process (`rlimit_nofile`)
+	// join them by the same argument: the ceiling was chosen by whoever
+	// exec'd the program, and a dependency that learns how many
+	// descriptors it may open reaches nothing it could not already
+	// reach. `internal/platforms` gates that one too, because there the
+	// question is whether the target has resource limits at all.
+	"geteuid":       true,
+	"getegid":       true,
+	"getuid":        true,
+	"getgid":        true,
+	"getgroups":     true,
+	"rlimit_nofile": true,
+	"target_os":     true,
+	"target_arch":   true,
+	"args":          true,
+	"exit":          true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

@@ -285,6 +285,9 @@ var rcInertBuiltins = map[string]bool{
 	// like `access` it is classified here under the builtin name rather
 	// than as a wasm runtime helper.
 	"process_alive": true,
+	// No arguments at all, and an i64 out. Native-only for the same
+	// reason: no wasm world has resource limits.
+	"rlimit_nofile": true,
 
 	// (path, contents) → Result. Both strings are read and written
 	// out; neither is retained. Its sibling `write_file` resolves

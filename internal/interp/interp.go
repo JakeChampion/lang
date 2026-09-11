@@ -1060,6 +1060,7 @@ func New() *Interp {
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
+	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -2762,6 +2763,28 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 // would hang where they no-op. 64 rather than 31 because Linux's realtime
 // signals run to 64 and are perfectly real dispositions to set.
 const maxSignal = 64
+
+// builtinRlimitNofile mirrors the native `rlimit_nofile()` — the soft
+// RLIMIT_NOFILE the kernel is enforcing on this process.
+//
+// An unlimited resource reports i64 max. Linux spells RLIM_INFINITY as all
+// ones and Darwin as i64 max, so clamping anything above i64's range covers
+// both without either spelling reaching a caller as a count.
+func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("rlimit_nofile: expected 0 args, got %d", len(args))
+	}
+	var lim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+		// Only EFAULT and EINVAL are defined, and neither can happen
+		// against a named resource and a buffer this function owns.
+		return Number(math.MaxInt64), nil
+	}
+	if lim.Cur > math.MaxInt64 {
+		return Number(math.MaxInt64), nil
+	}
+	return Number(int64(lim.Cur)), nil
+}
 
 // builtinProcessAlive mirrors the native `process_alive(pid)` — kill(pid, 0),
 // whose errno only refines "yes": nil and EPERM both mean the process exists,

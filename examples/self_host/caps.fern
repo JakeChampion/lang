@@ -142,6 +142,7 @@ pub function ungated(): string[] {
             "stdin", "stdout", "stderr", "isatty", "target_os", "target_arch", "args", "exit",
             "signal_ignore", "signal_default",
             "geteuid", "getegid", "getuid", "getgid", "getgroups",
+            "rlimit_nofile",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",

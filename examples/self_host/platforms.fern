@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -198,6 +198,12 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "proc_waitpid", capability: "proc" },
         Gate { builtin: "proc_exec", capability: "proc" },
         Gate { builtin: "process_alive", capability: "proc" },
+
+        // A kernel-enforced ceiling on a process resource. Its own
+        // capability rather than `proc`: that one is the authority to have
+        // processes at all, while this is a property a host can lack while
+        // still having them.
+        Gate { builtin: "rlimit_nofile", capability: "rlimit" },
 
         // One-level bump-arena checkpoint. Both natives rewind the heap
         // pointer and shadow the freelist heads; wasm's linear-memory

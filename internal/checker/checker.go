@@ -1833,6 +1833,31 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
 	}
+	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
+	// enforcing on this process's open file descriptors, `getrlimit(2)`
+	// on RLIMIT_NOFILE (#8819). What `ulimit -n` prints, and what
+	// `sort --batch-size` caps itself against.
+	//
+	// A plain number rather than a Result: the only errno getrlimit can
+	// answer for a resource the runtime names itself is EFAULT, which
+	// cannot happen against a stack buffer the helper owns, so there is
+	// no failure for a caller to handle. An unlimited resource reports
+	// i64 max — the two kernels spell RLIM_INFINITY differently (all
+	// ones on Linux, i64 max on Darwin) and neither spelling is a count,
+	// so both normalise to "more than any count you can hold".
+	//
+	// The HARD limit is a different question and has no builtin: only
+	// something raising the soft limit needs it, and raising is
+	// setrlimit — a different authority from reading.
+	//
+	// Gated on `rlimit`, which no wasm profile grants: neither preview
+	// has resource limits, and the constants that would stand in for
+	// them ("unlimited", or a plausible 1024) would both be fictions of
+	// the `geteuid`-answers-0 kind. E066 refuses it there.
+	c.info.FuncSigs["rlimit_nofile"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	// process_alive(pid): boolean — is `pid` a process that currently
 	// exists? `kill(pid, 0)` underneath: signal 0 runs every check kill(2)
 	// would and delivers nothing (#8767).
