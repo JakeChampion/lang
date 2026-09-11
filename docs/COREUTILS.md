@@ -293,6 +293,19 @@ coreutils/
                     set consulted from the twenty-FIRST link rather
                     than a depth limit, so a 5000-link chain resolves
                     and a cycle's residue depends on its LENGTH
+  lib/lines.fern    the two line-boundary scans head and tail share when
+                    they hold bytes back — head -n -N because the last
+                    N lines are the ones to elide, tail -n N because
+                    they are the ones to keep. Either utility asks the
+                    same question of each chunk, from opposite ends.
+                    tail_start answers -1, never 0, when the chunk does
+                    not hold N+1 terminators: 0 is indistinguishable
+                    from "they begin at byte 0", and acting on the
+                    second reading releases a hold that was part of the
+                    withheld lines (#9064). read_size is deliberately
+                    NOT shared — head reads 64 KiB and tail 8 KiB,
+                    matching the reference binaries, and a chunk size
+                    is not a line-boundary rule
   lib/tty.fern      ttyname(3) as glibc answers it: the /proc/self/fd/N
                     readlink first, trusted only when it still stats to
                     the same character device, then a walk of /dev/pts
