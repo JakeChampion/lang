@@ -67,6 +67,12 @@ func headCases(t *testing.T) []invocation {
 	// while streaming (`error writing 'standard output'`) rather than
 	// at the final flush (`write error`).
 	big := headFile(t, dir, "big", strings.Repeat("0123456789\n", 5000))
+	// One line longer than a read block, so the terminator that ends it
+	// and the terminator before it cannot be in the same chunk: the
+	// streaming elision has to remember what it is already holding.
+	// `---presume-input-pipe` over a regular file is what makes the
+	// reads full and the case deterministic.
+	straddle := headFile(t, dir, "straddle", strings.Repeat("a", 99999)+"\n"+strings.Repeat("b", 10)+"\n")
 
 	return []invocation{
 		// Defaults and the two counts.
@@ -106,6 +112,8 @@ func headCases(t *testing.T) []invocation {
 		{name: "elide bytes with an unterminated tail", args: []string{"-c", "-1", nonl}},
 		{name: "elide across a large file", args: []string{"-n", "-4", s400}},
 		{name: "elide bytes across a large file", args: []string{"-c", "-4", s400}},
+		{name: "presumed pipe across a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "-2"}, stdinPath: straddle},
+		{name: "presumed pipe inside a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "-1"}, stdinPath: straddle},
 
 		// Multiplier suffixes.
 		{name: "b is 512", args: []string{"-c", "1b", s400}},
