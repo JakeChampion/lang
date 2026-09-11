@@ -848,6 +848,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesProcExec {
 		g.emitProcExecRuntime()
 	}
+	if g.usesProcExecAs {
+		g.emitProcExecAsRuntime()
+	}
 	if g.usesArgs {
 		g.emitArgsRuntime()
 	}
@@ -7019,6 +7022,184 @@ func (g *generator) emitProcExecTail() {
 	g.emit("ret")
 }
 
+// emitCStrVector materialises a NULL-terminated `char **` from the
+// single-word-ABI `string[]` whose data pointer is in x19, leaving the vector
+// in x21. Clobbers x20 (count), x22 (index), x23 (element cstr), x24 (element
+// length), x25 (element bytes), x0..x2 and the emitStrDataPtr scratch at
+// [x29 + 96]. Both vectors of __fern_proc_exec_as go through it, so the loop
+// labels are uniqued from labelN.
+func (g *generator) emitCStrVector() {
+	id := g.labelN
+	g.labelN++
+	elem := fmt.Sprintf(".Lcstrv_elem_%d", id)
+	copyL := fmt.Sprintf(".Lcstrv_copy_%d", id)
+	copyDone := fmt.Sprintf(".Lcstrv_copy_done_%d", id)
+	done := fmt.Sprintf(".Lcstrv_done_%d", id)
+
+	g.emitArrayLen("w20", "x19") // x20 = element count
+	g.emit("add x0, x20, #1")    // + the NULL terminator
+	g.emit("lsl x0, x0, #3")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0") // x21 = vector
+	g.emit("mov x22, #0") // i = 0
+
+	g.label(elem)
+	g.emit("cmp x22, x20")
+	g.emit("b.ge %s", done)
+	g.emit("ldr x0, [x19, x22, lsl #3]")
+	g.emitStrLen("w24", "x0")
+	g.emitStrDataPtr("x25", "x0", 96)
+	g.emit("add x0, x24, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x23, x0")
+	g.emit("mov x1, #0")
+	g.label(copyL)
+	g.emit("cmp x1, x24")
+	g.emit("b.ge %s", copyDone)
+	g.emit("ldrb w2, [x25, x1]")
+	g.emit("strb w2, [x23, x1]")
+	g.emit("add x1, x1, #1")
+	g.emit("b %s", copyL)
+	g.label(copyDone)
+	g.emit("strb wzr, [x23, x24]")
+	g.emit("str x23, [x21, x22, lsl #3]")
+	g.emit("add x22, x22, #1")
+	g.emit("b %s", elem)
+	g.label(done)
+	g.emit("str xzr, [x21, x20, lsl #3]")
+}
+
+// emitCStrVector2W is emitCStrVector under the two-word string ABI, where a
+// `string[]` element is a 16-byte (data, len) pair rather than one pointer
+// (ast.ElemSizeBytesFor). Same registers, same result in x21.
+func (g *generator) emitCStrVector2W() {
+	id := g.labelN
+	g.labelN++
+	elem := fmt.Sprintf(".Lcstrv2w_elem_%d", id)
+	done := fmt.Sprintf(".Lcstrv2w_done_%d", id)
+
+	g.emitArrayLen("w20", "x19") // x20 = element count
+	g.emit("add x0, x20, #1")    // + the NULL terminator
+	g.emit("lsl x0, x0, #3")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0") // x21 = vector
+	g.emit("mov x22, #0") // i = 0
+
+	g.label(elem)
+	g.emit("cmp x22, x20")
+	g.emit("b.ge %s", done)
+	g.emit("lsl x9, x22, #4")
+	g.emit("add x9, x19, x9")
+	g.emit("ldr x0, [x9]")     // data
+	g.emit("ldr x1, [x9, #8]") // length (tagged)
+	g.emitStrDataPtr2W("x25", "x0", "x1", 96)
+	g.emitStrLen2W("w24", "x1") // x24 = real length
+	g.emit("mov x23, x25")
+	g.emitNulTermPath2W("x23", "x23", "x24") // x23 = element cstr
+	g.emit("str x23, [x21, x22, lsl #3]")
+	g.emit("add x22, x22, #1")
+	g.emit("b %s", elem)
+	g.label(done)
+	g.emit("str xzr, [x21, x20, lsl #3]")
+}
+
+// emitProcExecAsRuntime emits `__fern_proc_exec_as(path, argv, envp) -> i32` —
+// the mirror of the x86-64 helper. argv reaches the kernel verbatim (so
+// argv[0] is the caller's, not `path`) and envp is the caller's vector rather
+// than the __fern_envp snapshot; see the x86-64 helper for why the result only
+// ever reports failure and why the copies are never freed.
+func (g *generator) emitProcExecAsRuntime() {
+	g.line("")
+	g.line(".global __fern_proc_exec_as")
+	g.typeDirective("__fern_proc_exec_as")
+	g.label("__fern_proc_exec_as")
+	// Frame 128 bytes, one allocation, everything at POSITIVE offsets from
+	// x29 (the __fern_strcat convention) — x29 == sp == the frame BOTTOM, so
+	// a second pre-indexed push would put sp below x29 and make
+	// emitStrDataPtr's `add dst, x29, #off+1` unrepresentable.
+	//   [x29 + 16..31]:  x19 (box being walked) / x20 (count)
+	//   [x29 + 32..47]:  x21 (vector) / x22 (loop index)
+	//   [x29 + 48..63]:  x23 (element cstr) / x24 (element length)
+	//   [x29 + 64..79]:  x25 (source bytes) / x26 (path cstr)
+	//   [x29 + 80..95]:  x27 (argv vector) / x28 (envp box)
+	//   [x29 + 96..111]: emitStrDataPtr scratch — reserved: for a SMALL
+	//                    string that helper returns a pointer INTO it, so
+	//                    storing anything else there destroys the bytes.
+	//                    16 bytes because the two-word variant spills both
+	//                    words.
+	g.emit("stp x29, x30, [sp, #-128]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+	g.emit("stp x27, x28, [sp, #80]")
+
+	if ast.UseTwoWordStrings(8) {
+		// x0 = path data, x1 = path length (tagged), x2 = argv box,
+		// x3 = envp box: a `string` occupies TWO argument slots here.
+		g.emit("mov x27, x2") // argv box
+		g.emit("mov x28, x3") // envp box
+		g.emitStrDataPtr2W("x25", "x0", "x1", 96)
+		g.emitStrLen2W("w20", "x1")
+		g.emit("mov x26, x25")
+		g.emitNulTermPath2W("x26", "x26", "x20") // x26 = path cstr
+
+		g.emit("mov x19, x27")
+		g.emitCStrVector2W() // argv -> x21
+		g.emit("mov x27, x21")
+		g.emit("mov x19, x28")
+		g.emitCStrVector2W() // envp -> x21
+	} else {
+		// x0 = path, x1 = argv box, x2 = envp box.
+		g.emit("mov x27, x1") // argv box
+		g.emit("mov x28, x2") // envp box
+		g.emitStrLen("w20", "x0")
+		g.emitStrDataPtr("x25", "x0", 96)
+		g.emit("add x0, x20, #1")
+		g.emit("bl __fern_alloc")
+		g.emit("mov x26, x0") // x26 = path cstr
+		g.emit("mov x24, #0")
+		g.label(".Lpexecas_pcopy")
+		g.emit("cmp x24, x20")
+		g.emit("b.ge .Lpexecas_pcopy_done")
+		g.emit("ldrb w1, [x25, x24]")
+		g.emit("strb w1, [x26, x24]")
+		g.emit("add x24, x24, #1")
+		g.emit("b .Lpexecas_pcopy")
+		g.label(".Lpexecas_pcopy_done")
+		g.emit("strb wzr, [x26, x20]")
+
+		g.emit("mov x19, x27")
+		g.emitCStrVector() // argv -> x21
+		g.emit("mov x27, x21")
+		g.emit("mov x19, x28")
+		g.emitCStrVector() // envp -> x21
+	}
+
+	g.emit("mov x0, x26") // path cstr
+	g.emit("mov x1, x27") // argv
+	g.emit("mov x2, x21") // envp
+	if g.darwin {
+		g.emit("mov x16, #%d", darExecve)
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lpexecas_ret")
+		g.emit("neg x0, x0") // carry set: +errno -> -errno
+	} else {
+		g.emit("mov x8, #%d", sysExecve)
+		g.emit("svc #0")
+	}
+	g.label(".Lpexecas_ret")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x27, x28, [sp, #80]")
+	g.emit("ldp x29, x30, [sp], #128")
+	g.emit("ret")
+	g.sizeDirective("__fern_proc_exec_as")
+}
+
 // emitProcWaitpidRuntime emits `__fern_proc_waitpid(pid)` —
 // blocking wait4 (Linux asm-generic #260 / Darwin BSD 7: pid,
 // &status, options=0, rusage=NULL; status on the stack) plus the
@@ -13069,6 +13250,10 @@ type generator struct {
 	// that lets a forked child become another program. Shares the `proc`
 	// capability with fork / waitpid.
 	usesProcExec bool
+	// usesProcExecAs pulls in `__fern_proc_exec_as(path, argv, envp)` —
+	// execve with both vectors given verbatim. Unlike proc_exec it does NOT
+	// need __fern_envp: the environment it hands the child is its argument.
+	usesProcExecAs bool
 	// usesFloatTranscendentals pulls in the f64 transcendental
 	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus the
 	// .rodata coefficient table they share. arm64 has no hardware
@@ -17240,6 +17425,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// Void.
 			target = "__fern_sleep_ns"
 			g.usesSleepNs = true
+		case "proc_exec_as":
+			target = "__fern_proc_exec_as"
+			g.usesProcExecAs = true
+			g.usesAlloc = true // NUL-terminated argv/envp copies
+			// The two-word path builds its copies through __fern_memcpy.
+			g.usesMemcpy = true
 		case "proc_exec":
 			target = "__fern_proc_exec"
 			g.usesProcExec = true

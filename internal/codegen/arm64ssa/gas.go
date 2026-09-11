@@ -1204,6 +1204,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"proc_fork":                 emitProcForkHelper,
 	"proc_waitpid":              emitProcWaitpidHelper,
 	"proc_exec":                 emitProcExecHelper,
+	"proc_exec_as":              emitProcExecAsHelper,
 	"__fern_box_free":           emitBoxFreeHelper,
 	"__fern_closure_drop":       emitClosureDropHelper,
 	"__memset":                  emitMemsetHelper,
@@ -3178,6 +3179,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_map_drop":               {"__free"},
 	"__fern_map_hash_seed":          {"random_i32"},
 	"proc_exec":                     {"__alloc"},
+	"proc_exec_as":                  {"__alloc"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
 	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow", "__fern_rc_inc"},
@@ -3769,6 +3771,100 @@ func emitProcExecHelper(w func(string, ...any)) {
 	w("\tldp x23, x24, [sp, #48]")
 	w("\tldp x25, x26, [sp, #64]")
 	w("\tldp x29, x30, [sp], #80")
+	w("\tret")
+}
+
+// emitCStrVector writes the loop that turns the `string[]` whose data pointer
+// is in x19 into a NULL-terminated `char **` in x21. Clobbers x20 (count),
+// x22 (index), x23 (element cstr), x24 (element length), x25 (element bytes)
+// and x0..x2. `tag` distinguishes the two calls in one helper body.
+func emitCStrVector(w func(string, ...any), tag string) {
+	w("\tldur w20, [x19, #-4]") // element count
+	w("\tadd w0, w20, #1")      // + the NULL terminator
+	w("\tlsl w0, w0, #3")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x21, x0")
+	w("\tmov x22, #0")
+
+	w(".Lssa_pexecas_%s_elem:", tag)
+	w("\tcmp x22, x20")
+	w("\tb.ge .Lssa_pexecas_%s_done", tag)
+	w("\tldr x25, [x19, x22, lsl #3]")
+	w("\tldur w24, [x25, #-4]")
+	w("\tadd w0, w24, #1")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x23, x0")
+	w("\tmov x1, #0")
+	w(".Lssa_pexecas_%s_copy:", tag)
+	w("\tcmp x1, x24")
+	w("\tb.ge .Lssa_pexecas_%s_copy_done", tag)
+	w("\tldrb w2, [x25, x1]")
+	w("\tstrb w2, [x23, x1]")
+	w("\tadd x1, x1, #1")
+	w("\tb .Lssa_pexecas_%s_copy", tag)
+	w(".Lssa_pexecas_%s_copy_done:", tag)
+	w("\tstrb wzr, [x23, x24]")
+	w("\tstr x23, [x21, x22, lsl #3]")
+	w("\tadd x22, x22, #1")
+	w("\tb .Lssa_pexecas_%s_elem", tag)
+	w(".Lssa_pexecas_%s_done:", tag)
+	w("\tstr xzr, [x21, x20, lsl #3]")
+}
+
+// emitProcExecAsHelper writes `proc_exec_as(path, argv, envp) -> i32`.
+//
+// Both vectors come from the caller: argv verbatim (argv[0] included, so it is
+// NOT the path) and envp instead of the __fern_envp snapshot, which is why this
+// helper does not pull in the envp capture the way proc_exec does. Everything
+// else matches it — only failure returns, as -errno, and the NUL-terminated
+// copies are never freed.
+func emitProcExecAsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("proc_exec_as"))
+	w("\tstp x29, x30, [sp, #-96]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tstp x25, x26, [sp, #64]")
+	w("\tstp x27, x28, [sp, #80]")
+	w("\tmov x27, x1") // argv box
+	w("\tmov x28, x2") // envp box
+	w("\tmov x25, x0") // path bytes
+
+	// path -> a NUL-terminated copy in x26.
+	w("\tldur w20, [x25, #-4]")
+	w("\tadd w0, w20, #1")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov x26, x0")
+	w("\tmov x24, #0")
+	w(".Lssa_pexecas_pcopy:")
+	w("\tcmp x24, x20")
+	w("\tb.ge .Lssa_pexecas_pcopy_done")
+	w("\tldrb w1, [x25, x24]")
+	w("\tstrb w1, [x26, x24]")
+	w("\tadd x24, x24, #1")
+	w("\tb .Lssa_pexecas_pcopy")
+	w(".Lssa_pexecas_pcopy_done:")
+	w("\tstrb wzr, [x26, x20]")
+
+	w("\tmov x19, x27")
+	emitCStrVector(w, "argv")
+	w("\tmov x27, x21")
+	w("\tmov x19, x28")
+	emitCStrVector(w, "envp")
+
+	w("\tmov x0, x26") // path
+	w("\tmov x1, x27") // argv
+	w("\tmov x2, x21") // envp
+	w("\tmov x8, #221")
+	w("\tsvc #0")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x25, x26, [sp, #64]")
+	w("\tldp x27, x28, [sp, #80]")
+	w("\tldp x29, x30, [sp], #96")
 	w("\tret")
 }
 

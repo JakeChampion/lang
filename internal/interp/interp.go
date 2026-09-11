@@ -1059,6 +1059,7 @@ func New() *Interp {
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
+	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
@@ -2363,6 +2364,16 @@ func builtinProcFork(_ *Interp, args []Value) (Value, error) {
 func builtinProcExec(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("proc_exec: expected 2 args, got %d", len(args))
+	}
+	return Number(-38), nil // -ENOSYS
+}
+
+// builtinProcExecAs mirrors the native `proc_exec_as(path, argv, envp)`.
+// Refused for the same reason proc_exec is: the exec would replace the
+// interpreter process itself. -38 (ENOSYS).
+func builtinProcExecAs(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("proc_exec_as: expected 3 args, got %d", len(args))
 	}
 	return Number(-38), nil // -ENOSYS
 }
