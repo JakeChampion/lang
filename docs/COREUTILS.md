@@ -1535,9 +1535,19 @@ groups are the order of work. Each sub-issue names its group.
   stayed broken until #9081. So a primitive is not landed until the
   self-host compiles a program that calls it, and the utility's parity
   suite covers its self-host leg. #9085 tracks the missing completeness
-  test. Lowered so far: `sleep_ns` (266), `rename` (267), `chmod` (268),
-  `set_file_times` (269), `process_alive` (271), `rlimit_nofile` (272).
-  Still native-only: `statfs`.
+  test. **All of #9085's five are lowered now**, and the completeness test
+  landed with no exemption list: `TestSelfHostKnowsEveryNativeBuiltin` in
+  `internal/checker` pins every bare builtin the checker registers against
+  `builtin_function_names()` in the self-hosted parser, and fails naming
+  each one that is missing. Lowered: `sleep_ns` (266), `rename` (267),
+  `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
+  (271), `rlimit_nofile` (272).
+
+  That test covers the half that fails SILENTLY — an unknown name is E001
+  at the call site, which reads like the program's mistake rather than the
+  compiler's. The lowering half is self-reporting by comparison: a name
+  that reaches the parser with no IR op behind it stops at a diagnostic
+  naming the bail site.
 
   Two of those do not reach every target, and the refusal is deliberate
   rather than a gap: `chmod` is refused on wasm (E066, capability
@@ -1546,7 +1556,11 @@ groups are the order of work. Each sub-issue names its group.
   the wasm emitter rather than by the platforms gate, because
   `wasm_ir_run` / `wasm_run` / `playground_run` reach `emit_ir_module`
   directly and would otherwise present a deliberate absence as a
-  missing lowering. On arm64-darwin `set_file_times` issues
+  missing lowering — and `statfs` is refused there too, for the reason
+  `internal/interp/fsstat_other.go` gives: neither preview has a volume to
+  measure, since a preopen is a capability handle rather than a mount, so
+  it reports neither a size nor a name-length limit. On arm64-darwin
+  `set_file_times` issues
   `setattrlist(2)` where native issues `setattrlistat(2)`: the
   self-host's syscall floor stops at five arguments and `setattrlistat`
   takes six, and the two are the same call for a path resolved against
