@@ -1111,6 +1111,29 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`stat` cannot report a birth time, a file's SELinux context, or three of
+statfs's fields.** `stat` and `lstat` lower to `newfstatat(2)`, whose `struct
+stat` has no birth time (#9096); a file's context is an extended attribute and
+there is no `getxattr` (#9098); and `statfs` reads `f_type`, `f_fsid` and
+`f_frsize` and then drops them (#9097). That is `%w`, `%W`, `%C` and `-f`'s
+`%t`, `%T`, `%i`, `%S` — and the DEFAULT multi-line block, `--terse`, `-f` and
+`-t -f` all carry one of them, so all four are refused with a diagnostic naming
+the field and exit 1. The refusal comes only after the operand has been read,
+so `stat nosuch` still reports `cannot statx` exactly as GNU does.
+
+Printing GNU's own "unknown" rendering instead — `-` and `0` for a birth time,
+a zeroed magic number — was the tempting shape and is the one thing that must
+not happen: ext4 on every machine the gate runs on DOES report a birth time,
+so those bytes would be an invention and the corpus would be measuring it. The
+corpus therefore holds 414 cases over the format engine and none over the four
+layouts; they arrive with the primitives, and #8366 stays open until they do.
+
+`QUOTING_STYLE` is the second, smaller gap: GNU takes `%N`'s quoting style from
+it and `stat.fern` always uses the default shell-escape-always. It reaches `%N`
+and nothing else — the default block prints the name literally whatever the
+variable says. #9105 has the measurement and puts the remaining gnulib styles
+in `lib/gnu.fern`, where `ls` will want them too.
+
 **`mv` does not copy across filesystems.** GNU falls back to a recursive
 copy-then-unlink when `rename(2)` answers EXDEV. Measured, it preserves mode
 including setuid, both timestamps on files AND directories, ownership, symlinks
