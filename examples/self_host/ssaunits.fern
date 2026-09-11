@@ -120,7 +120,8 @@ function construction(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new();
 }
 function fresh_unit(kind: i32): boolean {
-    return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call();
+    return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call()
+        || kind == ssasem.append();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
@@ -153,6 +154,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var counted: boolean[] = [];
     if (ins.kind_tag == ssasem.call()) {
         counted = call_supplied(f, ins);
+    } else if (ins.kind_tag == ssasem.append()) {
+        counted = [true, reference(f.values[ins.args[1]])];
     } else if (construction(ins.kind_tag)) {
         for arg in ins.args { counted = counted.append(reference(f.values[arg])); }
     }
@@ -371,6 +374,20 @@ function replay(state: boolean[], s: Step, wanted: Supply[], result: i32, owned:
 struct ReplayProgress { why: string, state: boolean[], count: i32 }
 function progress_error(why: string): ReplayProgress { return ReplayProgress { why: why, state: [], count: 0 }; }
 
+// The runtime's push hands back the receiver's OWN box when the push fit and a
+// fresh one when it grew, so the result is the receiver's unit rather than a
+// second one. Only a receiver whose unit is moved here can be that: a retained
+// receiver forces the un-share copy and leaves the retained count unreleased,
+// and a borrowed one would have the result aliasing a box someone else owns.
+// A receiver still live after the push needs a clone form this vocabulary does
+// not have yet, so it is refused rather than lowered.
+function append_move_error(s: Step): string {
+    for got in s.supplies {
+        if (got.slot == 0 && got.mode != move_unit()) { return "append receiver is not consumed"; }
+    }
+    return "";
+}
+
 function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
     var next: boolean[] = state;
     var count: i32 = 0;
@@ -385,6 +402,10 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolea
             if (at < 0) { return progress_error("missing or duplicate operation step"); }
             var done: Ledger = replay(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
             if (!done.ok) { return progress_error(done.why); }
+            if (ins.kind_tag == ssasem.append()) {
+                var why: string = append_move_error(p.steps[at]);
+                if (why != "") { return progress_error(why); }
+            }
             next = done.bits;
             count = count + 1;
         }

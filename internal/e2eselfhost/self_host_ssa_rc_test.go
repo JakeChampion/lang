@@ -323,6 +323,31 @@ function main(): i32 {
     if (ssaunits.plan(badRecv, [2]).why != "length container type") { return 38; }
     var badResult = ssasem.Func { graph: lenGraph, values: [f.result, f.result], params: [f.result], result: f.result, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badResult, [2]).why != "length result type") { return 39; }
+    // An append takes the receiver's unit and hands one back, so it is admitted
+    // only where that unit is MOVED. A counted receiver dead after the push is;
+    // a borrowed one is not, and is refused rather than lowered.
+    var appendGraph = ssa.SFunc { name: "append", nparams: 2, nvals: 3, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
+    var appendFunc = ssasem.Func { graph: appendGraph, values: [f.result, i32ty, f.result],
+        params: [f.result, i32ty], result: f.result, records: [], enums: [], calls: [] };
+    var appendPlan = ssaunits.plan(appendFunc, [3, 1]);
+    if (!appendPlan.ok) { eprint(appendPlan.why); return 40; }
+    var appendLowered = ssarc.lower(appendFunc, [3, 1], appendPlan);
+    if (!appendLowered.ok) { eprint(appendLowered.why); return 41; }
+    var sawPush: boolean = false;
+    for o in appendLowered.ops { if (ir.render_op(o) == "arr_push_owned") { sawPush = true; } }
+    if (!sawPush) { return 42; }
+    // The same graph with a BORROWED receiver: its unit is not this function's
+    // to hand over, so the plan refuses instead of aliasing the result onto it.
+    if (ssaunits.plan(appendFunc, [2, 1]).why != "append receiver is not consumed") { return 43; }
+    // An element that is not the array's own type, and a result that is not the
+    // receiver's, are contract errors rather than lowering ones.
+    var badElem = ssasem.Func { ...appendFunc, values: [f.result, strTy, f.result], params: [f.result, strTy] };
+    if (ssaunits.plan(badElem, [3, 2]).why != "append element type") { return 44; }
+    var badRecvAppend = ssasem.Func { graph: appendGraph, values: [strTy, i32ty, strTy],
+        params: [strTy, i32ty], result: strTy, records: [], enums: [], calls: [] };
+    if (ssaunits.plan(badRecvAppend, [3, 1]).why != "append container type") { return 45; }
     return 0;
 }
 `

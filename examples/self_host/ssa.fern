@@ -162,22 +162,16 @@ pub function kind_name(id: i32): string {
 }
 
 // Negative ids are the typed semantic phase's operations (ssasem.fern owns
-// them); physical consumers never see them, the printer only names them.
+// them); physical consumers never see them, the printer only names them. They
+// run from -1 downward without gaps, so the table is indexed by -id - 1; an id
+// outside it names nothing, exactly as an unknown id always did.
 function semantic_kind_name(id: i32): string {
-    if (id == 0 - 1) { return "array_new"; }
-    if (id == 0 - 2) { return "tuple_new"; }
-    if (id == 0 - 3) { return "array_get"; }
-    if (id == 0 - 4) { return "tuple_get"; }
-    if (id == 0 - 5) { return "record_new"; }
-    if (id == 0 - 6) { return "record_get"; }
-    if (id == 0 - 7) { return "call"; }
-    if (id == 0 - 8) { return "variant_new"; }
-    if (id == 0 - 9) { return "variant_is"; }
-    if (id == 0 - 10) { return "variant_get"; }
-    if (id == 0 - 11) { return "variant_up"; }
-    if (id == 0 - 12) { return "variant_as"; }
-    if (id == 0 - 13) { return "length"; }
-    return "invalid";
+    var names: string[] = ["array_new", "tuple_new", "array_get", "tuple_get",
+        "record_new", "record_get", "call", "variant_new", "variant_is",
+        "variant_get", "variant_up", "variant_as", "length", "append"];
+    var at: i32 = 0 - id - 1;
+    if (at < 0 || at >= names.len()) { return "invalid"; }
+    return names[at];
 }
 
 // The semantic operations whose str names something: a call names its callee,
