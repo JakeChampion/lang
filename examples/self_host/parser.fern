@@ -8033,6 +8033,10 @@ pub function builtin_function_names(): string[] {
         // tcp_serve_supervised is the stdlib caller of the first and last;
         // asm_modload_run's batched per-module orchestrator uses all three.
         "proc_fork", "proc_waitpid", "proc_exec",
+        // exec with BOTH vectors given verbatim: argv[0] as typed rather
+        // than the resolved path, and an environment the caller built
+        // rather than its own (#9090).
+        "proc_exec_as",
         // Liveness of one pid — kill(pid, 0), the zero signal that runs
         // every check kill(2) makes and delivers nothing (#8767).
         "process_alive",
