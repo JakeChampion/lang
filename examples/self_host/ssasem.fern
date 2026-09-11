@@ -328,17 +328,27 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-function arithmetic(op: string): boolean { return op == "+" || op == "-" || op == "*"; }
+// The integer operators this vocabulary produces, all of them total: Fern
+// pins every edge rather than trapping (docs/INTEGER-SEMANTICS.md) — `x / 0`
+// is 0, `x % 0` is x, `INT_MIN / -1` wraps, and a shift count is masked to
+// the operand width — so none of these needs a guard or a branch, and each
+// is one machine operation on a value that owns nothing.
+function integer_op(op: string): boolean {
+    if (op == "+" || op == "-" || op == "*") { return true; }
+    if (op == "/" || op == "%") { return true; }
+    if (op == "&" || op == "|" || op == "^") { return true; }
+    return op == "<<" || op == ">>";
+}
 function comparison(op: string): boolean {
     return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
 
-// Wrapping i32 arithmetic, i32 ordering and equality on i32 or booleans;
-// string concatenation, a fresh string, and string equality. Division, other
-// widths, string ordering and operator overloads have no contract yet.
+// The i32 integer operators, i32 ordering, and equality on i32 or booleans;
+// string concatenation, a fresh string, and string equality. Other widths,
+// string ordering and operator overloads have no contract yet.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
     if (is_i32(left) && is_i32(right)) {
-        if (arithmetic(op)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+        if (integer_op(op)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
         if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }

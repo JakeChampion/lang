@@ -146,7 +146,16 @@ refused unsupported literal
 refused operator contract
 refused value-returning body falls through
 refused unsupported destructuring declaration
-refused operator contract
+modes 1 result i32
+v0:i32 v1:i32 v2:i32
+func halve {
+  b0:
+    v0 = param 0
+    v1 = const_int 2
+    v2 = binary / v0 v1
+    ret v2
+}
+
 modes result i32
 v0:i32 v1:i32
 func refused_global {

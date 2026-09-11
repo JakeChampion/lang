@@ -53,7 +53,7 @@ function refused_literal(): f64 { return 1.5; }
 function refused_width(n: i64): i64 { return n + 1; }
 function refused_fallthrough(n: i32): i32 { if (n > 0) { return 1; } }
 function refused_destructure(): i32 { var (a, b) = (1, 2); return a + b; }
-function refused_division(n: i32): i32 { return n / 2; }
+function halve(n: i32): i32 { return n / 2; }
 function refused_global(): i32 { return loop_phi(2); }
 function callee(xs: i32[], own ys: i32[]): i32[] { return ys; }
 function caller(n: i32): i32[] {
@@ -574,6 +574,15 @@ enum Chain { End, Link(i32, Chain) }
     if (s != "ab") { return 2; }
     return 0;
 }
+// The integer operators, including the edges Fern pins rather than traps
+// (docs/INTEGER-SEMANTICS.md). A borrowed container feeds the last one, so the
+// operands are projections whose anchor has to outlive the operation.
+@noinline function div_of(a: i32, b: i32): i32 { return a / b; }
+@noinline function rem_of(a: i32, b: i32): i32 { return a % b; }
+@noinline function bit_ops(a: i32, b: i32): i32 { return (a & b) + (a | b) + (a ^ b); }
+@noinline function shifts(a: i32, n: i32): i32 { return (a << n) + (a >> n); }
+@noinline function int_min(): i32 { return 0 - 2147483647 - 1; }
+@noinline function ratio_of(xs: i32[]): i32 { return xs[0] / xs[1] + xs[0] % xs[1]; }
 // Schema fields the drop walk never reads: each box is built by the AST-lowered
 // main and released by a produced function, so the reference field past the wide
 // one has to land on the same offset under both layouts.
@@ -667,6 +676,11 @@ function main(): i32 {
     print_int(paired_len(Paired { pt: (9, 0.5), s: "abc" })); print("");
     print_int(longs_len(Longs { ns: [1, 2], s: "hello" })); print("");
     print_int(span_len(Wide(1.5, "abcde"))); print(""); print_int(span_len(Empty)); print("");
+    print_int(div_of(7, 2)); print(""); print_int(rem_of(7, 2)); print("");
+    print_int(div_of(10, 0)); print(""); print_int(rem_of(10, 0)); print("");
+    print_int(div_of(int_min(), 0 - 1)); print(""); print_int(rem_of(int_min(), 0 - 1)); print("");
+    print_int(bit_ops(12, 10)); print(""); print_int(shifts(1, 3)); print("");
+    print_int(shifts(0 - 8, 33)); print(""); print_int(ratio_of(lens)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -704,7 +718,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
