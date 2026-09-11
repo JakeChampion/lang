@@ -1382,24 +1382,39 @@ function bytes_at(text: string, at: i32, lit: string): boolean {
 }
 
 // The first index in `text[lo..hi)` at which `lit` occurs, or -1.
-// Candidate starts come from the SIMD byte scan, so a literal whose
-// first byte is not in the range costs one vector pass and no
-// comparisons at all.
+//
+// `__memchr` answers over the whole of `text` — it takes a start and no
+// end — so it is the scan for a range that runs to the string's end,
+// where a candidate outside the range cannot exist, and the wrong one
+// for a range inside a larger buffer: csplit asks about one line of a
+// 64 KiB read, and a first byte absent from that line sends the vector
+// pass on across every line after it. A bounded range gets the plain
+// scan, whose cost is the range itself however rare the byte is.
 function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
   if (lit.len() == 0) {
     return lo;
   }
   var first: i32 = lit[0] as i32;
+  // The last position with room for the whole literal.
+  var last: i32 = hi - lit.len();
   var i: i32 = lo;
-  while (true) {
-    var j: i32 = __memchr(text, first, i);
-    if (j < 0 || j + lit.len() > hi) {
-      return 0 - 1;
+  if (hi == text.len()) {
+    while (true) {
+      var j: i32 = __memchr(text, first, i);
+      if (j < 0 || j > last) {
+        return 0 - 1;
+      }
+      if (bytes_at(text, j, lit)) {
+        return j;
+      }
+      i = j + 1;
     }
-    if (bytes_at(text, j, lit)) {
-      return j;
+  }
+  while (i <= last) {
+    if (text[i] as i32 == first && bytes_at(text, i, lit)) {
+      return i;
     }
-    i = j + 1;
+    i = i + 1;
   }
   return 0 - 1;
 }
