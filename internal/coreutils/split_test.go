@@ -55,6 +55,10 @@ func splitStdin(name, stdin string, args ...string) invocation {
 	return invocation{name: name, args: args, stdin: stdin, seedTree: splitSeed}
 }
 
+func init() {
+	registerCorpus("split", splitCases)
+}
+
 // splitCases is split(1)'s corpus.
 //
 // Three areas carry most of it. The suffix counter widens rather than

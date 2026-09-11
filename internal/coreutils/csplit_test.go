@@ -26,6 +26,9 @@ func csplitSeed(t *testing.T, dir string) {
 		// Past one read block in both directions, so the piece boundary
 		// and the buffer's own compaction cross a chunk.
 		"big": strings.Repeat("line\n", 40000) + "MARK\n" + strings.Repeat("line\n", 40000),
+		// A line whose only match begins past its first byte, with more
+		// than one byte before it that no match can begin at.
+		"mid": "xa1\nzz\nq\n",
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -35,6 +38,10 @@ func csplitSeed(t *testing.T, dir string) {
 	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func init() {
+	registerCorpus("csplit", csplitCases)
 }
 
 // csplitCases is csplit(1)'s corpus.
@@ -122,6 +129,41 @@ func csplitCases(t *testing.T) []invocation {
 		c("interval", "ten", `/1\{1,2\}/`),
 		c("backreference", "abab", `/\(a\)\1/`),
 		c("case matters", "abab", "/A/"),
+
+		// The scan seeds a match at every position of the line, so a
+		// line whose first bytes can start none of them still has to be
+		// searched to its end.
+		c("a match past the first byte", "mid", "/[0-9]/"),
+		c("a negated class past the first byte", "mid", "/[^xa]/"),
+		c("a class the whole line fails", "mid", "/[A-Z]/"),
+
+		// An alternation is filtered on one literal per branch, and a
+		// branch that has none has to turn that filter off rather than
+		// narrow it to the branches that do.
+		c("alternation of literals", "ten", `/3\|7/`),
+		c("alternation matching neither branch", "ten", `/zz\|qq/`),
+		c("alternation of unequal literals", "ten", `/10\|4/`),
+		c("alternation with a class branch", "ten", `/zz\|[0-9]/`),
+		c("alternation with a dot branch", "ten", `/zz\|./`),
+		c("alternation with a star branch", "ten", `/zz\|.*/`),
+		c("alternation with an empty branch", "ten", `/zz\|/`),
+		c("alternation with a leading empty branch", "ten", `/\|zz/`),
+		c("alternation inside a group", "ten", `/\(1\|9\)0/`),
+		c("alternation of groups", "abab", `/\(ab\)\|\(z\)/`),
+		c("alternation of anchored branches", "ten", `/^5\|^zz/`),
+		c("alternation whose literal is off its anchor", "ten", `/^0\|^zz/`),
+		c("alternation whose literal is off its end anchor", "ten", `/1$\|z$/`),
+		c("alternation with a class before a literal", "mid", `/zz\|[a-z]1/`),
+		c("alternation with a star before a literal", "ten", `/zz\|1*0/`),
+		c("alternation with a dot before a literal", "mid", `/zz\|.1/`),
+		c("alternation with a backreference branch", "aab", `/\(a\)\1\|b/`),
+		c("alternation with a leading backreference branch", "aab", `/\(a\)b\|\1/`),
+		c("alternation with a backreference after a literal", "mid", `/\(z\)\1\|qq/`),
+		c("alternation with a repeated branch", "ten", `/z*9\|4/`),
+		c("alternation of three literals", "ten", `/zz\|8\|qq/`),
+		c("alternation longer than the line", "ten", `/zzzzz\|qqqqq/`),
+		c("alternation across a read block", "big", `/MARK\|zzzz/`),
+
 		c("the last delimiter closes", "ten", "/a/b/"),
 		c("the last delimiter closes a digit", "ten", "/5/5/"),
 		c("the last percent closes", "ten", "%5%5%"),

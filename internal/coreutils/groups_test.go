@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("groups", groupsCases)
+}
+
 // groups(1) — the process's own group names, or one line per named
 // user.
 //

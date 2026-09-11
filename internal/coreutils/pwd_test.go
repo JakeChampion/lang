@@ -48,6 +48,10 @@ func pwdTree(t *testing.T) (link, real string) {
 	return link, real
 }
 
+func init() {
+	registerCorpus("pwd", pwdCases)
+}
+
 func pwdCases(t *testing.T) []invocation {
 	link, real := pwdTree(t)
 	at := func(inv invocation) invocation {

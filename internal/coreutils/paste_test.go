@@ -17,6 +17,10 @@ func pasteFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("paste", pasteCases)
+}
+
 // pasteCases is paste(1)'s corpus.
 //
 // Unequal file lengths are where the behaviour lives: the delimiter of a

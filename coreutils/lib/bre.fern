@@ -34,12 +34,12 @@
 // ask of it, and `search_range` takes the line as bounds into a buffer
 // rather than as a string cut out of one.
 //
-// A search reaches an engine through three filters of decreasing
+// A search reaches an engine through four filters of decreasing
 // strength, laid out at `search_range`: a program that is nothing but a
 // literal run never enters one, a program that merely BEGINS with a
-// literal run is rejected over the whole range before one is entered,
-// and the fastmap skips the positions inside it where no match can
-// start.
+// literal run — or with one literal per alternation branch — is
+// rejected over the whole range before one is entered, and the fastmap
+// skips the positions inside it where no match can start.
 import "std/string";
 import "std/array";
 
@@ -140,7 +140,18 @@ function assert_buf_end(): i32 {
 // of that shape. Where the program continues past the run, `pre` is a
 // stronger fastmap than `first`: a whole run of bytes rather than the
 // set the first one falls in.
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: string, pre_bol: boolean, pre_eol: boolean, literal: boolean }
+//
+// `alts` is the same condition for a program whose branches diverge
+// before the first byte: one literal per branch, of which a match
+// begins with one. It is empty where no such set could be proved, and
+// then nothing but the fastmap stands in front of the simulation.
+//
+// `seen0` is the simulation's generation-stamp array in its cleared
+// state, held here rather than built per search: the stamps are
+// positions, so a cleared one is -1 whatever the search, and the
+// engine's first stamp copies this rather than filling a new array on
+// every line.
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: string, pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: string[], seen0: i32[] }
 
 // `Syntax` — which glibc dialect a pattern is read in, and whether a
 // newline anchors `$` at match time (the header has the three cases).
@@ -1228,6 +1239,8 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   var nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   var cls: u8[] = [];
   var none_first: u8[] = [];
+  var no_alts: string[] = [];
+  var no_seen: i32[] = [];
   var p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
   var r: (P, i32) = parse_alt(p);
   p = r.0;
@@ -1236,7 +1249,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   }
   if (p.err.len() > 0) {
     var no_insts: Inst[] = [];
-    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false };
+    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var empty: Inst[] = [];
   var c: C = C { insts: empty, nmarks: 0, err: "" };
@@ -1247,12 +1260,18 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
     var none: Inst[] = [];
-    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false };
+    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var fm: (u8[], boolean) = fastmap(c.insts, p.classes);
   var pre: (string, boolean, i32) = prefix_scan(c.insts);
   var tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1 };
+  // A program with a prefix run needs no branch literals: `pre` is that
+  // one branch, and the stronger filter of the two.
+  var alts: string[] = no_alts;
+  if (pre.0.len() == 0) {
+    alts = branch_literals(c.insts);
+  }
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), 0 - 1) };
 }
 
 // ---- the fastmap -----------------------------------------------------------
@@ -1369,6 +1388,106 @@ function literal_tail(insts: Inst[], at: i32): (boolean, boolean) {
   return (eol, true);
 }
 
+// How many branch literals are worth carrying. Each one costs the
+// search a byte scan of its own, so a pattern that alternates over more
+// than this answers faster by simulating than by scanning for every
+// branch first.
+function alt_max(): i32 {
+  return 8;
+}
+
+// `branch_literals(insts)` — one literal per branch of the entry point,
+// such that EVERY match begins with one of them, or an empty list where
+// no such set exists.
+//
+// `prefix_scan` reads the program in sequence and so stops at the first
+// `Split`, which leaves an alternation with no prefix at all. This walks
+// the same closure the fastmap does and collects, per branch, the run of
+// `Char` instructions it opens with — a whole literal rather than the
+// set of first bytes the fastmap unions those branches into.
+//
+// The conservative direction is an EMPTY list, and every case that is
+// not provably a literal takes it: a branch reaching a class, a
+// backreference, `Match` (so the pattern can match nothing), or any op
+// this does not recognise gives up on the whole analysis rather than on
+// that one branch, since a branch with no required literal makes the
+// filter unsound for the others too. Zero-width instructions consume
+// nothing and so cannot move where a match begins; walking through them
+// keeps the literal behind them.
+function branch_literals(insts: Inst[]): string[] {
+  var none: string[] = [];
+  var out: string[] = [];
+  var seen: i32[] = fill(insts.len(), 0);
+  var work: i32[] = [0];
+  var top: i32 = 1;
+  while (top > 0) {
+    top = top - 1;
+    var pc: i32 = work[top];
+    if (seen[pc] != 0) {
+      continue;
+    }
+    seen = seen.with(pc, 1);
+    var in: Inst = insts[pc];
+    if (in.op == op_char()) {
+      var bs: u8[] = [];
+      var k: i32 = pc;
+      while (k < insts.len() && insts[k].op == op_char()) {
+        bs = bs.append(insts[k].a as u8);
+        k = k + 1;
+      }
+      out = out.append(string_from_bytes_unchecked(bs));
+      if (out.len() > alt_max()) {
+        return none;
+      }
+    } else if (in.op == op_jmp()) {
+      work = push_at(work, top, in.a);
+      top = top + 1;
+    } else if (in.op == op_split()) {
+      work = push_at(work, top, in.a);
+      work = push_at(work, top + 1, in.b);
+      top = top + 2;
+    } else if (in.op == op_save() || in.op == op_mark() || in.op == op_progress() || in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
+      work = push_at(work, top, pc + 1);
+      top = top + 1;
+    } else {
+      return none;
+    }
+  }
+  return out;
+}
+
+// The first index in `text[lo..hi)` at which any of `lits` occurs, or
+// -1 where none does. A match begins with one of them, so that index is
+// the earliest position one can start at.
+function find_any_literal(text: string, lits: string[], lo: i32, hi: i32): i32 {
+  var best: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < lits.len()) {
+    var at: i32 = find_literal(text, lits[i], lo, hi);
+    if (at >= 0 && (best < 0 || at < best)) {
+      best = at;
+      if (best == lo) {
+        return best;
+      }
+    }
+    i = i + 1;
+  }
+  return best;
+}
+
+// Whether one of `lits` sits at `at`. The caller has not checked the
+// room, since the literals differ in length.
+function any_bytes_at(text: string, at: i32, lits: string[], hi: i32): boolean {
+  var i: i32 = 0;
+  while (i < lits.len()) {
+    if (at + lits[i].len() <= hi && bytes_at(text, at, lits[i])) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 // Whether `lit` sits at `at` in `text`. The caller has checked the room.
 function bytes_at(text: string, at: i32, lit: string): boolean {
   var k: i32 = 0;
@@ -1382,24 +1501,39 @@ function bytes_at(text: string, at: i32, lit: string): boolean {
 }
 
 // The first index in `text[lo..hi)` at which `lit` occurs, or -1.
-// Candidate starts come from the SIMD byte scan, so a literal whose
-// first byte is not in the range costs one vector pass and no
-// comparisons at all.
+//
+// `__memchr` answers over the whole of `text` — it takes a start and no
+// end — so it is the scan for a range that runs to the string's end,
+// where a candidate outside the range cannot exist, and the wrong one
+// for a range inside a larger buffer: csplit asks about one line of a
+// 64 KiB read, and a first byte absent from that line sends the vector
+// pass on across every line after it. A bounded range gets the plain
+// scan, whose cost is the range itself however rare the byte is.
 function find_literal(text: string, lit: string, lo: i32, hi: i32): i32 {
   if (lit.len() == 0) {
     return lo;
   }
   var first: i32 = lit[0] as i32;
+  // The last position with room for the whole literal.
+  var last: i32 = hi - lit.len();
   var i: i32 = lo;
-  while (true) {
-    var j: i32 = __memchr(text, first, i);
-    if (j < 0 || j + lit.len() > hi) {
-      return 0 - 1;
+  if (hi == text.len()) {
+    while (true) {
+      var j: i32 = __memchr(text, first, i);
+      if (j < 0 || j > last) {
+        return 0 - 1;
+      }
+      if (bytes_at(text, j, lit)) {
+        return j;
+      }
+      i = j + 1;
     }
-    if (bytes_at(text, j, lit)) {
-      return j;
+  }
+  while (i <= last) {
+    if (text[i] as i32 == first && bytes_at(text, i, lit)) {
+      return i;
     }
-    i = j + 1;
+    i = i + 1;
   }
   return 0 - 1;
 }
@@ -1668,14 +1802,18 @@ pub function (re: Bre) search_back(text: string, hi: i32): (i32, i32) {
 }
 
 // The cheapest necessary condition for a match BEGINNING at `pos`: the
-// whole literal prefix where the program has one, and glibc's fastmap
-// otherwise. A program with a prefix has that run's first byte as its
-// entire fastmap, so the prefix subsumes the fastmap rather than
-// running after it.
+// whole literal prefix where the program has one, one of the branch
+// literals where it has those, and glibc's fastmap otherwise. Either
+// literal test subsumes the fastmap — the run's first bytes ARE the
+// fastmap for such a program — so they replace it rather than run after
+// it.
 function can_start_at(re: Bre, text: string, pos: i32, hi: i32): boolean {
   var n: i32 = re.pre.len();
   if (n > 0) {
     return pos + n <= hi && bytes_at(text, pos, re.pre);
+  }
+  if (re.alts.len() > 0) {
+    return any_bytes_at(text, pos, re.alts, hi);
   }
   if (re.empty_ok) {
     return true;
@@ -1702,7 +1840,7 @@ pub function (re: Bre) search(text: string): boolean {
 // the line out: csplit runs this once per line of its input, and a slice
 // materialised per line is the copy that costs more than the search.
 //
-// Three filters stand between the call and the simulation, strongest
+// Four filters stand between the call and the simulation, strongest
 // first, each reached only where the one above it does not apply:
 //
 //   1. `literal` — the program is the prefix run and nothing else, so
@@ -1711,9 +1849,12 @@ pub function (re: Bre) search(text: string): boolean {
 //      necessary condition. One scan for it either rejects the whole
 //      range or moves the engine's first start to where it was found,
 //      since no match can begin before that.
-//   3. the fastmap, inside the engine, which skips the positions left
+//   3. `alts` — the branches diverge before the first byte, so it takes
+//      one scan per branch to reject the range, and the earliest hit of
+//      any of them is where the engine starts.
+//   4. the fastmap, inside the engine, which skips the positions left
 //      that a match cannot start at (`can_start_at`, which is the
-//      prefix again where there is one).
+//      literals again where there are any).
 //
 // `^` and `$` pin a match to `lo` and `hi` only while `newline_anchor`
 // is off. With it on they hold at every newline too, so an anchored
@@ -1753,6 +1894,15 @@ pub function (re: Bre) search_range(text: string, lo: i32, hi: i32): boolean {
       }
       from = at;
     }
+  } else if (re.alts.len() > 0) {
+    // No anchor case to split out: a branch literal is required at the
+    // match's own start wherever that falls, so `^` and `$` only narrow
+    // further what the simulation is then asked.
+    var first_at: i32 = find_any_literal(text, re.alts, lo, hi);
+    if (first_at < 0) {
+      return false;
+    }
+    from = first_at;
   }
   if (re.backref) {
     var i: i32 = from;
@@ -1876,20 +2026,26 @@ function zero_width_holds(re: Bre, text: string, in: Inst, pos: i32, lo: i32, hi
 // glibc's re_search; without it the match must begin at `start`, which
 // is re_match. `^` and `$` are unaffected either way: they are asked
 // about the position in `text[lo, hi)`, not about where the scan began.
-// The generation stamp is the position, so it starts at `start` and the
-// stamps are seeded below it.
+// The generation stamp is the position, so it starts at `start` and
+// `re.seen0` is below every one of them.
 function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
-  var ncap: i32 = re.ngroups * 2;
   var no_pcs: i32[] = [];
   var no_caps: i32[][] = [];
-  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: fill(re.insts.len(), start - 1), match_at: 0 - 1, match_zw: false };
-  t = add_thread(re, t, start, 0, fresh_caps(ncap), start, text, lo, hi, false);
+  var t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1, match_zw: false };
+  // One seed vector for the whole search: it is never written through,
+  // since `.with` copies an array a second reference holds, so the
+  // thread seeded at each position can share it rather than allocate
+  // one per position — which for a pattern with no groups was an empty
+  // array per byte.
+  var seed: i32[] = fresh_caps(re.ngroups * 2);
+  t = add_thread(re, t, start, 0, seed, start, text, lo, hi, false);
   var best: i32 = 0 - 1;
-  var best_caps: i32[] = fresh_caps(ncap);
+  var best_caps: i32[] = seed;
   var pos: i32 = start;
   while (true) {
     // The list being stepped is held apart from `t`, so `t` keeps sole
-    // ownership of the stamp array and updates it in place.
+    // ownership of the stamp array — its own copy of `re.seen0` from
+    // the first stamp — and updates it in place.
     var pcs: i32[] = t.pcs;
     var caps: i32[][] = t.caps;
     var empty_pcs: i32[] = [];
@@ -1923,13 +2079,16 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
       // which is why it is sound to share the stamps rather than pay a
       // second array.
       //
-      // The fastmap gate is the third of `search_range`'s filters: a
+      // The fastmap gate is the last of `search_range`'s filters: a
       // position no match can begin at is never seeded.
       if (can_start_at(re, text, pos, hi)) {
-        t = add_thread(re, t, pos, 0, fresh_caps(ncap), pos, text, lo, hi, false);
+        t = add_thread(re, t, pos, 0, seed, pos, text, lo, hi, false);
       }
     }
-    if (t.pcs.len() == 0) {
+    // Out of threads ends an ANCHORED run, whose only start has died.
+    // An unanchored one seeds a new start at every position left, so
+    // there is nothing to conclude from the ones before it dying.
+    if (!unanchored && t.pcs.len() == 0) {
       break;
     }
   }

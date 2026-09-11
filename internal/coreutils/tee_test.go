@@ -35,6 +35,10 @@ func teeSeed(t *testing.T, dir string) {
 // that fails rather than finishing first. A pipe holds 64 KiB.
 var teePipeStdin = strings.Repeat("0123456789abcdef", 16384) // 256 KiB
 
+func init() {
+	registerCorpus("tee", teeCases)
+}
+
 // teeCases is tee(1)'s corpus.
 //
 // Three things need pinning beyond the copy. The FILEs are opened

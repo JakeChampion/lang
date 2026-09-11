@@ -53,9 +53,9 @@ unless the harness equalises this. It does, and `coreutils/lib/gnu.fern`
 reproduces the verbatim rule, so `/usr/local/bin/yes -x` says
 `/usr/local/bin/yes: invalid option -- 'x'` exactly as GNU would.
 
-### The two exemptions
+### The three exemptions
 
-Two outputs are ours by design, because their content names the
+Three outputs are ours by design, because their content names the
 implementation:
 
 - `--version` prints `<util> (Fern coreutils) <version>` and nothing else.
@@ -64,6 +64,16 @@ implementation:
 - `--help` is our own text. GNU's is GPL-licensed prose carrying GNU's URLs,
   authors and (in 9.x) terminal hyperlink escapes; reproducing it would be
   copying, and it would be wrong in every particular that matters.
+- `cksum --debug` — "indicate which implementation used" — is silent. GNU's
+  CRC has several implementations and it picks one at startup by asking the
+  CPU (`using pclmul hardware support` where the instruction exists), which
+  is a runtime dispatch a static Fern binary with no CPU detection does not
+  have; claiming the message would say something untrue about our own code,
+  and printing a different one would diverge just the same. Only the CRC
+  reaches it — GNU says nothing under `--debug` for the other ten
+  algorithms, and neither do we, so those ARE in the byte-exact corpus, as
+  is everything else about the option: that it is accepted, that it refuses
+  a value, and that it stands in the ambiguity list.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -172,8 +182,10 @@ every utility declaring an option bailed the module (#8407). The first green
 run of the leg then found `Writer.close()` answering None to a failing close
 on all three self-host backends, which is the whole of `close_stdout`'s
 decision (#8569). `TestSelfHostCoreutilsCoverage` fails when a utility has no
-entry in `corpusByUtil`, so a new one cannot join the tree without joining
-this leg.
+corpus registered, so a new one cannot join the tree without joining this
+leg. Each `<util>_test.go` registers its own cases from an `init`, rather
+than every utility appending to one map: that map was the file every open
+coreutils PR conflicted on (#8840).
 
 The package is in the unit-test lane (`scripts/unit-test-packages` derives
 the lane from `go list`, so it was covered the moment it existed). It
@@ -194,10 +206,10 @@ coreutils/
   lib/bre.fern      regular expressions as glibc compiles them —
                     POSIX basic for expr, syntax 0 (Emacs) for tac -r,
                     anchored or searched over a range of a buffer for
-                    nl and csplit, with a literal and a literal-prefix
-                    fast path ahead of glibc's fastmap and the
-                    simulation, and glibc's regerror texts as the
-                    diagnostics
+                    nl and csplit, with a literal, a literal-prefix and
+                    a per-alternation-branch fast path ahead of glibc's
+                    fastmap and the simulation, and glibc's regerror
+                    texts as the diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
@@ -207,10 +219,16 @@ coreutils/
   lib/tabs.fern     the `-t` tab-stop grammar and lookup expand and
                     unexpand share
   lib/digest.fern   md5sum, sha1sum, sha224sum, sha256sum, sha384sum,
-                    sha512sum and b2sum, which GNU also builds from one
-                    source: the option surface, the file-name escaping
-                    and the check-line grammar, parameterised by the
-                    digest each of the seven names
+                    sha512sum, b2sum and the eight digests of cksum,
+                    which GNU also builds from one source: the option
+                    surface, the file-name escaping and the check-line
+                    grammar, parameterised by the digest each utility
+                    names. cksum widens two rules of that grammar and
+                    the module carries both behind one flag — a base64
+                    digest is read wherever a hex one is, and a line's
+                    TAG chooses the algorithm when no -a did. The three
+                    checksums cksum offers that are NOT digests (the
+                    POSIX crc, and sum's bsd and sysv) are std/hash
   lib/pwdb.fern     /etc/passwd and /etc/group as glibc's `files`
                     backend reads them — the lookups by name and by id,
                     getgrouplist's ordering, and the process's own group
@@ -240,6 +258,11 @@ internal/coreutils/
                     own digest and calls it
 scripts/coreutils-bench
                     hyperfine: Fern vs GNU vs uutils, one table
+scripts/coreutils-bench.d/
+  <util>.sh         that utility's workloads, sourced by the bench with
+                    the utility name in $1. A `_`-prefixed file is a body
+                    several utilities share (the digests, the base
+                    encodings); each member has its own file sourcing it
 ```
 
 A utility is one file. Shared behaviour goes in `lib/` only once a
@@ -326,9 +349,11 @@ Darwin.
 4. Cases: every option, every option combination that changes behaviour,
    every error path, `--`, `-`, an empty operand, an operand that is not
    valid UTF-8, POSIXLY_CORRECT if the utility reads it, and the write-failure
-   paths once #8265 lands. Run the gate; iterate until it is green.
-5. Add the utility's workloads to `scripts/coreutils-bench` and record its
-   first numbers in the sub-issue. If it is slower than GNU, that is the
+   paths once #8265 lands. Register them with `registerCorpus` from that
+   file's `init`, so the self-host leg runs the same corpus. Run the gate;
+   iterate until it is green.
+5. Add the utility's workloads as `scripts/coreutils-bench.d/<util>.sh` and
+   record its first numbers in the sub-issue. If it is slower than GNU, that is the
    next task, not a footnote.
 6. Any Fern quirk or bug you hit on the way gets an issue and a fix, never a
    workaround. That is the project's standing order and it is doubly so here,
@@ -480,12 +505,43 @@ did, at 8 000 000 allocations for the workload.
 
 The last row is the one that loses, and it is the regexp engine rather than
 csplit (#8820): a pattern that is entirely a literal, or that STARTS with
-one, is answered by a byte scan, and everything else runs the Thompson
-simulation over every byte at several heap operations per position. An
-alternation has no literal prefix, so the only filter left is the fastmap
-— the set of bytes a match can begin with — which an alternation of
-ordinary words barely narrows. `nl -bp`, `expr` and `tac -r` reach the
-same engine, so the same work pays for all four.
+one, is answered by a byte scan, and everything else ran the Thompson
+simulation over every byte. That row is the state before the branch
+literals landed — `lib/bre.fern` now takes the literal each ALTERNATION
+branch opens with, of which every match begins with one, so a scan per
+branch rejects a line that carries none and the earliest hit is where the
+engine starts. What is left without a filter is a pattern whose branches
+open with a class rather than a literal (`/[0-9]zzz/`), which is the lazy
+DFA's job and not done.
+
+Measured again after that on the same 62 MiB file, 2026-09-11, on a
+DIFFERENT 4-core x86-64 host with no hyperfine on it — so these are the
+best of three wall-clock runs rather than mean ± σ, and nothing here is
+comparable to the table above, only down its own columns:
+
+| workload | before (ms) | after (ms) | gnu (ms) |
+|---|---|---|---|
+| a literal, `/4000000/` | 109 | 112 | 520 |
+| a literal prefix and a class | 92 | 99 | 508 |
+| a two-branch alternation | 2116 | 169 | 517 |
+| a four-branch alternation | 3368 | 351 | 513 |
+| a 7-byte literal nowhere in the file | 5508 | 199 | 666 |
+| a 3-byte literal prefix nowhere in it | 6233 | 250 | 693 |
+| a class before a literal | 12378 | 11298 | 1549 |
+
+Read the two alternation before-numbers with the engine's own bug in
+mind: the scan they were measured on stopped at the first position with
+no live thread (#9050), which ended most lines early and answered some of
+them wrongly. The corrected scan without the branch literals is 3968 and
+5709 ms.
+
+The two rows that are nowhere in the file are a second bug the first one
+hid: `__memchr` takes a start and no end, so a literal absent from the
+LINE sent the vector pass on through every line after it, which made the
+filter quadratic in the read block.
+
+`nl -bp`, `expr` and `tac -r` reach the same engine, so all four utilities
+are paid for at once.
 
 `od`, 2026-09-07, Linux x86-64, the same 62 MiB file (and a 1 MiB one for
 the float row), GNU 9.4:
@@ -829,6 +885,75 @@ redirection that recreates the file) is inside the timed command. It comes from
 the GNU directory for all three implementations, exactly as `yes`'s `head`
 does, so it compresses every ratio equally rather than biasing one.
 
+`sum`, 2026-09-10, Linux x86-64, the same 62 MiB / 8 000 000-line file (GNU
+coreutils 9.4; uutils 0.0.24 as the Debian multi-call binary):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `sum` | a 62 MiB file | 157.32 ± 5.17 | 133.81 ± 4.00 | 67.85 ± 11.29 | 0.85× | 0.43× |
+| `sum` | `-s` a 62 MiB file | 114.01 ± 6.94 | 15.99 ± 2.10 | 21.62 ± 1.37 | **0.14×** | 0.19× |
+| `sum` | a 62 MiB file from a pipe | 164.13 ± 23.18 | 153.88 ± 20.26 | 110.55 ± 17.95 | 0.94× | 0.67× |
+| `sum` | `-s` a 62 MiB file from a pipe | 123.83 ± 29.78 | 32.52 ± 5.95 | 56.24 ± 15.38 | 0.26× | 0.45× |
+| `sum` | a small file | 0.23 ± 0.10 | 1.14 ± 0.17 | 2.00 ± 0.17 | 4.99× | 8.75× |
+| `sum` | 500 small files | 3.80 ± 0.55 | 3.95 ± 0.39 | 4.59 ± 0.60 | 1.04× | 1.21× |
+
+The two algorithms fail differently, and only one of the failures is sum's
+(#9052). BSD's rotate-then-add carries a dependency through every byte, so
+neither side vectorises it: GNU's scalar loop is 2.07 ns a byte and Fern's is
+2.47, and the 20% is #8425's induction variable in a stack slot. System V is
+`s += buf[i]`, which gcc turns into `psadbw` — 0.09 ns a byte against Fern's
+1.6 — and there is no way to spell that in Fern today, because the byte-kernel
+family (`__memchr`, `__rmemchr`, `__count_byte`, `__mismatch`) has no reduction
+member. Unrolling the absorb loop eight ways was measured before concluding
+that and is a wash, which is what places the cost on the per-byte load.
+
+`cksum`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as
+the Debian multi-call binary). The same 62 MiB / 8 000 000-line file the
+digest table uses, and the `-c` workload is the same 500 small files:
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `cksum` | cksum of a 62 MiB file | 331.23 ± 4.03 | 14.42 ± 2.38 | 199.22 ± 3.22 | 0.04× | 0.60× |
+| `cksum` | cksum of a 62 MiB file from a pipe | 336.44 ± 4.76 | 29.52 ± 4.35 | 224.19 ± 15.89 | 0.09× | 0.67× |
+| `cksum` | `-a sysv` of a 62 MiB file | 114.41 ± 3.83 | 19.58 ± 6.75 | 22.15 ± 4.77 | 0.17× | 0.19× |
+| `cksum` | `-a bsd` of a 62 MiB file | 163.10 ± 22.75 | 142.40 ± 16.26 | 62.44 ± 1.85 | 0.87× | 0.38× |
+| `cksum` | `-a sha256` of a 62 MiB file | 578.89 ± 25.62 | 66.91 ± 7.91 | 65.20 ± 5.26 | 0.12× | 0.11× |
+| `cksum` | `-a sm3` of a 62 MiB file | 560.76 ± 29.56 | 245.05 ± 8.14 | 230.44 ± 6.07 | 0.44× | 0.41× |
+| `cksum` | `-a blake2b` of a 62 MiB file | 228.11 ± 13.55 | 103.72 ± 8.22 | 86.21 ± 11.13 | 0.45× | 0.38× |
+| `cksum` | `--untagged -a md5` of a 62 MiB file | 241.22 ± 7.92 | 122.61 ± 3.55 | 149.09 ± 4.31 | 0.51× | 0.62× |
+| `cksum` | `--raw` of a 62 MiB file | 334.59 ± 23.40 | 11.71 ± 0.80 | 200.86 ± 8.29 | 0.04× | 0.60× |
+| `cksum` | cksum of a small file | 0.31 ± 0.53 | 1.69 ± 0.97 | 1.85 ± 0.34 | 5.54× | 6.04× |
+| `cksum` | `-a sha256 -c` over 500 small files | 10.49 ± 2.20 | 3.68 ± 1.18 | 2.01 ± 0.63 | 0.35× | 0.19× |
+
+**cksum does not meet the epic's bar**, and the three groups of rows fail it
+for three different reasons:
+
+- **The CRC rows are the worst in this document, and the cause is one
+  instruction.** GNU's 14 ms over 62 MiB is 0.23 ns a byte, which no
+  byte-at-a-time loop reaches: it folds the message with `pclmulqdq`, the
+  carry-less multiply, sixteen bytes at a time. `std/hash`'s `Cksum` is the
+  ordinary slice-by-one table, and 331 ms is what that costs. uutils' 199 ms
+  is a table too, so the Fern-to-uutils ratio (0.60×) is the codegen
+  comparison and the 0.04× is not. Closing it needs the instruction, and
+  `pclmulqdq` is inside the Haswell baseline — this is the first workload
+  here that wants a SIMD intrinsic rather than better scalar code. #9056.
+- **The digest rows are #8782 again**, unchanged by anything cksum does: the
+  driver is the same `lib/digest.fern` the seven `*sum` utilities run, and
+  raising the read block moves nothing. `sha256` is 0.12× because GNU is on
+  SHA-NI, a hardware instruction, so that row is not a codegen comparison
+  either; `blake2b` at 0.45× and `sm3` at 0.44× are, and they are the same
+  4× gap `b2sum` measures against plain portable C.
+- **`sysv` and `bsd` are the interesting middle.** Both are a sum over every
+  byte with no table, and `bsd` at 0.87× is the closest any throughput row in
+  this document comes to GNU without a hardware instruction on either side.
+  `sysv` at 0.17× is the outlier: GNU's is a plain `sum += *p` that a C
+  compiler auto-vectorises, and nothing in `std/hash` does — #9056 again,
+  and the cheap half of it (a slice-by-N CRC table, which needs nothing
+  from the backend) is there too.
+
+The startup row is the static-binary margin, widened as it is for the seven:
+GNU dlopens libcrypto before it hashes a hundred bytes.
+
 ## The primitives group C is built on
 
 A utility here is blocked on a builtin far more often than on anything about
@@ -1120,8 +1245,8 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `tee` and the seven
-  checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
+  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `sum`, `tee` and the
+  seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
   Needs a buffered stdout writer in `std/io_buffered`
   (its own header already promises one) and a streaming stdin reader whose

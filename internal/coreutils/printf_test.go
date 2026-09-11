@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("printf", printfCases)
+}
+
 func printfCases(t *testing.T) []invocation {
 	long := strings.Repeat("x", 10000)
 	return []invocation{

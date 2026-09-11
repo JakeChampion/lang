@@ -30,6 +30,10 @@ func idUserNames(t *testing.T) (self string, other string) {
 	return self, other
 }
 
+func init() {
+	registerCorpus("id", idCases)
+}
+
 // id(1) — the composite line, the four "only" modes, and the option
 // combinations each of them refuses.
 //

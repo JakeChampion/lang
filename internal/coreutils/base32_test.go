@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("base32", base32Cases)
+}
+
 // base32Cases is base32(1)'s corpus.
 //
 // The half worth having beside base64's is the padding arithmetic, which

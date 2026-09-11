@@ -48,6 +48,10 @@ func outCwd(t *testing.T, name string) (string, string, func(*testing.T)) {
 	}
 }
 
+func init() {
+	registerCorpus("uniq", uniqCases)
+}
+
 // uniqCases is uniq(1)'s corpus.
 //
 // Three things here are not what the synopsis suggests, and each has its

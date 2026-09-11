@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("[", bracketCases)
+}
+
 // TestBracketParity holds coreutils/[.fern to GNU [. The expression
 // corpus is test(1)'s with a `]` appended; the cases of its own are the
 // closing bracket and the two options it honours where `test` does not.

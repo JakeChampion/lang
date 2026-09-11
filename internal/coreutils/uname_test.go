@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("uname", unameCases)
+}
+
 // uname(1) prints the fields of the kernel's utsname record in one
 // order whatever order the options were given in, space separated, with
 // one trailing newline. Both sides read the same kernel, so the VALUES

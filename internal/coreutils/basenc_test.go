@@ -179,6 +179,10 @@ func wrapCases(prefix string, lead []string) []invocation {
 	}
 }
 
+func init() {
+	registerCorpus("basenc", basencCases)
+}
+
 // basencCases is basenc(1)'s corpus.
 func basencCases(t *testing.T) []invocation {
 	f := baseFixtureFor(t)

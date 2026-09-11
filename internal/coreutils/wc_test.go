@@ -16,6 +16,10 @@ func wcFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("wc", wcCases)
+}
+
 // wcCases is wc(1)'s corpus.
 //
 // The counts themselves are the easy half. The two that need the whole

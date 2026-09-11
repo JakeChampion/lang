@@ -16,6 +16,10 @@ func nlFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("nl", nlCases)
+}
+
 // nlCases is nl(1)'s corpus.
 //
 // Three things repay the most cases. The section delimiters, which are
@@ -108,6 +112,20 @@ func nlCases(t *testing.T) []invocation {
 		{name: "regex word character", args: []string{"-bp\\w", re}},
 		{name: "regex word start", args: []string{"-bp\\<a", re}},
 		{name: "regex matching empty", args: []string{"-bpx*", re}},
+		// A match the line's first bytes cannot begin: the scan seeds a
+		// start at every position, not only while a thread is alive.
+		{name: "regex negated class", args: []string{"-bp[^a]", re}},
+		{name: "regex class past the first bytes", args: []string{"-bp[c+?|]", re}},
+		// One literal per alternation branch is what the scan filters
+		// on, and a branch without one turns the filter off.
+		{name: "regex alternation of literals", args: []string{"-bpbc\\|a+", re}},
+		{name: "regex alternation matching neither branch", args: []string{"-bpzz\\|qq", re}},
+		{name: "regex alternation with a class branch", args: []string{"-bpzz\\|[0-9x]", re}},
+		{name: "regex alternation with an empty branch", args: []string{"-bpzz\\|", re}},
+		{name: "regex alternation with a class before a literal", args: []string{"-bpzz\\|[ax]b", re}},
+		{name: "regex alternation of anchored branches", args: []string{"-bp^x\\|^z", re}},
+		{name: "regex alternation off its anchor", args: []string{"-bp^b\\|^z", re}},
+		{name: "regex alternation inside a group", args: []string{"-bp\\(a\\|x\\)b", re}},
 		{name: "regex on empty lines", args: []string{"-bp^$", s4}},
 		{name: "regex in the header", args: []string{"-hpH", sec}},
 		{name: "regex in the footer", args: []string{"-fpF", sec}},

@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("seq", seqCases)
+}
+
 // seqCases is the corpus, shared by the GNU parity gate and the
 // self-host leg so neither can test something narrower than the other.
 func seqCases(t *testing.T) []invocation {

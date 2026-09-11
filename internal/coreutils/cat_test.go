@@ -16,6 +16,10 @@ func catFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("cat", catCases)
+}
+
 // catCases is cat(1)'s corpus.
 //
 // The copy is the easy half. What the corpus has to pin is the line

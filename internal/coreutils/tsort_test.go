@@ -16,6 +16,10 @@ func tsortFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
+func init() {
+	registerCorpus("tsort", tsortCases)
+}
+
 func tsortCases(t *testing.T) []invocation {
 	dir := t.TempDir()
 	pairs := tsortFile(t, dir, "pairs", "a b\nb c\n")

@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("yes", yesCases)
+}
+
 // yes(1) never stops, so every output case bounds the read. The bound
 // doubles as the SIGPIPE check: the harness closes the read end after
 // the prefix, and both sides have to die of it.

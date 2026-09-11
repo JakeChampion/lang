@@ -2,6 +2,11 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("false", trueFalseCases)
+	registerCorpus("true", trueFalseCases)
+}
+
 // true(1) and false(1) ignore every argument, including ones that look
 // like options, and answer `--help` / `--version` only when it is the
 // sole argument and spelled in full. Both write those to stdout and

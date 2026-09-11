@@ -36,6 +36,10 @@ func unlinkTree(t *testing.T, dir string) {
 	}
 }
 
+func init() {
+	registerCorpus("unlink", unlinkCases)
+}
+
 func unlinkCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "removes a file", args: []string{"victim"}, seedTree: unlinkTree},

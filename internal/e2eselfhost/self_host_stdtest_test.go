@@ -392,6 +392,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"digest_sha384", langSrcAbs(t, "examples/tests/digest_sha384_test.fern"), ""},
 		{"digest_sha512", langSrcAbs(t, "examples/tests/digest_sha512_test.fern"), ""},
 		{"digest_blake2b", langSrcAbs(t, "examples/tests/digest_blake2b_test.fern"), ""},
+		{"digest_sm3", langSrcAbs(t, "examples/tests/digest_sm3_test.fern"), ""},
 		{"hash_checksums", langSrcAbs(t, "examples/tests/hash_checksums_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}

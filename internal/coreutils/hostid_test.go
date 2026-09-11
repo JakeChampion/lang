@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("hostid", hostidCases)
+}
+
 // hostid(1) has no options and takes no operand: the id is glibc's
 // gethostid — /etc/hostid if it holds four bytes, else the hostname's
 // IPv4 address with its halves swapped, else 0 — printed as eight hex

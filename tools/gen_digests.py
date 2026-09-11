@@ -59,6 +59,8 @@ SHA384_IV = [0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fe
 SHA256_IV = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
 SHA224_IV = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4]
 SHA1_IV = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]
+SM3_IV = [0x7380166f, 0x4914b2b9, 0x172442d7, 0xda8a0600,
+          0xa96f30bc, 0x163138aa, 0xe38dee4d, 0xb0fb0e4e]
 MD5_IV = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476]
 MD5_K = [int(abs(math.sin(i + 1)) * (1 << 32)) & 0xffffffff for i in range(64)]
 MD5_S = [7, 12, 17, 22] * 4 + [5, 9, 14, 20] * 4 + [4, 11, 16, 23] * 4 + [6, 10, 15, 21] * 4
@@ -351,6 +353,68 @@ def md5_rounds(p):
     p("    }")
 
 
+def sm3_rounds(p):
+    """SM3 (GB/T 32905-2016) — SHA-256's outer shape with a different round.
+
+    The message schedule needs W[j] and W[j+4] in the same round, so the
+    rolling window is 21 words wide (W[j-16] … W[j+4]) rather than 16; 20
+    slots suffice because W[j-16] is dead by the time W[j+4] overwrites it.
+    The four working variables of each half rotate the way SHA-2's eight do,
+    so the round renames them instead of moving them — with the one rotate
+    each half applies (B by 9, F by 19) done in place on the register that is
+    about to become C and G."""
+    names = list("abcdefgh")
+    for i, n in enumerate(names):
+        p(f"    var {n}: u32 = st.h{i};")
+    for i in range(20):
+        p(f"    var w{i}: u32 = 0;")
+    p("    var sw: u32 = 0;")
+    p("    var tt: u32 = 0;")
+    p("    var t12: u32 = 0;")
+    p("    var ss1: u32 = 0;")
+    p("    var off: i32 = from;")
+    p("    var blk: i32 = 0;")
+    p("    while (blk < nblocks) {")
+    for i in range(16):
+        p(f"        w{i} = {load_word(i, 4, True, 'u32', 32)};")
+    for n in names:
+        p(f"        var {n}{n}: u32 = {n};")
+    lo = [n + n for n in names[:4]]
+    hi = [n + n for n in names[4:]]
+    for j in range(64):
+        A, B, C, D = [lo[(k - j) % 4] for k in range(4)]
+        E, F, G, H = [hi[(k - j) % 4] for k in range(4)]
+        if j >= 12:
+            src = " ^ ".join([f"w{(j - 12) % 20}", f"w{(j - 5) % 20}", rotl(f"w{(j + 1) % 20}", 15, 32)])
+            p(f"        sw = {src};")
+            p(f"        w{(j + 4) % 20} = sw ^ {rotl('sw', 15, 32)} ^ {rotl('sw', 23, 32)}"
+              f" ^ {rotl(f'w{(j - 9) % 20}', 7, 32)} ^ w{(j - 2) % 20};")
+        wj, wj4 = f"w{j % 20}", f"w{(j + 4) % 20}"
+        k = rotl_const(0x79cc4519 if j < 16 else 0x7a879d8a, j % 32)
+        p(f"        t12 = {rotl(A, 12, 32)};")
+        p(f"        ss1 = {rotl(f'(t12 + {E} + 0x{k:08x})', 7, 32)};")
+        if j < 16:
+            ff = f"({A} ^ {B} ^ {C})"
+            gg = f"({E} ^ {F} ^ {G})"
+        else:
+            ff = f"((({A} ^ {B}) & {C}) ^ ({A} & {B}))"
+            gg = f"({G} ^ ({E} & ({F} ^ {G})))"
+        p(f"        tt = {gg} + {H} + ss1 + {wj};")
+        p(f"        {D} = {ff} + {D} + (ss1 ^ t12) + ({wj} ^ {wj4});")
+        p(f"        {H} = tt ^ {rotl('tt', 9, 32)} ^ {rotl('tt', 17, 32)};")
+        p(f"        {B} = {rotl(B, 9, 32)};")
+        p(f"        {F} = {rotl(F, 19, 32)};")
+    for n in names:
+        p(f"        {n} = {n} ^ {n}{n};")
+    p("        off = off + 64;")
+    p("        blk = blk + 1;")
+    p("    }")
+
+
+def rotl_const(v, n):
+    return ((v << n) | (v >> (32 - n))) & 0xffffffff if n else v
+
+
 def emit_blake2b(p):
     p("// === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===")
     p("")
@@ -500,6 +564,9 @@ def generate():
                 big_endian=True, ivs={"sha512_new": (SHA512_IV, 64), "sha384_new": (SHA384_IV, 48)},
                 rounds_body=sha2_rounds(64, 80, SHA512_K, (28, 34, 39), (14, 18, 41), (1, 8, 7), (19, 61, 6)),
                 doc="SHA-384 / SHA-512 (FIPS 180-4) — u64 arithmetic, 128-byte blocks")
+    emit_family(p, tag="sm3", struct="Sm3", ty="u32", width=32, nwords=8, block=64, len_bytes=8,
+                big_endian=True, ivs={"sm3_new": (SM3_IV, 32)}, rounds_body=sm3_rounds,
+                doc="SM3 (GB/T 32905-2016) — the digest cksum(1) reaches with -a sm3")
     emit_blake2b(p)
     p(END)
     return "\n".join(out) + "\n"

@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("nproc", nprocCases)
+}
+
 // nproc(1) answers two different questions. The default is how many
 // units THIS PROCESS may run on — the affinity mask, overridable by the
 // two OpenMP variables — and `--all` is how many the machine has

@@ -307,9 +307,18 @@ it if a `stash pop` ever conflicts unexpectedly).
 Report the count, not the verdict: "15 of 16 fail, the sixteenth is the
 deliberate control" is checkable; "verified non-vacuous" is not.
 
-## Selecting and running a measurement: four ways to get a confident wrong answer
+## Selecting and running a measurement: five ways to get a confident wrong answer
 
 Every one of these produced a wrong answer that looked right, on the same day.
+
+**Go's test cache does not know about a `.fern` file, so pass `-count=1`
+whenever the change under test is Fern source.** The suites that compile this
+tree's own Fern — `internal/coreutils` above all — take their inputs from
+outside the package, so a rerun after editing one replays the previous
+result as `ok ... (cached)`. It reads as a pass, and it reads as a pass just
+as convincingly when the file has been reverted underneath it, which is how a
+non-vacuity check above reports that a new test would pass without its
+fix.
 
 **`-run` is an unanchored substring match, and nearly every test in
 `internal/e2eselfhost` is named `...X86_64`.** So `-run 'X86|Gas'` does not

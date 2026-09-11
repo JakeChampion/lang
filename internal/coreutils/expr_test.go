@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("expr", exprCases)
+}
+
 // TestExprParity holds coreutils/expr.fern to GNU expr.
 //
 // The corpus is in the shape of the utility: the option rule, then the

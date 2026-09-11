@@ -71,9 +71,9 @@ const inlineSizeLimit = 80
 // still caps chain depth.
 const inlineLoopSizeLimit = 160
 
-// inlineMaxUnitOps is the whole-program op count above which Inline does
-// nothing at all — the analogue of GCC's `--param large-unit-insns`, and
-// the reason the pass can run on the native backends.
+// inlineMaxUnitOps is the whole-program op count above which the general
+// size policy stops applying — the analogue of GCC's `--param
+// large-unit-insns`, and the reason the pass can run on the native backends.
 //
 // The per-callee caps above bound each SITE; nothing bounds the SUM, and
 // on a program with thousands of small helpers the sum is the whole
@@ -84,7 +84,8 @@ const inlineLoopSizeLimit = 160
 // growth at 30% still cost 1.74x the assembly and 1.71x the emit, and at
 // 0% growth the pass's own six walks cost 37% of the emit to change the
 // output by half a percent. There is no setting at which it pays on a
-// unit that size, so the policy is to leave such units alone.
+// unit that size, so the general policy stops here; inlineTinyLeaves is
+// the narrower thing such a unit gets instead.
 //
 // Below the ceiling it pays and the pass is unchanged: on examples/bench
 // (31-2,202 ops) retired instructions fall 4.95% on average, up to 23.9%
@@ -92,6 +93,46 @@ const inlineLoopSizeLimit = 160
 // corpus tops out at 2.2k ops and the compiler's smallest module is 15k,
 // with nothing measured between 15k and 691k.
 const inlineMaxUnitOps = 20000
+
+// inlineTinyLeafOps is the callee size that stays eligible above the
+// ceiling — see inlineTinyLeaves. Swept on the two over-ceiling programs
+// the repo has, coreutils/sort.fern (44,205 ops) and
+// examples/self_host/fern.fern (2,672,218 ops), against the same sources
+// with the pass declining as it did before:
+//
+//	cap    sort -n Ir   sort -k2,2n Ir   sort .text   self-host .text
+//	  8       -2.23%         -1.87%        -1.54%         not measured
+//	 24       -2.90%        -12.29%        -0.74%           +0.09%
+//	 32       -2.90%        -12.29%        +0.14%           +0.80%
+//
+// 24 is the knee. It covers the byte classifiers a comparison loop calls
+// once per byte — `is_blank_b` and `fold_up` at 18 ops, `key_numeric` at 21
+// — which is the whole of the `-k2,2n` column, and stops below the bodies
+// with real work in them (`__method_u64_checked_mul` at 70) that are the
+// general policy's territory. 32 buys no measurable instruction and costs
+// 8.5x the self-host assembly growth.
+//
+// sort's own text comes out SMALLER, which is the shape of the win rather
+// than a rounding artefact: inlining EVERY site of a call-free helper
+// leaves the original unreferenced, so the dead-function cull takes it, and
+// the call sequence it replaced — argument spills, `call`, `ret`, the
+// callee frame — was larger than the body. Admitting only sites inside a
+// loop inverts that. Measured at the same 24: text +0.62% instead of
+// -0.74%, because every partly-inlined helper has to stay, and `sort -n`
+// keeps a quarter of its win. So there is no loop-depth tier here; the
+// general policy (siteAllows) is where one earns its keep.
+const inlineTinyLeafOps = 24
+
+// inlineTinyBudgetDivisor caps what the tiny-leaf mode may add to an
+// over-ceiling unit at 1/N of that unit's op count.
+//
+// It never binds on either measured program — sort wants 3.3% of its ops
+// and the self-host 0.56% — which is the point: the sum is naturally
+// small because tiny leaves are few and their call sites are countable.
+// The budget is the guard against a unit where they are not, so that the
+// worst case is a bounded growth rather than an unbounded one. Inline runs
+// twice per battery, so the whole-battery bound is twice this.
+const inlineTinyBudgetDivisor = 10
 
 // Inline rewrites every OpCallDirect to an eligible callee in prog
 // as the callee's op list with parameters bound to fresh local
@@ -117,17 +158,19 @@ func Inline(prog *Program) {
 		unit += len(fn.Ops)
 	}
 	if unit > inlineMaxUnitOps {
+		inlineTinyLeaves(prog, unit)
 		return
 	}
+	mode := &inlineMode{}
 	for i := 0; i < inlineMaxPasses; i++ {
-		candidates := findInlineCandidates(prog)
+		candidates := findInlineCandidates(prog, mode)
 		if len(candidates) == 0 {
 			return
 		}
 		changed := false
 		for _, fn := range prog.Funcs {
 			before := len(fn.Ops)
-			fn.Ops = inlineOps(fn, fn.Ops, candidates)
+			fn.Ops = inlineOps(fn, fn.Ops, candidates, mode)
 			if len(fn.Ops) != before {
 				changed = true
 			}
@@ -138,12 +181,125 @@ func Inline(prog *Program) {
 	}
 }
 
+// inlineTinyLeaves is what a unit over inlineMaxUnitOps gets instead of
+// nothing: the one shape whose cost the ceiling's evidence does not cover.
+//
+// The ceiling exists because the general policy's 80/160-op bodies, summed
+// over thousands of helpers, multiply the assembly and the emit for a
+// runtime loss. That argument does not reach a call-free helper of a few
+// ops — `is_digit(c)`, `line_len(p)` — where the call sequence is most of
+// what the site costs. Measured on coreutils/sort.fern (44,205 ops) and the
+// self-hosted compiler (2,672,218 ops), inlining every such site adds 1,477
+// and 14,892 ops — +3.3% and +0.56% — where the unbudgeted general policy
+// produces 2.7x the assembly.
+//
+// Three properties keep it that cheap, and all three are load-bearing:
+//
+//   - A LEAF callee contains no call of any kind, so splicing it creates no
+//     new call site. One walk is therefore a fixpoint — no equivalent of
+//     inlineMaxPasses, and no chain multiplying one helper's body by
+//     another's.
+//   - TINY bounds each site's growth by the callee's own op count, at a cap
+//     small enough that the spliced body measures no larger than the call
+//     sequence it replaces (inlineTinyLeafOps).
+//   - The BUDGET bounds the sum. Real programs sit far under it (above);
+//     it is the guard against a program with a hundred thousand sites, not
+//     a tuning knob.
+//
+// The eligibility rules the general path applies for correctness —
+// @noinline, self-recursion, closure drop thunks, the wasm dyn-slot
+// splice — all still apply: this widens WHICH units the pass considers,
+// never what it is willing to splice.
+func inlineTinyLeaves(prog *Program, unit int) {
+	mode := &inlineMode{tinyLeaf: true, budget: unit / inlineTinyBudgetDivisor}
+	if mode.budget <= 0 {
+		return
+	}
+	candidates := findInlineCandidates(prog, mode)
+	if len(candidates) == 0 {
+		return
+	}
+	for _, fn := range prog.Funcs {
+		if mode.budget <= 0 {
+			return
+		}
+		fn.Ops = inlineOps(fn, fn.Ops, candidates, mode)
+	}
+}
+
 // inlineMaxPasses caps the iteration depth. Three passes covers
 // the deepest call chain the migrated stdlib builds today
 // (`Map.set` → `__map_grow` / `__map_hash` → no further inlineable
 // callees). Bumping further has diminishing returns and risks
 // runaway code growth on pathological inputs.
 const inlineMaxPasses = 3
+
+// inlineMode carries the size policy one Inline call runs under, and the
+// growth budget it spends. The zero value is the general policy that
+// applies below inlineMaxUnitOps; tinyLeaf is the carve-out above it.
+type inlineMode struct {
+	tinyLeaf bool
+	budget   int // ops left to insert; consulted only when tinyLeaf
+}
+
+// admits reports whether fn may be a candidate at all under this mode.
+// The general mode takes whatever isInlineable passed; the tiny-leaf mode
+// additionally requires a call-free body within inlineTinyLeafOps — and
+// applies that size test itself, since isInlineable waives its own cap for
+// an @inline hint and this mode's bounds are what make it safe over the
+// ceiling.
+func (m *inlineMode) admits(fn *Func) bool {
+	if !m.tinyLeaf {
+		return true
+	}
+	return len(fn.Ops) <= inlineTinyLeafOps && isCallFree(fn)
+}
+
+// allows applies the per-call-site policy. Under the general mode that is
+// siteAllows; under the tiny-leaf mode candidacy has already bounded the
+// body, so all that is left per site is the budget.
+func (m *inlineMode) allows(cand inlineCandidate, loopDepth int, constArgs bool) bool {
+	if !m.tinyLeaf {
+		return siteAllows(cand, loopDepth, constArgs)
+	}
+	return len(cand.body) <= m.budget
+}
+
+// spend records a splice against the budget. A no-op under the general
+// mode, whose bound is inlineMaxUnitOps plus the per-site size caps.
+func (m *inlineMode) spend(ops int) {
+	if m.tinyLeaf {
+		m.budget -= ops
+	}
+}
+
+// isCallFree reports whether fn's body reaches no other function: no call
+// of any kind, and no op that hands a function's address out for someone
+// else to call. Splicing such a body introduces no call site, which is why
+// the tiny-leaf mode needs only one walk. The property is IR-level: an op a
+// backend expands into a runtime helper is not a call here, and what bounds
+// that body is the size cap rather than this predicate.
+func isCallFree(fn *Func) bool {
+	for _, op := range fn.Ops {
+		if op.Kind == OpCallIndirect || namesCallee(op.Kind) {
+			return false
+		}
+	}
+	return true
+}
+
+// namesCallee reports whether an op of this kind carries a function name in
+// Str — a direct call of any form, a closure body, or an address-of. It is
+// the same set dead_funcs.go's reachability walk keeps alive, minus the rc
+// ops, whose Str names a runtime helper rather than an IR func.
+func namesCallee(k OpKind) bool {
+	switch k {
+	case OpCallDirect, OpCallDirectPair, OpCallClosureDirect,
+		OpMakeClosure, OpMakeEnv, OpConstFunc:
+		return true
+	}
+	return false
+}
 
 // inlineCandidate is an eligible callee snapshot taken before any
 // rewriting begins. Storing the body slice keeps the inliner from
@@ -183,15 +339,23 @@ type inlineCandidate struct {
 // the subset that meets the eligibility rules. The map's key is
 // the function name so Inline can resolve OpCallDirect.Str
 // directly.
-func findInlineCandidates(prog *Program) map[string]inlineCandidate {
+func findInlineCandidates(prog *Program, mode *inlineMode) map[string]inlineCandidate {
 	out := map[string]inlineCandidate{}
 	ptrW := prog.PtrW
 	if ptrW == 0 {
 		ptrW = 4
 	}
-	refs := programRefCounts(prog)
+	// The reference tally is a second whole-program walk, and it feeds only
+	// siteAllows' net-neutral single-reference rule — which the tiny-leaf
+	// mode does not use. Skip it there: over the ceiling this walk is over
+	// millions of ops, and a walk that answers nothing is exactly the cost
+	// the ceiling was drawn to avoid.
+	var refs map[string]int
+	if !mode.tinyLeaf {
+		refs = programRefCounts(prog)
+	}
 	for _, fn := range prog.Funcs {
-		if !isInlineable(fn) {
+		if !isInlineable(fn) || !mode.admits(fn) {
 			continue
 		}
 		slots := make([]ast.Type, 0, len(fn.Params)+len(fn.Locals)+len(fn.ScratchTypes))
@@ -246,12 +410,8 @@ func programRefCounts(prog *Program) map[string]int {
 			refs[fn.Name]++
 		}
 		for _, op := range fn.Ops {
-			switch op.Kind {
-			case OpCallDirect, OpCallDirectPair, OpCallClosureDirect,
-				OpMakeClosure, OpMakeEnv, OpConstFunc:
-				if op.Str != "" {
-					refs[op.Str]++
-				}
+			if namesCallee(op.Kind) && op.Str != "" {
+				refs[op.Str]++
 			}
 		}
 	}
@@ -342,15 +502,19 @@ func isInlineable(fn *Func) bool {
 // non-candidate functions are left untouched. The fn argument is
 // the caller, mutated in place: each substitution appends the
 // callee's slot types to fn.ScratchTypes.
-func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
-	out := make([]Op, 0, len(ops))
+func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate, mode *inlineMode) []Op {
+	// out stays nil until the first substitution, so a function with no
+	// inlineable call site is returned untouched instead of copied. Most
+	// functions in a large unit are that function, and the copy is what
+	// made the pass's own walks expensive enough to price it out.
+	var out []Op
 	// Track loop depth through the structured-control scope stack so
 	// each call site sees its depth-appropriate size cap (siteAllows).
 	// OpElse switches an if's arm without opening a scope, so only the
 	// three openers push; OpEnd pops whichever opener is innermost.
 	var scopes []OpKind
 	loopDepth := 0
-	for _, op := range ops {
+	for i, op := range ops {
 		switch op.Kind {
 		case OpBlock, OpLoop, OpIf:
 			scopes = append(scopes, op.Kind)
@@ -365,30 +529,54 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 				scopes = scopes[:n-1]
 			}
 		}
-		if op.Kind != OpCallDirect && op.Kind != OpCallClosureDirect {
-			out = append(out, op)
+		cand, ok := inlineTarget(fn, op, candidates)
+		if ok {
+			// The ops emitted so far: the rewritten prefix once a
+			// substitution has forced the copy, the original's own until then.
+			emitted := out
+			if emitted == nil {
+				emitted = ops[:i]
+			}
+			ok = mode.allows(cand, loopDepth, allConstArgs(emitted, int(op.I32)))
+		}
+		if !ok {
+			if out != nil {
+				out = append(out, op)
+			}
 			continue
 		}
-		if op.Runtime {
-			// The lowering meant the BACKEND's helper of this name, not a
-			// program function that happens to share it. Candidates are keyed
-			// by name, so without this a program defining `__fern_str_append`
-			// gets its body spliced into the string-append lowering's own call
-			// site — which is how that program built a module whose `main`
-			// carried a bare `i32.const 1 / i32.add` where an append belonged.
-			out = append(out, op)
-			continue
+		if out == nil {
+			out = append(make([]Op, 0, len(ops)+len(cand.body)), ops[:i]...)
 		}
-		cand, ok := candidates[op.Str]
-		if !ok || cand.fn == fn || !siteAllows(cand, loopDepth, allConstArgs(out, int(op.I32))) {
-			// Unknown callee, self-recursion, or a body too big for
-			// this site's cap — leave the call.
-			out = append(out, op)
-			continue
-		}
+		mode.spend(len(cand.body))
 		out = append(out, expandInline(fn, cand)...)
 	}
+	if out == nil {
+		return ops
+	}
 	return out
+}
+
+// inlineTarget resolves op to the candidate whose body may replace it, if
+// op is a call to one at all.
+func inlineTarget(caller *Func, op Op, candidates map[string]inlineCandidate) (inlineCandidate, bool) {
+	if op.Kind != OpCallDirect && op.Kind != OpCallClosureDirect {
+		return inlineCandidate{}, false
+	}
+	if op.Runtime {
+		// The lowering meant the BACKEND's helper of this name, not a
+		// program function that happens to share it. Candidates are keyed
+		// by name, so without this a program defining `__fern_str_append`
+		// gets its body spliced into the string-append lowering's own call
+		// site — which is how that program built a module whose `main`
+		// carried a bare `i32.const 1 / i32.add` where an append belonged.
+		return inlineCandidate{}, false
+	}
+	cand, ok := candidates[op.Str]
+	if !ok || cand.fn == caller {
+		return inlineCandidate{}, false
+	}
+	return cand, true
 }
 
 // allConstArgs reports whether a call's `argc` arguments are all

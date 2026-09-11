@@ -7,6 +7,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("sort", sortCases)
+}
+
 // sortCases is sort(1)'s corpus.
 //
 // sort has more surface than anything else here, and most of it is in

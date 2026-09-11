@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+func init() {
+	registerCorpus("tr", trCases)
+}
+
 // trCases is tr(1)'s corpus.
 //
 // tr has no file operands: everything it does is decided by two SET

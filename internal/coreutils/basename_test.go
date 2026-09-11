@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("basename", basenameCases)
+}
+
 func basenameCases(t *testing.T) []invocation {
 	return []invocation{
 		// The name rule: last component, trailing slashes dropped, all

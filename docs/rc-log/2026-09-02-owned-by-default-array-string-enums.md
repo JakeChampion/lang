@@ -99,7 +99,8 @@ certify oracle's walk over it was OOM-killed at 14 GB. A body that calls
 itself is now never a candidate at all.
 
 The self-host driver is untouched by either rule — it exceeds
-`inlineMaxUnitOps`, so `ir.Inline` never runs on it — and still grew 16%
+`inlineMaxUnitOps`, so `ir.Inline` reaches only tiny call-free callees there —
+and still grew 16%
 (5,659,727 → 6,572,602 lines): the exit sweep inlined a many-variant
 enum's tag-switch drop at every exit of every function owning one
 (`checker.check_expr` 2x, `asmcore.ty_tag` 25x). The sweep now inlines

@@ -2,6 +2,10 @@ package coreutils
 
 import "testing"
 
+func init() {
+	registerCorpus("factor", factorCases)
+}
+
 // factorCases is the corpus, shared by the GNU parity gate and the
 // self-host leg so neither can test something narrower than the other.
 func factorCases(t *testing.T) []invocation {

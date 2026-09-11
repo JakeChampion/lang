@@ -294,6 +294,13 @@ function type_error_size(arg: string, size: i32, floating: boolean): void {
   exit(1);
 }
 
+// A size too large to parse has no width to name, so GNU reports it
+// without the suffix type_error_size carries. Its cutoff is i32 overflow.
+function type_error(arg: string): void {
+  gnu.error("invalid type string " + gnu.quote(arg));
+  exit(1);
+}
+
 // The size letters `d`, `o`, `u` and `x` accept, which are C's integer
 // widths, and the ones `f` accepts, which are its floating widths.
 function int_size_letter(c: i32): i32 {
@@ -369,11 +376,18 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
       size = 1;
     } else if (i < arg.len() && gnu.is_digit(arg[i] as i32)) {
       var n: i64 = 0 as i64;
+      var too_big: boolean = false;
       while (i < arg.len() && gnu.is_digit(arg[i] as i32)) {
-        if (n < 1000000 as i64) {
+        if (!too_big) {
           n = n * (10 as i64) + (arg[i] as i32 - 48) as i64;
+          if (n > 2147483647 as i64) {
+            too_big = true;
+          }
         }
         i = i + 1;
+      }
+      if (too_big) {
+        type_error(arg);
       }
       size = n as i32;
       if (floating) {
