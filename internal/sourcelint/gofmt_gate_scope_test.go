@@ -16,10 +16,12 @@ import (
 // for someone else's half-finished work. A fresh clone has no such paths, so
 // CI could never see it.
 //
-// The two halves have to hold together: ignoring ignored paths is only
-// correct if everything else is still gated, so this checks a misformatted
-// file in an ignored path passes AND that the same content fails when it is
-// somewhere git tracks.
+// The rows have to hold together: ignoring ignored paths is only correct if
+// everything else is still gated, and the two ways the file set can be wrong
+// pull in opposite directions. Too wide takes in ignored paths; too narrow
+// stops gating a file that counts. The last row covers neither — it is the
+// list containing a path that is no longer on disk, where gofmt exits 2 and
+// the gate fails over an in-flight edit state rather than a formatting fault.
 func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 	gate, err := filepath.Abs(filepath.Join("..", "..", "tools", "gofmt_gate.sh"))
 	if err != nil {
@@ -32,13 +34,20 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 	const misformatted = "package p\n\nfunc  Bad( ) int {\nreturn 1\n}\n"
 
 	for _, tc := range []struct {
-		name     string
-		rel      string
-		wantFail bool
+		name string
+		rel  string
+		// track stages and commits the file, so git reports it under
+		// --cached rather than --others.
+		track bool
+		// removeFromDisk deletes it again after the commit, leaving an
+		// index entry with no file — an uncommitted deletion.
+		removeFromDisk bool
+		wantFail       bool
 	}{
-		{"ignored path is not the repository's to format", ".claude/worktrees/agent-x/bad.go", false},
-		{"a tracked path still is", "pkg/bad.go", true},
-		{"so is a new file git does not track yet", "pkg/untracked.go", true},
+		{name: "an ignored path is not the repository's to format", rel: ".claude/worktrees/agent-x/bad.go"},
+		{name: "a tracked path still is", rel: "pkg/bad.go", track: true, wantFail: true},
+		{name: "so is a new file git does not track yet", rel: "pkg/untracked.go", wantFail: true},
+		{name: "a tracked file deleted from the worktree is skipped, not an error", rel: "pkg/removed.go", track: true, removeFromDisk: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -64,13 +73,16 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 			if err := os.WriteFile(path, []byte(misformatted), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			// Committing only .gitignore leaves the "new file" case untracked
-			// but not ignored, which is the third row above.
 			run("git", "add", ".gitignore")
-			if tc.rel == "pkg/bad.go" {
+			if tc.track {
 				run("git", "add", tc.rel)
 			}
 			run("git", "commit", "-q", "-m", "seed", "--no-gpg-sign")
+			if tc.removeFromDisk {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
 
 			cmd := exec.Command("bash", gate)
 			cmd.Dir = dir
@@ -84,7 +96,7 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 				t.Fatalf("a failure should say what is wrong, got:\n%s", out)
 			}
 			if !tc.wantFail && strings.Contains(string(out), tc.rel) {
-				t.Fatalf("gate named an ignored path:\n%s", out)
+				t.Fatalf("gate named a path it should have passed over:\n%s", out)
 			}
 		})
 	}
