@@ -53,6 +53,7 @@ pub function variant_is(): i32 { return 0 - 9; }
 pub function variant_get(): i32 { return 0 - 10; }
 pub function variant_up(): i32 { return 0 - 11; }
 pub function variant_as(): i32 { return 0 - 12; }
+pub function length(): i32 { return 0 - 13; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -158,6 +159,17 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
         i = i + 1;
     }
     return "";
+}
+
+// A counted container's element count. The receiver is read, not consumed,
+// and the i32 it hands back anchors nothing.
+function length_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "length arity"; }
+    if (!is_i32(result)) { return "length result type"; }
+    var recv: typeinfo.Type = f.values[ins.args[0]];
+    if let typeinfo.TypeArray(_) = recv { return ""; }
+    if (is_string(recv)) { return ""; }
+    return "length container type";
 }
 
 function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -333,6 +345,7 @@ function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     if (kind == record_new()) { return record_construction_error(ins, f, result); }
     if (kind == record_get()) { return record_projection_error(ins, f, result); }
     if (kind == call()) { return call_error(ins, f, result); }
+    if (kind == length()) { return length_error(ins, f, result); }
     if (is_variant_op(kind)) { return variant_error(ins, f, result); }
     return "unsupported semantic operation";
 }

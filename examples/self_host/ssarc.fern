@@ -376,7 +376,8 @@ function scalar_op(k: i32): boolean {
 
 function container_op(k: i32): boolean {
     return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
-        || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get() || variant_op(k);
+        || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get()
+        || k == ssasem.length() || variant_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -441,6 +442,10 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_arr_make(ins.args.len(), 32)); }
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make(ins.args.len())); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), 0 - 1)); }
+    if (ins.kind_tag == ssasem.length()) {
+        if (ssasem.is_string(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
+        return emit(r, ir.op_arr_len());
+    }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, ir.op_arr_get(32)); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get(ins.imm)); }
     return emit(r, ir.op_struct_get(ins.imm, 0));
