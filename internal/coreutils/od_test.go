@@ -246,6 +246,20 @@ func odCases(t *testing.T) []invocation {
 		{name: "a comma is not a separator", args: []string{"-t", "x1,x2", allBytes}},
 		{name: "a newline in a type string", args: []string{"-t", "x\n", allBytes}},
 
+		// A size too large to parse. GNU reports it WITHOUT the
+		// "this system doesn't provide a N-byte type" suffix, having no
+		// width to name, and its cutoff is i32 overflow — so the pair
+		// either side of 2^31 is what pins which message is chosen, and
+		// the sizes below it pin that the number is the one the user
+		// wrote rather than a truncation of it.
+		{name: "size over seven digits", args: []string{"-t", "x12345678", short}},
+		{name: "size at i32 max", args: []string{"-t", "x2147483647", short}},
+		{name: "size one past i32 max", args: []string{"-t", "x2147483648", short}},
+		{name: "size past u32", args: []string{"-t", "x99999999999", short}},
+		{name: "size past u64", args: []string{"-t", "u99999999999999999999", short}},
+		{name: "float size past i32 max", args: []string{"-t", "f2147483648", short}},
+		{name: "leading zeros do not overflow", args: []string{"-t", "d00000004", short}},
+
 		// Floating point, where the digits are the shortest round trip.
 		{name: "floats", args: []string{"-t", "f4", f4}},
 		{name: "floats one per line", args: []string{"-A", "n", "-t", "f4", "-w4", "-v", f4}},
