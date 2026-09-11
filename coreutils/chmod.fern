@@ -1,0 +1,860 @@
+// chmod.fern — GNU-compatible `chmod`.
+//
+//   chmod [OPTION]... MODE[,MODE]... FILE...
+//   chmod [OPTION]... OCTAL-MODE FILE...
+//   chmod [OPTION]... --reference=RFILE FILE...
+//
+// One fchmodat(2) per entry, and under `-R` a depth-first PRE-order walk
+// that visits a directory before its children and takes those children in
+// raw readdir order — GNU hands fts no comparator, so the order the kernel
+// returns is the order `-v` prints and the order the calls happen in.
+//
+// ---- the mode grammar -----------------------------------------------------
+//
+// Two shapes, and which one a string is decides more than it looks:
+//
+//   [ugoa]*([-+=]([rwxXst]*|[ugo]))+ , …     symbolic, comma-separated
+//   [-+=]?[0-7]+                             octal
+//
+// A clause's `who` letters apply to EVERY operator in it, so `u+rwx-w` is
+// two changes both confined to the user triple. After an operator the perms
+// are either a set of [rwxXst] or ONE of [ugo] naming a triple to copy —
+// never a mix, which is why `+ux` is a fault and `+u` is a copy.
+//
+// `X` sets the execute bits only for a directory or for something that
+// already has an execute bit, and the condition is read from the mode AS IT
+// STANDS AT THAT CLAUSE: `u+x,+X` reaches `+X` with u's x already set and so
+// sets all three, where `+X` alone on the same file does nothing.
+//
+// ---- the umask, which only a bare operator consults ------------------------
+//
+// A clause with NO `ugoa` prefix is masked by the process umask; `a` is not.
+// The mask filters the VALUE, not the set of bits the clause may touch, so
+// `=` still clears everything while setting only what the umask allows:
+// `chmod = f` on 0777 is 0000, and `chmod =rwx f` under 022 is 0755.
+//
+// The special bits are in the same arithmetic but out of the umask's reach,
+// since umask(2) keeps only the low nine: `+s` is 6000 whatever the mask is.
+//
+// A `-` clause the umask stops from clearing everything it named is a
+// DIAGNOSTIC, not a silent narrowing — `chmod -w` on 0777 under 022 leaves
+// 0577 and says so, exiting 1. The test is per file: run the clauses a
+// second time with the umask taken as zero, and complain when the mode that
+// actually landed has a bit that run does not.
+//
+// It is raised ONLY for a mode that arrived through the option letters,
+// which is the spelling the warning exists for: `chmod -w f` complains and
+// `chmod -- -w f` — the identical change, typed as an operand — does not.
+// That is not about the leading `-`, it is about which path the mode came
+// in by: `chmod -- 'a+w,-w' f` is silent and `chmod -x,u+r,-w f` is not.
+//
+// ---- a directory keeps its setuid and setgid -------------------------------
+//
+// `=` on a DIRECTORY never clears S_ISUID / S_ISGID unless the clause named
+// them, so `chmod 755 d` on 6777 is 6755 and `chmod g-s d` is how the bit
+// actually goes. The sticky bit has no such protection. The escape is an
+// octal mode of FIVE digits or more — `00755` is 0755 — and an octal with an
+// operator (`=755`) is explicit too. `--reference` is explicit as well: it
+// writes the reference's twelve bits verbatim.
+//
+// ---- the mode can arrive as an option ---------------------------------------
+//
+// `chmod -w file` works because every mode character is declared as a short
+// option taking an OPTIONAL argument: the first one in a cluster swallows the
+// rest of it, and the whole argv element becomes the mode string — which is
+// why `-Rw` is `invalid mode: '-Rw'` and not a recursive `-w`. Elements are
+// joined with commas in argv order (`-r -w` is `-r,-w`), and once the mode
+// has come from options the first operand is a FILE rather than a mode.
+//
+// ---- the one thing this cannot do -------------------------------------------
+//
+// GNU's fts is fd-relative — it holds a descriptor on each directory and
+// calls fchmodat against it — so a tree renamed underneath a running
+// `chmod -R` cannot be tricked into chmod'ing something outside it, and a
+// path longer than PATH_MAX is still reachable. The runtime has no
+// fd-relative traversal (#9074 / #9078), so the walk below concatenates
+// paths: it meets ENAMETOOLONG partway down a tree GNU finishes, and a
+// concurrent rename of an interior directory can redirect a chmod to another
+// subtree. Nothing in the corpus renames anything under a running chmod, so
+// the two agree there; the gap is real all the same.
+import "std/array";
+import "./lib/gnu";
+
+// ---- the twelve bits chmod speaks ------------------------------------------
+// Written in decimal because the language has no octal literal; the octal
+// each one is spelled as is in the comment beside it.
+function m_all(): u32 {
+  return 4095 as u32;
+}
+
+function m_read(): u32 {
+  return 292 as u32;
+}
+
+function m_write(): u32 {
+  return 146 as u32;
+}
+
+function m_exec(): u32 {
+  return 73 as u32;
+}
+
+// S_ISUID | S_ISGID — the pair a directory keeps through a `=` that does not
+// name them.
+function m_setid(): u32 {
+  return 3072 as u32;
+}
+
+function m_sticky(): u32 {
+  return 512 as u32;
+}
+
+// The bits each `who` letter reaches: its own rwx triple plus the special bit
+// that rides on it — setuid on `u`, setgid on `g`, sticky on `o`. That is
+// what makes `u+s` setuid, `g+s` setgid, `o+s` nothing at all, and `+t`
+// sticky only because the empty who covers `o`.
+function who_u(): u32 {
+  return 2496 as u32;
+}
+
+function who_g(): u32 {
+  return 1080 as u32;
+}
+
+function who_o(): u32 {
+  return 519 as u32;
+}
+
+// ---- one clause of a parsed mode -------------------------------------------
+// `affected` is the who mask, and ZERO means the who was omitted — the case
+// the umask filters. `copy` is the [ugo] source letter of a copy clause, 0
+// otherwise; `cond_x` is whether the perms held an `X`. `mentioned` is the
+// bits the clause NAMED, which is what a directory's setuid/setgid survive
+// being absent from.
+struct Change { affected: u32, op: i32, value: u32, copy: i32, cond_x: boolean, mentioned: u32 }
+
+// The operator bytes.
+function op_add(): i32 {
+  return 43;
+}
+
+function op_sub(): i32 {
+  return 45;
+}
+
+function op_set(): i32 {
+  return 61;
+}
+
+function is_op(c: i32): boolean {
+  return c == op_add() || c == op_sub() || c == op_set();
+}
+
+function is_octal_digit(c: i32): boolean {
+  return c >= 48 && c <= 55;
+}
+
+// The who mask of a `ugoa` letter, or zero for anything else.
+function who_bit(c: i32): u32 {
+  if (c == 117) {
+    return who_u();
+  }
+  if (c == 103) {
+    return who_g();
+  }
+  if (c == 111) {
+    return who_o();
+  }
+  if (c == 97) {
+    return m_all();
+  }
+  return 0 as u32;
+}
+
+// The bits a `rwxst` perm letter stands for before the who mask narrows
+// them. `X` is not here: it is conditional and carries no bits of its own.
+function perm_bits(c: i32): u32 {
+  if (c == 114) {
+    return m_read();
+  }
+  if (c == 119) {
+    return m_write();
+  }
+  if (c == 120) {
+    return m_exec();
+  }
+  if (c == 115) {
+    return m_setid();
+  }
+  if (c == 116) {
+    return m_sticky();
+  }
+  return 0 as u32;
+}
+
+function is_copy_letter(c: i32): boolean {
+  return c == 117 || c == 103 || c == 111;
+}
+
+// ---- parsing ---------------------------------------------------------------
+// `parse_mode(spec)` — the change list, and whether `spec` was a mode at all.
+function parse_mode(spec: string): (Change[], boolean) {
+  var empty: Change[] = [];
+  if (spec.len() == 0) {
+    return (empty, false);
+  }
+  var octal: (Change[], boolean, boolean) = parse_octal_mode(spec);
+  if (octal.2) {
+    return (octal.0, octal.1);
+  }
+  return parse_symbolic_mode(spec);
+}
+
+// The `[-+=]?[0-7]+` half. Returns (changes, ok, matched): `matched` says
+// whether the string had this shape at all, so a `0644x` falls through to the
+// symbolic parser — which refuses it — rather than being accepted here.
+//
+// A bare octal of FEWER than five digits mentions only the bits it sets, so a
+// directory keeps the setuid and setgid it is not told about; five digits or
+// an operator mention everything.
+function parse_octal_mode(spec: string): (Change[], boolean, boolean) {
+  var empty: Change[] = [];
+  var n: i32 = spec.len();
+  var i: i32 = 0;
+  var op: i32 = op_set();
+  var explicit: boolean = false;
+  if (is_op(spec[0] as i32)) {
+    op = spec[0] as i32;
+    explicit = true;
+    i = 1;
+  }
+  var digits: i32 = 0;
+  var v: u32 = 0 as u32;
+  var over: boolean = false;
+  while (i < n && is_octal_digit(spec[i] as i32)) {
+    v = v * (8 as u32) + (spec[i] as i32 - 48) as u32;
+    if (v > m_all()) {
+      over = true;
+      v = m_all() + 1 as u32;
+    }
+    digits = digits + 1;
+    i = i + 1;
+  }
+  if (digits == 0 || i != n) {
+    return (empty, false, false);
+  }
+  if (over) {
+    return (empty, false, true);
+  }
+  var mentioned: u32 = m_all();
+  if (!explicit && digits < 5) {
+    mentioned = v;
+  }
+  var out: Change[] = [];
+  out = out.append(Change { affected: m_all(), op: op, value: v, copy: 0, cond_x: false, mentioned: mentioned });
+  return (out, true, true);
+}
+
+// The symbolic half: comma-separated clauses, each `[ugoa]*` then at least
+// one `[-+=]` with its perms.
+function parse_symbolic_mode(spec: string): (Change[], boolean) {
+  var empty: Change[] = [];
+  var n: i32 = spec.len();
+  var out: Change[] = [];
+  var pos: i32 = 0;
+  while (true) {
+    var who: u32 = 0 as u32;
+    while (pos < n) {
+      var wb: u32 = who_bit(spec[pos] as i32);
+      if (wb == 0 as u32) {
+        break;
+      }
+      who = who | wb;
+      pos = pos + 1;
+    }
+    var ops: i32 = 0;
+    while (pos < n && is_op(spec[pos] as i32)) {
+      var o: i32 = spec[pos] as i32;
+      pos = pos + 1;
+      ops = ops + 1;
+      var r: (Change, i32) = parse_perms(spec, pos, who, o);
+      out = out.append(r.0);
+      pos = r.1;
+    }
+    if (ops == 0) {
+      return (empty, false);
+    }
+    if (pos == n) {
+      break;
+    }
+    if (spec[pos] as i32 != 44) {
+      return (empty, false);
+    }
+    pos = pos + 1;
+  }
+  return (out, true);
+}
+
+// One operator's perms: a single [ugo] naming a triple to copy, or a run of
+// [rwxXst]. The copy form is only a copy when the letter ENDS the perms — a
+// `u` with an ordinary perm letter after it is neither, and the clause fails
+// on the leftover byte.
+function parse_perms(spec: string, start: i32, who: u32, o: i32): (Change, i32) {
+  var n: i32 = spec.len();
+  var pos: i32 = start;
+  if (pos < n && is_copy_letter(spec[pos] as i32)) {
+    var ends: boolean = pos + 1 == n;
+    if (!ends) {
+      var nxt: i32 = spec[pos + 1] as i32;
+      ends = is_op(nxt) || nxt == 44;
+    }
+    if (ends) {
+      return (Change { affected: who, op: o, value: 0 as u32, copy: spec[pos] as i32, cond_x: false, mentioned: 0 as u32 }, pos + 1);
+    }
+  }
+  var value: u32 = 0 as u32;
+  var cond: boolean = false;
+  while (pos < n) {
+    var pc: i32 = spec[pos] as i32;
+    if (pc == 88) {
+      cond = true;
+      pos = pos + 1;
+      continue;
+    }
+    var pb: u32 = perm_bits(pc);
+    if (pb == 0 as u32) {
+      break;
+    }
+    value = value | pb;
+    pos = pos + 1;
+  }
+  return (Change { affected: who, op: o, value: value, copy: 0, cond_x: cond, mentioned: value }, pos);
+}
+
+// ---- applying --------------------------------------------------------------
+// The bits a copy clause carries: the source triple's r, w and x, each
+// spread back across all three triples before the destination's who mask
+// narrows them again. A source's special bit is NOT part of it — `a=u` on a
+// setuid file clears the setuid.
+function copy_bits(cur: u32, src: i32): u32 {
+  var got: u32 = cur & 7 as u32;
+  if (src == 117) {
+    got = cur & 448 as u32;
+  } else if (src == 103) {
+    got = cur & 56 as u32;
+  }
+  var v: u32 = 0 as u32;
+  if ((got & m_read()) != 0 as u32) {
+    v = v | m_read();
+  }
+  if ((got & m_write()) != 0 as u32) {
+    v = v | m_write();
+  }
+  if ((got & m_exec()) != 0 as u32) {
+    v = v | m_exec();
+  }
+  return v;
+}
+
+// `apply(old, is_dir, mask, changes)` — the mode the changes leave behind.
+// Passing zero for `mask` is the second, umask-free run the `-` diagnostic
+// compares against.
+function apply(old: u32, is_dir: boolean, mask: u32, cs: Change[]): u32 {
+  var cur: u32 = old & m_all();
+  var i: i32 = 0;
+  while (i < cs.len()) {
+    var c: Change = cs[i];
+    var before: u32 = cur;
+    // An omitted who reaches every bit — `=` clears all of them — but may
+    // only SET what the umask leaves.
+    var affected: u32 = c.affected;
+    var clear: u32 = c.affected;
+    if (affected == 0 as u32) {
+      affected = m_all() ^ mask & m_all();
+      clear = m_all();
+    }
+    var value: u32 = c.value;
+    if (c.copy != 0) {
+      value = copy_bits(cur, c.copy);
+    }
+    if (c.cond_x && (is_dir || (cur & m_exec()) != 0 as u32)) {
+      value = value | m_exec();
+    }
+    if (c.op == op_set()) {
+      cur = cur & (clear ^ m_all()) | value & affected;
+      if (is_dir) {
+        cur = cur | before & m_setid() & (c.mentioned ^ m_all());
+      }
+    } else if (c.op == op_add()) {
+      cur = cur | value & affected;
+    } else {
+      cur = cur & (value & affected ^ m_all());
+    }
+    i = i + 1;
+  }
+  return cur & m_all();
+}
+
+// ---- rendering -------------------------------------------------------------
+function octal_digit(n: i32): string {
+  return n.to_string();
+}
+
+// `0644`, `4755`, `7000` — four digits, always.
+function octal4(m: u32): string {
+  var v: i32 = (m & m_all()) as i32;
+  return octal_digit(v / 512) + octal_digit(v / 64 % 8) + octal_digit(v / 8 % 8) + octal_digit(v % 8);
+}
+
+// One triple. The third character carries two bits at once: the special bit
+// is upper case when the matching execute bit is clear, lower case when it is
+// set — `rwsr-Sr-T`.
+function triple(v: u32, shift: i32, sp: u32, lo: string, hi: string): string {
+  var out: string = "-";
+  if ((v & (4 << shift) as u32) != 0 as u32) {
+    out = "r";
+  }
+  if ((v & (2 << shift) as u32) != 0 as u32) {
+    out = out + "w";
+  } else {
+    out = out + "-";
+  }
+  var has_x: boolean = (v & (1 << shift) as u32) != 0 as u32;
+  var has_sp: boolean = (v & sp) != 0 as u32;
+  if (has_sp && has_x) {
+    return out + lo;
+  }
+  if (has_sp) {
+    return out + hi;
+  }
+  if (has_x) {
+    return out + "x";
+  }
+  return out + "-";
+}
+
+function symbolic(m: u32): string {
+  var v: u32 = m & m_all();
+  return triple(v, 6, 2048 as u32, "s", "S") + triple(v, 3, 1024 as u32, "s", "S") + triple(v, 0, m_sticky(), "t", "T");
+}
+
+// ---- options ---------------------------------------------------------------
+function opt_changes(): i32 {
+  return 1;
+}
+
+function opt_silent(): i32 {
+  return 2;
+}
+
+function opt_verbose(): i32 {
+  return 3;
+}
+
+function opt_no_preserve_root(): i32 {
+  return 4;
+}
+
+function opt_preserve_root(): i32 {
+  return 5;
+}
+
+function opt_reference(): i32 {
+  return 6;
+}
+
+function opt_recursive(): i32 {
+  return 7;
+}
+
+// Every byte a mode may start or continue with, declared so `chmod -w` and
+// `chmod -0644` reach the mode instead of getopt's `invalid option`.
+function opt_mode(): i32 {
+  return 8;
+}
+
+function v_quiet(): i32 {
+  return 0;
+}
+
+function v_changes(): i32 {
+  return 1;
+}
+
+function v_all(): i32 {
+  return 2;
+}
+
+struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean }
+
+// What one run has to say about every file: the change list or the fixed mode
+// `--reference` read, the umask the empty-who clauses are filtered by, and
+// whether the mode came in through the option letters — the only spelling
+// the umask complaint is raised for.
+struct Target { changes: Change[], fixed: u32, has_fixed: boolean, mask: u32, from_option: boolean }
+
+// The whole of the mutable state: the stdio stream `-v` writes through, and
+// the exit status a diagnostic turns to 1.
+struct St { out: gnu.Stdio, status: i32 }
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... MODE[,MODE]... FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... OCTAL-MODE FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
+  out = out + "Change the mode of each FILE to MODE.\n";
+  out = out + "With --reference, change the mode of each FILE to that of RFILE.\n";
+  out = out + "\n";
+  out = out + "  -c, --changes          like verbose but report only when a change is made\n";
+  out = out + "  -f, --silent, --quiet  suppress most error messages\n";
+  out = out + "  -v, --verbose          output a diagnostic for every file processed\n";
+  out = out + "      --no-preserve-root  do not treat '/' specially (the default)\n";
+  out = out + "      --preserve-root    fail to operate recursively on '/'\n";
+  out = out + "      --reference=RFILE  use RFILE's mode instead of specifying MODE values.\n";
+  out = out + "                         RFILE is always dereferenced if a symbolic link.\n";
+  out = out + "  -R, --recursive        change files and directories recursively\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+'.\n";
+  return out;
+}
+
+// The long options in GNU's declaration order, which is visible: the
+// ambiguity list prints candidates in it, so `--r` names '--recursive' before
+// '--reference'. `--help` and `--version` are appended by getopt_new.
+function option_table(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("c", "changes", opt_changes()));
+  opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
+  opts = opts.append(gnu.flag("", "no-preserve-root", opt_no_preserve_root()));
+  opts = opts.append(gnu.flag("", "preserve-root", opt_preserve_root()));
+  opts = opts.append(gnu.flag("f", "quiet", opt_silent()));
+  opts = opts.append(gnu.valued("", "reference", opt_reference()));
+  opts = opts.append(gnu.flag("", "silent", opt_silent()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  var i: i32 = 0;
+  var letters: string = "rwxXstugoa,+=01234567";
+  while (i < letters.len()) {
+    opts = opts.append(gnu.optional(slice_unchecked(letters, i, i + 1) + "", "", opt_mode()));
+    i = i + 1;
+  }
+  return opts;
+}
+
+struct Parsed { s: Settings, mode: string, has_mode: boolean, reference: string, has_reference: boolean, files: string[] }
+
+function parse(argv: string[]): Parsed {
+  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false };
+  var mode: string = "";
+  var has_mode: boolean = false;
+  var reference: string = "";
+  var has_reference: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "chmod", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_changes()) {
+          s = Settings { ...s, verbosity: v_changes() };
+        } else if (m.id == opt_silent()) {
+          s = Settings { ...s, quiet: true };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, verbosity: v_all() };
+        } else if (m.id == opt_no_preserve_root()) {
+          s = Settings { ...s, preserve_root: false };
+        } else if (m.id == opt_preserve_root()) {
+          s = Settings { ...s, preserve_root: true };
+        } else if (m.id == opt_reference()) {
+          reference = m.value;
+          has_reference = true;
+        } else if (m.id == opt_recursive()) {
+          s = Settings { ...s, recursive: true };
+        } else if (m.id == opt_mode()) {
+          // The WHOLE argv element is the mode, however much of it getopt
+          // already consumed as options: `-vRw` is the mode `-vRw`, and a
+          // fault. A later element is joined on with a comma.
+          var token: string = argv[g.index() - 1];
+          if (has_mode) {
+            mode = mode + "," + token;
+          } else {
+            mode = token;
+          }
+          has_mode = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return Parsed { s: s, mode: mode, has_mode: has_mode, reference: reference, has_reference: has_reference, files: g.operands() };
+}
+
+// ---- paths -----------------------------------------------------------------
+// fts trims a RUN of trailing slashes to one before the operand is printed,
+// and leaves `/` and `//` alone: `d///` is `d/`, `///` is `/`.
+function fts_trim(p: string): string {
+  var n: i32 = p.len();
+  if (n > 2 && p[n - 1] as i32 == 47) {
+    while (n > 1 && p[n - 2] as i32 == 47) {
+      n = n - 1;
+    }
+  }
+  return slice_unchecked(p, 0, n) + "";
+}
+
+function child_path(dir: string, name: string): string {
+  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+function s_ifmt(): u32 {
+  return 61440 as u32;
+}
+
+function is_dir_mode(mode: u32): boolean {
+  return (mode & s_ifmt()) == 16384 as u32;
+}
+
+function is_link_mode(mode: u32): boolean {
+  return (mode & s_ifmt()) == 40960 as u32;
+}
+
+// ---- diagnostics -----------------------------------------------------------
+// A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
+// the message, not the failure.
+function fail_quiet(st: St, s: Settings, msg: string): St {
+  if (s.quiet) {
+    return St { ...st, status: 1 };
+  }
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+// A diagnostic `-f` does NOT silence: the root failsafe, a `--reference` that
+// cannot be read, and the umask complaint.
+function fail_loud(st: St, msg: string): St {
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+function say(st: St, s: Settings, line: string): St {
+  if (s.verbosity != v_all()) {
+    return st;
+  }
+  return St { ...st, out: st.out.fwrite(line) };
+}
+
+// The entry could not be reached at all. `-v` adds its own line after the
+// diagnostic, which is why the two are written in this order.
+function unreachable(st0: St, s: Settings, path: string, msg: string): St {
+  var st: St = fail_quiet(st0, s, msg);
+  return say(st, s, gnu.quotea(path) + " could not be accessed\n");
+}
+
+// ---- the root failsafe -----------------------------------------------------
+// Compared by device and inode, so every spelling of `/` is caught — `//`,
+// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
+function is_root_dir(info: FileStat): boolean {
+  match (stat("/")) {
+    Ok(root) => {
+      return info.dev == root.dev && info.ino == root.ino;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+function refuse_root(st0: St, path: string): St {
+  var same: string = "";
+  if (path != "/") {
+    same = " (same as '/')";
+  }
+  var st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  return fail_loud(st, "use --no-preserve-root to override this failsafe");
+}
+
+// ---- one entry -------------------------------------------------------------
+// The mode `t` should end up with, the mode the same clauses reach with the
+// umask taken as zero, and whether the two differ in the direction that is a
+// complaint — a bit the mask stopped a `-` clause from clearing.
+function target_mode(t: Target, old: u32, is_dir: boolean): (u32, u32, boolean) {
+  if (t.has_fixed) {
+    return (t.fixed, t.fixed, false);
+  }
+  var wanted: u32 = apply(old, is_dir, t.mask, t.changes);
+  if (!t.from_option) {
+    return (wanted, wanted, false);
+  }
+  var naive: u32 = apply(old, is_dir, 0 as u32, t.changes);
+  return (wanted, naive, (wanted & (naive ^ m_all())) != 0 as u32);
+}
+
+function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat): St {
+  var st: St = st0;
+  var old: u32 = info.mode & m_all();
+  var is_dir: boolean = is_dir_mode(info.mode);
+  var r: (u32, u32, boolean) = target_mode(t, old, is_dir);
+  var wanted: u32 = r.0;
+  match (chmod(path, wanted as i32)) {
+    Ok(_) => {
+      if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
+        st = St { ...st, out: st.out.fwrite(describe(path, old, wanted)) };
+      }
+    },
+    Err(e) => {
+      st = fail_quiet(st, s, "changing permissions of " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return say(st, s, "failed to change mode of " + gnu.quotea(path) + " from " + octal4(old) + " (" + symbolic(old) + ") to " + octal4(wanted) + " (" + symbolic(wanted) + ")\n");
+    }
+  }
+  if (r.2) {
+    // The one diagnostic that names the file the way a shell would need it
+    // typed rather than always in quotes.
+    st = fail_loud(st, gnu.quotef(path) + ": new permissions are " + symbolic(wanted) + ", not " + symbolic(r.1));
+  }
+  return st;
+}
+
+function describe(path: string, old: u32, wanted: u32): string {
+  if (old == wanted) {
+    return "mode of " + gnu.quotea(path) + " retained as " + octal4(old) + " (" + symbolic(old) + ")\n";
+  }
+  return "mode of " + gnu.quotea(path) + " changed from " + octal4(old) + " (" + symbolic(old) + ") to " + octal4(wanted) + " (" + symbolic(wanted) + ")\n";
+}
+
+// ---- the walk --------------------------------------------------------------
+// `top` marks a command-line operand: only there is a symlink FOLLOWED, and
+// only there is the root failsafe asked. A symlink met below one is neither
+// followed nor changed — Linux has no mode on a symlink to set — and says so
+// under `-v` without touching the exit status.
+function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
+  var st: St = st0;
+  if (!top) {
+    match (lstat(path)) {
+      Ok(info) => {
+        if (is_link_mode(info.mode)) {
+          return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
+        }
+        return visit(st, s, t, path, info, false);
+      },
+      Err(e) => {
+        return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  match (stat(path)) {
+    Ok(info) => {
+      return visit(st, s, t, path, info, true);
+    },
+    Err(e) => {
+      // A symlink whose target is not there is its own wording; every other
+      // failure — a loop, a name too long, a component that is not a
+      // directory — is the plain one.
+      if (gnu.io_error_text(e) == "No such file or directory" && names_symlink(path)) {
+        return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
+      }
+      return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+}
+
+function names_symlink(path: string): boolean {
+  match (lstat(path)) {
+    Ok(info) => {
+      return is_link_mode(info.mode);
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// One entry that was reached. The directory is chmod'ed BEFORE its children
+// are read, which is the order GNU's pre-order walk imposes.
+function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, top: boolean): St {
+  var st: St = st0;
+  if (top && s.recursive && s.preserve_root && is_dir_mode(info.mode) && is_root_dir(info)) {
+    return refuse_root(st, path);
+  }
+  st = change_one(st, s, t, path, info);
+  if (!s.recursive || !is_dir_mode(info.mode)) {
+    return st;
+  }
+  match (read_dir(path)) {
+    Ok(names) => {
+      var i: i32 = 0;
+      while (i < names.len()) {
+        st = process(st, s, t, child_path(path, names[i]), false);
+        i = i + 1;
+      }
+    },
+    Err(e) => {
+      // A directory whose children cannot be listed has its own wording,
+      // where an entry that could not be STATTED is `cannot access`.
+      st = unreachable(st, s, path, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+  return st;
+}
+
+// ---- main ------------------------------------------------------------------
+// The process umask, read the only way POSIX offers: set zero, take the
+// answer, put it back.
+function current_umask(): u32 {
+  var mask: i32 = umask(0);
+  var back: i32 = umask(mask);
+  return (mask & 4095) as u32;
+}
+
+function main(): i32 {
+  var p: Parsed = parse(args());
+  var s: Settings = p.s;
+  var files: string[] = p.files;
+  var mode_spec: string = p.mode;
+  // A mode that arrived through the option letters and a --reference are the
+  // one combination chmod refuses outright, ahead of the operand count.
+  if (p.has_reference && p.has_mode) {
+    gnu.die_usage("cannot combine mode and --reference options", 1);
+  }
+  if (!p.has_reference && !p.has_mode) {
+    if (files.len() == 0) {
+      gnu.die_usage("missing operand", 1);
+    }
+    mode_spec = files[0];
+    if (files.len() == 1) {
+      gnu.die_usage("missing operand after " + gnu.quote(mode_spec), 1);
+    }
+    files = array.slice(files, 1, files.len());
+  } else if (files.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var st: St = St { out: gnu.stdio_new(), status: 0 };
+  var t: Target = Target { changes: [], fixed: 0 as u32, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
+  if (p.has_reference) {
+    match (stat(p.reference)) {
+      Ok(info) => {
+        t = Target { ...t, fixed: info.mode & m_all(), has_fixed: true };
+      },
+      Err(e) => {
+        gnu.error("failed to get attributes of " + gnu.quotea(p.reference) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  } else {
+    var parsed: (Change[], boolean) = parse_mode(mode_spec);
+    if (!parsed.1) {
+      gnu.die_usage("invalid mode: " + gnu.quote(mode_spec), 1);
+    }
+    t = Target { ...t, changes: parsed.0 };
+  }
+  var i: i32 = 0;
+  while (i < files.len()) {
+    st = process(st, s, t, fts_trim(files[i]), true);
+    i = i + 1;
+  }
+  st.out.close_stdout();
+  return st.status;
+}
