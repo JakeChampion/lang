@@ -202,16 +202,10 @@ fmt-check: bin/fern
 # gofmt's trailing-comment and map-literal alignment goes stale as soon
 # as a longer entry lands beside an existing one.
 gofmt:
-	@out=$$(gofmt -l .); \
-	if [ -n "$$out" ]; then gofmt -w $$out; echo "reformatted:"; echo "$$out"; fi
+	./tools/gofmt_gate.sh --fix
 
 gofmt-check:
-	@out=$$(gofmt -l .); \
-	if [ -n "$$out" ]; then \
-		echo "not gofmt-clean:"; echo "$$out"; \
-		gofmt -d $$out; \
-		exit 1; \
-	fi
+	./tools/gofmt_gate.sh
 
 # Every cheap whole-repo gate, in the order the Lint workflow runs them.
 # One target so a local run and CI cannot drift into checking different things,
