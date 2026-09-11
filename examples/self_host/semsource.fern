@@ -471,11 +471,30 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     return define(s, ssasem.call(), ids, 0, key, contract.result);
 }
 
+// `slice_unchecked(s, start, end)` reads a window of a string's bytes. The box
+// it hands back is this function's to release; the bytes stay the source's, so
+// the result is anchored to it and the source must outlive the view.
+function string_slice(c: ast.ExprCall, s: State): Value {
+    var src: Value = expr(c.args[0], s, typeinfo.unchecked());
+    s = src.s;
+    if (!s.ok) { return src; }
+    if (!ssasem.is_string(s.values[src.id])) { return refused(s, "unsupported call target"); }
+    var lo: Value = expr(c.args[1], s, t_i32());
+    s = lo.s;
+    if (!s.ok) { return lo; }
+    var hi: Value = expr(c.args[2], s, t_i32());
+    s = hi.s;
+    if (!s.ok) { return hi; }
+    if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) { return refused(s, "slice bound type"); }
+    return define(s, ssasem.slice(), [src.id, lo.id, hi.id], 0, "", typeinfo.TypeString { tag: 0 });
+}
+
 function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }
+    if (name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0) { return string_slice(c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
     if (at < 0) {
         var owner: string = union_name(checked(e, s));
