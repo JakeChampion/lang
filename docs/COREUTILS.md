@@ -838,6 +838,28 @@ redirection that recreates the file) is inside the timed command. It comes from
 the GNU directory for all three implementations, exactly as `yes`'s `head`
 does, so it compresses every ratio equally rather than biasing one.
 
+`sum`, 2026-09-10, Linux x86-64, the same 62 MiB / 8 000 000-line file (GNU
+coreutils 9.4; uutils 0.0.24 as the Debian multi-call binary):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `sum` | a 62 MiB file | 157.32 ± 5.17 | 133.81 ± 4.00 | 67.85 ± 11.29 | 0.85× | 0.43× |
+| `sum` | `-s` a 62 MiB file | 114.01 ± 6.94 | 15.99 ± 2.10 | 21.62 ± 1.37 | **0.14×** | 0.19× |
+| `sum` | a 62 MiB file from a pipe | 164.13 ± 23.18 | 153.88 ± 20.26 | 110.55 ± 17.95 | 0.94× | 0.67× |
+| `sum` | `-s` a 62 MiB file from a pipe | 123.83 ± 29.78 | 32.52 ± 5.95 | 56.24 ± 15.38 | 0.26× | 0.45× |
+| `sum` | a small file | 0.23 ± 0.10 | 1.14 ± 0.17 | 2.00 ± 0.17 | 4.99× | 8.75× |
+| `sum` | 500 small files | 3.80 ± 0.55 | 3.95 ± 0.39 | 4.59 ± 0.60 | 1.04× | 1.21× |
+
+The two algorithms fail differently, and only one of the failures is sum's
+(#9052). BSD's rotate-then-add carries a dependency through every byte, so
+neither side vectorises it: GNU's scalar loop is 2.07 ns a byte and Fern's is
+2.47, and the 20% is #8425's induction variable in a stack slot. System V is
+`s += buf[i]`, which gcc turns into `psadbw` — 0.09 ns a byte against Fern's
+1.6 — and there is no way to spell that in Fern today, because the byte-kernel
+family (`__memchr`, `__rmemchr`, `__count_byte`, `__mismatch`) has no reduction
+member. Unrolling the absorb loop eight ways was measured before concluding
+that and is a wash, which is what places the cost on the per-byte load.
+
 ## The primitives group C is built on
 
 A utility here is blocked on a builtin far more often than on anything about
@@ -1129,8 +1151,8 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `tee` and the seven
-  checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
+  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `sum`, `tee` and the
+  seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
   Needs a buffered stdout writer in `std/io_buffered`
   (its own header already promises one) and a streaming stdin reader whose

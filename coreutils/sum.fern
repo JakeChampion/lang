@@ -1,0 +1,216 @@
+// sum.fern — GNU-compatible `sum`.
+//
+//   sum [-rs] [FILE]...
+//
+// A 16-bit checksum and a block count per operand. Two algorithms, and
+// the last of `-r` / `-s` on the line wins:
+//
+//   -r  BSD, the default: rotate the running sum right one bit, add the
+//       byte, keep 16 bits. Blocks are 1 KiB, and the line is the
+//       checksum zero-padded to five columns and the count in five.
+//   -s  System V: add every byte into a 32-bit accumulator and fold it
+//       to 16 bits twice, so the carry of the first fold lands. Blocks
+//       are 512 bytes, and the two numbers are printed bare.
+//
+// The block count is rounded UP, so any non-empty input is at least one
+// block and an empty one is zero.
+//
+// The name is printed for every operand, `-` included, and not at all
+// when there is none — `sum < f` is two numbers on their own. An input
+// that fails to open or fails to read prints its diagnostic and no
+// line at all, and the exit status is 1 if any operand failed.
+import "std/i64";
+import "std/hash";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function opt_bsd(): i32 {
+  return 1;
+}
+
+function opt_sysv(): i32 {
+  return 2;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "Print a 16-bit checksum and a block count for each FILE.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "  -r              use BSD sum algorithm (the default), use 1K blocks\n";
+  out = out + "  -s, --sysv      use System V sum algorithm, use 512 bytes blocks\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- the two checksums -----------------------------------------------------
+// `Ctx` — the running checksum. Both accumulators are carried and one
+// is fed, so the algorithm is decided once per chunk rather than once
+// per byte; `std/hash` holds the kernels and the block sizes.
+struct Ctx { sysv: boolean, bsd: hash.BsdSum, sv: hash.SysvSum }
+
+function ctx_new(sysv: boolean): Ctx {
+  return Ctx { sysv: sysv, bsd: hash.bsd_sum_new(), sv: hash.sysv_sum_new() };
+}
+
+function ctx_update(c: Ctx, chunk: string): Ctx {
+  if (c.sysv) {
+    return Ctx { ...c, sv: c.sv.update(chunk) };
+  }
+  return Ctx { ...c, bsd: c.bsd.update(chunk) };
+}
+
+function ctx_checksum(c: Ctx): i64 {
+  if (c.sysv) {
+    return c.sv.finish() as i64;
+  }
+  return c.bsd.finish() as i64;
+}
+
+function ctx_blocks(c: Ctx): i64 {
+  if (c.sysv) {
+    return c.sv.blocks() as i64;
+  }
+  return c.bsd.blocks() as i64;
+}
+
+// ---- one input -------------------------------------------------------------
+// `Tally` — one input's answer, or the failure that stopped it. A
+// failed input prints no line, so `checksum` is only read when
+// `failed` is false.
+struct Tally { checksum: i64, blocks: i64, err: Option[IoError], failed: boolean }
+
+// Bytes per read(2). The checksum kernels are per byte and dominate,
+// so this only has to be large enough that the syscalls disappear;
+// 64 KiB is where `wc` measured that on the same machine.
+function read_size(): i32 {
+  return 65536;
+}
+
+function sum_reader(r: Reader, sysv: boolean, owned: boolean): Tally {
+  var c: Ctx = ctx_new(sysv);
+  while (true) {
+    match (r.read_chunk(read_size())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        c = ctx_update(c, chunk);
+      },
+      Err(e) => {
+        if (owned) {
+          r.close();
+        }
+        return Tally { checksum: 0 as i64, blocks: 0 as i64, err: Some(e), failed: true };
+      }
+    }
+  }
+  if (owned) {
+    r.close();
+  }
+  return Tally { checksum: ctx_checksum(c), blocks: ctx_blocks(c), err: None, failed: false };
+}
+
+// `sum_path(path, sysv)` — one operand summed. `-` is standard input,
+// which is never closed.
+function sum_path(path: string, sysv: boolean): Tally {
+  if (path == "-") {
+    return sum_reader(stdin(), sysv, false);
+  }
+  match (open_reader(path)) {
+    Ok(r) => {
+      return sum_reader(r, sysv, true);
+    },
+    Err(e) => {
+      return Tally { checksum: 0 as i64, blocks: 0 as i64, err: Some(e), failed: true };
+    }
+  }
+}
+
+// ---- output ----------------------------------------------------------------
+// `pad(s, width, zero)` — `s` right-aligned in `width` columns, with
+// zeros rather than spaces when `zero`. The BSD line is `%05d %5d`;
+// System V prints both numbers bare.
+function pad(s: string, width: i32, zero: boolean): string {
+  var n: i32 = width - s.len();
+  if (n <= 0) {
+    return s;
+  }
+  if (zero) {
+    return "0".repeat(n) + s;
+  }
+  return " ".repeat(n) + s;
+}
+
+function line_for(t: Tally, sysv: boolean, name: string, named: boolean): string {
+  var out: string = "";
+  if (sysv) {
+    out = t.checksum.to_string() + " " + t.blocks.to_string();
+  } else {
+    out = pad(t.checksum.to_string(), 5, true) + " " + pad(t.blocks.to_string(), 5, false);
+  }
+  if (named) {
+    out = out + " " + name;
+  }
+  return out + "\n";
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("r", "", opt_bsd()));
+  opts = opts.append(gnu.flag("s", "sysv", opt_sysv()));
+
+  var sysv: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "sum", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        sysv = m.id == opt_sysv();
+      },
+      None => {
+        break;
+      }
+    }
+  }
+
+  var operands: string[] = g.operands();
+  var named: boolean = operands.len() > 0;
+  if (!named) {
+    operands = ["-"];
+  }
+
+  // Writes go through the buffer with no check of their own: a failure
+  // is sticky, and glibc reports it once at the end. The final flush
+  // is what makes `> /dev/full` say `write error` with no errno left to
+  // name, the way GNU does, rather than naming ENOSPC at the close.
+  var out: io_buffered.BufWriter = gnu.out_new();
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    var t: Tally = sum_path(operands[i], sysv);
+    if (t.failed) {
+      ok = false;
+      match (t.err) {
+        Some(e) => {
+          out = gnu.error_out(out, gnu.quotef(operands[i]) + ": " + gnu.io_error_text(e));
+        },
+        None => {}
+      }
+    } else {
+      out = out.write_string(line_for(t, sysv, operands[i], named));
+    }
+    i = i + 1;
+  }
+  out = out.flush();
+  gnu.close_stdout(out, false);
+  if (!ok) {
+    return 1;
+  }
+  return 0;
+}

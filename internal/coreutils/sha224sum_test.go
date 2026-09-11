@@ -6,14 +6,14 @@ func init() {
 	registerCorpus("sha224sum", sha224sumCases)
 }
 
-// sha224sum(1) — SHA-224. The corpus is `sumCases`, shared with the other
+// sha224sum(1) — SHA-224. The corpus is `digestCases`, shared with the other
 // six checksum utilities because `coreutils/lib/digest.fern` is one
 // program: what is proved here that the others do not prove is the
 // digest itself, the word this utility writes in a BSD tag and in
 // `improperly formatted SHA224 checksum line`, and the digest length
 // the check-line grammar measures against.
 func sha224sumCases(t *testing.T) []invocation {
-	return sumCases(t, "sha224sum")
+	return digestCases(t, "sha224sum")
 }
 
 func TestSha224sumParity(t *testing.T) {

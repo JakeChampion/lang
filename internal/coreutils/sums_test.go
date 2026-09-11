@@ -24,8 +24,8 @@ import (
 // the reference binary, never by writing a digest down: the oracle
 // makes them the same way it makes everything else here.
 
-// sumSpec is what the seven do not share.
-type sumSpec struct {
+// digestSpec is what the seven do not share.
+type digestSpec struct {
 	util string
 	// tag is the BSD-style prefix, and the word in the
 	// improperly-formatted diagnostic.
@@ -40,8 +40,8 @@ type sumSpec struct {
 	variable bool
 }
 
-func sumSpecs() map[string]sumSpec {
-	return map[string]sumSpec{
+func digestSpecs() map[string]digestSpec {
+	return map[string]digestSpec{
 		"md5sum":    {util: "md5sum", tag: "MD5", bits: 128},
 		"sha1sum":   {util: "sha1sum", tag: "SHA1", bits: 160},
 		"sha224sum": {util: "sha224sum", tag: "SHA224", bits: 224},
@@ -69,9 +69,9 @@ func refOutput(t *testing.T, util string, args ...string) string {
 	return string(out)
 }
 
-// sumTree is the files one utility's corpus is asked about, plus the
+// digestTree is the files one utility's corpus is asked about, plus the
 // checksum files built over them.
-type sumTree struct {
+type digestTree struct {
 	dir string
 	// The inputs.
 	a, empty, big, backslash, newline, carriage, spaced, quoted, raw string
@@ -81,7 +81,7 @@ type sumTree struct {
 	hex string
 }
 
-func sumFile(t *testing.T, dir, name, content string) string {
+func digestFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -90,24 +90,24 @@ func sumFile(t *testing.T, dir, name, content string) string {
 	return p
 }
 
-func newSumTree(t *testing.T, spec sumSpec) sumTree {
+func newDigestTree(t *testing.T, spec digestSpec) digestTree {
 	t.Helper()
 	dir := t.TempDir()
-	tr := sumTree{
+	tr := digestTree{
 		dir: dir,
-		a:   sumFile(t, dir, "a", "hello\n"),
+		a:   digestFile(t, dir, "a", "hello\n"),
 		// Empty is its own digest, and the padding path for every one of
 		// these algorithms differs at zero bytes.
-		empty: sumFile(t, dir, "e0", ""),
+		empty: digestFile(t, dir, "e0", ""),
 		// Longer than one read block and not a multiple of any of the
 		// block sizes, so the tail padding is exercised too.
-		big:       sumFile(t, dir, "big", strings.Repeat("0123456789abcdef", 12345)+"tail"),
-		backslash: sumFile(t, dir, `back\slash`, "x\n"),
-		newline:   sumFile(t, dir, "new\nline", "x\n"),
-		carriage:  sumFile(t, dir, "car\rriage", "x\n"),
-		spaced:    sumFile(t, dir, "sp ace", "x\n"),
-		quoted:    sumFile(t, dir, "q'uote", "x\n"),
-		raw:       sumFile(t, dir, "na\xffme", "x\n"),
+		big:       digestFile(t, dir, "big", strings.Repeat("0123456789abcdef", 12345)+"tail"),
+		backslash: digestFile(t, dir, `back\slash`, "x\n"),
+		newline:   digestFile(t, dir, "new\nline", "x\n"),
+		carriage:  digestFile(t, dir, "car\rriage", "x\n"),
+		spaced:    digestFile(t, dir, "sp ace", "x\n"),
+		quoted:    digestFile(t, dir, "q'uote", "x\n"),
+		raw:       digestFile(t, dir, "na\xffme", "x\n"),
 		missing:   filepath.Join(dir, "nosuch"),
 		subdir:    filepath.Join(dir, "d"),
 		hex:       strings.Repeat("0", spec.bits/4),
@@ -118,11 +118,11 @@ func newSumTree(t *testing.T, spec sumSpec) sumTree {
 	return tr
 }
 
-// sumCases is the corpus of one checksum utility.
-func sumCases(t *testing.T, util string) []invocation {
+// digestCases is the corpus of one checksum utility.
+func digestCases(t *testing.T, util string) []invocation {
 	t.Helper()
-	spec := sumSpecs()[util]
-	tr := newSumTree(t, spec)
+	spec := digestSpecs()[util]
+	tr := newDigestTree(t, spec)
 	cases := computeCases(t, spec, tr)
 	cases = append(cases, checkCases(t, spec, tr)...)
 	cases = append(cases, grammarCases(t, spec, tr)...)
@@ -134,7 +134,7 @@ func sumCases(t *testing.T, util string) []invocation {
 
 // The compute half: digests, the two modes, --tag, -z, escaping, and
 // the operand diagnostics.
-func computeCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
+func computeCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	return []invocation{
 		{name: "one file", args: []string{tr.a}},
@@ -188,7 +188,7 @@ func computeCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
 		{name: "name with a backslash", args: []string{tr.backslash}},
 		{name: "name with a newline", args: []string{tr.newline}},
 		{name: "name with a carriage return", args: []string{tr.carriage}},
-		{name: "name with a tab is not escaped", args: []string{sumFile(t, tr.dir, "ta\tb", "x\n")}},
+		{name: "name with a tab is not escaped", args: []string{digestFile(t, tr.dir, "ta\tb", "x\n")}},
 		{name: "name with a space is not escaped", args: []string{tr.spaced}},
 		{name: "name with a quote is not escaped", args: []string{tr.quoted}},
 		{name: "name that is not valid UTF-8", args: []string{tr.raw}},
@@ -266,10 +266,10 @@ func computeCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
 }
 
 // The check half: the report, its summaries, and their exit statuses.
-func checkCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
+func checkCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	dir := tr.dir
-	mk := func(name, content string) string { return sumFile(t, dir, name, content) }
+	mk := func(name, content string) string { return digestFile(t, dir, name, content) }
 
 	ok := mk("c.ok", refOutput(t, spec.util, tr.a))
 	okBinary := mk("c.okb", refOutput(t, spec.util, "-b", tr.a))
@@ -392,7 +392,7 @@ func checkCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
 // The check-line grammar, which is looser than what the utility writes:
 // the separator rules, the length rules, the two shapes, and the three
 // escapes a name may carry.
-func grammarCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
+func grammarCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	dir := tr.dir
 	h := tr.hex
@@ -485,7 +485,7 @@ func grammarCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
 }
 
 // b2sum alone: -l, and the digest length a checksum line declares.
-func lengthCases(t *testing.T, spec sumSpec, tr sumTree) []invocation {
+func lengthCases(t *testing.T, spec digestSpec, tr digestTree) []invocation {
 	t.Helper()
 	dir := tr.dir
 	n := 0
