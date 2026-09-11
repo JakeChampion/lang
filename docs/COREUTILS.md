@@ -40,6 +40,15 @@ set to the utility name, the Fern binary and the GNU binary produce:
   SIGPIPE on both sides, and the harness checks that it does);
 - for utilities that touch the filesystem, the same resulting tree.
 
+A case may also name a `umask`, for a utility whose answer is the creation
+mask applied to something. `mkdir` is what needs it: the whole subject is which
+mode a directory ends up with, and `-m` changes which CLAUSES of a MODE the mask
+still reaches rather than switching it off. A mask is process-global state a
+child inherits at fork and cannot be set per-child, so a case naming one runs
+with every other case excluded and the mask is restored before the next starts;
+every other case holds the read side of the same lock and they still run
+concurrently, which the self-host leg needs.
+
 A case may also name a `mask`, for the one utility whose correct answer
 differs run to run: `mktemp`'s whole output is a run of random characters.
 The mask rewrites that run BY POSITION on stdout and in the names of the
@@ -297,6 +306,24 @@ coreutils/
                     set consulted from the twenty-FIRST link rather
                     than a depth limit, so a 5000-link chain resolves
                     and a cycle's residue depends on its LENGTH
+  lib/mode.fern     the MODE operand `chmod` and every option spelled
+                    "as in chmod" share — `mkdir -m` is the first
+                    caller. The clause grammar, with the three rules no
+                    man page states (a numeric perm takes no who and
+                    ENDS its clause, so `=7,u+r` is two clauses and
+                    `=7=7` is nothing; the `[ugo]` copy form must end an
+                    action, so `u=g+w` parses and `u=gr` does not; and
+                    `s` reaches S_ISUID through `u` and S_ISGID through
+                    `g` while `t` reaches S_ISVTX through `o`, so `u+t`
+                    and `o+s` change nothing); the arithmetic against a
+                    creation mask, which reaches a clause that named no
+                    who and nothing else, and not even that one when the
+                    perm is numeric; and `=` on a DIRECTORY keeping the
+                    set-user-ID and set-group-ID bits the entry already
+                    had. The two outputs beside the mode are what
+                    `mkdir` decides its post-creation chmod from: the
+                    bits the MODE MENTIONED, and whether the change went
+                    near the set-id pair with `+` or `-`
   lib/blocks.fern   the SIZE argument du and df share, and the number
                     it scales: the two alphabets — which are not the
                     set of letters that scale — and the three
@@ -1121,6 +1148,28 @@ anything, the second drains a tree and ignores a missing target — and the
 errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
+
+**`mkdir -Z` and `mkdir --context[=CTX]` on a kernel that HAS SELinux.** GNU
+sets a security context and no primitive here can, so the option is refused —
+`setting a security context is not supported on this system`, exit 1 — rather
+than quietly ignored, which is the answer `runcon` gives for running a command
+in a context. No machine the corpus runs on has SELinux, so the compared path is
+the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
+(`-Z`, a bare `--context`) and carries on.
+
+**`mkdir`'s post-creation chmod failing is the one wording in the utility the
+reference binary has never been made to print.** A directory this process just
+created is one it owns and may chmod — a setgid one in a group it does not
+belong to included, measured as an ordinary user against a setgid parent — so
+the path looks unreachable and `cannot change permissions of 'NAME': <strerror>`
+is unverified. It is flagged as a guess in a comment at the call site.
+
+**`mkdir -p`'s "can I enter this ancestor" check is `stat` of `dir/.` where
+GNU's is a `chdir`.** The two answer identically for every errno the corpus
+reaches — success, EACCES, ENOENT, ENOTDIR, ELOOP, measured as root and as an
+ordinary user — but the name asked about is two bytes longer, so a path within
+two bytes of PATH_MAX could answer ENAMETOOLONG where GNU's would not. Fern has
+no chdir builtin, and one was judged too narrow a reason to add it.
 
 **`df --sync` does not sync.** GNU calls `sync(2)` before it measures, so its
 numbers are post-writeback. Fern has no such builtin — no `sync`, `fsync` or
