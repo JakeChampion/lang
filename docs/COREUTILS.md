@@ -40,6 +40,13 @@ set to the utility name, the Fern binary and the GNU binary produce:
   SIGPIPE on both sides, and the harness checks that it does);
 - for utilities that touch the filesystem, the same resulting tree.
 
+A case may also name a `timeout`, which exists because the REFERENCE does not
+always terminate. GNU `expr bba : '\(b\|\|a\)\?*'` never returns — two of
+them were found at 95% CPU eighteen minutes after the sweep that started them
+was killed — so an unbounded differential run hangs instead of naming the input
+that hung it. The bound is per-invocation and zero everywhere else, so no
+existing case changes behaviour.
+
 A case may also name a `umask`, for a utility whose answer is the creation
 mask applied to something. `mkdir` is what needs it: the whole subject is which
 mode a directory ends up with, and `-m` changes which CLAUSES of a MODE the mask
@@ -1148,6 +1155,27 @@ anything, the second drains a tree and ignores a missing target — and the
 errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
+
+**`expr`'s empty alternation branch inside a COUNTED repetition follows no
+branch order at all.** glibc demotes a branch that compiles to nothing — `expr
+aa : '\(\|a\)a*'` reports the empty string, not `a` — and `bre.fern` now does
+the same, which fixed 34 inputs. Inside `\{m,n\}` that rule stops applying and
+nothing replaces it. Measured: `a : \(\|a\)\{2\}` is empty (demoted),
+`\{2,3\}` is `a` (written order), `\{1,3\}` is empty, `\{1,2\}` is `a`; and
+`aa : \(\|a\)\{1,2\}a*` is `a` where the same pattern without the trailing
+`a*` is not. So it is not monotonic in the bound AND the rest of the pattern
+decides, which means no compile-time branch order can express it.
+`compile_rep` therefore compiles its body with the demotion off, leaving that
+family answering exactly as it did before — 27 inputs still disagree with GNU,
+all of them this shape, all pre-existing. #9092 §7 has the measurements.
+
+Applying the demotion uniformly was tried and rejected: it fixed 8 more inputs
+and broke 6, which is a worse trade than leaving a known shape alone.
+
+The other six shapes in #9092 are GNU behaving worse than Fern — a SIGSEGV on
+`expr "" : '\(\)\1\{2\}*'`, a non-terminating match on
+`expr bba : '\(b\|\|a\)\?*'`, and four no-matches where Fern finds one.
+Those are deliberately NOT reproduced.
 
 **`mkdir -Z` and `mkdir --context[=CTX]` on a kernel that HAS SELinux.** GNU
 sets a security context and no primitive here can, so the option is refused —
