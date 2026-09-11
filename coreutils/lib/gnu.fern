@@ -1585,3 +1585,236 @@ pub function sole_help_version_with(argv: string[], name: string, help_text: str
     print_version(name, status, fail_status);
   }
 }
+
+// ---- file names ------------------------------------------------------------
+//
+// gnulib's name splitting, which is not the shell's: trailing slashes
+// belong to the component they follow, so `base_name("x/")` is `x` and
+// `dir_name("x/y/")` is `x`.
+function is_slash(c: u8): boolean {
+  return c as i32 == 47;
+}
+
+// `base_name(s)` — the last component of `s`, trailing slashes dropped.
+// A name that is nothing but slashes is `/`, and the empty name stays
+// empty.
+pub function base_name(s: string): string {
+  var end: i32 = s.len();
+  while (end > 0 && is_slash(s[end - 1])) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    if (s.len() > 0) {
+      return "/";
+    }
+    return "";
+  }
+  var start: i32 = end;
+  while (start > 0 && !is_slash(s[start - 1])) {
+    start = start - 1;
+  }
+  return slice_unchecked(s, start, end) + "";
+}
+
+// `dir_name(s)` — everything before `base_name`'s component, `.` when
+// there is none.
+pub function dir_name(s: string): string {
+  var end: i32 = s.len();
+  while (end > 0 && is_slash(s[end - 1])) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    if (s.len() > 0) {
+      return "/";
+    }
+    return ".";
+  }
+  var i: i32 = end;
+  while (i > 0 && !is_slash(s[i - 1])) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return ".";
+  }
+  while (i > 0 && is_slash(s[i - 1])) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return "/";
+  }
+  return slice_unchecked(s, 0, i) + "";
+}
+
+// `join_path(dir, name)` — the two joined with exactly ONE slash
+// however many the directory ends with: `ln -t 'd///' s/f` makes `d/f`,
+// not `d///f`.
+pub function join_path(dir: string, name: string): string {
+  var end: i32 = dir.len();
+  while (end > 1 && is_slash(dir[end - 1])) {
+    end = end - 1;
+  }
+  var head: string = slice_unchecked(dir, 0, end) + "";
+  if (head.len() > 0 && is_slash(head[head.len() - 1])) {
+    return head + name;
+  }
+  return head + "/" + name;
+}
+
+// `strip_slashes(s)` — `s` with its trailing slashes removed, which is
+// what `mv --strip-trailing-slashes` does to each source operand. A
+// name that is nothing but slashes keeps one, so `//` is `/`.
+pub function strip_slashes(s: string): string {
+  var end: i32 = s.len();
+  while (end > 1 && is_slash(s[end - 1])) {
+    end = end - 1;
+  }
+  return slice_unchecked(s, 0, end) + "";
+}
+
+// Where `s`'s last component starts — gnulib's last_component, which is
+// NOT `base_name`: trailing slashes belong to the component here, so
+// `x/`'s last component is `x/` and `/`'s is empty.
+function last_component_start(s: string): i32 {
+  var i: i32 = 0;
+  while (i < s.len() && is_slash(s[i])) {
+    i = i + 1;
+  }
+  var last: i32 = i;
+  var after_slash: boolean = false;
+  while (i < s.len()) {
+    if (is_slash(s[i])) {
+      after_slash = true;
+    } else if (after_slash) {
+      last = i;
+      after_slash = false;
+    }
+    i = i + 1;
+  }
+  return last;
+}
+
+// ---- backups ---------------------------------------------------------------
+//
+// The `--backup` family gnulib gives every utility that replaces a
+// destination: four controls, eight names for them, and the scan that
+// picks the next `NAME.~N~`.
+pub function backup_none(): i32 {
+  return 0;
+}
+
+pub function backup_simple(): i32 {
+  return 1;
+}
+
+pub function backup_existing(): i32 {
+  return 2;
+}
+
+pub function backup_numbered(): i32 {
+  return 3;
+}
+
+// The eight names, in gnulib's declaration order — which is visible,
+// because the invalid-argument list prints them in it.
+pub function backup_names(): string[] {
+  return ["none", "off", "simple", "never", "existing", "nil", "numbered", "t"];
+}
+
+pub function backup_values(): i32[] {
+  return [backup_none(), backup_none(), backup_simple(), backup_simple(), backup_existing(), backup_existing(), backup_numbered(), backup_numbered()];
+}
+
+// `usable_suffix(s)` — whether `-S s` / `$SIMPLE_BACKUP_SUFFIX` is one a
+// backup name may be built from. A suffix is taken only when it IS its
+// own last component, so `-S 'x/y'`, `-S '/x'` and `-S '/'` are ignored
+// and `~` is used. `-S 'x/'` passes the test, and the backup name it
+// builds ends in a slash — which is how `ln -b -S x/ a b` reaches
+// `cannot backup 'b': Not a directory`.
+pub function usable_suffix(s: string): boolean {
+  return s.len() > 0 && last_component_start(s) == 0;
+}
+
+// The N in `NAME.~N~`, or -1 when `entry` is not one of NAME's numbered
+// backups. A leading zero disqualifies it — `b.~09~` is not a backup of
+// `b` and does not raise the next number.
+function numbered_index(entry: string, name: string): i32 {
+  var head: string = name + ".~";
+  if (!entry.starts_with(head) || !entry.ends_with("~")) {
+    return 0 - 1;
+  }
+  var start: i32 = head.len();
+  var end: i32 = entry.len() - 1;
+  if (end <= start) {
+    return 0 - 1;
+  }
+  if (entry[start] as i32 == 48 && end - start > 1) {
+    return 0 - 1;
+  }
+  var n: i32 = 0;
+  var i: i32 = start;
+  while (i < end) {
+    if (!is_digit(entry[i] as i32)) {
+      return 0 - 1;
+    }
+    n = n * 10 + (entry[i] as i32 - 48);
+    i = i + 1;
+  }
+  return n;
+}
+
+// The highest N over `dir`'s `NAME.~N~` entries, or -1 when there is
+// none. A DIRECTORY named that way counts: the scan reads names.
+function highest_numbered(dir: string, name: string): i32 {
+  var best: i32 = 0 - 1;
+  match (read_dir(dir)) {
+    Ok(entries) => {
+      var i: i32 = 0;
+      while (i < entries.len()) {
+        var n: i32 = numbered_index(entries[i], name);
+        if (n > best) {
+          best = n;
+        }
+        i = i + 1;
+      }
+    },
+    Err(_) => {}
+  }
+  return best;
+}
+
+// `backup_name(dest, control, suffix)` — the name the existing `dest` is
+// moved to. `existing` picks numbered only when a numbered backup of
+// this name is already there.
+pub function backup_name(dest: string, control: i32, suffix: string): string {
+  var c: i32 = control;
+  if (c == backup_existing()) {
+    if (highest_numbered(dir_name(dest), base_name(dest)) >= 0) {
+      c = backup_numbered();
+    } else {
+      c = backup_simple();
+    }
+  }
+  if (c == backup_numbered()) {
+    // The first numbered backup is `.~1~`, so a directory with none in
+    // it starts there rather than one past the -1 the scan reports.
+    var n: i32 = highest_numbered(dir_name(dest), base_name(dest));
+    if (n < 0) {
+      n = 0;
+    }
+    return dest + ".~" + (n + 1).to_string() + "~";
+  }
+  return dest + suffix;
+}
+
+// `yesno()` — glibc's yesno(): one line from stdin, yes when it starts
+// with `y` or `Y` in the C locale. End of input is no.
+pub function yesno(): boolean {
+  match (read_line()) {
+    Some(l) => {
+      return l.len() > 0 && (l[0] as i32 == 121 || l[0] as i32 == 89);
+    },
+    None => {
+      return false;
+    }
+  }
+}
