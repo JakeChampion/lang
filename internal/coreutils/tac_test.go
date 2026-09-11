@@ -148,6 +148,14 @@ func tacCases(t *testing.T) []invocation {
 		{name: "intervals are literal braces", args: []string{"-r", "-s", "x\\{1,2\\}", xs}},
 		{name: "alternation is backslashed", args: []string{"-r", "-s", "1\\|22", digits}},
 		{name: "bare bar is a literal", args: []string{"-r", "-s", "1|22", digits}},
+		// The backward scan tests each start against one literal per
+		// branch, so a branch without one has to turn that test off.
+		{name: "alternation matching neither branch", args: []string{"-r", "-s", "zz\\|qq", xs}},
+		{name: "alternation of unequal literals", args: []string{"-r", "-s", "xx\\|b", xs}},
+		{name: "alternation with a class branch", args: []string{"-r", "-s", "zz\\|[0-9]", digits}},
+		{name: "alternation with an empty branch", args: []string{"-r", "-s", "zz\\|", xs}},
+		{name: "alternation with a class before a literal", args: []string{"-r", "-s", "zz\\|[0-9]2", digits}},
+		{name: "alternation across blocks", args: []string{"-r", "-s", "55\\|zz", b16385}},
 		{name: "regex group", args: []string{"-r", "-s", "\\(x\\)", xs}},
 		{name: "regex backreference", args: []string{"-r", "-s", "\\(x\\)\\1", xs}},
 		{name: "bracket expression", args: []string{"-r", "-s", "[123]", digits}},
