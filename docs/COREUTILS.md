@@ -874,7 +874,7 @@ for three different reasons:
   is a table too, so the Fern-to-uutils ratio (0.60×) is the codegen
   comparison and the 0.04× is not. Closing it needs the instruction, and
   `pclmulqdq` is inside the Haswell baseline — this is the first workload
-  here that wants a SIMD intrinsic rather than better scalar code.
+  here that wants a SIMD intrinsic rather than better scalar code. #9056.
 - **The digest rows are #8782 again**, unchanged by anything cksum does: the
   driver is the same `lib/digest.fern` the seven `*sum` utilities run, and
   raising the read block moves nothing. `sha256` is 0.12× because GNU is on
@@ -885,7 +885,9 @@ for three different reasons:
   byte with no table, and `bsd` at 0.87× is the closest any throughput row in
   this document comes to GNU without a hardware instruction on either side.
   `sysv` at 0.17× is the outlier: GNU's is a plain `sum += *p` that a C
-  compiler auto-vectorises, and nothing in `std/hash` does.
+  compiler auto-vectorises, and nothing in `std/hash` does — #9056 again,
+  and the cheap half of it (a slice-by-N CRC table, which needs nothing
+  from the backend) is there too.
 
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.
