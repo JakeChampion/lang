@@ -19932,6 +19932,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             // local array `a` previously freed `a` here while the returned box still
             // referenced it. Everything else is released as usual.
             var moved_slots: i32[] = returned_moved_arr_slots(r.value, se, []);
+            moved_slots = returned_own_struct_param_slot(r.value, se, moved_slots);
             se = emit_consumed_param_exit(se, r.value, true);
             se = emit_dec_sweep_except_list(se, moved_slots);
             return se.emit(ir.op_return());
@@ -31852,6 +31853,28 @@ function field_type_is_reclaimable_ptr(t: string): boolean {
     if (t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8"
         || t == "f64" || t == "f32" || t == "float" || t == "boolean") { return false; }
     return true;
+}
+
+// returned_own_struct_param_slot keeps a bare-returned `own` struct PARAM from
+// this exit's sweep. The box is handed to the caller uncounted — there is no
+// return-transfer retain for structs — so eliding this exit's release IS the
+// move, the same accounting returned_moved_arr_slots applies to a returned
+// array local. Without it the caller's fresh-ret release and the OWNREL row
+// are two claims on one box. Scoped to struct params carrying a release row,
+// so array params and every other keep consumer are unaffected (#8628).
+function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]): i32[] {
+    match (e) {
+        ast.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (sl < 0 || sl >= s.frame.n_params) { return acc; }
+            if (!reclaim_has(s.frame.reclaimable_names, "OWNREL:", id.name)
+                && !reclaim_has(s.frame.reclaimable_names, "OWNRELB:", id.name)) { return acc; }
+            if (slot_list_has(acc, sl)) { return acc; }
+            return acc.append(sl);
+        },
+        _ => { return acc; }
+    }
+    return acc;
 }
 
 // returned_moved_arr_slots collects every array-LOCAL slot that the returned
@@ -64595,10 +64618,14 @@ function own_param_names_of(fn: parser.FuncDecl): string[] {
 
 // own_struct_param_release_rows_of names the `own` struct parameters this frame
 // still OWNS at every exit, so the sweep releases them: the caller moved its
-// reference in, and a param that is never returned bare, aliased, stored, passed
-// to a non-borrowable position or handed back through a result has no other
-// owner when the frame ends. A donating reuse site (the own-param families, the
+// reference in, and a param that is never aliased, stored, passed to a
+// non-borrowable position or handed back through a result has no other owner
+// when the frame ends. A donating reuse site (the own-param families, the
 // `$ownret` update) zeroes the slot it takes, so the release finds null there.
+//
+// A `return p` exit is not a disqualifier: the row is granted and that ONE exit
+// elides its release (returned_own_struct_param_slot), which is the move — a
+// sibling exit that supersedes p with a new box still releases it (#8628).
 //
 // "OWNREL:<name>" releases deep — the routed field walk under the box's rc==1
 // gate, then the box dec; "OWNRELB:<name>" is box-only, for a param whose
@@ -64615,8 +64642,8 @@ function own_struct_param_release_rows_of(fn: parser.FuncDecl, reassigned: strin
         if (!pd.own || !decl_is_struct(structs, ty) || !decl_is_leaksafe(structs, ty)) { continue; }
         if (local_decl_count(fn.body, nm) != 0) { continue; }
         if (util.index_of_str(reassigned, nm) >= 0 && util.index_of_str(upd, nm) < 0) { continue; }
-        if (body_unsafe_for(fn.body, nm, borrowable, recv_borrow)) { continue; }
-        if (struct_returned_bare(fn.body, nm)) { continue; }
+        var no_alias_ok: string[] = [];
+        if (body_unsafe_for_alias_ret_ok(fn.body, nm, borrowable, recv_borrow, no_alias_ok, true)) { continue; }
         if (struct_arg_to_handback(fn.body, nm, handback)) { continue; }
         if (recv_borrow_escapes_via_result(recv_borrow, ty, fn.body, nm, borrowable)) { continue; }
         var nomove: string[] = recv_borrow_methods_of(recv_borrow, ty);
