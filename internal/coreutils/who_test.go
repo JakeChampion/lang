@@ -170,6 +170,13 @@ func whoCases(t *testing.T) []invocation {
 	stale := whoTerminal(t, term, "c", 0o600)
 	future := whoTerminal(t, term, "d", 0o600)
 	justOver := whoTerminal(t, term, "e", 0o666)
+	// The message column is S_IWGRP alone, and every mode above sets
+	// S_IRGRP and S_IWGRP together or clears both — so they cannot tell
+	// the two bits apart, and reading the wrong one was invisible here
+	// while being wrong on every real terminal, which is 0620. These two
+	// separate them.
+	mesgOnly := whoTerminal(t, term, "f", 0o620)
+	readOnly := whoTerminal(t, term, "g", 0o640)
 	gone := filepath.Join(term, "nosuch")
 	idle := utmpFile(t, dir, "idle",
 		utmpRec{typ: utUserProcess, pid: 100, line: writable, user: "u0", host: "h", sec: utmpWhen},
@@ -178,6 +185,8 @@ func whoCases(t *testing.T) []invocation {
 		utmpRec{typ: utUserProcess, pid: 103, line: future, user: "u3", host: "h", sec: utmpWhen},
 		utmpRec{typ: utUserProcess, pid: 104, line: justOver, user: "u4", host: "h", sec: utmpWhen},
 		utmpRec{typ: utUserProcess, pid: 105, line: gone, user: "u5", host: "h", sec: utmpWhen},
+		utmpRec{typ: utUserProcess, pid: 106, line: mesgOnly, user: "u6", host: "h", sec: utmpWhen},
+		utmpRec{typ: utUserProcess, pid: 107, line: readOnly, user: "u7", host: "h", sec: utmpWhen},
 	)
 	// The idle time is counted from a boot record SEEN SO FAR, so a
 	// session listed above the boot that follows it is `old` however
@@ -202,6 +211,8 @@ func whoCases(t *testing.T) []invocation {
 			{stale, now.Add(-25 * time.Hour)},
 			{future, now.Add(100 * time.Hour)},
 			{justOver, now.Add(-90 * time.Second)},
+			{mesgOnly, now},
+			{readOnly, now},
 		} {
 			if err := os.Chtimes(s.path, s.at, s.at); err != nil {
 				t.Fatal(err)

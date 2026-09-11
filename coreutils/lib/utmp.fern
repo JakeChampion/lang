@@ -265,8 +265,10 @@ pub struct Line { present: boolean, writable: boolean, atime: i64 }
 pub function line_info(l: string): Line {
   match (stat(device_path(l))) {
     Ok(st) => {
-      // S_IWGRP is 0o20 — the bit `mesg y` sets and `mesg n` clears.
-      return Line { present: true, writable: (st.mode & 32 as u32) != 0 as u32, atime: st.atime };
+      // S_IWGRP is 0o20, which is 16 — the bit `mesg y` sets and `mesg n`
+      // clears. 32 is 0o40, S_IRGRP, and a terminal at the usual 0620 has
+      // one set and the other clear.
+      return Line { present: true, writable: (st.mode & 16 as u32) != 0 as u32, atime: st.atime };
     },
     Err(_) => {
       return Line { present: false, writable: false, atime: 0 };
