@@ -1081,7 +1081,9 @@ that and is a wash, which is what places the cost on the per-byte load.
 
 `cksum`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as
 the Debian multi-call binary). The same 62 MiB / 8 000 000-line file the
-digest table uses, and the `-c` workload is the same 500 small files:
+digest table uses, and the `-c` workload is the same 500 small files. **The
+two CRC rows and `--raw` predate the slicing-by-8 table** (#9056) and are
+kept as the before side of it; the re-measure is the block under this table.
 
 | utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
 |---|---|---|---|---|---|---|
@@ -1103,25 +1105,40 @@ for three different reasons:
 - **The CRC rows are the worst in this document, and the cause is one
   instruction.** GNU's 14 ms over 62 MiB is 0.23 ns a byte, which no
   byte-at-a-time loop reaches: it folds the message with `pclmulqdq`, the
-  carry-less multiply, sixteen bytes at a time. `std/hash`'s `Cksum` is the
-  ordinary slice-by-one table, and 331 ms is what that costs. uutils' 199 ms
-  is a table too, so the Fern-to-uutils ratio (0.60×) is the codegen
-  comparison and the 0.04× is not. Closing it needs the instruction, and
-  `pclmulqdq` is inside the Haswell baseline — this is the first workload
-  here that wants a SIMD intrinsic rather than better scalar code. #9056.
+  carry-less multiply, sixteen bytes at a time. uutils' 199 ms is a table,
+  so the Fern-to-uutils ratio is the codegen comparison and the ratio
+  against GNU is not. `std/hash`'s `Cksum` is now a slicing-by-8 table,
+  which closed the uutils half; closing the GNU half still needs the
+  instruction, and `pclmulqdq` is inside the Haswell baseline — this is the
+  first workload here that wants a SIMD intrinsic rather than better scalar
+  code. #9056.
 - **The digest rows are #8782 again**, unchanged by anything cksum does: the
   driver is the same `lib/digest.fern` the seven `*sum` utilities run, and
   raising the read block moves nothing. `sha256` is 0.12× because GNU is on
   SHA-NI, a hardware instruction, so that row is not a codegen comparison
   either; `blake2b` at 0.45× and `sm3` at 0.44× are, and they are the same
   4× gap `b2sum` measures against plain portable C.
+The slicing-by-8 re-measure, 2026-09-11, **macOS arm64 (Apple Silicon), a
+different machine from the table above and not comparable to it row for
+row** — all four columns come from one hyperfine run on that machine, over
+the same 62 MiB / 8 000 000-line file, GNU coreutils 9.10 and uutils 0.6.0.
+Taken under load from other agents on the same box, so the σ is wide:
+
+| workload | fern before (ms) | fern after (ms) | gnu (ms) | uutils (ms) | gnu / fern after | uutils / fern after |
+|---|---|---|---|---|---|---|
+| `cksum` of a 62 MiB file | 347.1 ± 31.6 | 210.2 ± 17.9 | 40.6 ± 3.8 | 287.9 ± 128.1 | 0.19× | 1.37× |
+
+1.65× on the CRC, and it moves the utility from behind uutils to ahead of
+it. Slicing-by-16 was measured in the same pass and is a wash (180.5 ms of
+user time against 183.0 over 40 runs), so the table stays at eight and does
+not pay for 4096 entries per hasher.
+
 - **`sysv` and `bsd` are the interesting middle.** Both are a sum over every
   byte with no table, and `bsd` at 0.87× is the closest any throughput row in
   this document comes to GNU without a hardware instruction on either side.
   `sysv` at 0.17× is the outlier: GNU's is a plain `sum += *p` that a C
-  compiler auto-vectorises, and nothing in `std/hash` does — #9056 again,
-  and the cheap half of it (a slice-by-N CRC table, which needs nothing
-  from the backend) is there too.
+  compiler auto-vectorises, and nothing in `std/hash` does. That wants a
+  byte-sum kernel in the `__count_byte` family — #9052.
 
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.
