@@ -1,0 +1,2109 @@
+// du.fern — GNU-compatible `du`.
+//
+//   du [OPTION]... [FILE]...
+//   du [OPTION]... --files0-from=F
+//
+// Disk usage, summed post-order over each operand's tree and printed in
+// raw readdir order — du does not sort, and a directory's line follows
+// the lines of everything inside it.
+//
+// Four things about this are not obvious from the synopsis:
+//
+//   - The quantity is `st_blocks * 512`, so it is what the filesystem
+//     ALLOCATED. `--apparent-size` / `-b` switch to `st_size`, and a
+//     DIRECTORY then counts as zero rather than as its own st_size.
+//   - Every inode is counted and printed at most once per run, files
+//     with a single link included and across operands: `du -s a a`
+//     prints one line. The same set is what silently stops a symlink
+//     loop under `-L`, and `-l` turns the whole mechanism off.
+//   - A trailing slash on an operand collapses to exactly ONE in that
+//     operand's own line while its children are named with all of them
+//     stripped, and on a SYMLINK it forces traversal even under the
+//     default `-P`, because the kernel resolves `slink/` for lstat.
+//   - Every unit option — `-h` `--si` `-k` `-m` `-B` `-b` — is last
+//     wins, except that `-b`'s apparent-size half survives a later
+//     unit change.
+//
+// A failed operand or an unreadable directory costs the exit status and
+// not the run: the walk continues, and the directory still gets a line
+// of its own.
+//
+// Timestamps (`--time`) are rendered in UTC. Reading the zone — TZ and
+// the TZif files glibc's localtime consults — is a shared piece the
+// utilities that print times all need and it is not written yet
+// (#9076); the parity gate pins TZ=UTC, so every case there is exact.
+import "std/string";
+import "std/array";
+import "std/u64";
+import "std/i64";
+import "std/io_buffered";
+import "core/map";
+import "./lib/gnu";
+
+function opt_null(): i32 {
+  return 1;
+}
+
+function opt_all(): i32 {
+  return 2;
+}
+
+function opt_apparent(): i32 {
+  return 3;
+}
+
+function opt_block_size(): i32 {
+  return 4;
+}
+
+function opt_bytes(): i32 {
+  return 5;
+}
+
+function opt_total(): i32 {
+  return 6;
+}
+
+function opt_dereference(): i32 {
+  return 7;
+}
+
+function opt_dereference_args(): i32 {
+  return 8;
+}
+
+function opt_max_depth(): i32 {
+  return 9;
+}
+
+function opt_files0(): i32 {
+  return 10;
+}
+
+function opt_human(): i32 {
+  return 11;
+}
+
+function opt_inodes(): i32 {
+  return 12;
+}
+
+function opt_count_links(): i32 {
+  return 13;
+}
+
+function opt_no_dereference(): i32 {
+  return 14;
+}
+
+function opt_si(): i32 {
+  return 15;
+}
+
+function opt_separate_dirs(): i32 {
+  return 16;
+}
+
+function opt_summarize(): i32 {
+  return 17;
+}
+
+function opt_threshold(): i32 {
+  return 18;
+}
+
+function opt_time(): i32 {
+  return 19;
+}
+
+function opt_time_style(): i32 {
+  return 20;
+}
+
+function opt_exclude(): i32 {
+  return 21;
+}
+
+function opt_exclude_from(): i32 {
+  return 22;
+}
+
+function opt_one_file_system(): i32 {
+  return 23;
+}
+
+function opt_kilo(): i32 {
+  return 24;
+}
+
+function opt_mega(): i32 {
+  return 25;
+}
+
+function opt_deref_args_h(): i32 {
+  return 26;
+}
+
+// The three symlink modes -L / -D / -P choose between; they are one
+// setting and the last one typed wins.
+function deref_none(): i32 {
+  return 0;
+}
+
+function deref_args(): i32 {
+  return 1;
+}
+
+function deref_all(): i32 {
+  return 2;
+}
+
+// Which stat timestamp `--time` shows.
+function time_none(): i32 {
+  return 0 - 1;
+}
+
+function time_mtime(): i32 {
+  return 0;
+}
+
+function time_atime(): i32 {
+  return 1;
+}
+
+function time_ctime(): i32 {
+  return 2;
+}
+
+// `Conf` — every decision the option scan makes, read by the walk.
+//
+// The unit is `human` when that is non-zero (the count is scaled by
+// powers of it) and `block_size` otherwise (the count is divided by it,
+// rounding UP). `suffix` is what a bare `-BK` prints after each number,
+// derived from the final divisor rather than echoed from the spec —
+// which is why `--inodes -BKiB` prints `B` and not `KiB`.
+pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: string, excludes: string[], one_file_system: boolean, terminator: string }
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: du [OPTION]... [FILE]...\n";
+  out = out + "  or:  du [OPTION]... --files0-from=F\n";
+  out = out + "Summarize device usage of the set of FILEs, recursively for directories.\n";
+  out = out + "\n";
+  out = out + "  -0, --null            end each output line with NUL, not newline\n";
+  out = out + "  -a, --all             write counts for all files, not just directories\n";
+  out = out + "      --apparent-size   print apparent sizes rather than device usage\n";
+  out = out + "  -B, --block-size=SIZE  scale sizes by SIZE before printing them\n";
+  out = out + "  -b, --bytes           equivalent to '--apparent-size --block-size=1'\n";
+  out = out + "  -c, --total           produce a grand total\n";
+  out = out + "  -D, --dereference-args  dereference only symlinks listed on the command line\n";
+  out = out + "  -d, --max-depth=N     print the total for a directory only if it is N or\n";
+  out = out + "                          fewer levels below the command line argument\n";
+  out = out + "      --files0-from=F   summarize device usage of the NUL-terminated file\n";
+  out = out + "                          names specified in file F; if F is -, read stdin\n";
+  out = out + "  -H                    equivalent to --dereference-args (-D)\n";
+  out = out + "  -h, --human-readable  print sizes in human readable format\n";
+  out = out + "      --inodes          list inode usage information instead of block usage\n";
+  out = out + "  -k                    like --block-size=1K\n";
+  out = out + "  -L, --dereference     dereference all symbolic links\n";
+  out = out + "  -l, --count-links     count sizes many times if hard linked\n";
+  out = out + "  -m                    like --block-size=1M\n";
+  out = out + "  -P, --no-dereference  don't follow any symbolic links (this is the default)\n";
+  out = out + "  -S, --separate-dirs   for directories do not include size of subdirectories\n";
+  out = out + "      --si              like -h, but use powers of 1000 not 1024\n";
+  out = out + "  -s, --summarize       display only a total for each argument\n";
+  out = out + "  -t, --threshold=SIZE  exclude entries smaller than SIZE if positive,\n";
+  out = out + "                          or entries greater than SIZE if negative\n";
+  out = out + "      --time            show time of the last modification of any file in\n";
+  out = out + "                          the directory, or any of its subdirectories\n";
+  out = out + "      --time=WORD       show time as WORD instead of modification time:\n";
+  out = out + "                          atime, access, use, ctime or status\n";
+  out = out + "      --time-style=STYLE  show times using STYLE, which can be full-iso,\n";
+  out = out + "                          long-iso, iso, or +FORMAT\n";
+  out = out + "  -X, --exclude-from=FILE  exclude files that match any pattern in FILE\n";
+  out = out + "      --exclude=PATTERN    exclude files that match PATTERN\n";
+  out = out + "  -x, --one-file-system    skip directories on different file systems\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// ---- SIZE arguments --------------------------------------------------------
+// The alphabet a SIZE argument's suffix letter has to be in, which is
+// not the same question as whether the letter has a scale. The two
+// alphabets differ, and neither is the set of letters that scale:
+//
+//   -B  e E g G k K m M p P t T y Y z Z   — p / e / z / y are in it and
+//                                           have no power, so `-Bp` is
+//                                           an invalid SUFFIX while
+//                                           `-BR` is an invalid ARGUMENT
+//   -t  k K m M G T P E Z Y R Q           — R and Q are here and not
+//                                           there, and the lowercase
+//                                           g / t are the other way round
+//
+// A letter outside the alphabet with no digits in front of it is not a
+// suffix at all, which is what makes the two diagnostics differ.
+function valid_suffix(c: i32, wide: boolean): boolean {
+  if (wide) {
+    return c == 107 || c == 75 || c == 109 || c == 77 || c == 71 || c == 84 || c == 80 || c == 69 || c == 90 || c == 89 || c == 82 || c == 81;
+  }
+  return c == 101 || c == 69 || c == 103 || c == 71 || c == 107 || c == 75 || c == 109 || c == 77 || c == 112 || c == 80 || c == 116 || c == 84 || c == 121 || c == 89 || c == 122 || c == 90;
+}
+
+// The power of the base a suffix letter stands for, or 0 for a letter
+// that has none. `b` (512) and `B` (1024) are deliberately absent: du
+// admits neither into either alphabet.
+function suffix_power(c: i32): i32 {
+  if (c == 107 || c == 75) {
+    return 1;
+  }
+  if (c == 109 || c == 77) {
+    return 2;
+  }
+  if (c == 103 || c == 71) {
+    return 3;
+  }
+  if (c == 116 || c == 84) {
+    return 4;
+  }
+  if (c == 80) {
+    return 5;
+  }
+  if (c == 69) {
+    return 6;
+  }
+  if (c == 90) {
+    return 7;
+  }
+  if (c == 89) {
+    return 8;
+  }
+  if (c == 82) {
+    return 9;
+  }
+  if (c == 81) {
+    return 10;
+  }
+  return 0;
+}
+
+// The canonical letter for a scaled power: uppercase for the powers of
+// 1024, and `k` alone lowercased for the powers of 1000 — the rule `-h`
+// and `--si` print under.
+function power_letter(p: i32, base: u64): string {
+  if (p <= 0) {
+    return "";
+  }
+  if (p == 1) {
+    if (base == 1000 as u64) {
+      return "k";
+    }
+    return "K";
+  }
+  if (p == 2) {
+    return "M";
+  }
+  if (p == 3) {
+    return "G";
+  }
+  if (p == 4) {
+    return "T";
+  }
+  if (p == 5) {
+    return "P";
+  }
+  if (p == 6) {
+    return "E";
+  }
+  if (p == 7) {
+    return "Z";
+  }
+  return "Y";
+}
+
+// `Num` — a parsed SIZE argument.
+//
+// `show_suffix` is set when the spec named a unit with no count (`K`),
+// which is also what makes du print that unit after every number;
+// `base` and `with_b` are how the unit is spelled back out.
+struct Num { value: u64, neg: boolean, base: u64, with_b: boolean, show_suffix: boolean, human: u64, status: i32 }
+
+function size_ok(): i32 {
+  return 0;
+}
+
+function size_invalid(): i32 {
+  return 1;
+}
+
+function size_bad_suffix(): i32 {
+  return 2;
+}
+
+function size_overflow(): i32 {
+  return 3;
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+// Multiply, reporting overflow rather than wrapping.
+function mul_checked(a: u64, b: u64): (u64, boolean) {
+  if (a == 0 as u64 || b == 0 as u64) {
+    return (0 as u64, false);
+  }
+  var p: u64 = a * b;
+  if (p / b != a) {
+    return (0 as u64, true);
+  }
+  return (p, false);
+}
+
+function hex_digit(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return 0 - 1;
+}
+
+// The digits of `s` from `start`, base 0: `0x` hexadecimal, a leading
+// `0` octal, anything else decimal. Returns (value, index just past the
+// digits, overflowed); the index is `start` when there are none.
+function scan_number(s: string, start: i32): (u64, i32, boolean) {
+  if (start + 1 < s.len() && s[start] as i32 == 48 && (s[start + 1] as i32 == 120 || s[start + 1] as i32 == 88)) {
+    var j: i32 = start + 2;
+    var hv: u64 = 0 as u64;
+    var hany: boolean = false;
+    var hover: boolean = false;
+    while (j < s.len()) {
+      var d: i32 = hex_digit(s[j] as i32);
+      if (d < 0) {
+        break;
+      }
+      hany = true;
+      var m: (u64, boolean) = mul_checked(hv, 16 as u64);
+      if (m.1) {
+        hover = true;
+      }
+      hv = m.0 + d as u64;
+      j = j + 1;
+    }
+    if (!hany) {
+      // `0x` with nothing after it is the digit 0 followed by `x`.
+      return (0 as u64, start + 1, false);
+    }
+    return (hv, j, hover);
+  }
+  var base: u64 = 10 as u64;
+  if (start < s.len() && s[start] as i32 == 48) {
+    base = 8 as u64;
+  }
+  var i: i32 = start;
+  var v: u64 = 0 as u64;
+  var any: boolean = false;
+  var over: boolean = false;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    var d: i32 = s[i] as i32 - 48;
+    if (base == 8 as u64 && d > 7) {
+      break;
+    }
+    any = true;
+    var m: (u64, boolean) = mul_checked(v, base);
+    if (m.1) {
+      over = true;
+    }
+    v = m.0 + d as u64;
+    i = i + 1;
+  }
+  if (!any) {
+    return (0 as u64, start, false);
+  }
+  return (v, i, over);
+}
+
+// The unit at `i`: a letter, optionally followed by `B` (powers of
+// 1000) or `iB` (powers of 1024). Returns (multiplier, base, status).
+function scan_unit(s: string, i: i32, wide: boolean): (u64, u64, i32) {
+  if (i >= s.len()) {
+    return (1 as u64, 1024 as u64, size_ok());
+  }
+  if (!valid_suffix(s[i] as i32, wide)) {
+    return (0 as u64, 0 as u64, size_bad_suffix());
+  }
+  var p: i32 = suffix_power(s[i] as i32);
+  if (p == 0) {
+    return (0 as u64, 0 as u64, size_bad_suffix());
+  }
+  var base: u64 = 1024 as u64;
+  var rest: i32 = i + 1;
+  if (rest < s.len() && s[rest] as i32 == 66) {
+    base = 1000 as u64;
+    rest = rest + 1;
+  } else if (rest + 1 < s.len() && s[rest] as i32 == 105 && s[rest + 1] as i32 == 66) {
+    rest = rest + 2;
+  }
+  if (rest != s.len()) {
+    return (0 as u64, 0 as u64, size_bad_suffix());
+  }
+  var m: u64 = 1 as u64;
+  var k: i32 = 0;
+  while (k < p) {
+    var r: (u64, boolean) = mul_checked(m, base);
+    if (r.1) {
+      return (0 as u64, base, size_overflow());
+    }
+    m = r.0;
+    k = k + 1;
+  }
+  return (m, base, size_ok());
+}
+
+function bad_num(status: i32): Num {
+  return Num { value: 0 as u64, neg: false, base: 1024 as u64, with_b: false, show_suffix: false, human: 0 as u64, status: status };
+}
+
+// `parse_num(spec, wide, words, signed)` — gnulib's SIZE grammar.
+//
+// An optional grouping apostrophe and the `human-readable` / `si`
+// spellings are the block-size half (`words`); `-t` takes neither and
+// takes a sign instead. A spec naming a unit with NO count (`K`) means
+// one of that unit, and for a block size it also prints the unit after
+// every number. The count may be preceded by blanks (` 1K` is 1024) but
+// a bare unit may not: ` K` is invalid.
+function parse_num(spec: string, wide: boolean, words: boolean, signed: boolean): Num {
+  var s: string = spec;
+  if (words) {
+    if (s.len() > 0 && s[0] as i32 == 39) {
+      s = slice_unchecked(s, 1, s.len()) + "";
+    }
+    if (s == "human-readable") {
+      return Num { value: 1 as u64, neg: false, base: 1024 as u64, with_b: false, show_suffix: false, human: 1024 as u64, status: size_ok() };
+    }
+    if (s == "si") {
+      return Num { value: 1 as u64, neg: false, base: 1000 as u64, with_b: false, show_suffix: false, human: 1000 as u64, status: size_ok() };
+    }
+  }
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  } else if (signed && i < s.len() && s[i] as i32 == 45) {
+    neg = true;
+    i = i + 1;
+  }
+  var n: (u64, i32, boolean) = scan_number(s, i);
+  var value: u64 = 1 as u64;
+  var bare: boolean = false;
+  var after: i32 = n.1;
+  if (n.1 == i) {
+    // No digits: a unit standing alone, which has to be at the front and
+    // in the alphabet. Outside it there is no suffix to be wrong about,
+    // so the whole argument is what the diagnostic names.
+    if (i != 0 || i >= s.len() || !valid_suffix(s[i] as i32, wide)) {
+      return bad_num(size_invalid());
+    }
+    bare = true;
+  } else {
+    if (n.2) {
+      return bad_num(size_overflow());
+    }
+    value = n.0;
+  }
+  var u: (u64, u64, i32) = scan_unit(s, after, wide);
+  if (u.2 != size_ok()) {
+    return bad_num(u.2);
+  }
+  var m: (u64, boolean) = mul_checked(value, u.0);
+  if (m.1) {
+    return bad_num(size_overflow());
+  }
+  // A block size of zero is refused where a threshold of zero is fine.
+  if (words && m.0 == 0 as u64) {
+    return bad_num(size_invalid());
+  }
+  var with_b: boolean = false;
+  if (after < s.len() && after + 1 < s.len() && s[after + 1] as i32 == 66) {
+    with_b = true;
+  }
+  if (after + 2 < s.len() && s[after + 1] as i32 == 105 && s[after + 2] as i32 == 66) {
+    with_b = true;
+  }
+  return Num { value: m.0, neg: neg, base: u.1, with_b: with_b, show_suffix: bare, human: 0 as u64, status: size_ok() };
+}
+
+// The unit printed after every number, for a spec that named one with
+// no count. The letter comes from the DIVISOR rather than the spec, so
+// `--inodes` — which forces the divisor to 1 — leaves `-BKiB` printing
+// a bare `B`.
+function unit_text(divisor: u64, base: u64, with_b: boolean): string {
+  var exp: i32 = 0;
+  var d: u64 = divisor;
+  while (d > 1 as u64 && d % base == 0 as u64) {
+    d = d / base;
+    exp = exp + 1;
+  }
+  if (d != 1 as u64) {
+    exp = 0;
+  }
+  var out: string = power_letter(exp, base);
+  if (with_b) {
+    if (exp > 0 && base == 1024 as u64) {
+      out = out + "i";
+    }
+    out = out + "B";
+  }
+  return out;
+}
+
+// `human(n, base)` — gnulib's human_readable with the ceiling rounding
+// du uses: one decimal below ten after scaling, none at or above, and a
+// value that rounds up to the base scaled once more, so 1048575 bytes
+// is `1.0M` and not `1024K`.
+function human(n: u64, base: u64): string {
+  var div: u64 = 1 as u64;
+  var exp: i32 = 0;
+  while (n / div >= base) {
+    div = div * base;
+    exp = exp + 1;
+  }
+  if (exp == 0) {
+    return n.to_string();
+  }
+  var whole: u64 = n / div;
+  var rem: u64 = n % div;
+  if (whole < 10 as u64) {
+    var tenths: u64 = whole * (10 as u64) + rem * (10 as u64) / div;
+    if (rem * (10 as u64) % div != 0 as u64) {
+      tenths = tenths + 1 as u64;
+    }
+    if (tenths < 100 as u64) {
+      return (tenths / (10 as u64)).to_string() + "." + (tenths % (10 as u64)).to_string() + power_letter(exp, base);
+    }
+  }
+  var up: u64 = whole;
+  if (rem > 0 as u64) {
+    up = up + 1 as u64;
+  }
+  if (up == base) {
+    return "1.0" + power_letter(exp + 1, base);
+  }
+  return up.to_string() + power_letter(exp, base);
+}
+
+// The number one line prints: scaled by the human base, or divided by
+// the block size rounding UP and followed by the unit the spec named.
+function format_size(n: u64, c: Conf): string {
+  if (c.human > 0 as u64) {
+    return human(n, c.human);
+  }
+  var q: u64 = n / c.block_size;
+  if (n % c.block_size != 0 as u64) {
+    q = q + 1 as u64;
+  }
+  return q.to_string() + c.suffix;
+}
+
+// ---- time ------------------------------------------------------------------
+// Howard Hinnant's era arithmetic, which folds the pre-epoch branch
+// into the same closed form as the rest.
+struct Civil { year: i64, month: i32, day: i32, yday: i32, wday: i32 }
+
+function is_leap(y: i64): boolean {
+  if (y % (4 as i64) != 0 as i64) {
+    return false;
+  }
+  if (y % (100 as i64) != 0 as i64) {
+    return true;
+  }
+  return y % (400 as i64) == 0 as i64;
+}
+
+function year_day(y: i64, m: i32, d: i32): i32 {
+  var cum: i32[] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  var n: i32 = cum[m - 1] + d;
+  if (m > 2 && is_leap(y)) {
+    n = n + 1;
+  }
+  return n;
+}
+
+function civil_from_days(z0: i64): Civil {
+  var z: i64 = z0 + 719468 as i64;
+  var era: i64 = z / (146097 as i64);
+  if (z < 0 as i64 && z % (146097 as i64) != 0 as i64) {
+    era = era - 1 as i64;
+  }
+  var doe: i64 = z - era * (146097 as i64);
+  var yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
+  var y: i64 = yoe + era * (400 as i64);
+  var doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
+  var mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
+  var d: i64 = doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64;
+  var m: i64 = mp + 3 as i64;
+  if (mp >= 10 as i64) {
+    m = mp - 9 as i64;
+    y = y + 1 as i64;
+  }
+  var wd: i64 = (z0 + 4 as i64) % (7 as i64);
+  if (wd < 0 as i64) {
+    wd = wd + 7 as i64;
+  }
+  return Civil { year: y, month: m as i32, day: d as i32, yday: year_day(y, m as i32, d as i32), wday: wd as i32 };
+}
+
+function days_from_civil(y0: i64, m: i32, d: i32): i64 {
+  var y: i64 = y0;
+  if (m <= 2) {
+    y = y - 1 as i64;
+  }
+  var era: i64 = y / (400 as i64);
+  if (y < 0 as i64 && y % (400 as i64) != 0 as i64) {
+    era = era - 1 as i64;
+  }
+  var yoe: i64 = y - era * (400 as i64);
+  var mp: i64 = m as i64 - 3 as i64;
+  if (m <= 2) {
+    mp = m as i64 + 9 as i64;
+  }
+  var doy: i64 = (153 as i64 * mp + 2 as i64) / (5 as i64) + d as i64 - 1 as i64;
+  var doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
+  return era * (146097 as i64) + doe - 719468 as i64;
+}
+
+// `Tm` — the broken-down time strftime renders, in UTC.
+struct Tm { c: Civil, hour: i32, min: i32, sec: i32, nsec: i64, epoch: i64 }
+
+function break_time(sec: i64, nsec: i64): Tm {
+  var days: i64 = sec / (86400 as i64);
+  var rest: i64 = sec % (86400 as i64);
+  if (rest < 0 as i64) {
+    days = days - 1 as i64;
+    rest = rest + 86400 as i64;
+  }
+  return Tm { c: civil_from_days(days), hour: (rest / (3600 as i64)) as i32, min: (rest / (60 as i64) % (60 as i64)) as i32, sec: (rest % (60 as i64)) as i32, nsec: nsec, epoch: sec };
+}
+
+function pad_num(n: i64, width: i32, fill: i32): string {
+  var neg: boolean = n < 0 as i64;
+  var mag: u64 = n as u64;
+  if (neg) {
+    mag = 0 as u64 - n as u64;
+  }
+  var digits: string = mag.to_string();
+  var pad: string = "";
+  var need: i32 = width - digits.len();
+  if (neg) {
+    need = need - 1;
+  }
+  while (need > 0) {
+    pad = pad + string_from_bytes_unchecked([fill as u8]);
+    need = need - 1;
+  }
+  if (neg) {
+    return "-" + pad + digits;
+  }
+  return pad + digits;
+}
+
+function day_name(w: i32): string {
+  var names: string[] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return names[w];
+}
+
+function month_name(m: i32): string {
+  var names: string[] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return names[m - 1];
+}
+
+// The ISO 8601 week-based year and week number.
+function iso_week(t: Tm): (i64, i32) {
+  var wday: i32 = t.c.wday;
+  if (wday == 0) {
+    wday = 7;
+  }
+  var thursday: i64 = days_from_civil(t.c.year, t.c.month, t.c.day) + (4 - wday) as i64;
+  var wy: Civil = civil_from_days(thursday);
+  var jan1: i64 = days_from_civil(wy.year, 1, 1);
+  return (wy.year, ((thursday - jan1) / (7 as i64)) as i32 + 1);
+}
+
+function upper_ascii(s: string): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b >= 97 && b <= 122) {
+      b = b - 32;
+    }
+    bs = bs.append(b as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+function known_conversion(c: i32): boolean {
+  var letters: string = "aAbBcCdDeFgGhHIjklmMnNpPqrRsStTuUVwWxXyYzZ%";
+  var i: i32 = 0;
+  while (i < letters.len()) {
+    if (letters[i] as i32 == c) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// `strftime(fmt, t)` — the C-locale conversions in UTC, with glibc's
+// flags (`-` no pad, `_` space pad, `0` zero pad, `^` upper) and field
+// width. An unknown conversion is copied out verbatim, as glibc does.
+function strftime(fmt: string, t: Tm): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < fmt.len()) {
+    var ch: i32 = fmt[i] as i32;
+    if (ch != 37) {
+      out = out + string_from_bytes_unchecked([ch as u8]);
+      i = i + 1;
+      continue;
+    }
+    var j: i32 = i + 1;
+    var no_pad: boolean = false;
+    var space_pad: boolean = false;
+    var zero_pad: boolean = false;
+    var upper: boolean = false;
+    while (j < fmt.len()) {
+      var f: i32 = fmt[j] as i32;
+      if (f == 45) {
+        no_pad = true;
+      } else if (f == 95) {
+        space_pad = true;
+      } else if (f == 48) {
+        zero_pad = true;
+      } else if (f == 94 || f == 35) {
+        upper = true;
+      } else {
+        break;
+      }
+      j = j + 1;
+    }
+    var width: i32 = 0;
+    while (j < fmt.len() && is_digit(fmt[j] as i32)) {
+      width = width * 10 + (fmt[j] as i32 - 48);
+      j = j + 1;
+    }
+    // E and O select alternative representations, which the C locale
+    // does not have; glibc falls back to the plain conversion.
+    if (j < fmt.len() && (fmt[j] as i32 == 69 || fmt[j] as i32 == 79)) {
+      j = j + 1;
+    }
+    if (j >= fmt.len()) {
+      out = out + slice_unchecked(fmt, i, fmt.len());
+      i = fmt.len();
+      continue;
+    }
+    var conv: i32 = fmt[j] as i32;
+    if (!known_conversion(conv)) {
+      out = out + slice_unchecked(fmt, i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    var piece: string = conversion(conv, t, width, no_pad, space_pad, zero_pad);
+    if (upper) {
+      piece = upper_ascii(piece);
+    }
+    out = out + piece;
+    i = j + 1;
+  }
+  return out;
+}
+
+// One conversion's text.
+function conversion(c: i32, t: Tm, width: i32, no_pad: boolean, space_pad: boolean, zero_pad: boolean): string {
+  if (c == 37) {
+    return "%";
+  }
+  if (c == 110) {
+    return "\n";
+  }
+  if (c == 116) {
+    return "\t";
+  }
+  if (c == 97) {
+    return slice_unchecked(day_name(t.c.wday), 0, 3) + "";
+  }
+  if (c == 65) {
+    return day_name(t.c.wday);
+  }
+  if (c == 98 || c == 104) {
+    return slice_unchecked(month_name(t.c.month), 0, 3) + "";
+  }
+  if (c == 66) {
+    return month_name(t.c.month);
+  }
+  if (c == 99) {
+    return strftime("%a %b %e %H:%M:%S %Y", t);
+  }
+  if (c == 68 || c == 120) {
+    return strftime("%m/%d/%y", t);
+  }
+  if (c == 70) {
+    return strftime("%Y-%m-%d", t);
+  }
+  if (c == 114) {
+    return strftime("%I:%M:%S %p", t);
+  }
+  if (c == 82) {
+    return strftime("%H:%M", t);
+  }
+  if (c == 84 || c == 88) {
+    return strftime("%H:%M:%S", t);
+  }
+  if (c == 112) {
+    if (t.hour < 12) {
+      return "AM";
+    }
+    return "PM";
+  }
+  if (c == 80) {
+    if (t.hour < 12) {
+      return "am";
+    }
+    return "pm";
+  }
+  if (c == 90) {
+    return "UTC";
+  }
+  if (c == 122) {
+    return "+0000";
+  }
+  if (c == 78) {
+    return pad_num(t.nsec, 9, 48);
+  }
+  return numeric_conversion(c, t, width, no_pad, space_pad, zero_pad);
+}
+
+// The conversions that are a number, with the field width each one pads
+// to by default.
+function numeric_conversion(c: i32, t: Tm, width: i32, no_pad: boolean, space_pad: boolean, zero_pad: boolean): string {
+  var value: i64 = 0 as i64;
+  var w: i32 = 2;
+  var fill: i32 = 48;
+  if (c == 100) {
+    value = t.c.day as i64;
+  } else if (c == 101) {
+    value = t.c.day as i64;
+    fill = 32;
+  } else if (c == 109) {
+    value = t.c.month as i64;
+  } else if (c == 72) {
+    value = t.hour as i64;
+  } else if (c == 107) {
+    value = t.hour as i64;
+    fill = 32;
+  } else if (c == 73 || c == 108) {
+    var h: i32 = t.hour % 12;
+    if (h == 0) {
+      h = 12;
+    }
+    value = h as i64;
+    if (c == 108) {
+      fill = 32;
+    }
+  } else if (c == 77) {
+    value = t.min as i64;
+  } else if (c == 83) {
+    value = t.sec as i64;
+  } else if (c == 106) {
+    value = t.c.yday as i64;
+    w = 3;
+  } else if (c == 121) {
+    var yy: i64 = t.c.year % (100 as i64);
+    if (yy < 0 as i64) {
+      yy = yy + 100 as i64;
+    }
+    value = yy;
+  } else if (c == 89) {
+    value = t.c.year;
+    w = 4;
+  } else if (c == 67) {
+    value = t.c.year / (100 as i64);
+  } else if (c == 117) {
+    var wd: i32 = t.c.wday;
+    if (wd == 0) {
+      wd = 7;
+    }
+    value = wd as i64;
+    w = 1;
+  } else if (c == 119) {
+    value = t.c.wday as i64;
+    w = 1;
+  } else if (c == 113) {
+    value = ((t.c.month - 1) / 3 + 1) as i64;
+    w = 1;
+  } else if (c == 115) {
+    value = t.epoch;
+    w = 1;
+  } else if (c == 71) {
+    value = iso_week(t).0;
+    w = 4;
+  } else if (c == 103) {
+    var gy: i64 = iso_week(t).0 % (100 as i64);
+    if (gy < 0 as i64) {
+      gy = gy + 100 as i64;
+    }
+    value = gy;
+  } else if (c == 86) {
+    value = iso_week(t).1 as i64;
+  } else if (c == 85) {
+    value = ((t.c.yday + 6 - t.c.wday) / 7) as i64;
+  } else {
+    var mw: i32 = t.c.wday;
+    if (mw == 0) {
+      mw = 7;
+    }
+    value = ((t.c.yday + 7 - mw) / 7) as i64;
+  }
+  if (no_pad) {
+    w = 1;
+  } else if (space_pad) {
+    fill = 32;
+  } else if (zero_pad) {
+    fill = 48;
+  }
+  if (width > w) {
+    w = width;
+  }
+  return pad_num(value, w, fill);
+}
+
+// ---- exclusion -------------------------------------------------------------
+// `fnmatch(pattern, text)` — POSIX fnmatch with NO flags, which is what
+// --exclude matches under: `*` and `?` CROSS `/`, a backslash escapes
+// the next character, and a bracket may be negated with `!` or `^`.
+function fnmatch(p: string, t: string): boolean {
+  return match_at(p, 0, t, 0);
+}
+
+function match_at(p: string, pi0: i32, t: string, ti0: i32): boolean {
+  var pi: i32 = pi0;
+  var ti: i32 = ti0;
+  while (pi < p.len()) {
+    var pc: i32 = p[pi] as i32;
+    if (pc == 42) {
+      var k: i32 = ti;
+      while (k <= t.len()) {
+        if (match_at(p, pi + 1, t, k)) {
+          return true;
+        }
+        k = k + 1;
+      }
+      return false;
+    }
+    if (ti >= t.len()) {
+      return false;
+    }
+    if (pc == 63) {
+      pi = pi + 1;
+      ti = ti + 1;
+      continue;
+    }
+    if (pc == 91) {
+      var r: (boolean, i32) = bracket(p, pi, t[ti] as i32);
+      if (r.1 >= 0) {
+        if (!r.0) {
+          return false;
+        }
+        pi = r.1;
+        ti = ti + 1;
+        continue;
+      }
+    }
+    // An unterminated `[` is a literal one.
+    if (pc == 92 && pi + 1 < p.len()) {
+      pi = pi + 1;
+      pc = p[pi] as i32;
+    }
+    if (pc != t[ti] as i32) {
+      return false;
+    }
+    pi = pi + 1;
+    ti = ti + 1;
+  }
+  return ti == t.len();
+}
+
+// One bracket expression against `ch`, returning (matched, the index
+// past the `]`), or a negative index when the bracket is never closed.
+function bracket(p: string, start: i32, ch: i32): (boolean, i32) {
+  var i: i32 = start + 1;
+  var negate: boolean = false;
+  if (i < p.len() && (p[i] as i32 == 33 || p[i] as i32 == 94)) {
+    negate = true;
+    i = i + 1;
+  }
+  var matched: boolean = false;
+  var first: boolean = true;
+  while (i < p.len()) {
+    if (p[i] as i32 == 93 && !first) {
+      if (negate) {
+        return (!matched, i + 1);
+      }
+      return (matched, i + 1);
+    }
+    first = false;
+    if (p[i] as i32 == 91 && i + 1 < p.len() && p[i + 1] as i32 == 58) {
+      var close: i32 = find_class_end(p, i + 2);
+      if (close > 0) {
+        if (in_class(slice_unchecked(p, i + 2, close) + "", ch)) {
+          matched = true;
+        }
+        i = close + 2;
+        continue;
+      }
+    }
+    var lo: i32 = p[i] as i32;
+    if (lo == 92 && i + 1 < p.len()) {
+      i = i + 1;
+      lo = p[i] as i32;
+    }
+    if (i + 2 < p.len() && p[i + 1] as i32 == 45 && p[i + 2] as i32 != 93) {
+      if (ch >= lo && ch <= p[i + 2] as i32) {
+        matched = true;
+      }
+      i = i + 3;
+      continue;
+    }
+    if (ch == lo) {
+      matched = true;
+    }
+    i = i + 1;
+  }
+  return (false, 0 - 1);
+}
+
+function find_class_end(p: string, from: i32): i32 {
+  var i: i32 = from;
+  while (i + 1 < p.len()) {
+    if (p[i] as i32 == 58 && p[i + 1] as i32 == 93) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function in_class(name: string, ch: i32): boolean {
+  var alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
+  var digit: boolean = ch >= 48 && ch <= 57;
+  if (name == "alpha") {
+    return alpha;
+  }
+  if (name == "digit") {
+    return digit;
+  }
+  if (name == "alnum") {
+    return alpha || digit;
+  }
+  if (name == "upper") {
+    return ch >= 65 && ch <= 90;
+  }
+  if (name == "lower") {
+    return ch >= 97 && ch <= 122;
+  }
+  if (name == "space") {
+    return ch == 32 || ch >= 9 && ch <= 13;
+  }
+  if (name == "blank") {
+    return ch == 32 || ch == 9;
+  }
+  if (name == "print") {
+    return ch >= 32 && ch < 127;
+  }
+  if (name == "graph") {
+    return ch > 32 && ch < 127;
+  }
+  if (name == "cntrl") {
+    return ch < 32 || ch == 127;
+  }
+  if (name == "punct") {
+    return ch > 32 && ch < 127 && !alpha && !digit;
+  }
+  if (name == "xdigit") {
+    return hex_digit(ch) >= 0;
+  }
+  return false;
+}
+
+// `excluded(c, name)` — whether any --exclude pattern matches the name
+// as printed, or any suffix of it starting just after a `/`, which is
+// what makes `--exclude=sub` drop `a/sub`.
+function excluded(c: Conf, name: string): boolean {
+  var i: i32 = 0;
+  while (i < c.excludes.len()) {
+    if (fnmatch(c.excludes[i], name)) {
+      return true;
+    }
+    var j: i32 = 0;
+    while (j < name.len()) {
+      if (name[j] as i32 == 47) {
+        if (fnmatch(c.excludes[i], slice_unchecked(name, j + 1, name.len()) + "")) {
+          return true;
+        }
+      }
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- the walk --------------------------------------------------------------
+function join_path(dir: string, name: string): string {
+  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+// The operand with every trailing slash removed — the prefix its
+// children are named with. A name that is nothing but slashes keeps
+// one, and `//` keeps both: the kernel treats it as a root of its own.
+function walk_base(arg: string): string {
+  var n: i32 = arg.len();
+  while (n > 0 && arg[n - 1] as i32 == 47) {
+    n = n - 1;
+  }
+  if (n == 0) {
+    if (arg.len() == 2) {
+      return "//";
+    }
+    return "/";
+  }
+  return slice_unchecked(arg, 0, n) + "";
+}
+
+// The operand's own line names it with its trailing slashes collapsed
+// to exactly one: `du -s a//` prints `a/` while its children print
+// `a/f1`.
+function display_name(arg: string): string {
+  if (arg.len() == 0) {
+    return arg;
+  }
+  if (arg[arg.len() - 1] as i32 != 47) {
+    return arg;
+  }
+  var b: string = walk_base(arg);
+  if (b[b.len() - 1] as i32 == 47) {
+    return b;
+  }
+  return b + "/";
+}
+
+// The key an entry takes in the already-seen set. A string, because that
+// and an i32-sized scalar are the only key types Map takes and the pair
+// is two 64-bit words; the sixteen-raw-byte spelling was measured and is
+// SLOWER, since building it is sixteen `.with` calls on a fresh buffer.
+function inode_key(dev: i64, ino: i64): string {
+  return dev.to_string() + "/" + ino.to_string();
+}
+
+function is_symlink(st: FileStat): boolean {
+  return (st.mode & 61440 as u32) == 40960 as u32;
+}
+
+// The bytes — or, under --inodes, the one inode — an entry contributes.
+// A directory has no apparent size: `du -b` reports 0 for it, never its
+// own st_size.
+function entry_size(c: Conf, st: FileStat, is_dir: boolean): u64 {
+  if (c.inodes) {
+    return 1 as u64;
+  }
+  if (c.apparent) {
+    if (is_dir || st.size < 0 as i64) {
+      return 0 as u64;
+    }
+    return st.size as u64;
+  }
+  if (st.blocks <= 0 as i64) {
+    return 0 as u64;
+  }
+  return st.blocks as u64 * (512 as u64);
+}
+
+function stamp_of(c: Conf, st: FileStat): (i64, i64) {
+  if (c.time_kind == time_atime()) {
+    return (st.atime, st.atime_nsec);
+  }
+  if (c.time_kind == time_ctime()) {
+    return (st.ctime, st.ctime_nsec);
+  }
+  return (st.mtime, st.mtime_nsec);
+}
+
+function newer(a: i64, an: i64, b: i64, bn: i64): boolean {
+  if (a != b) {
+    return a > b;
+  }
+  return an > bn;
+}
+
+// `cannot access` for a path that would not stat. A symlink whose
+// target is simply not there loses the errno — that is the one entry
+// kind fts reports without one — while every other failure keeps it.
+function access_failure(name: string, e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "cannot access " + gnu.quotea(name);
+    },
+    _ => {}
+  }
+  return "cannot access " + gnu.quotea(name) + ": " + gnu.io_error_text(e);
+}
+
+function passes_threshold(c: Conf, size: u64): boolean {
+  if (!c.has_threshold) {
+    return true;
+  }
+  if (c.threshold >= 0 as i64) {
+    return size >= c.threshold as u64;
+  }
+  return size <= 0 as u64 - c.threshold as u64;
+}
+
+// Whether this entry earns a line: within --max-depth, and either a
+// directory, an operand, or anything at all under -a.
+function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
+  if (depth as u64 > c.max_depth) {
+    return false;
+  }
+  return is_dir || c.all || depth == 0;
+}
+
+function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
+  var line: string = format_size(size, c) + "\t";
+  if (c.time_kind != time_none()) {
+    line = line + strftime(c.time_format, break_time(tsec, tnsec)) + "\t";
+  }
+  return o.write_string(line + display + c.terminator);
+}
+
+// `Frame` — a directory whose children are still being walked: where it
+// is, what readdir gave back, how far through that list the walk is, and
+// the two running sums. `full` is the true subtree total, which the
+// parent adds and which -c sums; `shown` is what this directory's own
+// line will print, which is the same number unless -S left the
+// subdirectories out of it. Each carries the newest stamp counted into
+// it, for --time.
+struct Frame { path: string, display: string, names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }
+
+// `walk` — every operand, and everything under each of them.
+//
+// One function rather than a recursion, because the already-seen set has
+// to stay a LOCAL: a Map handed to a callee is aliased by the call, so
+// its next mutator copies the whole table instead of writing in place,
+// and the walk goes quadratic in the number of files. The directory
+// stack is explicit for the same reason, and it costs nothing that
+// matters — a deep tree is a longer array rather than a deeper frame.
+//
+// The one thing this cannot do is walk PAST `PATH_MAX`: every primitive
+// here takes a path, so a component 8 KiB down is `File name too long`
+// where GNU's fts, which opens each directory and reads it fd-relative,
+// keeps going (#9078). That tree reports what it could read and exits 1,
+// the same shape an unreadable directory has.
+//
+// Returns the exit status.
+function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
+  var out: io_buffered.BufWriter = gnu.out_new();
+  var seen: Map[string, i32] = map_new(1024);
+  var failed: boolean = false;
+  var grand: u64 = 0 as u64;
+  var gtime: i64 = 0 as i64;
+  var gnsec: i64 = 0 as i64;
+  var stack: Frame[] = [];
+
+  var oi: i32 = 0;
+  while (oi < names.len()) {
+    var arg: string = names[oi];
+    var ordinal: i32 = oi + 1;
+    oi = oi + 1;
+    if (arg.len() == 0) {
+      var where: string = "";
+      if (have_files0) {
+        where = gnu.quotef(list_name) + ":" + ordinal.to_string() + ": ";
+      }
+      out = gnu.error_out(out, where + "invalid zero-length file name");
+      failed = true;
+      continue;
+    }
+    if (from_stdin && arg == "-") {
+      out = gnu.error_out(out, "when reading file names from stdin, no file name of '-' allowed");
+      failed = true;
+      continue;
+    }
+    var display: string = display_name(arg);
+    if (excluded(c, display)) {
+      continue;
+    }
+    // The stat names the operand as TYPED, so a trailing slash resolves
+    // a symlink through the kernel exactly as it does for GNU.
+    var st: FileStat = zero_stat();
+    var got: boolean = false;
+    match (lstat(arg)) {
+      Ok(s) => {
+        st = s;
+        got = true;
+      },
+      Err(e) => {
+        out = gnu.error_out(out, "cannot access " + gnu.quotea(display) + ": " + gnu.io_error_text(e));
+        failed = true;
+      }
+    }
+    if (!got) {
+      continue;
+    }
+    if (c.deref != deref_none() && is_symlink(st)) {
+      var resolved: boolean = false;
+      match (stat(arg)) {
+        Ok(s) => {
+          st = s;
+          resolved = true;
+        },
+        Err(e) => {
+          out = gnu.error_out(out, access_failure(display, e));
+          failed = true;
+        }
+      }
+      if (!resolved) {
+        continue;
+      }
+    }
+
+    var root_dev: i64 = st.dev;
+    var sp: i32 = 0;
+    // The entry waiting to be counted: the operand first, then each
+    // child the stack's top frame hands over.
+    var pending: boolean = true;
+    var p_path: string = walk_base(arg);
+    var p_display: string = display;
+    var p_st: FileStat = st;
+    var p_depth: i32 = 0;
+    // What a finished entry contributes to its parent — or, with the
+    // stack empty, to this operand's total.
+    var owed: boolean = false;
+    var o_size: u64 = 0 as u64;
+    var o_time: i64 = 0 as i64;
+    var o_nsec: i64 = 0 as i64;
+    var o_dir: boolean = false;
+    var total: u64 = 0 as u64;
+    var ttime: i64 = 0 as i64;
+    var tnsec: i64 = 0 as i64;
+    var thave: boolean = false;
+
+    while (pending || owed || sp > 0) {
+      if (owed) {
+        owed = false;
+        if (sp > 0) {
+          var par: Frame = stack[sp - 1];
+          var nfull: u64 = par.full + o_size;
+          var nft: i64 = par.ftime;
+          var nfn: i64 = par.fnsec;
+          if (newer(o_time, o_nsec, nft, nfn)) {
+            nft = o_time;
+            nfn = o_nsec;
+          }
+          var nshown: u64 = par.shown;
+          var nst: i64 = par.stime;
+          var nsn: i64 = par.snsec;
+          if (!c.separate_dirs || !o_dir) {
+            nshown = nshown + o_size;
+            if (newer(o_time, o_nsec, nst, nsn)) {
+              nst = o_time;
+              nsn = o_nsec;
+            }
+          }
+          stack = stack.with(sp - 1, Frame { ...par, full: nfull, shown: nshown, ftime: nft, fnsec: nfn, stime: nst, snsec: nsn });
+        } else {
+          total = total + o_size;
+          if (!thave || newer(o_time, o_nsec, ttime, tnsec)) {
+            ttime = o_time;
+            tnsec = o_nsec;
+          }
+          thave = true;
+        }
+        continue;
+      }
+
+      if (pending) {
+        pending = false;
+        // Every inode is counted and printed at most once per run —
+        // files with a single link included, and across operands. The
+        // same set is what silently stops a symlink loop under -L; -l
+        // turns the whole mechanism off.
+        var known: boolean = false;
+        if (!c.count_links) {
+          var key: string = inode_key(p_st.dev, p_st.ino);
+          match (seen.get(key)) {
+            Some(_) => {
+              known = true;
+            },
+            None => {}
+          }
+          if (!known) {
+            seen = seen.insert(key, 1);
+          }
+        }
+        if (known) {
+          continue;
+        }
+        var own: u64 = entry_size(c, p_st, p_st.is_dir);
+        var stamp: (i64, i64) = stamp_of(c, p_st);
+        if (p_st.is_dir) {
+          // A directory already on the path from the operand to here is a
+          // CYCLE, which `-L` reaches through a symlink pointing at an
+          // ancestor. It is skipped whole — no line, nothing counted, and
+          // nothing said. The check is separate from the seen set above
+          // because `-l` turns that off, and the descent would then be
+          // endless; the stack IS the path, so this is a walk of it.
+          var cycle: boolean = false;
+          var f: i32 = 0;
+          while (f < sp) {
+            if (stack[f].dev == p_st.dev && stack[f].ino == p_st.ino) {
+              cycle = true;
+              break;
+            }
+            f = f + 1;
+          }
+          if (cycle) {
+            continue;
+          }
+          var kids: string[] = [];
+          match (read_dir(p_path)) {
+            Ok(es) => {
+              kids = es;
+            },
+            Err(e) => {
+              out = gnu.error_out(out, "cannot read directory " + gnu.quotea(p_display) + ": " + gnu.io_error_text(e));
+              failed = true;
+            }
+          }
+          var pushed: Frame = Frame { path: p_path, display: p_display, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
+          if (sp < stack.len()) {
+            stack = stack.with(sp, pushed);
+          } else {
+            stack = stack.append(pushed);
+          }
+          sp = sp + 1;
+          continue;
+        }
+        if (wants_line(c, p_depth, false) && passes_threshold(c, own)) {
+          out = emit(c, out, own, stamp.0, stamp.1, p_display);
+        }
+        owed = true;
+        o_size = own;
+        o_time = stamp.0;
+        o_nsec = stamp.1;
+        o_dir = false;
+        continue;
+      }
+
+      var top: Frame = stack[sp - 1];
+      if (top.idx >= top.names.len()) {
+        // Post-order: the directory's own line follows its contents.
+        sp = sp - 1;
+        if (wants_line(c, top.depth, true) && passes_threshold(c, top.shown)) {
+          out = emit(c, out, top.shown, top.stime, top.snsec, top.display);
+        }
+        owed = true;
+        o_size = top.full;
+        o_time = top.ftime;
+        o_nsec = top.fnsec;
+        o_dir = true;
+        continue;
+      }
+      var nm: string = top.names[top.idx];
+      stack = stack.with(sp - 1, Frame { ...top, idx: top.idx + 1 });
+      var cpath: string = join_path(top.path, nm);
+      var cname: string = join_path(top.display, nm);
+      if (excluded(c, cname)) {
+        continue;
+      }
+      var cst: FileStat = zero_stat();
+      var cgot: boolean = false;
+      match (lstat(cpath)) {
+        Ok(s) => {
+          cst = s;
+          cgot = true;
+        },
+        Err(e) => {
+          out = gnu.error_out(out, "cannot access " + gnu.quotea(cname) + ": " + gnu.io_error_text(e));
+          failed = true;
+        }
+      }
+      if (!cgot) {
+        continue;
+      }
+      if (c.deref == deref_all() && is_symlink(cst)) {
+        var cres: boolean = false;
+        match (stat(cpath)) {
+          Ok(s) => {
+            cst = s;
+            cres = true;
+          },
+          Err(e) => {
+            out = gnu.error_out(out, access_failure(cname, e));
+            failed = true;
+          }
+        }
+        if (!cres) {
+          continue;
+        }
+      }
+      // -x takes its device from the operand being walked, so naming a
+      // mount point directly still measures it; a crossing below one
+      // vanishes rather than appearing as a zero.
+      if (c.one_file_system && cst.dev != root_dev) {
+        continue;
+      }
+      p_path = cpath;
+      p_display = cname;
+      p_st = cst;
+      p_depth = top.depth + 1;
+      pending = true;
+    }
+
+    grand = grand + total;
+    if (thave && newer(ttime, tnsec, gtime, gnsec)) {
+      gtime = ttime;
+      gnsec = tnsec;
+    }
+  }
+
+  if (c.total) {
+    out = emit(c, out, grand, gtime, gnsec, "total");
+  }
+  out = out.flush();
+  gnu.close_stdout(out, false);
+  if (failed) {
+    return 1;
+  }
+  return 0;
+}
+
+function zero_stat(): FileStat {
+  return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
+}
+
+// ---- reading a list of names ------------------------------------------------
+// `Slurp` — a whole file read in, or the failure that stopped it.
+// `at_open` separates a name that could not be OPENED from one that
+// could not be READ, which du words differently.
+struct Slurp { text: string, ok: boolean, at_open: boolean, err: Option[IoError] }
+
+// The whole of `path`, or stdin for `-`.
+function slurp(path: string): Slurp {
+  var r: Reader = stdin();
+  if (path != "-") {
+    match (open_reader(path)) {
+      Ok(f) => {
+        r = f;
+      },
+      Err(e) => {
+        return Slurp { text: "", ok: false, at_open: true, err: Some(e) };
+      }
+    }
+  }
+  var chunks: string[] = [];
+  var text: string = "";
+  while (true) {
+    match (r.read_chunk(65536)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        chunks = chunks.append(chunk);
+      },
+      Err(e) => {
+        if (path != "-") {
+          r.close();
+        }
+        return Slurp { text: "", ok: false, at_open: false, err: Some(e) };
+      }
+    }
+  }
+  if (path != "-") {
+    r.close();
+  }
+  var i: i32 = 0;
+  while (i < chunks.len()) {
+    text = text + chunks[i];
+    i = i + 1;
+  }
+  return Slurp { text: text, ok: true, at_open: false, err: None };
+}
+
+// The patterns of a -X file: one per line, a trailing carriage return
+// stripped, the line cut at an embedded NUL, and an empty line ignored.
+// Leading and trailing SPACES are significant.
+function exclude_patterns(text: string): string[] {
+  var out: string[] = [];
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= text.len()) {
+    if (i == text.len() || text[i] as i32 == 10) {
+      var stop: i32 = i;
+      while (stop > start && text[stop - 1] as i32 == 13) {
+        stop = stop - 1;
+      }
+      var j: i32 = start;
+      while (j < stop && text[j] as i32 != 0) {
+        j = j + 1;
+      }
+      if (j > start) {
+        out = out.append(slice_unchecked(text, start, j) + "");
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The NUL-separated names of a --files0-from file. A trailing NUL is
+// optional; an empty name is reported with its ordinal and skipped.
+function files0_names(text: string): string[] {
+  var out: string[] = [];
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i < text.len()) {
+    if (text[i] as i32 == 0) {
+      out = out.append(slice_unchecked(text, start, i) + "");
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if (start < text.len()) {
+    out = out.append(slice_unchecked(text, start, text.len()) + "");
+  }
+  return out;
+}
+
+// ---- option values ---------------------------------------------------------
+// `--time=WORD`, which is argmatch over five words mapping to two
+// stamps: a prefix of several names that all mean the same stamp is NOT
+// ambiguous, which is why `--time=a` is atime.
+function time_word(v: string): i32 {
+  var names: string[] = ["atime", "access", "use", "ctime", "status"];
+  var kinds: i32[] = [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime()];
+  var found: i32 = 0 - 1;
+  var ambiguous: boolean = false;
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == v) {
+      return kinds[i];
+    }
+    if (names[i].starts_with(v)) {
+      if (found < 0) {
+        found = i;
+      } else if (kinds[i] != kinds[found]) {
+        ambiguous = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (found >= 0 && !ambiguous) {
+    return kinds[found];
+  }
+  var what: string = "invalid";
+  if (ambiguous) {
+    what = "ambiguous";
+  }
+  gnu.error(what + " argument " + gnu.quote(v) + " for " + gnu.quote("--time"));
+  eprint("Valid arguments are:");
+  eprint("  - 'atime', 'access', 'use'");
+  eprint("  - 'ctime', 'status'");
+  gnu.try_help(1);
+  return time_mtime();
+}
+
+// The strftime format a --time-style names. `+FORMAT` is its own
+// format; everything else is argmatch over the three ISO styles.
+function style_format(v: string): string {
+  if (v.len() > 0 && v[0] as i32 == 43) {
+    return slice_unchecked(v, 1, v.len()) + "";
+  }
+  var names: string[] = ["full-iso", "long-iso", "iso"];
+  var formats: string[] = ["%Y-%m-%d %H:%M:%S.%N %z", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
+  return formats[gnu.argmatch(v, names, "time style")];
+}
+
+// TIME_STYLE, which is not --time-style: the literal `locale` is
+// accepted and renders as long-iso in the C locale, and anything else
+// has a leading `posix-` stripped before it is matched — so an invalid
+// value is reported under the STRIPPED spelling.
+function env_style(v: string): string {
+  if (v == "locale") {
+    return "%Y-%m-%d %H:%M";
+  }
+  var s: string = v;
+  if (s.starts_with("posix-")) {
+    s = slice_unchecked(s, 6, s.len()) + "";
+  }
+  return style_format(s);
+}
+
+// The SIZE diagnostics quote differently from every other one here:
+// gnulib's xstrtol_fatal wraps the argument in apostrophes and escapes
+// NOTHING, so a tab is a tab and an apostrophe closes and reopens the
+// quotes. `invalid maximum depth`, `extra operand` and the argmatch
+// lists all use the C-escaping `quote` instead.
+function quote_size(spec: string): string {
+  return "'" + spec + "'";
+}
+
+function die_size(status: i32, option: string, spec: string): void {
+  if (status == size_bad_suffix()) {
+    gnu.error("invalid suffix in " + option + " argument " + quote_size(spec));
+  } else if (status == size_overflow()) {
+    gnu.error(option + " argument " + quote_size(spec) + " too large");
+  } else {
+    gnu.error("invalid " + option + " argument " + quote_size(spec));
+  }
+  exit(1);
+}
+
+function option_name(m: gnu.OptMatch, long: string, short: string): string {
+  if (m.long_form) {
+    return long;
+  }
+  return short;
+}
+
+// `--max-depth=N`, base 0 with blanks and a sign tolerated in FRONT of
+// the digits and nothing at all after them. A negative wraps, which is
+// how `-d -1` comes out unlimited.
+function parse_depth(spec: string): u64 {
+  var i: i32 = 0;
+  while (i < spec.len() && gnu.is_blank(spec[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < spec.len() && spec[i] as i32 == 43) {
+    i = i + 1;
+  } else if (i < spec.len() && spec[i] as i32 == 45) {
+    neg = true;
+    i = i + 1;
+  }
+  var n: (u64, i32, boolean) = scan_number(spec, i);
+  if (n.1 == i || n.1 != spec.len() || n.2) {
+    gnu.die_usage("invalid maximum depth " + gnu.quote(spec), 1);
+  }
+  if (neg) {
+    return 0 as u64 - n.0;
+  }
+  return n.0;
+}
+
+// ---- main ------------------------------------------------------------------
+function declare_options(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("0", "null", opt_null()));
+  opts = opts.append(gnu.flag("a", "all", opt_all()));
+  opts = opts.append(gnu.flag("", "apparent-size", opt_apparent()));
+  opts = opts.append(gnu.valued("B", "block-size", opt_block_size()));
+  opts = opts.append(gnu.flag("b", "bytes", opt_bytes()));
+  opts = opts.append(gnu.flag("c", "total", opt_total()));
+  opts = opts.append(gnu.flag("L", "dereference", opt_dereference()));
+  opts = opts.append(gnu.flag("D", "dereference-args", opt_dereference_args()));
+  opts = opts.append(gnu.valued("d", "max-depth", opt_max_depth()));
+  opts = opts.append(gnu.valued("", "files0-from", opt_files0()));
+  opts = opts.append(gnu.flag("h", "human-readable", opt_human()));
+  opts = opts.append(gnu.flag("", "inodes", opt_inodes()));
+  opts = opts.append(gnu.flag("l", "count-links", opt_count_links()));
+  opts = opts.append(gnu.flag("P", "no-dereference", opt_no_dereference()));
+  opts = opts.append(gnu.flag("", "si", opt_si()));
+  opts = opts.append(gnu.flag("S", "separate-dirs", opt_separate_dirs()));
+  opts = opts.append(gnu.flag("s", "summarize", opt_summarize()));
+  opts = opts.append(gnu.valued("t", "threshold", opt_threshold()));
+  opts = opts.append(gnu.optional_long("", "time", opt_time()));
+  opts = opts.append(gnu.valued("", "time-style", opt_time_style()));
+  opts = opts.append(gnu.valued("", "exclude", opt_exclude()));
+  opts = opts.append(gnu.valued("X", "exclude-from", opt_exclude_from()));
+  opts = opts.append(gnu.flag("x", "one-file-system", opt_one_file_system()));
+  opts = opts.append(gnu.flag("H", "", opt_deref_args_h()));
+  opts = opts.append(gnu.flag("k", "", opt_kilo()));
+  opts = opts.append(gnu.flag("m", "", opt_mega()));
+  return opts;
+}
+
+// `Unit` — the display unit as the scan leaves it, before --inodes and
+// the environment get their say.
+struct Unit { block_size: u64, base: u64, with_b: boolean, show_suffix: boolean, human: u64, chosen: boolean }
+
+function default_unit(): Unit {
+  return Unit { block_size: 1024 as u64, base: 1024 as u64, with_b: false, show_suffix: false, human: 0 as u64, chosen: false };
+}
+
+function unit_from(n: Num): Unit {
+  return Unit { block_size: n.value, base: n.base, with_b: n.with_b, show_suffix: n.show_suffix, human: n.human, chosen: true };
+}
+
+function plain_unit(size: u64): Unit {
+  return Unit { block_size: size, base: 1024 as u64, with_b: false, show_suffix: false, human: 0 as u64, chosen: true };
+}
+
+// The block size the environment names: the first of DU_BLOCK_SIZE,
+// BLOCK_SIZE and BLOCKSIZE that is SET wins, and one that will not
+// parse is silently ignored rather than fatal.
+function env_unit(): Unit {
+  var names: string[] = ["DU_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"];
+  var i: i32 = 0;
+  while (i < names.len()) {
+    match (env(names[i])) {
+      Some(v) => {
+        var n: Num = parse_num(v, false, true, false);
+        if (n.status == size_ok()) {
+          return unit_from(n);
+        }
+        return posix_default();
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return posix_default();
+}
+
+// POSIXLY_CORRECT is tested for PRESENCE, not value, and moves the
+// default block size to 512.
+function posix_default(): Unit {
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      return plain_unit(512 as u64);
+    },
+    None => {}
+  }
+  return default_unit();
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = declare_options();
+
+  var c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: "%Y-%m-%d %H:%M", excludes: [], one_file_system: false, terminator: "\n" };
+  var unit: Unit = default_unit();
+  var summarize: boolean = false;
+  var depth_text: string = "";
+  var have_depth: boolean = false;
+  var depth: u64 = 0 as u64;
+  var files0: string = "";
+  var have_files0: boolean = false;
+  var style: string = "";
+  var have_style: boolean = false;
+
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "du", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    var done: boolean = false;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_null()) {
+          c = Conf { ...c, terminator: string_from_bytes_unchecked([0 as u8]) };
+        } else if (m.id == opt_all()) {
+          c = Conf { ...c, all: true };
+        } else if (m.id == opt_apparent()) {
+          c = Conf { ...c, apparent: true };
+        } else if (m.id == opt_block_size()) {
+          var n: Num = parse_num(m.value, false, true, false);
+          if (n.status != size_ok()) {
+            die_size(n.status, option_name(m, "--block-size", "-B"), m.value);
+          }
+          unit = unit_from(n);
+        } else if (m.id == opt_bytes()) {
+          c = Conf { ...c, apparent: true };
+          unit = plain_unit(1 as u64);
+        } else if (m.id == opt_total()) {
+          c = Conf { ...c, total: true };
+        } else if (m.id == opt_dereference()) {
+          c = Conf { ...c, deref: deref_all() };
+        } else if (m.id == opt_dereference_args() || m.id == opt_deref_args_h()) {
+          c = Conf { ...c, deref: deref_args() };
+        } else if (m.id == opt_no_dereference()) {
+          c = Conf { ...c, deref: deref_none() };
+        } else if (m.id == opt_max_depth()) {
+          depth = parse_depth(m.value);
+          depth_text = m.value;
+          have_depth = true;
+        } else if (m.id == opt_files0()) {
+          files0 = m.value;
+          have_files0 = true;
+        } else if (m.id == opt_human()) {
+          unit = Unit { block_size: 1 as u64, base: 1024 as u64, with_b: false, show_suffix: false, human: 1024 as u64, chosen: true };
+        } else if (m.id == opt_si()) {
+          unit = Unit { block_size: 1 as u64, base: 1000 as u64, with_b: false, show_suffix: false, human: 1000 as u64, chosen: true };
+        } else if (m.id == opt_kilo()) {
+          unit = plain_unit(1024 as u64);
+        } else if (m.id == opt_mega()) {
+          unit = plain_unit(1048576 as u64);
+        } else if (m.id == opt_inodes()) {
+          c = Conf { ...c, inodes: true };
+        } else if (m.id == opt_count_links()) {
+          c = Conf { ...c, count_links: true };
+        } else if (m.id == opt_separate_dirs()) {
+          c = Conf { ...c, separate_dirs: true };
+        } else if (m.id == opt_summarize()) {
+          summarize = true;
+        } else if (m.id == opt_threshold()) {
+          var t: Num = parse_num(m.value, true, false, true);
+          if (t.status == size_ok() && t.neg && t.value == 0 as u64) {
+            gnu.error("invalid --threshold argument '-0'");
+            exit(1);
+          }
+          if (t.status != size_ok()) {
+            die_size(t.status, option_name(m, "--threshold", "-t"), m.value);
+          }
+          var v: i64 = t.value as i64;
+          if (t.neg) {
+            v = 0 as i64 - v;
+          }
+          c = Conf { ...c, threshold: v, has_threshold: true };
+        } else if (m.id == opt_time()) {
+          var kind: i32 = time_mtime();
+          if (m.has_value) {
+            kind = time_word(m.value);
+          }
+          c = Conf { ...c, time_kind: kind };
+        } else if (m.id == opt_time_style()) {
+          style = m.value;
+          have_style = true;
+        } else if (m.id == opt_exclude()) {
+          c = Conf { ...c, excludes: c.excludes.append(m.value) };
+        } else if (m.id == opt_exclude_from()) {
+          c = Conf { ...c, excludes: read_exclude_file(c.excludes, m.value) };
+        } else if (m.id == opt_one_file_system()) {
+          c = Conf { ...c, one_file_system: true };
+        }
+      },
+      None => {
+        done = true;
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+
+  if (summarize && c.all) {
+    gnu.die_usage("cannot both summarize and show all entries", 1);
+  }
+  if (summarize && have_depth) {
+    if (depth == 0 as u64) {
+      gnu.error("warning: summarizing is the same as using --max-depth=0");
+    } else {
+      gnu.die_usage("warning: summarizing conflicts with --max-depth=" + depth_text, 1);
+    }
+  }
+  if (summarize) {
+    depth = 0 as u64;
+    have_depth = true;
+  }
+  if (have_depth) {
+    c = Conf { ...c, max_depth: depth };
+  }
+  if (c.inodes && c.apparent) {
+    gnu.error("warning: options --apparent-size and -b are ineffective with --inodes");
+  }
+  if (c.time_kind != time_none()) {
+    if (have_style) {
+      c = Conf { ...c, time_format: style_format(style) };
+    } else {
+      match (env("TIME_STYLE")) {
+        Some(v) => {
+          c = Conf { ...c, time_format: env_style(v) };
+        },
+        None => {}
+      }
+    }
+  }
+
+  if (!unit.chosen) {
+    unit = env_unit();
+  }
+  if (c.inodes) {
+    unit = Unit { ...unit, block_size: 1 as u64 };
+  }
+  var suffix: string = "";
+  if (unit.show_suffix) {
+    suffix = unit_text(unit.block_size, unit.base, unit.with_b);
+  }
+  c = Conf { ...c, block_size: unit.block_size, human: unit.human, suffix: suffix };
+
+  var operands: string[] = g.operands();
+  var names: string[] = operands;
+  var from_stdin: boolean = false;
+  var list_name: string = "";
+  if (have_files0) {
+    if (operands.len() > 0) {
+      gnu.error("extra operand " + gnu.quote(operands[0]) + "\nfile operands cannot be combined with --files0-from");
+      gnu.try_help(1);
+    }
+    list_name = files0;
+    from_stdin = files0 == "-";
+    names = read_name_list(files0);
+  } else if (operands.len() == 0) {
+    names = [".".to_string()];
+  }
+
+  return walk(c, names, have_files0, list_name, from_stdin);
+}
+
+// -X is read where it stands in the scan, not afterwards, which is what
+// lets `du -X - --files0-from=-` take the whole of stdin for the
+// patterns and leave the name list empty.
+function read_exclude_file(have: string[], path: string): string[] {
+  var r: Slurp = slurp(path);
+  if (!r.ok) {
+    gnu.die_usage(gnu.quotef(path) + ": " + slurp_error(r), 1);
+  }
+  var pats: string[] = exclude_patterns(r.text);
+  var out: string[] = have;
+  var i: i32 = 0;
+  while (i < pats.len()) {
+    out = out.append(pats[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function slurp_error(r: Slurp): string {
+  match (r.err) {
+    Some(e) => {
+      return gnu.io_error_text(e);
+    },
+    None => {}
+  }
+  return "";
+}
+
+function read_name_list(path: string): string[] {
+  var r: Slurp = slurp(path);
+  if (!r.ok) {
+    if (r.at_open) {
+      gnu.error("cannot open " + gnu.quotea(path) + " for reading: " + slurp_error(r));
+    } else {
+      gnu.error(gnu.quotef(path) + ": read error: " + slurp_error(r));
+    }
+    exit(1);
+  }
+  return files0_names(r.text);
+}
