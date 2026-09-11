@@ -1435,10 +1435,10 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
   // the long one is, so it short-circuits the rest of the cluster:
   // `mktemp -Vx` prints the version rather than reaching the invalid x.
   if (o.id == help_id()) {
-    print_help(g.help, 0, g.status);
+    print_help(g.help, 0, g.fail);
   }
   if (o.id == version_id()) {
-    print_version(g.name, 0, g.status);
+    print_version(g.name, 0, g.fail);
   }
   if (o.short_arg == 0) {
     return (Some(OptMatch { id: o.id, value: "", has_value: false, long_form: false }), Getopt { ...g, cluster: rest });
