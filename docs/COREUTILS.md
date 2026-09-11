@@ -1094,6 +1094,24 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`mv` does not copy across filesystems.** GNU falls back to a recursive
+copy-then-unlink when `rename(2)` answers EXDEV. Measured, it preserves mode
+including setuid, both timestamps on files AND directories, ownership, symlinks
+as symlinks, FIFOs as FIFOs, and hard-link structure within one invocation; it
+UNLINKS an existing destination rather than truncating it, and a partial failure
+leaves the source intact. `mv.fern` reports the errno instead, which is exactly
+what GNU's own `--no-copy` does with it — a loud failure rather than a wrong
+result. Smallest divergence: `mv -v a /dev/shm/c` from an ext4 directory, where
+GNU prints `copied` then `removed` and exits 0.
+
+Closing it needs more than #9085 delivered, which is worth stating because it
+looked otherwise: besides `chmod` and `set_file_times`, both lowered now, it
+needs `chown`/`lchown` and `mkfifo`/`mknod`, and neither exists as a builtin in
+either compiler. #9089 carries all four. The corpus reaches EXDEV for real
+through the harness's `crossDev` field — `/dev/shm` is tmpfs where `/tmp` is
+ext4 — but only under `--no-copy` / `-n` / `--update=none`, which prove the
+errno is reported identically.
+
 **`du --time` renders in UTC.** GNU calls `localtime_r`, which resolves `TZ`
 and then `/etc/localtime`. `lib/tz.fern` can answer that now, but `du.fern`
 was written against a tree that predated it and formats the stamp as UTC,
