@@ -421,6 +421,38 @@ Darwin.
 
 ## Performance
 
+`shuf`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as the
+Debian multi-call binary), a 62 MiB / 8 000 000-line file. Best of three
+wall-clock runs rather than mean plus sigma: the hyperfine run took longer
+than the box could give it with other agents on the same four cores, and its
+sigma came back larger than its means. Comparable down its own columns only.
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `shuf` | `-i 1-1000000` | 782 | 181 | 193 | 0.23x | 0.25x |
+| `shuf` | a 62 MiB file | 7397 | 4244 | 1130 | 0.57x | 0.15x |
+| `shuf` | a 62 MiB file from a pipe | 4696 | 3780 | 964 | 0.80x | 0.21x |
+| `shuf` | `-n 10` of a 62 MiB file | 1711 | 360 | 200 | 0.21x | 0.12x |
+| `shuf` | `-n 1000000` of a 62 MiB file | 2327 | 1705 | 310 | 0.73x | 0.13x |
+| `shuf` | `-r -n 1000000` of a 62 MiB file | 1263 | 563 | 576 | 0.45x | 0.46x |
+| `shuf` | `-n 10 -i 1-1000000000` | 0.58 | 1.60 | — | 2.76x | — |
+| `shuf` | `-e` 200 operands | 1.07 | 1.67 | 2.82 | 1.56x | 2.65x |
+
+**shuf does not meet this epic's bar.** It wins the two startup rows and
+loses every per-line one, and the cause is per-draw and per-line rather than
+algorithmic: 8 000 000 draws plus their one-byte writes cost Fern 1506 ms
+against GNU's 720, so the generator alone is 2x, and the rest of the `-n 10`
+row is `io_buffered.LineReader` materialising a string per line on the
+reservoir path. That is #8770's per-append floor and #8822's x86-64 emitter.
+Two shapes were fixed before these numbers were taken: the generator state
+used to be rebuilt as a nine-field record per BYTE, and the output block used
+to be a concatenation per line.
+
+The row uutils cannot answer at all is `-n 10 -i 1-1000000000`: it
+materialises the range and dies allocating 24 GB. GNU keeps a sparse map of
+the slots a swap moved, and so does `shuf.fern`, which is the 0.58 ms.
+
+
 `scripts/coreutils-bench` compiles the utilities with `-O` for the host and
 runs each workload under hyperfine for Fern, GNU and (when present) uutils,
 with the same command shape for all three and any pipeline partner taken from
@@ -1357,8 +1389,8 @@ groups are the order of work. Each sub-issue names its group.
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Done: `cat`, `tac`, `head`, `tail`, `wc`, `nl`, `cut`,
   `paste`, `join`, `comm`, `uniq`, `sort`, `tr`, `fold`, `expand`, `unexpand`,
-  `split`, `csplit`, `od`, `base32`, `base64`, `basenc`, `sum`, `tee` and the
-  seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
+  `split`, `csplit`, `shuf`, `od`, `base32`, `base64`, `basenc`, `sum`, `tee`
+  and the seven checksum utilities. `tee` wanted signal dispositions (#8792) for `-i`
   and its `--output-error` family: SIG_IGN on SIGINT and SIGPIPE.
   Needs a buffered stdout writer in `std/io_buffered`
   (its own header already promises one) and a streaming stdin reader whose
