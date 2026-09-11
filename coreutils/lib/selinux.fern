@@ -1,0 +1,61 @@
+// coreutils/lib/selinux.fern — the two questions libselinux answers for
+// the utilities here: whether the kernel has SELinux at all, and what
+// the calling process's own security context is.
+//
+// Neither needs libselinux; both are files.
+//
+// No machine this corpus runs on has SELinux, so the only path the
+// oracle has ever compared is `enabled()` answering false and the
+// refusal each utility gives for it. `context()` IS compared, because
+// /proc/self/attr/current exists and reads `kernel` on a kernel with no
+// policy loaded, which is what `runcon` with no operands prints.
+import "std/string";
+import "std/array";
+import "./procfs";
+
+// `enabled()` — libselinux's is_selinux_enabled(): find the selinuxfs
+// mount and, with no such mount, there is no SELinux. The mount POINT is
+// wherever the system put it, so the filesystem TYPE is what to look for
+// rather than a hardcoded /sys/fs/selinux.
+//
+// Ask it lazily: it costs an open and a read, and the shapes a script
+// runs in a loop — `id -u`, `runcon` with no operands — never need the
+// answer.
+pub function enabled(): boolean {
+  match (procfs.read("/proc/self/mounts")) {
+    Ok(text) => {
+      var lines: string[] = text.lines();
+      var i: i32 = 0;
+      while (i < lines.len()) {
+        var f: string[] = lines[i].fields();
+        if (f.len() >= 3 && f[2] == "selinuxfs") {
+          return true;
+        }
+        i = i + 1;
+      }
+      return false;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// `context()` — getcon(3): the process's own security context, which the
+// kernel exposes as this file, NUL-terminated. libselinux reads
+// /proc/thread-self/attr/current; a Fern binary has one thread, for
+// which that is this same file.
+pub function context(): Result[string, IoError] {
+  match (procfs.read("/proc/self/attr/current")) {
+    Ok(text) => {
+      var n: i32 = text.len();
+      while (n > 0 && (text[n - 1] as i32 == 0 || text[n - 1] as i32 == 10)) {
+        n = n - 1;
+      }
+      return Ok(slice_unchecked(text, 0, n) + "");
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
