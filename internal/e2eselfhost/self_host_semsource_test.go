@@ -610,7 +610,9 @@ enum Chain { End, Link(i32, Chain) }
 }
 // One byte of a string. The receiver is read, not consumed, and the result is
 // an i32 that owns nothing — so a byte outlives the string it came from, which
-// a projection never could.
+// a projection never could. The temporary and the dying local are each read at
+// n = 0 and n = 1: a literal's box is immortal and its release a no-op, so only
+// the grown one proves a COUNTED box is freed after the read.
 @noinline function byte_at(s: string, i: i32): i32 { return s[i]; }
 @noinline function first_last(s: string): i32 { return s[0] + s[s.len() - 1]; }
 @noinline function temp_byte(n: i32): i32 { return grown(n)[1]; }
@@ -739,7 +741,8 @@ function main(): i32 {
     var uw: W = W { s: S2 { a: 1, b: 2 } };
     print_int(nested_up(uw)); print("");
     print_int(byte_at("abc", 1)); print(""); print_int(first_last("abc")); print("");
-    print_int(temp_byte(0)); print(""); print_int(outlives(0)); print("");
+    print_int(temp_byte(0)); print(""); print_int(temp_byte(1)); print("");
+    print_int(outlives(0)); print(""); print_int(outlives(1)); print("");
     print_int(checksum("ab")); print(""); print_int(checksum("")); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -778,7 +781,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n98\n196\n98\n97\n195\n0\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n98\n196\n98\n98\n97\n97\n195\n0\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
