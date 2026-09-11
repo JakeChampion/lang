@@ -539,6 +539,10 @@ pub function sysno(t: string, name: string): string {
         // Its record has no name-length member, so a Darwin emit needs
         // pathconf (BSD 191) for the two length limits as well.
         if (name == "statfs") { return "345"; }
+        // pathconf(2) — BSD 191. No Linux row: Linux has no pathconf syscall
+        // at all (glibc computes the answers from statfs plus constants), so a
+        // row there would be a number nothing could issue.
+        if (name == "pathconf") { return "191"; }
         // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
         // second fd in x1, which no __syscall* intrinsic can see. That is why
         // subprocess keeps a hand-written body on this one target — the same
@@ -1924,6 +1928,144 @@ function stat_fields_src(t: string): string {
     o = o + ", ctime: " + stat_i64(t, "ctime");
     o = o + ", ctime_nsec: " + stat_i64(t, "ctime_nsec");
     return o;
+}
+
+// ---- statfs(2): the FILESYSTEM behind a path --------------------------------
+//
+// `struct statfs` shares nothing between the two kernels but its name, so
+// unlike `stat` — where statoff carries the whole difference over one body —
+// statfs needs a per-target BODY as well as a per-target offset table. Darwin's
+// record has no name-length member at all, so the two length limits are real
+// `pathconf(2)` calls there; Linux's record has `f_namelen` and Linux has no
+// pathconf syscall, so PATH_MAX is the kernel's own constant.
+
+// statfs_linux_path_max is PATH_MAX, the longest pathname the Linux kernel will
+// resolve. A constant rather than a lookup because Linux has no pathconf
+// syscall — glibc computes it from statfs plus constants — and `getconf
+// PATH_MAX` reports this for every filesystem it mounts.
+function statfs_linux_path_max(): string { return "4096"; }
+
+// statfs_bufsize is how many bytes the kernel writes into the statfs buffer on
+// `t` — the whole record, not the part this projection reads, since the kernel
+// fills all of it. Linux's is 120 bytes (rounded to 128); Darwin's is 2168,
+// almost all of it the two MAXPATHLEN mount-name strings (rounded to 2176).
+// scratch_size reads the same number, so the buffer and the .bss reservation
+// cannot drift apart.
+pub function statfs_bufsize(t: string): string {
+    return util.i32_to_string(statfs_bufsize_n(t));
+}
+
+function statfs_bufsize_n(t: string): i32 {
+    if (t == "arm64-darwin") { return 2176; }
+    return 128;
+}
+
+// scratch_size is how large `__fern_scratch` must be on `t`. 256 bytes serves
+// every other syscall leaf that writes into it (the widest is `stat`'s 160-byte
+// record); Darwin's `struct statfs` is the one record that does not fit, so a
+// module reaching statfs there reserves the whole thing. The buffer is reused
+// and non-reentrant by construction — each leaf reads it fully before the next
+// runs — so the reservation is the MAXIMUM, not a sum.
+pub function scratch_size(t: string, needs_statfs: boolean): string {
+    var n: i32 = 256;
+    if (needs_statfs && statfs_bufsize_n(t) > n) { n = statfs_bufsize_n(t); }
+    return util.i32_to_string(n);
+}
+
+// statfsoff is the byte offset each FsStat field is read from in the platform's
+// `struct statfs`, and statfs_field_i64 the load that widens it into the
+// struct's i64 slot.
+//
+// Linux — the asm-generic record, 120 bytes, every member a `__kernel_long_t`
+// (8 bytes on both supported ISAs):
+//
+//	f_type 0, f_bsize 8, f_blocks 16, f_bfree 24, f_bavail 32,
+//	f_files 40, f_ffree 48, f_fsid 56, f_namelen 64, f_frsize 72
+//
+// Darwin — the 64-bit-inode record, 2168 bytes: f_bsize is a u32 at 0 with
+// f_iosize sharing its word at 4, then five u64 counts. There is NO
+// name-length member, which is why `name_max` has no row here and the Darwin
+// body asks pathconf instead.
+//
+// The 4-byte Darwin f_bsize is the trap: read 64 bits wide it drags f_iosize
+// into the high half, which is a plausible-looking multi-gigabyte block size
+// rather than a fault.
+pub function statfsoff(t: string, name: string): string {
+    if (t == "arm64-darwin") { return statfsoff_darwin(name); }
+    return statfsoff_linux(name);
+}
+
+// Both ISAs take the asm-generic record unchanged (x86-64's asm/statfs.h
+// overrides only compat_statfs64's packing), so ONE table serves them.
+function statfsoff_linux(name: string): string {
+    if (name == "block_size") { return "8"; }
+    if (name == "blocks") { return "16"; }
+    if (name == "blocks_free") { return "24"; }
+    if (name == "blocks_avail") { return "32"; }
+    if (name == "files") { return "40"; }
+    if (name == "files_free") { return "48"; }
+    if (name == "name_max") { return "64"; }
+    return "0";
+}
+
+// No name_max row: the member does not exist in this record.
+function statfsoff_darwin(name: string): string {
+    if (name == "block_size") { return "0"; }
+    if (name == "blocks") { return "8"; }
+    if (name == "blocks_free") { return "16"; }
+    if (name == "blocks_avail") { return "24"; }
+    if (name == "files") { return "32"; }
+    if (name == "files_free") { return "40"; }
+    return "0";
+}
+
+// statfs_field_i64 reads one record field into its i64 FsStat slot. Darwin's
+// f_bsize is the only sub-64-bit member either kernel has here, and it is
+// UNSIGNED, so it widens by masking the 32-bit load rather than by sign
+// extension — `as i64` on the register backends sign-extends, which would make
+// a block size with the top bit set arrive negative.
+function statfs_field_i64(t: string, name: string): string {
+    var addr: string = "__raw_addr(buf, " + statfsoff(t, name) + ")";
+    if (t == "arm64-darwin" && name == "block_size") {
+        return "(__load_i32(" + addr + ") as i64) & (4294967295 as i64)";
+    }
+    return "__load_i64(" + addr + ")";
+}
+
+// statfs_counts_src is the six count fields of the FsStat literal — the part
+// both targets read straight out of the record.
+function statfs_counts_src(t: string): string {
+    var o: string = "block_size: " + statfs_field_i64(t, "block_size");
+    o = o + ", blocks: " + statfs_field_i64(t, "blocks");
+    o = o + ", blocks_free: " + statfs_field_i64(t, "blocks_free");
+    o = o + ", blocks_avail: " + statfs_field_i64(t, "blocks_avail");
+    o = o + ", files: " + statfs_field_i64(t, "files");
+    o = o + ", files_free: " + statfs_field_i64(t, "files_free");
+    return o;
+}
+
+// rt_src_statfs backs `statfs(path)` (#9062) → Result[FsStat, IoError]: the
+// geometry of the filesystem the path resolves on, plus the two length limits a
+// path on it is held to.
+//
+// Same skeleton as rt_src_stat — a NUL-terminated heap copy of the path, the
+// errno classified by the shared __fern_io_error against a FRESH copy of that
+// path — and it diverges only where the kernels do.
+//
+// On Darwin the two pathconf calls are part of the RESULT, not a best effort: a
+// failing one replaces the reported errno, so the Err names the call that
+// actually failed rather than reporting success with two zero limits. They are
+// issued before the path buffer is handed to the string box, since both read it.
+pub function rt_src_statfs(t: string): string {
+    var head: string = "function __fern_statfs(path: string): Result[FsStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(" + statfs_bufsize(t) + "); var rc: i32 = __syscall3(" + sysno(t, "statfs") + ", pathz, buf, 0); ";
+    if (t == "arm64-darwin") {
+        // _PC_NAME_MAX is 4 and _PC_PATH_MAX 5 on XNU. Both answers are
+        // well under 2^31, so they are carried as i32 and widened into the
+        // i64 slots — which also lets the negative errno share the variable.
+        var pc: string = sysno(t, "pathconf");
+        return head + "var nmax: i32 = 0; var pmax: i32 = 0; if (rc >= 0) { nmax = __syscall3(" + pc + ", pathz, 4, 0); rc = nmax; } if (rc >= 0) { pmax = __syscall3(" + pc + ", pathz, 5, 0); rc = pmax; } var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: (nmax as i64), path_max: (pmax as i64) }); }";
+    }
+    return head + "var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: " + statfs_field_i64(t, "name_max") + ", path_max: (" + statfs_linux_path_max() + " as i64) }); }";
 }
 
 // rt_src_access backs `access(path, mode)` (syscall-leaf) →
@@ -3779,6 +3921,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "stat") { return ty_result(ty_unknown()); }
     if (id.name == "access") { return ty_result(ty_unknown()); }
     if (id.name == "lstat") { return ty_result(ty_unknown()); }
+    if (id.name == "statfs") { return ty_result(ty_unknown()); }
     if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
     if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
     // env(name): Option[string] — Some(value) if the
@@ -5719,7 +5862,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_create_dir", "__fn___fern_remove_dir",
         "__fn___fern_create_link", "__fn___fern_create_symlink",
         "__fn___fern_read_link", "__fn___fern_umask",
-        "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_subprocess",
+        "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.

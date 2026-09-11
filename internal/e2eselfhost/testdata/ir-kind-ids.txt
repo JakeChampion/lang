@@ -253,3 +253,4 @@ create_link=262
 create_symlink=263
 read_link=264
 umask=265
+statfs=270
