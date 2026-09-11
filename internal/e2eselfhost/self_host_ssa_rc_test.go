@@ -433,6 +433,28 @@ function main(): i32 {
     if (!wideValPlan.ok) { eprint(wideValPlan.why); return 58; }
     var wideValWhy: string = ssarc.lower(wideVal, [1], wideValPlan).why;
     if (wideValWhy != "unsupported physical RC value type") { eprint(wideValWhy); return 60; }
+    // A string index reads its receiver and hands back a scalar. The source
+    // DIES at the read here and the result is returned past it, which a
+    // projection could never do — the planner would refuse the borrow. That it
+    // plans at all is the pin: str_index is not in projects(), so nothing
+    // anchors the i32 to the bytes it came from.
+    var idxGraph = ssa.SFunc { name: "idx", nparams: 2, nvals: 3, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.str_index(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
+    var idxFunc = ssasem.Func { graph: idxGraph, values: [strTy, i32ty, i32ty],
+        params: [strTy, i32ty], result: i32ty, records: [], enums: [], calls: [] };
+    var idxPlan = ssaunits.plan(idxFunc, [3, 1]);
+    if (!idxPlan.ok) { eprint(idxPlan.why); return 61; }
+    var idxLowered = ssarc.lower(idxFunc, [3, 1], idxPlan);
+    if (!idxLowered.ok) { eprint(idxLowered.why); return 62; }
+    var sawIndex: boolean = false;
+    for o in idxLowered.ops { if (ir.render_op(o) == "str_index") { sawIndex = true; } }
+    if (!sawIndex) { return 63; }
+    // An array receiver has its own projection, and the index is not negotiable.
+    var idxArr = ssasem.Func { ...idxFunc, values: [f.result, i32ty, i32ty], params: [f.result, i32ty] };
+    if (ssaunits.plan(idxArr, [3, 1]).why != "string index container type") { return 64; }
+    var idxBad = ssasem.Func { ...idxFunc, values: [strTy, strTy, i32ty], params: [strTy, strTy] };
+    if (ssaunits.plan(idxBad, [3, 2]).why != "string index type") { return 65; }
     return 0;
 }
 `

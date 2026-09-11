@@ -56,6 +56,7 @@ pub function variant_as(): i32 { return 0 - 12; }
 pub function length(): i32 { return 0 - 13; }
 pub function append(): i32 { return 0 - 14; }
 pub function slice(): i32 { return 0 - 15; }
+pub function str_index(): i32 { return 0 - 16; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -295,13 +296,28 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// The builtin methods this vocabulary admits: a container's length, and one
-// element pushed onto an array.
-function is_builtin_op(kind: i32): boolean { return kind == length() || kind == append() || kind == slice(); }
+// One byte of a string, handed back as an i32. The receiver is read the way a
+// length's is, and the result owns nothing and anchors nothing — so unlike a
+// slice this is not a projection, and no rule here has to keep the source
+// alive for it.
+function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "string index arity"; }
+    if (!is_i32(result)) { return "string index result type"; }
+    if (!is_string(f.values[ins.args[0]])) { return "string index container type"; }
+    if (!is_i32(f.values[ins.args[1]])) { return "string index type"; }
+    return "";
+}
+
+// The builtins this vocabulary admits: a container's length, one element
+// pushed onto an array, a window onto a string, and one of its bytes.
+function is_builtin_op(kind: i32): boolean {
+    return kind == length() || kind == append() || kind == slice() || kind == str_index();
+}
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
+    if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
     return append_error(ins, f, result);
 }
 
