@@ -51,7 +51,7 @@ costs a silent failure on the first target that lacks it.
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
-| `fsmode` | `write_file_exec`, `access`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
+| `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
@@ -116,6 +116,23 @@ permission model can answer neither. Putting it on `fs` would make the question
 askable on a target that has no bits to answer it from, which is the failure
 `fsmode` exists to convert into an E066.
 
+**`chmod` is on `fsmode`, and it is the third face of the same property.**
+`write_file_exec` sets a permission bit on an entry it is CREATING, `access`
+reads the bits on one that exists, and `chmod` writes them on one that exists —
+the only builtin that can change the mode of something already there. A host
+with files and no permission model can do none of the three, so they belong
+together; putting `chmod` on `fs` would make the write expressible on a target
+with nothing to write it into. Neither WASI preview has permission bits at all,
+so E066 refuses it there, and the wasm backend emits nothing for it rather than
+stubbing something that would report success.
+
+Its two companions in the same set go the other way. **`rename` and
+`set_file_times` are plain `fs`**: moving a directory entry and writing a
+timestamp need a filesystem and nothing beyond one. A timestamp is not a
+permission bit — a host can have no notion of who may read a file and still
+know when it was last written — and both previews provide the calls, which is
+the observation `fsmode` exists to make about the mode word.
+
 **`umask` is on `fsmode` too, and it is the one that is not a question.**
 `access` and `write_file_exec` ask and set the bits on one entry; `umask` sets
 the mask EVERY later creation is filtered through, which is the same property
@@ -142,6 +159,33 @@ than discovering:
     a kernel would resolve it. That bound is the whole `fs` family's, not
     these five's, but a `ln` or `mkdir` operand is far likelier to be absolute
     than a `read_file` one.
+
+**`rename` and `set_file_times` are WASI calls too, and one of them has a
+range WASI cannot express.** They are `path_rename` and
+`path_filestat_set_times` on preview 1 and `descriptor.rename-at` /
+`descriptor.set-times-at` on preview 2, so they are provided rather than
+refused (#9059). Three things about that target are true and are worth stating
+rather than discovering:
+
+  - **WASI timestamps are UNSIGNED nanoseconds** — preview 1's `timestamp` and
+    preview 2's `datetime.seconds` alike — so a time before 1970 has no
+    representation. `set_file_times` answers `EOVERFLOW` for a negative second
+    count on either preview rather than letting the conversion wrap, which
+    would write a date six centuries out and report success. The natives take
+    the full signed range the kernel does.
+  - **A rename cannot cross preopens.** Both operands resolve under the first
+    one, and the destination descriptor handed to `rename-at` is that same
+    preopen. A kernel's `EXDEV` has no counterpart here; the failure is
+    `ENOTCAPABLE` for the operand that left.
+  - **The omit and nofollow flags are honoured**, each in the preview's own
+    spelling: preview 1 clears an `fstflags` bit and passes `lookupflags` 0,
+    preview 2 passes the `new-timestamp` variant's `no-change` arm and clears
+    `path-flags`. So `touch -a` / `touch -m` / `touch -h` are expressible on
+    a component, unlike `chmod`.
+
+`chmod` is the third of that set and is refused there, by construction rather
+than by a missing case: no wasi profile grants `fsmode`, so E066 names it at
+check time and the backend has no case to write.
 
 **`userid` is a capability, where `isatty` is core** — and the pair is the
 clearest illustration of where that line runs. Both are host-shaped questions

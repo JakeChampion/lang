@@ -41,6 +41,21 @@ var (
 	// verbatim, so it has no descriptor of its own:
 	// (self, old_ptr, old_len, new_ptr, new_len, ret_ptr) -> ().
 	composeSymlinkAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
+
+	// rename-at is symlink-at plus the destination descriptor, and no
+	// path-flags: (self, old_ptr, old_len, new_desc, new_ptr, new_len,
+	// ret_ptr) -> ().
+	composeRenameAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
+
+	// set-times-at carries two `new-timestamp` variants. A variant
+	// flattens to its discriminant followed by the JOIN of its arms, and
+	// the only arm with a payload is `timestamp(datetime)` — {u64, u32} —
+	// so each becomes (i32 disc, i64 seconds, i32 nanoseconds):
+	// (self, path-flags, path_ptr, path_len, a_disc, a_sec, a_nsec,
+	// m_disc, m_sec, m_nsec, ret_ptr) -> ().
+	composeSetTimesAtParams = []byte{
+		0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f, 0x7e, 0x7f, 0x7f,
+	}
 )
 
 const (
@@ -62,6 +77,8 @@ const (
 	composeLinkAtName     = "[method]descriptor.link-at"
 	composeSymlinkAtName  = "[method]descriptor.symlink-at"
 	composeReadlinkAtName = "[method]descriptor.readlink-at"
+	composeRenameAtName   = "[method]descriptor.rename-at"
+	composeSetTimesAtName = "[method]descriptor.set-times-at"
 )
 
 type p2composer struct {

@@ -168,6 +168,12 @@ var linuxDarwinSysno = map[string][2]int{
 	"linkat":     {37, 471},
 	"symlinkat":  {36, 474},
 	"readlinkat": {78, 473},
+	// renameat(2) / fchmodat(2) — Linux 38 / 53, Darwin BSD 465 / 467.
+	// Identical argument shapes; only AT_FDCWD differs. Linux's fchmodat
+	// takes three arguments where Darwin's takes four, and the helper
+	// passes a zero fourth that Linux ignores, so one body serves both.
+	"renameat": {38, 465},
+	"fchmodat": {53, 467},
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
@@ -182,10 +188,10 @@ var linuxDarwinSysno = map[string][2]int{
 	"ioctl": {29, 54},
 	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
 	// older faccessat (48) has no flags word and so cannot express
-	// AT_EACCESS. Darwin's faccessat (BSD 467) has taken flags since it
+	// AT_EACCESS. Darwin's faccessat (BSD 466) has taken flags since it
 	// was introduced. Same four-argument shape either way; only the
 	// AT_EACCESS and AT_FDCWD constants differ (see atEaccess/atFdcwd).
-	"faccessat": {439, 467},
+	"faccessat": {439, 466},
 	// geteuid(2) / getegid(2) — Linux asm-generic 175 / 177, Darwin BSD
 	// 25 / 43. Neither takes an argument and neither can fail.
 	"geteuid": {175, 25},
@@ -239,6 +245,11 @@ var f64UnaryIntrinsic = map[string]string{
 
 var linuxOnlySysno = map[string]int{
 	"getrandom": sysGetrandom,
+	// utimensat: XNU has no such syscall at all — libc builds it out of
+	// setattrlistat(2) (BSD 524), which is what __fern_set_file_times
+	// issues inline on Darwin. So this row is Linux's alone rather than
+	// a number whose Darwin twin sits in the other table.
+	"utimensat": 88,
 	// ppoll: Linux-only here; arm64-darwin's readiness path (kqueue)
 	// is deferred, so `__fern_poll` branches to a -1 stub on Darwin
 	// rather than reaching this entry.
@@ -522,7 +533,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesFdStat || g.usesReaderSeek ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
-		g.usesCreateSymlink || g.usesReadLink {
+		g.usesCreateSymlink || g.usesReadLink ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -551,6 +563,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesRemoveDirAll ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes ||
 		g.usesReaderWriter {
 		g.usesFree = true
 	}
@@ -847,6 +860,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesUmask {
 		g.emitUmaskRuntime()
+	}
+	if g.usesRename {
+		g.emitRenameRuntime()
+	}
+	if g.usesChmod {
+		g.emitChmodRuntime()
+	}
+	if g.usesSetFileTimes {
+		g.emitSetFileTimesRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -9770,6 +9792,165 @@ func (g *generator) emitReadLinkRuntime() {
 	g.line(".ltorg")
 }
 
+// emitRenameRuntime emits `__fern_rename(from, to)` —
+// renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
+// compatible type is replaced atomically; a rename across filesystems is
+// EXDEV and stays EXDEV, because the copy-then-remove `mv(1)` falls back
+// to is the caller's.
+func (g *generator) emitRenameRuntime() {
+	g.emitPathOpRuntime("__fern_rename", "rnam", "renameat", 2, false, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.atFdcwd("x2")
+		g.emit("mov x3, x23")
+	})
+}
+
+// emitChmodRuntime emits `__fern_chmod(path, mode)` —
+// fchmodat(AT_FDCWD, path, mode, 0). The umask is not consulted: it
+// filters a creation, and this is not one. The zero fourth argument is
+// Darwin's flags word; Linux's fchmodat has only three and ignores it.
+func (g *generator) emitChmodRuntime() {
+	g.emitPathOpRuntime("__fern_chmod", "chmd", "fchmodat", 1, true, func() {
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+		g.emit("and x2, x24, #4095")
+		g.emit("mov x3, #0")
+	})
+}
+
+// emitSetFileTimesRuntime emits `__fern_set_file_times(path_data,
+// path_len, atime_sec, atime_nsec, mtime_sec, mtime_nsec, flags)` in
+// (x0..x6) → Result[void, IoError].
+//
+// On Linux that is utimensat(AT_FDCWD, path, times, flags): two
+// `struct timespec`s on the stack, access time first, with UTIME_OMIT in
+// the nanosecond half of either one the caller asked to leave alone.
+//
+// XNU has no utimensat syscall — libc builds it out of setattrlistat(2),
+// and so does this. The attribute list names only the timestamps that
+// are not omitted, and they are packed into the buffer in ASCENDING
+// ATTRIBUTE-BIT order, which puts ATTR_CMN_MODTIME (0x400) before
+// ATTR_CMN_ACCTIME (0x1000) — the reverse of the timespec order Linux
+// wants. Omitting both leaves an empty list, which setattrlistat accepts
+// and which does nothing, exactly as UTIME_OMIT on both halves does.
+//
+// The two operands are read into the frame before the path copy: they
+// arrive in argument registers that NUL-terminating the path clobbers.
+func (g *generator) emitSetFileTimesRuntime() {
+	g.line("")
+	g.line(".global __fern_set_file_times")
+	g.typeDirective("__fern_set_file_times")
+	g.label("__fern_set_file_times")
+	// Frame: fp/lr (16) + x19..x24 (48) + 16-byte inline-spill scratch
+	// at [x29+80] + the syscall's own operands from [x29+96]: the
+	// timespec pair on Linux, the 24-byte attrlist at +96 with its
+	// attribute buffer at +128 and the buffer's length at +160 on
+	// Darwin.
+	g.emit("sub sp, sp, #176")
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0") // path_data
+	g.emit("mov x20, x1") // path_len
+	g.emit("mov x23, x6") // flags
+	if g.darwin {
+		g.emit("mov w9, #0")         // commonattr
+		g.emit("add x10, x29, #128") // buffer cursor
+		g.emit("tbnz x23, #2, .Lsft_no_m")
+		g.emit("orr w9, w9, #0x400") // ATTR_CMN_MODTIME
+		g.emit("stp x4, x5, [x10]")
+		g.emit("add x10, x10, #16")
+		g.label(".Lsft_no_m")
+		g.emit("tbnz x23, #1, .Lsft_no_a")
+		g.emit("orr w9, w9, #0x1000") // ATTR_CMN_ACCTIME
+		g.emit("stp x2, x3, [x10]")
+		g.emit("add x10, x10, #16")
+		g.label(".Lsft_no_a")
+		g.emit("add x11, x29, #128")
+		g.emit("sub x10, x10, x11")
+		g.emit("str x10, [x29, #160]") // the buffer's length
+		g.emit("add x11, x29, #96")
+		g.emit("mov w12, #5") // ATTR_BIT_MAP_COUNT
+		g.emit("strh w12, [x11]")
+		g.emit("strh wzr, [x11, #2]") // reserved
+		g.emit("str w9, [x11, #4]")   // commonattr
+		g.emit("str wzr, [x11, #8]")  // volattr
+		g.emit("str wzr, [x11, #12]") // dirattr
+		g.emit("str wzr, [x11, #16]") // fileattr
+		g.emit("str wzr, [x11, #20]") // forkattr
+	} else {
+		g.emit("stp x2, x3, [x29, #96]")  // atime
+		g.emit("stp x4, x5, [x29, #112]") // mtime
+		// UTIME_OMIT (1<<30 - 2) in the nanosecond half is how
+		// utimensat is told to leave one of the pair alone; the
+		// seconds half is then not read.
+		g.emit("mov x9, #1073741822")
+		g.emit("tbz x23, #1, .Lsft_a")
+		g.emit("stp xzr, x9, [x29, #96]")
+		g.label(".Lsft_a")
+		g.emit("tbz x23, #2, .Lsft_m")
+		g.emit("stp xzr, x9, [x29, #112]")
+		g.label(".Lsft_m")
+	}
+	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
+	g.emitNulTermPath2W("x21", "x21", "x20")
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	if g.darwin {
+		g.emit("add x2, x29, #96")  // attrlist
+		g.emit("add x3, x29, #128") // attribute buffer
+		g.emit("ldr x4, [x29, #160]")
+		g.emit("and x5, x23, #1") // FSOPT_NOFOLLOW
+		g.emit("mov x16, #524")   // setattrlistat
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lsft_done")
+		g.emit("neg x0, x0")
+		g.label(".Lsft_done")
+	} else {
+		g.emit("add x2, x29, #96")
+		// AT_SYMLINK_NOFOLLOW is 0x100; bit 0 of the Fern word
+		// selects it.
+		g.emit("mov x3, #0")
+		g.emit("tbz x23, #0, .Lsft_go")
+		g.emit("mov x3, #256")
+		g.label(".Lsft_go")
+		g.syscall("utimensat")
+	}
+	g.emitFreeNulTermPath2W("x21", "x20")
+	g.emit("tbnz x0, #63, .Lsft_err")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lsft_return")
+
+	g.label(".Lsft_err")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash the IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsft_return")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #176")
+	g.emit("ret")
+	g.sizeDirective("__fern_set_file_times")
+	g.line(".ltorg")
+}
+
 // emitUmaskRuntime emits `__fern_umask(mask) → previous mask`. umask(2)
 // cannot fail and returns the mask it replaced, so the syscall's own
 // return value is the whole answer.
@@ -12475,6 +12656,11 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	// The filesystem-metadata primitives (#9059): renameat, fchmodat and
+	// utimensat — on Darwin, setattrlistat in place of the last.
+	usesRename       bool
+	usesChmod        bool
+	usesSetFileTimes bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -16707,6 +16893,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// umask(mask): the previous mask. Cannot fail.
 			target = "__fern_umask"
 			g.usesUmask = true
+		case "rename":
+			// rename(from, to): Result[void, IoError] —
+			// renameat, which replaces an existing `to`.
+			target = "__fern_rename"
+			g.usesRename = true
+		case "chmod":
+			// chmod(path, mode): Result[void, IoError] —
+			// fchmodat on an entry that already exists.
+			target = "__fern_chmod"
+			g.usesChmod = true
+		case "set_file_times":
+			// set_file_times(path, asec, ansec, msec, mnsec,
+			// flags): Result[void, IoError] — utimensat.
+			target = "__fern_set_file_times"
+			g.usesSetFileTimes = true
 		case "temp_dir":
 			// temp_dir(prefix): Result[string, IoError] —
 			// mkdirat("/tmp/<prefix>-<monotonic_ns>").

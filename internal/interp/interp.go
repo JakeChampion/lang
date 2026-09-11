@@ -1081,6 +1081,9 @@ func New() *Interp {
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
+	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
+	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
+	i.Builtins["set_file_times"] = &Builtin{Fn: builtinSetFileTimes}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
 	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
@@ -2903,6 +2906,80 @@ func builtinReadLink(_ *Interp, args []Value) (Value, error) {
 		}
 	}
 	return resultErr(ioErrorOther(p[0], syscall.ENAMETOOLONG)), nil
+}
+
+// builtinRename moves a directory entry. Nothing is copied and an
+// existing destination is replaced atomically; a rename across
+// filesystems stays EXDEV rather than becoming a copy here.
+func builtinRename(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("rename", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	// The IoError names the destination: EXDEV, ENOTEMPTY and EISDIR
+	// are all properties of where the entry was going.
+	return ioResult(p[1], syscall.Rename(p[0], p[1])), nil
+}
+
+// builtinChmod sets the permission bits of an existing entry. The umask
+// does not apply: it filters a creation, and this is not one.
+func builtinChmod(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("chmod: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("chmod: expected string path, got %T", args[0])
+	}
+	mode, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("chmod: expected number mode, got %T", args[1])
+	}
+	return ioResult(string(path), syscall.Chmod(string(path), uint32(int(mode))&0o7777)), nil
+}
+
+// The bits of set_file_times' `flags` word. They are Fern's own, not the
+// kernel's: AT_SYMLINK_NOFOLLOW is 0x100 on Linux and 0x20 on Darwin,
+// and the two omit bits are not a flags word at all — each is UTIME_OMIT
+// written into the nanosecond half of the timespec being skipped.
+const (
+	timesNoFollow  = 1
+	timesOmitAtime = 2
+	timesOmitMtime = 4
+)
+
+// builtinSetFileTimes writes the access and modification timestamps of
+// an entry — utimensat(2). `os.Chtimes` can express neither omit bit nor
+// the nofollow flag, so this goes to the syscall.
+func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 6 {
+		return nil, fmt.Errorf("set_file_times: expected 6 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("set_file_times: expected string path, got %T", args[0])
+	}
+	var n [5]int64
+	for i := 1; i < 6; i++ {
+		v, ok := args[i].(Number)
+		if !ok {
+			return nil, fmt.Errorf("set_file_times: expected number arg %d, got %T", i, args[i])
+		}
+		n[i-1] = int64(v)
+	}
+	flags := n[4]
+	times := [2]syscall.Timespec{
+		{Sec: n[0], Nsec: n[1]},
+		{Sec: n[2], Nsec: n[3]},
+	}
+	if flags&timesOmitAtime != 0 {
+		times[0] = syscall.Timespec{Nsec: utimeOmit}
+	}
+	if flags&timesOmitMtime != 0 {
+		times[1] = syscall.Timespec{Nsec: utimeOmit}
+	}
+	err := setFileTimes(string(path), &times, flags&timesNoFollow != 0)
+	return ioResult(string(path), err), nil
 }
 
 // builtinUmask sets the process file-mode creation mask and answers the

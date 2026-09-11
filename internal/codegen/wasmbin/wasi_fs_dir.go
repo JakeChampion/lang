@@ -1850,9 +1850,9 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	// 16 bytes and removes the ordering constraint entirely.
 	body = emitPreopenP2(body, alloc, getDirs, 10, 5)
 
-	// stat-at(preopen, path-flags, path_buf, len, rb). 1 = symlink-follow.
+	// stat-at(preopen, path-flags, path_buf, len, rb).
 	body = inst.InstLocalGet(body, 5)
-	body = inst.InstI32Const(body, 1)
+	body = inst.InstI32Const(body, pathFlags) // 1 = symlink-follow, 0 = not
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstLocalGet(body, 2)

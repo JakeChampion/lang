@@ -257,6 +257,15 @@ const (
 	sysSymlinkat  = 266
 	sysReadlinkat = 267
 	sysUmask      = 95
+	// The filesystem-metadata primitives: renameat(2) 264,
+	// fchmodat(2) 268 and utimensat(2) 280. Linux's fchmodat takes
+	// THREE arguments, not four: the flags-taking form is fchmodat2
+	// (452), and the one flag it adds — AT_SYMLINK_NOFOLLOW — is
+	// EOPNOTSUPP here anyway, so `chmod` follows a final symlink and
+	// has no flag to pass.
+	sysRenameat  = 264
+	sysFchmodat  = 268
+	sysUtimensat = 280
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -608,7 +617,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// working buffers (#9001); remove_dir_all also releases its child paths.
 	if g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink {
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
+		g.usesRename || g.usesChmod || g.usesSetFileTimes {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -900,6 +910,15 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesUmask {
 		g.emitUmaskRuntime()
+	}
+	if g.usesRename {
+		g.emitRenameRuntime()
+	}
+	if g.usesChmod {
+		g.emitChmodRuntime()
+	}
+	if g.usesSetFileTimes {
+		g.emitSetFileTimesRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -1411,6 +1430,11 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	// The filesystem-metadata primitives (#9059): renameat, fchmodat
+	// and utimensat, each one syscall over one or two path operands.
+	usesRename       bool
+	usesChmod        bool
+	usesSetFileTimes bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1846,6 +1870,18 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "umask":
 		g.usesUmask = true
+	case "rename":
+		g.usesRename = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "chmod":
+		g.usesChmod = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "set_file_times":
+		g.usesSetFileTimes = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "temp_dir":
 		g.usesTempDir = true
 		g.usesMonotonicNs = true
@@ -3416,6 +3452,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_link"
 		case "umask":
 			target = "__fern_umask"
+		case "rename":
+			target = "__fern_rename"
+		case "chmod":
+			target = "__fern_chmod"
+		case "set_file_times":
+			target = "__fern_set_file_times"
 		case "temp_dir":
 			target = "__fern_temp_dir"
 		case "read_dir":
@@ -13726,6 +13768,129 @@ func (g *generator) emitReadLinkRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_link, .-__fern_read_link")
+}
+
+// emitRenameRuntime emits `__fern_rename(from, to)` —
+// renameat(AT_FDCWD, from, AT_FDCWD, to). An existing `to` of a
+// compatible type is replaced atomically; a rename across filesystems is
+// EXDEV and stays EXDEV, because the copy-then-remove `mv(1)` falls back
+// to is the caller's and folding it in here would move the bytes where
+// the caller asked to move the entry.
+func (g *generator) emitRenameRuntime() {
+	g.emitPathOpRuntime("__fern_rename", "rnam", sysRenameat, 2, false, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, -100")
+		g.emit("mov r10, r14")
+	})
+}
+
+// emitChmodRuntime emits `__fern_chmod(path, mode)` —
+// fchmodat(AT_FDCWD, path, mode). The umask is not consulted: it filters
+// a creation, and this is not one, so the low twelve bits land verbatim.
+func (g *generator) emitChmodRuntime() {
+	g.emitPathOpRuntime("__fern_chmod", "chmd", sysFchmodat, 1, true, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, [rbp - 72]") // mode
+		g.emit("and edx, 4095")
+	})
+}
+
+// emitSetFileTimesRuntime emits `__fern_set_file_times(path, atime_sec,
+// atime_nsec, mtime_sec, mtime_nsec, flags) → Result[void, IoError]` —
+// utimensat(AT_FDCWD, path, times, flags).
+//
+// The two `struct timespec`s are built on the stack in the order the
+// kernel reads them, access time first. `flags` is Fern's word rather
+// than the kernel's: bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2
+// become UTIME_OMIT written into the nanosecond half of the timespec
+// being skipped — an omit is not a flag to utimensat, it is a sentinel
+// value, and the seconds half is then ignored.
+func (g *generator) emitSetFileTimesRuntime() {
+	g.line("")
+	g.line(".globl __fern_set_file_times")
+	g.line(".type __fern_set_file_times, @function")
+	g.label("__fern_set_file_times")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // path byte ptr (copy scratch)
+	g.emit("push r13") // path len / errno / IoError box
+	g.emit("push r14") // flags
+	g.emit("push r15") // syscall result across the free
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 72 realigns. Slots:
+	//   [rbp-48] emitStrDataPtr inline-spill scratch
+	//   [rbp-56] the path string value (io_error arg)
+	//   [rbp-64] path len
+	//   [rbp-96 .. rbp-65] the two timespecs, atime first
+	g.emit("sub rsp, 72")
+	g.emit("mov [rbp - 56], rdi")
+	g.emit("mov r14, r9") // flags, before the path copy clobbers r9
+	g.emit("mov [rbp - 96], rsi")
+	g.emit("mov [rbp - 88], rdx")
+	g.emit("mov [rbp - 80], rcx")
+	g.emit("mov [rbp - 72], r8")
+	// UTIME_OMIT (1<<30 - 2) into the nanosecond half of whichever
+	// timespec the caller asked to leave alone.
+	g.emit("test r14d, 2")
+	g.emit("jz .Lsft_a")
+	g.emit("mov qword ptr [rbp - 96], 0")
+	g.emit("mov qword ptr [rbp - 88], 1073741822")
+	g.label(".Lsft_a")
+	g.emit("test r14d, 4")
+	g.emit("jz .Lsft_m")
+	g.emit("mov qword ptr [rbp - 80], 0")
+	g.emit("mov qword ptr [rbp - 72], 1073741822")
+	g.label(".Lsft_m")
+	g.emitPathzCopy("rbx", "[rbp - 56]", "[rbp - 48]", "sft")
+	g.emit("mov [rbp - 64], r13")
+	g.emit("mov edi, -100") // AT_FDCWD
+	g.emit("mov rsi, rbx")
+	g.emit("lea rdx, [rbp - 96]")
+	// AT_SYMLINK_NOFOLLOW is 0x100; bit 0 of the Fern word selects it.
+	g.emit("xor r10d, r10d")
+	g.emit("test r14d, 1")
+	g.emit("jz .Lsft_go")
+	g.emit("mov r10d, 256")
+	g.label(".Lsft_go")
+	g.emitSyscall(sysUtimensat)
+	g.emit("mov r15, rax")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r15")
+	g.emit("test rax, rax")
+	g.emit("js .Lsft_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lsft_ret")
+
+	g.label(".Lsft_err")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 56]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lsft_ret")
+	g.emit("add rsp, 72")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_set_file_times, .-__fern_set_file_times")
 }
 
 // emitUmaskRuntime emits `__fern_umask(mask) → previous mask`. umask(2)

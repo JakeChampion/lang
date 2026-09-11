@@ -1845,6 +1845,11 @@ type FsFeatures struct {
 	Link     bool // link-at
 	Symlink  bool // symlink-at
 	Readlink bool // readlink-at
+	// Rename is rename-at, the second method taking a destination
+	// descriptor; SetTimes is set-times-at, the only one whose
+	// arguments carry a variant.
+	Rename   bool // rename-at
+	SetTimes bool // set-times-at
 	Stat     bool // stat-at
 	// StatSelf is `stat` on the descriptor itself — the fstat behind a
 	// Reader / Writer's `.stat()`. It shares stat-at's result record, so
@@ -1863,6 +1868,7 @@ type FsFeatures struct {
 func (f FsFeatures) Any() bool {
 	return f.OpenAt || f.Read || f.Write || f.Append ||
 		f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Readlink ||
+		f.Rename || f.SetTimes ||
 		f.Stat || f.StatSelf || f.ReadDir || f.DropDesc
 }
 
@@ -1883,7 +1889,7 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 		in: inT, out: outT,
 		needIn:       f.Read,
 		needOut:      f.Write || f.Append,
-		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink,
+		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Rename || f.SetTimes,
 		needDescType: f.Stat || f.StatSelf || f.ReadDir,
 	})
 	if f.OpenAt {
@@ -1917,10 +1923,19 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 		fsReadlinkAt(b, v)
 	}
 	if f.Stat || f.StatSelf {
-		fsStat(b, v, f.Stat, f.StatSelf)
+		fsStat(b, &v, f.Stat, f.StatSelf)
 	}
 	if f.ReadDir {
 		fsReadDir(b, v)
+	}
+	// The metadata pair goes last: everything before it is pinned byte
+	// for byte, and a method set that does not ask for these two has to
+	// keep producing the sequence it produced before they existed.
+	if f.Rename {
+		fsRenameAt(b, v)
+	}
+	if f.SetTimes {
+		fsSetTimesAt(b, &v)
 	}
 	return b.body()
 }

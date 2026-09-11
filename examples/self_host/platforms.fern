@@ -276,6 +276,8 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "create_link", capability: "fs" },
         Gate { builtin: "create_symlink", capability: "fs" },
         Gate { builtin: "read_link", capability: "fs" },
+        Gate { builtin: "rename", capability: "fs" },
+        Gate { builtin: "set_file_times", capability: "fs" },
         Gate { builtin: "temp_dir", capability: "fs" },
 
         // Permission bits on a filesystem entry, which is a separate
@@ -287,6 +289,9 @@ pub function gated_builtins(): Gate[] {
         // The umask is the same property from the other side: the mode
         // bits a creation is allowed to keep. WASI has no creation mask.
         Gate { builtin: "umask", capability: "fsmode" },
+        // And `chmod` is the WRITE of it on an entry that already exists,
+        // where `write_file_exec` only sets a bit on one it creates.
+        Gate { builtin: "chmod", capability: "fsmode" },
 
         // The process's own identity — the effective pair, the real pair,
         // and the supplementary group set. Neither WASI preview has a
