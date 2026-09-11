@@ -54,6 +54,7 @@ pub function variant_get(): i32 { return 0 - 10; }
 pub function variant_up(): i32 { return 0 - 11; }
 pub function variant_as(): i32 { return 0 - 12; }
 pub function length(): i32 { return 0 - 13; }
+pub function append(): i32 { return 0 - 14; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -159,6 +160,21 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
         i = i + 1;
     }
     return "";
+}
+
+// One element pushed onto a counted array. The array the caller gets back is
+// the receiver's box when the push fit and a fresh one when it grew, so the
+// receiver's unit is handed over rather than read — the unit planner is what
+// holds that to a move.
+function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "append arity"; }
+    var recv: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.equal(recv, result)) { return "append result type"; }
+    if let typeinfo.TypeArray(a) = recv {
+        if (!semtypes.equal(a.elem, f.values[ins.args[1]])) { return "append element type"; }
+        return "";
+    }
+    return "append container type";
 }
 
 // A counted container's element count. The receiver is read, not consumed,
@@ -267,6 +283,15 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return variant_projection_error(ins, f, result);
 }
 
+// The builtin methods this vocabulary admits: a container's length, and one
+// element pushed onto an array.
+function is_builtin_op(kind: i32): boolean { return kind == length() || kind == append(); }
+
+function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == length()) { return length_error(ins, f, result); }
+    return append_error(ins, f, result);
+}
+
 function is_variant_op(kind: i32): boolean {
     return kind == variant_new() || kind == variant_is() || kind == variant_get()
         || kind == variant_up() || kind == variant_as();
@@ -345,7 +370,7 @@ function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     if (kind == record_new()) { return record_construction_error(ins, f, result); }
     if (kind == record_get()) { return record_projection_error(ins, f, result); }
     if (kind == call()) { return call_error(ins, f, result); }
-    if (kind == length()) { return length_error(ins, f, result); }
+    if (is_builtin_op(kind)) { return builtin_error(ins, f, result); }
     if (is_variant_op(kind)) { return variant_error(ins, f, result); }
     return "unsupported semantic operation";
 }
