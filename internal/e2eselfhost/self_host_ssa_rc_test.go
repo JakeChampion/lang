@@ -297,6 +297,32 @@ function main(): i32 {
     var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var withKidsFunc = ssasem.Func { graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    // A length reads its receiver and hands back an i32 that owns nothing: an
+    // array selects arr_len, a string str_len, and a receiver that is neither
+    // is not a counted container this can read at all.
+    var lenGraph = ssa.SFunc { name: "len", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.length(), 1, [0], 0)], term: ret(1) }] };
+    var arrLen = ssasem.Func { graph: lenGraph, values: [f.result, i32ty], params: [f.result], result: i32ty, records: [], enums: [], calls: [] };
+    var arrLenPlan = ssaunits.plan(arrLen, [2]);
+    if (!arrLenPlan.ok) { eprint(arrLenPlan.why); return 32; }
+    var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan);
+    if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
+    var sawArrLen: boolean = false;
+    for o in arrLenLowered.ops { if (ir.render_op(o) == "arr_len") { sawArrLen = true; } }
+    if (!sawArrLen) { return 34; }
+    var strTy: typeinfo.Type = typeinfo.TypeString { tag: 0 };
+    var strLen = ssasem.Func { graph: lenGraph, values: [strTy, i32ty], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
+    var strLenPlan = ssaunits.plan(strLen, [2]);
+    if (!strLenPlan.ok) { eprint(strLenPlan.why); return 35; }
+    var strLenLowered = ssarc.lower(strLen, [2], strLenPlan);
+    if (!strLenLowered.ok) { eprint(strLenLowered.why); return 36; }
+    var sawStrLen: boolean = false;
+    for o in strLenLowered.ops { if (ir.render_op(o) == "str_len") { sawStrLen = true; } }
+    if (!sawStrLen) { return 37; }
+    var badRecv = ssasem.Func { graph: lenGraph, values: [boxOnly, i32ty], params: [boxOnly], result: i32ty, records: [boxOnlySchema], enums: [], calls: [] };
+    if (ssaunits.plan(badRecv, [2]).why != "length container type") { return 38; }
+    var badResult = ssasem.Func { graph: lenGraph, values: [f.result, f.result], params: [f.result], result: f.result, records: [], enums: [], calls: [] };
+    if (ssaunits.plan(badResult, [2]).why != "length result type") { return 39; }
     return 0;
 }
 `
