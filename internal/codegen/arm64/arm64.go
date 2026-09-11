@@ -10963,12 +10963,16 @@ func (g *generator) emitFdStatRuntime() {
 // back neither is_file nor is_dir. That three-way answer is what
 // a directory walk needs to choose between recursing, reading and
 // skipping (#7982).
+//
+// The flag is per-kernel, and XNU rejects Linux's number outright —
+// so a hardcoded 0x100 makes every `lstat` on Darwin EINVAL,
+// symlink or not.
 func (g *generator) emitLstatRuntime() {
-	g.emitStatLikeRuntime("__fern_lstat", 256, "lst2w", false)
+	g.emitStatLikeRuntime("__fern_lstat", g.atSymlinkNofollow(), "lst2w", false)
 }
 
 // emitStatLikeRuntime is the shared body. `atFlags` is fstatat's
-// flags word — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to —
+// flags word — 0 to follow, atSymlinkNofollow() not to —
 // and `lp` prefixes the local labels so the helpers can all be
 // emitted into one object. `byFd` selects fstat of the fd at [x0]
 // over fstatat of a path.

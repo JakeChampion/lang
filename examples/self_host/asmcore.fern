@@ -2090,14 +2090,17 @@ pub function rt_src_stat(t: string): string {
 }
 
 // rt_src_lstat backs `lstat(path)` — the same body with fstatat's flags word set
-// to AT_SYMLINK_NOFOLLOW (0x100), so the final component is described rather
-// than resolved. A symlink's S_IFMT is then S_IFLNK, which is neither S_IFREG
-// nor S_IFDIR, so both flags come back false. That three-way answer is what a
+// to AT_SYMLINK_NOFOLLOW, so the final component is described rather than
+// resolved. A symlink's S_IFMT is then S_IFLNK, which is neither S_IFREG nor
+// S_IFDIR, so both flags come back false. That three-way answer is what a
 // directory walk needs to choose between recursing, reading and skipping
 // (#7982); the flags word is the only difference, which is why the two share
 // one body rather than drifting as near-copies.
+//
+// The flag is per-kernel, and XNU rejects Linux's number outright — so a
+// hardcoded 0x100 makes every `lstat` on Darwin EINVAL, symlink or not.
 pub function rt_src_lstat(t: string): string {
-    return rt_src_stat_like(t, "__fern_lstat", "256");
+    return rt_src_stat_like(t, "__fern_lstat", at_symlink_nofollow(t));
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
