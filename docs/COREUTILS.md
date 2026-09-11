@@ -40,6 +40,23 @@ set to the utility name, the Fern binary and the GNU binary produce:
   SIGPIPE on both sides, and the harness checks that it does);
 - for utilities that touch the filesystem, the same resulting tree.
 
+A case may also name a `mask`, for the one utility whose correct answer
+differs run to run: `mktemp`'s whole output is a run of random characters.
+The mask rewrites that run BY POSITION on stdout and in the names of the
+entries the run left behind — never on stderr, which carries the template
+with its X's intact — so the directory, the prefix, the suffix, the length,
+the status and the tree all stay under byte comparison and only the
+characters themselves are canonicalised. A seeded name is left alone: it is
+identical on both sides already, and masking `td1` and `td2` under a
+three-character mask would put two entries under one name. The hard-link
+groups are renumbered afterwards, because the walk order a random name sorts
+into is not the same on both sides. What a mask hides is what the corpus
+stops proving, so `mktemp`'s test file states for each case which of the two
+it is under, and the two properties no diff against GNU can see — that the
+characters come from `[0-9A-Za-z]` and actually vary, and that the retry is
+bounded at 62^3 — are Fern-side invariants beside the corpus rather than
+cases in it.
+
 The environment is `LC_ALL=C LANG=C TZ=UTC PATH=/usr/bin:/bin`, plus whatever
 a case adds (`POSIXLY_CORRECT=1`). The C locale is a deliberate choice, not a
 simplification: GNU's quoting, collation, case folding and number formatting
@@ -1366,9 +1383,12 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` `mv` `cp`
-  `install` `touch` `truncate` `mkfifo` `mknod` `mktemp` `sync` (rename,
+  `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
-  primitives now), `chmod` `chown`
+  primitives now, and `rename`, `chmod` and `set_file_times` landed with
+  #9059), `mktemp` (done — it needed none of them: `open_exclusive`,
+  `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
+  `env` were all already here, so its banner was stale), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df` `dircolors`
   (full stat, statfs, d_type), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
