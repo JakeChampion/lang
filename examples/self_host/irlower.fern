@@ -11737,6 +11737,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!sms.ok) { return sms; }
         return sms.emit(ir.op_sleep_ms());
     }
+    // Built-in `sleep_ns(ns)` — the same pause at nanosecond
+    // resolution (no-op if ns <= 0), so a sub-millisecond interval
+    // reaches the kernel unrounded (#8528). The count is an i64 in
+    // the checker's signature and every backend helper reads it as
+    // one, so it always lowers through lower_i64 — which widens an
+    // i32 leaf rather than bailing, so `sleep_ns(1000)` lowers too.
+    if (cid.name == "sleep_ns" && c.args.len() == 1) {
+        var sns: LowerState = lower_i64(c.args[0], s);
+        if (!sns.ok) { return sns; }
+        return sns.emit(ir.op_sleep_ns());
+    }
     // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2',
     // #5686): `proc_fork()` forks and pushes the kernel's return
     // verbatim (0 child / pid parent / -errno), `proc_waitpid(pid)`

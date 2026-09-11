@@ -8056,7 +8056,7 @@ pub function builtin_function_names(): string[] {
         // signal dispositions — SIG_IGN / SIG_DFL for one signal
         "signal_ignore", "signal_default",
         // clocks + randomness + sleep + reactor readiness
-        "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
+        "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "sleep_ns", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
         "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // maps + string builder + bytes + the free-function `len(a)` form.

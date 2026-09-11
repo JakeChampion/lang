@@ -1084,9 +1084,18 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 // `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
 // no-op), pushing a dummy result (the syscall return) so a statement-level drop
 // balances — the same void-with-drop shape as putchar. Lowers to the x86-64 /
-// arm64 __fern_sleep_ms helper the AST path / native compiler use (no wasm: the
-// WASI poll-based sleep is a separate item, #2843). Mirrors the native builtin.
+// arm64 __fern_sleep_ms helper the native compiler uses, and on wasm to a
+// single-clock poll_oneoff block. Mirrors the native builtin.
 pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
+// `sleep_ns` is the same pause at the resolution the underlying primitive
+// actually has: it pops an i64 (nanoseconds) and pushes the same dummy result
+// for the statement-level drop. Only the split differs — the timespec divisor
+// is 1e9 and the remainder IS tv_nsec, so nothing is rounded up to a
+// millisecond before the kernel sees it. arm64-darwin has no nanosleep syscall
+// and rounds the remainder UP into select's microsecond timeval; both WASI
+// previews take nanoseconds already, so wasm is exact. Mirrors the native
+// builtin (#8528).
+pub function op_sleep_ns(): Op { return op0("sleep_ns"); }
 // `proc_fork` takes no operands and pushes the fork(2) return verbatim — 0 in
 // the child, the child's pid in the parent, -errno on failure. `proc_waitpid`
 // pops a pid and pushes the reaped child's status decoded to the shell
@@ -1541,12 +1550,12 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … umask=265): not
+// Extension tags beyond kind_count() (struct_copy=198 … sleep_ns=266): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260.
-// NEXT FREE EXTENSION ID: 266 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 267 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -1807,6 +1816,7 @@ function kind_id_len8_r(name: string): i32 {
 function kind_id_len8_s(name: string): i32 {
     if (name == "str_trim") { return 109; }
     if (name == "sleep_ms") { return 181; }
+    if (name == "sleep_ns") { return 266; }
     if (name == "syscall3") { return 204; }
     if (name == "syscall4") { return 206; }
     if (name == "syscall5") { return 228; }
@@ -2335,13 +2345,14 @@ function kind_name_4(id: i32): string {
     if (id == 263) { return "create_symlink"; }
     if (id == 264) { return "read_link"; }
     if (id == 265) { return "umask"; }
+    if (id == 266) { return "sleep_ns"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … umask=265)
+// extension tags beyond kind_count() (struct_copy=198 … sleep_ns=266)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2435,6 +2446,7 @@ function pops1_io(t: i32): boolean {
         || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
         || t == 169 || t == 233 || t == 171 || t == 172 || t == 173      // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
+        || t == 266                                                      // sleep_ns
         || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 243 || t == 244                                          // signal_ignore, signal_default
