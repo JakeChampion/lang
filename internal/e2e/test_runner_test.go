@@ -1011,6 +1011,10 @@ func TestRunnerDigestBlake2bExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "digest_blake2b", "std/crypto BLAKE2b", 8)
 }
 
+func TestRunnerDigestSm3ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "digest_sm3", "std/crypto SM3", 8)
+}
+
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 6)
 }
