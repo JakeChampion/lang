@@ -709,17 +709,22 @@ func prCases(t *testing.T) []invocation {
 		}
 	}
 
-	// The zone is $TZ, read as glibc reads it: a TZif file under
-	// /usr/share/zoneinfo, a POSIX string when that is not one, and
-	// the footer of the file past its last transition — which is what
-	// decides a 2038 or 2100 date.
+	// The zone is $TZ, read by `coreutils/lib/tz.fern` as glibc reads
+	// it: a TZif file under /usr/share/zoneinfo, a POSIX string when
+	// that is not one, and the footer of the file past its last
+	// transition — which is what decides a 2038 or 2100 date. `%Z` is
+	// the abbreviation that comes with the offset, so these cases are
+	// the zone's DESIGNATION table as much as its transitions.
 	//
-	// A string whose DAYLIGHT name is one or two characters ("ABC1x")
-	// is not here: glibc leaves the rule it never parsed unset, and
-	// the answer that falls out of it is standard time at exactly the
-	// two instants 0 and 1 and daylight time with an empty
-	// abbreviation everywhere else — including 2020 — which no rule in
-	// the POSIX grammar can produce.
+	// Two TZ shapes are deliberately absent. One is a string whose
+	// DAYLIGHT name is one or two characters ("ABC1x"): glibc leaves
+	// the rule it never parsed unset, and the answer that falls out is
+	// standard time at exactly the two instants 0 and 1 and daylight
+	// time with an empty abbreviation everywhere else — including
+	// 2020 — which no rule in the POSIX grammar can produce. The other
+	// is a daylight name with NO dates after it ("ABC1DEF"), which is
+	// the posixrules divergence docs/COREUTILS.md already records for
+	// who(1).
 	zones := []string{
 		"UTC", "America/New_York", "Asia/Tokyo", "Europe/London", "Australia/Lord_Howe",
 		"Asia/Kathmandu", "Pacific/Chatham", "America/Sao_Paulo", "Africa/Cairo",
@@ -731,6 +736,14 @@ func prCases(t *testing.T) []invocation {
 		":UTC", ":/etc/localtime", "/usr/share/zoneinfo/Asia/Tokyo",
 		"", "Nowhere/Nothing", "garbage", "X", "XY", "ABC", "A/B/C", "abc",
 		"garbage1", "ABC+", "<ABC>", "Etc/Nope",
+		// tzset tries a FILE before a rule, and the spellings that
+		// decide which: a lone colon is the default file, a colon
+		// before a name is that name, and a relative name hangs under
+		// the zoneinfo directory however it is written.
+		":", "::", ":Asia/Tokyo", "Asia//Tokyo", "./UTC", "../zoneinfo/UTC",
+		"Asia/Tokyo/", "/", "//", "/nonexistent", " UTC", "UTC ", "utc",
+		"<+07>-7<+08>,M3.2.0,M11.1.0", "AAA+25", "AAA+25:59:59",
+		"AAA1BBB,M1.1.0,M12.5.0",
 	}
 	for _, zone := range zones {
 		for _, file := range []string{f, y2100, pre70, epoch} {
