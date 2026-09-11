@@ -1493,8 +1493,9 @@ groups are the order of work. Each sub-issue names its group.
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
   `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
-  primitives now, and `rename`, `chmod` and `set_file_times` landed with
-  #9059), `mktemp` (done — it needed none of them: `open_exclusive`,
+  primitives now. `rename`, `chmod` and `set_file_times` landed natively
+  with #9059, but only `rename` reached the self-hosted COMPILER — see the
+  paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
@@ -1502,11 +1503,28 @@ groups are the order of work. Each sub-issue names its group.
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
-  plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,
-  which is four classifications (`docs/FREESTANDING-CORE.md`,
-  `docs/PACKAGE-CAPABILITIES-BRIEF.md`) and the self-host mirror. The
+  plus the resolver in `lib/resolv.fern`). The
   sub-issue for each utility names the primitives it is blocked on; the
   primitive gets its own issue when the first utility needs it.
+
+  **What a primitive costs, and the half that has no gate.** A builtin is
+  four classifications — `internal/checker`, `internal/interp`,
+  `internal/caps` (`docs/PACKAGE-CAPABILITIES-BRIEF.md`) and
+  `internal/platforms` (`docs/FREESTANDING-CORE.md`) — plus the two
+  self-host MIRRORS, `examples/self_host/caps.fern` and `platforms.fern`.
+  Each of those has a completeness test that fails when one is missed.
+
+  It is also, and this is the expensive half, the self-hosted COMPILER:
+  `parser.fern`'s name list, `ircore.fern`, `ir.fern` (op + extension kind
+  id), `irlower.fern`, `asmcore.fern` and the three emitters. **Nothing
+  tests for that.** `sleep_ns` was classified in all six places, never
+  lowered, and #9060 merged with the self-host leg of `sleep` red; main
+  stayed broken until #9081. So a primitive is not landed until the
+  self-host compiles a program that calls it, and the utility's parity
+  suite covers its self-host leg. #9085 tracks the missing completeness
+  test. Lowered so far: `sleep_ns` (266), `rename` (267), `process_alive`
+  (271), `rlimit_nofile` (272). Still native-only: `chmod`,
+  `set_file_times`, `statfs`.
 
 Within a group, easiest first. Do not start a group-C utility by adding a
 one-off syscall to one backend.
