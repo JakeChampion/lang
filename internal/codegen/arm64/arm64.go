@@ -779,6 +779,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
 	}
+	if g.usesSleepNs {
+		g.emitSleepNsRuntime()
+	}
 	if g.usesProcFork {
 		g.emitProcForkRuntime()
 	}
@@ -6640,6 +6643,60 @@ func (g *generator) emitSleepMsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSleepNsRuntime emits `__fern_sleep_ns(ns)` — the same pause with
+// the caller's nanoseconds carried through rather than rounded to a
+// millisecond first (#8528). ns <= 0 returns at once.
+//
+// On Linux the timespec split is by 1e9 and the remainder IS tv_nsec,
+// so the request reaches the kernel unrounded. Darwin has no nanosleep
+// syscall — `select(0, NULL, NULL, NULL, &timeout)` is the sleep, and
+// its timeval is MICROseconds — so the nanosecond remainder is rounded
+// UP to the next microsecond. That keeps the primitive's only promise
+// (the pause is never shorter than asked) at the finest resolution the
+// target has.
+func (g *generator) emitSleepNsRuntime() {
+	g.line("")
+	g.line(".global __fern_sleep_ns")
+	g.typeDirective("__fern_sleep_ns")
+	g.label("__fern_sleep_ns")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32")
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lsleep_ns_done")
+	g.emit("ldr x9, =1000000000")
+	g.emit("udiv x10, x0, x9")      // sec
+	g.emit("msub x11, x10, x9, x0") // rem ns
+	g.emit("str x10, [sp]")         // tv_sec
+	if g.darwin {
+		// tv_usec = ceil(rem_ns / 1000)
+		g.emit("mov x12, #999")
+		g.emit("add x11, x11, x12")
+		g.emit("mov x12, #1000")
+		g.emit("udiv x11, x11, x12")
+		g.emit("str x11, [sp, #8]")
+		g.emit("mov x0, #0") // nfds
+		g.emit("mov x1, #0") // readfds
+		g.emit("mov x2, #0") // writefds
+		g.emit("mov x3, #0") // errorfds
+		g.emit("mov x4, sp") // timeout
+		g.emit("mov x16, #%d", darSelect)
+		g.emit("svc #0x80")
+	} else {
+		g.emit("str x11, [sp, #8]") // tv_nsec
+		g.emit("mov x0, sp")        // &req
+		g.emit("mov x1, #0")        // rem = NULL
+		g.emit("mov x8, #%d", sysNanosleep)
+		g.emit("svc #0")
+	}
+	g.label(".Lsleep_ns_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_sleep_ns")
+	g.line(".ltorg")
+}
+
 // emitProcForkRuntime emits `__fern_proc_fork()` — fork the
 // process, returning 0 in the child, the child's pid in the
 // parent, or -errno on failure (docs/CRASH-ONLY-SERVE.md D2').
@@ -12371,6 +12428,13 @@ type generator struct {
 	// Linux, or `select(0,…,&timeout)` (BSD 93) on Darwin; ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesSleepNs pulls in `__fern_sleep_ns(ns)` — the same sleep at the
+	// resolution `nanosleep` already takes. Darwin has no nanosleep
+	// syscall and sleeps through `select`, whose timeval is
+	// microseconds, so the request is rounded UP to the next
+	// microsecond there — never shorter than asked, which is the whole
+	// contract.
+	usesSleepNs bool
 	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
 	// clone(SIGCHLD,0,0,0,0) (#220) on Linux (arm64 has no bare fork
 	// syscall) or fork (BSD 2, x1-flag normalised) on Darwin: 0 in
@@ -13183,6 +13247,8 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			g.usesNowNs = true
 		case "sleep_ms":
 			g.usesSleepMs = true
+		case "sleep_ns":
+			g.usesSleepNs = true
 		case "read_file":
 			g.needFern("__fern_utf8_valid")
 		}
@@ -16525,6 +16591,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// or select (Darwin). Void.
 			target = "__fern_sleep_ms"
 			g.usesSleepMs = true
+		case "sleep_ns":
+			// sleep_ns(ns): the same sleep at nanosecond resolution.
+			// Void.
+			target = "__fern_sleep_ns"
+			g.usesSleepNs = true
 		case "proc_exec":
 			target = "__fern_proc_exec"
 			g.usesProcExec = true

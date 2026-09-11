@@ -1055,6 +1055,7 @@ func New() *Interp {
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
+	i.Builtins["sleep_ns"] = &Builtin{Fn: builtinSleepNS}
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
@@ -2309,6 +2310,24 @@ func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
 	}
 	if int64(ms) > 0 {
 		time.Sleep(time.Duration(int64(ms)) * time.Millisecond)
+	}
+	return Void{}, nil
+}
+
+// builtinSleepNS pauses for the given duration (nanoseconds).
+// Negative / zero inputs return immediately. Go's timer resolution is
+// coarser than a nanosecond, so a short sleep overshoots — which the
+// primitive's "not shorter than asked" contract allows.
+func builtinSleepNS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("sleep_ns: expected 1 arg, got %d", len(args))
+	}
+	ns, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("sleep_ns: expected number arg, got %T", args[0])
+	}
+	if int64(ns) > 0 {
+		time.Sleep(time.Duration(int64(ns)))
 	}
 	return Void{}, nil
 }

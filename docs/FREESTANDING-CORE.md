@@ -45,7 +45,7 @@ costs a silent failure on the first target that lacks it.
 | `log` | `print`, `eprint` | somewhere to put a line of diagnostics |
 | `stdout` | `stdout`, `stderr`, `write`, `putchar` | an actual stdout stream |
 | `stdin` | `stdin`, `read_line` | a blocking input stream |
-| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
+| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `env` | `env` | envp, captured at process start |
 | `args` | `args` | argv, which exists only because something exec'd you |
@@ -195,6 +195,17 @@ memory-model question rather than a capability one. The two dispositions are
 what a utility needs: `tee -i` is SIG_IGN on SIGINT, and its `--output-error`
 family is SIG_IGN on SIGPIPE so a write to a vanished reader returns EPIPE
 instead of killing the process.
+
+**`sleep_ns` is `now`, like `sleep_ms`, and wasm is where it is most exact.**
+Both previews already count in nanoseconds — preview 1's `poll_oneoff`
+subscription carries a nanosecond timeout, preview 2's `subscribe-duration`
+takes a nanosecond duration — so the wasm helper is `sleep_ms`'s body with the
+1e6 multiplier removed rather than a rounding. The target that cannot honour
+the full resolution is **Darwin**, which has no nanosleep syscall: the sleep
+goes through `select(2)`, whose timeval is microseconds, so the request is
+rounded UP to the next microsecond. That is a resolution limit, not a
+divergence — the primitive promises only that the pause is NOT SHORTER than
+asked, which is also all nanosleep guarantees against an overshoot.
 
 **`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
 otherwise carried them** (#7947). Each is a property of the target, not a gap in a

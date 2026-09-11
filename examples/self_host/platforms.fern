@@ -227,6 +227,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "now_ns", capability: "now" },
         Gate { builtin: "monotonic_ns", capability: "now" },
         Gate { builtin: "sleep_ms", capability: "now" },
+        Gate { builtin: "sleep_ns", capability: "now" },
         Gate { builtin: "wasm_timer_pollable", capability: "now" },
 
         // `timer_fd` is a clock wakeup too, but gated on the FD half rather

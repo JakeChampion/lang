@@ -784,6 +784,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
 	}
+	if g.usesSleepNs {
+		g.emitSleepNsRuntime()
+	}
 	if g.usesProcFork {
 		g.emitProcForkRuntime()
 	}
@@ -1117,6 +1120,10 @@ type generator struct {
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesSleepNs pulls in `__fern_sleep_ns(ns)` — the same sleep at
+	// nanosecond resolution, which is what `nanosleep` takes anyway;
+	// ns <= 0 returns immediately. Void.
+	usesSleepNs bool
 	// usesProcExec pulls in `__fern_proc_exec(path, args)` — execve(2),
 	// the leg that lets a forked child become another program. Shares the
 	// `proc` capability with fork / waitpid and needs the allocator (it
@@ -1685,6 +1692,8 @@ func (g *generator) recordUse(target string) {
 		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
+	case "sleep_ns":
+		g.usesSleepNs = true
 	case "proc_exec":
 		g.usesProcExec = true
 		g.usesAlloc = true // NUL-terminated argv copies
@@ -3348,6 +3357,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_now_ns"
 		case "sleep_ms":
 			target = "__fern_sleep_ms"
+		case "sleep_ns":
+			target = "__fern_sleep_ns"
 		case "proc_exec":
 			target = "__fern_proc_exec"
 		case "proc_fork":
@@ -11021,6 +11032,36 @@ func (g *generator) emitSleepMsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_sleep_ms, .-__fern_sleep_ms")
+}
+
+// emitSleepNsRuntime emits `__fern_sleep_ns(ns)` — the same pause with
+// the caller's nanoseconds carried through instead of rounded to a
+// millisecond first (#8528). ns <= 0 returns immediately. The timespec
+// split is by 1e9 rather than 1e3, and the remainder IS tv_nsec.
+func (g *generator) emitSleepNsRuntime() {
+	g.line("")
+	g.line(".globl __fern_sleep_ns")
+	g.line(".type __fern_sleep_ns, @function")
+	g.label("__fern_sleep_ns")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emit("cmp rdi, 0")
+	g.emit("jle .Lsleep_ns_done")
+	g.emit("mov rax, rdi")
+	g.emit("xor edx, edx") // clear high for div
+	g.emit("mov rcx, 1000000000")
+	g.emit("div rcx")            // rax = ns/1e9 (sec), rdx = ns%1e9
+	g.emit("mov [rsp], rax")     // tv_sec
+	g.emit("mov [rsp + 8], rdx") // tv_nsec
+	g.emit("mov rdi, rsp")       // &req
+	g.emit("xor esi, esi")       // rem = NULL
+	g.emitSyscall(sysNanosleep)
+	g.label(".Lsleep_ns_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sleep_ns, .-__fern_sleep_ns")
 }
 
 // emitProcForkRuntime emits `__fern_proc_fork()` — fork(2)

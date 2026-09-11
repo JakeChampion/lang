@@ -1781,6 +1781,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
+	// sleep_ns(ns): void — the same pause at the resolution the
+	// underlying primitive actually has. `sleep_ms` rounds a caller's
+	// interval to a millisecond before the kernel ever sees it, which
+	// costs a sub-millisecond sleeper a full tick per step (#8528).
+	// ns <= 0 returns without entering the kernel.
+	//
+	// Like `sleep_ms` this promises only that the pause is NOT SHORTER
+	// than asked; nanosleep(2) may overshoot by any amount, and an
+	// interrupted sleep is not resumed. Two targets cannot honour the
+	// full resolution and round the request UP, which keeps that
+	// promise: Darwin has no nanosleep syscall and sleeps through
+	// `select(2)`, whose timeval is microseconds; wasm preview-1 and
+	// preview-2 both take nanoseconds, so wasm is exact.
+	c.info.FuncSigs["sleep_ns"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	// proc_fork(): i32 — fork the process (docs/CRASH-ONLY-SERVE.md
 	// D2'). Returns 0 in the child, the child's pid in the parent,
 	// or a negative errno on failure. Capability-gated (`proc`,

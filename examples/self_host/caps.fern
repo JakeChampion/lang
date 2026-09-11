@@ -112,6 +112,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "now_ns", capability: "time" },
         BuiltinCap { builtin: "monotonic_ns", capability: "time" },
         BuiltinCap { builtin: "sleep_ms", capability: "time" },
+        BuiltinCap { builtin: "sleep_ns", capability: "time" },
         BuiltinCap { builtin: "timer_fd", capability: "time" },
         BuiltinCap { builtin: "wasm_timer_pollable", capability: "time" },
 

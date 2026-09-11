@@ -322,6 +322,7 @@ var providedSigs = map[string]providedSig{
 	"read_link":                     {2, rWord},
 	"umask":                         {1, rWord},
 	"sleep_ms":                      {-1, rVoid},
+	"sleep_ns":                      {-1, rVoid},
 	"stat":                          {-1, rWord},
 	"lstat":                         {-1, rWord},
 	"stderr":                        {-1, rWord},

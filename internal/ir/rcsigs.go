@@ -279,7 +279,7 @@ var rcInertBuiltins = map[string]bool{
 	"string_from_bytes_unchecked": true,
 
 	"proc_exec": true, "proc_fork": true, "proc_waitpid": true,
-	"sleep_ms": true, "subprocess": true, "timer_fd": true,
+	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
 
 	// (path, contents) → Result. Both strings are read and written
 	// out; neither is retained. Its sibling `write_file` resolves
@@ -397,7 +397,7 @@ var rcInert = map[string]bool{
 	"__fern_create_link": true, "__fern_create_symlink": true,
 	"__fern_read_link": true,
 	"__fern_round_f64": true, "__fern_sin_f64": true,
-	"__fern_sleep_ms": true,
+	"__fern_sleep_ms": true, "__fern_sleep_ns": true,
 	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true,
 	"__fern_stderr": true,
 	"__fern_stdin":  true, "__fern_stdout": true,

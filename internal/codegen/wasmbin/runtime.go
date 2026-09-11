@@ -405,6 +405,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_sleep_ms":
 					// Its subscription buffer is scratch, so no allocator.
 					needs.add("__fern_sleep_ms")
+				case "__fern_sleep_ns":
+					// Same buffer, same absence of an allocator.
+					needs.add("__fern_sleep_ns")
 				case "__fern_wasm_timer_pollable":
 					// wasm reactor timer: subscribe-duration → pollable.
 					needs.add("__fern_wasm_timer_pollable")
@@ -1578,6 +1581,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI64},
 		results: nil,
 		body:    buildSleepMsBody,
+	},
+	"__fern_sleep_ns": {
+		// (ns: i64) → () — the same block at the resolution both WASI
+		// previews already take: poll_oneoff's timeout and
+		// subscribe-duration's argument are both nanoseconds, so wasm
+		// is the one target where sleep_ns is exact. ns <= 0 returns
+		// immediately.
+		params:  []byte{encode.ValtypeI64},
+		results: nil,
+		body:    buildSleepNsBody,
 	},
 	"__fern_wasm_timer_pollable": {
 		// (duration_ns: i64) → pollable handle (i32). The wasm

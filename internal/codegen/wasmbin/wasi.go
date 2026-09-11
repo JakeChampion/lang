@@ -1789,7 +1789,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_clock_time_get")
 		}
 	}
-	if helpers.set["__fern_sleep_ms"] {
+	if helpers.set["__fern_sleep_ms"] || helpers.set["__fern_sleep_ns"] {
 		if opts.Preview2WASI {
 			// The preview-2 sleep is the reactor's own primitives:
 			// subscribe-duration → block → drop.
@@ -2567,6 +2567,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_random_i32":          buildRandomI32BodyP2,
 	"__fern_monotonic_ns":        buildMonotonicNsBodyP2,
 	"__fern_sleep_ms":            buildSleepMsBodyP2,
+	"__fern_sleep_ns":            buildSleepNsBodyP2,
 	"__fern_random_bytes":        buildRandomBytesBodyP2,
 	"__fern_print":               buildPrintBodyP2,
 	"__fern_write":               buildWriteBodyP2,
@@ -2865,6 +2866,20 @@ func buildWasmTimerPollableBody(idxs map[string]uint32) []byte {
 // ms <= 0 returns immediately: a relative timeout of 0 is a legal
 // subscription, but there is no reason to enter the host for it.
 func buildSleepMsBody(idxs map[string]uint32) []byte {
+	return buildSleepBody(idxs, 1000000)
+}
+
+// buildSleepNsBody — body for __fern_sleep_ns, preview-1. The same
+// subscription with the caller's nanoseconds used verbatim: poll_oneoff's
+// timeout field IS nanoseconds, so wasm honours the full resolution where
+// Darwin's select cannot (#8528).
+func buildSleepNsBody(idxs map[string]uint32) []byte {
+	return buildSleepBody(idxs, 1)
+}
+
+// buildSleepBody is the shared preview-1 timed block; `toNs` scales the
+// caller's unit into the subscription's nanoseconds.
+func buildSleepBody(idxs map[string]uint32, toNs int64) []byte {
 	poll := idxs["wasi_poll_oneoff"]
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
@@ -2883,9 +2898,11 @@ func buildSleepMsBody(idxs map[string]uint32) []byte {
 		body = memory.InstI32Store(body, 2, 16) // clockid = monotonic
 		body = inst.InstI32Const(body, sleepBufAddr)
 		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI64Const(body, 1000000)
-		body = numeric.InstI64Mul(body)
-		body = memory.InstI64Store(body, 3, 24) // timeout = ms * 1e6 ns
+		if toNs != 1 {
+			body = inst.InstI64Const(body, toNs)
+			body = numeric.InstI64Mul(body)
+		}
+		body = memory.InstI64Store(body, 3, 24) // timeout, in ns
 		body = inst.InstI32Const(body, sleepBufAddr)
 		body = inst.InstI64Const(body, 0)
 		body = memory.InstI64Store(body, 3, 32) // precision = 0
@@ -2912,6 +2929,18 @@ func buildSleepMsBody(idxs map[string]uint32) []byte {
 // drop returns the handle — without which a program sleeping in a loop
 // grows the host's resource table until it runs out of keys.
 func buildSleepMsBodyP2(idxs map[string]uint32) []byte {
+	return buildSleepBodyP2(idxs, 1000000)
+}
+
+// buildSleepNsBodyP2 — the preview-2 twin of buildSleepNsBody.
+// subscribe-duration already takes nanoseconds, so nothing scales.
+func buildSleepNsBodyP2(idxs map[string]uint32) []byte {
+	return buildSleepBodyP2(idxs, 1)
+}
+
+// buildSleepBodyP2 is the shared preview-2 timed block; `toNs` scales the
+// caller's unit into subscribe-duration's nanoseconds.
+func buildSleepBodyP2(idxs map[string]uint32, toNs int64) []byte {
 	sub := idxs["wasi_clocks_subscribe_duration"]
 	block := idxs["wasi_io_pollable_block"]
 	drop := idxs["wasi_io_pollable_drop"]
@@ -2922,8 +2951,10 @@ func buildSleepMsBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI64Const(body, 1000000)
-		body = numeric.InstI64Mul(body)
+		if toNs != 1 {
+			body = inst.InstI64Const(body, toNs)
+			body = numeric.InstI64Mul(body)
+		}
 		body = inst.InstCall(body, sub)
 		body = inst.InstLocalTee(body, 1)
 		body = inst.InstCall(body, block)

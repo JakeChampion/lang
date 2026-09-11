@@ -1263,6 +1263,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
+	"sleep_ns":                      emitSleepNsHelper,
 	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
 	"__str_slice":                   emitStrSliceHelper,
 	"args":                          emitArgsHelper,
@@ -7111,6 +7112,31 @@ func emitSleepMsHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w("\tadd sp, sp, #16")
 	w(".Lssa_sleep_done:")
+	w("\tret")
+}
+
+// emitSleepNsHelper writes sleep_ns(ns): the same nanosleep with the
+// caller's nanoseconds carried through instead of rounded to a millisecond
+// first (#8528) — the timespec split is by 1e9 and the remainder IS tv_nsec.
+// A non-positive argument returns without a syscall; an interrupted sleep is
+// not resumed (rem = NULL), as on the natives.
+func emitSleepNsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("sleep_ns"))
+	w("\tcmp x0, #0")
+	w("\tb.le .Lssa_sleepns_done")
+	w("\tsub sp, sp, #16") // struct timespec { i64 tv_sec; i64 tv_nsec }
+	movImm64(w, "x9", 1_000_000_000)
+	w("\tudiv x10, x0, x9")      // tv_sec = ns / 1e9
+	w("\tmsub x11, x10, x9, x0") // tv_nsec = ns % 1e9
+	w("\tstr x10, [sp]")
+	w("\tstr x11, [sp, #8]")
+	w("\tmov x0, sp") // &req
+	w("\tmov x1, #0") // rem = NULL
+	w("\tmov x8, #%d", sysNanosleep)
+	w("\tsvc #0")
+	w("\tadd sp, sp, #16")
+	w(".Lssa_sleepns_done:")
 	w("\tret")
 }
 

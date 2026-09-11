@@ -75,6 +75,7 @@ var gatedBuiltins = map[string]string{
 	"now_ns":              "now",
 	"monotonic_ns":        "now",
 	"sleep_ms":            "now",
+	"sleep_ns":            "now",
 	"wasm_timer_pollable": "now",
 
 	// `timer_fd` is a clock wakeup too, but it is gated on the FD half

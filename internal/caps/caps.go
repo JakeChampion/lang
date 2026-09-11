@@ -103,6 +103,7 @@ var BuiltinCaps = map[string]string{
 	"now_ns":              "time",
 	"monotonic_ns":        "time",
 	"sleep_ms":            "time",
+	"sleep_ns":            "time",
 	"timer_fd":            "time",
 	"wasm_timer_pollable": "time",
 
