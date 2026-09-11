@@ -257,6 +257,21 @@ coreutils/
                     set consulted from the twenty-FIRST link rather
                     than a depth limit, so a 5000-link chain resolves
                     and a cycle's residue depends on its LENGTH
+  lib/tty.fern      ttyname(3) as glibc answers it: the /proc/self/fd/N
+                    readlink first, trusted only when it still stats to
+                    the same character device, then a walk of /dev/pts
+                    and /dev by device number, for the utilities that
+                    name the terminal on standard input (tty, logname).
+                    /dev/ptmx and /dev/pts/ptmx share a device number,
+                    which is why the order matters
+  lib/selinux.fern  is_selinux_enabled() and getcon(), which are two
+                    files rather than libselinux — the selinuxfs line
+                    of /proc/self/mounts and /proc/self/attr/current —
+                    for id and runcon
+  lib/procfs.fern   reading a kernel pseudo-file, which read_file
+                    cannot do: /proc reports st_size 0 and /sys reports
+                    a page, so the content only comes out of a read to
+                    EOF. Temporary — it goes when #9065 fixes read_file
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced"),
@@ -1141,6 +1156,21 @@ without it gives. The detection is what keeps that refusal honest rather
 than unconditional; what an SELinux host prints is reproduced from the
 documented behaviour and not from a reference binary.
 
+**`runcon` cannot run a command.** Everything a kernel without SELinux reaches
+is byte-exact — the current context with no operands, `no command specified`,
+the `may be used only on a SELinux kernel` refusal, and the whole non-permuting
+`+r:t:u:l:c` scan including the `multiple roles` family and the `--r` ambiguity
+list. Past the SELinux check nothing is implemented, because three pieces are
+each blocked on a primitive: `execvp(3)` passes the command NAME as the child's
+argv[0] where `proc_exec` forces the resolved path it was handed; `-c` needs
+`getfilecon(3)`, an extended-attribute read with no primitive at all; and
+`security_check_context(3)` reads the kernel's verdict back off the descriptor
+it wrote the context to, which `write_file` cannot do. So a build on an SELinux
+host says `running a command in a security context is not supported on this
+system` and exits 125 where GNU would run the command — the shape `split
+--filter` already uses — with every option still declared, since their getopt
+behaviour is observable either way.
+
 ## Open gaps
 
 **`X as usize` means different addresses in the two compilers (#8799).**
@@ -1253,6 +1283,15 @@ directory that has been removed, `Permission denied` for one whose ancestor lost
 search permission. `lib/canon.fern` can report only the first, and does. The
 corpus cannot reach either: the harness has no way to put both children in the
 same removed or unsearchable directory.
+
+**`read_file` trusts `st_size` (#9065).** The buffer is sized from `fstat` and
+the string's length is reported as `st_size` rather than as the bytes actually
+read, so every `/proc` file reads empty and every `/sys` file reads as a page of
+mostly NUL. The interpreter is correct — Go's `os.ReadFile` grows — so this is
+also an interp/native divergence. It was silently wrong in shipped code:
+`id.fern`'s SELinux detection always answered false, and `logname.fern` never
+saw `/proc/self/loginuid`. Three readers go through `lib/procfs.fern` meanwhile;
+246 callers do not, which is why the fix belongs in `read_file` itself.
 
 ## Staging
 
