@@ -86,32 +86,6 @@ function opt_verbose(): i32 {
   return 13;
 }
 
-// The four backup controls, and the eight names that reach them. Order
-// is gnulib's declaration order, which the invalid-argument list prints.
-function control_none(): i32 {
-  return 0;
-}
-
-function control_simple(): i32 {
-  return 1;
-}
-
-function control_existing(): i32 {
-  return 2;
-}
-
-function control_numbered(): i32 {
-  return 3;
-}
-
-function control_names(): string[] {
-  return ["none", "off", "simple", "never", "existing", "nil", "numbered", "t"];
-}
-
-function control_values(): i32[] {
-  return [control_none(), control_none(), control_simple(), control_simple(), control_existing(), control_existing(), control_numbered(), control_numbered()];
-}
-
 function help_text(): string {
   var out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [-T] TARGET LINK_NAME\n";
@@ -149,73 +123,6 @@ function help_text(): string {
 struct Cfg { symbolic: boolean, force: boolean, interactive: boolean, no_deref: boolean, deref_src: boolean, hard_dir: boolean, relative: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string }
 
 // ---- paths -----------------------------------------------------------------
-function is_slash(c: u8): boolean {
-  return c as i32 == 47;
-}
-
-// The last component of `s`, trailing slashes dropped — GNU's base_name.
-// A name that is nothing but slashes is `/`, and the empty name stays
-// empty.
-function base_name(s: string): string {
-  var end: i32 = s.len();
-  while (end > 0 && is_slash(s[end - 1])) {
-    end = end - 1;
-  }
-  if (end == 0) {
-    if (s.len() > 0) {
-      return "/";
-    }
-    return "";
-  }
-  var start: i32 = end;
-  while (start > 0 && !is_slash(s[start - 1])) {
-    start = start - 1;
-  }
-  return slice_unchecked(s, start, end) + "";
-}
-
-// Everything before base_name's component, `.` when there is none.
-function dir_name(s: string): string {
-  var end: i32 = s.len();
-  while (end > 0 && is_slash(s[end - 1])) {
-    end = end - 1;
-  }
-  if (end == 0) {
-    if (s.len() > 0) {
-      return "/";
-    }
-    return ".";
-  }
-  var i: i32 = end;
-  while (i > 0 && !is_slash(s[i - 1])) {
-    i = i - 1;
-  }
-  if (i == 0) {
-    return ".";
-  }
-  while (i > 0 && is_slash(s[i - 1])) {
-    i = i - 1;
-  }
-  if (i == 0) {
-    return "/";
-  }
-  return slice_unchecked(s, 0, i) + "";
-}
-
-// `dir` and `name` joined with exactly ONE slash however many the
-// directory ends with: `ln -t 'd///' s/f` makes `d/f`, not `d///f`.
-function join_path(dir: string, name: string): string {
-  var end: i32 = dir.len();
-  while (end > 1 && is_slash(dir[end - 1])) {
-    end = end - 1;
-  }
-  var head: string = slice_unchecked(dir, 0, end) + "";
-  if (head.len() > 0 && is_slash(head[head.len() - 1])) {
-    return head + name;
-  }
-  return head + "/" + name;
-}
-
 // The absolute resolved form of `p`, with components that do not exist
 // kept verbatim — gnulib's CAN_MISSING, which is `realpath -m`'s walk and
 // `lib/canon.fern`'s MISSING mode. It refuses nothing, so a path that
@@ -236,7 +143,7 @@ function resolved(p: string): string {
 // sides are resolved first, so a symbolic link on either path is resolved
 // away and the answer can be `.` or `..`.
 function relativise(target: string, dest: string): string {
-  return canon.relative(resolved(target), resolved(dir_name(dest)));
+  return canon.relative(resolved(target), resolved(gnu.dir_name(dest)));
 }
 
 // ---- stat ------------------------------------------------------------------
@@ -276,118 +183,12 @@ function same_entry(cfg: Cfg, src: string, dest: string): boolean {
   if (!s.ok || !d.ok || s.dev != d.dev || s.ino != d.ino) {
     return false;
   }
-  if (base_name(src) != base_name(dest)) {
+  if (gnu.base_name(src) != gnu.base_name(dest)) {
     return false;
   }
-  var sd: StatInfo = stat_info(dir_name(src), true);
-  var dd: StatInfo = stat_info(dir_name(dest), true);
+  var sd: StatInfo = stat_info(gnu.dir_name(src), true);
+  var dd: StatInfo = stat_info(gnu.dir_name(dest), true);
   return sd.ok && dd.ok && sd.dev == dd.dev && sd.ino == dd.ino;
-}
-
-// ---- backups ---------------------------------------------------------------
-function is_digit(c: u8): boolean {
-  return c as i32 >= 48 && c as i32 <= 57;
-}
-
-// The N in `NAME.~N~`, or -1 when `entry` is not one of NAME's numbered
-// backups. A leading zero disqualifies it — `b.~09~` is not a backup of
-// `b` and does not raise the next number.
-function numbered_index(entry: string, name: string): i32 {
-  var head: string = name + ".~";
-  if (!entry.starts_with(head) || !entry.ends_with("~")) {
-    return 0 - 1;
-  }
-  var start: i32 = head.len();
-  var end: i32 = entry.len() - 1;
-  if (end <= start) {
-    return 0 - 1;
-  }
-  if (entry[start] as i32 == 48 && end - start > 1) {
-    return 0 - 1;
-  }
-  var n: i32 = 0;
-  var i: i32 = start;
-  while (i < end) {
-    if (!is_digit(entry[i])) {
-      return 0 - 1;
-    }
-    n = n * 10 + (entry[i] as i32 - 48);
-    i = i + 1;
-  }
-  return n;
-}
-
-// The highest N over `dir`'s `NAME.~N~` entries, or -1 when there is
-// none. A DIRECTORY named that way counts: the scan reads names.
-function highest_numbered(dir: string, name: string): i32 {
-  var best: i32 = 0 - 1;
-  match (read_dir(dir)) {
-    Ok(entries) => {
-      var i: i32 = 0;
-      while (i < entries.len()) {
-        var n: i32 = numbered_index(entries[i], name);
-        if (n > best) {
-          best = n;
-        }
-        i = i + 1;
-      }
-    },
-    Err(_) => {}
-  }
-  return best;
-}
-
-// The name the existing `dest` is moved to. `existing` picks numbered
-// only when a numbered backup of this name is already there.
-function backup_name(cfg: Cfg, dest: string): string {
-  var control: i32 = cfg.control;
-  if (control == control_existing()) {
-    if (highest_numbered(dir_name(dest), base_name(dest)) >= 0) {
-      control = control_numbered();
-    } else {
-      control = control_simple();
-    }
-  }
-  if (control == control_numbered()) {
-    // The first numbered backup is `.~1~`, so a directory with none in
-    // it starts there rather than one past the -1 the scan reports.
-    var n: i32 = highest_numbered(dir_name(dest), base_name(dest));
-    if (n < 0) {
-      n = 0;
-    }
-    return dest + ".~" + (n + 1).to_string() + "~";
-  }
-  return dest + cfg.suffix;
-}
-
-// Where `s`'s last component starts — gnulib's last_component, which is
-// NOT base_name: trailing slashes belong to the component here, so
-// `x/`'s last component is `x/` and `/`'s is empty.
-function last_component_start(s: string): i32 {
-  var i: i32 = 0;
-  while (i < s.len() && is_slash(s[i])) {
-    i = i + 1;
-  }
-  var last: i32 = i;
-  var after_slash: boolean = false;
-  while (i < s.len()) {
-    if (is_slash(s[i])) {
-      after_slash = true;
-    } else if (after_slash) {
-      last = i;
-      after_slash = false;
-    }
-    i = i + 1;
-  }
-  return last;
-}
-
-// A suffix is taken only when it IS its own last component, so `-S 'x/y'`,
-// `-S '/x'` and `-S '/'` are ignored and `~` is used. `-S 'x/'` passes the
-// test, and the backup name it builds ends in a slash — which is how
-// `ln -b -S x/ a b` reaches `cannot backup 'b': Not a directory`.
-function usable_suffix(s: string): boolean {
-  return s.len() > 0 && last_component_start(s) == 0;
 }
 
 // ---- linking ---------------------------------------------------------------
@@ -445,10 +246,10 @@ struct TempLink { ok: boolean, path: string, err: string }
 // untouched and a backup is the destination MOVED rather than copied.
 // The temporary name is never visible in the resulting tree.
 function temp_link(cfg: Cfg, src: string, text: string, dest: string): TempLink {
-  var dir: string = dir_name(dest);
+  var dir: string = gnu.dir_name(dest);
   var n: i32 = 0;
   while (n < 1000) {
-    var path: string = join_path(dir, ".ln-tmp" + n.to_string());
+    var path: string = gnu.join_path(dir, ".ln-tmp" + n.to_string());
     var err: string = make_link(cfg, src, text, path);
     if (err.len() == 0) {
       return TempLink { ok: true, path: path, err: "" };
@@ -459,19 +260,6 @@ function temp_link(cfg: Cfg, src: string, text: string, dest: string): TempLink 
     n = n + 1;
   }
   return TempLink { ok: false, path: "", err: "File exists" };
-}
-
-// glibc's yesno(): one line from stdin, yes when it starts with `y` or
-// `Y` in the C locale. End of input is no.
-function yesno(): boolean {
-  match (read_line()) {
-    Some(l) => {
-      return l.len() > 0 && (l[0] as i32 == 121 || l[0] as i32 == 89);
-    },
-    None => {
-      return false;
-    }
-  }
 }
 
 // `Replaced` — what the occupied-destination path answers: whether the
@@ -507,7 +295,7 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
     w = gnu.flush(w);
     var prompt: Writer = stderr();
     prompt.write(gnu.prog() + ": replace " + gnu.quotea(dest) + "? ");
-    if (!yesno()) {
+    if (!gnu.yesno()) {
       return Replaced { ok: false, backup: "", out: w };
     }
   }
@@ -518,7 +306,7 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
   }
   var backup: string = "";
   if (cfg.backups) {
-    backup = backup_name(cfg, dest);
+    backup = gnu.backup_name(dest, cfg.control, cfg.suffix);
     match (rename(dest, backup)) {
       Ok(_) => {},
       Err(e) => {
@@ -682,7 +470,7 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  var cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: false, hard_dir: false, relative: false, verbose: false, backups: false, control: control_existing(), suffix: "~" };
+  var cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: false, hard_dir: false, relative: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
   var s: Scan = Scan { cfg: cfg, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
   var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "ln", help_text(), 1);
   while (true) {
@@ -729,7 +517,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     // A suffix turns backups on by itself, and an unusable one leaves
     // the default `~` in place rather than being refused.
     var suf: string = c.suffix;
-    if (usable_suffix(m.value)) {
+    if (gnu.usable_suffix(m.value)) {
       suf = m.value;
     }
     return Scan { ...s, cfg: Cfg { ...c, backups: true, suffix: suf }, suffix_given: true };
@@ -769,29 +557,29 @@ function from_environment(s: Scan): Cfg {
   if (!s.suffix_given) {
     match (env("SIMPLE_BACKUP_SUFFIX")) {
       Some(v) => {
-        if (usable_suffix(v)) {
+        if (gnu.usable_suffix(v)) {
           c = Cfg { ...c, suffix: v };
         }
       },
       None => {}
     }
   }
-  var control: i32 = control_existing();
+  var control: i32 = gnu.backup_existing();
   if (s.control_given) {
     if (s.control_text.len() > 0) {
-      control = gnu.argmatch_valued(s.control_text, control_names(), control_values(), "backup type");
+      control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
     }
   } else {
     match (env("VERSION_CONTROL")) {
       Some(v) => {
         if (v.len() > 0) {
-          control = gnu.argmatch_valued(v, control_names(), control_values(), "$VERSION_CONTROL");
+          control = gnu.argmatch_valued(v, gnu.backup_names(), gnu.backup_values(), "$VERSION_CONTROL");
         }
       },
       None => {}
     }
   }
-  if (control == control_none()) {
+  if (control == gnu.backup_none()) {
     return Cfg { ...c, backups: false, control: control };
   }
   return Cfg { ...c, control: control };
@@ -835,7 +623,7 @@ function main(): i32 {
   if (operands.len() == 1) {
     // The 2nd form's destination is the literal `./` + the target's last
     // component, which is what the diagnostics and `-v` show.
-    var r2: LinkOut = do_link(cfg, operands[0], "./" + base_name(operands[0]), o);
+    var r2: LinkOut = do_link(cfg, operands[0], "./" + gnu.base_name(operands[0]), o);
     return finish(r2.out, r2.status);
   }
   if (operands.len() == 2) {
@@ -861,7 +649,7 @@ function link_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_
   var status: i32 = 0;
   var i: i32 = 0;
   while (i < count) {
-    var r: LinkOut = do_link(cfg, operands[i], join_path(dir, base_name(operands[i])), w);
+    var r: LinkOut = do_link(cfg, operands[i], gnu.join_path(dir, gnu.base_name(operands[i])), w);
     w = r.out;
     if (r.status != 0) {
       status = 1;

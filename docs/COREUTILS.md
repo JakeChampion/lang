@@ -180,8 +180,12 @@ Versions: the corpus is held to GNU coreutils **9.4 or newer**. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
-comment and is the exception, not the pattern — the utilities done so far
-have no such case.
+comment and is the exception, not the pattern. There is exactly one such case:
+`numfmt`'s buffer-length refusal is GNU <= 9.4 behaviour, pinned by a comment in
+both `coreutils/numfmt.fern` and its corpus, and #8765 holds the open question
+of whether Fern should follow 9.5+ instead. Nothing forces that today — every
+CI runner and this container ship 9.4 — so it is a future-GNU decision rather
+than a live divergence.
 
 ### The self-host leg
 
@@ -293,6 +297,19 @@ coreutils/
                     set consulted from the twenty-FIRST link rather
                     than a depth limit, so a 5000-link chain resolves
                     and a cycle's residue depends on its LENGTH
+  lib/lines.fern    the two line-boundary scans head and tail share when
+                    they hold bytes back — head -n -N because the last
+                    N lines are the ones to elide, tail -n N because
+                    they are the ones to keep. Either utility asks the
+                    same question of each chunk, from opposite ends.
+                    tail_start answers -1, never 0, when the chunk does
+                    not hold N+1 terminators: 0 is indistinguishable
+                    from "they begin at byte 0", and acting on the
+                    second reading releases a hold that was part of the
+                    withheld lines (#9064). read_size is deliberately
+                    NOT shared — head reads 64 KiB and tail 8 KiB,
+                    matching the reference binaries, and a chunk size
+                    is not a line-boundary rule
   lib/tty.fern      ttyname(3) as glibc answers it: the /proc/self/fd/N
                     readlink first, trusted only when it still stats to
                     the same character device, then a walk of /dev/pts
@@ -1493,8 +1510,9 @@ groups are the order of work. Each sub-issue names its group.
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
   `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
-  primitives now, and `rename`, `chmod` and `set_file_times` landed with
-  #9059), `mktemp` (done — it needed none of them: `open_exclusive`,
+  primitives now. `rename`, `chmod` and `set_file_times` landed natively
+  with #9059; `rename`, `chmod` and `set_file_times` have since reached
+  the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
@@ -1502,11 +1520,55 @@ groups are the order of work. Each sub-issue names its group.
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty` `uptime` `pathchk`, and `hostid` (done: `hostname()`
-  plus the resolver in `lib/resolv.fern`). Each primitive is a builtin,
-  which is four classifications (`docs/FREESTANDING-CORE.md`,
-  `docs/PACKAGE-CAPABILITIES-BRIEF.md`) and the self-host mirror. The
+  plus the resolver in `lib/resolv.fern`). The
   sub-issue for each utility names the primitives it is blocked on; the
   primitive gets its own issue when the first utility needs it.
+
+  **What a primitive costs, and the half that has no gate.** A builtin is
+  four classifications — `internal/checker`, `internal/interp`,
+  `internal/caps` (`docs/PACKAGE-CAPABILITIES-BRIEF.md`) and
+  `internal/platforms` (`docs/FREESTANDING-CORE.md`) — plus the two
+  self-host MIRRORS, `examples/self_host/caps.fern` and `platforms.fern`.
+  Each of those has a completeness test that fails when one is missed.
+
+  It is also, and this is the expensive half, the self-hosted COMPILER:
+  `parser.fern`'s name list, `ircore.fern`, `ir.fern` (op + extension kind
+  id), `irlower.fern`, `asmcore.fern` and the three emitters. **Nothing
+  tests for that.** `sleep_ns` was classified in all six places, never
+  lowered, and #9060 merged with the self-host leg of `sleep` red; main
+  stayed broken until #9081. So a primitive is not landed until the
+  self-host compiles a program that calls it, and the utility's parity
+  suite covers its self-host leg. #9085 tracks the missing completeness
+  test. **All of #9085's five are lowered now**, and the completeness test
+  landed with no exemption list: `TestSelfHostKnowsEveryNativeBuiltin` in
+  `internal/checker` pins every bare builtin the checker registers against
+  `builtin_function_names()` in the self-hosted parser, and fails naming
+  each one that is missing. Lowered: `sleep_ns` (266), `rename` (267),
+  `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
+  (271), `rlimit_nofile` (272).
+
+  That test covers the half that fails SILENTLY — an unknown name is E001
+  at the call site, which reads like the program's mistake rather than the
+  compiler's. The lowering half is self-reporting by comparison: a name
+  that reaches the parser with no IR op behind it stops at a diagnostic
+  naming the bail site.
+
+  Two of those do not reach every target, and the refusal is deliberate
+  rather than a gap: `chmod` is refused on wasm (E066, capability
+  `fsmode` — neither WASI preview has permission bits), and
+  `process_alive` and `rlimit_nofile` are refused there too, named by
+  the wasm emitter rather than by the platforms gate, because
+  `wasm_ir_run` / `wasm_run` / `playground_run` reach `emit_ir_module`
+  directly and would otherwise present a deliberate absence as a
+  missing lowering — and `statfs` is refused there too, for the reason
+  `internal/interp/fsstat_other.go` gives: neither preview has a volume to
+  measure, since a preopen is a capability handle rather than a mount, so
+  it reports neither a size nor a name-length limit. On arm64-darwin
+  `set_file_times` issues
+  `setattrlist(2)` where native issues `setattrlistat(2)`: the
+  self-host's syscall floor stops at five arguments and `setattrlistat`
+  takes six, and the two are the same call for a path resolved against
+  the process's own directory, which is what `AT_FDCWD` means.
 
 Within a group, easiest first. Do not start a group-C utility by adding a
 one-off syscall to one backend.

@@ -547,7 +547,28 @@ Worth knowing so you do not assume coverage you do not have:
    and the detail is discarded. Redirect to a file and grep `--- FAIL`.
 6. **`ok` in 0.3s is a SKIP, not a pass.** Usually a missing toolchain; fix the
    dependency rather than taking the green.
-7. **A `-run` name that matches nothing is exit 0.** Deleting a test does not
+7. **`ok … (cached)` is not a run, and after a Fern-only edit it is a lie.**
+   `go test` invalidates a cached result when a file the TEST PROCESS opened
+   changes; it cannot see what a compiler the test `exec`s opened. A suite that
+   hands `coreutils/head.fern` to the `fern` binary therefore keeps reporting
+   its previous result after that source changes — 443 subtests PASS, nothing
+   executed, on a tree where the bug had been put back (#9087). The harness now
+   reads the entry's local import closure (`e2eharness.TrackFernSources`) so
+   those files reach the testlog, and `make fern-test-cache` perturbs a source
+   and fails if the cached result survives. `std/…` and `core/…` are already
+   covered, reaching the compiler through `internal/stdlib`'s `go:embed`. Use
+   `-count=1` for anything this does not cover, above all a mutation run: a
+   cached PASS on a mutant is indistinguishable from a test that cannot catch
+   it. TWO surfaces are compiled through a child process and both needed it:
+   the utility's own source in `fernBin`, and **the compiler itself** in
+   `selfHostCompiler` — a stale hit on the latter means
+   `TestSelfHostCoreutilsParity`, the gate `sleep_ns` slipped past, exercises a
+   stale COMPILER. `make fern-test-cache` probes both. `internal/e2eselfhost`
+   is covered only INCIDENTALLY — `CachedDriverBin` reads
+   `examples/self_host`'s closure to build its own key, and that read is what
+   reaches the testlog — so a build-cache change could take the test-cache
+   protection with it without anything saying so.
+8. **A `-run` name that matches nothing is exit 0.** Deleting a test does not
    remove it from the workflow that names it, so the lane keeps listing
    coverage it stopped having. `test-e2e-arm64`'s cross-host job ran 15 of the
    17 tests in its regex for months, including the arm64 stage-2 fixpoint its
@@ -556,7 +577,7 @@ Worth knowing so you do not assume coverage you do not have:
    `.github/selfhost-test-weights.txt` (#6310). `make testnames` now fails on
    a name in `.github/` that resolves to no test; when you retire a test, run
    it before assuming the workflows followed.
-8. **A wrong shard WEIGHT fails the shard, and only by timeout.** An entry that
+9. **A wrong shard WEIGHT fails the shard, and only by timeout.** An entry that
    badly understates a test pushes its bucket past the shard `-test.timeout`
    (28 minutes, tracking the 30-minute job budget), so an unrelated PR goes red
    for a scheduling error — twice so far (#5914, #6823), both at the earlier
@@ -565,7 +586,7 @@ Worth knowing so you do not assume coverage you do not have:
    in its job summary (`scripts/ci-test-weights`); it is advisory, so read the
    summary rather than waiting for a red. Weight pessimistically — the same test
    has measured 482 s and 738 s on consecutive runs.
-9. **A parent reports PASS when every one of its subtests SKIPs.** So rule 6
+10. **A parent reports PASS when every one of its subtests SKIPs.** So rule 6
    does not save you: there is nothing in the log to read. `TestStdArrayEqual`
    asserted nothing for its whole existence that way — the interp oracle
    skipped, which took the x86-64 and wasm legs with it (#6840). Two habits
@@ -578,13 +599,13 @@ Worth knowing so you do not assume coverage you do not have:
    That second habit buys leg independence at the cost of making the parent's
    PASS meaningless when EVERY leg skips, which is #7310: the diff oracle
    reported 256 seeds green having executed 0 of 768 backend legs, and exited
-   0. So a multi-leg oracle needs rule 10's ratio floor as well as the split —
+   0. So a multi-leg oracle needs rule 11's ratio floor as well as the split —
    `TestDifferential_LangsmithMain` now settles which legs the host can run
    before the first seed (`FERN_REQUIRE_DIFF_BACKENDS` names what a lane is
    meant to have) and then asserts each of them actually ran. A leg that is
    INSTALLED and silently not running is the same hollow lane as a missing
    one, and only the second check sees it.
-10. **A corpus walk that selects nothing PASSes with no sub-tests at all**, which
+11. **A corpus walk that selects nothing PASSes with no sub-tests at all**, which
    reads exactly like a clean run. Every fixture-driven walk needs a floor:
    `runSelfHostFixtureLeg`, `forEachRunnableFixture`, `TestSeccompFixtureCorpus`,
    `TestFernFixtures` and the diff-oracle legs all fail on zero now. The selector
@@ -603,7 +624,7 @@ Worth knowing so you do not assume coverage you do not have:
    per-leg execution tally as well (#7400), the same instrument #7310 put on the
    diff oracle. A sweep needs both numbers: seeds that reached the legs, and what
    each leg then ran.
-11. **Most lanes cannot tell you whether a given test RAN.** They use gotestsum's
+12. **Most lanes cannot tell you whether a given test RAN.** They use gotestsum's
    `pkgname-and-test-fails` formatter, which prints one line per package plus
    failures — so a PASS, a SKIP and a cached replay are indistinguishable in the
    log, and "did test X actually run?" has no answer from that lane at all. The
@@ -617,7 +638,7 @@ Worth knowing so you do not assume coverage you do not have:
    NOT fixed lane-wide — the other lanes still hide passes — so on any question
    of the form "is this test running in CI" read the test's own output, not the
    lane's colour, and add the output if it is not there.
-12. **A test that needs TWO backends on one host runs on neither single-backend
+13. **A test that needs TWO backends on one host runs on neither single-backend
    lane.** `TestF64TranscendentalBackendsAgree` had compared nothing since it was
    written: the catch-all `test-e2e-other` lane owns its name, and each of that
    lane's arches has one of the two toolchains. It now runs on
@@ -625,7 +646,7 @@ Worth knowing so you do not assume coverage you do not have:
    qemu-user), which sets `FERN_REQUIRE_CROSS_BACKENDS=1` so a lane that loses a
    toolchain goes RED instead of quietly back to skipping.
 
-13. **Pick the gate by the fixture's SHAPE, not by the test's NAME.**
+14. **Pick the gate by the fixture's SHAPE, not by the test's NAME.**
    `internal/e2eselfhost` holds ~1980 test functions, and the ones pinning a
    given rc shape are not named after it. Two stale pins reached CI on #7553 for
    exactly this reason: a change to the aliased-param verdict was gated on
@@ -654,7 +675,7 @@ Worth knowing so you do not assume coverage you do not have:
    row".
 
 
-14. **A measurement over `internal/ir` says nothing about emitted code unless
+15. **A measurement over `internal/ir` says nothing about emitted code unless
    the backend's pass battery has run first.** Every backend runs
    `Defunctionalise` → `ElideClosurePair` → `InlineZeroCaptureClosures` →
    `Inline` → `FuseTee` → `EliminateDeadCode` → `FlattenBranches` →
@@ -666,7 +687,7 @@ Worth knowing so you do not assume coverage you do not have:
    by 2x. The same applies to a lift into `internal/ssa`: `LiftProgram`
    deliberately skips `Optimize`, so it sees the pre-battery form too.
 
-15. **A buffered `go test` log is EMPTY until the package finishes, so
+16. **A buffered `go test` log is EMPTY until the package finishes, so
    grepping a running one for `--- FAIL` always answers zero.** Without
    `-v`, nothing is written until the package completes; a periodic
    `grep -c '^--- FAIL'` on that file reports 0 whether the run is healthy,

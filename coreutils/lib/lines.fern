@@ -1,0 +1,55 @@
+// coreutils/lib/lines.fern — the two line-boundary scans `head` and
+// `tail` share when they hold bytes back.
+//
+// Both utilities stream a fixed-size read at a time and keep a HOLD of
+// the bytes they cannot release yet: `head -n -N` because the last N
+// lines are the ones to elide, `tail -n N` because they are the ones
+// to keep. Either way the question at each chunk is the same — where
+// does the run of the last N terminated lines begin — and it is asked
+// from both ends, which is why there are two scans rather than one.
+//
+// `read_size` is deliberately NOT here: head reads 64 KiB and tail 8
+// KiB, matching the reference binaries, and a chunk size is not a
+// line-boundary rule.
+import "std/string";
+
+// line_cut returns the byte offset just past the `n`-th terminator in
+// `hold`, or its whole length when it holds fewer than that — the last
+// line is then unterminated, and there is nothing after it to point at.
+pub function line_cut(hold: string, n: u64, term: i32): i32 {
+  var cut: i32 = 0;
+  var left: u64 = n;
+  while (left > 0 as u64) {
+    var j: i32 = __memchr(hold, term, cut);
+    if (j < 0) {
+      return hold.len();
+    }
+    cut = j + 1;
+    left = left - 1 as u64;
+  }
+  return cut;
+}
+
+// tail_start returns the offset in `s` at which the last `n` terminated
+// lines begin, found by walking `n + 1` terminators back from the end,
+// or -1 when `s` does not hold that many.
+//
+// The -1 is load-bearing and was a bug for a while (#9064). Answering 0
+// for "ran out" is indistinguishable from "they begin at s[0]", and the
+// callers act on the second reading: a chunk holding exactly `n`
+// terminators takes the fast path and releases a hold that was part of
+// the very lines being withheld. A negative answer sends the caller to
+// the general path, which counts terminators across the hold as well
+// and was always right for that case.
+pub function tail_start(s: string, n: u64, term: i32): i32 {
+  var pos: i32 = s.len();
+  var left: u64 = n + 1 as u64;
+  while (left > 0 as u64) {
+    pos = __rmemchr(s, term, pos - 1);
+    if (pos < 0) {
+      return 0 - 1;
+    }
+    left = left - 1 as u64;
+  }
+  return pos + 1;
+}

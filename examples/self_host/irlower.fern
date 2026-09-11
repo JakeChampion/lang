@@ -10112,6 +10112,10 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
                     // The clock builtins return an i64 timespec reading, so a
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
+                    // The descriptor ceiling is an i64 for the same reason the
+                    // clocks are: RLIM_INFINITY normalises to i64 max, which a
+                    // 32-bit binding would read back as -1.
+                    if (cid.name == "rlimit_nofile") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
                     // The bump high-water mark is i64 (the arena is 16 GiB, so
                     // it passes 2^31 on a long run). Width-tracking it matters
@@ -10499,6 +10503,10 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     // The clock builtins return an i64 value: lower via the
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
+                    // rlimit_nofile pushes a full-width i64 too, so the normal
+                    // call path is the lowering; the sign-extend below would
+                    // widen an already-wide operand.
+                    if (cid.name == "rlimit_nofile") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
                     // The bump high-water mark is an i64 value: the normal call
                     // path emits op_heap_bump_bytes and pushes the full-width
@@ -11949,6 +11957,25 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // lower_call_dirlink, split out so this dispatch does not grow six
     // more arms of the same shape.
     if (is_dirlink_call(cid.name, c.args.len())) { return lower_call_dirlink(c, cid, s); }
+    // Built-in `set_file_times(path, atime_sec, atime_nsec, mtime_sec,
+    // mtime_nsec, flags)` (#9059) — utimensat(2) over the pair `stat`
+    // answers in. The four timestamp halves are i64 in the signature and
+    // every backend helper reads them as one, so they lower through
+    // lower_i64, which widens an i32 leaf rather than bailing the module
+    // off the IR path; the path and the flags word stay 32-bit.
+    if (cid.name == "set_file_times" && c.args.len() == 6) {
+        var sft: LowerState = lower_expr(c.args[0], s);
+        if (!sft.ok) { return sft; }
+        var ti: i32 = 1;
+        while (ti < 5) {
+            sft = lower_i64(c.args[ti], sft);
+            if (!sft.ok) { return sft; }
+            ti = ti + 1;
+        }
+        sft = lower_expr(c.args[5], sft);
+        if (!sft.ok) { return sft; }
+        return sft.emit(ir.op_set_file_times());
+    }
     // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
     // directory, push a fresh Result[string, IoError] box
     // (Ok(path) / Err(_)). The Result type is resolved by
@@ -12006,6 +12033,16 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         var lsts: LowerState = lower_expr(c.args[0], s);
         if (!lsts.ok) { return lsts; }
         return lsts.emit(ir.op_lstat());
+    }
+    // Built-in `statfs(path)` — describe the FILESYSTEM the path
+    // resolves on rather than the entry, pushing a fresh
+    // Result[FsStat, IoError] (#9062). Same one-argument shape as
+    // `stat`; opt_ret_type's statfs case binds the Ok payload as the
+    // injected FsStat struct so `fs.blocks_avail` resolves to a slot.
+    if (cid.name == "statfs" && c.args.len() == 1) {
+        var sfs: LowerState = lower_expr(c.args[0], s);
+        if (!sfs.ok) { return sfs; }
+        return sfs.emit(ir.op_statfs());
     }
     // Built-in `subprocess(cmd, args, stdin)` — spawn a child, pipe
     // its streams, push a fresh ProcessResult struct {stdout, stderr,
@@ -12326,6 +12363,8 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "getgroups" || name == "environ") { return argc == 0; }
     if (name == "getcwd" || name == "cpu_count") { return argc == 0; }
     if (name == "uname_field") { return argc == 1; }
+    if (name == "process_alive") { return argc == 1; }
+    if (name == "rlimit_nofile") { return argc == 0; }
     return false;
 }
 
@@ -12348,6 +12387,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 //   uname_field(i)      → op_uname_field → one field of the utsname record,
 //                         boxed the same way; getcwd() the working directory.
 //   cpu_count()         → op_cpu_count → a bare i32, no operands.
+//   rlimit_nofile()     → op_rlimit_nofile → the soft RLIMIT_NOFILE as an
+//                         i64, no operands.
+//   process_alive(pid)  → op_process_alive → 0/1, one kill(pid, 0).
 function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
     if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
@@ -12358,20 +12400,22 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     if (cid.name == "hostname") { return s.emit(ir.op_hostname()); }
     if (cid.name == "getcwd") { return s.emit(ir.op_getcwd()); }
     if (cid.name == "cpu_count") { return s.emit(ir.op_cpu_count()); }
+    if (cid.name == "rlimit_nofile") { return s.emit(ir.op_rlimit_nofile()); }
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
+    if (cid.name == "process_alive") { return a0.emit(ir.op_process_alive()); }
     if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     return a1.emit(ir.op_access());
 }
 
-// is_dirlink_call recognises the seven single-step directory and link
-// primitives. The ARITY is part of the test so a call with the wrong number
-// of arguments falls through to the ordinary named-call path.
+// is_dirlink_call recognises the eight single-step directory, link and
+// permission primitives. The ARITY is part of the test so a call with the
+// wrong number of arguments falls through to the ordinary named-call path.
 function is_dirlink_call(name: string, argc: i32): boolean {
-    if (name == "create_dir") { return argc == 2; }
+    if (name == "create_dir" || name == "chmod") { return argc == 2; }
     if (name == "remove_dir" || name == "read_link" || name == "umask") { return argc == 1; }
     if (name == "create_link" || name == "create_symlink" || name == "rename") { return argc == 2; }
     return false;
@@ -12391,6 +12435,7 @@ function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState):
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     if (cid.name == "create_dir") { return a1.emit(ir.op_create_dir()); }
+    if (cid.name == "chmod") { return a1.emit(ir.op_chmod()); }
     if (cid.name == "create_link") { return a1.emit(ir.op_create_link()); }
     if (cid.name == "rename") { return a1.emit(ir.op_rename()); }
     return a1.emit(ir.op_create_symlink());
@@ -70611,12 +70656,15 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "create_link") { return "Result[void, IoError]"; }
     if (name == "create_symlink") { return "Result[void, IoError]"; }
     if (name == "rename") { return "Result[void, IoError]"; }
+    if (name == "chmod") { return "Result[void, IoError]"; }
+    if (name == "set_file_times") { return "Result[void, IoError]"; }
     if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
     if (name == "stat") { return "Result[FileStat, IoError]"; }
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
+    if (name == "statfs") { return "Result[FsStat, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender / open_exclusive ->

@@ -53,6 +53,7 @@ import "std/i64";
 import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
+import "./lib/lines";
 
 // Option ids. The declaration order below is GNU's, because the
 // ambiguity list prints candidates in it.
@@ -810,39 +811,6 @@ function file_lines(c: Copy, r: Reader, pretty: string, s: Settings, start: i64,
   return out;
 }
 
-// The offset just past the `n`-th terminator in `hold`, or its whole
-// length when it holds fewer.
-function line_cut(hold: string, n: u64, term: i32): i32 {
-  var cut: i32 = 0;
-  var left: u64 = n;
-  while (left > 0 as u64) {
-    var j: i32 = __memchr(hold, term, cut);
-    if (j < 0) {
-      return hold.len();
-    }
-    cut = j + 1;
-    left = left - 1 as u64;
-  }
-  return cut;
-}
-
-// The offset in `s` at which the last `n` terminated lines begin, found
-// by walking `n + 1` terminators back from the end, or -1 when `s` does
-// not hold that many: the line they begin with then starts before `s`,
-// and only the bytes held in front of it say where.
-function tail_start(s: string, n: u64, term: i32): i32 {
-  var pos: i32 = s.len();
-  var left: u64 = n + 1 as u64;
-  while (left > 0 as u64) {
-    pos = __rmemchr(s, term, pos - 1);
-    if (pos < 0) {
-      return 0 - 1;
-    }
-    left = left - 1 as u64;
-  }
-  return pos + 1;
-}
-
 // GNU's pipe_lines: the last N lines of a stream. `hold` keeps the
 // bytes after the last dropped terminator, `pending` the terminators
 // in it, so the drop scan runs once per chunk rather than per line.
@@ -859,7 +827,7 @@ function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
             total = total + 1 as u64;
           }
           if (total > s.count) {
-            hold = slice_unchecked(hold, line_cut(hold, total - s.count, s.term), hold.len()) + "";
+            hold = slice_unchecked(hold, lines.line_cut(hold, total - s.count, s.term), hold.len()) + "";
           }
           return Copy { ...out, o: gnu.stream_put(out.o, hold) };
         }
@@ -867,7 +835,7 @@ function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
         var here: u64 = __count_byte(chunk, s.term) as u64;
         var start: i32 = 0 - 1;
         if (here >= s.count) {
-          start = tail_start(chunk, s.count, s.term);
+          start = lines.tail_start(chunk, s.count, s.term);
         }
         if (start >= 0) {
           // The chunk alone carries the lines to keep: the hold
@@ -879,7 +847,7 @@ function pipe_lines(c: Copy, r: Reader, pretty: string, s: Settings): Copy {
           hold = hold + chunk;
           pending = pending + here;
           if (pending > s.count) {
-            var cut: i32 = line_cut(hold, pending - s.count, s.term);
+            var cut: i32 = lines.line_cut(hold, pending - s.count, s.term);
             hold = slice_unchecked(hold, cut, hold.len()) + "";
             pending = s.count;
           }

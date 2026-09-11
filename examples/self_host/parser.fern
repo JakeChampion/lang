@@ -8033,6 +8033,9 @@ pub function builtin_function_names(): string[] {
         // tcp_serve_supervised is the stdlib caller of the first and last;
         // asm_modload_run's batched per-module orchestrator uses all three.
         "proc_fork", "proc_waitpid", "proc_exec",
+        // Liveness of one pid — kill(pid, 0), the zero signal that runs
+        // every check kill(2) makes and delivers nothing (#8767).
+        "process_alive",
         // stdin / readers
         "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
         // the two halves of the compile target's name, literals once compiled
@@ -8041,9 +8044,14 @@ pub function builtin_function_names(): string[] {
         // filesystem
         "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
         "create_dir_all", "stat", "lstat", "access", "temp_dir",
+        // the FILESYSTEM a path resolves on, where stat describes one entry
+        "statfs",
         // the single-step directory and link primitives, each one syscall
         // with nothing folded away
         "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
+        // the metadata writes on an entry that already exists: its permission
+        // bits and its two timestamps
+        "chmod", "set_file_times",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",
@@ -8053,6 +8061,9 @@ pub function builtin_function_names(): string[] {
         // the kernel's utsname record, the working directory and how many
         // processing units the process may use
         "uname_field", "getcwd", "cpu_count",
+        // The kernel-enforced ceiling on this process's open descriptors,
+        // which `ulimit -n` prints (#8819).
+        "rlimit_nofile",
         // signal dispositions — SIG_IGN / SIG_DFL for one signal
         "signal_ignore", "signal_default",
         // clocks + randomness + sleep + reactor readiness
@@ -8139,6 +8150,24 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.append(StructFieldDecl { name: "ctime", type_name: "i64", fn_ret: "", fn_param_types: "" });
         fsf = fsf.append(StructFieldDecl { name: "ctime_nsec", type_name: "i64", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
+    }
+    // FsStat: the builtin struct returned by statfs(path) — the filesystem's
+    // own geometry and length limits, where FileStat above describes one entry
+    // on it. Same injection pattern and the same reason: __fern_statfs builds a
+    // struct whose shape pointer is the interned "FsStat" name, and the emitter
+    // resolves `fs.blocks_avail` to a slot offset from this decl. Every field is
+    // an i64, so the layout is the same on every target.
+    if (!struct_declared(structs, "FsStat")) {
+        var fvf: StructFieldDecl[] = [];
+        fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "blocks_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "blocks_avail", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "files", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "files_free", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess

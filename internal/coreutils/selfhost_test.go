@@ -102,7 +102,14 @@ func selfHostCompiler(t *testing.T) string {
 			return
 		}
 		bin := filepath.Join(dir, "fern-selfhost")
-		src := filepath.Join(repoRoot(t), "examples", "self_host", "fern.fern")
+		selfHostDir := filepath.Join(repoRoot(t), "examples", "self_host")
+		// The compiler under test is built by a child process, so its sources
+		// reach the go command's test cache only if this process reads them
+		// (#9087). Without it this suite — the one that would have caught
+		// sleep_ns — keeps reporting its previous result after a change to the
+		// self-host compiler, exercising a stale one.
+		e2eharness.TrackFernSources(t, selfHostDir, "fern.fern")
+		src := filepath.Join(selfHostDir, "fern.fern")
 		out, cerr := exec.Command(fern, "-target", fernTarget(t), "-o", bin, src).CombinedOutput()
 		if cerr != nil {
 			selfHostFail = string(out)

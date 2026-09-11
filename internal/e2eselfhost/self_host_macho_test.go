@@ -296,6 +296,36 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 		`function main(): i32 { match (stat("`+filepath.Join(dir, "no_such_stat_zzz")+`")) { Ok(fs) => { return 1; }, Err(e) => { return 99; } } }`,
 		99)
 
+	// statfs — BSD 345, whose record shares NOTHING with Linux's: f_bsize is a
+	// u32 at 0 with f_iosize beside it at 4, the five counts are u64 from 8,
+	// and there is no name-length member at all, so both limits come from real
+	// pathconf(2) calls (BSD 191) that Linux has no equivalent of. The block
+	// size carries the width trap: read 64 bits wide it drags f_iosize into the
+	// high half, which is a plausible-looking multi-terabyte answer rather than
+	// a fault, so the ceiling is the assertion that catches it. The host's own
+	// numbers are not available here (this case is generated on Linux and run
+	// on the macOS runner), so the rest is the nesting the record must satisfy.
+	runCase("statfs",
+		`function main(): i32 {
+  match (statfs("`+dir+`")) {
+    Ok(fs) => {
+      if (fs.block_size <= (0 as i64)) { return 1; }
+      if (fs.block_size > (1048576 as i64)) { return 2; }
+      if (fs.blocks <= (0 as i64)) { return 3; }
+      if (fs.blocks_free > fs.blocks) { return 4; }
+      if (fs.blocks_avail > fs.blocks_free) { return 5; }
+      if (fs.files_free > fs.files) { return 6; }
+      if (fs.name_max <= (0 as i64)) { return 8; }
+      if (fs.name_max > (4096 as i64)) { return 9; }
+      if (fs.path_max <= (0 as i64)) { return 10; }
+      match (statfs("`+filepath.Join(dir, "no_such_statfs_zzz", "x")+`")) { Ok(g) => { return 11; }, Err(e) => {} }
+      return 7;
+    },
+    Err(e) => { return 12; }
+  }
+}`,
+		7)
+
 	// remove_file — unlinkat(35) -> Darwin 472, AT_FDCWD -2. Full file
 	// lifecycle: write a file, delete it, then stat must report it gone
 	// (the Err arm). Returns 7 iff write + remove + the "now gone" stat
@@ -335,6 +365,59 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// if every step round-trips.
 	runCase("fs_builtins_lifecycle", fsBuiltinsProgram, 42)
 
+	// chmod — fchmodat (Darwin BSD 467, where Linux's is 53/268), with the
+	// flags word Linux's three-argument form does not have. The low TWELVE
+	// bits land verbatim, so setuid survives; a backend that masked to 0o777
+	// before the syscall reports 0o755 here. The sticky bit is deliberately
+	// not among them: BSD restricts S_ISVTX on a non-directory to the
+	// superuser, and this runner is not one.
+	chmodPath := filepath.Join(dir, "chmod_target.txt")
+	runCase("chmod_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+chmodPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (chmod("`+chmodPath+`", 2541)) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+chmodPath+`")) { Ok(f) => { if ((f.mode & (4095 as u32)) != (2541 as u32)) { return 3; } }, Err(e) => { return 4; } }
+  match (chmod("`+filepath.Join(dir, "no_such_chmod_zzz")+`", 420)) { Ok(_) => { return 5; }, Err(e) => {} }
+  return 7;
+}`,
+		7)
+
+	// set_file_times — the one primitive with no shared body at all: XNU has
+	// no utimensat syscall, so this lowers to setattrlist (BSD 221) over an
+	// attribute list naming only the timestamps that are not omitted, packed
+	// in ASCENDING attribute-bit order — modification time before access
+	// time, the reverse of the timespec pair Linux wants. Both halves of both
+	// timestamps and the omit bit are read back through stat, so a list built
+	// in the wrong order, a dropped nanosecond half or an ignored omit bit is
+	// a wrong number rather than a plausible one.
+	sftPath := filepath.Join(dir, "sft_target.txt")
+	runCase("set_file_times_roundtrip",
+		`function main(): i32 {
+  match (write_file("`+sftPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (set_file_times("`+sftPath+`", 1111111111, 222333444, 1444555666, 777888999, 0)) { Err(e) => { return 2; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime != (1111111111 as i64)) { return 3; }
+      if (f.atime_nsec != (222333444 as i64)) { return 4; }
+      if (f.mtime != (1444555666 as i64)) { return 5; }
+      if (f.mtime_nsec != (777888999 as i64)) { return 6; }
+    },
+    Err(e) => { return 7; }
+  }
+  match (set_file_times("`+sftPath+`", 9, 9, 1777888999, 864213579, 2)) { Err(e) => { return 8; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime != (1111111111 as i64)) { return 9; }
+      if (f.mtime != (1777888999 as i64)) { return 10; }
+      if (f.mtime_nsec != (864213579 as i64)) { return 11; }
+    },
+    Err(e) => { return 12; }
+  }
+  match (set_file_times("`+filepath.Join(dir, "no_such_sft_zzz")+`", 1, 0, 1, 0, 0)) { Ok(_) => { return 13; }, Err(e) => {} }
+  return 42;
+}`,
+		42)
+
 	// sleep_ms — Darwin has no nanosleep syscall, so this lowers to
 	// select(0, NULL, NULL, NULL, &timeval) (sysno 93). A short sleep
 	// must return normally (a wrong syscall number would SIGILL → runCase
@@ -357,6 +440,37 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 		`function main(): i32 { sleep_ns(5000000 as i64); sleep_ns(400 as i64); `+
 			`var t0: i64 = monotonic_ns(); sleep_ns(999999500 as i64); `+
 			`if (monotonic_ns() - t0 < (999999500 as i64)) { return 1; } return 7; }`,
+		7)
+
+	// process_alive — kill(pid, 0) on Darwin is BSD sysno 37, and the trap's
+	// carry-flag error has to reach the helper already normalised to -errno or
+	// every pid reads dead. launchd is pid 1 on every macOS, and Darwin's pid
+	// ceiling is five digits, so 4194304 can never be a process. The
+	// non-positive spellings name process groups and answer false with no
+	// syscall at all.
+	runCase("process_alive",
+		`function main(): i32 {
+  if (!process_alive(1)) { return 90; }
+  if (process_alive(4194304)) { return 91; }
+  if (process_alive(0)) { return 92; }
+  if (process_alive(0 - 1)) { return 93; }
+  return 7;
+}`,
+		7)
+
+	// rlimit_nofile — getrlimit is BSD sysno 194 and RLIMIT_NOFILE is 8 here,
+	// not Linux's 7. A failing call (wrong syscall number) normalises to i64
+	// max and an unclamped RLIM_INFINITY reads negative, so the range is what
+	// separates a real ceiling from both. It does NOT pin the resource id: a
+	// wrong one still answers some plausible ceiling, and only the Linux legs
+	// compare against a limit the harness itself imposed.
+	runCase("rlimit_nofile",
+		`function main(): i32 {
+  var n: i64 = rlimit_nofile();
+  if (n < (4 as i64)) { return 90; }
+  if (n > (1000000 as i64)) { return 91; }
+  return 7;
+}`,
 		7)
 
 	// subprocess — fork/exec on Darwin: pipe() (sysno 42, two fds in

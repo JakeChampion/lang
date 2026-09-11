@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# check-fern-test-cache — prove the Go test cache can see a Fern-only change.
+#
+# `go test` reuses a cached result until something it can see changes, and what
+# it can see is the package's Go files, the environment, the command line, and
+# the files the TEST PROCESS opened. It cannot see what a compiler the test
+# exec'd opened. Two surfaces here are built that way, and both were blind:
+#
+#   the utility     coreutils/<util>.fern, handed to the fern binary by fernBin
+#   the compiler    examples/self_host/fern.fern, handed to it by selfHostCompiler
+#
+# Without e2eharness.TrackFernSources on each, a `.fern` edit leaves the cached
+# result standing: `ok … (cached)`, every subtest reported PASS, nothing
+# executed (#9087). The second surface is the worse one — it is
+# TestSelfHostCoreutilsParity, the gate that would have caught sleep_ns, and a
+# stale hit there exercises a stale COMPILER.
+#
+# That failure is silent and reads exactly like a pass, so it gets its own gate.
+# For each surface: warm the cache, confirm a second identical run IS served
+# from it, perturb a source in that surface's closure, and require the third run
+# not to be. The middle step is what keeps this from passing vacuously — if
+# caching were off entirely (GOFLAGS=-count=1, a cold GOCACHE), step three would
+# "pass" while proving nothing.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+pkg="./internal/coreutils/"
+log="$(mktemp)"
+backup="$(mktemp)"
+probe=""
+# EXIT alone leaves the probe file modified and the tree dirty if this is
+# interrupted mid-run, which is the one failure mode that outlives the script.
+trap '[ -n "$probe" ] && cp "$backup" "$probe"; rm -f "$log" "$backup"' EXIT INT TERM HUP
+
+run() {
+  # Never pipe a test run: the pipeline's status is the pipe's, not the test's.
+  go test -run "$suite" "$pkg" >"$log" 2>&1 || {
+    echo "check-fern-test-cache: $suite is failing before the probe even starts:" >&2
+    cat "$log" >&2
+    exit 1
+  }
+}
+
+# Each surface: the file to perturb, and a suite that compiles through it.
+# `true` is the cheapest utility in the corpus on both legs.
+check_surface() {
+  probe="$1"
+  suite="$2"
+  what="$3"
+  cp "$probe" "$backup"
+
+  # Identical argument lists, twice: the cache key covers the command line, so a
+  # warm-up spelled differently (`-count=1`) would miss on a key of its own.
+  run
+  run
+  if ! grep -q '(cached)' "$log"; then
+    echo "check-fern-test-cache: the second identical run of $suite was NOT served from" >&2
+    echo "the cache, so this gate cannot tell a working cache key from a disabled cache." >&2
+    echo "Check GOFLAGS and GOCACHE; do not read the result below as a pass." >&2
+    exit 1
+  fi
+
+  printf '\n// check-fern-test-cache probe\n' >>"$probe"
+  run
+  if grep -q '(cached)' "$log"; then
+    echo "check-fern-test-cache: $probe changed and $suite still came back (cached)." >&2
+    echo "A Fern-only edit to $what is invisible to the test cache again (#9087):" >&2
+    echo "whichever harness compiles that source must call e2eharness.TrackFernSources" >&2
+    echo "first, so the closure is read by the test process and lands in its testlog." >&2
+    exit 1
+  fi
+
+  cp "$backup" "$probe"
+  probe=""
+  echo "check-fern-test-cache: ok — a change to $what invalidates the cached result"
+}
+
+check_surface "coreutils/true.fern" '^TestTrueParity$' "a utility's own source"
+check_surface "examples/self_host/ircore.fern" '^TestSelfHostCoreutilsParity$/^true$' "the self-hosted compiler"

@@ -39,6 +39,7 @@ import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
+import "./lib/lines";
 
 // Option ids. The declaration order below is GNU's, because the
 // ambiguity list prints candidates in it — `head --=x` names
@@ -514,7 +515,7 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
         var here: u64 = __count_byte(chunk, s.term) as u64;
         var start: i32 = 0 - 1;
         if (here >= s.count.n) {
-          start = tail_start(chunk, s.count.n, s.term);
+          start = lines.tail_start(chunk, s.count.n, s.term);
         }
         if (start >= 0) {
           // The chunk alone carries every line that has to be withheld,
@@ -529,7 +530,7 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
           hold = hold + chunk;
           pending = pending + here;
           if (pending > s.count.n) {
-            var cut: i32 = line_cut(hold, pending - s.count.n, s.term);
+            var cut: i32 = lines.line_cut(hold, pending - s.count.n, s.term);
             out = gnu.stream_put(out, slice_unchecked(hold, 0, cut) + "");
             hold = slice_unchecked(hold, cut, hold.len()) + "";
             pending = s.count.n;
@@ -544,41 +545,8 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
   return out;
 }
 
-// The byte offset just past the `n`-th terminator in `hold`, or its whole
-// length when it holds fewer than that (the last line is unterminated).
-function line_cut(hold: string, n: u64, term: i32): i32 {
-  var cut: i32 = 0;
-  var left: u64 = n;
-  while (left > 0 as u64) {
-    var j: i32 = __memchr(hold, term, cut);
-    if (j < 0) {
-      return hold.len();
-    }
-    cut = j + 1;
-    left = left - 1 as u64;
-  }
-  return cut;
-}
-
 function release_lines(hold: string, n: u64, term: i32): string {
-  return slice_unchecked(hold, 0, line_cut(hold, n, term)) + "";
-}
-
-// The offset in `s` at which the last `n` terminated lines begin, found
-// by walking `n + 1` terminators back from the end, or -1 when `s` does
-// not hold that many: the line they begin with then starts before `s`,
-// and only the bytes held in front of it say where.
-function tail_start(s: string, n: u64, term: i32): i32 {
-  var pos: i32 = s.len();
-  var left: u64 = n + 1 as u64;
-  while (left > 0 as u64) {
-    pos = __rmemchr(s, term, pos - 1);
-    if (pos < 0) {
-      return 0 - 1;
-    }
-    left = left - 1 as u64;
-  }
-  return pos + 1;
+  return slice_unchecked(hold, 0, lines.line_cut(hold, n, term)) + "";
 }
 
 // `head_file(path, o, s, show)` — one operand: its header when `show`,

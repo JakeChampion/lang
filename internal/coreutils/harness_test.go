@@ -130,6 +130,18 @@ type invocation struct {
 	// too, which an `artifacts` list cannot express. Takes precedence
 	// over dir.
 	seedTree func(t *testing.T, dir string)
+	// crossDev seeds a second working directory on a DIFFERENT
+	// filesystem from the seedTree one, reachable from it under the
+	// name `xdev`. It is the only way a case can reach EXDEV, which is
+	// what `mv`'s copy-then-unlink fallback hangs off: `rename` between
+	// two names on one filesystem never produces it.
+	//
+	// Everything under it joins the tree comparison as `xdev/…`, with
+	// the hard-link groups numbered across both roots. The link itself
+	// does not: its target is a fresh directory per run, so the two
+	// sides would differ on that one name while agreeing about every
+	// file under it. Needs seedTree.
+	crossDev func(t *testing.T, dir string)
 }
 
 // treeEntry is one path under a seedTree case's working directory, as the
@@ -449,7 +461,12 @@ func fernBin(t *testing.T, util string) string {
 		fernBinDir = dir
 	}
 	fern := e2eharness.BuildLangBinForInterp(t)
-	src := filepath.Join(repoRoot(t), "coreutils", util+".fern")
+	root := repoRoot(t)
+	// The compile below is a child process, so nothing it reads reaches the go
+	// command's test cache on its own: without this the suite reports its last
+	// result after a `.fern` edit, having run nothing (#9087).
+	e2eharness.TrackFernSources(t, filepath.Join(root, "coreutils"), util+".fern")
+	src := filepath.Join(root, "coreutils", util+".fern")
 	bin := filepath.Join(fernBinDir, util)
 	cmd := exec.Command(fern, "-target", fernTarget(t), "-o", bin, src)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -488,6 +505,51 @@ func crossArgv(bin string, args ...string) []string {
 	return append(append(crossPrefix(), bin), args...)
 }
 
+// crossDevName is what a crossDev case's second filesystem is reached
+// through from the working directory. Both sides spell it the same way,
+// which is what keeps the operands — and so the diagnostics quoting them
+// — identical between the two runs.
+const crossDevName = "xdev"
+
+// crossDevDir makes a fresh directory on a filesystem OTHER than the one
+// holding `near`, and fails if it cannot: a case that silently ran both
+// of its names on one filesystem would never reach EXDEV and would prove
+// the opposite of what it claims.
+func crossDevDir(t *testing.T, near string) string {
+	t.Helper()
+	base := os.Getenv("FERN_COREUTILS_XDEV")
+	if base == "" {
+		base = "/dev/shm"
+	}
+	dir, err := os.MkdirTemp(base, "fern-coreutils-xdev-")
+	if err != nil {
+		t.Fatalf(`make a directory under %s: %v
+
+A cross-device case needs a second filesystem to move a file onto, and
+EXDEV is the whole point of it. Name a directory on one with
+FERN_COREUTILS_XDEV=/path (a tmpfs mount is the usual answer).`, base, err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if deviceOf(t, dir) == deviceOf(t, near) {
+		t.Fatalf(`%s is on the same filesystem as %s, so nothing here can reach EXDEV.
+Name a directory on another one with FERN_COREUTILS_XDEV=/path.`, dir, near)
+	}
+	return dir
+}
+
+func deviceOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("%s: no stat_t, so which filesystem it is on cannot be asked", path)
+	}
+	return uint64(st.Dev)
+}
+
 // run executes `bin` with argv[0] = argv0 and reports what happened.
 func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	t.Helper()
@@ -505,12 +567,19 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		cmd.Args = append(append(append([]string{pre[0]}, pre[1:]...), "-0", argv0, bin), inv.args...)
 	}
 	cmd.Env = append(baseEnv(), inv.env...)
-	var workDir string
+	var workDir, crossRoot string
 	var seeded map[string]bool
 	if inv.seedTree != nil {
 		workDir = t.TempDir()
 		inv.seedTree(t, workDir)
 		cmd.Dir = workDir
+		if inv.crossDev != nil {
+			crossRoot = crossDevDir(t, workDir)
+			inv.crossDev(t, crossRoot)
+			if err := os.Symlink(crossRoot, filepath.Join(workDir, crossDevName)); err != nil {
+				t.Fatalf("link %s into the working directory: %v", crossRoot, err)
+			}
+		}
 		if inv.mask != nil {
 			seeded = map[string]bool{}
 			for _, e := range readTree(t, workDir) {
@@ -617,7 +686,21 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		res.signal = ws.Signal().String()
 	}
 	if workDir != "" {
-		res.tree = readTree(t, workDir)
+		groups := map[[2]uint64]int{}
+		res.tree = readTreeInto(t, workDir, "", groups)
+		if crossRoot != "" {
+			// The link to the other filesystem is the harness's own
+			// scaffolding and its target is a fresh path per run, so it
+			// leaves the comparison and everything it reaches joins it.
+			kept := res.tree[:0]
+			for _, e := range res.tree {
+				if e.name != crossDevName {
+					kept = append(kept, e)
+				}
+			}
+			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups)...)
+			sort.Slice(res.tree, func(i, j int) bool { return res.tree[i].name < res.tree[j].name })
+		}
 	}
 	if inv.mask != nil {
 		res.stdout = []byte(inv.mask(string(res.stdout)))
@@ -669,8 +752,15 @@ func regroup(es []treeEntry) {
 // recorded, not followed.
 func readTree(t *testing.T, root string) []treeEntry {
 	t.Helper()
+	return readTreeInto(t, root, "", map[[2]uint64]int{})
+}
+
+// readTreeInto is readTree with each name prefixed and the hard-link
+// groups numbered into a caller's map, so a case spanning two roots
+// reads as one tree.
+func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) []treeEntry {
+	t.Helper()
 	var out []treeEntry
-	groups := map[[2]uint64]int{}
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -683,7 +773,7 @@ func readTree(t *testing.T, root string) []treeEntry {
 			return nil
 		}
 		mode := info.Mode()
-		e := treeEntry{name: rel, kind: treeKind(mode), mode: permBits(mode)}
+		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode)}
 		switch {
 		case mode&os.ModeSymlink != 0:
 			target, err := os.Readlink(path)
