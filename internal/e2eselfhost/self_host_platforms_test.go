@@ -275,10 +275,11 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 			// even when one compiler rejects with nothing to show for it.
 			//
 			// Not asserted where the self-host checker reports a construct it
-			// cannot represent: that is #4346's measured gap, it makes the two
-			// compilers disagree on the exit code for reasons that have nothing
-			// to do with capabilities, and `exit-ok` lands on it today.
-			if strings.Contains(string(shOut), "#4346") {
+			// cannot represent: that gap makes the two compilers disagree on
+			// the exit code for reasons that have nothing to do with
+			// capabilities, and `exit-ok` lands on it today. The sentinel is
+			// the hint's issue number, so it moves with the hint (#9053).
+			if strings.Contains(string(shOut), "#9053") {
 				return
 			}
 			if wantCode, gotCode := nativeCmd.ProcessState.ExitCode(), shCmd.ProcessState.ExitCode(); wantCode != gotCode {
