@@ -6708,6 +6708,10 @@ func (g *generator) emitSleepMsRuntime() {
 // UP to the next microsecond. That keeps the primitive's only promise
 // (the pause is never shorter than asked) at the finest resolution the
 // target has.
+//
+// Rounding up the last microsecond of a second carries into tv_sec: a
+// timeval whose tv_usec is 1000000 is out of range, and select rejects
+// it with EINVAL instead of pausing at all.
 func (g *generator) emitSleepNsRuntime() {
 	g.line("")
 	g.line(".global __fern_sleep_ns")
@@ -6721,22 +6725,29 @@ func (g *generator) emitSleepNsRuntime() {
 	g.emit("ldr x9, =1000000000")
 	g.emit("udiv x10, x0, x9")      // sec
 	g.emit("msub x11, x10, x9, x0") // rem ns
-	g.emit("str x10, [sp]")         // tv_sec
 	if g.darwin {
-		// tv_usec = ceil(rem_ns / 1000)
+		// tv_usec = ceil(rem_ns / 1000), carrying 1000000 into tv_sec.
 		g.emit("mov x12, #999")
 		g.emit("add x11, x11, x12")
 		g.emit("mov x12, #1000")
 		g.emit("udiv x11, x11, x12")
-		g.emit("str x11, [sp, #8]")
-		g.emit("mov x0, #0") // nfds
-		g.emit("mov x1, #0") // readfds
-		g.emit("mov x2, #0") // writefds
-		g.emit("mov x3, #0") // errorfds
-		g.emit("mov x4, sp") // timeout
+		g.emit("ldr x12, =1000000")
+		g.emit("cmp x11, x12")
+		g.emit("b.lo .Lsleep_ns_no_carry")
+		g.emit("mov x11, #0")
+		g.emit("add x10, x10, #1")
+		g.label(".Lsleep_ns_no_carry")
+		g.emit("str x10, [sp]")     // tv_sec
+		g.emit("str x11, [sp, #8]") // tv_usec
+		g.emit("mov x0, #0")        // nfds
+		g.emit("mov x1, #0")        // readfds
+		g.emit("mov x2, #0")        // writefds
+		g.emit("mov x3, #0")        // errorfds
+		g.emit("mov x4, sp")        // timeout
 		g.emit("mov x16, #%d", darSelect)
 		g.emit("svc #0x80")
 	} else {
+		g.emit("str x10, [sp]")     // tv_sec
 		g.emit("str x11, [sp, #8]") // tv_nsec
 		g.emit("mov x0, sp")        // &req
 		g.emit("mov x1, #0")        // rem = NULL

@@ -981,14 +981,16 @@ pub function rt_src_sleep_ms(t: string): string {
 // resolution. Darwin's select still measures its subsecond field in
 // MICROseconds, so the remainder is rounded UP there — which keeps the
 // primitive's only promise, that the pause is never SHORTER than asked, at the
-// finest resolution that target has.
+// finest resolution that target has. Rounding up the last microsecond of a
+// second carries into tv_sec: select rejects a tv_usec of 1000000 with EINVAL
+// rather than pausing at all.
 //
 // The two words go out through __store_i64 rather than __raw_store_ptr: the
 // count is an i64, and the ptr store takes an i32 value, so a second past the
 // i32 range would be truncated on the way into the timespec.
 pub function rt_src_sleep_ns(t: string): string {
     if (t == "arm64-darwin") {
-        return "function __fern_sleep_ns(ns: i64): i32 { if (ns <= (0 as i64)) { return 0; } var tv: i32 = __raw_scratch(16); var sec: i64 = ns / (1000000000 as i64); __store_i64(tv, sec); __store_i64(__raw_addr(tv, 8), (ns - sec * (1000000000 as i64) + (999 as i64)) / (1000 as i64)); return __syscall5(" + sysno(t, "select") + ", 0, 0, 0, 0, tv); }";
+        return "function __fern_sleep_ns(ns: i64): i32 { if (ns <= (0 as i64)) { return 0; } var tv: i32 = __raw_scratch(16); var sec: i64 = ns / (1000000000 as i64); var usec: i64 = (ns - sec * (1000000000 as i64) + (999 as i64)) / (1000 as i64); if (usec == (1000000 as i64)) { sec = sec + (1 as i64); usec = 0 as i64; } __store_i64(tv, sec); __store_i64(__raw_addr(tv, 8), usec); return __syscall5(" + sysno(t, "select") + ", 0, 0, 0, 0, tv); }";
     }
     return "function __fern_sleep_ns(ns: i64): i32 { if (ns <= (0 as i64)) { return 0; } var ts: i32 = __raw_scratch(16); var sec: i64 = ns / (1000000000 as i64); __store_i64(ts, sec); __store_i64(__raw_addr(ts, 8), ns - sec * (1000000000 as i64)); return __syscall3(" + sysno(t, "nanosleep") + ", ts, 0, 0); }";
 }

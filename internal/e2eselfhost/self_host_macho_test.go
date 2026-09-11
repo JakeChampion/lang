@@ -348,8 +348,15 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// pause is never shorter than asked, at the finest unit this target has.
 	// The sub-microsecond interval is the one that would truncate to a zero
 	// timeval under a plain divide, so it is the interval worth passing.
+	//
+	// The third interval is in the last microsecond of its second, where the
+	// rounding reaches 1000000 µs — out of range for a timeval, so select
+	// returns EINVAL and skips the pause unless the carry into tv_sec is
+	// there. That one is measured rather than merely survived.
 	runCase("sleep_ns",
-		`function main(): i32 { sleep_ns(5000000 as i64); sleep_ns(400 as i64); return 7; }`,
+		`function main(): i32 { sleep_ns(5000000 as i64); sleep_ns(400 as i64); `+
+			`var t0: i64 = monotonic_ns(); sleep_ns(999999500 as i64); `+
+			`if (monotonic_ns() - t0 < (999999500 as i64)) { return 1; } return 7; }`,
 		7)
 
 	// subprocess — fork/exec on Darwin: pipe() (sysno 42, two fds in
