@@ -45,19 +45,21 @@ costs a silent failure on the first target that lacks it.
 | `log` | `print`, `eprint` | somewhere to put a line of diagnostics |
 | `stdout` | `stdout`, `stderr`, `write`, `putchar` | an actual stdout stream |
 | `stdin` | `stdin`, `read_line` | a blocking input stream |
-| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
+| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `env` | `env` | envp, captured at process start |
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
+| `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
-| `proc` | `proc_fork`, `proc_exec`, `proc_waitpid` | processes |
+| `proc` | `proc_fork`, `proc_exec`, `proc_waitpid`, `process_alive` | processes |
+| `rlimit` | `rlimit_nofile` | a kernel that enforces ceilings on this process's resources |
 | `subprocess` | `subprocess` | interp-only; no compiled target provides it |
 | `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
 
@@ -239,6 +241,74 @@ memory-model question rather than a capability one. The two dispositions are
 what a utility needs: `tee -i` is SIG_IGN on SIGINT, and its `--output-error`
 family is SIG_IGN on SIGPIPE so a write to a vanished reader returns EPIPE
 instead of killing the process.
+
+**`fsinfo` is a third split off `fs`, and the split is the same one
+`fsmode` made.** `fs` is the files: open one, read it, link it, remove
+it. `fsinfo` is the volume they sit on — how many blocks it has, how
+many are left, and how long a name it will accept. A host can serve
+files and have nothing to say about any of that, and both WASI previews
+are exactly that host: preview 1's `path_filestat_get` is per-file, the
+component model's `wasi:filesystem/types` has no volume interface, and a
+preopen is a capability handle rather than a mount, so it carries no
+length limit either. Zeros would claim a filesystem with no blocks and
+no name length — a measurement nobody took — so E066 refuses it.
+
+Where the limits live differs between the two hosted kernels, and that
+is an implementation detail rather than a classification one: Linux's
+`statfs(2)` carries `f_namelen` and Linux has no pathconf syscall at all
+(PATH_MAX is the kernel's own 4096), while Darwin's `struct statfs` has
+no name length and its real `pathconf(2)` answers both limits. Not
+constants on Darwin: APFS and HFS+ agree on 255, a mounted FAT or SMB
+volume does not, and `pathchk` is the caller that would notice.
+
+`internal/caps` files it under plain `fs` — for a dependency grant the
+question is only whether filesystem reach should be visible, and
+measuring a volume is filesystem reach.
+
+**`rlimit` is its own capability, not `proc`.** `proc` is the authority
+to HAVE processes — fork one, exec into one, wait for one — and a host
+can offer all three while enforcing no ceilings on any of them. What
+`rlimit_nofile` needs is the second thing: a kernel keeping a per-process
+budget and willing to report it.
+
+Neither WASI preview has one, and this is the case where the absence of
+an honest constant is easiest to see. "Unlimited" claims the component
+may open descriptors without bound, which no host means; a plausible
+1024 claims a measurement nobody took. Both are the `geteuid`-answers-0
+failure, so E066 refuses it and `sort --batch-size` simply does not
+build for wasm rather than capping itself against a fiction.
+
+The package-capability side leaves it UNGATED, beside `geteuid`: the
+ceiling was chosen by whoever exec'd the program, and a dependency that
+learns how many descriptors it may open gains no reach it did not have.
+
+**`process_alive` is `proc`, and the reason it is not `signal` is the
+whole point of the pair.** It is `kill(pid, 0)` underneath — a signal
+send — so filing it beside `signal_ignore` / `signal_default` looks
+natural. But `signal` is GRANTED by wasi-cli, on the argument that a
+world which can deliver no signal makes ignoring one an honest no-op.
+There is no honest answer here. A component has no process table and no
+pids, so "is process 4711 alive" is not a question with a false answer
+available — it is a question that cannot be asked, which is exactly what
+`proc` already means. Refusing it there is the same judgement `userid`
+gets, for the same reason.
+
+Note the package-capability side disagrees about which *dependency*
+grant it needs, and correctly: `internal/caps` files it under
+`subprocess`, beside fork / exec / waitpid, because the pid asked about
+belongs to someone else — reaching outside this process is reach whether
+or not a process is created.
+
+**`sleep_ns` is `now`, like `sleep_ms`, and wasm is where it is most exact.**
+Both previews already count in nanoseconds — preview 1's `poll_oneoff`
+subscription carries a nanosecond timeout, preview 2's `subscribe-duration`
+takes a nanosecond duration — so the wasm helper is `sleep_ms`'s body with the
+1e6 multiplier removed rather than a rounding. The target that cannot honour
+the full resolution is **Darwin**, which has no nanosleep syscall: the sleep
+goes through `select(2)`, whose timeval is microseconds, so the request is
+rounded UP to the next microsecond. That is a resolution limit, not a
+divergence — the primitive promises only that the pause is NOT SHORTER than
+asked, which is also all nanosleep guarantees against an overshoot.
 
 **`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
 otherwise carried them** (#7947). Each is a property of the target, not a gap in a

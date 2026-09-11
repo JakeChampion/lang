@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -197,6 +197,18 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "proc_fork", capability: "proc" },
         Gate { builtin: "proc_waitpid", capability: "proc" },
         Gate { builtin: "proc_exec", capability: "proc" },
+        Gate { builtin: "process_alive", capability: "proc" },
+
+        // A kernel-enforced ceiling on a process resource. Its own
+        // capability rather than `proc`: that one is the authority to have
+        // processes at all, while this is a property a host can lack while
+        // still having them.
+        Gate { builtin: "rlimit_nofile", capability: "rlimit" },
+
+        // The filesystem itself — how large it is and what it will accept
+        // as a name — rather than the files on it, which is `fs`. A host
+        // can serve files and have no volume to measure.
+        Gate { builtin: "statfs", capability: "fsinfo" },
 
         // One-level bump-arena checkpoint. Both natives rewind the heap
         // pointer and shadow the freelist heads; wasm's linear-memory
@@ -227,6 +239,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "now_ns", capability: "now" },
         Gate { builtin: "monotonic_ns", capability: "now" },
         Gate { builtin: "sleep_ms", capability: "now" },
+        Gate { builtin: "sleep_ns", capability: "now" },
         Gate { builtin: "wasm_timer_pollable", capability: "now" },
 
         // `timer_fd` is a clock wakeup too, but gated on the FD half rather

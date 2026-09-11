@@ -41,6 +41,20 @@ var gatedBuiltins = map[string]string{
 	"proc_fork":    "proc",
 	"proc_waitpid": "proc",
 	"proc_exec":    "proc",
+	// A process table with pids in it to ask about, which is the same
+	// host property fork / exec / waitpid need.
+	"process_alive": "proc",
+
+	// A kernel-enforced ceiling on a process resource. Its own
+	// capability rather than `proc`: that one is the authority to have
+	// processes at all, while this is a property a host can lack while
+	// still having them.
+	"rlimit_nofile": "rlimit",
+
+	// The filesystem itself — how large it is and what it will accept as
+	// a name — rather than the files on it, which is `fs`. A host can
+	// serve files and have no volume to measure.
+	"statfs": "fsinfo",
 
 	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
 	// Native-only: both natives rewind __fern_heap_ptr and snapshot the
@@ -75,6 +89,7 @@ var gatedBuiltins = map[string]string{
 	"now_ns":              "now",
 	"monotonic_ns":        "now",
 	"sleep_ms":            "now",
+	"sleep_ns":            "now",
 	"wasm_timer_pollable": "now",
 
 	// `timer_fd` is a clock wakeup too, but it is gated on the FD half

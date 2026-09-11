@@ -91,6 +91,7 @@ pub function builtin_caps(): BuiltinCap[] {
         // anything creates afterwards, so it sits with the rest of the
         // filesystem surface rather than in ungated().
         BuiltinCap { builtin: "umask", capability: "fs" },
+        BuiltinCap { builtin: "statfs", capability: "fs" },
         BuiltinCap { builtin: "temp_dir", capability: "fs" },
         BuiltinCap { builtin: "getcwd", capability: "fs" },
 
@@ -110,11 +111,13 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
         BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
         BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
+        BuiltinCap { builtin: "process_alive", capability: "subprocess" },
 
         BuiltinCap { builtin: "now_unix_ms", capability: "time" },
         BuiltinCap { builtin: "now_ns", capability: "time" },
         BuiltinCap { builtin: "monotonic_ns", capability: "time" },
         BuiltinCap { builtin: "sleep_ms", capability: "time" },
+        BuiltinCap { builtin: "sleep_ns", capability: "time" },
         BuiltinCap { builtin: "timer_fd", capability: "time" },
         BuiltinCap { builtin: "wasm_timer_pollable", capability: "time" },
 
@@ -143,6 +146,7 @@ pub function ungated(): string[] {
             "stdin", "stdout", "stderr", "isatty", "target_os", "target_arch", "args", "exit",
             "signal_ignore", "signal_default",
             "geteuid", "getegid", "getuid", "getgid", "getgroups",
+            "rlimit_nofile",
             "strbuf_reset", "strbuf_append", "strbuf_take",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",

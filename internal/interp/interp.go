@@ -1055,9 +1055,13 @@ func New() *Interp {
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
+	i.Builtins["sleep_ns"] = &Builtin{Fn: builtinSleepNS}
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
+	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
+	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
+	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -2316,6 +2320,24 @@ func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
+// builtinSleepNS pauses for the given duration (nanoseconds).
+// Negative / zero inputs return immediately. Go's timer resolution is
+// coarser than a nanosecond, so a short sleep overshoots — which the
+// primitive's "not shorter than asked" contract allows.
+func builtinSleepNS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("sleep_ns: expected 1 arg, got %d", len(args))
+	}
+	ns, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("sleep_ns: expected number arg, got %T", args[0])
+	}
+	if int64(ns) > 0 {
+		time.Sleep(time.Duration(int64(ns)))
+	}
+	return Void{}, nil
+}
+
 // builtinProcFork mirrors the native `proc_fork()` builtin
 // (docs/CRASH-ONLY-SERVE.md D2') — except the interpreter can
 // never actually fork: the Go runtime is threaded, and a raw
@@ -2745,6 +2767,78 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 // would hang where they no-op. 64 rather than 31 because Linux's realtime
 // signals run to 64 and are perfectly real dispositions to set.
 const maxSignal = 64
+
+// builtinStatfs mirrors the native `statfs(path)` — the geometry and the
+// length limits of the filesystem the path resolves on. Where those numbers
+// come from is per-OS (fsstat_linux.go / fsstat_darwin.go); the projection
+// onto FsStat is not.
+func builtinStatfs(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("statfs: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("statfs: expected string path, got %T", args[0])
+	}
+	raw, err := fsStatFields(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return resultOk(&Struct{
+		TypeName: "FsStat",
+		Fields: map[string]Value{
+			"block_size":   Number(raw.blockSize),
+			"blocks":       Number(raw.blocks),
+			"blocks_free":  Number(raw.blocksFree),
+			"blocks_avail": Number(raw.blocksAvail),
+			"files":        Number(raw.files),
+			"files_free":   Number(raw.filesFree),
+			"name_max":     Number(raw.nameMax),
+			"path_max":     Number(raw.pathMax),
+		},
+	}), nil
+}
+
+// builtinRlimitNofile mirrors the native `rlimit_nofile()` — the soft
+// RLIMIT_NOFILE the kernel is enforcing on this process.
+//
+// An unlimited resource reports i64 max. Linux spells RLIM_INFINITY as all
+// ones and Darwin as i64 max, so clamping anything above i64's range covers
+// both without either spelling reaching a caller as a count.
+func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("rlimit_nofile: expected 0 args, got %d", len(args))
+	}
+	var lim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+		// Only EFAULT and EINVAL are defined, and neither can happen
+		// against a named resource and a buffer this function owns.
+		return Number(math.MaxInt64), nil
+	}
+	if lim.Cur > math.MaxInt64 {
+		return Number(math.MaxInt64), nil
+	}
+	return Number(int64(lim.Cur)), nil
+}
+
+// builtinProcessAlive mirrors the native `process_alive(pid)` — kill(pid, 0),
+// whose errno only refines "yes": nil and EPERM both mean the process exists,
+// ESRCH means it does not. A pid of 0 or below names a process group rather
+// than a process and is false without asking the kernel.
+func builtinProcessAlive(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("process_alive: expected 1 arg, got %d", len(args))
+	}
+	pid, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("process_alive: expected number pid, got %T", args[0])
+	}
+	if int64(pid) <= 0 {
+		return Bool(false), nil
+	}
+	err := syscall.Kill(int(pid), 0)
+	return Bool(err == nil || err == syscall.EPERM), nil
+}
 
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.
 //

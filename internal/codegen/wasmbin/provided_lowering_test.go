@@ -49,6 +49,16 @@ var providedRefusedByPlatform = map[string]bool{
 	"proc_fork":    true,
 	"proc_waitpid": true,
 	"proc_exec":    true,
+	// Liveness of an arbitrary pid, which needs the same process table.
+	"process_alive": true,
+	// `fsinfo` — the size and the length limits of a filesystem, where
+	// `fs` is the files on it. Neither preview has a volume interface,
+	// and a preopen is a capability handle rather than a mount.
+	"statfs": true,
+	// `rlimit` — a kernel-enforced ceiling on a process resource.
+	// Neither WASI preview has one, and every constant that could stand
+	// in would be a measurement a component never took.
+	"rlimit_nofile": true,
 	// The arena mark/release pair: a bump-arena discipline the wasm
 	// allocator does not implement.
 	"__heap_mark":       true,

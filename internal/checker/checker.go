@@ -679,6 +679,35 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
+		// about itself, where FileStat reports about one entry on it.
+		// The six counts are `statfs(2)`'s, and the two limits are
+		// what a path resolving on this filesystem is held to.
+		//
+		// `blocks_free` counts every free block and `blocks_avail`
+		// only the ones an unprivileged caller may take; the
+		// difference is the superuser reserve, which is why `df`
+		// prints the second and a fullness percentage computed from
+		// the first is wrong.
+		//
+		// `name_max` and `path_max` live here rather than in a second
+		// builtin because both are properties of the filesystem the
+		// path resolves on — which is exactly what
+		// `pathconf(path, _PC_NAME_MAX)` means — and a caller that has
+		// paid for the lookup should not pay again for the other half.
+		{
+			Name: "FsStat",
+			Fields: []ast.Param{
+				{Name: "block_size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks_free", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks_avail", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "files", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "files_free", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "name_max", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -1781,6 +1810,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
+	// sleep_ns(ns): void — the same pause at the resolution the
+	// underlying primitive actually has. `sleep_ms` rounds a caller's
+	// interval to a millisecond before the kernel ever sees it, which
+	// costs a sub-millisecond sleeper a full tick per step (#8528).
+	// ns <= 0 returns without entering the kernel.
+	//
+	// Like `sleep_ms` this promises only that the pause is NOT SHORTER
+	// than asked; nanosleep(2) may overshoot by any amount, and an
+	// interrupted sleep is not resumed. Two targets cannot honour the
+	// full resolution and round the request UP, which keeps that
+	// promise: Darwin has no nanosleep syscall and sleeps through
+	// `select(2)`, whose timeval is microseconds; wasm preview-1 and
+	// preview-2 both take nanoseconds, so wasm is exact.
+	c.info.FuncSigs["sleep_ns"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	// proc_fork(): i32 — fork the process (docs/CRASH-ONLY-SERVE.md
 	// D2'). Returns 0 in the child, the child's pid in the parent,
 	// or a negative errno on failure. Capability-gated (`proc`,
@@ -1815,6 +1861,92 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
+	}
+	// statfs(path): Result[FsStat, IoError] — the geometry and the
+	// length limits of the filesystem `path` resolves on (#9062).
+	// `pathchk` needs the limits, `df` needs the counts, and one
+	// `statfs(2)` answers both on Linux.
+	//
+	// Err carries the errno the lookup failed with: ENOENT for a path
+	// that does not exist, EACCES for a directory the caller cannot
+	// search, ENOTDIR, ELOOP.
+	//
+	// The two kernels keep the limits in different places, and the
+	// builtin reports the same thing either way:
+	//
+	//   - Linux fills every field from `statfs(2)`; `f_namelen` is
+	//     `name_max`. There is no pathconf syscall — glibc computes it
+	//     from statfs plus constants — so `path_max` is the kernel's own
+	//     PATH_MAX, 4096, which `getconf PATH_MAX` reports for every
+	//     Linux filesystem.
+	//   - Darwin's `struct statfs` has no name-length field at all, so
+	//     both limits come from its real `pathconf(2)`. Not a constant:
+	//     APFS and HFS+ agree on 255 today, a mounted FAT or SMB volume
+	//     does not, and `pathchk` is the caller that would notice.
+	//
+	// Gated on `fsinfo`, which no wasm profile grants. Neither preview
+	// has a notion of a filesystem's size — preview 1's
+	// `path_filestat_get` is per-file and the component model has no
+	// volume interface — and a preopen is a capability handle rather
+	// than a mount, so it has no length limit to report either. A
+	// zero-filled record would be a measurement nobody took, so E066
+	// refuses it instead.
+	c.info.FuncSigs["statfs"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FsStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
+	// enforcing on this process's open file descriptors, `getrlimit(2)`
+	// on RLIMIT_NOFILE (#8819). What `ulimit -n` prints, and what
+	// `sort --batch-size` caps itself against.
+	//
+	// A plain number rather than a Result: the only errno getrlimit can
+	// answer for a resource the runtime names itself is EFAULT, which
+	// cannot happen against a stack buffer the helper owns, so there is
+	// no failure for a caller to handle. An unlimited resource reports
+	// i64 max — the two kernels spell RLIM_INFINITY differently (all
+	// ones on Linux, i64 max on Darwin) and neither spelling is a count,
+	// so both normalise to "more than any count you can hold".
+	//
+	// The HARD limit is a different question and has no builtin: only
+	// something raising the soft limit needs it, and raising is
+	// setrlimit — a different authority from reading.
+	//
+	// Gated on `rlimit`, which no wasm profile grants: neither preview
+	// has resource limits, and the constants that would stand in for
+	// them ("unlimited", or a plausible 1024) would both be fictions of
+	// the `geteuid`-answers-0 kind. E066 refuses it there.
+	c.info.FuncSigs["rlimit_nofile"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// process_alive(pid): boolean — is `pid` a process that currently
+	// exists? `kill(pid, 0)` underneath: signal 0 runs every check kill(2)
+	// would and delivers nothing (#8767).
+	//
+	// The answer is deliberately two-valued rather than a Result, because
+	// the errno only ever refines "yes": success and EPERM both mean the
+	// process is there — a process owned by another user is still a
+	// process — and ESRCH means it is gone. Nothing else can come back
+	// from a zero signal.
+	//
+	// A `pid` of 0 or below is false. Those spellings name a process
+	// GROUP to kill(2), not a process, so passing one through would
+	// answer a different question than the caller asked; the argument
+	// names one process.
+	//
+	// The `proc` capability gates it, beside fork / exec / waitpid: the
+	// question needs a host with a process table and pids to ask about,
+	// and neither WASI preview has one, so E066 refuses it there. It is
+	// not on `signal` — wasi-cli GRANTS that, because ignoring a signal
+	// nothing can deliver is honestly a no-op, and there is no such
+	// honest answer here.
+	c.info.FuncSigs["process_alive"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.BoolType{},
 	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return a path to it.

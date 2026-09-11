@@ -186,6 +186,23 @@ var linuxDarwinSysno = map[string][2]int{
 	// number differs (TCGETS vs TIOCGETA), and that is an argument the
 	// emitter picks, not part of the call.
 	"ioctl": {29, 54},
+	// kill(2) — Linux asm-generic 129, Darwin BSD 37. Backs
+	// `__fern_process_alive`, which passes signal 0: every check kill(2)
+	// makes, with nothing delivered.
+	"kill": {129, 37},
+	// getrlimit(2) — Linux asm-generic 163 (arm64 asks for the
+	// set/get-rlimit pair), Darwin BSD 194. Identical shape:
+	// (resource, &rlimit) over a two-u64 record. Only the RESOURCE
+	// number differs — RLIMIT_NOFILE is 7 on Linux and 8 on Darwin —
+	// and that is an argument the emitter picks.
+	"getrlimit": {163, 194},
+	// statfs(2) — Linux asm-generic 43, Darwin BSD 345. Both take
+	// (path, buf) and differ only in what they write there: Linux's
+	// record is 120 bytes of 64-bit words, Darwin's is 2168 bytes with
+	// 32-bit block size and two 1024-byte mount-point names. 345 rather
+	// than 157 because arm64 macOS ships only the 64-bit-inode variants,
+	// which is also the one libSystem's `statfs` resolves to.
+	"statfs": {43, 345},
 	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
 	// older faccessat (48) has no flags word and so cannot express
 	// AT_EACCESS. Darwin's faccessat (BSD 466) has taken flags since it
@@ -533,7 +550,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesFdStat || g.usesReaderSeek ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
-		g.usesCreateSymlink || g.usesReadLink ||
+		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -562,7 +579,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesRemoveDirAll ||
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
+		g.usesRemoveDirAll ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes ||
 		g.usesReaderWriter {
 		g.usesFree = true
@@ -734,6 +752,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
+	if g.usesStatfs {
+		g.emitStatfsRuntime()
+	}
+	if g.usesRlimitNofile {
+		g.emitRlimitNofileRuntime()
+	}
+	if g.usesProcessAlive {
+		g.emitProcessAliveRuntime()
+	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
@@ -791,6 +818,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesSleepMs {
 		g.emitSleepMsRuntime()
+	}
+	if g.usesSleepNs {
+		g.emitSleepNsRuntime()
 	}
 	if g.usesProcFork {
 		g.emitProcForkRuntime()
@@ -6662,6 +6692,60 @@ func (g *generator) emitSleepMsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSleepNsRuntime emits `__fern_sleep_ns(ns)` — the same pause with
+// the caller's nanoseconds carried through rather than rounded to a
+// millisecond first (#8528). ns <= 0 returns at once.
+//
+// On Linux the timespec split is by 1e9 and the remainder IS tv_nsec,
+// so the request reaches the kernel unrounded. Darwin has no nanosleep
+// syscall — `select(0, NULL, NULL, NULL, &timeout)` is the sleep, and
+// its timeval is MICROseconds — so the nanosecond remainder is rounded
+// UP to the next microsecond. That keeps the primitive's only promise
+// (the pause is never shorter than asked) at the finest resolution the
+// target has.
+func (g *generator) emitSleepNsRuntime() {
+	g.line("")
+	g.line(".global __fern_sleep_ns")
+	g.typeDirective("__fern_sleep_ns")
+	g.label("__fern_sleep_ns")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32")
+	g.emit("cmp x0, #0")
+	g.emit("b.le .Lsleep_ns_done")
+	g.emit("ldr x9, =1000000000")
+	g.emit("udiv x10, x0, x9")      // sec
+	g.emit("msub x11, x10, x9, x0") // rem ns
+	g.emit("str x10, [sp]")         // tv_sec
+	if g.darwin {
+		// tv_usec = ceil(rem_ns / 1000)
+		g.emit("mov x12, #999")
+		g.emit("add x11, x11, x12")
+		g.emit("mov x12, #1000")
+		g.emit("udiv x11, x11, x12")
+		g.emit("str x11, [sp, #8]")
+		g.emit("mov x0, #0") // nfds
+		g.emit("mov x1, #0") // readfds
+		g.emit("mov x2, #0") // writefds
+		g.emit("mov x3, #0") // errorfds
+		g.emit("mov x4, sp") // timeout
+		g.emit("mov x16, #%d", darSelect)
+		g.emit("svc #0x80")
+	} else {
+		g.emit("str x11, [sp, #8]") // tv_nsec
+		g.emit("mov x0, sp")        // &req
+		g.emit("mov x1, #0")        // rem = NULL
+		g.emit("mov x8, #%d", sysNanosleep)
+		g.emit("svc #0")
+	}
+	g.label(".Lsleep_ns_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_sleep_ns")
+	g.line(".ltorg")
+}
+
 // emitProcForkRuntime emits `__fern_proc_fork()` — fork the
 // process, returning 0 in the child, the child's pid in the
 // parent, or -errno on failure (docs/CRASH-ONLY-SERVE.md D2').
@@ -8318,6 +8402,249 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.sizeDirective("__fern_timer_fd")
+	g.line(".ltorg")
+}
+
+// statfsField is one FsStat field and where it is read from in the
+// platform's `struct statfs`: the box offset, the buffer offset, and the
+// load width.
+type statfsField struct{ box, src, width int32 }
+
+// linuxStatfsFields — Linux's 120-byte record, every member a 64-bit
+// word on both supported ISAs: f_type 0, f_bsize 8, f_blocks 16,
+// f_bfree 24, f_bavail 32, f_files 40, f_ffree 48, f_fsid 56,
+// f_namelen 64, f_frsize 72.
+var linuxStatfsFields = []statfsField{
+	{ir.FsStat.BlockSize, 8, 8},
+	{ir.FsStat.Blocks, 16, 8},
+	{ir.FsStat.BlocksFree, 24, 8},
+	{ir.FsStat.BlocksAvail, 32, 8},
+	{ir.FsStat.Files, 40, 8},
+	{ir.FsStat.FilesFree, 48, 8},
+	{ir.FsStat.NameMax, 64, 8},
+}
+
+// darwinStatfsFields — Darwin's 2168-byte record: f_bsize is a u32 at 0
+// (f_iosize takes 4..7), then five u64 counts. There is no name-length
+// member at all, which is why the Darwin path asks pathconf(2) instead.
+var darwinStatfsFields = []statfsField{
+	{ir.FsStat.BlockSize, 0, 4},
+	{ir.FsStat.Blocks, 8, 8},
+	{ir.FsStat.BlocksFree, 16, 8},
+	{ir.FsStat.BlocksAvail, 24, 8},
+	{ir.FsStat.Files, 32, 8},
+	{ir.FsStat.FilesFree, 40, 8},
+}
+
+// emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
+// — the geometry and the length limits of the filesystem `path` resolves
+// on.
+//
+// Linux fills the whole record from one statfs(2), and PATH_MAX is the
+// kernel's own 4096 since there is no pathconf syscall to ask. Darwin's
+// record has the counts and no name length, so both limits come from its
+// real pathconf(2) (BSD 191) — not constants, because a mounted FAT or
+// SMB volume does not answer 255 the way APFS does. A failing pathconf
+// replaces the reported errno, so the Err names the call that actually
+// failed.
+//
+// Frame: a 96-byte base (fp/lr + x19..x25 + the 16-byte inline-spill
+// scratch at [x29+72]) with the statfs buffer above it at [x29+96]. The
+// buffer is inside the frame rather than below sp because the
+// NUL-terminated-path helpers push and pop there.
+func (g *generator) emitStatfsRuntime() {
+	fields := linuxStatfsFields
+	bufSize := 128
+	if g.darwin {
+		fields = darwinStatfsFields
+		bufSize = 2176
+	}
+	frame := 96 + bufSize
+	g.line("")
+	g.line(".global __fern_statfs")
+	g.typeDirective("__fern_statfs")
+	g.label("__fern_statfs")
+	g.emit("sub sp, sp, #%d", frame)
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 72)
+	g.emitStrLen2W("w22", "x20")
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// statfs(pathz, buf)
+	g.emit("mov x0, x21")
+	g.emit("add x1, x29, #96")
+	g.syscall("statfs")
+	g.emit("mov x23, x0") // errno-or-zero, kept across the free
+	if g.darwin {
+		g.emit("tbnz x23, #63, .Lsfs_asked")
+		g.emitDarwinPathconf("x24", "x21", 4) // _PC_NAME_MAX
+		g.emit("tbnz x24, #63, .Lsfs_pcfail_name")
+		g.emitDarwinPathconf("x25", "x21", 5) // _PC_PATH_MAX
+		g.emit("tbnz x25, #63, .Lsfs_pcfail_path")
+		g.emit("b .Lsfs_asked")
+		g.label(".Lsfs_pcfail_name")
+		g.emit("mov x23, x24")
+		g.emit("b .Lsfs_asked")
+		g.label(".Lsfs_pcfail_path")
+		g.emit("mov x23, x25")
+		g.label(".Lsfs_asked")
+	}
+	g.emitFreeNulTermPath2W("x21", "x22")
+	g.emit("tbnz x23, #63, .Lsfs_err")
+	g.emit("mov x0, #%d", ir.FsStat.Bytes)
+	g.emit("bl __fern_alloc_box")
+	// The buffer is still live at [x29+96]; the record is copied out
+	// field by field, widening each to its 8-byte FsStat slot.
+	for _, f := range fields {
+		if f.width == 4 {
+			g.emit("ldr w9, [x29, #%d]", 96+f.src)
+		} else {
+			g.emit("ldr x9, [x29, #%d]", 96+f.src)
+		}
+		g.emit("str x9, [x0, #%d]", f.box)
+	}
+	if g.darwin {
+		g.emit("str x24, [x0, #%d]", ir.FsStat.NameMax)
+		g.emit("str x25, [x0, #%d]", ir.FsStat.PathMax)
+	} else {
+		g.emit("mov x9, #%d", linuxPathMax)
+		g.emit("str x9, [x0, #%d]", ir.FsStat.PathMax)
+	}
+	g.emit("mov x21, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")
+	g.emit("b .Lsfs_return")
+
+	g.label(".Lsfs_err")
+	g.emit("neg x0, x23")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsfs_return")
+	g.emit("mov sp, x29")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #%d", frame)
+	g.emit("ret")
+	g.sizeDirective("__fern_statfs")
+	g.line(".ltorg")
+}
+
+// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// resolve. A constant rather than a lookup because Linux has no pathconf
+// syscall — glibc computes it from statfs plus constants — and `getconf
+// PATH_MAX` reports this for every filesystem it mounts.
+const linuxPathMax = 4096
+
+// emitDarwinPathconf emits `dstX = pathconf(pathzX, name)` — Darwin BSD
+// 191, which Linux has no equivalent of, so it cannot go in the dual
+// syscall table. Carry-clear is success; the error is negated into
+// Linux's -errno shape the way `syscall` does for the shared calls.
+func (g *generator) emitDarwinPathconf(dstX, pathzX string, name int) {
+	const darPathconf = 191
+	g.emit("mov x0, %s", pathzX)
+	g.emit("mov x1, #%d", name)
+	g.emit("mov x16, #%d", darPathconf)
+	g.emit("svc #0x80")
+	lbl := g.freshLabel("pconf_ok")
+	g.emit("b.cc %s", lbl)
+	g.emit("neg x0, x0")
+	g.label(lbl)
+	g.emit("mov %s, x0", dstX)
+}
+
+// emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft
+// RLIMIT_NOFILE, in x0 as an i64.
+//
+// `getrlimit(RLIMIT_NOFILE, &rlim)` into a two-u64 buffer on the stack,
+// and `rlim_cur` is the answer. Two paths report i64 max instead: a
+// failing call, which for a resource named in the emitter and a buffer
+// it owns has no reachable errno, and a limit whose top bit is set —
+// Linux spells RLIM_INFINITY as all ones, which is not a count anything
+// could hold. Darwin already spells it i64 max, so both arrive as the
+// same answer.
+func (g *generator) emitRlimitNofileRuntime() {
+	resource := 7 // Linux RLIMIT_NOFILE
+	if g.darwin {
+		resource = 8 // Darwin RLIMIT_NOFILE
+	}
+	g.line("")
+	g.line(".global __fern_rlimit_nofile")
+	g.typeDirective("__fern_rlimit_nofile")
+	g.label("__fern_rlimit_nofile")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #32") // struct rlimit { u64 cur; u64 max }
+	g.emit("mov x0, #%d", resource)
+	g.emit("mov x1, sp")
+	g.syscall("getrlimit")
+	g.emit("cmp x0, #0")
+	g.emit("b.ne .Lrlim_unlimited")
+	g.emit("ldr x0, [sp]") // rlim_cur
+	g.emit("tbz x0, #63, .Lrlim_done")
+	g.label(".Lrlim_unlimited")
+	g.emit("ldr x0, =0x7fffffffffffffff")
+	g.label(".Lrlim_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_rlimit_nofile")
+	g.line(".ltorg")
+}
+
+// emitProcessAliveRuntime emits `__fern_process_alive(pid)` — 1 when a
+// process with that pid exists, 0 when it does not.
+//
+// `kill(pid, 0)` performs every check a real signal would and delivers
+// nothing, so the errno is the whole answer: 0 and -EPERM both mean the
+// process is there (one owned by another user is still a process) and
+// -ESRCH means it is gone. Nothing else can come back from a zero signal.
+// `syscall` has already normalised Darwin's carry-flag error into Linux's
+// -errno shape, so one comparison covers both.
+//
+// A non-positive pid answers 0 without a syscall. kill(2) reads 0 as "my
+// process group" and negatives as "the group -pid", so passing one
+// through would answer a different question than the caller asked.
+func (g *generator) emitProcessAliveRuntime() {
+	const eperm = 1
+	g.line("")
+	g.line(".global __fern_process_alive")
+	g.typeDirective("__fern_process_alive")
+	g.label("__fern_process_alive")
+	g.emit("cmp w0, #0")
+	g.emit("b.le .Lalive_no")
+	g.emit("sxtw x0, w0")
+	g.emit("mov x1, #0") // sig = 0
+	g.syscall("kill")
+	g.emit("cmp x0, #0")
+	g.emit("b.eq .Lalive_yes")
+	g.emit("cmn x0, #%d", eperm) // x0 + EPERM == 0, i.e. x0 == -EPERM
+	g.emit("b.eq .Lalive_yes")
+	g.label(".Lalive_no")
+	g.emit("mov x0, #0")
+	g.emit("ret")
+	g.label(".Lalive_yes")
+	g.emit("mov x0, #1")
+	g.emit("ret")
+	g.sizeDirective("__fern_process_alive")
 	g.line(".ltorg")
 }
 
@@ -12299,6 +12626,18 @@ type generator struct {
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
+	// usesStatfs pulls in `__fern_statfs(path)` — statfs(2) projected
+	// onto FsStat, plus two pathconf(2) calls on Darwin, whose statfs
+	// record has no name-length field.
+	usesStatfs bool
+	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
+	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
+	usesRlimitNofile bool
+	// usesProcessAlive pulls in `__fern_process_alive(pid)` — kill(pid, 0),
+	// 1 when the process exists (success or EPERM) and 0 when it does not
+	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
+	// name a process group to kill(2), not a process.
+	usesProcessAlive bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -12552,6 +12891,13 @@ type generator struct {
 	// Linux, or `select(0,…,&timeout)` (BSD 93) on Darwin; ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesSleepNs pulls in `__fern_sleep_ns(ns)` — the same sleep at the
+	// resolution `nanosleep` already takes. Darwin has no nanosleep
+	// syscall and sleeps through `select`, whose timeval is
+	// microseconds, so the request is rounded UP to the next
+	// microsecond there — never shorter than asked, which is the whole
+	// contract.
+	usesSleepNs bool
 	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
 	// clone(SIGCHLD,0,0,0,0) (#220) on Linux (arm64 has no bare fork
 	// syscall) or fork (BSD 2, x1-flag normalised) on Darwin: 0 in
@@ -13369,6 +13715,8 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			g.usesNowNs = true
 		case "sleep_ms":
 			g.usesSleepMs = true
+		case "sleep_ns":
+			g.usesSleepNs = true
 		case "read_file":
 			g.needFern("__fern_utf8_valid")
 		}
@@ -16566,6 +16914,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "timer_fd":
 			target = "__fern_timer_fd"
 			g.usesTimerFd = true
+		case "process_alive":
+			// process_alive(pid): kill(pid, 0) — 1 when the process
+			// exists, 0 when it does not.
+			target = "__fern_process_alive"
+			g.usesProcessAlive = true
+		case "rlimit_nofile":
+			// rlimit_nofile(): the soft RLIMIT_NOFILE, i64 in x0.
+			target = "__fern_rlimit_nofile"
+			g.usesRlimitNofile = true
+		case "statfs":
+			// statfs(path): Result[FsStat, IoError].
+			target = "__fern_statfs"
+			g.usesStatfs = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true
@@ -16711,6 +17074,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// or select (Darwin). Void.
 			target = "__fern_sleep_ms"
 			g.usesSleepMs = true
+		case "sleep_ns":
+			// sleep_ns(ns): the same sleep at nanosecond resolution.
+			// Void.
+			target = "__fern_sleep_ns"
+			g.usesSleepNs = true
 		case "proc_exec":
 			target = "__fern_proc_exec"
 			g.usesProcExec = true
