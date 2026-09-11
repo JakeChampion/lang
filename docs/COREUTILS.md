@@ -194,10 +194,10 @@ coreutils/
   lib/bre.fern      regular expressions as glibc compiles them —
                     POSIX basic for expr, syntax 0 (Emacs) for tac -r,
                     anchored or searched over a range of a buffer for
-                    nl and csplit, with a literal and a literal-prefix
-                    fast path ahead of glibc's fastmap and the
-                    simulation, and glibc's regerror texts as the
-                    diagnostics
+                    nl and csplit, with a literal, a literal-prefix and
+                    a per-alternation-branch fast path ahead of glibc's
+                    fastmap and the simulation, and glibc's regerror
+                    texts as the diagnostics
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
                     (printf, numfmt, seq, sleep)
@@ -480,12 +480,43 @@ did, at 8 000 000 allocations for the workload.
 
 The last row is the one that loses, and it is the regexp engine rather than
 csplit (#8820): a pattern that is entirely a literal, or that STARTS with
-one, is answered by a byte scan, and everything else runs the Thompson
-simulation over every byte at several heap operations per position. An
-alternation has no literal prefix, so the only filter left is the fastmap
-— the set of bytes a match can begin with — which an alternation of
-ordinary words barely narrows. `nl -bp`, `expr` and `tac -r` reach the
-same engine, so the same work pays for all four.
+one, is answered by a byte scan, and everything else ran the Thompson
+simulation over every byte. That row is the state before the branch
+literals landed — `lib/bre.fern` now takes the literal each ALTERNATION
+branch opens with, of which every match begins with one, so a scan per
+branch rejects a line that carries none and the earliest hit is where the
+engine starts. What is left without a filter is a pattern whose branches
+open with a class rather than a literal (`/[0-9]zzz/`), which is the lazy
+DFA's job and not done.
+
+Measured again after that on the same 62 MiB file, 2026-09-11, on a
+DIFFERENT 4-core x86-64 host with no hyperfine on it — so these are the
+best of three wall-clock runs rather than mean ± σ, and nothing here is
+comparable to the table above, only down its own columns:
+
+| workload | before (ms) | after (ms) | gnu (ms) |
+|---|---|---|---|
+| a literal, `/4000000/` | 109 | 112 | 520 |
+| a literal prefix and a class | 92 | 99 | 508 |
+| a two-branch alternation | 2116 | 169 | 517 |
+| a four-branch alternation | 3368 | 351 | 513 |
+| a 7-byte literal nowhere in the file | 5508 | 199 | 666 |
+| a 3-byte literal prefix nowhere in it | 6233 | 250 | 693 |
+| a class before a literal | 12378 | 11298 | 1549 |
+
+Read the two alternation before-numbers with the engine's own bug in
+mind: the scan they were measured on stopped at the first position with
+no live thread (#9050), which ended most lines early and answered some of
+them wrongly. The corrected scan without the branch literals is 3968 and
+5709 ms.
+
+The two rows that are nowhere in the file are a second bug the first one
+hid: `__memchr` takes a start and no end, so a literal absent from the
+LINE sent the vector pass on through every line after it, which made the
+filter quadratic in the read block.
+
+`nl -bp`, `expr` and `tac -r` reach the same engine, so all four utilities
+are paid for at once.
 
 `od`, 2026-09-07, Linux x86-64, the same 62 MiB file (and a 1 MiB one for
 the float row), GNU 9.4:
