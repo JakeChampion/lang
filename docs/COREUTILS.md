@@ -1507,8 +1507,8 @@ groups are the order of work. Each sub-issue names its group.
   `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
-  with #9059, but only `rename` reached the self-hosted COMPILER — see the
-  paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
+  with #9059; `rename`, `chmod` and `set_file_times` have since reached
+  the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` `chown`
   `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
@@ -1535,9 +1535,22 @@ groups are the order of work. Each sub-issue names its group.
   stayed broken until #9081. So a primitive is not landed until the
   self-host compiles a program that calls it, and the utility's parity
   suite covers its self-host leg. #9085 tracks the missing completeness
-  test. Lowered so far: `sleep_ns` (266), `rename` (267), `process_alive`
-  (271), `rlimit_nofile` (272). Still native-only: `chmod`,
-  `set_file_times`, `statfs`.
+  test. Lowered so far: `sleep_ns` (266), `rename` (267), `chmod` (268),
+  `set_file_times` (269), `process_alive` (271), `rlimit_nofile` (272).
+  Still native-only: `statfs`.
+
+  Two of those do not reach every target, and the refusal is deliberate
+  rather than a gap: `chmod` is refused on wasm (E066, capability
+  `fsmode` — neither WASI preview has permission bits), and
+  `process_alive` and `rlimit_nofile` are refused there too, named by
+  the wasm emitter rather than by the platforms gate, because
+  `wasm_ir_run` / `wasm_run` / `playground_run` reach `emit_ir_module`
+  directly and would otherwise present a deliberate absence as a
+  missing lowering. On arm64-darwin `set_file_times` issues
+  `setattrlist(2)` where native issues `setattrlistat(2)`: the
+  self-host's syscall floor stops at five arguments and `setattrlistat`
+  takes six, and the two are the same call for a path resolved against
+  the process's own directory, which is what `AT_FDCWD` means.
 
 Within a group, easiest first. Do not start a group-C utility by adding a
 one-off syscall to one backend.
