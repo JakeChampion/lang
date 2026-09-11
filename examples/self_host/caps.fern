@@ -88,6 +88,10 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "set_file_times", capability: "fs" },
         BuiltinCap { builtin: "truncate", capability: "fs" },
         BuiltinCap { builtin: "mknod", capability: "fs" },
+        // Setting an entry's owner or group rewrites who may reach it. For
+        // the package question that is filesystem reach like any other, so
+        // it sits beside `chmod` rather than getting a split of its own.
+        BuiltinCap { builtin: "chown_at", capability: "fs" },
         // The process file-mode creation mask. Reading it reaches nothing,
         // but SETTING it changes the mode of every file and directory
         // anything creates afterwards, so it sits with the rest of the

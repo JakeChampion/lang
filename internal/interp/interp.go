@@ -1089,6 +1089,7 @@ func New() *Interp {
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
 	i.Builtins["mknod"] = &Builtin{Fn: builtinMknod}
+	i.Builtins["chown_at"] = &Builtin{Fn: builtinChownAt}
 	i.Builtins["set_file_times"] = &Builtin{Fn: builtinSetFileTimes}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -3091,6 +3092,40 @@ func builtinMknod(_ *Interp, args []Value) (Value, error) {
 		n[i-1] = uint32(int64(v))
 	}
 	return ioResult(string(path), mknodAt(string(path), n[0], n[1], n[2])), nil
+}
+
+// builtinChownAt sets the owner and the group of an entry — fchownat(2).
+// One builtin for `chown(1)` and `chgrp(1)` alike: -1 for either id
+// leaves that half alone, so a group-only change is this call with the
+// uid left at -1.
+//
+// The follow flag picks between chown(2) and lchown(2), which is what
+// `chown -h` and every -R walk that meets a symlink need. That choice
+// lives in chownat_unix.go.
+func builtinChownAt(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("chown_at: expected 4 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("chown_at: expected string path, got %T", args[0])
+	}
+	var ids [2]int
+	for i := 1; i < 3; i++ {
+		v, ok := args[i].(Number)
+		if !ok {
+			return nil, fmt.Errorf("chown_at: expected number arg %d, got %T", i, args[i])
+		}
+		// int32 first: the ids are i32 and -1 is the leave-alone
+		// sentinel, which a widening through an unsigned type would
+		// turn into 4294967295 for the kernel to reject.
+		ids[i-1] = int(int32(int64(v)))
+	}
+	follow, ok := args[3].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("chown_at: expected bool follow, got %T", args[3])
+	}
+	return ioResult(string(path), chownAt(string(path), ids[0], ids[1], bool(follow))), nil
 }
 
 // The bits of set_file_times' `flags` word. They are Fern's own, not the

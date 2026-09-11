@@ -2429,6 +2429,50 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// chown_at(path, uid, gid, follow): Result[void, IoError] — set the
+	// owner and the group of an entry, `fchownat(AT_FDCWD, path, uid,
+	// gid, follow ? 0 : AT_SYMLINK_NOFOLLOW)`.
+	//
+	// A uid or a gid of -1 leaves that half alone, which is the kernel's
+	// own convention and not a Fern one: `chgrp` is this call with the
+	// uid omitted, and `chown :group` is the same thing spelled the
+	// other way. It is why there is one builtin here rather than a
+	// `chown` and a `chgrp`.
+	//
+	// `follow` false is `lchown(2)`: the LINK's ownership changes and
+	// the target's does not. That is what `chown -h` asks for, and what
+	// every `-R` walk needs when it meets a symlink it was not told to
+	// follow. True resolves the final component, which is `chown`'s
+	// default.
+	//
+	// The `at` in the name is the syscall's, not an offer: there is no
+	// directory descriptor to pass one, and the path resolves against
+	// the process's working directory. The shape is `fchownat`'s because
+	// that is the only one of the three that expresses both follow
+	// modes.
+	//
+	// Changing an owner needs CAP_CHOWN — in practice, being root — so
+	// an unprivileged caller gets EPERM for anything but a no-op. The
+	// GROUP may be changed by the file's owner to any group they belong
+	// to, and EPERM otherwise. Both reach the caller as the errno the
+	// kernel gave.
+	//
+	// Neither WASI preview has a file owner at all — preview 1's
+	// `filestat` has no uid or gid field and the component model's
+	// `descriptor-stat` has none either — so E066 refuses this builtin
+	// on that target (capability `fsowner`); docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["chown_at"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.BoolType{},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// set_file_times(path, atime_sec, atime_nsec, mtime_sec,
 	// mtime_nsec, flags): Result[void, IoError] — write the access and
 	// modification timestamps of an entry, `utimensat(AT_FDCWD, path,

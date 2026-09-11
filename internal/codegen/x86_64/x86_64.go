@@ -275,6 +275,9 @@ const (
 	// major / minor pair, derived by measurement — see
 	// emitMknodRuntime.
 	sysMknodat = 259
+	// fchownat(2) 260. The only one of chown / lchown / fchownat that
+	// expresses both follow modes, which is what `chown -h` needs.
+	sysFchownat = 260
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -642,7 +645,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
-		g.usesMknod {
+		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -958,6 +961,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesMknod {
 		g.emitMknodRuntime()
+	}
+	if g.usesChownAt {
+		g.emitChownAtRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -1496,6 +1502,8 @@ type generator struct {
 	usesTruncate bool
 	// mknodat(2) over a path, a mode and a major / minor pair.
 	usesMknod bool
+	// fchownat(2) over a path, a uid, a gid and a follow flag.
+	usesChownAt bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1963,6 +1971,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "mknod":
 		g.usesMknod = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "chown_at":
+		g.usesChownAt = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "set_file_times":
@@ -3555,6 +3567,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_truncate"
 		case "mknod":
 			target = "__fern_mknod"
+		case "chown_at":
+			target = "__fern_chown_at"
 		case "set_file_times":
 			target = "__fern_set_file_times"
 		case "temp_dir":
@@ -14236,6 +14250,29 @@ func (g *generator) emitMknodRuntime() {
 		g.emit("and eax, 1048320")
 		g.emit("shl eax, 12")
 		g.emit("or r10d, eax") // minor[19:8] << 20
+	})
+}
+
+// emitChownAtRuntime emits `__fern_chown_at(path, uid, gid, follow)` —
+// fchownat(AT_FDCWD, path, uid, gid, follow ? 0 : AT_SYMLINK_NOFOLLOW).
+//
+// The ids reach the kernel as 32-bit words, which is what makes the -1
+// sentinel work: uid_t is unsigned, the caller's -1 arrives as
+// 0xffffffff, and the kernel reads that as "leave this one alone". So
+// the moves are deliberately `edx` / `r10d` rather than the 64-bit
+// registers.
+func (g *generator) emitChownAtRuntime() {
+	g.emitPathOpRuntime("__fern_chown_at", "chwn", sysFchownat, 1, 3, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, [rbp - 72]")  // uid
+		g.emit("mov r10d, [rbp - 96]") // gid
+		// AT_SYMLINK_NOFOLLOW unless the caller asked to follow.
+		g.emit("mov r8d, 256")
+		g.emit("cmp dword ptr [rbp - 104], 0")
+		g.emit("jz .Lchwn_flags")
+		g.emit("xor r8d, r8d")
+		g.label(".Lchwn_flags")
 	})
 }
 

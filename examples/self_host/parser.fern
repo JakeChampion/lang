@@ -8058,6 +8058,10 @@ pub function builtin_function_names(): string[] {
         // the entries that are neither a file nor a directory: a FIFO, and a
         // character or block device node
         "mknod",
+        // who an entry BELONGS to — fchownat(2), with -1 for either id
+        // leaving that half alone, which is how `chgrp` is this with the
+        // uid omitted
+        "chown_at",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",

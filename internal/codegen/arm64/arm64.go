@@ -185,6 +185,10 @@ var linuxDarwinSysno = map[string][2]int{
 	// directory descriptor; the helper branches on g.darwin for that one
 	// difference, and the dev_t layouts differ too.
 	"mknodat": {33, 14},
+	// fchownat(2) — Linux asm-generic 54, Darwin BSD 468. Identical
+	// five-argument shape on both; only AT_FDCWD and AT_SYMLINK_NOFOLLOW
+	// differ, and `atFdcwd` / `atSymlinkNofollow` carry those.
+	"fchownat": {54, 468},
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
@@ -563,7 +567,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
-		g.usesMknod {
+		g.usesMknod || g.usesChownAt {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -594,7 +598,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
-		g.usesMknod || g.usesReaderWriter {
+		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll || g.usesReadFile {
@@ -919,6 +923,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesMknod {
 		g.emitMknodRuntime()
+	}
+	if g.usesChownAt {
+		g.emitChownAtRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -10130,6 +10137,34 @@ func (g *generator) atRemoveDir() int {
 	return 0x200
 }
 
+// atSymlinkNofollow is AT_SYMLINK_NOFOLLOW: 0x100 on Linux, 0x20 on
+// Darwin. It is the flag that turns an *at call into its `l` form.
+func (g *generator) atSymlinkNofollow() int {
+	if g.darwin {
+		return 0x20
+	}
+	return 0x100
+}
+
+// emitChownAtRuntime emits `__fern_chown_at(path, uid, gid, follow)` —
+// fchownat(AT_FDCWD, path, uid, gid, follow ? 0 : AT_SYMLINK_NOFOLLOW).
+//
+// The ids move as 32-bit registers, which is what makes -1 mean "leave
+// this one alone": uid_t is unsigned, so `w` gives the kernel 0xffffffff
+// and that is the sentinel it compares against.
+func (g *generator) emitChownAtRuntime() {
+	g.emitPathOpRuntime("__fern_chown_at", "chwn", "fchownat", 1, 3, func() {
+		// The scalars arrived in x24 (uid), x23 (gid) and x22 (follow).
+		g.emit("mov w2, w24")
+		g.emit("mov w3, w23")
+		g.emit("mov x4, #%d", g.atSymlinkNofollow())
+		g.emit("cmp x22, #0")
+		g.emit("csel x4, xzr, x4, ne")
+		g.atFdcwd("x0")
+		g.emit("mov x1, x21")
+	})
+}
+
 // emitReadLinkRuntime emits `__fern_read_link(path) → Result[string,
 // IoError]` — readlinkat(AT_FDCWD, path, buf, 4096).
 //
@@ -13168,6 +13203,8 @@ type generator struct {
 	usesTruncate bool
 	// mknodat(2) over a path, a mode and a major / minor pair.
 	usesMknod bool
+	// fchownat(2) over a path, a uid, a gid and a follow flag.
+	usesChownAt bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -17443,6 +17480,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// device node.
 			target = "__fern_mknod"
 			g.usesMknod = true
+		case "chown_at":
+			// chown_at(path, uid, gid, follow): Result[void,
+			// IoError] — fchownat, which sets an entry's owner
+			// and group.
+			target = "__fern_chown_at"
+			g.usesChownAt = true
 		case "set_file_times":
 			// set_file_times(path, asec, ansec, msec, mnsec,
 			// flags): Result[void, IoError] — utimensat.
