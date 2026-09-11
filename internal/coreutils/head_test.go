@@ -1,6 +1,7 @@
 package coreutils
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,21 @@ func headCases(t *testing.T) []invocation {
 	// while streaming (`error writing 'standard output'`) rather than
 	// at the final flush (`write error`).
 	big := headFile(t, dir, "big", strings.Repeat("0123456789\n", 5000))
+	// A tail elision seeks only over a regular file bigger than one
+	// block, so every seekable case needs a fixture past 4 KiB; these
+	// run to ~34 KiB, which is several of head's 64 KiB reads' worth of
+	// lines short of one, so the backward walk starts on a partial
+	// block.
+	seekText := seqLines(5000)
+	seek := headFile(t, dir, "seek", seekText)
+	seekNonl := headFile(t, dir, "seeknonl", seekText[:len(seekText)-1])
+	seekNul := headFile(t, dir, "seeknul", strings.ReplaceAll(seekText, "\n", "\x00"))
+	// One line longer than a read block, so the terminator that ends it
+	// and the terminator before it cannot be in the same chunk: the
+	// streaming elision has to remember what it is already holding.
+	// `---presume-input-pipe` over a regular file is what makes the
+	// reads full and the case deterministic.
+	straddle := headFile(t, dir, "straddle", strings.Repeat("a", 99999)+"\n"+strings.Repeat("b", 10)+"\n")
 
 	return []invocation{
 		// Defaults and the two counts.
@@ -106,6 +122,51 @@ func headCases(t *testing.T) []invocation {
 		{name: "elide bytes with an unterminated tail", args: []string{"-c", "-1", nonl}},
 		{name: "elide across a large file", args: []string{"-n", "-4", s400}},
 		{name: "elide bytes across a large file", args: []string{"-c", "-4", s400}},
+
+		// The seekable elision: a regular file bigger than one block is
+		// read backwards from its end instead of streamed forward, and
+		// anything that cannot seek falls back to the streaming path
+		// these cases share their answers with.
+		{name: "seekable elide lines", args: []string{"-n", "-3", seek}},
+		{name: "seekable elide bytes", args: []string{"-c", "-3", seek}},
+		{name: "seekable elide a whole block of lines", args: []string{"-n", "-2000", seek}},
+		{name: "seekable elide a whole block of bytes", args: []string{"-c", "-20000", seek}},
+		{name: "seekable elide zero lines", args: []string{"-n", "-0", seek}},
+		{name: "seekable elide zero bytes", args: []string{"-c", "-0", seek}},
+		{name: "seekable elide more lines than there are", args: []string{"-n", "-99999", seek}},
+		{name: "seekable elide more bytes than there are", args: []string{"-c", "-99999", seek}},
+		{name: "seekable elide exactly the line count", args: []string{"-n", "-5000", seek}},
+		{name: "seekable elide exactly the file's size", args: []string{"-c", "-" + itoa(len(seekText)), seek}},
+		{name: "seekable elide one byte less than the file", args: []string{"-c", "-" + itoa(len(seekText)-1), seek}},
+		{name: "seekable elide one byte more than the file", args: []string{"-c", "-" + itoa(len(seekText)+1), seek}},
+		{name: "seekable elide an unterminated tail", args: []string{"-n", "-1", seekNonl}},
+		{name: "seekable elide zero lines with an unterminated tail", args: []string{"-n", "-0", seekNonl}},
+		{name: "seekable elide bytes with an unterminated tail", args: []string{"-c", "-1", seekNonl}},
+		{name: "seekable elide NUL-terminated lines", args: []string{"-z", "-n", "-3", seekNul}},
+		{name: "seekable elide with no terminator to find", args: []string{"-z", "-n", "-1", seek}},
+		{name: "seekable elide across a line longer than a read block", args: []string{"-n", "-2", straddle}},
+		{name: "seekable elide inside a line longer than a read block", args: []string{"-n", "-1", straddle}},
+		{name: "seekable file with headers", args: []string{"-n", "-3", seek, seekNonl}},
+		{name: "seekable file then a pipe", args: []string{"-n", "-3", seek, "-"}, stdin: "p\nq\nr\ns\n"},
+		{name: "pipe then a seekable file", args: []string{"-c", "-3", "-", seek}, stdin: "abcdef"},
+		// The same file streamed instead of seeked: a pipe, and a
+		// regular file the seek is refused on.
+		{name: "piped elide falls back to streaming", args: []string{"-n", "-3"}, stdin: seekText},
+		{name: "piped elide bytes falls back to streaming", args: []string{"-c", "-3"}, stdin: seekText},
+		{name: "presumed pipe elides by streaming", args: []string{"---presume-input-pipe", "-n", "-3", seek}},
+		{name: "presumed pipe elides bytes by streaming", args: []string{"---presume-input-pipe", "-c", "-3", seek}},
+		{name: "presumed pipe across a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "-2"}, stdinPath: straddle},
+		{name: "presumed pipe inside a line longer than a read block", args: []string{"---presume-input-pipe", "-n", "-1"}, stdinPath: straddle},
+		// stdin is a regular file here, so it seeks like an operand.
+		{name: "seekable stdin elide lines", args: []string{"-n", "-3"}, stdinPath: seek},
+		{name: "seekable stdin elide bytes", args: []string{"-c", "-3"}, stdinPath: seek},
+		// The second `-` reads on from where the first stopped, which
+		// is the one thing the seekable path has to leave behind it.
+		{name: "seekable stdin twice", args: []string{"-n", "-3", "-", "-"}, stdinPath: seek},
+		{name: "seekable stdin twice by bytes", args: []string{"-c", "-3", "-", "-"}, stdinPath: seek},
+		{name: "seekable stdin twice elided whole", args: []string{"-n", "-99999", "-", "-"}, stdinPath: seek},
+		// A character device reports no usable size, so it streams.
+		{name: "elide from a character device", args: []string{"-c", "-1", "/dev/null"}},
 
 		// Multiplier suffixes.
 		{name: "b is 512", args: []string{"-c", "1b", s400}},
@@ -313,6 +374,67 @@ func itoa(n int) string {
 
 func TestHeadParity(t *testing.T) {
 	requireParity(t, "head", headCases(t))
+}
+
+// TestHeadSeekableMatchesStreaming holds the seekable tail elision to the
+// streaming one, which is the same input read the other way round.
+//
+// Four spellings of one invocation have to agree byte for byte: the file
+// as an operand and the file on stdin both seek, a pipe carrying the same
+// bytes streams, and `---presume-input-pipe` streams the operand's own
+// descriptor. The corpus pins each of those to GNU case by case; this
+// sweeps every count against every fixture instead, which is where an
+// off-by-one in the backward scan lives — one a corpus can only catch on
+// a count someone thought to write down.
+func TestHeadSeekableMatchesStreaming(t *testing.T) {
+	bin := fernBin(t, "head")
+	// Each fixture is past one block, so the seekable path is taken:
+	// under that, both spellings stream and the comparison is vacuous.
+	fixtures := map[string]string{
+		"lines":            seqLines(5000),
+		"unterminated":     strings.TrimSuffix(seqLines(5000), "\n"),
+		"terminators only": strings.Repeat("\n", 9000),
+		"no terminator":    strings.Repeat("x", 9000),
+		"one long line":    strings.Repeat("a", 99999) + "\n" + strings.Repeat("b", 10) + "\n",
+		"block boundary":   strings.Repeat("y", 65535) + "\n" + strings.Repeat("z", 65535) + "\n",
+		"nul records":      strings.ReplaceAll(seqLines(5000), "\n", "\x00"),
+	}
+	// Counts around the read block, around the file, and past both.
+	counts := []string{"0", "1", "2", "3", "9", "4999", "5000", "5001", "65535", "65536", "65537", "18446744073709551615"}
+	dir := t.TempDir()
+	for name, content := range fixtures {
+		path := headFile(t, dir, strings.ReplaceAll(name, " ", "_"), content)
+		counts := append(append([]string{}, counts...), itoa(len(content)), itoa(len(content)-1))
+		for _, flag := range []string{"-n", "-c"} {
+			for _, z := range [][]string{nil, {"-z"}} {
+				for _, n := range counts {
+					opts := append(append([]string{}, z...), flag, "-"+n)
+					t.Run(name+" "+strings.Join(opts, " "), func(t *testing.T) {
+						seekable := invocation{args: append(append([]string{}, opts...), path)}.run(t, bin, "head")
+						onStdin := invocation{args: opts, stdinPath: path}.run(t, bin, "head")
+						piped := invocation{args: opts, stdin: content}.run(t, bin, "head")
+						forced := invocation{args: append([]string{"---presume-input-pipe"}, append(append([]string{}, opts...), path)...)}.run(t, bin, "head")
+						for _, other := range []struct {
+							who string
+							got outcome
+						}{
+							{"the same file on stdin", onStdin},
+							{"the same bytes through a pipe", piped},
+							{"the same file with the seek refused", forced},
+						} {
+							if !bytes.Equal(seekable.stdout, other.got.stdout) {
+								t.Errorf("head %s: the operand seeks and %s streams, and they differ\n  seek: %s\nstream: %s",
+									quoteArgs(opts), other.who, quote(seekable.stdout), quote(other.got.stdout))
+							}
+							if seekable.how() != other.got.how() {
+								t.Errorf("head %s: the operand %s and %s %s", quoteArgs(opts), seekable.how(), other.who, other.got.how())
+							}
+						}
+					})
+				}
+			}
+		}
+	}
 }
 
 func TestHeadHelpVersion(t *testing.T) {
