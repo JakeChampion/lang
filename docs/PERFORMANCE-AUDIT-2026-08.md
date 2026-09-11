@@ -90,7 +90,7 @@ Measured over the whole-compiler emit (22,420,063 emitted instructions):
 
 Both native backends now run `ir.Inline` and IR dead-function elimination,
 matching wasm. `ir.Inline` is capped by `ir.inlineMaxUnitOps` — item 6 below
-for why a compiler-sized unit is left alone. #4377.
+for why a compiler-sized unit gets only the tiny-leaf carve-out. #4377.
 
 ## 3. Multiplier 2 — the exit drop sweep — FIXED (#6894)
 
@@ -405,9 +405,10 @@ that shape out of four more places for −35% and left a flat profile. Pick from
 **Item 6's −9% was measured on the wrong subject**, and the resolution is that
 the subject decides the answer. Both halves are now on the natives: the IR
 dead-function cull (with the AST↔IR walk keyed by name), and `ir.Inline` under
-`ir.inlineMaxUnitOps` — a whole-program op ceiling above which the pass does
-nothing. On the self-hosted compiler, the workload the roadmap cares about, it
-loses at every growth setting measured:
+`ir.inlineMaxUnitOps` — a whole-program op ceiling above which the pass narrows
+to the carve-out at the end of this item. On the self-hosted compiler, the
+workload the roadmap cares about, the general policy loses at every growth
+setting measured:
 
 | | `.s` for `fern.fern` | linked driver | emit time | driver runtime |
 |---|---|---|---|---|
@@ -437,12 +438,36 @@ The 2.70× / 2.31× unbudgeted figures reproduce exactly. What the sweep adds is
 that **no budget rescues it**: even at 0% growth — where only the net-neutral
 single-reference moves happen and the output changes by half a percent — the
 pass's own six walks over 2.7M ops cost 37% of the emit. So the ceiling is the
-policy, not a percentage: units above it are left alone (`fern.fern` emits
-byte-identically to a tree without the pass), units below it inline exactly as
-wasm always has. The measured gap is wide — `examples/bench` tops out at 2,202
-ops and the compiler's smallest module is 14,933, with nothing measured between
-15k and 691k — so 20,000 sits in empty space rather than near a cliff any real
-program rides.
+policy, not a percentage: units below it inline exactly as wasm always has, and
+units above it get only the tiny-leaf carve-out below. The measured gap is wide
+— `examples/bench` tops out at 2,202 ops and the compiler's smallest module is
+14,933, with nothing measured between 15k and 691k — so 20,000 sits in empty
+space rather than near a cliff any real program rides.
+
+### The carve-out above the ceiling (#8822)
+
+What the sweep prices is the general policy — 80/160-op bodies over thousands
+of helpers. It does not reach a CALL-FREE callee of at most 24 ops, which is
+where a comparison loop's per-byte cost sits, so above the ceiling those still
+inline (`ir.inlineTinyLeafOps`, one walk, within a 1/10-of-unit growth budget).
+Measured against 5be6cae on the same 4-core x86-64 box:
+
+| | baseline | carve-out |
+|---|---|---|
+| `fern.fern` `.text` instructions | 3,258,365 | 3,261,440 (+0.09%) |
+| self-host driver compiling `checker.fern`, Ir | 23.671 G | 23.607 G (**−0.27%**) |
+| `sort -n`, 100k numbers, Ir | 2.519 G | 2.447 G (**−2.90%**) |
+| `sort -k2,2n`, 100k lines, Ir | 6.371 G | 5.588 G (**−12.29%**) |
+| `sort.fern` `.text` instructions | 63,212 | 62,743 (−0.74%) |
+
+The driver's own emitted output is byte-identical, and so is the assembly of all
+91 under-ceiling programs in `examples/**` and `coreutils/`. Of the 19 over the
+ceiling — every one a coreutil — all 19 got SMALLER text (−0.34% to −2.77%):
+inlining every site of a call-free helper leaves the original unreferenced for
+the dead-function cull, and the call sequence it replaced was larger than the
+body. Restricting the splice to sites inside a loop inverts that, which is why
+there is no loop-depth tier: at the same 24-op cap sort's text GREW 0.62% and
+`sort -n` kept a quarter of its win.
 
 The cull alone is byte-identical to baseline over `examples/` and
 `examples/bench` except on Map programs, where the four `_impl` helpers no

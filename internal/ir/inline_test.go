@@ -524,40 +524,109 @@ func padStmts(stmts int) string {
 	return b.String()
 }
 
-// Above inlineMaxUnitOps the pass declines entirely: on a unit that size it
-// costs multiples of the code and the emit for a runtime loss, so the call
-// survives where the same program unpadded (TestInlineSubstitutesBody) has it
+// leafArith returns `stmts` statements of straight-line arithmetic over a
+// local `a` seeded from x — a call-free body whose op count grows with
+// stmts, for sizing a callee against inlineTinyLeafOps.
+func leafArith(stmts int) string {
+	var b strings.Builder
+	b.WriteString("var a: i32 = x;\n")
+	for i := 0; i < stmts; i++ {
+		fmt.Fprintf(&b, "a = a + %d; a = a * 3;\n", i%7)
+	}
+	b.WriteString("return a;\n")
+	return b.String()
+}
+
+// mustBeOverTinyCap fails unless fnName's body is too big for the tiny-leaf
+// carve-out but still within the general size policy — the premise every
+// "declines over the ceiling" case below rests on.
+func mustBeOverTinyCap(t *testing.T, p *Program, fnName string) {
+	t.Helper()
+	fn := findFunc(p, fnName)
+	if fn == nil {
+		t.Fatalf("%s not found", fnName)
+	}
+	if len(fn.Ops) <= inlineTinyLeafOps {
+		t.Fatalf("%s has %d ops, within the %d tiny cap — the case cannot test what it claims", fnName, len(fn.Ops), inlineTinyLeafOps)
+	}
+	if len(fn.Ops) > inlineSizeLimit {
+		t.Fatalf("%s has %d ops, over the %d general cap — it would be refused under the ceiling too", fnName, len(fn.Ops), inlineSizeLimit)
+	}
+}
+
+// Above inlineMaxUnitOps the GENERAL size policy declines: on a unit that
+// size its 80/160-op bodies cost multiples of the code and the emit for a
+// runtime loss, so a callee too big for the tiny-leaf carve-out stays a
+// call where the same program unpadded (TestInlineSubstitutesBody) has it
 // substituted.
 func TestInlineSkipsProgramsOverUnitCeiling(t *testing.T) {
-	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+	p := lowerSource(t, `function mid(x: i32): i32 {
+		`+leafArith(4)+`
+		}
 		function main(): i32 {
 		`+padStmts(4000)+`
-			return dbl(7) + acc;
+			return mid(7) + acc;
 		}`)
+	mustBeOverTinyCap(t, p, "mid")
 	if got := programOps(p); got <= inlineMaxUnitOps {
 		t.Fatalf("padding produced %d ops, at or under the %d ceiling — the case cannot test what it claims", got, inlineMaxUnitOps)
 	}
 	Inline(p)
-	mustContainOp(t, p, "main", OpCallDirect)
+	if got := countCallDirect(findFunc(p, "main").Ops, "mid"); got != 1 {
+		t.Fatalf("over the ceiling an oversized callee should stay a call; got %d calls to mid:\n%s", got, p)
+	}
 }
 
 // The ceiling is on the WHOLE program, not on the caller: the same padding
 // moved into a second function still denies the call site in main.
 func TestInlineUnitCeilingCountsWholeProgram(t *testing.T) {
-	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+	p := lowerSource(t, `function mid(x: i32): i32 {
+		`+leafArith(4)+`
+		}
 		function bulk(): i32 {
 		`+padStmts(4000)+`
 			return acc;
 		}
-		function main(): i32 { return dbl(7) + bulk(); }`)
+		function main(): i32 { return mid(7) + bulk(); }`)
+	mustBeOverTinyCap(t, p, "mid")
 	if got := programOps(p); got <= inlineMaxUnitOps {
 		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
 	}
 	Inline(p)
-	mustContainOp(t, p, "main", OpCallDirect)
+	if got := countCallDirect(findFunc(p, "main").Ops, "mid"); got != 1 {
+		t.Fatalf("over the ceiling an oversized callee should stay a call; got %d calls to mid:\n%s", got, p)
+	}
 }
 
-// Under the ceiling the pass still runs — the control for the two cases above,
+// A loop site does not rescue an oversized callee over the ceiling: the
+// carve-out's only per-callee bound is size, and it has no loop-depth tier
+// (inlineLoopSizeLimit belongs to the general policy, below the ceiling).
+// Without this, raising the cap "just for hot sites" reads as free.
+func TestInlineOverCeilingRefusesAnOversizedLeafInALoop(t *testing.T) {
+	p := lowerSource(t, `function mid(x: i32): i32 {
+		`+leafArith(4)+`
+		}
+		function bulk(): i32 {
+		`+padStmts(4000)+`
+			return acc;
+		}
+		function main(): i32 {
+			var t: i32 = 0;
+			var i: i32 = 0;
+			while (i < 10) { t = t + mid(i); i = i + 1; }
+			return t + bulk();
+		}`)
+	mustBeOverTinyCap(t, p, "mid")
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	Inline(p)
+	if got := countCallDirect(findFunc(p, "main").Ops, "mid"); got != 1 {
+		t.Fatalf("over the ceiling an oversized callee in a loop should stay a call; got %d calls to mid:\n%s", got, p)
+	}
+}
+
+// Under the ceiling the pass still runs — the control for the cases above,
 // so a ceiling accidentally set to zero fails here rather than passing both.
 func TestInlineRunsUnderUnitCeiling(t *testing.T) {
 	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
@@ -573,6 +642,101 @@ func TestInlineRunsUnderUnitCeiling(t *testing.T) {
 		if op.Kind == OpCallDirect && op.Str == "dbl" {
 			t.Fatal("a program under the ceiling did not inline")
 		}
+	}
+}
+
+// The carve-out: a tiny call-free callee substitutes above the ceiling,
+// where the general policy declines — and at a straight-line site, not
+// only inside a loop.
+func TestInlineTinyLeafSplicesOverUnitCeiling(t *testing.T) {
+	p := lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 {
+		`+padStmts(4000)+`
+			return dbl(7) + acc;
+		}`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	if got := len(findFunc(p, "dbl").Ops); got > inlineTinyLeafOps {
+		t.Fatalf("dbl has %d ops, over the %d tiny cap — the case cannot test what it claims", got, inlineTinyLeafOps)
+	}
+	Inline(p)
+	if got := countCallDirect(findFunc(p, "main").Ops, "dbl"); got != 0 {
+		t.Fatalf("a tiny leaf should inline over the ceiling; %d calls to dbl survived:\n%s", got, p)
+	}
+}
+
+// Tiny is not enough: a callee within the size cap that CALLS something is
+// not a leaf, so splicing it would carry a call site into every host and
+// clearing those would need the general policy's repeat passes.
+func TestInlineOverCeilingRefusesANonLeafCallee(t *testing.T) {
+	p := lowerSource(t, `function bump(x: i32): i32 { return x + 1; }
+		function twice(x: i32): i32 { return bump(x) + bump(x); }
+		function main(): i32 {
+		`+padStmts(4000)+`
+			return twice(7) + acc;
+		}`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	if got := len(findFunc(p, "twice").Ops); got > inlineTinyLeafOps {
+		t.Fatalf("twice has %d ops, over the %d tiny cap — the case would be refused for its size, not its calls", got, inlineTinyLeafOps)
+	}
+	Inline(p)
+	if got := countCallDirect(findFunc(p, "main").Ops, "twice"); got != 1 {
+		t.Fatalf("a non-leaf callee should stay a call over the ceiling; got %d calls to twice:\n%s", got, p)
+	}
+}
+
+// @noinline still wins over the ceiling: the carve-out widens which units
+// the pass considers, not what it is willing to splice.
+func TestInlineOverCeilingHonoursHintNever(t *testing.T) {
+	p := lowerSource(t, `@noinline
+		function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 {
+		`+padStmts(4000)+`
+			return dbl(7) + acc;
+		}`)
+	if got := programOps(p); got <= inlineMaxUnitOps {
+		t.Fatalf("padding produced %d ops, at or under the %d ceiling", got, inlineMaxUnitOps)
+	}
+	Inline(p)
+	if got := countCallDirect(findFunc(p, "main").Ops, "dbl"); got != 1 {
+		t.Fatalf("@noinline should hold over the ceiling; got %d calls to dbl:\n%s", got, p)
+	}
+}
+
+// The growth budget bounds the SUM. A program that is mostly calls to one
+// tiny leaf would otherwise grow by a body per site without limit, so the
+// splice stops partway and the remaining sites keep their call.
+func TestInlineTinyLeafStopsAtTheGrowthBudget(t *testing.T) {
+	const sites = 6000
+	var b strings.Builder
+	b.WriteString("var acc: i32 = 0;\n")
+	for i := 0; i < sites; i++ {
+		b.WriteString("acc = acc + tiny(acc);\n")
+	}
+	p := lowerSource(t, `function tiny(x: i32): i32 { return x + 1; }
+		function main(): i32 {
+		`+b.String()+`
+			return acc;
+		}`)
+	unit := programOps(p)
+	if unit <= inlineMaxUnitOps {
+		t.Fatalf("produced %d ops, at or under the %d ceiling", unit, inlineMaxUnitOps)
+	}
+	before := countCallDirect(findFunc(p, "main").Ops, "tiny")
+	body := len(findFunc(p, "tiny").Ops)
+	Inline(p)
+	after := countCallDirect(findFunc(p, "main").Ops, "tiny")
+	if after == 0 {
+		t.Fatalf("every one of %d sites was spliced: the growth budget did not bind", before)
+	}
+	if after == before {
+		t.Fatalf("no site was spliced; expected the budget to admit some of %d", before)
+	}
+	if spliced := (before - after) * body; spliced > unit/inlineTinyBudgetDivisor {
+		t.Fatalf("spliced %d ops, over the %d budget", spliced, unit/inlineTinyBudgetDivisor)
 	}
 }
 
