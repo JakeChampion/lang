@@ -3028,7 +3028,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_struct("Cell");
   }
   // print/eprint yield no value (TypeVoid). Leaving them unknown made every
-  // printing function trip the #4346 catch-all under -check (#7311). Arity
+  // printing function trip the #9053 catch-all under -check (#7311). Arity
   // is call_diags' E004 rule; a wrong count here stays unknown.
   if (!is_method && (name == "print" || name == "eprint") && c.args.len() == 1) {
     return t_void();
@@ -3065,7 +3065,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // statement type makes check_func_body mark the module ill-typed
   // while the coded passes stay silent, so the whole class surfaced as
   // the uncoded "cannot represent yet" bail instead of a real
-  // diagnostic (#4346's catch-all). The array receiver is typed in
+  // diagnostic (#9053's catch-all). The array receiver is typed in
   // array_method_ret_type and Map in its own arm below.
   if (is_method && name == "len" && c.args.len() == 0) {
     match (recv_ty) {
@@ -8639,7 +8639,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         }
         // E004 (#7311): free-builtin arity. These have no FuncSig, so the
         // rule above never sees them, and a wrong count used to fall
-        // through to IR lowering and surface as the whole-function #4346
+        // through to IR lowering and surface as the whole-function #9053
         // ineligibility hint; native reports E004 at the call. Expected
         // counts mirror native's builtin signatures. Only when no user
         // function shadows the name.
@@ -8709,7 +8709,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
           // E004 (#7311): the two string builtins take no arguments. A wrong
           // count used to fall through to IR lowering and surface as the
-          // whole-function #4346 ineligibility hint; native reports E004 at
+          // whole-function #9053 ineligibility hint; native reports E004 at
           // the call. Only when no user method shadows the name — a user
           // `(s: string) len(…)` resolves through the MethodSig path below,
           // which has its own arity rule.
@@ -14345,7 +14345,8 @@ pub function module_scopes(mod: parser.Module): Scope[] {
 // ill_typed_hint returns a best-effort fallback diagnostic for a module that
 // check_module marked ill-typed but produced NO coded diagnostic for — an
 // expression collapsed to TypeUnknown because the partial `Type` union can't
-// yet model an enum value, Option/Result, generic, or `dyn` type (#4346). The
+// yet model an Option/Result or `dyn` type, or because a builtin the call
+// names is unregistered (#9053). The
 // `-check` driver calls this ONLY when `all_well_typed` is false and `diags`
 // is empty, so a rejection is never silent. Two deliberate properties keep it
 // safe: (1) it is a driver-only helper — check_module, checker_run, and the
