@@ -197,12 +197,14 @@ var rcResultOwned = map[string]bool{
 	"__fern_create_link":         true,
 	"__fern_create_symlink":      true,
 	"__fern_read_link":           true,
-	// `access` and `write_file_exec` have no `__fern_*` entry in rcsigs
-	// to alias through — both are native-only (E066 refuses them on the
-	// wasm worlds), so they are classified there under the builtin name,
-	// which is why these two are spelled the builtin's way too.
+	// `access`, `write_file_exec` and `statfs` have no `__fern_*` entry
+	// in rcsigs to alias through — all three are native-only (E066
+	// refuses them on the wasm worlds), so they are classified there
+	// under the builtin name, which is why they are spelled the
+	// builtin's way here too.
 	"access":          true,
 	"write_file_exec": true,
+	"statfs":          true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -286,6 +288,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"read_dir":                   true,
 	"stat":                       true,
 	"lstat":                      true,
+	"statfs":                     true,
 	"access":                     true,
 }
 

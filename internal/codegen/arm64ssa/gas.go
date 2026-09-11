@@ -1293,6 +1293,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"isatty":                        emitIsattyHelper,
 	"process_alive":                 emitProcessAliveHelper,
 	"rlimit_nofile":                 emitRlimitNofileHelper,
+	"statfs":                        emitStatfsHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
@@ -3183,6 +3184,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
 	"stat":                          {"__fern_io_error"},
 	"lstat":                         {"__fern_io_error"},
+	"statfs":                        {"__fern_io_error"},
 	"access":                        {"__fern_io_error"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
@@ -6794,7 +6796,37 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 		return
 	}
 	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a heap buffer (x24).
+	emitNulTermPathInline(w, lp)
+	// fstatat(AT_FDCWD, path_nul, statbuf@sp+64, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD
+	w("\tmov x1, x24")
+	w("\tadd x2, sp, #64")
+	w("\tmov x3, #%d", atFlags)
+	w("\tmov x8, #79") // fstatat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa%s_err", lp)
+	emitStatProjection(w, lp)
+	w("\tb .Lssa%s_ret", lp)
+	w(".Lssa%s_err:", lp)
+	w("\tneg x0, x0")  // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitStatErrBox(w)
+	w(".Lssa%s_ret:", lp)
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #256")
+	w("\tret")
+}
+
+// emitNulTermPathInline copies the single-word string in x19 into a fresh
+// heap block and NUL-terminates it, leaving the C string in x24. Bumps the
+// heap cursor inline rather than calling __fern_alloc, as everything else in
+// this emitter does. Labels are suffixed with `lp` so several path helpers
+// can live in one module.
+func emitNulTermPathInline(w func(string, ...any), lp string) {
 	w("\tldur w2, [x19, #-4]")
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -6816,23 +6848,91 @@ func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp str
 	w(".Lssa%s_cpd:", lp)
 	w("\tstrb wzr, [x4, x2]")
 	w("\tmov x24, x4") // path_nul
-	// fstatat(AT_FDCWD, path_nul, statbuf@sp+64, 0).
-	w("\tmov x0, #100")
-	w("\tneg x0, x0") // AT_FDCWD
-	w("\tmov x1, x24")
-	w("\tadd x2, sp, #64")
-	w("\tmov x3, #%d", atFlags)
-	w("\tmov x8, #79") // fstatat
+}
+
+// linuxStatfsFields projects Linux's 120-byte `struct statfs` — every member
+// a 64-bit word — onto FsStat: f_type 0, f_bsize 8, f_blocks 16, f_bfree 24,
+// f_bavail 32, f_files 40, f_ffree 48, f_fsid 56, f_namelen 64, f_frsize 72.
+//
+// `path_max` is not in the record. Linux has no pathconf syscall and PATH_MAX
+// is the kernel's own 4096 for every filesystem it mounts, so the helper
+// stores that constant.
+var linuxStatfsFields = []struct{ box, src int32 }{
+	{ir.FsStat.BlockSize, 8},
+	{ir.FsStat.Blocks, 16},
+	{ir.FsStat.BlocksFree, 24},
+	{ir.FsStat.BlocksAvail, 32},
+	{ir.FsStat.Files, 40},
+	{ir.FsStat.FilesFree, 48},
+	{ir.FsStat.NameMax, 64},
+}
+
+// emitStatfsHelper writes statfs(path) -> Result[FsStat, IoError]: the
+// geometry and the length limits of the filesystem the path resolves on.
+// x0 = path (single-word string).
+//
+// Same shape as stat(path) — the NUL-terminated path copy, the frame buffer
+// at sp+64, and the two boxed results — because it is the same contract.
+// Linux-only, like the rest of this emitter, so syscall 43 and no pathconf
+// branch.
+func emitStatfsHelper(w func(string, ...any)) {
+	const (
+		sysStatfs = 43
+		pathMax   = 4096
+	)
+	w("")
+	w("%s:", fnLabel("statfs"))
+	w("\tstp x29, x30, [sp, #-256]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tmov x19, x0") // path
+	emitNulTermPathInline(w, "sfs")
+	w("\tmov x0, x24")
+	w("\tadd x1, sp, #64")
+	w("\tmov x8, #%d", sysStatfs)
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa%s_err", lp)
-	emitStatProjection(w, lp)
-	w("\tb .Lssa%s_ret", lp)
-	w(".Lssa%s_err:", lp)
+	w("\ttbnz x0, #63, .Lssasfs_err")
+	// FsStat box: {rc=1, then the field area}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #%d", 8+ir.FsStat.Bytes)
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")    // rc = 1
+	w("\tadd x23, x4, #8") // FsStat data
+	for _, f := range linuxStatfsFields {
+		w("\tldr x9, [sp, #%d]", 64+f.src)
+		w("\tstr x9, [x23, #%d]", f.box)
+	}
+	w("\tmov x9, #%d", pathMax)
+	w("\tstr x9, [x23, #%d]", ir.FsStat.PathMax)
+	// Result.Ok(FsStat): box {rc=1, tag=0, fsstat@+8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]") // rc = 1
+	w("\tadd x0, x4, #8")
+	w("\tstr wzr, [x0]") // tag = 0 (Ok)
+	w("\tstr x23, [x0, #8]")
+	w("\tb .Lssasfs_ret")
+	w(".Lssasfs_err:")
 	w("\tneg x0, x0")  // errno
 	w("\tmov x1, x19") // path
 	w("\tbl %s", fnLabel("__fern_io_error"))
 	emitStatErrBox(w)
-	w(".Lssa%s_ret:", lp)
+	w(".Lssasfs_ret:")
 	w("\tldp x23, x24, [sp, #48]")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")

@@ -79,7 +79,10 @@ var BuiltinCaps = map[string]string{
 	// dependency that reaches it reaches every later creation, so it
 	// sits with the rest of the filesystem surface rather than beside
 	// `geteuid` in Ungated.
-	"umask":    "fs",
+	"umask": "fs",
+	// Reading the geometry of a filesystem is filesystem reach; the
+	// package question has none of the target question's subtlety here.
+	"statfs":   "fs",
 	"temp_dir": "fs",
 
 	"env":     "env",

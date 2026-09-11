@@ -190,6 +190,13 @@ var linuxDarwinSysno = map[string][2]int{
 	// number differs — RLIMIT_NOFILE is 7 on Linux and 8 on Darwin —
 	// and that is an argument the emitter picks.
 	"getrlimit": {163, 194},
+	// statfs(2) — Linux asm-generic 43, Darwin BSD 345. Both take
+	// (path, buf) and differ only in what they write there: Linux's
+	// record is 120 bytes of 64-bit words, Darwin's is 2168 bytes with
+	// 32-bit block size and two 1024-byte mount-point names. 345 rather
+	// than 157 because arm64 macOS ships only the 64-bit-inode variants,
+	// which is also the one libSystem's `statfs` resolves to.
+	"statfs": {43, 345},
 	// faccessat: Linux's flag-taking form is faccessat2 (439) — the
 	// older faccessat (48) has no flags word and so cannot express
 	// AT_EACCESS. Darwin's faccessat (BSD 467) has taken flags since it
@@ -532,7 +539,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesFdStat || g.usesReaderSeek ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
-		g.usesCreateSymlink || g.usesReadLink {
+		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -560,8 +567,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesRemoveDirAll ||
-		g.usesReaderWriter {
+		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
+		g.usesRemoveDirAll || g.usesReaderWriter {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -730,6 +737,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
+	}
+	if g.usesStatfs {
+		g.emitStatfsRuntime()
 	}
 	if g.usesRlimitNofile {
 		g.emitRlimitNofileRuntime()
@@ -8372,6 +8382,172 @@ func (g *generator) emitTimerFdRuntime() {
 	g.line(".ltorg")
 }
 
+// statfsField is one FsStat field and where it is read from in the
+// platform's `struct statfs`: the box offset, the buffer offset, and the
+// load width.
+type statfsField struct{ box, src, width int32 }
+
+// linuxStatfsFields — Linux's 120-byte record, every member a 64-bit
+// word on both supported ISAs: f_type 0, f_bsize 8, f_blocks 16,
+// f_bfree 24, f_bavail 32, f_files 40, f_ffree 48, f_fsid 56,
+// f_namelen 64, f_frsize 72.
+var linuxStatfsFields = []statfsField{
+	{ir.FsStat.BlockSize, 8, 8},
+	{ir.FsStat.Blocks, 16, 8},
+	{ir.FsStat.BlocksFree, 24, 8},
+	{ir.FsStat.BlocksAvail, 32, 8},
+	{ir.FsStat.Files, 40, 8},
+	{ir.FsStat.FilesFree, 48, 8},
+	{ir.FsStat.NameMax, 64, 8},
+}
+
+// darwinStatfsFields — Darwin's 2168-byte record: f_bsize is a u32 at 0
+// (f_iosize takes 4..7), then five u64 counts. There is no name-length
+// member at all, which is why the Darwin path asks pathconf(2) instead.
+var darwinStatfsFields = []statfsField{
+	{ir.FsStat.BlockSize, 0, 4},
+	{ir.FsStat.Blocks, 8, 8},
+	{ir.FsStat.BlocksFree, 16, 8},
+	{ir.FsStat.BlocksAvail, 24, 8},
+	{ir.FsStat.Files, 32, 8},
+	{ir.FsStat.FilesFree, 40, 8},
+}
+
+// emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
+// — the geometry and the length limits of the filesystem `path` resolves
+// on.
+//
+// Linux fills the whole record from one statfs(2), and PATH_MAX is the
+// kernel's own 4096 since there is no pathconf syscall to ask. Darwin's
+// record has the counts and no name length, so both limits come from its
+// real pathconf(2) (BSD 191) — not constants, because a mounted FAT or
+// SMB volume does not answer 255 the way APFS does. A failing pathconf
+// replaces the reported errno, so the Err names the call that actually
+// failed.
+//
+// Frame: a 96-byte base (fp/lr + x19..x25 + the 16-byte inline-spill
+// scratch at [x29+72]) with the statfs buffer above it at [x29+96]. The
+// buffer is inside the frame rather than below sp because the
+// NUL-terminated-path helpers push and pop there.
+func (g *generator) emitStatfsRuntime() {
+	fields := linuxStatfsFields
+	bufSize := 128
+	if g.darwin {
+		fields = darwinStatfsFields
+		bufSize = 2176
+	}
+	frame := 96 + bufSize
+	g.line("")
+	g.line(".global __fern_statfs")
+	g.typeDirective("__fern_statfs")
+	g.label("__fern_statfs")
+	g.emit("sub sp, sp, #%d", frame)
+	g.emit("stp x29, x30, [sp]")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("str x25, [sp, #64]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 72)
+	g.emitStrLen2W("w22", "x20")
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// statfs(pathz, buf)
+	g.emit("mov x0, x21")
+	g.emit("add x1, x29, #96")
+	g.syscall("statfs")
+	g.emit("mov x23, x0") // errno-or-zero, kept across the free
+	if g.darwin {
+		g.emit("tbnz x23, #63, .Lsfs_asked")
+		g.emitDarwinPathconf("x24", "x21", 4) // _PC_NAME_MAX
+		g.emit("tbnz x24, #63, .Lsfs_pcfail_name")
+		g.emitDarwinPathconf("x25", "x21", 5) // _PC_PATH_MAX
+		g.emit("tbnz x25, #63, .Lsfs_pcfail_path")
+		g.emit("b .Lsfs_asked")
+		g.label(".Lsfs_pcfail_name")
+		g.emit("mov x23, x24")
+		g.emit("b .Lsfs_asked")
+		g.label(".Lsfs_pcfail_path")
+		g.emit("mov x23, x25")
+		g.label(".Lsfs_asked")
+	}
+	g.emitFreeNulTermPath2W("x21", "x22")
+	g.emit("tbnz x23, #63, .Lsfs_err")
+	g.emit("mov x0, #%d", ir.FsStat.Bytes)
+	g.emit("bl __fern_alloc_box")
+	// The buffer is still live at [x29+96]; the record is copied out
+	// field by field, widening each to its 8-byte FsStat slot.
+	for _, f := range fields {
+		if f.width == 4 {
+			g.emit("ldr w9, [x29, #%d]", 96+f.src)
+		} else {
+			g.emit("ldr x9, [x29, #%d]", 96+f.src)
+		}
+		g.emit("str x9, [x0, #%d]", f.box)
+	}
+	if g.darwin {
+		g.emit("str x24, [x0, #%d]", ir.FsStat.NameMax)
+		g.emit("str x25, [x0, #%d]", ir.FsStat.PathMax)
+	} else {
+		g.emit("mov x9, #%d", linuxPathMax)
+		g.emit("str x9, [x0, #%d]", ir.FsStat.PathMax)
+	}
+	g.emit("mov x21, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x21, [x0, #8]")
+	g.emit("b .Lsfs_return")
+
+	g.label(".Lsfs_err")
+	g.emit("neg x0, x23")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsfs_return")
+	g.emit("mov sp, x29")
+	g.emit("ldr x25, [sp, #64]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp]")
+	g.emit("add sp, sp, #%d", frame)
+	g.emit("ret")
+	g.sizeDirective("__fern_statfs")
+	g.line(".ltorg")
+}
+
+// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// resolve. A constant rather than a lookup because Linux has no pathconf
+// syscall — glibc computes it from statfs plus constants — and `getconf
+// PATH_MAX` reports this for every filesystem it mounts.
+const linuxPathMax = 4096
+
+// emitDarwinPathconf emits `dstX = pathconf(pathzX, name)` — Darwin BSD
+// 191, which Linux has no equivalent of, so it cannot go in the dual
+// syscall table. Carry-clear is success; the error is negated into
+// Linux's -errno shape the way `syscall` does for the shared calls.
+func (g *generator) emitDarwinPathconf(dstX, pathzX string, name int) {
+	const darPathconf = 191
+	g.emit("mov x0, %s", pathzX)
+	g.emit("mov x1, #%d", name)
+	g.emit("mov x16, #%d", darPathconf)
+	g.emit("svc #0x80")
+	lbl := g.freshLabel("pconf_ok")
+	g.emit("b.cc %s", lbl)
+	g.emit("neg x0, x0")
+	g.label(lbl)
+	g.emit("mov %s, x0", dstX)
+}
+
 // emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft
 // RLIMIT_NOFILE, in x0 as an i64.
 //
@@ -12268,6 +12444,10 @@ type generator struct {
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
+	// usesStatfs pulls in `__fern_statfs(path)` — statfs(2) projected
+	// onto FsStat, plus two pathconf(2) calls on Darwin, whose statfs
+	// record has no name-length field.
+	usesStatfs bool
 	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
 	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
 	usesRlimitNofile bool
@@ -16556,6 +16736,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// rlimit_nofile(): the soft RLIMIT_NOFILE, i64 in x0.
 			target = "__fern_rlimit_nofile"
 			g.usesRlimitNofile = true
+		case "statfs":
+			// statfs(path): Result[FsStat, IoError].
+			target = "__fern_statfs"
+			g.usesStatfs = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true

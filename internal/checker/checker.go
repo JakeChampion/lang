@@ -679,6 +679,35 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
+		// about itself, where FileStat reports about one entry on it.
+		// The six counts are `statfs(2)`'s, and the two limits are
+		// what a path resolving on this filesystem is held to.
+		//
+		// `blocks_free` counts every free block and `blocks_avail`
+		// only the ones an unprivileged caller may take; the
+		// difference is the superuser reserve, which is why `df`
+		// prints the second and a fullness percentage computed from
+		// the first is wrong.
+		//
+		// `name_max` and `path_max` live here rather than in a second
+		// builtin because both are properties of the filesystem the
+		// path resolves on — which is exactly what
+		// `pathconf(path, _PC_NAME_MAX)` means — and a caller that has
+		// paid for the lookup should not pay again for the other half.
+		{
+			Name: "FsStat",
+			Fields: []ast.Param{
+				{Name: "block_size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks_free", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks_avail", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "files", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "files_free", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "name_max", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -1832,6 +1861,42 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
+	}
+	// statfs(path): Result[FsStat, IoError] — the geometry and the
+	// length limits of the filesystem `path` resolves on (#9062).
+	// `pathchk` needs the limits, `df` needs the counts, and one
+	// `statfs(2)` answers both on Linux.
+	//
+	// Err carries the errno the lookup failed with: ENOENT for a path
+	// that does not exist, EACCES for a directory the caller cannot
+	// search, ENOTDIR, ELOOP.
+	//
+	// The two kernels keep the limits in different places, and the
+	// builtin reports the same thing either way:
+	//
+	//   - Linux fills every field from `statfs(2)`; `f_namelen` is
+	//     `name_max`. There is no pathconf syscall — glibc computes it
+	//     from statfs plus constants — so `path_max` is the kernel's own
+	//     PATH_MAX, 4096, which `getconf PATH_MAX` reports for every
+	//     Linux filesystem.
+	//   - Darwin's `struct statfs` has no name-length field at all, so
+	//     both limits come from its real `pathconf(2)`. Not a constant:
+	//     APFS and HFS+ agree on 255 today, a mounted FAT or SMB volume
+	//     does not, and `pathchk` is the caller that would notice.
+	//
+	// Gated on `fsinfo`, which no wasm profile grants. Neither preview
+	// has a notion of a filesystem's size — preview 1's
+	// `path_filestat_get` is per-file and the component model has no
+	// volume interface — and a preopen is a capability handle rather
+	// than a mount, so it has no length limit to report either. A
+	// zero-filled record would be a measurement nobody took, so E066
+	// refuses it instead.
+	c.info.FuncSigs["statfs"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FsStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
 	// enforcing on this process's open file descriptors, `getrlimit(2)`

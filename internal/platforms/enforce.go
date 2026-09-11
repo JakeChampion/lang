@@ -51,6 +51,11 @@ var gatedBuiltins = map[string]string{
 	// still having them.
 	"rlimit_nofile": "rlimit",
 
+	// The filesystem itself — how large it is and what it will accept as
+	// a name — rather than the files on it, which is `fs`. A host can
+	// serve files and have no volume to measure.
+	"statfs": "fsinfo",
+
 	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
 	// Native-only: both natives rewind __fern_heap_ptr and snapshot the
 	// freelist heads into a .bss shadow, which wasm's linear-memory

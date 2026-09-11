@@ -179,6 +179,11 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     not running on.
 	//   - `cwd` — a current working directory. WASI resolves every path
 	//     against a preopened descriptor, so there is none to report.
+	//   - `fsinfo` — the size and the length limits of a FILESYSTEM,
+	//     where `fs` is the files on it. Neither preview has a volume
+	//     interface at all, and a preopen is a capability handle rather
+	//     than a mount, so there is nothing to measure and no limit to
+	//     report.
 	//   - `rlimit` — a kernel-enforced ceiling on a process resource.
 	//     Neither WASI preview has resource limits, and both constants
 	//     that could stand in — "unlimited", or a plausible 1024 — would
@@ -198,7 +203,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

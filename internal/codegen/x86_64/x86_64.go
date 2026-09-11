@@ -314,6 +314,11 @@ const (
 	// 32-bit truncation the man page warns about does not apply and
 	// prlimit64 would buy nothing here.
 	sysGetrlimit = 97
+	// statfs(2): x86-64 syscall 137. Backs `__fern_statfs`. The 64-bit
+	// `struct statfs` is 120 bytes of `long`-wide words; there is no
+	// statvfs syscall on Linux at all, glibc's being a re-projection of
+	// this one.
+	sysStatfs = 137
 	// rt_sigaction(2): x86-64 syscall 13. Backs `__fern_signal_ignore`
 	// and `__fern_signal_default`.
 	sysRtSigaction = 13
@@ -832,6 +837,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
+	if g.usesStatfs {
+		g.emitStatfsRuntime()
+	}
 	if g.usesRlimitNofile {
 		g.emitRlimitNofileRuntime()
 	}
@@ -1168,6 +1176,9 @@ type generator struct {
 	usesWasmPoll          bool
 	usesWasmBlock         bool
 	usesTimerFd           bool
+	// usesStatfs pulls in `__fern_statfs(path)` — statfs(2) projected
+	// onto FsStat, with the errno as an IoError.
+	usesStatfs bool
 	// usesRlimitNofile pulls in `__fern_rlimit_nofile()` — the soft
 	// RLIMIT_NOFILE, or i64 max when the resource is unlimited.
 	usesRlimitNofile bool
@@ -1773,6 +1784,10 @@ func (g *generator) recordUse(target string) {
 		g.usesProcessAlive = true
 	case "rlimit_nofile":
 		g.usesRlimitNofile = true
+	case "statfs":
+		g.usesStatfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "isatty":
 		g.usesIsatty = true
 	case "signal_ignore", "signal_default":
@@ -3406,6 +3421,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_process_alive"
 		case "rlimit_nofile":
 			target = "__fern_rlimit_nofile"
+		case "statfs":
+			target = "__fern_statfs"
 		case "isatty":
 			target = "__fern_isatty"
 		case "signal_ignore":
@@ -12112,6 +12129,125 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
+}
+
+// linuxStatfsFields maps each FsStat field onto the offset it is read
+// from in Linux's 120-byte `struct statfs`, whose every member is a
+// 64-bit word on both supported ISAs:
+//
+//	f_type 0, f_bsize 8, f_blocks 16, f_bfree 24, f_bavail 32,
+//	f_files 40, f_ffree 48, f_fsid 56, f_namelen 64, f_frsize 72
+//
+// `path_max` is absent from the record and is stored separately: Linux
+// has no pathconf syscall, and PATH_MAX is the kernel's own 4096 for
+// every filesystem it mounts.
+var linuxStatfsFields = []struct{ box, src int32 }{
+	{ir.FsStat.BlockSize, 8},
+	{ir.FsStat.Blocks, 16},
+	{ir.FsStat.BlocksFree, 24},
+	{ir.FsStat.BlocksAvail, 32},
+	{ir.FsStat.Files, 40},
+	{ir.FsStat.FilesFree, 48},
+	{ir.FsStat.NameMax, 64},
+}
+
+// linuxPathMax is PATH_MAX, the longest pathname the Linux kernel will
+// resolve. A constant rather than a lookup because Linux has no
+// pathconf syscall and `getconf PATH_MAX` reports this for every
+// filesystem; Darwin, which does have one, asks it (see the arm64
+// emitter).
+const linuxPathMax = 4096
+
+// emitStatfsRuntime emits `__fern_statfs(path) → Result[FsStat, IoError]`
+// — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
+// linuxStatfsFields. System V: rdi = path string value.
+//
+// Built on the same skeleton as __fern_stat: a NUL-terminated heap copy
+// of the path for the syscall, the buffer left live across
+// __fern_alloc_box so the record is copied out after the box exists, and
+// the errno classified against the ORIGINAL path value so the IoError
+// names what the caller asked about.
+func (g *generator) emitStatfsRuntime() {
+	g.line("")
+	g.line(".globl __fern_statfs")
+	g.line(".type __fern_statfs, @function")
+	g.label("__fern_statfs")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // pathz
+	g.emit("push r12") // path byte ptr
+	g.emit("push r13") // path len / IoError box
+	g.emit("push r14") // syscall result across the free
+	g.emit("push r15")
+	// 6 pushes ⇒ rsp≡8 mod 16; sub 168 realigns — 120-byte statfs buf
+	// at [rsp..119] + slots:
+	//   [rbp-56] emitStrDataPtr inline-spill scratch
+	//   [rbp-64] original path string value (io_error arg)
+	g.emit("sub rsp, 168")
+	g.emit("mov [rbp - 64], rdi")
+	g.emitStrLen("r13d", "rdi")
+	g.emitStrDataPtr("r12", "rdi", "[rbp - 56]")
+	g.emit("lea edi, [r13 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov rbx, rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Lsfs_cp")
+	g.emit("cmp rcx, r13")
+	g.emit("jae .Lsfs_cpd")
+	g.emit("mov al, [r12 + rcx]")
+	g.emit("mov [rbx + rcx], al")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Lsfs_cp")
+	g.label(".Lsfs_cpd")
+	g.emit("mov byte ptr [rbx + r13], 0")
+	// statfs(pathz, buf)
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rsp")
+	g.emitSyscall(sysStatfs)
+	g.emit("mov r14, rax") // result across the free
+	g.emit("mov rdi, rbx")
+	g.emit("lea rsi, [r13 + 1]")
+	g.emit("call __fern_free")
+	g.emit("mov rax, r14")
+	g.emit("test rax, rax")
+	g.emit("js .Lsfs_err")
+	g.emit(fmt.Sprintf("mov edi, %d", ir.FsStat.Bytes))
+	g.emit("call __fern_alloc_box")
+	for _, f := range linuxStatfsFields {
+		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.src))
+		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.box))
+	}
+	g.emit(fmt.Sprintf("mov r9d, %d", linuxPathMax))
+	g.emit(fmt.Sprintf("mov [rax + %d], r9", ir.FsStat.PathMax))
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], r13")
+	g.emit("jmp .Lsfs_return")
+
+	g.label(".Lsfs_err")
+	g.emit("neg rax")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, r13d")
+	g.emit("mov rsi, [rbp - 64]")
+	g.emit("call __fern_io_error")
+	g.emit("mov r13, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], r13")
+
+	g.label(".Lsfs_return")
+	g.emit("add rsp, 168")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_statfs, .-__fern_statfs")
 }
 
 // emitRlimitNofileRuntime emits `__fern_rlimit_nofile()` — the soft

@@ -301,6 +301,11 @@ var rcInertBuiltins = map[string]bool{
 	// `write_file_exec` it is classified here under the builtin name
 	// rather than as a wasm runtime helper.
 	"access": true,
+	// (path) → Result[FsStat, IoError]. The path is read and NUL-copied
+	// and nothing in the record it fills is a counted reference.
+	// Native-only for the same reason — no wasm world has a volume to
+	// measure — so it too is classified under the builtin name.
+	"statfs": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066

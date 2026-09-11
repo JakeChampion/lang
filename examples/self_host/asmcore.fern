@@ -469,6 +469,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "umask") { return "95"; }
         if (name == "kill") { return "62"; }
         if (name == "getrlimit") { return "97"; }
+        if (name == "statfs") { return "137"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -531,6 +532,11 @@ pub function sysno(t: string, name: string): string {
         if (name == "umask") { return "60"; }
         if (name == "kill") { return "37"; }
         if (name == "getrlimit") { return "194"; }
+        // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
+        // variants, and that is the one libSystem's `statfs` resolves to.
+        // Its record has no name-length member, so a Darwin emit needs
+        // pathconf (BSD 191) for the two length limits as well.
+        if (name == "statfs") { return "345"; }
         // No pipe2 / dup3 rows: XNU has neither, and its pipe() reports the
         // second fd in x1, which no __syscall* intrinsic can see. That is why
         // subprocess keeps a hand-written body on this one target — the same
@@ -580,6 +586,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "umask") { return "166"; }
     if (name == "kill") { return "129"; }
     if (name == "getrlimit") { return "163"; }
+    if (name == "statfs") { return "43"; }
     // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
     // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
     if (name == "uname") { return "160"; }

@@ -1061,6 +1061,7 @@ func New() *Interp {
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
+	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -2763,6 +2764,37 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 // would hang where they no-op. 64 rather than 31 because Linux's realtime
 // signals run to 64 and are perfectly real dispositions to set.
 const maxSignal = 64
+
+// builtinStatfs mirrors the native `statfs(path)` — the geometry and the
+// length limits of the filesystem the path resolves on. Where those numbers
+// come from is per-OS (fsstat_linux.go / fsstat_darwin.go); the projection
+// onto FsStat is not.
+func builtinStatfs(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("statfs: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("statfs: expected string path, got %T", args[0])
+	}
+	raw, err := fsStatFields(string(path))
+	if err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return resultOk(&Struct{
+		TypeName: "FsStat",
+		Fields: map[string]Value{
+			"block_size":   Number(raw.blockSize),
+			"blocks":       Number(raw.blocks),
+			"blocks_free":  Number(raw.blocksFree),
+			"blocks_avail": Number(raw.blocksAvail),
+			"files":        Number(raw.files),
+			"files_free":   Number(raw.filesFree),
+			"name_max":     Number(raw.nameMax),
+			"path_max":     Number(raw.pathMax),
+		},
+	}), nil
+}
 
 // builtinRlimitNofile mirrors the native `rlimit_nofile()` — the soft
 // RLIMIT_NOFILE the kernel is enforcing on this process.

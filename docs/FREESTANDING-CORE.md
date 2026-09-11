@@ -52,6 +52,7 @@ costs a silent failure on the first target that lacks it.
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
+| `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
@@ -196,6 +197,29 @@ memory-model question rather than a capability one. The two dispositions are
 what a utility needs: `tee -i` is SIG_IGN on SIGINT, and its `--output-error`
 family is SIG_IGN on SIGPIPE so a write to a vanished reader returns EPIPE
 instead of killing the process.
+
+**`fsinfo` is a third split off `fs`, and the split is the same one
+`fsmode` made.** `fs` is the files: open one, read it, link it, remove
+it. `fsinfo` is the volume they sit on — how many blocks it has, how
+many are left, and how long a name it will accept. A host can serve
+files and have nothing to say about any of that, and both WASI previews
+are exactly that host: preview 1's `path_filestat_get` is per-file, the
+component model's `wasi:filesystem/types` has no volume interface, and a
+preopen is a capability handle rather than a mount, so it carries no
+length limit either. Zeros would claim a filesystem with no blocks and
+no name length — a measurement nobody took — so E066 refuses it.
+
+Where the limits live differs between the two hosted kernels, and that
+is an implementation detail rather than a classification one: Linux's
+`statfs(2)` carries `f_namelen` and Linux has no pathconf syscall at all
+(PATH_MAX is the kernel's own 4096), while Darwin's `struct statfs` has
+no name length and its real `pathconf(2)` answers both limits. Not
+constants on Darwin: APFS and HFS+ agree on 255, a mounted FAT or SMB
+volume does not, and `pathchk` is the caller that would notice.
+
+`internal/caps` files it under plain `fs` — for a dependency grant the
+question is only whether filesystem reach should be visible, and
+measuring a volume is filesystem reach.
 
 **`rlimit` is its own capability, not `proc`.** `proc` is the authority
 to HAVE processes — fork one, exec into one, wait for one — and a host
