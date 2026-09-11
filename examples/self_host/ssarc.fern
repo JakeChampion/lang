@@ -442,6 +442,13 @@ function frame(f: ssasem.Func): irlower.LowerResult {
 
 function binary_kind(op: string): string {
     if (op == "+") { return "add"; }
+    if (op == "/") { return "div_s"; }
+    if (op == "%") { return "rem_s"; }
+    if (op == "&") { return "and"; }
+    if (op == "|") { return "or"; }
+    if (op == "^") { return "xor"; }
+    if (op == "<<") { return "shl"; }
+    if (op == ">>") { return "shr_s"; }
     if (op == "-") { return "sub"; }
     if (op == "*") { return "mul"; }
     if (op == "<") { return "lt_s"; }

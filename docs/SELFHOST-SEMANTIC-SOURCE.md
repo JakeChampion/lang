@@ -37,16 +37,27 @@ Unsupported constructs refuse the whole function with a reason.
   literal names them in. Every record a function's values, contracts or a
   schema's own fields name is entered into the function's schema table, so
   a nested record is walked through its schema, never through syntax. A
-  functional update (`T { ...base, f: v }`) is refused.
+  functional update (`T { ...base, f: v }`) reads each field it does not
+  replace off the base as a `record_get`, in the order `semir.build_record`
+  uses: the base, then the replaced fields in written order, then the
+  projections. The plain literal's declaration order is enforced HERE, by
+  refusing a literal whose names do not match the schema in order — neither
+  checker requires it, and that refusal is what makes the positional
+  construction sound.
 - String literals as the SSA `const_str` constant, string `+` as a fresh
   concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
   beside the scalar rules. A string constant and a concatenation are units
   of the function's own, released when dead; a literal's static box is
   immortal to the runtime, so its release is a no-op.
-- Wrapping i32 `+ - *`, i32 comparisons, boolean `==` / `!=`, unary `-` and
-  `!`. These are new semantic kinds (the SSA `binary` / `unary` tags) whose
-  typing lives in `ssasem.binary_result` / `unary_result`; `ssarc` lowers them
-  to the stack IR's `add` … `ne` and `not` / zero-minus.
+- The i32 integer operators — arithmetic, division and remainder, the bitwise
+  three, and both shifts — plus i32 comparisons, boolean `==` / `!=`, unary
+  `-` and `!`. These are new semantic kinds (the SSA `binary` / `unary` tags)
+  whose typing lives in `ssasem.binary_result` / `unary_result`; `ssarc`
+  lowers them to the stack IR's `add` … `ne` and `not` / zero-minus. Every one
+  is total, because Fern pins the integer edges rather than trapping
+  (`docs/INTEGER-SEMANTICS.md`): `x / 0` is 0, `x % 0` is x, `INT_MIN / -1`
+  wraps, and a shift count is masked to the operand width. So none of them
+  needs a guard, a branch or an abort path here.
 - `&&` and `||` as control flow: the right operand runs on its own edge and the
   result is a boolean phi.
 - `if` / `else` with binding joins, `while` and `loop` with unlabelled `break`
@@ -66,12 +77,22 @@ Unsupported constructs refuse the whole function with a reason.
   (`Shape.Dot`), a nested, tuple, struct-field, literal or `@` pattern, and a
   non-enum scrutinee are refused.
 
-Refused, each with its own reason: calls of builtins, methods (including a
-string's), local function values and void functions, floats in expressions,
-integer widths other than i32, division, string ordering, generic records,
-record updates, destructuring, labelled loops, `for`, match guards and the
-pattern shapes above, `defer`, closures, receiver methods, generics, external
-and async functions, and a value-returning body that falls through.
+- `for` over an array as an index loop whose advance runs at the TOP of the
+  header with the index starting one before the first element, because
+  `continue` branches to the header and a bottom advance would be skipped
+  (#2788). The element is an `array_get`, so it is already a borrow anchored
+  to its container and needs no new ownership rule.
+- The array and string builtins `.len()` and `.append()`, and
+  `slice_unchecked` on a string. A slice owns its box and borrows the
+  source's bytes, so it is a projection anchored to its source and is
+  released by the view helper rather than the ordinary string free.
+
+Refused, each with its own reason: calls of the remaining builtins, local
+function values and void functions, floats in expressions, integer widths
+other than i32, casts, string indexing, string ordering, generic records,
+destructuring, labelled loops, match guards and the pattern shapes above,
+`defer`, closures, receiver methods, generics, external and async functions,
+and a value-returning body that falls through.
 
 ## Calls
 
@@ -159,10 +180,10 @@ the contract feed leaks five blocks on the same program.
 
 ## Remaining
 
-The producer does not yet admit method calls, builtins, `for`, casts, record
-updates, integer widths other than i32, floats, division, destructuring,
-closures or generics, so no production consumer is switched and no AST
-ownership analysis is deleted.
+The producer does not yet admit string indexing, casts, integer widths other
+than i32, floats, the remaining builtins, destructuring, closures or
+generics, so no production consumer is switched and no AST ownership analysis
+is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -177,14 +198,32 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 1,000 of its 7,356
-functions produce, plan and physically lower. The refusals are led by method
-calls, which are the first refusal for 3,057 of them and appear somewhere in
-more than half of all functions; then the statement surface, receiver method
-declarations, and recursive types.
+Measured against the whole loaded self-hosted compiler, 2,785 of its 7,406
+functions produce, plan and physically lower.
 
-Next: a per-type drop helper so a recursive type has a physical lowering,
-since every union this compiler declares is recursive; then method calls,
-which nothing else compounds past; then a production consumer that lowers
-produced functions through this pipeline and feeds `caller_sigs` to the
-remaining AST callers.
+Read that number, not the raw refusal histogram: 2,823 of the 4,455 refusals
+are `call target was refused` cascades, so the histogram is dominated by
+functions whose only problem is a refused callee. What is worth counting is
+the LEAF — the first refusal that is not a cascade. The leaves are now led by
+string indexing (507, the whole of `array projection contract`), then callees
+with no semantic contract, unsupported literals, destructuring, record
+literals the schema does not match in order, and the operators that remain:
+mixed widths and string ordering. A further 165 functions produce and plan
+but are refused by the unit planner for an `.append` whose receiver is not
+moved, and 1 by physical RC lowering for an `i64` array element.
+
+The leaf is what to probe against before building: measured deltas have
+repeatedly disagreed with the histogram, most sharply on string indexing,
+which is the largest leaf and was worth +0 until enough of its callers
+lowered.
+
+Next, by measured leaf rather than by histogram: the `.append` receiver gate,
+which needs a clone form for a receiver the planner does not move (the
+`op_arr_slice` shape `irlower.lower_arr_append_value` already uses) and
+carries a real cost — the dominant refused shape is a borrowed-parameter
+accumulator in a loop, where a clone is O(n^2) bytes and native escapes it
+with an exemption this vocabulary has no analogue for. Then the wider scalar
+types, which string indexing, the casts, the mixed-width operators and the
+last physical-RC refusal all wait behind. Then a production consumer that
+lowers produced functions through this pipeline and feeds `caller_sigs` to
+the remaining AST callers.

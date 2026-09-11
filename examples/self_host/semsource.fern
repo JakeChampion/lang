@@ -316,11 +316,66 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
     return define(s, ssasem.record_get(), [container.id], at, fa.field, sig.field_types[at]);
 }
 
-// A literal names every field once, in declaration order; the checker has
-// already held it to that. A functional update reads a base value's fields
-// through no semantic operation yet, so it is refused.
+// An update names the base first, then the fields it replaces in WRITTEN
+// order, and reads the rest off the base — the order semir.build_record
+// lowers this shape in. A projection is a borrow anchored to the base, and
+// the construction takes its own unit of every reference field, so the base
+// stays live to the construction and is released after it.
+function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
+    var ty: typeinfo.Type = checked(e, s);
+    var sig: checker.StructSig = record_schema(sl.type_name, s);
+    if (sig.name.len() == 0 || !semtypes.concrete(ty, false)) { return refused(s, "unsupported record literal"); }
+    var base: Value = expr(sl.base, s, ty);
+    s = base.s;
+    if (!s.ok) { return base; }
+    if (!semtypes.equal(s.values[base.id], ty)) { return refused(s, "record base type"); }
+    var replaced: i32[] = [];
+    var at: i32[] = [];
+    var i: i32 = 0;
+    while (i < sl.field_values.len()) {
+        var slot: i32 = field_slot(sig, sl.field_names[i]);
+        if (slot < 0) { return refused(s, "unsupported record literal"); }
+        var v: Value = expr(sl.field_values[i], s, sig.field_types[slot]);
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], sig.field_types[slot])) { return refused(s, "record field type"); }
+        replaced = replaced.append(v.id);
+        at = at.append(slot);
+        i = i + 1;
+    }
+    var ids: i32[] = [];
+    var d: i32 = 0;
+    while (d < sig.field_names.len()) {
+        var found: i32 = index_of_i32(at, d);
+        if (found >= 0) { ids = ids.append(replaced[found]); }
+        else {
+            var got: Value = define(s, ssasem.record_get(), [base.id], d, sig.field_names[d], sig.field_types[d]);
+            s = got.s;
+            if (!s.ok) { return got; }
+            ids = ids.append(got.id);
+        }
+        d = d + 1;
+    }
+    return define(s, ssasem.record_new(), ids, 0, "", ty);
+}
+
+function field_slot(sig: checker.StructSig, name: string): i32 {
+    var i: i32 = 0;
+    while (i < sig.field_names.len()) { if (sig.field_names[i] == name) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+function index_of_i32(xs: i32[], v: i32): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == v) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+// A plain literal names every field once, and this boundary holds it to
+// declaration order: neither checker requires that, so the refusal below is
+// what makes the positional construction sound.
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
-    if (sl.has_base) { return refused(s, "unsupported record update"); }
+    if (sl.has_base) { return record_update(e, sl, s); }
     var ty: typeinfo.Type = checked(e, s);
     var sig: checker.StructSig = record_schema(sl.type_name, s);
     if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || sl.field_values.len() != sig.field_types.len()) { return refused(s, "unsupported record literal"); }
