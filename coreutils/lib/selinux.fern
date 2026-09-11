@@ -44,14 +44,29 @@ pub function enabled(): boolean {
 // kernel exposes as this file, NUL-terminated. libselinux reads
 // /proc/thread-self/attr/current; a Fern binary has one thread, for
 // which that is this same file.
+//
+// The trailing NUL is stripped and NOTHING ELSE. Some kernels end the
+// attribute with a newline, and that newline is part of the context as
+// getcon reports it: `runcon` with no command prints a blank line after
+// it, and `id -Z` the same. Trimming it here made every no-command runcon
+// case differ by one byte on a host whose file carries one, and agree on
+// a host whose file does not.
+// The attribute's bytes as getcon reports them. Separate from the read so
+// that a host whose file carries no newline can still test the case of one
+// that does — runcon has no operand to point at another file, so the
+// oracle corpus only ever sees whatever this machine's kernel wrote.
+pub function trim_context(text: string): string {
+  var n: i32 = text.len();
+  while (n > 0 && text[n - 1] as i32 == 0) {
+    n = n - 1;
+  }
+  return slice_unchecked(text, 0, n) + "";
+}
+
 pub function context(): Result[string, IoError] {
   match (read_file("/proc/self/attr/current")) {
     Ok(text) => {
-      var n: i32 = text.len();
-      while (n > 0 && (text[n - 1] as i32 == 0 || text[n - 1] as i32 == 10)) {
-        n = n - 1;
-      }
-      return Ok(slice_unchecked(text, 0, n) + "");
+      return Ok(trim_context(text));
     },
     Err(e) => {
       return Err(e);

@@ -4566,6 +4566,29 @@ func TestRunnerCoreutilsPwdbExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/coreutils_selinux_test.fern` covers coreutils/lib/selinux's
+// getcon trim, which the oracle corpus cannot reach: the context comes from
+// /proc/self/attr/current and neither `runcon` nor `id -Z` has an operand
+// pointing anywhere else, so a case only ever sees what THIS machine's kernel
+// wrote. A container under AppArmor writes a NUL and no newline, where the
+// aarch64 runner writes a context ending in one — and a newline there belongs
+// to the context, so runcon with no command prints a blank line after it.
+// Trimming it agreed with GNU on the first host and differed by a byte on the
+// second, in every no-command case at once. Passing suite -> exit 0.
+func TestRunnerCoreutilsSelinuxExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/coreutils_selinux_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/selinux", "1..7", "# pass 7", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/coreutils_ld_test.fern")
