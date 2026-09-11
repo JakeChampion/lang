@@ -178,10 +178,10 @@ function plain_raw(sel: i32, p: Plain): u8[] {
   var v: u32 = plain_value(p);
   var out: u8[] = [];
   if (sel == sel_crc()) {
-    out = out.append(((v >> 24) & 255) as u8);
-    out = out.append(((v >> 16) & 255) as u8);
+    out = out.append((v >> 24 & 255) as u8);
+    out = out.append((v >> 16 & 255) as u8);
   }
-  out = out.append(((v >> 8) & 255) as u8);
+  out = out.append((v >> 8 & 255) as u8);
   out = out.append((v & 255) as u8);
   return out;
 }
