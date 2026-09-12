@@ -1772,7 +1772,7 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
-  `install` `touch` `truncate` (done) `mkfifo` (done) `mknod` (done)
+  `install` `touch` `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
@@ -1819,13 +1819,18 @@ groups are the order of work. Each sub-issue names its group.
   `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
   (271), `rlimit_nofile` (272), `truncate` (273), `mknod` (274).
 
-  `truncate` is path-based rather than fd-based, and the reason is
-  measured: `open_writer` is `O_WRONLY|O_CREAT|O_TRUNC`, `open_appender`
-  creates too, and `open_exclusive` fails on a file that exists — so no
-  Fern open yields a writable descriptor to an EXISTING file without
-  first emptying it, and an `ftruncate` form could not express
-  `truncate -s +10 file`. It does not create: that is `open_exclusive`
-  followed by this. Neither WASI preview has a path-based set-size —
+  `truncate` is path-based rather than fd-based because no Fern open
+  yields a writable descriptor to an EXISTING file without first
+  emptying it: `open_writer` is `O_WRONLY|O_CREAT|O_TRUNC`,
+  `open_appender` creates too, and `open_exclusive` fails on a file that
+  exists. It does not create: that is `open_exclusive` followed by this.
+  The shape costs a divergence GNU does not have (#9142): GNU opens once
+  and calls `ftruncate(2)`, so it resizes a file whose MODE would refuse
+  a fresh open, and `umask 222; truncate -s 5 new` succeeds there and
+  fails here with `Permission denied`. `truncate(1)` therefore waits on
+  the descriptor form, which is the same surface `dd` and `shred` want.
+
+  Neither WASI preview has a path-based set-size —
   `path_filestat_set_size` is not a preview-1 import, measured against
   wasmtime rather than read from a header — so both wasm bodies open
   without CREATE or TRUNCATE, set the size through the descriptor and
