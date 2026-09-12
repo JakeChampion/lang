@@ -1710,17 +1710,11 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-<<<<<<< HEAD
-// NEXT FREE EXTENSION ID: 286..290, then 298 — 285 (signal_send) was taken
-// out of order by a branch in flight, as 275..280 and 291..297 were (re-grep
-// rather than trusting this line — it has been stale before, which is the
-// drift the paragraph below is about).
-=======
-// NEXT FREE EXTENSION ID: 282..290, then 298 — 281 (writer_truncate) sits
-// past main's 277..279 block because both branches claimed 277 and the merge
-// moved this one (re-grep rather than trusting this line — it has been stale
-// before, which is the drift the paragraph below is about).
->>>>>>> origin/main
+// NEXT FREE EXTENSION ID: 282..284, 286..290, then 298 — 281
+// (writer_truncate) and 285 (signal_send) were each taken out of order by a
+// branch in flight, as 275..280 and 291..297 were, and 298..301 are spoken
+// for by the sync family (re-grep rather than trusting this line — it has
+// been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -2561,11 +2555,8 @@ function kind_name_4(id: i32): string {
     if (id == 278) { return "signal_mask"; }
     if (id == 279) { return "signal_disposition"; }
     if (id == 280) { return "proc_exec_as"; }
-<<<<<<< HEAD
-    if (id == 285) { return "signal_send"; }
-=======
     if (id == 281) { return "writer_truncate"; }
->>>>>>> origin/main
+    if (id == 285) { return "signal_send"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     return "invalid";
 }
@@ -2721,11 +2712,8 @@ function pops2_io(t: i32): boolean {
         || t == 237                                                      // access (path, mode)
         || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
         || t == 273                                                      // truncate (path, length)
-<<<<<<< HEAD
-        || t == 285                                                      // signal_send (pid, sig)
-=======
         || t == 281                                                      // writer_truncate (fd, length)
->>>>>>> origin/main
+        || t == 285                                                      // signal_send (pid, sig)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213                                          // writer_write, proc_exec
