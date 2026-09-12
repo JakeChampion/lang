@@ -690,6 +690,14 @@ pub function op_cpu_count(): Op { return op0("cpu_count"); }
 // without a syscall, since kill(2) reads those as process GROUPS. Native only:
 // neither WASI preview has a process table (#8767).
 pub function op_process_alive(): Op { return op0("process_alive"); }
+// `signal_send` takes two operands [pid, sig] and pushes Result[void, IoError]:
+// kill(2), of which `process_alive` is the signal-0 corner. The pid reaches the
+// kernel as written - negatives and zero name process GROUPS, which is what a
+// sender means by them - so unlike the liveness query nothing is filtered out
+// first. ESRCH, EPERM and EINVAL each arrive as Other("", strerror), the empty
+// path being honest: the op never saw the text its caller parsed the pid from.
+// Native only: neither WASI preview has a process table to name a target in.
+pub function op_signal_send(): Op { return op0("signal_send"); }
 // `rlimit_nofile` takes no operands and pushes an i64: the SOFT RLIMIT_NOFILE
 // the kernel is enforcing on this process, what `ulimit -n` prints. An
 // unlimited resource reports i64 max — Linux spells RLIM_INFINITY as all ones
@@ -1631,14 +1639,16 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272): not
+// Extension tags beyond kind_count() (struct_copy=198 … signal_send=285): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 275 (re-grep rather than trusting this line — it has
-// been stale before, which is the drift the paragraph below is about).
+// NEXT FREE EXTENSION ID: 300. 275..299 are allocated to slices in flight, so
+// the table below is sparse up here while they land. Re-grep rather than
+// trusting this line, and never reuse an id you merely cannot see yet: two
+// agents both took 266 off a stale copy of it (#9089).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -2067,6 +2077,7 @@ function kind_id_len11_r(name: string): i32 {
 
 function kind_id_len11_s(name: string): i32 {
     if (name == "store_local") { return 19; }
+    if (name == "signal_send") { return 285; }
     if (name == "str_reverse") { return 110; }
     if (name == "str_replace") { return 111; }
     if (name == "strbuf_take") { return 119; }
@@ -2453,6 +2464,7 @@ function kind_name_4(id: i32): string {
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
     if (id == 280) { return "proc_exec_as"; }
+    if (id == 285) { return "signal_send"; }
     return "invalid";
 }
 
@@ -2591,6 +2603,7 @@ function pops2_io(t: i32): boolean {
         || t == 237                                                      // access (path, mode)
         || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
         || t == 273                                                      // truncate (path, length)
+        || t == 285                                                      // signal_send (pid, sig)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213;                                         // writer_write, proc_exec

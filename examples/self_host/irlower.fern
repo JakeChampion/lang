@@ -12367,6 +12367,7 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "getcwd" || name == "cpu_count") { return argc == 0; }
     if (name == "uname_field") { return argc == 1; }
     if (name == "process_alive") { return argc == 1; }
+    if (name == "signal_send") { return argc == 2; }
     if (name == "rlimit_nofile") { return argc == 0; }
     return false;
 }
@@ -12393,6 +12394,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 //   rlimit_nofile()     → op_rlimit_nofile → the soft RLIMIT_NOFILE as an
 //                         i64, no operands.
 //   process_alive(pid)  → op_process_alive → 0/1, one kill(pid, 0).
+//   signal_send(pid,sig)→ op_signal_send → Result[void, IoError], the whole
+//                         of kill(2); opt_ret_type resolves the Result the way
+//                         it does for access.
 function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
     if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
@@ -12411,6 +12415,7 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
+    if (cid.name == "signal_send") { return a1.emit(ir.op_signal_send()); }
     return a1.emit(ir.op_access());
 }
 
@@ -70734,6 +70739,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
     if (name == "statfs") { return "Result[FsStat, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
+    if (name == "signal_send") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender / open_exclusive ->
     // Result[Writer, IoError], so

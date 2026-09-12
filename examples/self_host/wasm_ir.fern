@@ -1624,8 +1624,9 @@ function is_raw_floor_builtin(name: string): boolean {
 // nothing at all.
 //
 //   - subprocess — child-process spawning, unsupportable on wasm/WASI (#4320).
-//   - process_alive / rlimit_nofile — a process table to ask about pids in,
-//     and a kernel-enforced resource ceiling. Neither preview has either.
+//   - process_alive / signal_send / rlimit_nofile — a process table to ask
+//     about pids in or deliver to, and a kernel-enforced resource ceiling.
+//     Neither preview has either.
 //   - timer_fd — the native fd-based CLOCK_MONOTONIC timerfd. wasm has no file
 //     descriptors to poll, and its analog already exists and lowers:
 //     wasm_timer_pollable, which returns a wasi:io/poll pollable instead of an
@@ -1676,6 +1677,11 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // keeps the wasm drivers that bypass that gate from reporting an
         // unknown op instead of the feature.
         if (util.index_of_str(ids, "process_alive") >= 0) { return "process_alive"; }
+        // signal_send (#8377) — the same missing process table, named as a
+        // delivery target. `signal` is granted on wasi-cli only because
+        // ignoring a signal nothing can deliver is an honest no-op; there is
+        // no honest no-op for sending one.
+        if (util.index_of_str(ids, "signal_send") >= 0) { return "signal_send"; }
         // rlimit_nofile (#8819) — neither WASI preview enforces a resource
         // limit, and every constant that could stand in (a plausible 1024, or
         // "unlimited") would be a measurement a component never took.
@@ -1712,6 +1718,9 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "process_alive") {
         return "error: process_alive is not supported on the wasm target (a component has no process table, so there are no pids to ask about)\n";
+    }
+    if (name == "signal_send") {
+        return "error: signal_send is not supported on the wasm target (a component has no process table, so there are no pids to deliver a signal to)\n";
     }
     if (name == "rlimit_nofile") {
         return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)\n";

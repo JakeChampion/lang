@@ -943,8 +943,9 @@ pub function all_runtime_need_roots(): string[] {
         // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
         // find them either.
         "isatty", "signal_ignore", "signal_default",
-        // The liveness of one pid and this process's descriptor ceiling.
-        "process_alive", "rlimit_nofile",
+        // The liveness of one pid, delivering a signal to one, and this
+        // process's descriptor ceiling.
+        "process_alive", "signal_send", "rlimit_nofile",
         // sockets + readiness (the edge-handler serve loop):
         "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",

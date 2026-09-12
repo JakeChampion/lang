@@ -1061,6 +1061,7 @@ func New() *Interp {
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
+	i.Builtins["signal_send"] = &Builtin{Fn: builtinSignalSend}
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
@@ -2856,6 +2857,32 @@ func builtinProcessAlive(_ *Interp, args []Value) (Value, error) {
 	return Bool(err == nil || err == syscall.EPERM), nil
 }
 
+// builtinSignalSend mirrors the native `signal_send(pid, sig)` —
+// kill(2), of which `process_alive` is the signal-0 corner.
+//
+// `pid` goes to the kernel exactly as written, negatives and zero
+// included: those name process GROUPS, which is what a sender means by
+// them. The errno is the whole answer, so it is classified rather than
+// collapsed — ESRCH, EPERM and EINVAL all say different things.
+func builtinSignalSend(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("signal_send: expected 2 args, got %d", len(args))
+	}
+	pid, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("signal_send: expected number pid, got %T", args[0])
+	}
+	sig, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("signal_send: expected number signal, got %T", args[1])
+	}
+	// The path an IoError from here carries is empty: the primitive never
+	// saw the text its caller parsed the pid out of, and a decimal
+	// spelling of `pid` would put a string in the error that the caller's
+	// own diagnostic must not use.
+	return ioResult("", syscall.Kill(int(pid), syscall.Signal(sig))), nil
+}
+
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.
 //
 // The interpreter shares its process with the Go runtime, so this moves
@@ -3279,6 +3306,10 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 // interpreter and the backends agree on how to surface the
 // same kind of failure.
 func classifyIoError(path string, err error) *Enum {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return ioErrorOfErrno(path, errno)
+	}
 	switch {
 	case os.IsNotExist(err):
 		return &Enum{EnumName: "IoError", VariantName: "NotFound", Index: 0,
@@ -3290,10 +3321,7 @@ func classifyIoError(path string, err error) *Enum {
 		return &Enum{EnumName: "IoError", VariantName: "AlreadyExists", Index: 2,
 			Payloads: []Value{String(path)}}
 	}
-	var errno syscall.Errno
 	switch {
-	case errors.As(err, &errno):
-		return ioErrorOther(path, errno)
 	case errors.Is(err, os.ErrClosed):
 		// Go refuses a write on a closed *os.File before the kernel
 		// sees it; the kernel's answer would be EBADF.
@@ -3303,6 +3331,37 @@ func classifyIoError(path string, err error) *Enum {
 	// own text is the only description there is.
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
 		Payloads: []Value{String(path), String(err.Error())}}
+}
+
+// ioErrorOfErrno classifies a real syscall failure the way every
+// backend's `__fern_io_error` ladder does: by the errno itself.
+//
+// Go's os.Is* predicates cannot stand in for this. os.IsPermission
+// answers true for EPERM as well as EACCES, so an EPERM reached the
+// interpreter as PermissionDenied while the natives gave it
+// Other(path, "Operation not permitted") — and EINTR and EILSEQ, which
+// the natives name Interrupted and InvalidUtf8, had no predicate at all
+// and fell through to Other. The predicates still serve the errors Go
+// synthesises without a syscall behind them, which is all classifyIoError
+// asks them now.
+func ioErrorOfErrno(path string, errno syscall.Errno) *Enum {
+	switch errno {
+	case syscall.ENOENT:
+		return &Enum{EnumName: "IoError", VariantName: "NotFound", Index: 0,
+			Payloads: []Value{String(path)}}
+	case syscall.EACCES:
+		return &Enum{EnumName: "IoError", VariantName: "PermissionDenied", Index: 1,
+			Payloads: []Value{String(path)}}
+	case syscall.EEXIST:
+		return &Enum{EnumName: "IoError", VariantName: "AlreadyExists", Index: 2,
+			Payloads: []Value{String(path)}}
+	case syscall.EILSEQ:
+		return &Enum{EnumName: "IoError", VariantName: "InvalidUtf8", Index: 3,
+			Payloads: []Value{String(path)}}
+	case syscall.EINTR:
+		return &Enum{EnumName: "IoError", VariantName: "Interrupted", Index: 4}
+	}
+	return ioErrorOther(path, errno)
 }
 
 // ioErrorOther builds `IoError::Other(path, strerror(errno))` — where

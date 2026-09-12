@@ -115,6 +115,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
         BuiltinCap { builtin: "proc_exec_as", capability: "subprocess" },
         BuiltinCap { builtin: "process_alive", capability: "subprocess" },
+        BuiltinCap { builtin: "signal_send", capability: "subprocess" },
 
         BuiltinCap { builtin: "now_unix_ms", capability: "time" },
         BuiltinCap { builtin: "now_ns", capability: "time" },

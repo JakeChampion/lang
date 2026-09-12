@@ -263,3 +263,4 @@ rlimit_nofile=272
 truncate=273
 mknod=274
 proc_exec_as=280
+signal_send=285

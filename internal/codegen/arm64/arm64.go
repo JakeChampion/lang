@@ -198,8 +198,9 @@ var linuxDarwinSysno = map[string][2]int{
 	// emitter picks, not part of the call.
 	"ioctl": {29, 54},
 	// kill(2) — Linux asm-generic 129, Darwin BSD 37. Backs
-	// `__fern_process_alive`, which passes signal 0: every check kill(2)
-	// makes, with nothing delivered.
+	// `__fern_signal_send`, and `__fern_process_alive`, which is the same
+	// call with signal 0: every check kill(2) makes, with nothing
+	// delivered.
 	"kill": {129, 37},
 	// getrlimit(2) — Linux asm-generic 163 (arm64 asks for the
 	// set/get-rlimit pair), Darwin BSD 194. Identical shape:
@@ -777,6 +778,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
+	}
+	if g.usesSignalSend {
+		g.emitSignalSendRuntime()
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
@@ -8863,6 +8867,60 @@ func (g *generator) emitProcessAliveRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSignalSendRuntime emits `__fern_signal_send(pid, sig)` -
+// Result[void, IoError] - kill(2) with the pid passed through exactly as
+// written, negatives and zero included: those name process GROUPS, and a
+// sender that means one process passes a positive number. `syscall` has
+// already normalised Darwin's carry-flag error into Linux's -errno
+// shape.
+//
+// ESRCH, EPERM and EINVAL are none of the errnos `__fern_io_error` gives a
+// named variant, so each arrives as Other(path, strerror) against the
+// shared empty path: the primitive never saw the text its caller parsed
+// the pid out of.
+func (g *generator) emitSignalSendRuntime() {
+	g.line("")
+	g.line(".global __fern_signal_send")
+	g.typeDirective("__fern_signal_send")
+	g.label("__fern_signal_send")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("sxtw x0, w0")
+	g.emit("sxtw x1, w1")
+	g.syscall("kill")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lsigsend_err")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lsigsend_ret")
+
+	g.label(".Lsigsend_err")
+	g.emit("neg x0, x0")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // the IoError box, across the Result alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1") // tag = 1 (Err)
+	g.emit("str w1, [x0]")
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsigsend_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_signal_send")
+	g.line(".ltorg")
+}
+
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
 // terminal, 0 otherwise.
 //
@@ -12976,6 +13034,11 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesSignalSend pulls in `__fern_signal_send(pid, sig)` — kill(2),
+	// Result[void, IoError]. The pid reaches the kernel as written:
+	// non-positive spellings name process groups, which is what a sender
+	// means by them.
+	usesSignalSend bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -17320,6 +17383,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// exists, 0 when it does not.
 			target = "__fern_process_alive"
 			g.usesProcessAlive = true
+		case "signal_send":
+			// signal_send(pid, sig): kill(2) — Result[void, IoError].
+			target = "__fern_signal_send"
+			g.usesSignalSend = true
+			g.usesIoError = true
+			g.usesAlloc = true
 		case "rlimit_nofile":
 			// rlimit_nofile(): the soft RLIMIT_NOFILE, i64 in x0.
 			target = "__fern_rlimit_nofile"

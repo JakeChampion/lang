@@ -1218,6 +1218,24 @@ pub function rt_src_process_alive(t: string): string {
     return "function __fern_process_alive(pid: i32): i32 { if (pid <= 0) { return 0; } var rc: i32 = __syscall3(" + sysno(t, "kill") + ", pid, 0, 0); if (rc == 0) { return 1; } if (rc == (0 - 1)) { return 1; } return 0; }";
 }
 
+// rt_src_signal_send backs `signal_send(pid, sig)` (syscall-leaf) ->
+// Result[void, IoError]: kill(2), of which process_alive is the signal-0
+// corner.
+//
+// The pid goes to the kernel as written. kill(2) reads 0 as "my process
+// group" and a negative as "the group -pid", and a sender that means one of
+// those says so - which is the whole difference from the liveness query,
+// where a non-positive pid would answer a different question than the one
+// asked.
+//
+// ESRCH, EPERM and EINVAL are none of the errnos __fern_io_error names a
+// variant for, so each becomes Other("", strerror). The path is empty because
+// the helper never saw the text its caller parsed the pid out of; a decimal
+// spelling of `pid` would not be the operand either.
+pub function rt_src_signal_send(t: string): string {
+    return "function __fern_signal_send(pid: i32, sig: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "kill") + ", pid, sig, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
 // rt_src_rlimit_nofile backs `rlimit_nofile()` (syscall-leaf) -> the SOFT
 // RLIMIT_NOFILE as an i64, what `ulimit -n` prints.
 //
@@ -4120,6 +4138,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "create_symlink") { return ty_option(ty_unknown()); }
     if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "chmod") { return ty_option(ty_unknown()); }
+    if (id.name == "signal_send") { return ty_option(ty_unknown()); }
     if (id.name == "truncate") { return ty_option(ty_unknown()); }
     if (id.name == "mknod") { return ty_option(ty_unknown()); }
     if (id.name == "set_file_times") { return ty_option(ty_unknown()); }
@@ -6090,8 +6109,10 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
         "__fn___fern_proc_exec_as",
-        // one pid's liveness, and this process's descriptor ceiling.
-        "__fn___fern_process_alive", "__fn___fern_rlimit_nofile",
+        // one pid's liveness, delivering a signal to one, and this
+        // process's descriptor ceiling.
+        "__fn___fern_process_alive", "__fn___fern_signal_send",
+        "__fn___fern_rlimit_nofile",
         // random_bytes and random_i32 are Fern on BOTH register backends now
         // (#2649), so only the stack-ABI symbols exist; the register-ABI
         // __fern_random_bytes / __fern_random_i32 are gone.

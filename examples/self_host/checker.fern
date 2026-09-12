@@ -11407,9 +11407,9 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
   // native's table and fails when the two drift.
   var out: string[] = [
     "__alloc_u8", "args", "cell_new", "environ", "getcwd", "getgroups",
-    "hostname", "map_new", "random_bytes", "read_line", "stderr", "stdin",
-    "stdout", "strbuf_take", "target_arch", "target_os", "tcp_recv",
-    "uname_field"
+    "hostname", "map_new", "random_bytes", "read_line", "signal_send",
+    "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",
+    "tcp_recv", "uname_field"
   ];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }

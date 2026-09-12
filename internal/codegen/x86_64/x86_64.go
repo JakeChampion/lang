@@ -323,9 +323,10 @@ const (
 	// ioctl(2): x86-64 syscall 16. Backs `__fern_isatty` via TCGETS,
 	// which succeeds only on a terminal.
 	sysIoctl = 16
-	// kill(2): x86-64 syscall 62. Backs `__fern_process_alive`, which
-	// sends signal 0 — every permission and existence check kill(2)
-	// makes, with nothing delivered.
+	// kill(2): x86-64 syscall 62. Backs `__fern_signal_send`, and
+	// `__fern_process_alive`, which is the same call with signal 0 —
+	// every permission and existence check kill(2) makes, with nothing
+	// delivered.
 	sysKill = 62
 	// getrlimit(2): x86-64 syscall 97. Backs `__fern_rlimit_nofile`.
 	// The 64-bit ABI's `struct rlimit` is two u64s, so the ancient
@@ -869,6 +870,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
 	}
+	if g.usesSignalSend {
+		g.emitSignalSendRuntime()
+	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
@@ -1230,6 +1234,11 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesSignalSend pulls in `__fern_signal_send(pid, sig)` — kill(2),
+	// Result[void, IoError]. The pid reaches the kernel as written:
+	// non-positive spellings name process groups, which is what a sender
+	// means by them.
+	usesSignalSend bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
@@ -1837,6 +1846,10 @@ func (g *generator) recordUse(target string) {
 		g.usesTimerFd = true
 	case "process_alive":
 		g.usesProcessAlive = true
+	case "signal_send":
+		g.usesSignalSend = true
+		g.usesIoError = true
+		g.usesAlloc = true
 	case "rlimit_nofile":
 		g.usesRlimitNofile = true
 	case "statfs":
@@ -3504,6 +3517,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_timer_fd"
 		case "process_alive":
 			target = "__fern_process_alive"
+		case "signal_send":
+			target = "__fern_signal_send"
 		case "rlimit_nofile":
 			target = "__fern_rlimit_nofile"
 		case "statfs":
@@ -12543,6 +12558,56 @@ func (g *generator) emitProcessAliveRuntime() {
 	g.emit("mov eax, 1")
 	g.emit("ret")
 	g.line(".size __fern_process_alive, .-__fern_process_alive")
+}
+
+// emitSignalSendRuntime emits `__fern_signal_send(pid, sig)` →
+// Result[void, IoError] — kill(2) with the pid passed through exactly as
+// written, negatives and zero included: those name process GROUPS, and a
+// sender that means one process passes a positive number.
+//
+// The three errnos kill(2) returns — ESRCH, EPERM, EINVAL — are none of
+// the ones `__fern_io_error` gives a named variant, so each arrives as
+// Other(path, strerror). The path is the shared empty literal: the
+// primitive never saw the text its caller parsed the pid out of.
+//
+// System V: edi = pid, esi = sig; the Result box in rax.
+func (g *generator) emitSignalSendRuntime() {
+	g.line("")
+	g.line(".globl __fern_signal_send")
+	g.line(".type __fern_signal_send, @function")
+	g.label("__fern_signal_send")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8") // 2 pushes + this ⇒ 16-byte aligned at the calls
+	g.emit("movsxd rdi, edi")
+	g.emit("movsxd rsi, esi")
+	g.emitSyscall(sysKill)
+	g.emit("test rax, rax")
+	g.emit("js .Lsigsend_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lsigsend_ret")
+
+	g.label(".Lsigsend_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax") // the IoError box, across the Result alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lsigsend_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_signal_send, .-__fern_signal_send")
 }
 
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a

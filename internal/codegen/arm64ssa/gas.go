@@ -1298,6 +1298,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"poll":                          emitPollHelper,
 	"isatty":                        emitIsattyHelper,
 	"process_alive":                 emitProcessAliveHelper,
+	"signal_send":                    emitSignalSendHelper,
 	"rlimit_nofile":                 emitRlimitNofileHelper,
 	"statfs":                        emitStatfsHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
@@ -1978,6 +1979,47 @@ func emitRandomI32Helper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w("\tldr w0, [sp]") // 4 random bytes → i32
 	w("\tadd sp, sp, #16")
+	w("\tret")
+}
+
+// emitSignalSendHelper writes signal_send(pid, sig) -> Result[void, IoError]:
+// kill(2) with the pid as written. Negatives and zero reach the kernel
+// unchanged, because those spellings name process GROUPS and that is what a
+// sender means by them; process_alive rejects them only because a liveness
+// question is about one process.
+//
+// ESRCH, EPERM and EINVAL are none of the errnos __fern_io_error names a
+// variant for, so each becomes Other(path, strerror) against an empty path:
+// the primitive never saw the text its caller parsed the pid out of.
+// Non-leaf (calls __fern_io_error). x0=pid, x1=sig.
+func emitSignalSendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("signal_send"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tsxtw x0, w0")
+	w("\tsxtw x1, w1")
+	w("\tmov x8, #%d", sysKill)
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_sigsend_err")
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
+	w("\tb .Lssa_sigsend_ret")
+	w(".Lssa_sigsend_err:")
+	w("\tneg x19, x0") // errno, across the inline empty-string alloc
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_sigsend_ret:")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 
@@ -3204,6 +3246,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_link":                     {"__fern_io_error"},
 	"rename":                        {"__fern_io_error"},
 	"chmod":                         {"__fern_io_error"},
+	"signal_send":                   {"__fern_io_error"},
 	"truncate":                      {"__fern_io_error"},
 	"mknod":                         {"__fern_io_error"},
 	"set_file_times":                {"__fern_io_error"},
@@ -3270,6 +3313,7 @@ var heapUsingHelpers = map[string]bool{
 	"read_link":                     true,
 	"rename":                        true,
 	"chmod":                         true,
+	"signal_send":                   true,
 	"truncate":                      true,
 	"mknod":                         true,
 	"set_file_times":                true,
@@ -7525,7 +7569,8 @@ func oneHalfword(v uint64) bool {
 const (
 	sysClockGettime = 113
 	sysNanosleep    = 101
-	// kill(2), asm-generic 129 — process_alive's zero signal.
+	// kill(2), asm-generic 129 — signal_send, and process_alive's zero
+	// signal.
 	sysKill = 129
 	// getrlimit(2), asm-generic 163 — rlimit_nofile's soft ceiling.
 	sysGetrlimit   = 163

@@ -284,6 +284,7 @@ var providedSigs = map[string]providedSig{
 	"f64_from_bits":                 {-1, rFloat},
 	"isatty":                        {1, rWord},
 	"process_alive":                 {1, rWord},
+	"signal_send":                   {2, rWord},
 	"rlimit_nofile":                 {0, rWord},
 	"access":                        {2, rWord},
 	"geteuid":                       {0, rWord},

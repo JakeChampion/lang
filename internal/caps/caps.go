@@ -113,6 +113,9 @@ var BuiltinCaps = map[string]string{
 	// Not spawning, but reaching outside this process all the same: the
 	// pid asked about is someone else's.
 	"process_alive": "subprocess",
+	// Reaching outside this process to ACT on it, which is strictly more
+	// than asking whether it is there.
+	"signal_send": "subprocess",
 
 	"now_unix_ms":         "time",
 	"now_ns":              "time",

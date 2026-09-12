@@ -199,6 +199,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "proc_exec", capability: "proc" },
         Gate { builtin: "proc_exec_as", capability: "proc" },
         Gate { builtin: "process_alive", capability: "proc" },
+        Gate { builtin: "signal_send", capability: "proc" },
 
         // A kernel-enforced ceiling on a process resource. Its own
         // capability rather than `proc`: that one is the authority to have
