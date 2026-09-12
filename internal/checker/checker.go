@@ -2278,7 +2278,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.VoidType{},
-			ast.StructType{Name: "IoError"},
+			ast.EnumType{Name: "IoError"},
 		}},
 	}
 	// cpu_count(): how many processing units this process may run

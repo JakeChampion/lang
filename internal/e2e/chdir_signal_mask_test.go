@@ -33,6 +33,23 @@ import (
 // "/" is the one directory whose contents are known on every target this runs
 // on, and the harness starts the program somewhere else.
 const chdirSource = `
+// Naming every variant forces chdir's Err payload to BE the IoError enum.
+// Matching Err(e) and then dropping e does not, which is how the builtin
+// shipped with its error declared as a STRUCT of that name: unusable by
+// anything taking an IoError, and invisible to a test that never looks inside
+// the error it was handed.
+function code_of(e: IoError): i32 {
+    match (e) {
+        NotFound(_) => { return 1; },
+        PermissionDenied(_) => { return 2; },
+        AlreadyExists(_) => { return 3; },
+        InvalidUtf8(_) => { return 4; },
+        Interrupted => { return 5; },
+        Unsupported => { return 6; },
+        Other(c, m) => { return 7; }
+    }
+}
+
 function main(): i32 {
     match (stat("dev")) {
         Ok(v) => { return 61; },
@@ -49,17 +66,22 @@ function main(): i32 {
     // A path that does not exist is an error, not a silent no-op...
     match (chdir("/no-such-directory-at-all-9090")) {
         Ok(v) => { return 64; },
-        Err(e) => {}
+        Err(e) => {
+            if (code_of(e) != 1) { return 68; }
+        }
     }
     // ...and a failed move leaves the process where it was.
     match (stat("dev")) {
         Ok(v) => {},
         Err(e) => { return 65; }
     }
-    // A regular file is ENOTDIR rather than success.
+    // A regular file is ENOTDIR rather than success, which the IoError carries
+    // as Other since there is no named variant for it.
     match (chdir("/dev/null")) {
         Ok(v) => { return 66; },
-        Err(e) => {}
+        Err(e) => {
+            if (code_of(e) != 7) { return 69; }
+        }
     }
     match (stat("dev")) {
         Ok(v) => {},
