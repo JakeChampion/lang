@@ -208,6 +208,30 @@ pub function user_by_name_in(text: string, name: string): Option[User] {
   return None;
 }
 
+// The first /etc/group entry with this name. The inverse of group_name,
+// and the direction `chgrp GROUP` and `chown :GROUP` need: a name on the
+// command line has to become the gid the kernel is handed.
+pub function group_by_name(name: string): Option[Group] {
+  return group_by_name_in(slurp(group_path()), name);
+}
+
+pub function group_by_name_in(text: string, name: string): Option[Group] {
+  var lines: string[] = text.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    match (group_entry(lines[i])) {
+      Some(pair) => {
+        if (pair.0.name == name) {
+          return Some(pair.0);
+        }
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
 // The first /etc/passwd entry with this uid.
 pub function user_by_uid(uid: i64): Option[User] {
   return user_by_uid_in(slurp(passwd_path()), uid);

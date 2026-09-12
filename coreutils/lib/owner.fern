@@ -1,0 +1,448 @@
+// owner.fern — the `OWNER[:[GROUP]]` operand `chown`, `chgrp` and both of
+// their `--from=` options are written in, and the wording their `-v` / `-c`
+// lines are built from.
+//
+// It is one module because the two utilities disagree about less than they
+// look like they do. `chgrp GROUP` is the only place the grammar differs —
+// there the whole operand is a group, colons and all, so `chgrp a:b` is
+// `invalid group: 'a:b'` rather than a split. Everything else is shared,
+// `chgrp --from=` included: that one takes the FULL user:group spec, so
+// `chgrp --from=staff` is `invalid user: 'staff'` and `--from=:staff` is
+// what was meant.
+//
+// ---- the grammar ------------------------------------------------------------
+//
+// The spec splits at the FIRST colon. The user half is resolved before the
+// group half, which is why `a:b:c` is `invalid user` and `501:20:30` is
+// `invalid group` — in the second the user resolved and the group token is
+// the whole `20:30`. Either half may be empty and an empty half means "leave
+// this one alone", so `''` and `':'` are both complete no-ops rather than
+// errors.
+//
+// Every diagnostic quotes the WHOLE spec, never the half that failed.
+//
+// ---- the '.' separator ------------------------------------------------------
+//
+// GNU still accepts `user.group` and says so on stderr while doing the work.
+// It is a FALLBACK, not a second separator: the dot split is attempted, and
+// if any part of it fails the whole string is retried as a plain user name
+// before anything is reported. So a user genuinely named `a.b` is found, with
+// no warning, and `jakechampion.nosuchgroup` — where the split's user half is
+// fine and its group half is not — still reports `invalid user` naming the
+// whole string, because the retry is what failed last.
+//
+// That last case is worth stating because it reads like a bug: the failure
+// was a group, and the message says user.
+//
+// ---- numbers ----------------------------------------------------------------
+//
+// An id may be written as a number instead of a name, and a leading `+`
+// forces that reading for a name that is all digits. The parse is strtoul's,
+// not this codebase's usual one: decimal only (`0x10` is not 16, it is a
+// fault), leading zeros are fine, LEADING whitespace is skipped and trailing
+// whitespace is not. `4294967295` is refused — it is `(uid_t) -1`, the
+// kernel's own "leave this alone" sentinel, so it cannot also name an owner.
+//
+// ---- what the -v line says --------------------------------------------------
+//
+// `render` is the "to" half, and it is not simply the spec typed back. A
+// numeric id prints as its number, a symbolic one as its name, and the two
+// interact: `501:admin` renders `:admin`, dropping a user half that was
+// numeric, while `501:80` renders `501:80`. Which VERB the line uses —
+// "ownership of" or "group of" — falls out of the same three cases rather
+// than out of which half the caller supplied. Measured against GNU
+// coreutils 9.10 over every combination of {absent, name, number} squared;
+// `describe` is where that table lives.
+import "./gnu";
+import "./pwdb";
+
+// An id of -1 is "leave this one alone", which is the kernel's own
+// convention and what an omitted half compiles to. The names are carried
+// alongside the numbers because the -v wording needs to know whether a half
+// was written symbolically, not just what it resolved to.
+pub struct Spec {
+  uid: i64,
+  gid: i64,
+  uname: string,
+  has_uname: boolean,
+  gname: string,
+  has_gname: boolean,
+}
+
+pub function spec_none(): Spec {
+  return Spec { uid: 0 - (1 as i64), gid: 0 - (1 as i64), uname: "", has_uname: false, gname: "", has_gname: false };
+}
+
+// `kind` is which diagnostic to print, and it is part of the result rather
+// than of the caller because the grammar decides it: a failure in the user
+// half and a failure reached through the dot fallback are both `invalid
+// user`, however the spec was written.
+pub function err_none(): i32 { return 0; }
+pub function err_user(): i32 { return 1; }
+pub function err_group(): i32 { return 2; }
+pub function err_spec(): i32 { return 3; }
+
+pub struct Parsed { ok: boolean, spec: Spec, kind: i32, warn_dot: boolean }
+
+function fail(kind: i32): Parsed {
+  return Parsed { ok: false, spec: spec_none(), kind: kind, warn_dot: false };
+}
+
+// The message for a failed parse, already quoted. The spec goes through
+// `gnu.quote` and not `gnu.quotea`: a spec is not a file name, and the two
+// escape differently — `it's` is `'it\'s'` here and `"it's"` there.
+pub function (p: Parsed) message(spec: string): string {
+  if (p.kind == err_user()) {
+    return "invalid user: " + gnu.quote(spec);
+  }
+  if (p.kind == err_group()) {
+    return "invalid group: " + gnu.quote(spec);
+  }
+  return "invalid spec: " + gnu.quote(spec);
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+}
+
+// strtoul's reading of an id, bounded at the sentinel. Leading whitespace is
+// skipped because strtoul skips it; trailing whitespace is a fault because
+// the caller checks it consumed the whole string.
+pub function parse_number(s: string): Option[i64] {
+  var i: i32 = 0;
+  while (i < s.len() && is_space(s[i] as i32)) {
+    i = i + 1;
+  }
+  var v: i64 = 0;
+  var digits: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c < 48 || c > 57) {
+      return None;
+    }
+    v = v * (10 as i64) + (c - 48) as i64;
+    // 4294967295 is (uid_t) -1 and cannot name an owner; anything above it
+    // does not fit the field at all. Checked inside the loop so a very long
+    // digit run cannot overflow on its way to being refused.
+    if (v > 4294967294 as i64) {
+      return None;
+    }
+    i = i + 1;
+    digits = digits + 1;
+  }
+  if (digits == 0) {
+    return None;
+  }
+  return Some(v);
+}
+
+// A `+` makes the rest numeric whatever the databases say, which is the only
+// way to name a user whose login name is all digits by ID.
+function forced_numeric(tok: string): boolean {
+  return tok.len() > 0 && tok[0] as i32 == 43;
+}
+
+function after_plus(tok: string): string {
+  return slice_unchecked(tok, 1, tok.len()) + "";
+}
+
+// Resolve the user half. A name is looked up before a number, so a login
+// name that is all digits still wins over the id that reads the same.
+function resolve_user(tok: string, into: Spec): Option[Spec] {
+  if (forced_numeric(tok)) {
+    match (parse_number(after_plus(tok))) {
+      Some(n) => {
+        return Some(Spec { ...into, uid: n, uname: "", has_uname: false });
+      },
+      None => {
+        return None;
+      }
+    }
+  }
+  match (pwdb.user_by_name(tok)) {
+    Some(u) => {
+      return Some(Spec { ...into, uid: u.uid, uname: tok, has_uname: true });
+    },
+    None => {}
+  }
+  match (parse_number(tok)) {
+    Some(n) => {
+      return Some(Spec { ...into, uid: n, uname: "", has_uname: false });
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+function resolve_group(tok: string, into: Spec): Option[Spec] {
+  if (forced_numeric(tok)) {
+    match (parse_number(after_plus(tok))) {
+      Some(n) => {
+        return Some(Spec { ...into, gid: n, gname: "", has_gname: false });
+      },
+      None => {
+        return None;
+      }
+    }
+  }
+  match (pwdb.group_by_name(tok)) {
+    Some(g) => {
+      return Some(Spec { ...into, gid: g.gid, gname: tok, has_gname: true });
+    },
+    None => {}
+  }
+  match (parse_number(tok)) {
+    Some(n) => {
+      return Some(Spec { ...into, gid: n, gname: "", has_gname: false });
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// A trailing separator with nothing after it means the user's LOGIN group,
+// and the name it prints as is the group database's, not the user's. It
+// needs a SYMBOLIC user to hang off — there is no login group for a bare
+// number — which is why `501:` is `invalid spec` where `root:` is fine.
+function login_group(sp: Spec): Option[Spec] {
+  if (!sp.has_uname) {
+    return None;
+  }
+  match (pwdb.user_by_name(sp.uname)) {
+    Some(u) => {
+      match (pwdb.group_name(u.gid)) {
+        Some(n) => {
+          return Some(Spec { ...sp, gid: u.gid, gname: n, has_gname: true });
+        },
+        None => {
+          return Some(Spec { ...sp, gid: u.gid, gname: "", has_gname: false });
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// Split at the first occurrence of `sep`, or None when there is none.
+function split_first(s: string, sep: i32): Option[(string, string)] {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] as i32 == sep) {
+      return Some((slice_unchecked(s, 0, i) + "", slice_unchecked(s, i + 1, s.len()) + ""));
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// One attempt at a two-part spec. `trailing` says the separator was there
+// with nothing after it, which is the login-group form rather than an empty
+// group.
+function parse_split(user_tok: string, group_tok: string): Parsed {
+  var sp: Spec = spec_none();
+  // A separator with nothing after it is the login-group form, and EVERY way
+  // it can fail is `invalid spec` — including a user half that does not
+  // resolve. `nosuchuser:` is a spec fault, where `nosuchuser:g` is a user
+  // one, because the trailing form is a different request rather than the
+  // same one with an empty group.
+  var trailing: boolean = group_tok.len() == 0 && user_tok.len() > 0;
+  if (user_tok.len() > 0) {
+    match (resolve_user(user_tok, sp)) {
+      Some(next) => {
+        sp = next;
+      },
+      None => {
+        if (trailing) {
+          return fail(err_spec());
+        }
+        return fail(err_user());
+      }
+    }
+  }
+  if (group_tok.len() == 0) {
+    if (user_tok.len() == 0) {
+      // `:` on its own: both halves omitted, so nothing is changed.
+      return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
+    }
+    match (login_group(sp)) {
+      Some(next) => {
+        return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
+      },
+      None => {
+        return fail(err_spec());
+      }
+    }
+  }
+  match (resolve_group(group_tok, sp)) {
+    Some(next) => {
+      return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
+    },
+    None => {
+      return fail(err_group());
+    }
+  }
+}
+
+// The whole string as a user name and nothing else.
+function parse_user_only(spec: string): Parsed {
+  var sp: Spec = spec_none();
+  if (spec.len() == 0) {
+    return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
+  }
+  match (resolve_user(spec, sp)) {
+    Some(next) => {
+      return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
+    },
+    None => {
+      return fail(err_user());
+    }
+  }
+}
+
+// `chown`'s operand, and both utilities' `--from=`.
+pub function parse(spec: string): Parsed {
+  match (split_first(spec, 58)) {
+    Some(parts) => {
+      return parse_split(parts.0, parts.1);
+    },
+    None => {}
+  }
+  match (split_first(spec, 46)) {
+    Some(parts) => {
+      var dotted: Parsed = parse_split(parts.0, parts.1);
+      if (dotted.ok) {
+        return Parsed { ...dotted, warn_dot: true };
+      }
+      // The dot was not a separator after all. Whatever went wrong in the
+      // split is discarded: what is reported is the failure of the retry,
+      // which is always a user one.
+      var whole: Parsed = parse_user_only(spec);
+      if (whole.ok) {
+        return whole;
+      }
+      return fail(err_user());
+    },
+    None => {}
+  }
+  return parse_user_only(spec);
+}
+
+// `chgrp`'s operand. The whole thing is one group token: no split, so a
+// colon or a dot in it is part of the name and fails as one.
+pub function parse_group_only(spec: string): Parsed {
+  var sp: Spec = spec_none();
+  if (spec.len() == 0) {
+    return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
+  }
+  match (resolve_group(spec, sp)) {
+    Some(next) => {
+      return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
+    },
+    None => {
+      return fail(err_group());
+    }
+  }
+}
+
+pub function dot_warning(spec: string): string {
+  return "warning: '.' should be ':': " + gnu.quote(spec);
+}
+
+// ---- what a -v line says ----------------------------------------------------
+
+// Whether the line is about "group of" rather than "ownership of". Only a
+// spec that is a group and ONLY a group, written as a number, takes the
+// group verb under `chown`; `chgrp` takes it whenever it has a group at all.
+// A symbolic group does not, which is the asymmetry that looks like a bug
+// and is not: `chown :80` says "group of" and `chown :admin` says
+// "ownership of".
+pub function (sp: Spec) group_verb(chgrp_mode: boolean): boolean {
+  if (sp.uid < (0 as i64) && sp.gid < (0 as i64)) {
+    return false;
+  }
+  if (sp.has_gname) {
+    return chgrp_mode;
+  }
+  if (sp.gid >= (0 as i64)) {
+    return !sp.has_uname && sp.uid < (0 as i64);
+  }
+  return false;
+}
+
+// The "to" half. Empty when the spec changes nothing, which is the one case
+// with no clause at all: `ownership of 'f' retained`, full stop.
+pub function (sp: Spec) render(chgrp_mode: boolean): string {
+  if (sp.uid < (0 as i64) && sp.gid < (0 as i64)) {
+    return "";
+  }
+  if (sp.has_gname) {
+    if (chgrp_mode) {
+      return sp.gname;
+    }
+    var u: string = "";
+    if (sp.has_uname) {
+      u = sp.uname;
+    }
+    return u + ":" + sp.gname;
+  }
+  if (sp.gid >= (0 as i64)) {
+    if (sp.has_uname) {
+      return sp.uname + ":" + sp.gid.to_string();
+    }
+    if (sp.uid >= (0 as i64)) {
+      return sp.uid.to_string() + ":" + sp.gid.to_string();
+    }
+    return sp.gid.to_string();
+  }
+  if (sp.has_uname) {
+    return sp.uname;
+  }
+  return sp.uid.to_string();
+}
+
+// Whether the spec named a group at all, which decides whether the "from"
+// half carries one: `chown root f` reports `from jakechampion` and
+// `chown root:wheel f` reports `from jakechampion:wheel`.
+pub function (sp: Spec) names_group(): boolean {
+  return sp.gid >= (0 as i64) || sp.has_gname;
+}
+
+// An id as the -v line shows it: the database's name for it, or the number
+// when nothing claims it.
+pub function user_label(uid: i64): string {
+  match (pwdb.user_by_uid(uid)) {
+    Some(u) => {
+      return u.name;
+    },
+    None => {
+      return uid.to_string();
+    }
+  }
+}
+
+pub function group_label(gid: i64): string {
+  match (pwdb.group_name(gid)) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return gid.to_string();
+    }
+  }
+}
+
+// The "from" / "retained as" half: what the entry is NOW, rendered to the
+// same shape the spec will be.
+pub function current_label(uid: i64, gid: i64, with_group: boolean, group_verb: boolean): string {
+  if (group_verb) {
+    return group_label(gid);
+  }
+  if (with_group) {
+    return user_label(uid) + ":" + group_label(gid);
+  }
+  return user_label(uid);
+}

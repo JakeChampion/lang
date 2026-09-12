@@ -1582,6 +1582,34 @@ and the mode of every entry; what is missing is a safety property no case
 asserts, which is why it is recorded here rather than left to the depth
 sentence above.
 
+`chown -R` and `chgrp -R` are the third and fourth, with the same shape: they
+rebuild the path per entry where GNU holds a descriptor, so a rename of an
+interior directory under a running walk can redirect a call outside the tree.
+Nothing in the corpus renames anything under a running chown.
+
+**`chown -v` on a dangling symlink it was told to FOLLOW is the one place the
+corpus deliberately does not compare stdout, and the reason is that GNU has no
+answer to compare against.** The `-v` line carries a "from" clause built out of
+a `stat` buffer the failed `stat` never filled: on one machine the same broken
+link reported `from wheel`, `from 2` and `from _uucp:wheel` across runs of
+different binaries, against a link that was really `jakechampion:admin`. There
+is no value a second implementation could print that would match, so no case
+pairs `-v` with that combination. The stderr line (`cannot dereference 'X': No
+such file or directory`) and the exit status ARE deterministic, and cases
+compare both; `-h`, which succeeds on a broken link, is compared with `-v` in
+full. `chown.fern` fills the clause from the `lstat` it already did, which is
+the link's real ownership.
+
+**`chgrp --from=` and `chgrp`'s refusal of `(gid_t) -1` are 9.10 behaviour that
+9.1 does not have, and neither is in the corpus.** Measured on both: 9.1's
+chgrp answers `unrecognized option '--from='` and accepts `4294967295` as a
+gid, where 9.10 takes the option and answers `invalid group: '4294967295'`.
+chgrp reached GNU's shared `parse_user_spec` somewhere between the two. The
+corpus is held to "9.4 or newer" and a case may only assert what every version
+in that range does, so these two are implemented to 9.10 and left uncompared
+rather than pinned to a version the runner may not have. `chown` is unaffected
+— it has had both since long before 9.1, and its cases cover them.
+
 **Three rm paths are outside the corpus.** `--one-file-system` and
 `--preserve-root=all` only act across a mount point and the harness cannot
 mount one, so they stand in the corpus as the inert invocations that prove
