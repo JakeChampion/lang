@@ -137,6 +137,11 @@ var rcResultOwned = map[string]bool{
 	// Snapshots the string builder into a fresh rc=1 string and rewinds
 	// it, so the result aliases nothing the builder goes on to overwrite.
 	"strbuf_take": true,
+	// Hands the capacity-carrying builder's own buffer over as a string
+	// (#8773). No copy: the buffer was allocated string-shaped, so the
+	// take stamps the length and releases it. The builder drops the
+	// pointer in the same breath, so the caller holds the only reference.
+	"buf_take": true,
 	// The kernel's node name copied into a fresh rc=1 string; the empty
 	// answer is the same sentinel / inline form the string helpers use.
 	"hostname": true,
@@ -210,6 +215,7 @@ var rcResultOwned = map[string]bool{
 	"chmod":           true,
 	"mknod":           true,
 	"statfs":          true,
+	"window_size":     true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -432,6 +438,8 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
+	"buf_push": true, "buf_push_range": true, "buf_push_byte": true,
+	"buf_free": true, "__fern_buf_reserve": true,
 
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,
@@ -449,8 +457,9 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_str_len": true, "__fern_str_byte": true, "__fern_memchr": true,
 	"__fern_ascii_run": true, "__fern_rmemchr": true,
 	"__fern_count_byte": true, "__fern_mismatch": true,
-	"__str_eq":  true,
-	"__str_ord": true, "__fern_env_count": true, "__fern_arg_count": true,
+	"__fern_sum_bytes": true,
+	"__str_eq":         true,
+	"__str_ord":        true, "__fern_env_count": true, "__fern_arg_count": true,
 	"__fern_read_byte": true, "__fern_random_i32": true,
 	"__fern_map_hash_seed": true, "__load_i32": true, "__load_u8": true,
 	"__ptr_width":   true,
@@ -458,6 +467,10 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
 	"process_alive": true,
 	"geteuid":       true, "getegid": true, "getuid": true, "getgid": true,
+	// The builder's handle is an opaque token indexing its own control
+	// block, not a counted header, and its length is a byte count — the
+	// two cases `rWord` cannot tell apart on its own.
+	"buf_new": true, "buf_len": true,
 	// The sigaction return, which the caller drops; nothing counted.
 	"signal_default": true, "signal_ignore": true,
 	"__wasi_errno_of_code": true,

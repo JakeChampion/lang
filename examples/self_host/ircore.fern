@@ -919,7 +919,7 @@ pub function all_runtime_need_roots(): string[] {
         "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
-        "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf",
+        "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf", "buf",
         // The platform helpers. These were absent for as long as the list
         // existed, which made the "closed set" claim above false: the
         // bootstrap compiler marks none of them, so nothing noticed until a
@@ -942,7 +942,7 @@ pub function all_runtime_need_roots(): string[] {
         // caller. The two signal roots are marked through a VARIABLE rather
         // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
         // find them either.
-        "isatty", "signal_ignore", "signal_default",
+        "isatty", "window_size", "signal_ignore", "signal_default",
         // The liveness of one pid and this process's descriptor ceiling.
         "process_alive", "rlimit_nofile",
         // sockets + readiness (the edge-handler serve loop):

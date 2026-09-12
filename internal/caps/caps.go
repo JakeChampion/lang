@@ -146,6 +146,11 @@ var Ungated = map[string]bool{
 	"stdout":    true,
 	"stderr":    true,
 	"isatty":    true,
+	// How large the terminal on the other end of a descriptor is. The
+	// descriptor was handed to the process by whoever started it and
+	// its geometry is one more fact about it, so a dependency that asks
+	// reaches nothing `isatty` did not already let it reach.
+	"window_size": true,
 	// The process's own ids — effective, real, and the supplementary
 	// group set. Reading them reaches nothing:
 	// the identity was chosen by whoever exec'd the program, and a
@@ -178,11 +183,21 @@ var Ungated = map[string]bool{
 	// also process-wide and also irreversible from a caller's view.
 	// `internal/platforms` DOES gate these, because there the
 	// question is whether the target has signals at all.
-	"signal_ignore":               true,
-	"signal_default":              true,
-	"strbuf_reset":                true,
-	"strbuf_append":               true,
-	"strbuf_take":                 true,
+	"signal_ignore":  true,
+	"signal_default": true,
+	"strbuf_reset":   true,
+	"strbuf_append":  true,
+	"strbuf_take":    true,
+	// The capacity-carrying builder (#8773). Bytes into a block this
+	// process allocated, and back out as a string: the same reach as
+	// the strbuf above, with the singleton removed.
+	"buf_new":                     true,
+	"buf_push":                    true,
+	"buf_push_range":              true,
+	"buf_push_byte":               true,
+	"buf_len":                     true,
+	"buf_take":                    true,
+	"buf_free":                    true,
 	"f32_bits":                    true,
 	"f32_from_bits":               true,
 	"f64_bits":                    true,

@@ -96,7 +96,7 @@ function t_none(): STerm { return STerm { kind_tag: 0, cond: 0, target: 0, t: 0,
 // the stack-IR registry and vice versa).
 
 // kind_count is the number of registered SInst kinds (ids 1..kind_count()).
-pub function kind_count(): i32 { return 27; }
+pub function kind_count(): i32 { return 34; }
 
 pub function kind_id(name: string): i32 {
     if (name == "const_int") { return 1; }
@@ -126,7 +126,33 @@ pub function kind_id(name: string): i32 {
     if (name == "strbuf_take") { return 25; }
     if (name == "read_file") { return 26; }
     if (name == "write_file") { return 27; }
+    if (name.len() >= 7 && name[0] == b'b') { return buf_kind_id(name); }
     return 0;
+}
+
+// The capacity-carrying string builder's block (#8773), split out so the seven
+// names cost kind_id / kind_name one test apiece. `binary` is the only other
+// kind starting with 'b' and it is six bytes, so the length guard separates
+// them without a second compare.
+function buf_kind_id(name: string): i32 {
+    if (name == "buf_new") { return 28; }
+    if (name == "buf_push") { return 29; }
+    if (name == "buf_push_range") { return 30; }
+    if (name == "buf_push_byte") { return 31; }
+    if (name == "buf_len") { return 32; }
+    if (name == "buf_take") { return 33; }
+    if (name == "buf_free") { return 34; }
+    return 0;
+}
+
+function buf_kind_name(id: i32): string {
+    if (id == 28) { return "buf_new"; }
+    if (id == 29) { return "buf_push"; }
+    if (id == 30) { return "buf_push_range"; }
+    if (id == 31) { return "buf_push_byte"; }
+    if (id == 32) { return "buf_len"; }
+    if (id == 33) { return "buf_take"; }
+    return "buf_free";
 }
 
 pub function kind_name(id: i32): string {
@@ -158,6 +184,7 @@ pub function kind_name(id: i32): string {
     if (id == 25) { return "strbuf_take"; }
     if (id == 26) { return "read_file"; }
     if (id == 27) { return "write_file"; }
+    if (id >= 28 && id <= 34) { return buf_kind_name(id); }
     return "invalid";
 }
 
@@ -3119,6 +3146,40 @@ pub function calls_func(funcs: SFunc[], name: string): boolean {
 // lowerings that share only the argument evaluation order, so each gets
 // its own function; the naming mirrors asmcore's infer_call_named_type /
 // infer_call_method_type, which split the same distinction.
+// buf_builtin_tag maps one of the capacity-carrying string builder's calls
+// (#8773) to its SSA kind, or 0 when the name and arity are not one. The
+// builder is the strbuf above with the handle made explicit — a handle is the
+// address of its own control block — so any number are live at once. Dedicated
+// ops rather than generic calls, so calls_all_known does not bail; wasm has no
+// SSA lowering for them (ssa_wasm.inst_supported's whitelist omits them, so
+// such a module takes the IR path).
+function buf_builtin_tag(name: string, argc: i32): i32 {
+    if (name == "buf_new" && argc == 1) { return 28; }
+    if (name == "buf_push" && argc == 2) { return 29; }
+    if (name == "buf_push_range" && argc == 4) { return 30; }
+    if (name == "buf_push_byte" && argc == 2) { return 31; }
+    if (name == "buf_len" && argc == 1) { return 32; }
+    if (name == "buf_take" && argc == 1) { return 33; }
+    if (name == "buf_free" && argc == 1) { return 34; }
+    return 0;
+}
+
+// build_expr_call_buf builds the arguments left to right and emits the one
+// inst. Every builder op has the same shape — N operands in, one result out —
+// so the arity alone separates them.
+function build_expr_call_buf(tag: i32, c: ast.ExprCall, s: BState): BState {
+    var argv: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        s = build_expr(c.args[i], s);
+        if (!s.ok) { return s; }
+        argv = argv.append(s.cur_id());
+        i = i + 1;
+    }
+    s = s.fresh();
+    return s.emit(SInst { kind_tag: tag, result: s.cur_id(), args: argv, imm: 0, str: "" });
+}
+
 function build_expr_call(c: ast.ExprCall, s: BState): BState {
     match (c.callee) {
         ast.ExprIdent(cid) => { return build_call_named(cid, c, s); },
@@ -3250,6 +3311,9 @@ function build_call_named(cid: ast.ExprIdent, c: ast.ExprCall, s: BState): BStat
     // bail. wasm has no SSA lowering (ssa_wasm rejects them →
     // the IR path). strbuf_take materialises a fresh
     // [len, bytes…] string and resets the buffer.
+    if (buf_builtin_tag(cid.name, c.args.len()) != 0) {
+        return build_expr_call_buf(buf_builtin_tag(cid.name, c.args.len()), c, s);
+    }
     if (cid.name == "strbuf_reset" && c.args.len() == 0) {
         s = s.fresh();
         var sbra: i32[] = [];
