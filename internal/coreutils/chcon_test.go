@@ -24,7 +24,8 @@ func init() {
 // `Operation not permitted` from the kernel where it was configured with
 // it and the caller may not write `security.*`. Nothing a Fern binary
 // can compute predicts that byte. docs/COREUTILS.md records the
-// divergence and #9098 is the primitive that closes it.
+// divergence; #9154 is the primitive that closes it, and #9098 the one
+// the --reference and component forms additionally need.
 //
 // What that leaves is most of chcon's observable surface, and it is
 // worth the file:

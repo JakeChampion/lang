@@ -1270,7 +1270,7 @@ the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 
 **`chcon` refuses the context change itself, and there is no answer that
 would not.** A security context is an extended attribute; there is no
-`getxattr` or `setxattr` (#9098), so the one step the utility exists for
+`getxattr` (#9098) or `setxattr` (#9154), so the one step it exists for
 cannot happen. What makes this a divergence rather than a gap is that GNU
 does not refuse either: on a machine with no SELinux it calls
 `setfilecon(3)` and reports whatever the call failed with, and WHICH errno
