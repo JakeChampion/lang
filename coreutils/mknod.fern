@@ -1,0 +1,356 @@
+// mknod.fern — GNU-compatible `mknod`.
+//
+//   mknod [-m MODE] [-Z] [--context[=CTX]] NAME TYPE [MAJOR MINOR]
+//
+// `mkfifo`'s builtin with the type half of the mode word spelled out and
+// a device pair beside it. The MODE rules are `mkfifo`'s exactly — base
+// 0666, permission bits only, the umask reaching both the creation and
+// the `-m` clauses that name no who — and the whole of what is mknod's
+// own is the TYPE operand and the arity around it.
+//
+// Only the FIRST BYTE of TYPE is read, which is how `mknod /dev/rst0
+// character 18 0` works, and it decides how many operands there are
+// meant to be. That makes the arity diagnostics depend on the type, in a
+// way the `--help` line does not hint at:
+//
+//   p, with 2 operands   the fifo is made
+//   p, with 3 or more    `extra operand` naming the THIRD, and the
+//                        `Fifos do not have …` line only at exactly 4
+//   anything else, 2     `missing operand after` the last, under the
+//                        `Special files require …` line
+//   anything else, 3     `missing operand after` the last, with no
+//                        second line
+//   anything else, 5+    `extra operand` naming the FIFTH
+//
+// so a TYPE that is not one at all is only ever reported when there are
+// exactly four operands: `mknod n q` is a missing operand and `mknod n q
+// 1 2` is `invalid device type 'q'`.
+//
+// MAJOR and MINOR are gnulib's base-zero strtoumax — `0x` hexadecimal,
+// a leading `0` octal, a leading `+` and leading blanks accepted, a
+// trailing one not — and each must fit in 32 bits. A leading `-` never
+// reaches them: getopt has read it as an option first.
+//
+// The failure of the node creation itself is the one diagnostic here
+// that does not quote unconditionally: `mknod: p: File exists` where
+// mkfifo would say `cannot create fifo 'p'`.
+import "std/array";
+import "std/u64";
+import "./lib/gnu";
+import "./lib/mode";
+import "./lib/selinux";
+
+function opt_context(): i32 {
+  return 1;
+}
+
+function opt_mode(): i32 {
+  return 2;
+}
+
+function opt_z(): i32 {
+  return 3;
+}
+
+// The S_IFMT bits of the three types this utility can make.
+function s_ififo(): i32 {
+  return 4096;
+}
+
+function s_ifchr(): i32 {
+  return 8192;
+}
+
+function s_ifblk(): i32 {
+  return 24576;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME TYPE [MAJOR MINOR]\n";
+  out = out + "Create the special file NAME of the given TYPE.\n";
+  out = out + "\n";
+  out = out + "  -m, --mode=MODE    set file permission bits to MODE, not a=rw - umask\n";
+  out = out + "  -Z                 set the SELinux security context to default type\n";
+  out = out + "      --context[=CTX]  like -Z, or if CTX is specified then set the\n";
+  out = out + "                         SELinux or SMACK security context to CTX\n";
+  out = out + "      --help         display this help and exit\n";
+  out = out + "      --version      output version information and exit\n";
+  out = out + "\n";
+  out = out + "Both MAJOR and MINOR must be specified when TYPE is b, c, or u, and they\n";
+  out = out + "must be omitted when TYPE is p.  If MAJOR or MINOR begins with 0x or 0X,\n";
+  out = out + "it is interpreted as hexadecimal; otherwise, if it begins with 0, as octal;\n";
+  out = out + "otherwise, as decimal.  TYPE may be:\n";
+  out = out + "\n";
+  out = out + "  b      create a block (buffered) special file\n";
+  out = out + "  c, u   create a character (unbuffered) special file\n";
+  out = out + "  p      create a FIFO\n";
+  return out;
+}
+
+// `-Z` and `--context` ask for a security context on the node. On a
+// kernel with no SELinux there is none to set: GNU says nothing for `-Z`
+// or a bare `--context`, and warns once per occurrence when a CTX was
+// named. On a kernel that HAS one there is no primitive here that can
+// set it, so the option is refused rather than quietly ignored.
+function security_context(named: boolean): void {
+  if (selinux.enabled()) {
+    gnu.error("setting a security context is not supported on this system");
+    exit(1);
+  }
+  if (named) {
+    gnu.error("warning: ignoring --context; it requires an SELinux/SMACK-enabled kernel");
+  }
+}
+
+struct Scan { mode_text: string, mode_given: boolean }
+
+function scan_options(): (Scan, string[]) {
+  var opts: gnu.Opt[] = [];
+  // Declaration order is visible: `mknod --=x` lists the long options in
+  // it, and `--context` stands first.
+  opts = opts.append(gnu.optional("", "context", opt_context()));
+  opts = opts.append(gnu.valued("m", "mode", opt_mode()));
+  opts = opts.append(gnu.flag("Z", "", opt_z()));
+
+  var s: Scan = Scan { mode_text: "", mode_given: false };
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "mknod", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_mode()) {
+          s = Scan { mode_text: m.value, mode_given: true };
+        } else {
+          security_context(m.has_value);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// The permission bits `-m` asks for, from a base of 0666. The mask is
+// read the only way POSIX offers — set zero and take the answer — and
+// put straight back, because the creation below still has to be filtered
+// through it.
+function compile_mode(text: string): i32 {
+  match (mode.compile(text)) {
+    Some(c) => {
+      var mask: i32 = umask(0);
+      umask(mask);
+      var a: mode.Adjusted = c.adjust(438, false, mask);
+      if ((a.mode & mode.complement(mode.s_irwxugo())) != 0) {
+        gnu.error("mode must specify only file permission bits");
+        exit(1);
+      }
+      return a.mode;
+    },
+    None => {
+      gnu.error("invalid mode");
+      exit(1);
+    }
+  }
+  return 0;
+}
+
+// ---- MAJOR and MINOR -------------------------------------------------------
+//
+// gnulib's `xstrtoumax(s, NULL, 0, &v, "")`: leading blanks and a `+`
+// are accepted, the base comes from the prefix, no suffix is, and the
+// whole string has to be consumed. `what` is the half of the pair being
+// read, which is the only difference between the two diagnostics.
+function parse_dev(s: string, what: string): i32 {
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < s.len() && s[i] as i32 == 43) {
+    i = i + 1;
+  }
+  var base: i32 = 10;
+  if (i + 1 < s.len() && s[i] as i32 == 48 && (s[i + 1] as i32 == 120 || s[i + 1] as i32 == 88)) {
+    base = 16;
+    i = i + 2;
+  } else if (i < s.len() && s[i] as i32 == 48) {
+    base = 8;
+  }
+  var start: i32 = i;
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < s.len()) {
+    var d: i32 = digit_value(s[i] as i32);
+    if (d < 0 || d >= base) {
+      break;
+    }
+    match (v.checked_mul(base as u64)) {
+      Some(m) => {
+        match (m.checked_add(d as u64)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  // A device number wider than 32 bits is not one, which is what
+  // `i_major != (major_t) i_major` says in C.
+  if (i == start || i != s.len() || over || v > 4294967295 as u64) {
+    gnu.error("invalid " + what + " device number " + gnu.quote(s));
+    exit(1);
+  }
+  return to_i32(v);
+}
+
+// The value of one base-16 digit, or -1.
+function digit_value(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return 0 - 1;
+}
+
+// A 32-bit device number as the i32 with the same bit pattern. The
+// builtin takes the pair as i32s and each backend packs them the way its
+// kernel wants, so it is the pattern that has to survive, not the value:
+// a major of 0x80000000 is one GNU accepts.
+function to_i32(v: u64): i32 {
+  if (v >= 2147483648 as u64) {
+    return ((v as i64) - (4294967296 as i64)) as i32;
+  }
+  return v as i32;
+}
+
+// ---- the TYPE operand ------------------------------------------------------
+//
+// Whether the operands describe a fifo. Only the first byte is read, and
+// an empty TYPE is not one — it goes to the branch that wants four
+// operands and is refused there as a type.
+function is_fifo_type(t: string): boolean {
+  return t.len() > 0 && t[0] as i32 == 112;
+}
+
+// The S_IFMT bits `t` names, or -1 when it names none.
+function node_type(t: string): i32 {
+  if (t.len() == 0) {
+    return 0 - 1;
+  }
+  var c: i32 = t[0] as i32;
+  if (c == 98) {
+    return s_ifblk();
+  }
+  if (c == 99 || c == 117) {
+    return s_ifchr();
+  }
+  return 0 - 1;
+}
+
+// The `Try …` line under a usage fault that has a second line of its
+// own: `error` has already written the first, and this writes the rest.
+function die_with_note(note: string): void {
+  eprint(note);
+  gnu.try_help(1);
+}
+
+function make(name: string, whole: i32, major: i32, minor: i32): void {
+  match (mknod(name, whole, major, minor)) {
+    Ok(_) => {},
+    Err(e) => {
+      // The name is quoted only when it needs to be, unlike everywhere
+      // else in this utility.
+      gnu.error(gnu.quotef(name) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+}
+
+// The mode the MODE named, put on unmasked — the creation above was
+// filtered through the umask, and only a `-m` run undoes that.
+function set_mode(name: string, perm: i32): void {
+  match (chmod(name, perm)) {
+    Ok(_) => {},
+    Err(e) => {
+      gnu.error("cannot set permissions of " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+}
+
+function make_fifo(op: string[], perm: i32): void {
+  if (op.len() > 2) {
+    gnu.error("extra operand " + gnu.quote(op[2]));
+    if (op.len() == 4) {
+      die_with_note("Fifos do not have major and minor device numbers.");
+    }
+    gnu.try_help(1);
+  }
+  make(op[0], perm | s_ififo(), 0, 0);
+}
+
+function make_special(op: string[], perm: i32): void {
+  if (op.len() < 4) {
+    gnu.error("missing operand after " + gnu.quote(op[op.len() - 1]));
+    if (op.len() == 2) {
+      die_with_note("Special files require major and minor device numbers.");
+    }
+    gnu.try_help(1);
+  }
+  if (op.len() > 4) {
+    gnu.die_usage("extra operand " + gnu.quote(op[4]), 1);
+  }
+  var kind: i32 = node_type(op[1]);
+  if (kind < 0) {
+    gnu.die_usage("invalid device type " + gnu.quote(op[1]), 1);
+  }
+  var major: i32 = parse_dev(op[2], "major");
+  var minor: i32 = parse_dev(op[3], "minor");
+  make(op[0], perm | kind, major, minor);
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options();
+  var s: Scan = scanned.0;
+
+  // The MODE is read before the operand count, so `mknod -m bogus` is
+  // the bad mode rather than the missing operand — which is the other
+  // way round from mkfifo.
+  var perm: i32 = 438;
+  if (s.mode_given) {
+    perm = compile_mode(s.mode_text);
+  }
+
+  var op: string[] = scanned.1;
+  if (op.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  if (op.len() == 1) {
+    gnu.die_usage("missing operand after " + gnu.quote(op[0]), 1);
+  }
+
+  if (is_fifo_type(op[1])) {
+    make_fifo(op, perm);
+  } else {
+    make_special(op, perm);
+  }
+  if (s.mode_given) {
+    set_mode(op[0], perm);
+  }
+  return 0;
+}
