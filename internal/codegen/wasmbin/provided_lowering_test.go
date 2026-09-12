@@ -77,6 +77,11 @@ var providedRefusedByPlatform = map[string]bool{
 	// `chmod` is the WRITE of it on an entry that already exists, where
 	// write_file_exec only sets a bit on one it is creating.
 	"chmod": true,
+	// `tty` — the geometry of the terminal a descriptor is connected
+	// to. Neither preview has an ioctl, wasi:cli's terminal-output
+	// resource reports no size, and both constants that could stand in
+	// — 80x24, or 0x0 — are answers no component measured.
+	"window_size": true,
 	// `fsnode` — an entry that is neither a file nor a directory.
 	// Neither preview has a call that creates a FIFO or a device node,
 	// and a regular file standing in for one would read back as the

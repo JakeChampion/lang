@@ -1245,6 +1245,10 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // [ms] -> __fern_timer_fd(x0=ms) -> CLOCK_MONOTONIC timerfd fd in x0.
             s = s.write("    bl __fn___fern_timer_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
             s = s.need("timer_fd");
+        } else if (o.kind_tag == 276) {  // window_size
+            // [fd] -> __fern_window_size(x0=fd) -> Result[WinSize, IoError].
+            s = s.need("heap"); s = s.need("window_size");
+            s = s.write("    bl __fn___fern_window_size\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 232) {  // isatty
             // [fd] -> __fern_isatty(x0=fd) -> 1 when fd is a terminal, else 0.
             s = s.write("    bl __fn___fern_isatty\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -3536,7 +3540,16 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("set_file_times") || s.has_need("statfs") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("rlimit_nofile") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
+    if (s.any_need([
+        "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
+        "read_file", "read_file_bytes", "random_i32", "sleep_ms",
+        "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
+        "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
+        "eprint", "read_int", "udp_send", "isatty", "window_size",
+        "rlimit_nofile", "signal_ignore", "signal_default", "access",
+        "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
+        "fd_stat"
+    ])) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -6648,6 +6661,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod(tgt); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate(tgt); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod(tgt); }
+        if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size(tgt); }
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times(tgt); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link(tgt); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask(tgt); }
@@ -7535,7 +7549,14 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // need whose generated Fern body is emitted from that block, __fern_io_error
 // included — they share one call graph, so they are emitted together.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
-    return s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
+    return s.any_need([
+        "read_file", "read_file_bytes", "write_file", "write_file_exec",
+        "remove_file", "create_dir_all", "create_dir", "remove_dir",
+        "create_link", "create_symlink", "rename", "chmod", "truncate",
+        "mknod", "window_size", "set_file_times", "read_link", "umask",
+        "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
+        "remove_dir_all", "open_file", "writer_write", "reader"
+    ]);
 }
 
 pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {

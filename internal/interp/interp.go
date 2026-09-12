@@ -608,6 +608,7 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
+	i.Builtins["window_size"] = &Builtin{Fn: builtinWindowSize}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
@@ -3737,6 +3738,32 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("isatty: expected number arg, got %T", args[0])
 	}
 	return Bool(tty.IsTerminal(int(fd))), nil
+}
+
+// builtinWindowSize answers `window_size(fd)` against the real fd the
+// interpreter process holds, so `fern -interp` measures the same terminal
+// the compiled binary would.
+func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("window_size: expected 1 arg, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("window_size: expected number arg, got %T", args[0])
+	}
+	rows, cols, err := tty.WindowSize(int(fd))
+	if err != nil {
+		// Path-less, the way a failed read or fstat is: the descriptor
+		// is the subject and it has no name.
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(&Struct{
+		TypeName: "WinSize",
+		Fields: map[string]Value{
+			"rows": Number(int64(rows)),
+			"cols": Number(int64(cols)),
+		},
+	}), nil
 }
 
 // builtinTargetOS answers `target_os()` with the interpreter's host: under
