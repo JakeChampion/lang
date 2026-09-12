@@ -195,11 +195,11 @@ var Ungated = map[string]bool{
 	// than setting one does: it reports this process's own state and
 	// changes nothing. signal_mask writes as well, and to the same
 	// process-wide state the two setters already reach.
-	"signal_mask":                 true,
-	"signal_disposition":          true,
-	"strbuf_reset":   true,
-	"strbuf_append":  true,
-	"strbuf_take":    true,
+	"signal_mask":        true,
+	"signal_disposition": true,
+	"strbuf_reset":       true,
+	"strbuf_append":      true,
+	"strbuf_take":        true,
 	// The capacity-carrying builder (#8773). Bytes into a block this
 	// process allocated, and back out as a string: the same reach as
 	// the strbuf above, with the singleton removed.
