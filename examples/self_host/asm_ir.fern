@@ -5557,7 +5557,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // helper's return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_strbuf_append\n    pushq %rax\n");
             s = s.need("strbuf");
-        } else if (o.kind_tag >= 281 && o.kind_tag <= 287) {  // the buf_* builder
+        } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
             s = emit_ir_op_buf(o, s);
         } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
@@ -5833,20 +5833,20 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
 // handle, the length or the string box for the value ops, and the helper's
 // return as the dummy a statement-level drop takes for the rest.
 function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-    if (o.kind_tag == 281) {                                  // buf_new
+    if (o.kind_tag == 291) {                                  // buf_new
         s = s.write("    popq %rdi\n    call __fern_buf_new\n    pushq %rax\n");
-    } else if (o.kind_tag == 282) {                           // buf_push
+    } else if (o.kind_tag == 292) {                           // buf_push
         s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push\n    pushq %rax\n");
-    } else if (o.kind_tag == 283) {                           // buf_push_range
+    } else if (o.kind_tag == 293) {                           // buf_push_range
         s = s.write("    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
         s = s.write("    call __fern_buf_push_range\n    pushq %rax\n");
-    } else if (o.kind_tag == 284) {                           // buf_push_byte
+    } else if (o.kind_tag == 294) {                           // buf_push_byte
         s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push_byte\n    pushq %rax\n");
-    } else if (o.kind_tag == 285) {                           // buf_len
+    } else if (o.kind_tag == 295) {                           // buf_len
         s = s.write("    popq %rdi\n    call __fern_buf_len\n    pushq %rax\n");
-    } else if (o.kind_tag == 286) {                           // buf_take
+    } else if (o.kind_tag == 296) {                           // buf_take
         s = s.write("    popq %rdi\n    call __fern_buf_take\n    pushq %rax\n");
-    } else {                                                  // buf_free (287)
+    } else {                                                  // buf_free (297)
         s = s.write("    popq %rdi\n    call __fern_buf_free\n    pushq %rax\n");
     }
     s = s.need("heap");

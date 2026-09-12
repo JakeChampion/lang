@@ -4346,7 +4346,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // stack: strblock ptr -> copy its bytes onto the builder. Void helper
         // (consumes the arg); push a dummy i32 for the statement-level drop.
         parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
-    } else if (o.kind_tag >= 281 && o.kind_tag <= 287) {  // the buf_* builder
+    } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
         parts = emit_wasm_buf_op(o, parts);
     } else if (o.kind_tag == 119) {  // strbuf_take
         // no args -> snapshot the builder into a fresh string box and reset it
@@ -6961,12 +6961,12 @@ pub function arr_slice_helper(): string {
 // each arm is the bare call; the four void helpers push a dummy i32 for the
 // statement-level drop, the way strbuf_append does.
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
-    if (o.kind_tag == 281) { return parts.append("    call $__fern_buf_new\n"); }
-    if (o.kind_tag == 282) { return parts.append("    call $__fern_buf_push\n    i32.const 0\n"); }
-    if (o.kind_tag == 283) { return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n"); }
-    if (o.kind_tag == 284) { return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n"); }
-    if (o.kind_tag == 285) { return parts.append("    call $__fern_buf_len\n"); }
-    if (o.kind_tag == 286) { return parts.append("    call $__fern_buf_take\n"); }
+    if (o.kind_tag == 291) { return parts.append("    call $__fern_buf_new\n"); }
+    if (o.kind_tag == 292) { return parts.append("    call $__fern_buf_push\n    i32.const 0\n"); }
+    if (o.kind_tag == 293) { return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n"); }
+    if (o.kind_tag == 294) { return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n"); }
+    if (o.kind_tag == 295) { return parts.append("    call $__fern_buf_len\n"); }
+    if (o.kind_tag == 296) { return parts.append("    call $__fern_buf_take\n"); }
     return parts.append("    call $__fern_buf_free\n    i32.const 0\n");  // buf_free
 }
 

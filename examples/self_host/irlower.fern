@@ -11085,6 +11085,44 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 }
 
 // lower_expr emits ops that leave the value of `e` on the operand stack.
+// The capacity-carrying string builder (#8773) — the same accumulator with the
+// handle made explicit, so any number are live at once and they nest.
+// buf_builtin_arity is how many arguments one of its calls takes, or -1 when
+// the name is not one of them; a mismatch therefore falls through to the
+// ordinary call path exactly as a wrong-arity `strbuf_append` does.
+function buf_builtin_arity(name: string): i32 {
+    if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") { return 1; }
+    if (name == "buf_push" || name == "buf_push_byte") { return 2; }
+    if (name == "buf_push_range") { return 4; }
+    return 0 - 1;
+}
+
+// buf_builtin_op is the op one of those calls lowers to.
+function buf_builtin_op(name: string): ir.Op {
+    if (name == "buf_new") { return ir.op_buf_new(); }
+    if (name == "buf_push") { return ir.op_buf_push(); }
+    if (name == "buf_push_range") { return ir.op_buf_push_range(); }
+    if (name == "buf_push_byte") { return ir.op_buf_push_byte(); }
+    if (name == "buf_len") { return ir.op_buf_len(); }
+    if (name == "buf_take") { return ir.op_buf_take(); }
+    return ir.op_buf_free();
+}
+
+// lower_call_buf lowers the arguments left to right and emits the op.
+// `buf_push` / `buf_push_range` / `buf_push_byte` / `buf_free` are statement
+// ops (they push a dummy the statement-level drop takes); `buf_new` /
+// `buf_len` / `buf_take` are value ops, and buf_take is str-tracked in
+// expr_is_str.
+function lower_call_buf(name: string, c: ast.ExprCall, s: LowerState): LowerState {
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        s = lower_expr(c.args[i], s);
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s.emit(buf_builtin_op(name));
+}
+
 // lower_call_named lowers a call whose callee is a bare NAME — a user
 // function, a `const`, a builtin, or one of the closure / marker forms.
 // `e` is this same call as an Expr, for the two type queries that take one.
@@ -12138,56 +12176,8 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "strbuf_take" && c.args.len() == 0) {
         return s.emit(ir.op_strbuf_take());
     }
-    // The capacity-carrying string builder (#8773) — the same accumulator with
-    // the handle made explicit, so any number are live at once. Every arm
-    // lowers its arguments left to right and emits the op; `buf_push` /
-    // `buf_push_range` / `buf_push_byte` / `buf_free` are statement ops (push a
-    // dummy the statement-level drop takes), `buf_new` / `buf_len` / `buf_take`
-    // are value ops. `buf_take` is str-tracked in expr_is_str.
-    if (cid.name == "buf_new" && c.args.len() == 1) {
-        var bns: LowerState = lower_expr(c.args[0], s);
-        if (!bns.ok) { return bns; }
-        return bns.emit(ir.op_buf_new());
-    }
-    if (cid.name == "buf_push" && c.args.len() == 2) {
-        var bps: LowerState = lower_expr(c.args[0], s);
-        if (!bps.ok) { return bps; }
-        bps = lower_expr(c.args[1], bps);
-        if (!bps.ok) { return bps; }
-        return bps.emit(ir.op_buf_push());
-    }
-    if (cid.name == "buf_push_range" && c.args.len() == 4) {
-        var brs: LowerState = lower_expr(c.args[0], s);
-        if (!brs.ok) { return brs; }
-        brs = lower_expr(c.args[1], brs);
-        if (!brs.ok) { return brs; }
-        brs = lower_expr(c.args[2], brs);
-        if (!brs.ok) { return brs; }
-        brs = lower_expr(c.args[3], brs);
-        if (!brs.ok) { return brs; }
-        return brs.emit(ir.op_buf_push_range());
-    }
-    if (cid.name == "buf_push_byte" && c.args.len() == 2) {
-        var bbs: LowerState = lower_expr(c.args[0], s);
-        if (!bbs.ok) { return bbs; }
-        bbs = lower_expr(c.args[1], bbs);
-        if (!bbs.ok) { return bbs; }
-        return bbs.emit(ir.op_buf_push_byte());
-    }
-    if (cid.name == "buf_len" && c.args.len() == 1) {
-        var bls: LowerState = lower_expr(c.args[0], s);
-        if (!bls.ok) { return bls; }
-        return bls.emit(ir.op_buf_len());
-    }
-    if (cid.name == "buf_take" && c.args.len() == 1) {
-        var bts: LowerState = lower_expr(c.args[0], s);
-        if (!bts.ok) { return bts; }
-        return bts.emit(ir.op_buf_take());
-    }
-    if (cid.name == "buf_free" && c.args.len() == 1) {
-        var bfs: LowerState = lower_expr(c.args[0], s);
-        if (!bfs.ok) { return bfs; }
-        return bfs.emit(ir.op_buf_free());
+    if (buf_builtin_arity(cid.name) == c.args.len()) {
+        return lower_call_buf(cid.name, c, s);
     }
     // Built-in `i32_to_string(n)` — the free-function spelling of
     // `n.to_string()` on an i32: route to the __fern_i32_to_string

@@ -191,6 +191,31 @@ function fbinop(op: string): string {
 // handled elsewhere (prologue / edge copies) and skipped here. isfloat marks
 // f64 values (always stack-spilled in a float function, so slot() is their
 // home); fname names the function for const_float .rodata labels.
+// emit_ssa_buf emits the capacity-carrying string builder's seven ops (#8773).
+// The __fern_ssa_buf_* helpers take the System V register ABI, so each operand
+// is loaded through %rax into its argument register in turn; the three value
+// ops store %rax back into the result's home and the four void ones store
+// nothing.
+function emit_ssa_buf(reg_of: i32[], widths: i32[], ins: ssa.SInst, out: string): string {
+    out = load_op(reg_of, widths, ins.args[0], "a", out);
+    out = out + "    movq %rax, %rdi\n";
+    if (ins.args.len() > 1) {
+        out = load_op(reg_of, widths, ins.args[1], "a", out);
+        out = out + "    movq %rax, %rsi\n";
+    }
+    if (ins.args.len() > 2) {
+        out = load_op(reg_of, widths, ins.args[2], "a", out);
+        out = out + "    movq %rax, %rdx\n";
+        out = load_op(reg_of, widths, ins.args[3], "a", out);
+        out = out + "    movq %rax, %rcx\n";
+    }
+    out = out + "    call __fern_ssa_" + ssa.kind_name(ins.kind_tag) + "\n";
+    if (ins.kind_tag == 28 || ins.kind_tag == 32 || ins.kind_tag == 33) {
+        return store_res(reg_of, widths, ins.result, "a", out);
+    }
+    return out;
+}
+
 function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[], fname: string, out: string): string {
     if (ins.kind_tag == 4) {  // const_float
         out = out + "    movsd " + fconst_label(fname, ins.result) + "(%rip), %xmm0\n";
@@ -378,6 +403,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    movl $60, %eax\n";
         return out + "    syscall\n";
     }
+    if (ins.kind_tag >= 28 && ins.kind_tag <= 34) { return emit_ssa_buf(reg_of, widths, ins, out); }
     if (ins.kind_tag == 23) { return out + "    call __fern_ssa_strbuf_reset\n"; }
     if (ins.kind_tag == 24) {  // strbuf_append
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // string → %rax
@@ -751,6 +777,115 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     parts = parts.append("    incq %rax\n    jmp .Lsbt_loop\n");
     parts = parts.append(".Lsbt_fin:\n    movq $0, __fern_ssa_strbuf_len(%rip)\n");
     parts = parts.append("    movq %r8, %rax\n    ret\n");
+    // The capacity-carrying string builder (#8773) — the accumulator above with
+    // the handle made explicit, so any number are live at once and they nest. A
+    // handle is the address of a 32-byte control block: [H+0] data, [H+8] len,
+    // [H+16] cap, [H+24] reserve.
+    //
+    // The buffer is (cap+1) words in the SSA layout's own shape — [len@word0,
+    // one byte per 8-byte word] — so it IS a string already, which is what
+    // makes take zero-copy: it stamps the length into word 0 and hands the same
+    // pointer back, leaving the builder empty and still armed at its reserve.
+    // Growth doubles. buf_free is a no-op: __fern_ssa_alloc is a pure bump with
+    // no freelist, so there is nothing for a block to go back to.
+    parts = parts.append("__fern_ssa_buf_new:\n");            // %rdi = cap -> %rax = handle
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n");
+    parts = parts.append("    movq %rdi, %rbx\n");
+    parts = parts.append("    cmpq $16, %rbx\n    jae .Lsbufnew_cap\n    movq $16, %rbx\n");
+    parts = parts.append(".Lsbufnew_cap:\n");
+    parts = parts.append("    movq $32, %rdi\n    call __fern_ssa_alloc\n    movq %rax, %r12\n");
+    parts = parts.append("    leaq 1(%rbx), %rdi\n    leaq 0(,%rdi,8), %rdi\n");   // (cap+1) words
+    parts = parts.append("    call __fern_ssa_alloc\n");
+    parts = parts.append("    movq %rax, (%r12)\n    movq $0, 8(%r12)\n");
+    parts = parts.append("    movq %rbx, 16(%r12)\n    movq %rbx, 24(%r12)\n");
+    parts = parts.append("    movq %r12, %rax\n    popq %r12\n    popq %rbx\n    ret\n");
+    // reserve(%rdi = H, %rsi = need): a wider buffer, doubling from the current
+    // capacity (or from the reserve, when a take left the builder unarmed),
+    // with the live words carried across. Internal — no builtin reaches it.
+    parts = parts.append("__fern_ssa_buf_reserve:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+    parts = parts.append("    movq %rdi, %rbx\n    movq %rsi, %r12\n");
+    parts = parts.append("    movq 16(%rbx), %r13\n    testq %r13, %r13\n    jnz .Lsbufres_dbl\n");
+    parts = parts.append("    movq 24(%rbx), %r13\n    testq %r13, %r13\n    jnz .Lsbufres_dbl\n");
+    parts = parts.append("    movq $64, %r13\n");
+    parts = parts.append(".Lsbufres_dbl:\n    cmpq %r12, %r13\n    jae .Lsbufres_alloc\n");
+    parts = parts.append("    addq %r13, %r13\n    jmp .Lsbufres_dbl\n");
+    parts = parts.append(".Lsbufres_alloc:\n");
+    parts = parts.append("    leaq 1(%r13), %rdi\n    leaq 0(,%rdi,8), %rdi\n    call __fern_ssa_alloc\n");
+    parts = parts.append("    movq %rax, %r14\n");
+    parts = parts.append("    movq 8(%rbx), %rcx\n    testq %rcx, %rcx\n    jz .Lsbufres_store\n");
+    parts = parts.append("    movq (%rbx), %rsi\n    xorl %eax, %eax\n");
+    parts = parts.append(".Lsbufres_copy:\n    cmpq %rcx, %rax\n    jge .Lsbufres_store\n");
+    parts = parts.append("    leaq 1(%rax), %rdx\n");
+    parts = parts.append("    movl (%rsi,%rdx,8), %r8d\n    movl %r8d, (%r14,%rdx,8)\n");
+    parts = parts.append("    incq %rax\n    jmp .Lsbufres_copy\n");
+    parts = parts.append(".Lsbufres_store:\n");
+    parts = parts.append("    movq %r14, (%rbx)\n    movq %r13, 16(%rbx)\n");
+    parts = parts.append("    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
+    // push(%rdi = H, %rsi = string): append every byte-word of the string.
+    parts = parts.append("__fern_ssa_buf_push:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n");
+    parts = parts.append("    movq %rdi, %rbx\n    movq %rsi, %r12\n");
+    parts = parts.append("    movl (%r12), %r13d\n    movl %r13d, %r13d\n");      // src len
+    parts = parts.append("    testq %r13, %r13\n    jz .Lsbufpush_done\n");
+    parts = parts.append("    movq 8(%rbx), %rax\n    addq %r13, %rax\n");
+    parts = parts.append("    movq 16(%rbx), %rcx\n    cmpq %rcx, %rax\n    jbe .Lsbufpush_fits\n");
+    parts = parts.append("    movq %rbx, %rdi\n    movq %rax, %rsi\n    call __fern_ssa_buf_reserve\n");
+    parts = parts.append(".Lsbufpush_fits:\n");
+    parts = parts.append("    movq (%rbx), %rdx\n    movq 8(%rbx), %r8\n    xorl %eax, %eax\n");
+    parts = parts.append(".Lsbufpush_loop:\n    cmpq %r13, %rax\n    jge .Lsbufpush_fin\n");
+    parts = parts.append("    leaq 1(%rax), %rcx\n    movl (%r12,%rcx,8), %r9d\n");
+    parts = parts.append("    leaq 1(%r8), %rcx\n    addq %rax, %rcx\n    movl %r9d, (%rdx,%rcx,8)\n");
+    parts = parts.append("    incq %rax\n    jmp .Lsbufpush_loop\n");
+    parts = parts.append(".Lsbufpush_fin:\n");
+    parts = parts.append("    movq 8(%rbx), %rax\n    addq %r13, %rax\n    movq %rax, 8(%rbx)\n");
+    parts = parts.append(".Lsbufpush_done:\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
+    // push_range(%rdi = H, %rsi = s, %rdx = lo, %rcx = hi): append s[lo:hi]
+    // with no intermediate string. An empty or inverted range is a no-op; the
+    // bounds are the caller's, as with slice_unchecked.
+    parts = parts.append("__fern_ssa_buf_push_range:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n");
+    parts = parts.append("    movq %rdi, %rbx\n    movq %rsi, %r12\n    movq %rdx, %r13\n");
+    parts = parts.append("    movq %rcx, %r14\n    subq %r13, %r14\n");           // n = hi - lo
+    parts = parts.append("    cmpq $0, %r14\n    jle .Lsbufrange_done\n");
+    parts = parts.append("    movq 8(%rbx), %rax\n    addq %r14, %rax\n");
+    parts = parts.append("    movq 16(%rbx), %rcx\n    cmpq %rcx, %rax\n    jbe .Lsbufrange_fits\n");
+    parts = parts.append("    movq %rbx, %rdi\n    movq %rax, %rsi\n    call __fern_ssa_buf_reserve\n");
+    parts = parts.append(".Lsbufrange_fits:\n");
+    parts = parts.append("    movq (%rbx), %rdx\n    movq 8(%rbx), %r8\n    xorl %eax, %eax\n");
+    parts = parts.append(".Lsbufrange_loop:\n    cmpq %r14, %rax\n    jge .Lsbufrange_fin\n");
+    parts = parts.append("    leaq 1(%r13), %rcx\n    addq %rax, %rcx\n    movl (%r12,%rcx,8), %r9d\n");
+    parts = parts.append("    leaq 1(%r8), %rcx\n    addq %rax, %rcx\n    movl %r9d, (%rdx,%rcx,8)\n");
+    parts = parts.append("    incq %rax\n    jmp .Lsbufrange_loop\n");
+    parts = parts.append(".Lsbufrange_fin:\n");
+    parts = parts.append("    movq 8(%rbx), %rax\n    addq %r14, %rax\n    movq %rax, 8(%rbx)\n");
+    parts = parts.append(".Lsbufrange_done:\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n");
+    // push_byte(%rdi = H, %rsi = x): append the low byte of x.
+    parts = parts.append("__fern_ssa_buf_push_byte:\n");
+    parts = parts.append("    pushq %rbx\n    pushq %r12\n");
+    parts = parts.append("    movq %rdi, %rbx\n    movq %rsi, %r12\n");
+    parts = parts.append("    movq 8(%rbx), %rax\n    addq $1, %rax\n");
+    parts = parts.append("    movq 16(%rbx), %rcx\n    cmpq %rcx, %rax\n    jbe .Lsbufbyte_fits\n");
+    parts = parts.append("    movq %rbx, %rdi\n    movq %rax, %rsi\n    call __fern_ssa_buf_reserve\n");
+    parts = parts.append(".Lsbufbyte_fits:\n");
+    parts = parts.append("    movq (%rbx), %rdx\n    movq 8(%rbx), %rcx\n    leaq 1(%rcx), %r8\n");
+    parts = parts.append("    movq %r12, %rax\n    andl $255, %eax\n    movl %eax, (%rdx,%r8,8)\n");
+    parts = parts.append("    addq $1, %rcx\n    movq %rcx, 8(%rbx)\n");
+    parts = parts.append("    popq %r12\n    popq %rbx\n    ret\n");
+    // len(%rdi = H) -> %rax = the bytes accumulated so far.
+    parts = parts.append("__fern_ssa_buf_len:\n    movq 8(%rdi), %rax\n    ret\n");
+    // take(%rdi = H) -> %rax = string. An empty build answers a fresh empty
+    // string and KEEPS its buffer, so a flush that finds nothing allocates one
+    // word rather than a whole buffer.
+    parts = parts.append("__fern_ssa_buf_take:\n");
+    parts = parts.append("    movq 8(%rdi), %rcx\n    testq %rcx, %rcx\n    jz .Lsbuftake_empty\n");
+    parts = parts.append("    movq (%rdi), %rax\n    movl %ecx, (%rax)\n");
+    parts = parts.append("    movq $0, (%rdi)\n    movq $0, 8(%rdi)\n    movq $0, 16(%rdi)\n    ret\n");
+    parts = parts.append(".Lsbuftake_empty:\n");
+    parts = parts.append("    movq $8, %rdi\n    call __fern_ssa_alloc\n    movl $0, (%rax)\n    ret\n");
+    // free(%rdi = H): nothing to reclaim — this backend's allocator bumps and
+    // never recycles, so the call exists only to keep the op's shape.
+    parts = parts.append("__fern_ssa_buf_free:\n    ret\n");
     // File I/O — read_file / write_file lowered to the Linux x86-64 syscall
     // runtime (openat=257, read=0, write=1, close=3, lseek=8; AT_FDCWD -100).
     // Strings use the SSA [len, byte-per-8-byte-word] layout, so both helpers

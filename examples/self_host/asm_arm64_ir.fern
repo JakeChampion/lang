@@ -1678,7 +1678,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // the drop.
             s = s.mark_heap(); s = s.need("strbuf");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_strbuf_append\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag >= 281 && o.kind_tag <= 287) {  // the buf_* builder
+        } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
             s = emit_arm64_op_buf(o, s);
         } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
@@ -2067,23 +2067,23 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
 // buf_free returns blocks to the freelists, so all seven pull the heap in.
 function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.mark_heap(); s = s.need("buf");
-    if (o.kind_tag == 281) {                                  // buf_new
+    if (o.kind_tag == 291) {                                  // buf_new
         return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_new\n    str x0, [sp, #-16]!\n");
     }
-    if (o.kind_tag == 282) {                                  // buf_push
+    if (o.kind_tag == 292) {                                  // buf_push
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push\n    str x0, [sp, #-16]!\n");
     }
-    if (o.kind_tag == 283) {                                  // buf_push_range
+    if (o.kind_tag == 293) {                                  // buf_push_range
         s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         return s.write("    bl __fern_buf_push_range\n    str x0, [sp, #-16]!\n");
     }
-    if (o.kind_tag == 284) {                                  // buf_push_byte
+    if (o.kind_tag == 294) {                                  // buf_push_byte
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_byte\n    str x0, [sp, #-16]!\n");
     }
-    if (o.kind_tag == 285) {                                  // buf_len
+    if (o.kind_tag == 295) {                                  // buf_len
         return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_len\n    str x0, [sp, #-16]!\n");
     }
-    if (o.kind_tag == 286) {                                  // buf_take
+    if (o.kind_tag == 296) {                                  // buf_take
         return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_take\n    str x0, [sp, #-16]!\n");
     }
     return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_free\n    str x0, [sp, #-16]!\n");  // buf_free
