@@ -1,0 +1,118 @@
+// Diagnostic: how much of a real module the checked-source producer admits.
+// Loads the module tree the way the production compiler does, then for every
+// function runs semsource.build -> ssaunits.plan -> ssarc.lower and counts the
+// stage each one reaches. Refusal reasons are tallied by LEAF: a refusal that
+// is only "call target was refused" is charged to the reason at the end of the
+// chain, because that is the construct worth building next.
+//
+//   $ semsource_census_run <entry.fern>
+import "std/io";
+import "./util";
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./modloader";
+import "./irlower";
+import "./semsource";
+import "./ssaunits";
+import "./ssarc";
+
+struct Hist { keys: string[], counts: i32[] }
+
+function hist_bump(h: Hist, k: string): Hist {
+    var i: i32 = 0;
+    while (i < h.keys.len()) {
+        if (h.keys[i] == k) { return Hist { keys: h.keys, counts: h.counts.with(i, h.counts[i] + 1) }; }
+        i = i + 1;
+    }
+    return Hist { keys: h.keys.append(k), counts: h.counts.append(1) };
+}
+
+function hist_print(label: string, h: Hist): void {
+    print(label);
+    // selection sort by count, descending
+    var order: i32[] = [];
+    var used: boolean[] = [];
+    var i: i32 = 0;
+    while (i < h.keys.len()) { used = used.append(false); i = i + 1; }
+    var n: i32 = 0;
+    while (n < h.keys.len()) {
+        var best: i32 = 0 - 1;
+        var j: i32 = 0;
+        while (j < h.keys.len()) {
+            if (!used[j]) { if (best < 0 || h.counts[j] > h.counts[best]) { best = j; } }
+            j = j + 1;
+        }
+        used = used.with(best, true);
+        order = order.append(best);
+        n = n + 1;
+    }
+    for k in order { print("  " + util.i32_to_string(h.counts[k]) + "  " + h.keys[k]); }
+}
+
+// The leaf reason: strip every cascade prefix.
+function leaf(why: string): string {
+    var tag: string = "call target was refused: ";
+    var out: string = why;
+    while (out.len() > tag.len()) {
+        var head: string = slice_unchecked(out, 0, tag.len()).to_owned();
+        if (head != tag) { return out; }
+        out = slice_unchecked(out, tag.len(), out.len()).to_owned();
+    }
+    return out;
+}
+
+function main(): i32 {
+    var av: string[] = args();
+    if (av.len() < 2) { eprint("usage: semsource_census_run <entry.fern>\n"); return 2; }
+    var entry_path: string = av[1];
+    var dir: string = modloader.dirname(entry_path);
+    match (read_file(entry_path)) {
+        Ok(src) => {
+            var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
+            var merged: parser.Module = flatten.bundle(entry, loaded);
+            merged = modloader.merge_builtins(dir, merged);
+            merged = irlower.lift_lambdas(merged);
+
+            var produced: semsource.Produced[] = semsource.build_module(merged);
+            var total: i32 = produced.len();
+            var n_produced: i32 = 0;
+            var n_planned: i32 = 0;
+            var n_lowered: i32 = 0;
+            var refusals: Hist = Hist { keys: [], counts: [] };
+            var leaves: Hist = Hist { keys: [], counts: [] };
+            var plan_why: Hist = Hist { keys: [], counts: [] };
+            var rc_why: Hist = Hist { keys: [], counts: [] };
+            var i: i32 = 0;
+            while (i < produced.len()) {
+                var p: semsource.Produced = produced[i];
+                if (!p.ok) {
+                    refusals = hist_bump(refusals, p.why);
+                    leaves = hist_bump(leaves, leaf(p.why));
+                } else {
+                    n_produced = n_produced + 1;
+                    var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+                    if (!plan.ok) {
+                        plan_why = hist_bump(plan_why, plan.why);
+                    } else {
+                        n_planned = n_planned + 1;
+                        var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan);
+                        if (!lr.ok) { rc_why = hist_bump(rc_why, lr.why); } else { n_lowered = n_lowered + 1; }
+                    }
+                }
+                i = i + 1;
+            }
+            print("functions      " + util.i32_to_string(total));
+            print("produced       " + util.i32_to_string(n_produced));
+            print("planned        " + util.i32_to_string(n_planned));
+            print("lowered        " + util.i32_to_string(n_lowered));
+            hist_print("-- leaf refusals --", leaves);
+            hist_print("-- plan refusals --", plan_why);
+            hist_print("-- rc refusals --", rc_why);
+            return 0;
+        },
+        Err(_) => { eprint("cannot read entry\n"); return 2; }
+    }
+    return 0;
+}

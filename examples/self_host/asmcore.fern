@@ -1072,6 +1072,20 @@ pub function rt_src_proc_waitpid(t: string): string {
 // copied into fresh terminated buffers. Those are deliberately never freed: on
 // success the address space is replaced, and on failure the caller is already
 // reporting an error.
+// rt_src_proc_exec_as backs `proc_exec_as(path, argv, envp)` (#9090) — the
+// same execve(2), and the same failure-only -errno result, with NEITHER vector
+// derived from this process: argv is copied through as given (argv[0] is the
+// caller's, not the path) and envp replaces __raw_environ(), so the op site
+// does NOT mark the `env` need the way proc_exec's does.
+//
+// Both vectors get the same NUL-terminating copy treatment the path does, for
+// the same reason: Fern strings are not NUL-terminated and execve needs C
+// strings. Never freed — on success the address space is gone, and on failure
+// the caller is already reporting an error.
+pub function rt_src_proc_exec_as(t: string): string {
+    return "function __fern_proc_exec_as(path: string, argv: string[], envp: string[]): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var an: i32 = argv.len(); var av: i32 = __raw_alloc((an + 1) * 8); var k: i32 = 0; while (k < an) { var a: string = argv[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(av, k, ab); k = k + 1; } __raw_store_ptr(av, an, 0); var en: i32 = envp.len(); var ev: i32 = __raw_alloc((en + 1) * 8); var m: i32 = 0; while (m < en) { var e: string = envp[m]; var el: i32 = e.len(); var eb: i32 = __raw_alloc(el + 1); var q: i32 = 0; while (q < el) { __raw_store8(eb, q, e[q]); q = q + 1; } __raw_store8(eb, el, 0); __raw_store_ptr(ev, m, eb); m = m + 1; } __raw_store_ptr(ev, en, 0); return __syscall3(" + sysno(t, "execve") + ", pathz, av, ev); }";
+}
+
 pub function rt_src_proc_exec(t: string): string {
     return "function __fern_proc_exec(path: string, args: string[]): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var n: i32 = args.len(); var argv: i32 = __raw_alloc((n + 2) * 8); __raw_store_ptr(argv, 0, pathz); var k: i32 = 0; while (k < n) { var a: string = args[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(argv, k + 1, ab); k = k + 1; } __raw_store_ptr(argv, n + 1, 0); return __syscall3(" + sysno(t, "execve") + ", pathz, argv, __raw_environ()); }";
 }
@@ -3998,6 +4012,8 @@ function builtin_i32_names(): string[] {
         // on success execve has replaced the process image, so there
         // is nothing left to return to. Matches native's FuncSigs.
         "proc_exec",
+        // proc_exec_as(path, argv, envp) → the same failure-only i32.
+        "proc_exec_as",
         "f64_bits", "f32_bits",
         "len",
         "read_int",
@@ -6108,6 +6124,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
+        "__fn___fern_proc_exec_as",
         // one pid's liveness, and this process's descriptor ceiling.
         "__fn___fern_process_alive", "__fn___fern_rlimit_nofile",
         // random_bytes and random_i32 are Fern on BOTH register backends now

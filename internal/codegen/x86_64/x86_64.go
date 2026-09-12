@@ -830,6 +830,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesProcExec {
 		g.emitProcExecRuntime()
 	}
+	if g.usesProcExecAs {
+		g.emitProcExecAsRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -1190,6 +1193,11 @@ type generator struct {
 	// `proc` capability with fork / waitpid and needs the allocator (it
 	// materialises NUL-terminated copies for the C ABI).
 	usesProcExec bool
+	// usesProcExecAs pulls in `__fern_proc_exec_as(path, argv, envp)` —
+	// execve(2) with both vectors given verbatim rather than derived from
+	// this process. Needs the allocator for the NUL-terminated copies, and
+	// NOT __fern_envp: the environment it passes is the caller's argument.
+	usesProcExecAs bool
 	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
 	// fork(2) (#57): 0 in child, pid in parent, -errno on failure —
 	// and `__fern_proc_waitpid(pid)` — wait4(2) (#61) + status-word
@@ -1778,6 +1786,9 @@ func (g *generator) recordUse(target string) {
 		g.usesSleepMs = true
 	case "sleep_ns":
 		g.usesSleepNs = true
+	case "proc_exec_as":
+		g.usesProcExecAs = true
+		g.usesAlloc = true // NUL-terminated argv/envp copies
 	case "proc_exec":
 		g.usesProcExec = true
 		g.usesAlloc = true // NUL-terminated argv copies
@@ -3485,6 +3496,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_sleep_ns"
 		case "proc_exec":
 			target = "__fern_proc_exec"
+		case "proc_exec_as":
+			target = "__fern_proc_exec_as"
 		case "proc_fork":
 			target = "__fern_proc_fork"
 		case "proc_waitpid":
@@ -11343,6 +11356,136 @@ func (g *generator) emitProcExecRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_proc_exec, .-__fern_proc_exec")
+}
+
+// emitCStrVector materialises a NULL-terminated `char **` from the Fern
+// `string[]` whose data pointer is in rbx, leaving the vector in r13.
+//
+// Clobbers r12 (element count), r14 (index), r15, rax, rcx, rdx, r8 and the
+// caller's frame slots [rbp-48] (source bytes) and [rbp-64] (element length).
+// The caller must reserve [rbp-96] for emitStrDataPtr, which for an inline
+// (SSO) string returns a pointer INTO that slot.
+//
+// Shared by both vectors of __fern_proc_exec_as, which is why the loop labels
+// are uniqued from labelCounter rather than hard-coded.
+func (g *generator) emitCStrVector() {
+	id := g.labelCounter
+	g.labelCounter++
+	g.emitArrayLen("r12d", "rbx") // r12 = element count
+	g.emit("lea rdi, [r12 + 1]")  // + the NULL terminator
+	g.emit("shl rdi, 3")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")   // r13 = vector
+	g.emit("xor r14d, r14d") // i = 0
+
+	g.label(fmt.Sprintf(".Lcstrv_elem_%d", id))
+	g.emit("cmp r14, r12")
+	g.emit(fmt.Sprintf("jge .Lcstrv_done_%d", id))
+	g.emit("mov r15, [rbx + r14*8]") // element string box
+	g.emitStrLen("ecx", "r15")
+	g.emit("mov [rbp - 64], rcx")                // element length
+	g.emitStrDataPtr("r15", "r15", "[rbp - 96]") // element bytes
+	g.emit("mov [rbp - 48], r15")
+	g.emit("mov rdi, [rbp - 64]")
+	g.emit("inc rdi")
+	g.emit("call __fern_alloc")
+	g.emit("mov r15, [rbp - 48]") // src bytes
+	g.emit("mov rdx, [rbp - 64]") // length
+	g.emit("xor ecx, ecx")
+	g.label(fmt.Sprintf(".Lcstrv_copy_%d", id))
+	g.emit("cmp rcx, rdx")
+	g.emit(fmt.Sprintf("jge .Lcstrv_copy_done_%d", id))
+	g.emit("mov r8b, [r15 + rcx]")
+	g.emit("mov [rax + rcx], r8b")
+	g.emit("inc rcx")
+	g.emit(fmt.Sprintf("jmp .Lcstrv_copy_%d", id))
+	g.label(fmt.Sprintf(".Lcstrv_copy_done_%d", id))
+	g.emit("mov byte ptr [rax + rdx], 0")
+	g.emit("mov [r13 + r14*8], rax")
+	g.emit("inc r14")
+	g.emit(fmt.Sprintf("jmp .Lcstrv_elem_%d", id))
+	g.label(fmt.Sprintf(".Lcstrv_done_%d", id))
+	g.emit("mov qword ptr [r13 + r12*8], 0")
+}
+
+// emitProcExecAsRuntime emits `__fern_proc_exec_as(path, argv, envp) -> i32` —
+// execve(2) with BOTH vectors supplied by the caller.
+//
+// The difference from __fern_proc_exec is entirely in what reaches the kernel:
+// argv is copied through verbatim, so argv[0] is whatever the caller put there
+// rather than `path`, and envp is the caller's vector rather than the
+// __fern_envp snapshot _start took. Everything else — the NUL-terminated
+// copies for the C ABI, and the result carrying only failure because a
+// successful execve never returns — matches it exactly.
+//
+// The copies are deliberately never freed, for the same two reasons: on
+// success the address space is replaced, and on failure the caller is about to
+// report an error and exit.
+func (g *generator) emitProcExecAsRuntime() {
+	g.line("")
+	g.line(".globl __fern_proc_exec_as")
+	g.line(".type __fern_proc_exec_as, @function")
+	g.label("__fern_proc_exec_as")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // rbp-8:  vector box being walked
+	g.emit("push r12") // rbp-16: count
+	g.emit("push r13") // rbp-24: vector under construction
+	g.emit("push r14") // rbp-32: loop index
+	g.emit("push r15") // rbp-40: scratch pointer
+	// Spill slots start below the pushed callee-saved registers. 88 keeps
+	// rsp 16-aligned for the __fern_alloc calls.
+	g.emit("sub rsp, 88")
+	//   [rbp-48] source bytes
+	//   [rbp-56] path cstr
+	//   [rbp-64] element length
+	//   [rbp-72] envp box, held across the argv build
+	//   [rbp-80] argv vector, held across the envp build
+	//   [rbp-96] emitStrDataPtr scratch — reserved: for a SMALL string that
+	//            helper returns a pointer INTO this slot, so nothing else
+	//            may use it.
+
+	g.emit("mov [rbp - 72], rdx") // envp box
+	g.emit("mov rbx, rsi")        // argv box
+
+	// Path -> NUL-terminated copy.
+	g.emitStrLen("r12d", "rdi")
+	g.emitStrDataPtr("r15", "rdi", "[rbp - 96]")
+	g.emit("mov [rbp - 48], r15")
+	g.emit("lea rdi, [r12 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov [rbp - 56], rax") // path cstr
+	g.emit("mov r15, [rbp - 48]")
+	g.emit("xor ecx, ecx")
+	g.label(".Lpexecas_pcopy")
+	g.emit("cmp rcx, r12")
+	g.emit("jge .Lpexecas_pcopy_done")
+	g.emit("mov dl, [r15 + rcx]")
+	g.emit("mov [rax + rcx], dl")
+	g.emit("inc rcx")
+	g.emit("jmp .Lpexecas_pcopy")
+	g.label(".Lpexecas_pcopy_done")
+	g.emit("mov byte ptr [rax + r12], 0")
+
+	g.emitCStrVector() // argv, from rbx
+	g.emit("mov [rbp - 80], r13")
+	g.emit("mov rbx, [rbp - 72]")
+	g.emitCStrVector() // envp, from rbx
+
+	g.emit("mov rdi, [rbp - 56]") // path cstr
+	g.emit("mov rsi, [rbp - 80]") // argv
+	g.emit("mov rdx, r13")        // envp
+	g.emitSyscall(sysExecve)
+	// Only reachable on failure; rax holds -errno.
+	g.emit("add rsp, 88")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_proc_exec_as, .-__fern_proc_exec_as")
 }
 
 // emitProcWaitpidRuntime emits `__fern_proc_waitpid(pid)` —

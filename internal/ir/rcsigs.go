@@ -278,7 +278,7 @@ var rcInertBuiltins = map[string]bool{
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
 
-	"proc_exec": true, "proc_fork": true, "proc_waitpid": true,
+	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
 	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
 	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
 	// refuses it on both wasm worlds, which have no process table — so

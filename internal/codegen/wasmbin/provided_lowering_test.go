@@ -49,6 +49,7 @@ var providedRefusedByPlatform = map[string]bool{
 	"proc_fork":    true,
 	"proc_waitpid": true,
 	"proc_exec":    true,
+	"proc_exec_as": true,
 	// Liveness of an arbitrary pid, which needs the same process table.
 	"process_alive": true,
 	// `fsinfo` — the size and the length limits of a filesystem, where

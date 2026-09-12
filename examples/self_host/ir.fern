@@ -1188,6 +1188,12 @@ pub function op_proc_waitpid(): Op { return op0("proc_waitpid"); }
 // orchestrator in asm_modload_run needs exactly this. No wasm (a component has
 // no processes — see wasm_unsupported_builtin).
 pub function op_proc_exec(): Op { return op0("proc_exec"); }
+// `proc_exec_as` pops [path, argv, envp] and execve's with both vectors
+// VERBATIM: argv[0] is whatever the caller put there rather than the path,
+// and the environment is the caller's rather than __raw_environ()'s. Same
+// failure-only result as op_proc_exec, and no wasm for the same reason.
+// `env sh -c …` is the caller that needs both halves at once (#9090).
+pub function op_proc_exec_as(): Op { return op0("proc_exec_as"); }
 // `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
@@ -1636,8 +1642,10 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 277 (re-grep rather than trusting this line — it has
-// been stale before, which is the drift the paragraph below is about).
+// NEXT FREE EXTENSION ID: 275, then 277..279 — 276 (window_size) and 280
+// (proc_exec_as) were taken out of order by branches in flight (re-grep rather
+// than trusting this line — it has been stale before, which is the drift the
+// paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -2084,6 +2092,7 @@ function kind_id_len12(name: string): i32 {
     if (c == b'd' && name == "dyn_downcast") { return 148; }
     if (c == b'm' && name == "monotonic_ns") { return 182; }
     if (c == b'p' && name == "proc_waitpid") { return 212; }
+    if (c == b'p' && name == "proc_exec_as") { return 280; }
     if (c == b'r') { return kind_id_len12_r(name); }
     if (c == b's') { return kind_id_len12_s(name); }
     if (c == b't' && name == "tcp_pollable") { return 112; }
@@ -2452,6 +2461,7 @@ function kind_name_4(id: i32): string {
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
     if (id == 276) { return "window_size"; }
+    if (id == 280) { return "proc_exec_as"; }
     return "invalid";
 }
 
@@ -2602,7 +2612,8 @@ function pops3(t: i32): boolean {
         || t == 89 || t == 96 || t == 102 || t == 111                    // arr_set, arr_slice, str_slice, str_replace
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
-        || t == 242;                                                     // reader_seek (fd, offset, whence)
+        || t == 242                                                      // reader_seek (fd, offset, whence)
+        || t == 280;                                                     // proc_exec_as (path, argv, envp)
 }
 
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not

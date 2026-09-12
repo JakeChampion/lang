@@ -164,18 +164,18 @@ aarch64/map_int.text	3850
 aarch64/map_int.ir	61361301
 aarch64/map_probe_chain.text	3876
 aarch64/map_probe_chain.ir	613549422
-aarch64/map_string.text	5478
+aarch64/map_string.text	5432
 aarch64/map_string.ir	161643245	2
-aarch64/ordmap_insert.text	3545
+aarch64/ordmap_insert.text	3426
 aarch64/ordmap_insert.ir	507152976
-aarch64/pmap_insert.text	7657
+aarch64/pmap_insert.text	7173
 aarch64/pmap_insert.ir	232489686
-aarch64/pvec_with.text	7881
+aarch64/pvec_with.text	7597
 aarch64/pvec_with.ir	253752396
 aarch64/record_update.text	916
 aarch64/sort_inplace.text	822
 aarch64/sort_inplace.ir	112891129
-aarch64/sort_ints.text	2786
+aarch64/sort_ints.text	2766
 aarch64/sort_ints.ir	105084009
 aarch64/sort_strings.text	4184
 aarch64/string_build.text	1339
@@ -194,7 +194,7 @@ aarch64/struct_drop.text	2602
 aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	972
 aarch64/tokenize.ir	130770104
-aarch64/utf8_ingest_unchecked.text	36445
+aarch64/utf8_ingest_unchecked.text	32498
 aarch64/utf8_ingest_unchecked.ir	18250835	3
-aarch64/utf8_ingest_validated.text	37090
+aarch64/utf8_ingest_validated.text	33137
 aarch64/utf8_ingest_validated.ir	24108639	3

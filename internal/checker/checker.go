@@ -1879,6 +1879,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
 	}
+	// proc_exec_as(path, argv, envp): i32 — execve(2) with BOTH vectors
+	// given verbatim. `argv` is the complete vector including argv[0], and
+	// `envp` the complete `NAME=VALUE` vector; neither is derived from the
+	// caller's own process. That is the difference from `proc_exec`, which
+	// prepends `path` as argv[0] and inherits the captured environment.
+	//
+	// Both are needed together and by the same callers: `env sh -c …` runs
+	// the child as `sh` rather than `/bin/sh`, and hands it an environment it
+	// has just rebuilt. A duplicate name is legal in an environment vector
+	// and the kernel preserves it, which is why this takes the raw vector
+	// rather than a map.
+	//
+	// Same return contract as proc_exec: on success it does not return, so
+	// the i32 only ever reports failure as a negative errno. Same `proc`
+	// capability gate (native targets only — E066 on both wasm worlds, which
+	// have no process to replace), and the interpreter answers -38 / ENOSYS.
+	c.info.FuncSigs["proc_exec_as"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.NumberType{},
+	}
 	// statfs(path): Result[FsStat, IoError] — the geometry and the
 	// length limits of the filesystem `path` resolves on (#9062).
 	// `pathchk` needs the limits, `df` needs the counts, and one

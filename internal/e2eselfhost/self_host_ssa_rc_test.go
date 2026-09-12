@@ -178,6 +178,36 @@ func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
 function refused(r: irlower.LowerResult, why: string): boolean {
     return !r.ok && r.why == why && r.ops.len() == 0 && r.n_locals == 0 && r.n_params == 0;
 }
+// The width masks one lowered graph emits, concatenated — "" when it emits
+// none. A contract the planner refuses comes back as its reason instead, so
+// one helper covers both what an operation is allowed to be and what it
+// lowers to.
+function masks(r: irlower.LowerResult): string {
+    if (!r.ok) { return "lower:" + r.why; }
+    var out: string = "";
+    for o in r.ops { if (o.kind_tag == ir.kind_id("int_cast")) { out = out + o.str; } }
+    return out;
+}
+function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): string {
+    var g = ssa.SFunc { name: "bin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
+    var f = ssasem.Func { graph: g, values: [t, t, result], params: [t, t], result: result,
+        records: [], enums: [], calls: [] };
+    var p = ssaunits.plan(f, [1, 1]);
+    if (!p.ok) { return "plan:" + p.why; }
+    return masks(ssarc.lower(f, [1, 1], p));
+}
+function cast_masks(from: typeinfo.Type, to: typeinfo.Type): string {
+    var g = ssa.SFunc { name: "cast", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            ssa.SInst { kind_tag: ssasem.cast(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
+    var f = ssasem.Func { graph: g, values: [from, to], params: [from], result: to,
+        records: [], enums: [], calls: [] };
+    var p = ssaunits.plan(f, [1]);
+    if (!p.ok) { return "plan:" + p.why; }
+    return masks(ssarc.lower(f, [1], p));
+}
 function main(): i32 {
     var f = fixture();
     var p = ssaunits.plan(f, []);
@@ -441,8 +471,9 @@ function main(): i32 {
     var idxGraph = ssa.SFunc { name: "idx", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.str_index(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
-    var idxFunc = ssasem.Func { graph: idxGraph, values: [strTy, i32ty, i32ty],
-        params: [strTy, i32ty], result: i32ty, records: [], enums: [], calls: [] };
+    var u8ty: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false };
+    var idxFunc = ssasem.Func { graph: idxGraph, values: [strTy, i32ty, u8ty],
+        params: [strTy, i32ty], result: u8ty, records: [], enums: [], calls: [] };
     var idxPlan = ssaunits.plan(idxFunc, [3, 1]);
     if (!idxPlan.ok) { eprint(idxPlan.why); return 61; }
     var idxLowered = ssarc.lower(idxFunc, [3, 1], idxPlan);
@@ -451,10 +482,58 @@ function main(): i32 {
     for o in idxLowered.ops { if (ir.render_op(o) == "str_index") { sawIndex = true; } }
     if (!sawIndex) { return 63; }
     // An array receiver has its own projection, and the index is not negotiable.
-    var idxArr = ssasem.Func { ...idxFunc, values: [f.result, i32ty, i32ty], params: [f.result, i32ty] };
+    var idxArr = ssasem.Func { ...idxFunc, values: [f.result, i32ty, u8ty], params: [f.result, i32ty] };
     if (ssaunits.plan(idxArr, [3, 1]).why != "string index container type") { return 64; }
-    var idxBad = ssasem.Func { ...idxFunc, values: [strTy, strTy, i32ty], params: [strTy, strTy] };
+    var idxBad = ssasem.Func { ...idxFunc, values: [strTy, strTy, u8ty], params: [strTy, strTy] };
     if (ssaunits.plan(idxBad, [3, 2]).why != "string index type") { return 65; }
+    // Add, subtract, multiply and shift-left are the operators whose result can
+    // leave the range its type names, so each masks back to its own width in a
+    // register that is wider than it. Nothing else does: a bitwise op and a
+    // shift right stay inside a range their operands are already in, and a
+    // comparison lands in a boolean.
+    if (binary_masks("+", i32ty, i32ty) != "i32") { eprint(binary_masks("+", i32ty, i32ty)); return 66; }
+    if (binary_masks("*", i32ty, i32ty) != "i32") { return 67; }
+    if (binary_masks(">>", i32ty, i32ty) != "") { return 68; }
+    if (binary_masks("/", i32ty, i32ty) != "") { return 69; }
+    // Negation is the same subtraction, so it wraps for the same reason.
+    var negGraph = ssa.SFunc { name: "neg", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            ssa.SInst { kind_tag: 10, result: 1, args: [0], imm: 0, str: "-" }], term: ret(1) }] };
+    var negFunc = ssasem.Func { graph: negGraph, values: [i32ty, i32ty], params: [i32ty], result: i32ty,
+        records: [], enums: [], calls: [] };
+    if (masks(ssarc.lower(negFunc, [1], ssaunits.plan(negFunc, [1]))) != "i32") { return 70; }
+    // The byte is the type the checker gives a string index, so it is not
+    // negotiable either: an i32 result is a contract error, not a free widening.
+    var idxWide = ssasem.Func { ...idxFunc, values: [strTy, i32ty, i32ty], result: i32ty };
+    if (ssaunits.plan(idxWide, [3, 1]).why != "string index result type") { return 71; }
+    // A byte masks to eight bits where an i32 masks to thirty-two, and the same
+    // operators do it — the width comes from the result type, not the opcode.
+    var bt: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
+    if (binary_masks("+", u8ty, u8ty) != "u8") { eprint(binary_masks("+", u8ty, u8ty)); return 72; }
+    if (binary_masks("<<", u8ty, u8ty) != "u8") { return 73; }
+    if (binary_masks("&", u8ty, u8ty) != "") { return 74; }
+    if (binary_masks("<", u8ty, bt) != "") { return 75; }
+    // A cast narrows by masking and widens by doing nothing: a byte's producing
+    // sites keep it in range, so the value already reads as the wider type.
+    if (cast_masks(i32ty, u8ty) != "u8") { return 76; }
+    if (cast_masks(u8ty, i32ty) != "") { return 77; }
+    if (cast_masks(u8ty, u8ty) != "") { return 78; }
+    if (cast_masks(i32ty, i32ty) != "") { return 79; }
+    // Both ends are integers. A cast is a reinterpretation of one slot, which
+    // a float or a reference is not.
+    var f64ty2: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
+    if (cast_masks(i32ty, f64ty2) != "plan:cast result type") { return 80; }
+    if (cast_masks(f64ty2, i32ty) != "plan:cast operand type") { return 81; }
+    if (cast_masks(strTy, i32ty) != "plan:cast operand type") { return 82; }
+    // A byte's constant is pushed with no mask, so it has to be in range here.
+    var kGraph = ssa.SFunc { name: "k", nparams: 0, nvals: 1, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 255)], term: ret(0) }] };
+    var kFunc = ssasem.Func { graph: kGraph, values: [u8ty], params: [], result: u8ty,
+        records: [], enums: [], calls: [] };
+    if (!ssaunits.plan(kFunc, []).ok) { eprint(ssaunits.plan(kFunc, []).why); return 83; }
+    var kOver = ssasem.Func { ...kFunc, graph: ssa.SFunc { ...kGraph,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 256)], term: ret(0) }] } };
+    if (ssaunits.plan(kOver, []).why != "integer constant range") { return 84; }
     return 0;
 }
 `
