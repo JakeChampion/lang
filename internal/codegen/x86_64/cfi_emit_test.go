@@ -183,16 +183,31 @@ func findX86Gcc(t *testing.T) string {
 		}
 		dir := t.TempDir()
 		probe := filepath.Join(dir, "probe.s")
-		if err := os.WriteFile(probe, []byte(".intel_syntax noprefix\n.text\n.globl _start\n_start:\n\tpush rbp\n\tret\n"), 0o644); err != nil {
+		if err := os.WriteFile(probe, []byte(probeSrc), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if exec.Command(bin, "-c", "-o", filepath.Join(dir, "probe.o"), probe).Run() == nil {
 			return bin
 		}
 	}
-	t.Skip("no gcc/clang on PATH that assembles x86-64 Intel syntax")
+	t.Skip("no gcc/clang on PATH that assembles x86-64 Intel syntax into ELF")
 	return ""
 }
+
+// probeSrc is what findX86Gcc assembles. Being x86-64 is not on its own enough:
+// a Mach-O assembler takes these instructions and then rejects every ELF
+// directive the emitter writes, which selects a tool that cannot assemble the
+// real input and fails the test where it should have skipped. The `.type`,
+// `.size` and `@progbits` directives are what distinguish the two formats.
+const probeSrc = ".intel_syntax noprefix\n" +
+	".text\n" +
+	".globl _start\n" +
+	".type _start, @function\n" +
+	"_start:\n" +
+	"\tpush rbp\n" +
+	"\tret\n" +
+	".size _start, .-_start\n" +
+	".section .text.probe,\"ax\",@progbits\n"
 
 // adoptSrc reaches the runtime helpers the adoption checks look at: array
 // append and drop (string elements, so the element walk is emitted), an
