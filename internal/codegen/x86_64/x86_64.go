@@ -266,11 +266,13 @@ const (
 	sysRenameat  = 264
 	sysFchmodat  = 268
 	sysUtimensat = 280
-	// truncate(2) 76 — the PATH form, not ftruncate(2) 77. No Fern open
-	// mode yields a writable descriptor to an existing file without
-	// O_TRUNC having already emptied it, so the fd form could not
-	// express an extend.
+	// truncate(2) 76 — the PATH form. `open_appender` yields a writable
+	// descriptor to an existing file without emptying it, so the fd form
+	// is expressible too and is ftruncate(2) below; which one a caller
+	// wants is a question about WHEN the permission check happened.
 	sysTruncate = 76
+	// ftruncate(2) 77 — the descriptor form, `Writer.truncate`.
+	sysFtruncate = 77
 	// mknodat(2) 259. The dev_t it takes is Linux's own packing of a
 	// major / minor pair, derived by measurement — see
 	// emitMknodRuntime.
@@ -1011,6 +1013,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
 	}
+	if g.usesWriterTruncate {
+		g.emitWriterTruncateRuntime()
+	}
 	if g.usesAccess {
 		g.emitAccessRuntime()
 	}
@@ -1507,25 +1512,26 @@ type generator struct {
 	// mkdirat / getdents64 / newfstatat runtimes returning the same
 	// Option[IoError] / Result[_, IoError] box shapes as the file-I/O
 	// helpers above.
-	usesRemoveFile bool
-	usesTempDir    bool
-	usesReadDir    bool
-	usesStat       bool
-	usesLstat      bool
-	usesFdStat     bool
-	usesReaderSeek bool
-	usesAccess     bool
-	usesEuid       bool
-	usesEgid       bool
-	usesRuid       bool
-	usesRgid       bool
-	usesGetgroups  bool
-	usesEnviron    bool
-	usesHostname   bool
-	usesUnameField bool
-	usesGetcwd     bool
-	usesCPUCount   bool
-	usesIoError    bool
+	usesRemoveFile     bool
+	usesTempDir        bool
+	usesReadDir        bool
+	usesStat           bool
+	usesLstat          bool
+	usesFdStat         bool
+	usesReaderSeek     bool
+	usesWriterTruncate bool
+	usesAccess         bool
+	usesEuid           bool
+	usesEgid           bool
+	usesRuid           bool
+	usesRgid           bool
+	usesGetgroups      bool
+	usesEnviron        bool
+	usesHostname       bool
+	usesUnameField     bool
+	usesGetcwd         bool
+	usesCPUCount       bool
+	usesIoError        bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
 	// (`__fern_create_dir_all(path) → Result[void, IoError]`), the
 	// only builtin that can BUILD a directory tree (#6749).
@@ -1964,6 +1970,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "__method_Reader_seek":
 		g.usesReaderSeek = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Writer_truncate":
+		g.usesWriterTruncate = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__memset":
@@ -3716,6 +3726,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_stat"
 		case "__method_Reader_seek":
 			target = "__fern_reader_seek"
+		case "__method_Writer_truncate":
+			target = "__fern_writer_truncate"
 		case "__method_Reader_close",
 			"__method_Writer_close":
 			target = "__fern_close_fd_box"
@@ -15839,6 +15851,45 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_reader_seek, .-__fern_reader_seek")
+}
+
+// emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
+// length) → Option[IoError]` — ftruncate(2) on the Writer's fd. The
+// length is a full 64-bit operand passed through unmasked, so a negative
+// one is the kernel's EINVAL rather than a clamp here.
+//
+// System V: rdi = handle ptr, rsi = length.
+func (g *generator) emitWriterTruncateRuntime() {
+	g.line("")
+	g.line(".globl __fern_writer_truncate")
+	g.line(".type __fern_writer_truncate, @function")
+	g.label("__fern_writer_truncate")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd; the length is already in rsi
+	g.emitSyscall(sysFtruncate)
+	g.emit("test rax, rax")
+	g.emit("js .Lwtr_err")
+	g.emitPayloadlessResultBox(1) // None
+	g.emit("jmp .Lwtr_ret")
+	g.label(".Lwtr_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Some
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lwtr_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_writer_truncate, .-__fern_writer_truncate")
 }
 
 // emitAccessRuntime emits `__fern_access(path, mode) →

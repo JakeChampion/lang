@@ -2216,6 +2216,15 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_seek")
 		}
 	}
+	if helpers.set["__fern_writer_truncate"] {
+		// The same set-size the path form borrows, on the handle's own
+		// descriptor rather than one this helper opens.
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_set_size_p2")
+		} else {
+			in.add("wasi_fd_filestat_set_size")
+		}
+	}
 	if helpers.set["__fern_writer_write"] {
 		if opts.Preview2WASI {
 			in.add("wasi_blocking_write_and_flush_p2")
@@ -2741,6 +2750,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
 	"__fern_fd_stat":             buildFdStatBodyP2,
 	"__fern_reader_seek":         buildReaderSeekBodyP2,
+	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,
 	"__fern_open_appender":       buildOpenAppenderBodyP2,

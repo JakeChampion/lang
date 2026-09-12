@@ -175,11 +175,15 @@ var linuxDarwinSysno = map[string][2]int{
 	"renameat": {38, 465},
 	"fchmodat": {53, 467},
 	// truncate(2) — Linux asm-generic 45, Darwin BSD 200. The PATH
-	// form, not ftruncate: no Fern open mode yields a writable
-	// descriptor to an existing file without O_TRUNC having already
-	// emptied it. Same (path, off_t) shape on both, and off_t is one
-	// 64-bit register on arm64 either way.
+	// form. Same (path, off_t) shape on both, and off_t is one 64-bit
+	// register on arm64 either way.
 	"truncate": {45, 200},
+	// ftruncate(2) — Linux asm-generic 46, Darwin BSD 201. The
+	// DESCRIPTOR form, `Writer.truncate`: `open_appender` hands back a
+	// writable descriptor to an existing file without emptying it, so
+	// this is expressible and it is what GNU `truncate` resizes
+	// through. Same (fd, off_t) shape on both.
+	"ftruncate": {46, 201},
 	// mknodat(2) — Linux asm-generic 33. Darwin has no mknodat at all,
 	// only mknod(2) BSD 14, which takes (path, mode, dev) with no
 	// directory descriptor; the helper branches on g.darwin for that one
@@ -569,7 +573,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
-		g.usesFdStat || g.usesReaderSeek ||
+		g.usesFdStat || g.usesReaderSeek || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
@@ -975,6 +979,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
+	}
+	if g.usesWriterTruncate {
+		g.emitWriterTruncateRuntime()
 	}
 	if g.usesAccess {
 		g.emitAccessRuntime()
@@ -11854,6 +11861,41 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
+// length)` in (x0, x1) → Option[IoError]: ftruncate(2) on the handle's
+// fd. None = the payloadless box; Some = {tag=0, IoError @8}. The length
+// is passed through unmasked, so a negative one is the kernel's EINVAL.
+func (g *generator) emitWriterTruncateRuntime() {
+	g.line("")
+	g.line(".global __fern_writer_truncate")
+	g.typeDirective("__fern_writer_truncate")
+	g.label("__fern_writer_truncate")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("ldr w0, [x0]") // fd; the length is already in x1
+	g.syscall("ftruncate")
+	g.emit("tbnz x0, #63, .Lwtrn_err")
+	g.emitPayloadlessResultBox(16, 1) // None
+	g.emit("b .Lwtrn_ret")
+	g.label(".Lwtrn_err")
+	g.emit("neg x19, x0")
+	g.emit("mov x0, x19")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Some)
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lwtrn_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_writer_truncate")
+	g.line(".ltorg")
+}
+
 // statField projects one kernel `struct stat` field onto its FileStat
 // slot. `load` is how wide the source is and whether it sign-extends:
 // "h" a u16, "w" a u32, "sw" an i32 widened to 64 bits, "x" a 64-bit
@@ -13907,25 +13949,26 @@ type generator struct {
 	// unlinkat / mkdirat / getdents64 / fstatat runtimes with the
 	// same Option[IoError] / Result[_, IoError] box shapes as the
 	// file-I/O helpers.
-	usesRemoveFile   bool
-	usesTempDir      bool
-	usesReadDir      bool
-	usesStat         bool
-	usesLstat        bool
-	usesFdStat       bool
-	usesReaderSeek   bool
-	usesAccess       bool
-	usesEuid         bool
-	usesEgid         bool
-	usesRuid         bool
-	usesRgid         bool
-	usesGetgroups    bool
-	usesEnviron      bool
-	usesHostname     bool
-	usesUnameField   bool
-	usesGetcwd       bool
-	usesCPUCount     bool
-	usesRemoveDirAll bool
+	usesRemoveFile     bool
+	usesTempDir        bool
+	usesReadDir        bool
+	usesStat           bool
+	usesLstat          bool
+	usesFdStat         bool
+	usesReaderSeek     bool
+	usesWriterTruncate bool
+	usesAccess         bool
+	usesEuid           bool
+	usesEgid           bool
+	usesRuid           bool
+	usesRgid           bool
+	usesGetgroups      bool
+	usesEnviron        bool
+	usesHostname       bool
+	usesUnameField     bool
+	usesGetcwd         bool
+	usesCPUCount       bool
+	usesRemoveDirAll   bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
 	// builtin that can BUILD a directory tree (#6749).
 	usesCreateDirAll bool
@@ -18441,6 +18484,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// lseek(2) on the handle's fd → Result[i64, IoError].
 			target = "__fern_reader_seek"
 			g.usesReaderSeek = true
+		case "__method_Writer_truncate":
+			// ftruncate(2) on the handle's fd → Option[IoError].
+			target = "__fern_writer_truncate"
+			g.usesWriterTruncate = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "__method_Writer_write":
 			target = "__fern_writer_write"
 			g.usesReaderWriter = true

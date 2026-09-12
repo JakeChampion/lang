@@ -931,7 +931,7 @@ pub function all_runtime_need_roots(): string[] {
         "stat", "lstat", "statfs", "access", "read_dir", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
         "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
         "chmod", "set_file_times", "truncate", "mknod", "chown_at",
-        "temp_dir", "open_file", "reader", "fd_stat", "reader_seek", "writer_write", "subprocess",
+        "temp_dir", "open_file", "reader", "fd_stat", "reader_seek", "writer_write", "writer_truncate", "subprocess",
         // stdin / argv / the host's name / the process's own identity:
         "read_all_stdin", "hostname", "environ",
         "geteuid", "getegid", "getuid", "getgid", "getgroups",

@@ -186,6 +186,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_reader_close_fd":     true,
 	"__fern_writer_close":        true,
 	"__fern_writer_write":        true,
+	"__fern_writer_truncate":     true,
 	"__fern_reader_read_line_fd": true,
 	"__fern_reader_read_chunk":   true,
 	"__fern_fd_stat":             true,
@@ -279,6 +280,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Reader_close":      true, // __fern_reader_close_fd
 	"__method_Writer_close":      true, // __fern_writer_close
 	"__method_Writer_write":      true, // __fern_writer_write
+	"__method_Writer_truncate":   true, // __fern_writer_truncate
 	"__method_Reader_seek":       true, // __fern_reader_seek
 	"__method_Reader_stat":       true, // __fern_fd_stat
 	"__method_Writer_stat":       true, // __fern_fd_stat

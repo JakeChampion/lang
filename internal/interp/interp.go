@@ -663,6 +663,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinReaderSeek}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
+	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
 	i.Builtins["__method_Array_set"] = &Builtin{Fn: builtinArraySet}
 	// Map builtins. `map_new(cap)` returns an empty Map; the
@@ -3711,6 +3712,32 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 	}
 	if _, err := w.Write([]byte(s)); err != nil {
 		return optionSome(classifyIoError("", err)), nil
+	}
+	return optionNone(), nil
+}
+
+// builtinWriterTruncate answers `w.truncate(len)`: ftruncate(2) on the
+// handle. A stream with no descriptor behind it — a stdio handle the
+// interpreter is driving through an io.Writer — cannot be resized and
+// answers EINVAL, which is what the kernel gives for a descriptor that is
+// not a regular file.
+func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Writer.truncate: expected 2 args")
+	}
+	f, err := streamFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	length, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Writer.truncate: length must be a number")
+	}
+	if f == nil {
+		return optionSome(ioErrorOther("", syscall.EINVAL)), nil
+	}
+	if terr := f.Truncate(int64(length)); terr != nil {
+		return optionSome(classifyIoError("", terr)), nil
 	}
 	return optionNone(), nil
 }

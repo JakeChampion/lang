@@ -2774,6 +2774,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Writer_write":      "__fern_writer_write",
 	"__method_Writer_close":      "__fern_writer_close",
 	"__method_Writer_stat":       "__fern_fd_stat",
+	"__method_Writer_truncate":   "__fern_writer_truncate",
 
 	// String / bytes round-trip.
 	"string_from_bytes_unchecked": "__fern_string_from_bytes",

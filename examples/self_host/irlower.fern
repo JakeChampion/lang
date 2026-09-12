@@ -13950,7 +13950,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // backend intercepts unconditionally; this is strictly safer). No
     // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
     if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
-            || fa.field == "stat" || fa.field == "seek")
+            || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate")
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
         // Reader.read_line() (#4369) -> Option[string] (Some(line incl.
@@ -14000,6 +14000,23 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             sks = lower_expr(c.args[1], sks);
             if (!sks.ok) { return sks; }
             return sks.emit(ir.op_reader_seek());
+        }
+        // Writer.truncate(length) -> Option[IoError]: ftruncate of the
+        // handle's fd. The length is an i64 parameter and takes seek's
+        // widening, so a 32-bit expression still reaches the wasm call as
+        // the i64 its signature declares.
+        if (fa.field == "truncate" && c.args.len() == 1) {
+            var wts: LowerState = lower_expr(fa.obj, s);
+            if (!wts.ok) { return wts; }
+            if (infer_expr_width(c.args[0], wts) == 64) {
+                wts = lower_i64(c.args[0], wts);
+                if (!wts.ok) { return wts; }
+            } else {
+                wts = lower_expr(c.args[0], wts);
+                if (!wts.ok) { return wts; }
+                wts = wts.emit(ir.op_int_extend(false));
+            }
+            return wts.emit(ir.op_writer_truncate());
         }
         // Writer.write(s) (#4372): a Writer is a bare fd; lower the
         // receiver (fd) then the string arg (box), then write(2) the
@@ -17278,11 +17295,10 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
 }
 
 // resource_method_opt_ret_type returns the Option / Result type of a built-in
-// Reader / Writer resource method — read_line / read_chunk / write / close — or
-// "" when the receiver is not one. The five methods lower to ops that push a
-// fresh box (op_read_line / op_read_chunk / op_writer_write / op_reader_close),
-// so no module signature carries their return type and every scrutinee-type
-// resolver would otherwise bail the module.
+// Reader / Writer resource method — read_line / read_chunk / write / close /
+// stat / seek / truncate — or "" when the receiver is not one. Each lowers to an
+// op that pushes a fresh box, so no module signature carries its return type and
+// every scrutinee-type resolver would otherwise bail the module.
 //
 // The receiver gate is lower_call_method's, so the type reported here cannot
 // drift from the call that is actually emitted: a user `.close()` on a declared
@@ -17296,6 +17312,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
         return s.opt_ret_type("Reader." + field);
     }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
+    if (field == "truncate") { return s.opt_ret_type("Writer.truncate"); }
     return "";
 }
 
@@ -70805,7 +70822,8 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.read_chunk") { return "Result[string, IoError]"; }
     if (name == "Reader.stat" || name == "Writer.stat") { return "Result[FileStat, IoError]"; }
     if (name == "Reader.seek") { return "Result[i64, IoError]"; }
-    if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write") { return "Option[IoError]"; }
+    if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
+        || name == "Writer.truncate") { return "Option[IoError]"; }
     return "";
 }
 

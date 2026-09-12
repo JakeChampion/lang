@@ -269,6 +269,7 @@ chdir=277
 signal_mask=278
 signal_disposition=279
 proc_exec_as=280
+writer_truncate=281
 buf_new=291
 buf_push=292
 buf_push_range=293
