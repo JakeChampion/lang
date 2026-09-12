@@ -336,6 +336,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_count_byte")
+				case "__fern_sum_bytes":
+					// The byte-sum reduction. Scalar, and it reads
+					// every byte through str_byte for the same reason
+					// the backward search does.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_sum_bytes")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -889,6 +896,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
+				case "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
+					"buf_len", "buf_take", "buf_free":
+					// The capacity-carrying builder, same shape: its
+					// callees come from unconditionalHelperCalls.
+					needs.add(op.Str)
 				case "__alloc", "__alloc_u8":
 					needs.add("__fern_alloc")
 					needs.add(op.Str)
@@ -1104,6 +1116,12 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_alloc_rc1":       {"__fern_alloc"},
 	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
 	"strbuf_take":            {"__fern_alloc_rc1"},
+	"buf_new":                {"__fern_alloc_rc1"},
+	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
+	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_byte":          {"__fern_buf_reserve"},
+	"buf_free":               {"__fern_box_free"},
 	// The slice header is an rc1 block; as_bytes also promotes an inline
 	// string's bytes through the bare allocator.
 	"__slice_make":             {"__fern_alloc_rc1"},
@@ -1489,6 +1507,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCountByteBody,
+	},
+	"__fern_sum_bytes": {
+		// (data, len) → i32 wrapped sum of every byte.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSumBytesBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -1911,6 +1935,56 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildStrbufTakeBody,
+	},
+	"buf_new": {
+		// (cap) → handle. Reserves the control block and its buffer.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBufNewBody,
+	},
+	"__fern_buf_reserve": {
+		// (h, need) → (). Internal: the growth the three pushes share.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildBufReserveBody,
+	},
+	"buf_push": {
+		// (h, data, len) → (). Every byte of the string onto the tail.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildBufPushBody,
+	},
+	"buf_push_range": {
+		// (h, data, len, lo, hi) → (). A byte range, no intermediate.
+		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildBufPushRangeBody,
+	},
+	"buf_push_byte": {
+		// (h, x) → (). The low byte of x.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildBufPushByteBody,
+	},
+	"buf_len": {
+		// (h) → count.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBufLenBody,
+	},
+	"buf_take": {
+		// (h) → (data, len). The buffer itself, handed over uncopied.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildBufTakeBody,
+	},
+	"buf_free": {
+		// (h) → (). The buffer, when the builder still owns one, and the
+		// control block.
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+		body:    buildBufFreeBody,
 	},
 	"isatty": {
 		// (fd: i32) → i32 (0 / 1) — is the descriptor a terminal?
@@ -4487,6 +4561,403 @@ func buildStrbufTakeBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// The capacity-carrying string builder (#8773) — `buf_new(cap)` /
+// `buf_push(b, s)` / `buf_push_range(b, s, lo, hi)` / `buf_push_byte(b, x)` /
+// `buf_len(b)` / `buf_take(b)` / `buf_free(b)`. Unlike the singleton strbuf
+// above there may be any number of builders live at once, so the state moves
+// out of the scratch words and into a control block the handle addresses.
+// Four i32 words on wasm32:
+//
+//	[H +  0] data     — the buffer's string DATA pointer, 0 when unarmed
+//	[H +  4] len      — bytes accumulated so far
+//	[H +  8] cap      — bytes the buffer holds before it must grow
+//	[H + 12] reserve  — the capacity a re-arm after a take starts from
+//
+// Both blocks come from __fern_alloc_rc1, so the buffer is laid out exactly
+// as a heap string already is and `buf_take` hands it over with no copy: it
+// answers (data, len) and drops its own pointer. The rc is already 1 from
+// the allocation and nothing in between disturbs it.
+//
+// The block a take hands over is freed later at its LENGTH rather than its
+// capacity, so it returns to a smaller freelist class than it was bumped at.
+// That is bounded internal fragmentation, not unsoundness — a block on a
+// class's freelist is only ever reused as that class. The leak census is
+// settled at the handoff, where both numbers are still known.
+
+// bufReserveCall emits `__fern_buf_reserve(h, need)` from a builder helper.
+func bufReserveCall(body []byte, reserve, hLocal, needLocal uint32) []byte {
+	body = inst.InstLocalGet(body, hLocal)
+	body = inst.InstLocalGet(body, needLocal)
+	return inst.InstCall(body, reserve)
+}
+
+// bufDst pushes `mem[h+0] + mem[h+4]`, the address the next byte lands at.
+// Read AFTER a reserve: a grow moves the buffer.
+func bufDst(body []byte, hLocal uint32) []byte {
+	body = inst.InstLocalGet(body, hLocal)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, hLocal)
+	body = memory.InstI32Load(body, 2, 4)
+	return numeric.InstI32Add(body)
+}
+
+// buildBufNewBody assembles wasm bytes for buf_new.
+//
+// Signature: (cap i32) → (handle i32). Locals: $h (1).
+func buildBufNewBody(idxs map[string]uint32) []byte {
+	allocRc1 := idxs["__fern_alloc_rc1"]
+	var body []byte
+	// cap = max(cap, 16) — a floor, so the doubling has something to double.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstLocalSet(body, 0)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, allocRc1)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 8)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Store(body, 2, 12)
+	body = inst.InstLocalGet(body, 1)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+}
+
+// buildBufReserveBody assembles wasm bytes for __fern_buf_reserve.
+//
+// Signature: (h, need i32) → (). Locals: $ncap (2), $np (3), $old (4).
+//
+// Internal: no Fern builtin reaches it, the three pushes do.
+func buildBufReserveBody(idxs map[string]uint32) []byte {
+	allocRc1 := idxs["__fern_alloc_rc1"]
+	boxFree := idxs["__fern_box_free"]
+	var body []byte
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 8)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// ncap = cap, or the reserve when a take left the builder unarmed,
+	// or 64; then double until it covers need.
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 8)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 12)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 2)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 64)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstEnd(body)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalSet(body, 3)
+	// Carry the live bytes across. A zero-length copy from the unarmed
+	// null pointer moves nothing and is in bounds.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 8)
+	body = inst.InstCall(body, boxFree)
+	body = inst.InstDrop(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 8)
+	body = inst.InstEnd(body) // end if
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32), body)
+}
+
+// buildBufPushBody assembles wasm bytes for buf_push.
+//
+// Signature: (h, data, len i32) → (). Locals: $sl (3), $need (4), $dst (5),
+// $i (6).
+//
+// A heap-form argument is contiguous in linear memory and moves with one
+// memory.copy; an inline/SSO one lives IN its two words with no address to
+// copy from, so its bytes come out through __fern_str_byte.
+func buildBufPushBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	reserve := idxs["__fern_buf_reserve"]
+	var body []byte
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 4)
+	body = bufReserveCall(body, reserve, 0, 4)
+	body = bufDst(body, 0)
+	body = inst.InstLocalSet(body, 5)
+	body = bufCopyBytes(body, strByte, 1, 2, 3, 5, 6, noByteOffset)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
+}
+
+// noByteOffset says a copy starts at the string's first byte, so the heap
+// branch needs no address adjustment and the inline branch no index bias.
+const noByteOffset = ^uint32(0)
+
+// bufCopyBytes emits "copy `n` bytes of the string in (dataLocal, rawLenLocal),
+// starting at byte `offLocal` (or 0 when offLocal is noByteOffset), to the
+// address in dstLocal". iLocal is scratch for the inline branch's loop.
+func bufCopyBytes(body []byte, strByte, dataLocal, rawLenLocal, nLocal, dstLocal, iLocal, offLocal uint32) []byte {
+	// Heap form is (raw_len & 0x80000000) == 0.
+	body = inst.InstLocalGet(body, rawLenLocal)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, dstLocal)
+	body = inst.InstLocalGet(body, dataLocal)
+	if offLocal != noByteOffset {
+		body = inst.InstLocalGet(body, offLocal)
+		body = numeric.InstI32Add(body)
+	}
+	body = inst.InstLocalGet(body, nLocal)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstElse(body)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, iLocal)
+	body = inst.InstLocalGet(body, nLocal)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, dstLocal)
+	body = inst.InstLocalGet(body, iLocal)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, dataLocal)
+	body = inst.InstLocalGet(body, rawLenLocal)
+	body = inst.InstLocalGet(body, iLocal)
+	if offLocal != noByteOffset {
+		body = inst.InstLocalGet(body, offLocal)
+		body = numeric.InstI32Add(body)
+	}
+	body = inst.InstCall(body, strByte)
+	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, iLocal)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	body = inst.InstEnd(body) // end if
+	return body
+}
+
+// buildBufPushRangeBody assembles wasm bytes for buf_push_range.
+//
+// Signature: (h, data, len, lo, hi i32) → (). Locals: $n (5), $need (6),
+// $dst (7), $i (8).
+//
+// An empty or inverted range is a no-op; the bounds themselves are the
+// caller's, as with slice_unchecked.
+func buildBufPushRangeBody(idxs map[string]uint32) []byte {
+	strByte := idxs["__fern_str_byte"]
+	reserve := idxs["__fern_buf_reserve"]
+	var body []byte
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, 5)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 6)
+	body = bufReserveCall(body, reserve, 0, 6)
+	body = bufDst(body, 0)
+	body = inst.InstLocalSet(body, 7)
+	body = bufCopyBytes(body, strByte, 1, 2, 5, 7, 8, 3)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 6)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
+}
+
+// buildBufPushByteBody assembles wasm bytes for buf_push_byte.
+//
+// Signature: (h, x i32) → (). Locals: $need (2).
+func buildBufPushByteBody(idxs map[string]uint32) []byte {
+	reserve := idxs["__fern_buf_reserve"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 2)
+	body = bufReserveCall(body, reserve, 0, 2)
+	body = bufDst(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+}
+
+// buildBufLenBody assembles wasm bytes for buf_len.
+//
+// Signature: (h i32) → (i32).
+func buildBufLenBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildBufTakeBody assembles wasm bytes for buf_take.
+//
+// Signature: (h i32) → (data, len). Locals: $len (1), $data (2), $cap (3),
+// then the six the census arithmetic needs.
+//
+// The builder is left empty and still usable: the reserve survives, so the
+// next push allocates once at full width rather than growing back up. An
+// empty build answers the canonical inline empty and keeps its buffer, so a
+// flush that finds nothing costs no allocation.
+func buildBufTakeBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	if ast.LeakCheckEnabled {
+		// The block was charged at the capacity's class and __free will
+		// charge it back at the length's; settle the difference here.
+		// mem[lcAllocBytesAddr] -= cap(capacity) - cap(length).
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstLocalSet(body, 3)
+		body = strRoundedSize(body, 3, 4)
+		body = emitFreelistBin(body, 4, 5, 6, 7)
+		body = strRoundedSize(body, 1, 8)
+		body = emitFreelistBin(body, 8, 9, 6, 7)
+		body = inst.InstI32Const(body, lcAllocBytesAddr)
+		body = inst.InstI32Const(body, lcAllocBytesAddr)
+		body = memory.InstI64Load(body, 3, 0)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 9)
+		body = numeric.InstI32Sub(body)
+		body = convert.InstI64ExtendI32U(body)
+		body = numeric.InstI64Sub(body)
+		body = memory.InstI64Store(body, 3, 0)
+	}
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 8)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32), body)
+}
+
+// buildBufFreeBody assembles wasm bytes for buf_free.
+//
+// Signature: (h i32) → (). Locals: $data (1).
+func buildBufFreeBody(idxs map[string]uint32) []byte {
+	boxFree := idxs["__fern_box_free"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 1)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 8)
+	body = inst.InstCall(body, boxFree)
+	body = inst.InstDrop(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, boxFree)
+	body = inst.InstDrop(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+}
+
 func buildStrLenBody(_ map[string]uint32) []byte {
 	var body []byte
 	// $len is wasm local 1; $data is local 0 (unused for length).
@@ -4702,6 +5173,72 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstI32Const(body, -1)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $m
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildSumBytesBody assembles wasm bytes for __fern_sum_bytes: every byte of
+// the string added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). internal/wasm/simd carries
+// loads, stores, splats, compares, bitwise and bitmask and NO ARITHMETIC at
+// all, so the extadd_pairwise/i32x4.add sequence this wants has no encoder yet
+// — and §3.3a's rule, learnt on this very target, is to land the encodings
+// against wasm-tools first rather than assume a sub-opcode.
+//
+// One loop, not two: `i32.load8_u` cannot read a SHORT string, which lives in
+// its two words with no address, so this reads every byte through
+// __fern_str_byte — the one reader correct for both string forms. Its sibling
+// splits into an SSO arm and a vector arm only because it HAS a vector arm.
+//
+// `load8_u` / str_byte are unsigned, which is the whole of the sign question:
+// 0xff contributes 255. `i32.add` wraps at 32 bits by definition, so the wrap
+// the builtin promises is free here.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string leaves the loop guard true on entry and returns the 0 already
+// in $sum.
+//
+// Locals after the two params: $n (2), $i (3), $sum (4).
+func buildSumBytesBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		lN    = 2
+		lI    = 3
+		lSum  = 4
+	)
+	var body []byte
+
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, lSum)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lSum)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, lSum)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $sum
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

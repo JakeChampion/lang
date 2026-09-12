@@ -168,6 +168,14 @@ var gatedBuiltins = map[string]string{
 	// "every filesystem" for a component to name — and a no-op would be
 	// a flush the program asked for and never got.
 	"sync": "fssync",
+	// Who OWNS an entry. A host can have files, directories and
+	// permission bits and still have no users to attach them to, which
+	// is what both WASI previews are: preview 1's `filestat` has no uid
+	// or gid field and the component model's `descriptor-stat` has none
+	// either. It is not `userid`, which is the PROCESS's ids: that one
+	// is unanswerable because a component has no identity, this one
+	// because an entry has no owner to name.
+	"chown_at": "fsowner",
 
 	// Permission bits on a filesystem entry, which is a separate
 	// capability from having a filesystem: a host can offer files and no
@@ -212,6 +220,14 @@ var gatedBuiltins = map[string]string{
 	"signal_ignore":  "signal",
 	"signal_default": "signal",
 
+	// How large the terminal on the other end of a descriptor is. A
+	// target with no terminal cannot answer: 0x0 is not "there is no
+	// terminal" but "the terminal is empty", and a caller laying out
+	// columns cannot tell those apart. `isatty` stays core beside this
+	// because "no" IS the truthful answer to its question
+	// (docs/FREESTANDING-CORE.md).
+	"window_size": "tty",
+
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and
 	// answers the empty string, which is a fact about a component rather
@@ -252,7 +268,8 @@ var gatedBuiltins = map[string]string{
 //   - Allocation. map_new / cell_new / string_from_bytes_unchecked and
 //     the strbuf scratch surface need an ALLOCATOR, not an OS. Whoever
 //     seeds the heap region decides where the bytes come from; the
-//     builtin does not care.
+//     builtin does not care. The buf_* builder family (#8773) is the
+//     same argument: bytes into a block this process allocated.
 //   - Pure computation. The float bit casts compile to a register move.
 //   - Readiness. poll / wasm_block / wasm_poll / wasm_pollable_drop WAIT
 //     on a pollable someone else constructed, and every constructor is
@@ -286,6 +303,14 @@ var coreBuiltins = map[string]bool{
 	"strbuf_reset":                true,
 	"strbuf_append":               true,
 	"strbuf_take":                 true,
+
+	"buf_new":        true,
+	"buf_push":       true,
+	"buf_push_range": true,
+	"buf_push_byte":  true,
+	"buf_len":        true,
+	"buf_take":       true,
+	"buf_free":       true,
 
 	"f32_bits":      true,
 	"f32_from_bits": true,

@@ -351,7 +351,7 @@ measurement 1), which is why they cost 176 KB and 22 µs/call.
 | Scalar / char | Rust `char`, C# `Rune`, Swift `Unicode.Scalar` | **absent** (§2.4) |
 | OS string / path | Rust `OsStr`+`Path` (WTF-8), Python `os.PathLike`+surrogateescape, Haskell `OsPath` | `std/path` over plain `string` |
 | Interned symbol | compiler-internal everywhere; Ruby `Symbol`, Elixir atoms | `SELFHOST-SYMBOL-INTERNING.md` (compiler-internal) |
-| Builder / rope | Go `strings.Builder`, Rust `String::push_str`, Java `StringBuilder`, editors' ropes | **absent** |
+| Builder / rope | Go `strings.Builder`, Rust `String::push_str`, Java `StringBuilder`, editors' ropes | `buf_*` (capacity-carrying); no rope |
 | Encoding-tagged string | Ruby | — (rightly) |
 | Format/template type | Rust `format_args!`, Python f-strings, JS tagged templates | f-strings |
 
@@ -387,10 +387,26 @@ of its retired instructions.
 What that does **not** buy is amortised growth: the 8-byte `[rc][len]`
 header has no capacity slot, so the class step is the allocator's 16-byte
 granularity and a long accumulator still re-copies its prefix once per
-step — Θ(n²/16) bytes rather than Θ(n²). Closing that needs a real builder
-type carrying a capacity, which remains the open question; the in-place
-append is what makes it a throughput question rather than a
-correctness-of-idiom one.
+step — Θ(n²/16) bytes rather than Θ(n²).
+
+The **capacity-carrying builder** (#8773) closes that. A builder is a
+`usize` — the address of a control block holding data, length, capacity and
+the reserve — so an append is a compare, a memcpy and a length store, with
+no refcount check (the buffer is uniquely owned by construction) and no
+size class re-derived per call. Growth doubles, so the prefix re-copy is
+amortised away rather than softened.
+
+```
+buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
+buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_free(b)
+```
+
+`buf_take` is **zero-copy**: the buffer is allocated string-shaped, so the
+take stamps the length and hands the same pointer over, leaving the builder
+empty and still usable with its reserve intact. A builder is not
+refcounted and has no drop — a handle that is never freed leaks, exactly as
+an fd that is never closed does — so programs want `std/io_buffered`'s
+writers rather than these directly.
 
 ---
 

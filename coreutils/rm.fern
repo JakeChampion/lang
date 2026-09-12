@@ -45,6 +45,7 @@
 // the walk below concatenates paths and meets ENAMETOOLONG partway
 // down such a tree where GNU does not (#9074). Nothing shallower is
 // affected.
+import "./lib/fts";
 import "./lib/gnu";
 
 function opt_force(): i32 {
@@ -197,19 +198,6 @@ function help_text(): string {
 }
 
 // ---- paths -----------------------------------------------------------------
-// fts trims a RUN of trailing slashes to one before the operand is
-// ever printed, and leaves `/` and `//` alone: `d///` is `d/`,
-// `d/.///` is `d/./`, `///` is `/`.
-function fts_trim(p: string): string {
-  var n: i32 = p.len();
-  if (n > 2 && p[n - 1] as i32 == 47) {
-    while (n > 1 && p[n - 2] as i32 == 47) {
-      n = n - 1;
-    }
-  }
-  return slice_unchecked(p, 0, n) + "";
-}
-
 // The last component of `p`, trailing slashes ignored: `d/./` is `.`,
 // `..//` is `..`, `//` is empty.
 function base_name(p: string): string {
@@ -240,14 +228,6 @@ function parent_name(p: string): string {
     return ".";
   }
   return slice_unchecked(p, 0, end) + "";
-}
-
-// A child of `dir`, which already ends in a slash when the operand did.
-function child_path(dir: string, name: string): string {
-  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
-    return dir + name;
-  }
-  return dir + "/" + name;
 }
 
 // ---- file kinds ------------------------------------------------------------
@@ -581,7 +561,7 @@ function rm_children(st0: St, s: Settings, path: string, names: string[], dev: i
   var marked: boolean = false;
   var i: i32 = 0;
   while (i < names.len()) {
-    var r: (St, i32) = rm_entry(st, s, child_path(path, names[i]), false, dev);
+    var r: (St, i32) = rm_entry(st, s, fts.child_path(path, names[i]), false, dev);
     st = r.0;
     if (r.1 == res_mark()) {
       marked = true;
@@ -750,7 +730,7 @@ function main(): i32 {
   var st: St = St { out: gnu.stdio_new(), status: 0 };
   var i: i32 = 0;
   while (i < files.len()) {
-    var path: string = fts_trim(files[i]);
+    var path: string = fts.trim(files[i]);
     var r: (St, i32) = rm_entry(st, s, path, true, 0 as i64);
     st = r.0;
     i = i + 1;

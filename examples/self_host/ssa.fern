@@ -2945,6 +2945,27 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
 
 // ---- text printer (for golden tests / debugging) -----------------------
 
+// What an instruction prints after its kind. A constant too wide for the
+// immediate carries the literal's TEXT instead, so that is what is printed for
+// it rather than the zero its immediate holds; the other kinds print the
+// immediate, the operator, or the symbol they name.
+function carries_imm(kind: i32): boolean {
+    return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10;
+}
+
+function carries_str(kind: i32): boolean {
+    return kind == 9 || kind == 10 || kind == 11 || semantic_names_symbol(kind);
+}
+
+// A variant projection carries BOTH: the field index and the variant name.
+function inst_detail(ins: SInst): string {
+    if (ins.kind_tag == 1 && ins.str != "") { return " " + ins.str; }
+    var out: string = "";
+    if (carries_imm(ins.kind_tag)) { out = out + " " + util.i32_to_string(ins.imm); }
+    if (carries_str(ins.kind_tag)) { out = out + " " + ins.str; }
+    return out;
+}
+
 pub function print_func(f: SFunc): string {
     var out: string = "func " + f.name + " {\n";
     var bi: i32 = 0;
@@ -2954,13 +2975,7 @@ pub function print_func(f: SFunc): string {
         var k: i32 = 0;
         while (k < blk.insts.len()) {
             var ins: SInst = blk.insts[k];
-            out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag);
-            if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 6 || ins.kind_tag == 0 - 4 || ins.kind_tag == 0 - 6 || ins.kind_tag == 0 - 10) {
-                out = out + " " + util.i32_to_string(ins.imm);
-            }
-            if (ins.kind_tag == 9 || ins.kind_tag == 10 || ins.kind_tag == 11 || semantic_names_symbol(ins.kind_tag)) {
-                out = out + " " + ins.str;
-            }
+            out = out + "    v" + util.i32_to_string(ins.result) + " = " + kind_name(ins.kind_tag) + inst_detail(ins);
             var ai: i32 = 0;
             while (ai < ins.args.len()) {
                 out = out + " v" + util.i32_to_string(ins.args[ai]);

@@ -1,0 +1,35 @@
+// coreutils/lib/fts.fern — the path rules GNU's fts(3) imposes on every
+// utility that walks a tree.
+//
+// They are shared because they are SUBTLE, not because they are long.
+// The trailing-slash rule has a special case that reads like an
+// off-by-one and is not one, and a copy that dropped it reported
+// `chcon -R --preserve-root ctx //` against `'/'` where GNU says `'//'`.
+import "std/string";
+
+// `trim(p)` — a RUN of trailing slashes cut to one, which fts does
+// before the operand is ever printed. A path that is NOTHING but
+// slashes is left alone, so `///` is `/` but `//` stays `//`: POSIX
+// makes a leading pair distinct from a single slash, and fts never
+// shortens an operand into a different root.
+//
+//   `d///` is `d/`, `d/.///` is `d/./`, `///` is `/`, `//` is `//`.
+pub function trim(p: string): string {
+  var n: i32 = p.len();
+  if (n > 2 && p[n - 1] as i32 == 47) {
+    while (n > 1 && p[n - 2] as i32 == 47) {
+      n = n - 1;
+    }
+  }
+  return slice_unchecked(p, 0, n) + "";
+}
+
+// `child_path(dir, name)` — a child of `dir`, which already ends in a
+// slash when the operand it came from did. `trim` leaves that one
+// slash in place, so joining must not add a second.
+pub function child_path(dir: string, name: string): string {
+  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}

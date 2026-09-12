@@ -785,6 +785,9 @@ var bcopyUsingHelpers = map[string]bool{
 	"string_from_bytes_unchecked": true,
 	"strbuf_append":               true,
 	"strbuf_take":                 true,
+	"__fern_buf_reserve":          true,
+	"buf_push":                    true,
+	"buf_push_range":              true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
@@ -1226,6 +1229,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
+	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -1284,6 +1288,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"chmod":                         emitChmodHelper,
 	"truncate":                      emitTruncateHelper,
 	"mknod":                         emitMknodHelper,
+	"chown_at":                      emitChownAtHelper,
 	"set_file_times":                emitSetFileTimesHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
@@ -1300,6 +1305,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"process_alive":                 emitProcessAliveHelper,
 	"rlimit_nofile":                 emitRlimitNofileHelper,
 	"statfs":                        emitStatfsHelper,
+	"window_size":                   emitWindowSizeHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
@@ -1336,6 +1342,14 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"strbuf_reset":                  emitStrbufResetHelper,
 	"strbuf_append":                 emitStrbufAppendHelper,
 	"strbuf_take":                   emitStrbufTakeHelper,
+	"buf_new":                       emitBufNewHelper,
+	"__fern_buf_reserve":            emitBufReserveHelper,
+	"buf_push":                      emitBufPushHelper,
+	"buf_push_range":                emitBufPushRangeHelper,
+	"buf_push_byte":                 emitBufPushByteHelper,
+	"buf_len":                       emitBufLenHelper,
+	"buf_take":                      emitBufTakeHelper,
+	"buf_free":                      emitBufFreeHelper,
 	"__abs_f64":                     emitFloatUnaryHelper("__abs_f64", "fabs"),
 	"__sqrt_f64":                    emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
 	"__floor_f64":                   emitFloatUnaryHelper("__floor_f64", "frintm"),
@@ -2002,6 +2016,61 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tcmp x0, #0")
 	w("\tcset w0, eq")
 	w("\tadd sp, sp, #80")
+	w("\tret")
+}
+
+// emitWindowSizeHelper writes window_size(fd) -> Result[WinSize, IoError]:
+// one TIOCGWINSZ ioctl into an 8-byte `struct winsize`, whose two cell counts
+// widen into the record. The pixel pair the kernel fills beside them has no
+// field to land in.
+//
+// A descriptor that is not a terminal answers ENOTTY, which is the refusal a
+// caller falls back to COLUMNS on; it is classified against an empty path, as
+// every descriptor-shaped failure is.
+func emitWindowSizeHelper(w func(string, ...any)) {
+	const tiocgwinsz = 0x5413
+	w("")
+	w("%s:", fnLabel("window_size"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	// The fd is an i32 value, so the high half of x0 is whatever the producer
+	// left there; ioctl reads the whole register.
+	w("\tmov w0, w0")
+	w("\tmov x1, #%d", tiocgwinsz)
+	w("\tadd x2, sp, #48")
+	w("\tmov x8, #29") // ioctl
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssawsz_err")
+	w("\tldrh w19, [sp, #48]") // ws_row
+	w("\tldrh w20, [sp, #50]") // ws_col
+	// WinSize box: {rc=1, then the field area}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #%d", 8+ir.WinSize.Bytes)
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")    // rc = 1
+	w("\tadd x21, x4, #8") // WinSize data
+	w("\tstr x19, [x21, #%d]", ir.WinSize.Rows)
+	w("\tstr x20, [x21, #%d]", ir.WinSize.Cols)
+	emitOptionBox(w, 0, "x21")
+	w("\tb .Lssawsz_ret")
+	w(".Lssawsz_err:")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitStatErrBox(w)
+	w(".Lssawsz_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
 	w("\tret")
 }
 
@@ -3229,6 +3298,13 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_map_hash_seed":          {"random_i32"},
 	"proc_exec":                     {"__alloc"},
 	"proc_exec_as":                  {"__alloc"},
+	"buf_new":                       {"__alloc"},
+	"__fern_buf_reserve":            {"__alloc", "__free"},
+	"buf_push":                      {"__fern_buf_reserve"},
+	"buf_push_range":                {"__fern_buf_reserve"},
+	"buf_push_byte":                 {"__fern_buf_reserve"},
+	"buf_take":                      {"__alloc"},
+	"buf_free":                      {"__free"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
 	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow", "__fern_rc_inc"},
@@ -3241,6 +3317,7 @@ var runtimeHelperDeps = map[string][]string{
 	"stat":                          {"__fern_io_error"},
 	"lstat":                         {"__fern_io_error"},
 	"statfs":                        {"__fern_io_error"},
+	"window_size":                   {"__fern_io_error"},
 	"access":                        {"__fern_io_error"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
@@ -3255,6 +3332,7 @@ var runtimeHelperDeps = map[string][]string{
 	"chmod":                         {"__fern_io_error"},
 	"truncate":                      {"__fern_io_error"},
 	"mknod":                         {"__fern_io_error"},
+	"chown_at":                      {"__fern_io_error"},
 	"set_file_times":                {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
@@ -3286,6 +3364,10 @@ var runtimeHelperDeps = map[string][]string{
 // if no program body has a direct heap op.
 var heapUsingHelpers = map[string]bool{
 	"__free":                        true,
+	"buf_new":                       true,
+	"__fern_buf_reserve":            true,
+	"buf_take":                      true,
+	"buf_free":                      true,
 	"__fern_box_free":               true,
 	"__fern_arr_dec":                true,
 	"__str_concat":                  true,
@@ -3327,6 +3409,9 @@ var heapUsingHelpers = map[string]bool{
 	"chmod":                         true,
 	"truncate":                      true,
 	"mknod":                         true,
+	"chown_at":                      true,
+	"statfs":                        true,
+	"window_size":                   true,
 	"set_file_times":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
@@ -4511,6 +4596,44 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_rmemchr_found:")
 	w("\tmov x0, x2")
+	w("\tret")
+}
+
+// emitSumBytesHelper writes __fern_sum_bytes(s) -> every byte of `s` added
+// into a 32-bit accumulator that wraps (docs/ATLAS-PLATFORM-PLAN.md §3.3,
+// sixth kernel).
+//
+// SCALAR (§3.4 step 1). The NEON sequence this wants is uaddlp/uadalp, neither
+// of which internal/native/arm64 can encode yet, and §3.3a's rule is to land
+// the encodings before the vector body rather than after.
+//
+// `ldrb` zero-extends, which is the whole of the sign question: a byte is
+// unsigned and 0xff contributes 255. The accumulate is `add w4, w4, w6`, a
+// 32-bit add, so the wrap is the register width.
+//
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], so the single argument lands in x0 with no slot arithmetic — where
+// the native arm64 twin spends a frame unboxing a two-word SSO string first.
+// Leaf: no frame, and every register it touches is caller-saved.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func emitSumBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_sum_bytes"))
+	w("\tldur w2, [x0, #-4]")   // len
+	w("\tmov w4, #0")           // running sum
+	w("\tmov x8, x0")           // cursor
+	w("\tadd x9, x0, w2, uxtw") // end = data + len
+	w(".Lssa_sum_bytes_loop:")
+	w("\tcmp x8, x9")
+	w("\tb.ge .Lssa_sum_bytes_ret")
+	w("\tldrb w6, [x8]")
+	w("\tadd w4, w4, w6")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_sum_bytes_loop")
+	w(".Lssa_sum_bytes_ret:")
+	w("\tmov w0, w4")
 	w("\tret")
 }
 
@@ -5780,6 +5903,26 @@ func emitMknodHelper(w func(string, ...any)) {
 		w("\torr x3, x3, x9, lsl #8")
 		w("\tand x9, x24, #1048320")
 		w("\torr x3, x3, x9, lsl #12")
+	})(w)
+}
+
+// emitChownAtHelper writes chown_at(path, uid, gid, follow) ->
+// Result[void, IoError]: fchownat(AT_FDCWD, path, uid, gid,
+// follow ? 0 : AT_SYMLINK_NOFOLLOW).
+//
+// The ids move as 32-bit registers, which is what makes -1 mean "leave
+// this one alone": uid_t is unsigned, so `w` hands the kernel the
+// 0xffffffff it compares against.
+func emitChownAtHelper(w func(string, ...any)) {
+	emitPathOpHelper("chown_at", "chwn", 54, 1, 3, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0") // AT_FDCWD
+		w("\tmov x1, x20")
+		w("\tmov w2, w21") // uid
+		w("\tmov w3, w22") // gid
+		w("\tmov x4, #256")
+		w("\tcmp x24, #0")
+		w("\tcsel x4, xzr, x4, ne") // follow clears AT_SYMLINK_NOFOLLOW
 	})(w)
 }
 
@@ -7879,6 +8022,263 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "x8", "x9", "x10")
 	w("\tstr xzr, [x1]") // reset len = 0
 	w("\tmov x0, x8")    // return data pointer
+	w("\tret")
+}
+
+// The capacity-carrying string builder (#8773). A builder handle addresses a
+// 32-byte control block: data at +0, length at +8, capacity at +16, and the
+// reserve a take re-arms from at +24. The buffer is a single-word string block
+// (rc=1@base, len@base+4, data@base+8), so buf_take stamps the length prefix
+// and hands the same pointer back with no copy.
+//
+// Unlike the fixed 64 MiB .bss the strbuf helpers above share, these go through
+// __alloc / __free, so a builder grows on demand and gives its blocks back.
+
+// emitBufNewHelper writes buf_new(cap) -> handle: allocate the control block
+// and a buffer of at least 16 bytes, and publish both capacities.
+func emitBufNewHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_new"))
+	w("\tcmp x0, #16") // a floor, so the doubling has something to double
+	w("\tb.hs .Lssa_bufnew_cap")
+	w("\tmov x0, #16")
+	w(".Lssa_bufnew_cap:")
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]") // cap, across the two calls
+	w("\tmov x0, #32")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tstr x0, [sp, #24]") // H
+	w("\tldr x0, [sp, #16]")
+	w("\tadd x0, x0, #8") // rc header + payload
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov w2, #1")
+	w("\tstr w2, [x0]")   // rc = 1
+	w("\tadd x2, x0, #8") // data
+	w("\tldr x1, [sp, #24]")
+	w("\tldr x3, [sp, #16]")
+	w("\tstr x2, [x1]")
+	w("\tstr xzr, [x1, #8]")
+	w("\tstr x3, [x1, #16]")
+	w("\tstr x3, [x1, #24]")
+	w("\tmov x0, x1")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitBufReserveHelper writes __fern_buf_reserve(H, need): replace the buffer
+// with one of at least `need` bytes, doubling from the current capacity (or
+// from the reserve, when a take left the builder unarmed), carry the live bytes
+// across and give the old block back. Internal; the three pushes reach it.
+func emitBufReserveHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_buf_reserve"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tldr x9, [x0, #16]")
+	w("\tcbnz x9, .Lssa_bufres_dbl")
+	w("\tldr x9, [x0, #24]")
+	w("\tcbnz x9, .Lssa_bufres_dbl")
+	w("\tmov x9, #64")
+	w(".Lssa_bufres_dbl:")
+	w("\tcmp x9, x1")
+	w("\tb.hs .Lssa_bufres_alloc")
+	w("\tlsl x9, x9, #1")
+	w("\tb .Lssa_bufres_dbl")
+	w(".Lssa_bufres_alloc:")
+	w("\tstr x9, [sp, #24]") // new cap
+	w("\tadd x0, x9, #8")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov w2, #1")
+	w("\tstr w2, [x0]")
+	w("\tadd x13, x0, #8") // new data, clear of __ssa_bcopy's argument registers
+	w("\tstr x13, [sp, #32]")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [x1]")
+	w("\tldr x12, [x1, #8]")
+	w("\tcbz x12, .Lssa_bufres_free")
+	emitBcopyCall(w, "x13", "x11", "x12")
+	w(".Lssa_bufres_free:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [x1]") // old data, re-read: bcopy clobbers x0..x2
+	w("\tcbz x11, .Lssa_bufres_store")
+	w("\tldr x2, [x1, #16]")
+	w("\tadd x2, x2, #8")  // block size = cap + rc header
+	w("\tsub x0, x11, #8") // block base
+	w("\tmov x1, x2")
+	w("\tbl %s", fnLabel("__free"))
+	w(".Lssa_bufres_store:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x2, [sp, #32]")
+	w("\tldr x9, [sp, #24]")
+	w("\tstr x2, [x1]")
+	w("\tstr x9, [x1, #16]")
+	w("\tmov x0, xzr")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitBufPushHelper writes buf_push(H, s): copy the single-word string's bytes
+// (length at [s-4]) onto the builder's tail, growing it first when they do not
+// fit. Unused return is 0.
+func emitBufPushHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push"))
+	w("\tldur w12, [x1, #-4]")
+	w("\tcbz w12, .Lssa_bufpush_none")
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]") // H
+	w("\tstr x1, [sp, #24]") // s
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, x12") // need
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufpush_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufpush_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldur w12, [x11, #-4]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13") // dst
+	w("\tadd x14, x13, x12")
+	w("\tstr x14, [x1, #8]") // published before the copy clobbers x0..x2
+	emitBcopyCall(w, "x9", "x11", "x12")
+	w("\tldp x29, x30, [sp], #32")
+	w(".Lssa_bufpush_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushRangeHelper writes buf_push_range(H, s, lo, hi): the same, for a
+// byte range of s with no intermediate string. An empty or inverted range is a
+// no-op; the bounds are the caller's, as with slice_unchecked. lo/hi arrive as
+// i32 and are sign-extended.
+func emitBufPushRangeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_range"))
+	w("\tsxtw x14, w2") // lo
+	w("\tsxtw x15, w3") // hi
+	w("\tsub x12, x15, x14")
+	w("\tcmp x12, #0")
+	w("\tb.le .Lssa_bufrange_none")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tstr x1, [sp, #24]")
+	w("\tstr x14, [sp, #32]")
+	w("\tstr x12, [sp, #40]")
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x9, x13, x12")
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x9, x15")
+	w("\tb.ls .Lssa_bufrange_fits")
+	w("\tmov x1, x9")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufrange_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x11, [sp, #24]")
+	w("\tldr x14, [sp, #32]")
+	w("\tldr x12, [sp, #40]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13")   // dst
+	w("\tadd x11, x11, x14") // src = s + lo
+	w("\tadd x13, x13, x12")
+	w("\tstr x13, [x1, #8]")
+	emitBcopyCall(w, "x9", "x11", "x12")
+	w("\tldp x29, x30, [sp], #48")
+	w(".Lssa_bufrange_none:")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitBufPushByteHelper writes buf_push_byte(H, x): append the low byte of x.
+func emitBufPushByteHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_byte"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tstr x1, [sp, #24]")
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, #1")
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufbyte_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufbyte_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x2, [sp, #24]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13")
+	w("\tstrb w2, [x9]")
+	w("\tadd x13, x13, #1")
+	w("\tstr x13, [x1, #8]")
+	w("\tmov x0, xzr")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitBufLenHelper writes buf_len(H) -> count. Leaf.
+func emitBufLenHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_len"))
+	w("\tldr x0, [x0, #8]")
+	w("\tret")
+}
+
+// emitBufTakeHelper writes buf_take(H) -> string: stamp the length prefix into
+// the buffer's own header and hand the pointer over, leaving the builder empty
+// and still usable. An empty build allocates a zero-length string rather than
+// giving the buffer away, so the reserve survives.
+func emitBufTakeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_take"))
+	w("\tldr x1, [x0, #8]")
+	w("\tcbz x1, .Lssa_buftake_empty")
+	w("\tldr x2, [x0]")
+	w("\tstur w1, [x2, #-4]")
+	w("\tstr xzr, [x0]")
+	w("\tstr xzr, [x0, #8]")
+	w("\tstr xzr, [x0, #16]")
+	w("\tmov x0, x2")
+	w("\tret")
+	w(".Lssa_buftake_empty:")
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x0, #8")
+	w("\tbl %s", fnLabel("__alloc"))
+	w("\tmov w2, #1")
+	w("\tstr w2, [x0]")
+	w("\tstr wzr, [x0, #4]")
+	w("\tadd x0, x0, #8")
+	w("\tldp x29, x30, [sp], #16")
+	w("\tret")
+}
+
+// emitBufFreeHelper writes buf_free(H): give the buffer back when the builder
+// still owns one, then the control block.
+func emitBufFreeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_free"))
+	w("\tcbz x0, .Lssa_buffree_ret")
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tldr x1, [x0]")
+	w("\tcbz x1, .Lssa_buffree_ctl")
+	w("\tldr x2, [x0, #16]")
+	w("\tadd x2, x2, #8")
+	w("\tsub x0, x1, #8")
+	w("\tmov x1, x2")
+	w("\tbl %s", fnLabel("__free"))
+	w(".Lssa_buffree_ctl:")
+	w("\tldr x0, [sp, #16]")
+	w("\tmov x1, #32")
+	w("\tbl %s", fnLabel("__free"))
+	w("\tldp x29, x30, [sp], #32")
+	w(".Lssa_buffree_ret:")
+	w("\tmov x0, xzr")
 	w("\tret")
 }
 

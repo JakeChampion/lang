@@ -1523,7 +1523,8 @@ function is_reserved_struct_name(name: string): boolean {
     "BytesWriter", "Cell", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
-    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "Writer", "Zoned"
+    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
+    "Zoned"
   ];
   return util.index_of_str(reserved, name) >= 0;
 }
@@ -5299,8 +5300,8 @@ function view_sum_flags(sums: ViewSum[], vix: ViewIndex, key: string): boolean[]
 
 // view_sum_known reports whether key names a summarised declaration at
 // all. A callee with no entry is a BUILTIN — the only string-returning
-// ones are `strbuf_take` and `string_from_bytes_unchecked`, and both
-// allocate fresh — so a miss means fresh rather than harmless.
+// ones are `strbuf_take`, `buf_take` and `string_from_bytes_unchecked`,
+// and all allocate fresh — so a miss means fresh rather than harmless.
 function view_sum_known(sums: ViewSum[], vix: ViewIndex, key: string): boolean {
   return view_sum_pos(sums, vix, key) >= 0;
 }
@@ -11406,10 +11407,10 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
   // TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list from
   // native's table and fails when the two drift.
   var out: string[] = [
-    "__alloc_u8", "args", "cell_new", "environ", "getcwd", "getgroups",
+    "__alloc_u8", "args", "buf_take", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "stderr", "stdin",
     "stdout", "strbuf_take", "target_arch", "target_os", "tcp_recv",
-    "uname_field"
+    "uname_field", "window_size"
   ];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }

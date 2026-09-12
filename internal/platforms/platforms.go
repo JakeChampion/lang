@@ -197,6 +197,20 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     handle rather than a mount, so there is no set of filesystems
 	//     for a component to name. Doing nothing would be a flush the
 	//     caller asked for and did not get.
+	//   - `tty` — the geometry of the terminal a descriptor is connected
+	//     to. Neither preview has an ioctl, wasi:cli's terminal-output
+	//     resource reports no size, and the two constants that could
+	//     stand in — 80x24, or 0x0 — are respectively a guess about a
+	//     terminal the component cannot see and a size no terminal has.
+	//     `isatty` is NOT this capability: it is answerable anywhere,
+	//     and the answer off a terminal is "no".
+	//   - `fsowner` — the user and the group a filesystem entry belongs
+	//     to. Distinct from `userid`, which is the PROCESS's own ids:
+	//     neither WASI preview records an owner on an entry at all
+	//     (preview 1's `filestat` has no uid or gid field, and the
+	//     component model's `descriptor-stat` none either), so there is
+	//     nothing to set and no entry whose ownership a success would
+	//     describe.
 	//   - `rlimit` — a kernel-enforced ceiling on a process resource.
 	//     Neither WASI preview has resource limits, and both constants
 	//     that could stand in — "unlimited", or a plausible 1024 — would
@@ -216,7 +230,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fssync"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty", "fssync"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

@@ -181,8 +181,31 @@ var VecAcross = VecTable{
 	},
 }
 
+// VecPairwiseLong is the widening pairwise-add class: uaddlp/saddlp add
+// ADJACENT LANE PAIRS and write the sum one element size up, and
+// uadalp/sadalp accumulate that sum into the destination instead of
+// replacing it. The size mask is the SOURCE arrangement's, which is what the
+// encoding carries; the destination is a class wider with half the lanes, so
+// unlike every other two-register class here the two operands do NOT share
+// an arrangement.
+//
+// A byte sum needs exactly this pair: uaddlp turns 16 bytes into 8 halves
+// that cannot overflow (2 x 255), and uadalp folds those into a running
+// 32-bit accumulator, so no partial total is ever narrower than the sum it
+// carries.
+var VecPairwiseLong = VecTable{
+	FernFn: "arm64_pairlong_entry",
+	Aux:    "sizes",
+	Doc: "// Widening pairwise add. The size mask is the SOURCE arrangement's;\n" +
+		"// the destination is one element size up with half the lanes.\n",
+	Ops: []VecOp{
+		{"saddlp", false, 0x02, ArrBHS}, {"uaddlp", true, 0x02, ArrBHS},
+		{"sadalp", false, 0x06, ArrBHS}, {"uadalp", true, 0x06, ArrBHS},
+	},
+}
+
 // VecTables is every class, for the gates that enumerate the vocabulary.
-var VecTables = []VecTable{VecInt3, VecLogical3, VecCmpZero, VecInt2Misc, VecFP3, VecFP2Misc, VecFPCmpZero, VecShiftImm, VecPermute, VecAcross}
+var VecTables = []VecTable{VecInt3, VecLogical3, VecCmpZero, VecInt2Misc, VecFP3, VecFP2Misc, VecFPCmpZero, VecShiftImm, VecPermute, VecAcross, VecPairwiseLong}
 
 // Bool is the Aux field read as a flag.
 func (o VecOp) Bool() bool { return o.Aux != 0 }

@@ -87,6 +87,33 @@ function main(): i32 {
   if (v != 0) { return 7; }
   return 2;
 }`, 7},
+		// lstat's AT_SYMLINK_NOFOLLOW. The flag is per-kernel — 0x100 on
+		// Linux, 0x20 on XNU — and the emitter hardcoded Linux's, which
+		// XNU rejects outright: EVERY lstat on this target answered
+		// EINVAL, on a plain file as much as on a symlink. Nothing caught
+		// it because the only lstat coverage is on the Linux backends,
+		// where the constant was right.
+		//
+		// The shape fails in both directions: a wrong flag is an Err (5),
+		// and a flag DROPPED to zero makes the symlink read back as the
+		// regular file it points at (6). stat is the control — it passes
+		// zero and must follow.
+		{"lstat_nofollow_flag", `
+function main(): i32 {
+  var d: string = "";
+  match (temp_dir("lst")) { Ok(p) => { d = p; }, Err(_) => { return 1; } }
+  var f: string = d + "/f";
+  match (write_file(f, "x")) { Ok(_) => {}, Err(_) => { return 2; } }
+  var l: string = d + "/l";
+  match (create_symlink(f, l)) { Ok(_) => {}, Err(_) => { return 3; } }
+  match (lstat(f)) { Ok(s) => { if (!s.is_file) { return 4; } }, Err(_) => { return 5; } }
+  match (lstat(l)) {
+    Ok(s) => { if (s.is_file) { return 6; } if (s.is_dir) { return 7; } },
+    Err(_) => { return 8; }
+  }
+  match (stat(l)) { Ok(s) => { if (!s.is_file) { return 9; } }, Err(_) => { return 10; } }
+  return 42;
+}`, 42},
 		// Map with HEAP-allocated string values — the arm64-darwin
 		// >4 GiB pointer-truncation regression guard (docs/BACKEND-PARITY.md
 		// "Known limitations"). The keys/values are built by concat (`"a" +

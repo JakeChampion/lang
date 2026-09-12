@@ -510,6 +510,21 @@ pub function op_rmemchr(): Op { return op0("rmemchr"); }
 // nothing can equal it, and an empty string counts 0 because it has no bytes.
 pub function op_count_byte(): Op { return op0("count_byte"); }
 
+// sum_bytes (docs/ATLAS-PLATFORM-PLAN.md §3.3, sixth kernel): pops [str] →
+// the i32 sum of every byte, wrapped to 32 bits. Allocates nothing and reads
+// only the source bytes.
+//
+// The family's first true REDUCTION: count_byte reduces over a predicate,
+// where this one carries the bytes themselves into the accumulator. It is
+// also the only member with a single operand, so it is the one whose stack
+// effect a port is most likely to copy wrong from its neighbour.
+//
+// The result WRAPS rather than saturating, because System V `sum` is defined
+// that way (std/hash's SysvSum) and because that is what a 32-bit accumulator
+// produces on every target. No cursor and no byte operand, so there is
+// nothing to clamp and no range guard: an empty string sums to 0.
+pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
+
 // ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
 // → the i32 index of the first byte at or after `from` whose high bit is set,
 // or the string's length if the rest is ASCII. Allocates nothing and reads only
@@ -582,6 +597,11 @@ pub function op_timer_fd(): Op { return op0("timer_fd"); }
 // Lowers to __fern_isatty, one terminal-attribute ioctl. std/cli's colour gate
 // is the caller — no terminal means plain text.
 pub function op_isatty(): Op { return op0("isatty"); }
+// `window_size` takes one operand [fd] and pushes Result[WinSize, IoError]:
+// one TIOCGWINSZ ioctl, the terminal's row and column counts. Refused on wasm,
+// where no world has a terminal to measure (capability `tty`) — unlike
+// `isatty`, whose question a target with no terminal can still answer.
+pub function op_window_size(): Op { return op0("window_size"); }
 
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
@@ -658,6 +678,16 @@ pub function op_truncate(): Op { return op0("truncate"); }
 // major[11:0], then minor[19:8] from bit 20), and XNU does not. Refused on
 // wasm, where neither preview can create a special file (capability `fsnode`).
 pub function op_mknod(): Op { return op0("mknod"); }
+// `chown_at` takes [path, uid, gid, follow] and pushes Result[void, IoError]:
+// fchownat(2). -1 for either id leaves that half alone, which is the kernel's
+// own convention and why there is one op here rather than a chown and a chgrp
+// — `chgrp` is this with the uid left at -1.
+//
+// `follow` false is lchown(2): the LINK's ownership changes and the target's
+// does not, which is what `chown -h` and every -R walk that meets a symlink
+// need. Refused on wasm, where neither preview records an owner on an entry
+// at all (capability `fsowner`).
+pub function op_chown_at(): Op { return op0("chown_at"); }
 // `set_file_times` takes [path, atime_sec, atime_nsec, mtime_sec, mtime_nsec,
 // flags] — six operands, the widest op here — and pushes Result[void,
 // IoError]. Each timestamp is a whole second since the epoch plus a
@@ -1163,6 +1193,23 @@ pub function op_signal_default(): Op { return op0("signal_default"); }
 pub function op_strbuf_reset(): Op { return op0("strbuf_reset"); }
 pub function op_strbuf_append(): Op { return op0("strbuf_append"); }
 pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
+// The capacity-carrying string builder (#8773) — the same accumulator without
+// the singleton. A handle is the ADDRESS of a 32-byte control block (data ptr,
+// len, cap, reserve), so any number of builders are live at once and they nest.
+// The buffer is allocated as a heap string already is, which is what makes
+// `buf_take` zero-copy: it stamps the length and hands the same pointer back as
+// a string, leaving the builder empty but still armed at its reserve. `buf_new`
+// pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
+// `buf_push_byte` / `buf_free` are statement ops (pushing a dummy so a
+// statement-level drop balances); `buf_len` and `buf_take` are value ops. All
+// lower to each backend's __fern_buf_* helpers.
+pub function op_buf_new(): Op { return op0("buf_new"); }
+pub function op_buf_push(): Op { return op0("buf_push"); }
+pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
+pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
+pub function op_buf_len(): Op { return op0("buf_len"); }
+pub function op_buf_take(): Op { return op0("buf_take"); }
+pub function op_buf_free(): Op { return op0("buf_free"); }
 // `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
 // no-op), pushing a dummy result (the syscall return) so a statement-level drop
 // balances — the same void-with-drop shape as putchar. Lowers to the x86-64 /
@@ -1643,14 +1690,20 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272): not
+// Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 285 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 275 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
+// NEXT FREE EXTENSION ID: 285 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 277..279, then 298 — 275 (chown_at), 276
+// (window_size), 280 (proc_exec_as) and 291..297 (the buf_* builder) were
+// taken out of order by branches in flight (re-grep rather than trusting this
+// line — it has been stale before, which is the drift the paragraph below is
+// about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1845,6 +1898,8 @@ function kind_id_len7(name: string): i32 {
     if (c == b'g' && name == "geteuid") { return 238; }
     if (c == b'g' && name == "getegid") { return 239; }
     if (c == b'e' && name == "environ") { return 249; }
+    if (c == b'b' && name == "buf_new") { return 291; }
+    if (c == b'b' && name == "buf_len") { return 295; }
     if (c == b'm') { return kind_id_len7_m(name); }
     if (c == b'o' && name == "opt_tag") { return 122; }
     if (c == b'p' && name == "putchar") { return 165; }
@@ -1874,6 +1929,8 @@ function kind_id_len8(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len8_a(name); }
     if (c == b'f' && name == "fd_fsync") { return 282; }
+    if (c == b'b') { return kind_id_len8_b(name); }
+    if (c == b'c' && name == "chown_at") { return 275; }
     if (c == b'f' && name == "f32_bits") { return 14; }
     if (c == b'f' && name == "f64_bits") { return 16; }
     if (c == b'h' && name == "hostname") { return 240; }
@@ -1896,6 +1953,13 @@ function kind_id_len8_a(name: string): i32 {
     if (name == "alloc_u8") { return 77; }
     if (name == "arr_make") { return 87; }
     if (name == "arr_push") { return 92; }
+    return 0;
+}
+
+function kind_id_len8_b(name: string): i32 {
+    if (name == "buf_push") { return 292; }
+    if (name == "buf_take") { return 296; }
+    if (name == "buf_free") { return 297; }
     return 0;
 }
 
@@ -1985,6 +2049,7 @@ function kind_id_len9_r(name: string): i32 {
 }
 
 function kind_id_len9_s(name: string): i32 {
+    if (name == "sum_bytes") { return 253; }
     if (name == "store_i32") { return 72; }
     if (name == "store_ptr") { return 73; }
     if (name == "store_i64") { return 199; }
@@ -2068,6 +2133,7 @@ function kind_id_len11(name: string): i32 {
     if (c == b's') { return kind_id_len11_s(name); }
     if (c == b't' && name == "tcp_connect") { return 193; }
     if (c == b'u' && name == "uname_field") { return 250; }
+    if (c == b'w' && name == "window_size") { return 276; }
     return 0;
 }
 
@@ -2131,6 +2197,7 @@ function kind_id_len13(name: string): i32 {
     if (c == b'm' && name == "mapiter_value") { return 136; }
     if (c == b'm' && name == "map_hash_seed") { return 222; }
     if (c == b'p' && name == "process_alive") { return 271; }
+    if (c == b'b' && name == "buf_push_byte") { return 294; }
     if (c == b'r' && name == "raw_store_ptr") { return 84; }
     if (c == b'r' && name == "rlimit_nofile") { return 272; }
     if (c == b's' && name == "str_ends_with") { return 115; }
@@ -2142,6 +2209,7 @@ function kind_id_len13(name: string): i32 {
 function kind_id_len14(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "arr_push_owned") { return 93; }
+    if (c == b'b' && name == "buf_push_range") { return 293; }
     if (c == b'c' && name == "const_i32_text") { return 2; }
     if (c == b'c' && name == "create_dir_all") { return 231; }
     if (c == b'c' && name == "create_symlink") { return 263; }
@@ -2432,6 +2500,7 @@ function kind_name_4(id: i32): string {
     if (id == 227) { return "ascii_run"; }
     if (id == 234) { return "rmemchr"; }
     if (id == 235) { return "count_byte"; }
+    if (id == 253) { return "sum_bytes"; }
     if (id == 228) { return "syscall5"; }
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
@@ -2468,18 +2537,34 @@ function kind_name_4(id: i32): string {
     if (id == 272) { return "rlimit_nofile"; }
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
+    if (id == 275) { return "chown_at"; }
+    if (id == 276) { return "window_size"; }
     if (id == 280) { return "proc_exec_as"; }
     if (id == 281) { return "sync"; }
     if (id == 282) { return "fd_fsync"; }
     if (id == 283) { return "fd_fdatasync"; }
     if (id == 284) { return "fd_syncfs"; }
+    if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     return "invalid";
+}
+
+// buf_kind_name renders the capacity-carrying string builder's block of
+// extension ids (#8773). Its own function so the seven names cost kind_name_4
+// one range test rather than seven compares.
+function buf_kind_name(id: i32): string {
+    if (id == 291) { return "buf_new"; }
+    if (id == 292) { return "buf_push"; }
+    if (id == 293) { return "buf_push_range"; }
+    if (id == 294) { return "buf_push_byte"; }
+    if (id == 295) { return "buf_len"; }
+    if (id == 296) { return "buf_take"; }
+    return "buf_free";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272)
+// extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2555,6 +2640,7 @@ function pops1_mem(t: i32): boolean {
         || t == 81 || t == 205 || t == 224                               // raw_alloc, raw_scratch, raw_arr_box
         || t == 90 || t == 91                                            // arr_len, arr_rc
         || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
+        || t == 253                                                      // sum_bytes
         || t == 106 || t == 107 || t == 109 || t == 110                  // str_to_upper/lower, str_trim, str_reverse
         || t == 113                                                      // str_lines
         || t == 118                                                      // strbuf_append
@@ -2581,6 +2667,7 @@ function pops1_io(t: i32): boolean {
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
+        || t == 276                                                      // window_size
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -2633,8 +2720,22 @@ function pops3(t: i32): boolean {
 // native's arities: no self-host backend emits them and irlower never
 // constructs one, so an occurrence is already a bug, and bailing says so
 // where a guessed arity would quietly proceed.
+// pops_buf is the operand count of one of the capacity-carrying string
+// builder's ops (#8773), or -1 when the tag is not one of them. The family sits
+// in its own contiguous block of ids and spans three different arities, so it
+// answers in one place rather than scattering seven tags across the pops1_* /
+// pops2_* predicates.
+function pops_buf(t: i32): i32 {
+    if (t < 291 || t > 297) { return 0 - 1; }
+    if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
+    if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte
+    return 1;                                         // buf_new, buf_len, buf_take, buf_free
+}
+
 pub function op_pops(o: Op): i32 {
     var t: i32 = o.kind_tag;
+    var bufn: i32 = pops_buf(t);
+    if (bufn >= 0) { return bufn; }
     if (pops0(t)) { return 0; }
     if (pops1_conv(t) || pops1_mem(t) || pops1_io(t)) { return 1; }
     if (pops2_arith(t) || pops2_mem(t) || pops2_io(t)) { return 2; }
@@ -2645,6 +2746,7 @@ pub function op_pops(o: Op): i32 {
     if (t == 228) { return 6; }                       // syscall5
     if (t == 269) { return 6; }                       // set_file_times: path + two timespecs + flags
     if (t == 274) { return 4; }                       // mknod: path + mode + major + minor
+    if (t == 275) { return 4; }                       // chown_at: path + uid + gid + follow
     // Variadic: the immediate is the count. arr_make / struct_make /
     // tuple_make pop their elements; call_direct pops its arguments.
     if (t == 87 || t == 138 || t == 142 || t == 149) { return o.i32_imm; }
@@ -4268,6 +4370,8 @@ pub function op_allocates(tag: i32): boolean {
     // statfs boxes a fresh FsStat struct + a Result wrapper, and heap-builds the
     // NUL-terminated path it hands the kernel.
     if (tag == 270) { return true; }
+    // window_size boxes a fresh WinSize struct + a Result wrapper.
+    if (tag == 276) { return true; }
     // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
     if (tag == 241 || tag == 242) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
@@ -4319,6 +4423,11 @@ pub function op_allocates(tag: i32): boolean {
 // oversized-function miscompile threshold, #2720). The membership is a property
 // of the IR op set — not of any one target — so it lives here and both backends
 // share it; a new string op is taught to every backend's dispatch at once.
+//
+// fern-lint: allow cyclomatic-complexity
+// A flat membership test over opcode tags, so its complexity counts OPS rather
+// than logic: every `||` is one row of a table, there is no path through it to
+// get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106
@@ -4327,7 +4436,7 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
-        || tag == 234 || tag == 235 || tag == 245;
+        || tag == 234 || tag == 235 || tag == 245 || tag == 253;
 }
 
 // --- Structured-scope navigation over an op stream ---

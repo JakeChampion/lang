@@ -43,6 +43,7 @@ struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
 function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false }; }
+function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
@@ -197,9 +198,10 @@ function integer_literal(text: string): boolean {
 
 // A literal's width is the suffix the lexer read, which a byte literal
 // (`b'x'`) carries as much as a written `7u8` does. An unsuffixed decimal is
-// an i32; the other widths have no constant form here yet.
+// an i32; the unsigned and pointer widths have no constant form here yet.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
+    if (suffix == "i64") { return t_i64(); }
     if (suffix == "" || suffix == "i32") { return t_i32(); }
     return typeinfo.unchecked();
 }
@@ -209,11 +211,15 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
+// A 64-bit literal does not fit the instruction's i32 immediate, so it carries
+// its SOURCE TEXT instead — which is also how the AST lowering hands the same
+// literal to the backends, rather than through a parse and re-format.
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (parser.is_unit_literal(n) || n.is_float || !integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    if (ssasem.is_i64(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
 
@@ -364,7 +370,60 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
     return define(s, ssasem.record_get(), [container.id], at, fa.field, sig.field_types[at]);
 }
 
-// An update names the base first, then the fields it replaces in WRITTEN
+// The values a literal wrote, in written order, with the schema slot each one
+// names: `at[i]` is the slot `ids[i]` fills. Written order is the order the
+// AST lowering evaluates them in, and the order a side effect between two of
+// them would show, so it is the order they are PRODUCED in whatever order
+// they end up placed.
+struct Written { s: State, ids: i32[], at: i32[] }
+
+function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State): Written {
+    var ids: i32[] = [];
+    var at: i32[] = [];
+    var i: i32 = 0;
+    while (i < sl.field_values.len()) {
+        var slot: i32 = field_slot(sig, sl.field_names[i]);
+        if (slot < 0 || index_of_i32(at, slot) >= 0) { return Written { s: fail(s, "unsupported record literal"), ids: [], at: [] }; }
+        var v: Value = expr(sl.field_values[i], s, sig.field_types[slot]);
+        s = v.s;
+        if (!s.ok) { return Written { s: s, ids: [], at: [] }; }
+        if (!semtypes.equal(s.values[v.id], sig.field_types[slot])) { return Written { s: fail(s, "record field type"), ids: [], at: [] }; }
+        ids = ids.append(v.id);
+        at = at.append(slot);
+        i = i + 1;
+    }
+    return Written { s: s, ids: ids, at: at };
+}
+
+// The construction is positional, so the written values are placed into
+// declaration order by the slot their NAME selected. A slot the literal did
+// not name is read off the base; a plain literal names them all and passes no
+// base, so it reaches no such read.
+function place_fields(w: Written, sig: checker.StructSig, base: i32): Written {
+    if (!w.s.ok) { return w; }
+    var s: State = w.s;
+    var ids: i32[] = [];
+    var d: i32 = 0;
+    while (d < sig.field_names.len()) {
+        var found: i32 = index_of_i32(w.at, d);
+        if (found >= 0) { ids = ids.append(w.ids[found]); }
+        else {
+            var got: Value = define(s, ssasem.record_get(), [base], d, sig.field_names[d], sig.field_types[d]);
+            s = got.s;
+            if (!s.ok) { return Written { s: s, ids: [], at: [] }; }
+            ids = ids.append(got.id);
+        }
+        d = d + 1;
+    }
+    return Written { s: s, ids: ids, at: w.at };
+}
+
+function built_record(w: Written, ty: typeinfo.Type): Value {
+    if (!w.s.ok) { return Value { s: w.s, id: 0 - 1 }; }
+    return define(w.s, ssasem.record_new(), w.ids, 0, "", ty);
+}
+
+// An update names the base first, then the fields it replaces in written
 // order, and reads the rest off the base — the order semir.build_record
 // lowers this shape in. A projection is a borrow anchored to the base, and
 // the construction takes its own unit of every reference field, so the base
@@ -377,34 +436,7 @@ function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
     s = base.s;
     if (!s.ok) { return base; }
     if (!semtypes.equal(s.values[base.id], ty)) { return refused(s, "record base type"); }
-    var replaced: i32[] = [];
-    var at: i32[] = [];
-    var i: i32 = 0;
-    while (i < sl.field_values.len()) {
-        var slot: i32 = field_slot(sig, sl.field_names[i]);
-        if (slot < 0) { return refused(s, "unsupported record literal"); }
-        var v: Value = expr(sl.field_values[i], s, sig.field_types[slot]);
-        s = v.s;
-        if (!s.ok) { return v; }
-        if (!semtypes.equal(s.values[v.id], sig.field_types[slot])) { return refused(s, "record field type"); }
-        replaced = replaced.append(v.id);
-        at = at.append(slot);
-        i = i + 1;
-    }
-    var ids: i32[] = [];
-    var d: i32 = 0;
-    while (d < sig.field_names.len()) {
-        var found: i32 = index_of_i32(at, d);
-        if (found >= 0) { ids = ids.append(replaced[found]); }
-        else {
-            var got: Value = define(s, ssasem.record_get(), [base.id], d, sig.field_names[d], sig.field_types[d]);
-            s = got.s;
-            if (!s.ok) { return got; }
-            ids = ids.append(got.id);
-        }
-        d = d + 1;
-    }
-    return define(s, ssasem.record_new(), ids, 0, "", ty);
+    return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty);
 }
 
 function field_slot(sig: checker.StructSig, name: string): i32 {
@@ -419,26 +451,20 @@ function index_of_i32(xs: i32[], v: i32): i32 {
     return 0 - 1;
 }
 
-// A plain literal names every field once, and this boundary holds it to
-// declaration order: neither checker requires that, so the refusal below is
-// what makes the positional construction sound.
+// A plain literal names every field exactly once, in whatever order the source
+// likes — neither checker asks for declaration order, and this compiler's own
+// sources do not use it. So the literal is placed by name like an update
+// rather than refused for how it was written.
+//
+// Placement needs no base: the literal supplies as many fields as the schema
+// declares, each naming a distinct slot of it, so the written fields cover
+// every slot exactly once and no slot is left to read.
 function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
     if (sl.has_base) { return record_update(e, sl, s); }
     var ty: typeinfo.Type = checked(e, s);
     var sig: checker.StructSig = record_schema(sl.type_name, s);
     if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || sl.field_values.len() != sig.field_types.len()) { return refused(s, "unsupported record literal"); }
-    var ids: i32[] = [];
-    var i: i32 = 0;
-    while (i < sl.field_values.len()) {
-        if (sl.field_names[i] != sig.field_names[i]) { return refused(s, "unsupported record literal"); }
-        var v: Value = expr(sl.field_values[i], s, sig.field_types[i]);
-        s = v.s;
-        if (!s.ok) { return v; }
-        if (!semtypes.equal(s.values[v.id], sig.field_types[i])) { return refused(s, "record field type"); }
-        ids = ids.append(v.id);
-        i = i + 1;
-    }
-    return define(s, ssasem.record_new(), ids, 0, "", ty);
+    return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), ty);
 }
 
 // A variant literal supplies its payload fields in declaration order; the

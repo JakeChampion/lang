@@ -1916,6 +1916,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rmemchr":                emitRmemchrHelper,
 	"__fern_ascii_run":              emitAsciiRunHelper,
 	"__fern_count_byte":             emitCountByteHelper,
+	"__fern_sum_bytes":              emitSumBytesHelper,
 	"__alloc_u8":                    emitAllocU8Helper,
 	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
 	"__str_slice":                   emitStrSliceHelper,
@@ -3018,6 +3019,43 @@ func emitAsciiRunHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_ascii_none:")
 	w("\tmov eax, r8d") // no high byte: the answer is len
+	w("\tret")
+}
+
+// emitSumBytesHelper writes __fern_sum_bytes(s) -> every byte of `s` added
+// into a 32-bit accumulator that wraps (docs/ATLAS-PLATFORM-PLAN.md §3.3,
+// sixth kernel).
+//
+// SCALAR (§3.4 step 1). This is the leg §3.4 records as the SILENT undercount
+// — a backend that has the op but lowers it byte-at-a-time compiles, agrees
+// with every differential, and is simply slow — so it gets the lowering at the
+// same time as the other seven rather than after, and the throughput gate is
+// what will report it when the vector bodies land.
+//
+// `movzx` is the whole of the sign question: a byte is unsigned, so 0xff
+// contributes 255 rather than -1. The accumulate is a 32-bit `add`, so the
+// wrap is the register width.
+//
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], so the single argument lands in rdi with no slot arithmetic. Leaf:
+// no frame, and every register it touches is caller-saved.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func emitSumBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_sum_bytes"))
+	w("\tmov r8d, %s", memRef("rdi", -4)) // len
+	w("\txor eax, eax")                   // running sum
+	w("\txor edx, edx")                   // cursor, as an INDEX
+	w(".Lssa_sum_bytes_loop:")
+	w("\tcmp edx, r8d")
+	w("\tjae .Lssa_sum_bytes_ret")
+	w("\tmovzx r9d, byte ptr [rdi + rdx]")
+	w("\tadd eax, r9d")
+	w("\tadd edx, 1")
+	w("\tjmp .Lssa_sum_bytes_loop")
+	w(".Lssa_sum_bytes_ret:")
 	w("\tret")
 }
 
