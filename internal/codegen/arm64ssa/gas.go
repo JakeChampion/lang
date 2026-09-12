@@ -3354,8 +3354,6 @@ var heapUsingHelpers = map[string]bool{
 	"chmod":                         true,
 	"truncate":                      true,
 	"mknod":                         true,
-	"statfs":                        true,
-	"window_size":                   true,
 	"chown_at":                      true,
 	"statfs":                        true,
 	"window_size":                   true,
