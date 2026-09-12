@@ -395,8 +395,12 @@ Searched: %s`, gnuDirErr, strings.Join(gnuCandidates(), ", "))
 // gnuCandidates lists the directories to probe, most explicit first.
 func gnuCandidates() []string {
 	var dirs []string
+	// A LIST, separated the way PATH is, because no single directory need
+	// hold every utility: Debian and its derivatives do not build `uptime`
+	// or `kill` into their coreutils package, so a host supplies those
+	// beside /usr/bin rather than instead of it.
 	if d := os.Getenv("FERN_GNU_COREUTILS"); d != "" {
-		dirs = append(dirs, d)
+		dirs = append(dirs, filepath.SplitList(d)...)
 	}
 	if p, err := exec.LookPath("yes"); err == nil {
 		dirs = append(dirs, filepath.Dir(p))
@@ -430,7 +434,12 @@ const (
 // an exit. A candidate that writes nothing before the deadline is not
 // the reference either, so the timeout is an answer and not a hang.
 func gnuVersion(dir string) (string, error) {
-	bin := filepath.Join(dir, "yes")
+	return gnuVersionOf(filepath.Join(dir, "yes"))
+}
+
+// gnuVersionOf is the same probe against a NAMED binary, for the
+// per-utility check in referenceBin.
+func gnuVersionOf(bin string) (string, error) {
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
@@ -458,16 +467,56 @@ func gnuVersion(dir string) (string, error) {
 	return strings.TrimSpace(first), nil
 }
 
-// referenceBin is the GNU binary for `util`.
+// referenceBin is the GNU coreutils binary for `util`.
+//
+// The DIRECTORY is chosen by probing `yes`, and the name `util` inside it
+// is then verified rather than assumed. That is not defensive tidiness:
+// `/usr/bin/uptime` on Debian and its derivatives belongs to procps, a
+// different program with different options and different output, because
+// their coreutils package does not build coreutils' own. Trusting the
+// directory would have compared Fern against procps and reported the
+// difference as Fern's bug.
+//
+// A name the chosen directory does not answer for is looked up in the
+// remaining candidates, so a host can supply what its distribution
+// leaves out by adding a directory to FERN_GNU_COREUTILS.
 func referenceBin(t *testing.T, util string) string {
 	t.Helper()
 	dir, ver := gnuDir(t)
-	bin := filepath.Join(dir, util)
-	if _, err := os.Stat(bin); err != nil {
-		t.Fatalf("reference %s: %v (from %s, %s)", util, err, dir, ver)
+	refBinsMu.Lock()
+	defer refBinsMu.Unlock()
+	if bin, ok := refBins[util]; ok {
+		return bin
 	}
-	return bin
+	var tried []string
+	for _, cand := range append([]string{dir}, gnuCandidates()...) {
+		bin := filepath.Join(cand, util)
+		if _, err := os.Stat(bin); err != nil {
+			continue
+		}
+		if _, err := gnuVersionOf(bin); err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", bin, err))
+			continue
+		}
+		refBins[util] = bin
+		return bin
+	}
+	t.Fatalf(`no GNU coreutils %[1]s on this host (the corpus reference is %[2]s from %[3]s).
+
+Rejected: %[4]s
+
+A utility whose oracle is missing cannot be gated, and a SKIP here would
+report a green suite that compared nothing. Debian and Ubuntu do not build
+%[1]s into their coreutils package; add a directory holding one to
+FERN_GNU_COREUTILS, which takes a PATH-style list.`,
+		util, ver, dir, strings.Join(tried, ", "))
+	return ""
 }
+
+var (
+	refBinsMu sync.Mutex
+	refBins   = map[string]string{}
+)
 
 // fernTarget is the -target the utilities are compiled for: the host's,
 // unless FERN_COREUTILS_TARGET names another one to cross-run under
