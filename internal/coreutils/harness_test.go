@@ -18,6 +18,7 @@ package coreutils
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -411,22 +412,62 @@ func gnuCandidates() []string {
 // it does not hold GNU coreutils at all. `yes --version` is the probe:
 // every utility in the corpus answers it, and yes(1) is the one that
 // exists nowhere else under that name.
+//
+// The probe has to be BOUNDED, because the binary it runs is by
+// definition one this package has not identified yet. BSD yes(1) — what
+// /usr/bin/yes is on macOS, and the first candidate `exec.LookPath`
+// offers there — has no --version: it takes the word as the string to
+// repeat and prints it forever. Reading that to EOF grew the test
+// process to 19 GB before the kernel killed it, so the whole package
+// died on the first case rather than falling through to the nix store.
 func gnuVersion(dir string) (string, error) {
 	bin := filepath.Join(dir, "yes")
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
 	argv := crossArgv(bin, "--version")
-	out, err := exec.Command(argv[0], argv[1:]...).Output()
-	if err != nil {
-		return "", err
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	out := &cappedBuffer{limit: 4096, full: cancel}
+	cmd.Stdout = out
+	runErr := cmd.Run()
+	first, _, sawNewline := strings.Cut(out.String(), "\n")
+	if !sawNewline && runErr != nil {
+		return "", runErr
 	}
-	first, _, _ := strings.Cut(string(out), "\n")
 	if !strings.Contains(first, "(GNU coreutils)") {
 		return "", fmt.Errorf("%s is not GNU coreutils: %q", bin, first)
 	}
 	return strings.TrimSpace(first), nil
 }
+
+// cappedBuffer keeps the first `limit` bytes written to it and discards
+// the rest, calling `full` once at the cap so the caller can stop the
+// writer. Writes never fail: os/exec's copier would report the error
+// from Wait and hide whichever one the child itself had.
+type cappedBuffer struct {
+	limit int
+	full  func()
+	buf   bytes.Buffer
+	done  bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := c.limit - c.buf.Len(); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		c.buf.Write(p[:room])
+	}
+	if !c.done && c.buf.Len() >= c.limit {
+		c.done = true
+		c.full()
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string { return c.buf.String() }
 
 // referenceBin is the GNU binary for `util`.
 func referenceBin(t *testing.T, util string) string {
