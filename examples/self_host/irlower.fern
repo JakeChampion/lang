@@ -12349,6 +12349,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
 // path exactly as it did before these four were split out.
 function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "isatty") { return argc == 1; }
+    if (name == "window_size") { return argc == 1; }
     if (name == "access") { return argc == 2; }
     if (name == "geteuid" || name == "getegid" || name == "hostname") { return argc == 0; }
     if (name == "getuid" || name == "getgid") { return argc == 0; }
@@ -12366,6 +12367,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 // added to it inline costs the whole function's readability.
 //
 //   isatty(fd)          → op_isatty, one terminal-attribute ioctl → 0/1.
+//   window_size(fd)     → op_window_size → Result[WinSize, IoError], one
+//                         TIOCGWINSZ. opt_ret_type's case resolves the
+//                         Result so both match arms bind.
 //   access(path, mode)  → op_access → Result[void, IoError], judged against
 //                         the EFFECTIVE ids. opt_ret_type's access case
 //                         resolves the Result, so both match arms bind.
@@ -12396,6 +12400,7 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
+    if (cid.name == "window_size") { return a0.emit(ir.op_window_size()); }
     if (cid.name == "process_alive") { return a0.emit(ir.op_process_alive()); }
     if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
@@ -70755,6 +70760,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "stat") { return "Result[FileStat, IoError]"; }
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
     if (name == "statfs") { return "Result[FsStat, IoError]"; }
+    if (name == "window_size") { return "Result[WinSize, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender / open_exclusive ->
