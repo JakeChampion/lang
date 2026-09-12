@@ -536,6 +536,13 @@ type Interp struct {
 	// accumulated string and resets. (The AOT backends grow a heap
 	// buffer; the interp grows a []byte.)
 	strbuf []byte
+	// bufs is the same idea for the capacity-carrying builder (#8773),
+	// with the singleton removed: a handle table, since any number of
+	// builders may be live at once. The compiled backends give the handle
+	// the address of a control block; here it is a table key, which is the
+	// same opacity the Fern-level `usize` promises.
+	bufs    map[int64][]byte
+	nextBuf int64
 	// traitMethods is the interpreter's own copy of the checker's
 	// TraitMethods index — `<Trait>.<Type>.<method>` to the flat symbol
 	// — rebuilt from the FuncDecls handed to Register, since the interp
@@ -600,6 +607,8 @@ func New() *Interp {
 		Exiter:       os.Exit,
 		openFiles:    map[int64]*os.File{},
 		nextFd:       100,
+		bufs:         map[int64][]byte{},
+		nextBuf:      1,
 		Global:       newEnv(nil),
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
@@ -608,6 +617,7 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
+	i.Builtins["window_size"] = &Builtin{Fn: builtinWindowSize}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
@@ -616,6 +626,16 @@ func New() *Interp {
 	i.Builtins["strbuf_reset"] = &Builtin{Fn: builtinStrbufReset}
 	i.Builtins["strbuf_append"] = &Builtin{Fn: builtinStrbufAppend}
 	i.Builtins["strbuf_take"] = &Builtin{Fn: builtinStrbufTake}
+	// buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
+	// buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_free(b) — the
+	// capacity-carrying builder (see checker FuncSigs).
+	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
+	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
+	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
+	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
+	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
+	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
+	i.Builtins["buf_free"] = &Builtin{Fn: builtinBufFree}
 	// `x.len()` dispatches through three mangled names (one per
 	// receiver type the checker registers a method on); all three
 	// route to a single shared implementation that switches on the
@@ -972,6 +992,26 @@ func New() *Interp {
 			}
 		}
 		return Number(n), nil
+	}}
+	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
+	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
+	//
+	// The accumulator is uint32 so the wrap is the language's, not Go's int:
+	// every backend's vector sequence wraps at 32 bits, and the interpreter
+	// has to agree with them on a string long enough to reach it.
+	i.Builtins["__sum_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("__sum_bytes: expected 1 arg, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__sum_bytes: expected a string, got %T", args[0])
+		}
+		var sum uint32
+		for _, c := range []byte(string(s)) {
+			sum += uint32(c)
+		}
+		return Number(int32(sum)), nil
 	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
@@ -3726,6 +3766,32 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 	return Bool(tty.IsTerminal(int(fd))), nil
 }
 
+// builtinWindowSize answers `window_size(fd)` against the real fd the
+// interpreter process holds, so `fern -interp` measures the same terminal
+// the compiled binary would.
+func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("window_size: expected 1 arg, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("window_size: expected number arg, got %T", args[0])
+	}
+	rows, cols, err := tty.WindowSize(int(fd))
+	if err != nil {
+		// Path-less, the way a failed read or fstat is: the descriptor
+		// is the subject and it has no name.
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(&Struct{
+		TypeName: "WinSize",
+		Fields: map[string]Value{
+			"rows": Number(int64(rows)),
+			"cols": Number(int64(cols)),
+		},
+	}), nil
+}
+
 // builtinTargetOS answers `target_os()` with the interpreter's host: under
 // `fern -interp` the program runs where the compiler runs, so the host IS
 // the target. A compile never reaches here — constfold folds the call to
@@ -3772,6 +3838,149 @@ func builtinStrbufAppend(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("strbuf_append: expected string arg, got %T", args[0])
 	}
 	i.strbuf = append(i.strbuf, string(s)...)
+	return Void{}, nil
+}
+
+// bufHandle reads a builder handle argument and returns the builder's
+// bytes. An unknown handle is an error rather than a silent empty
+// builder: on the compiled backends it would be a wild pointer, and the
+// interp is where that has to be catchable.
+func bufHandle(i *Interp, name string, v Value) (int64, []byte, error) {
+	h, ok := v.(Number)
+	if !ok {
+		return 0, nil, fmt.Errorf("%s: expected a builder handle, got %T", name, v)
+	}
+	b, live := i.bufs[int64(h)]
+	if !live {
+		return 0, nil, fmt.Errorf("%s: %d is not a live builder handle", name, int64(h))
+	}
+	return int64(h), b, nil
+}
+
+// builtinBufNew reserves a builder of the requested capacity and returns
+// its handle.
+func builtinBufNew(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_new: expected 1 arg (cap), got %d", len(args))
+	}
+	c, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("buf_new: expected number cap, got %T", args[0])
+	}
+	capacity := int64(c)
+	if capacity < 0 {
+		capacity = 0
+	}
+	h := i.nextBuf
+	i.nextBuf++
+	i.bufs[h] = make([]byte, 0, capacity)
+	return Number(h), nil
+}
+
+// builtinBufPush appends a whole string's bytes to the builder.
+func builtinBufPush(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("buf_push: expected 2 args (b, s), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push: expected string arg, got %T", args[1])
+	}
+	i.bufs[h] = append(b, string(s)...)
+	return Void{}, nil
+}
+
+// builtinBufPushRange appends `s[lo:hi]`. Same bounds contract as
+// slice_unchecked's: out of range is an error here, the interp's
+// stand-in for the trap the codegen does not emit.
+func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("buf_push_range: expected 4 args (b, s, lo, hi), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_range", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_range: expected string arg, got %T", args[1])
+	}
+	lo, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_range: low bound must be number, got %T", args[2])
+	}
+	hi, ok := args[3].(Number)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_range: high bound must be number, got %T", args[3])
+	}
+	low, high, slen := int64(lo), int64(hi), int64(len(s))
+	if low < 0 || high > slen || low > high {
+		return nil, fmt.Errorf("buf_push_range [%d:%d] out of range for length %d", low, high, slen)
+	}
+	i.bufs[h] = append(b, string(s)[low:high]...)
+	return Void{}, nil
+}
+
+// builtinBufPushByte appends the low byte of x.
+func builtinBufPushByte(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("buf_push_byte: expected 2 args (b, x), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_byte", args[0])
+	if err != nil {
+		return nil, err
+	}
+	x, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_byte: expected number byte, got %T", args[1])
+	}
+	i.bufs[h] = append(b, byte(int64(x)&0xff))
+	return Void{}, nil
+}
+
+// builtinBufLen reports the bytes accumulated so far.
+func builtinBufLen(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_len: expected 1 arg (b), got %d", len(args))
+	}
+	_, b, err := bufHandle(i, "buf_len", args[0])
+	if err != nil {
+		return nil, err
+	}
+	return Number(len(b)), nil
+}
+
+// builtinBufTake hands the accumulated bytes over and leaves the builder
+// empty and still usable, matching the compiled backends: there the
+// buffer becomes the string and the builder re-arms at its reserve.
+func builtinBufTake(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_take: expected 1 arg (b), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_take", args[0])
+	if err != nil {
+		return nil, err
+	}
+	s := String(b)
+	i.bufs[h] = make([]byte, 0, cap(b))
+	return s, nil
+}
+
+// builtinBufFree releases the builder. The handle is dead afterwards,
+// which every later use reports rather than silently accepting.
+func builtinBufFree(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_free: expected 1 arg (b), got %d", len(args))
+	}
+	h, _, err := bufHandle(i, "buf_free", args[0])
+	if err != nil {
+		return nil, err
+	}
+	delete(i.bufs, h)
 	return Void{}, nil
 }
 

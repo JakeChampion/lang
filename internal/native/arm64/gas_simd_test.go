@@ -699,6 +699,35 @@ func TestSIMDPinnedEncodings(t *testing.T) {
 		{"\tfcmlt v0.2d, v1.2d, #0.0\n", 0x4ee0e820},
 		{"\tfcmeq v31.2d, v30.2d, #0.0\n", 0x4ee0dbdf},
 		{"\tfcmlt v0.4s, v1.4s, #0\n", 0x4ea0e820},
+		// Widening pairwise add. The encoded arrangement is the SOURCE's,
+		// and the destination is checked rather than encoded — which is why
+		// every source arrangement appears with both its Q forms: .8b and
+		// .16b differ only in the bit that also picks the destination's
+		// lane count, so a size/Q slip here assembles as a real instruction
+		// writing the wrong number of lanes.
+		{"\tsaddlp v0.8h, v1.16b\n", 0x4e202820},
+		{"\tsaddlp v0.4h, v1.8b\n", 0x0e202820},
+		{"\tsaddlp v0.4s, v1.8h\n", 0x4e602820},
+		{"\tsaddlp v0.2s, v1.4h\n", 0x0e602820},
+		{"\tsaddlp v0.2d, v1.4s\n", 0x4ea02820},
+		{"\tsaddlp v0.1d, v1.2s\n", 0x0ea02820},
+		{"\tuaddlp v0.8h, v1.16b\n", 0x6e202820},
+		{"\tuaddlp v0.4h, v1.8b\n", 0x2e202820},
+		{"\tuaddlp v0.4s, v1.8h\n", 0x6e602820},
+		{"\tuaddlp v0.2s, v1.4h\n", 0x2e602820},
+		{"\tuaddlp v0.2d, v1.4s\n", 0x6ea02820},
+		{"\tuaddlp v0.1d, v1.2s\n", 0x2ea02820},
+		{"\tuaddlp v31.8h, v30.16b\n", 0x6e202bdf},
+		{"\tsadalp v0.8h, v1.16b\n", 0x4e206820},
+		{"\tsadalp v0.4s, v1.8h\n", 0x4e606820},
+		{"\tsadalp v0.2d, v1.4s\n", 0x4ea06820},
+		{"\tuadalp v0.8h, v1.16b\n", 0x6e206820},
+		{"\tuadalp v0.4h, v1.8b\n", 0x2e206820},
+		{"\tuadalp v0.4s, v1.8h\n", 0x6e606820},
+		{"\tuadalp v0.2s, v1.4h\n", 0x2e606820},
+		{"\tuadalp v0.2d, v1.4s\n", 0x6ea06820},
+		{"\tuadalp v0.1d, v1.2s\n", 0x2ea06820},
+		{"\tuadalp v31.4s, v30.8h\n", 0x6e606bdf},
 	}
 	for _, c := range cases {
 		got, err := arm64.Assemble(c.asm)
@@ -720,6 +749,16 @@ func TestSIMDPinnedEncodings(t *testing.T) {
 // valid-looking instruction.
 func TestSIMDRejects(t *testing.T) {
 	for _, asm := range []string{
+		// Widening pairwise add with a destination that is not one element
+		// size up with the same Q. Each is refused by clang and by
+		// aarch64-linux-gnu-as; each would otherwise encode a real
+		// instruction writing a different lane count from the one written.
+		"\tuaddlp v0.16b, v1.16b\n",
+		"\tuaddlp v0.4s, v1.16b\n",
+		"\tuaddlp v0.8h, v1.8b\n",
+		"\tuaddlp v0.2d, v1.2d\n",
+		"\tuadalp v0.16b, v1.16b\n",
+		"\tuadalp v0.4h, v1.16b\n",
 		"\tadd v0.1d, v1.1d, v2.1d\n",
 		"\tsub v0.1d, v1.1d, v2.1d\n",
 		"\tmul v0.1d, v1.1d, v2.1d\n",

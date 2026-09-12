@@ -182,3 +182,131 @@ func TestPeepholePreservesReadBeforeFree(t *testing.T) {
 		t.Error("no live push survived: P3 removed a slot that was read before release")
 	}
 }
+
+// roundTripProg has an expression whose left operand is pushed, overwritten in
+// x0 by the load of the right operand, then popped into another register to be
+// combined — the shape P4 rewrites. The recursion is what keeps it: inlined
+// into main the whole body folds to a constant and no operand reaches the
+// stack at all.
+const roundTripProg = `function f(a: i64, b: i64): i64 {
+    if (a > 100i64) { return f(a - 1i64, b); }
+    return a + b;
+}
+function main(): i32 { return f(3i64, 4i64) as i32; }`
+
+// countRoundTrips returns how many `str x0, [sp, #-16]!` lines are separated
+// from their matching pop by exactly one instruction — what P4 removes.
+func countRoundTrips(asm string) int {
+	lines := strings.Split(asm, "\n")
+	n := 0
+	for i := 0; i+2 < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "str x0, [sp, #-16]!" {
+			continue
+		}
+		mid := lines[i+1]
+		if len(mid) == 0 || mid[0] != '\t' || strings.HasPrefix(mid, "\t.") {
+			continue
+		}
+		pop := strings.TrimSpace(lines[i+2])
+		if strings.HasPrefix(pop, "ldr ") && strings.HasSuffix(pop, ", [sp], #16") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPeepholeCollapsesRoundTrip(t *testing.T) {
+	on := compile(t, roundTripProg, Options{})
+	off := compile(t, roundTripProg, Options{NoPeephole: true})
+
+	if before := countRoundTrips(off); before == 0 {
+		t.Fatalf("fixture emits no push/op/pop round trip, so this test proves nothing:\n%s", off)
+	}
+	if after := countRoundTrips(on); after != 0 {
+		t.Errorf("P4 left %d push/op/pop round trips in place; asm:\n%s", after, on)
+	}
+	if instrCount(on) >= instrCount(off) {
+		t.Errorf("P4 did not shorten the output: %d instructions with the peephole, %d without",
+			instrCount(on), instrCount(off))
+	}
+}
+
+func TestRoundTripSafeMid(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		dst  string
+		want bool
+	}{
+		{"frame load into x0", "\tldur x0, [x29, #-16]", "x1", true},
+		{"immediate into x0", "\tmovz x0, #7", "x3", true},
+		{"w-width write to x0", "\tmov w0, w2", "x1", true},
+		// The mov P4 inserts precedes this line, so naming the pop destination
+		// in either width would read the moved value instead of the old one.
+		{"reads the pop destination", "\tadd x0, x1, x0", "x1", false},
+		{"reads it in w form", "\tmov w0, w1", "x1", false},
+		// x10 is not x1: the register match is whole-token.
+		{"similar register number", "\tadd x0, x10, x0", "x1", true},
+		{"touches sp", "\tldr x0, [sp, #8]", "x1", false},
+		// Not whitelisted: a call clobbers x0 and the caller-saved registers, a
+		// store has a memory effect, a branch can leave the region.
+		{"call", "\tbl __fern_alloc", "x1", false},
+		{"store", "\tstr x0, [x1]", "x1", false},
+		{"branch", "\tb .L1", "x1", false},
+		{"label", ".L1:", "x1", false},
+		// Writing some other register is fine on its own line — the run as a
+		// whole is what has to free x0, which roundTripSafeMids checks.
+		{"writes another register", "\tldur x2, [x29, #-16]", "x1", true},
+		// Writing the pop destination is not: the moved value has to survive
+		// to where the pop used to be.
+		{"writes the pop destination", "\tldur x1, [x29, #-16]", "x1", false},
+	}
+	for _, c := range cases {
+		if got := roundTripSafeMid(c.line, c.dst); got != c.want {
+			t.Errorf("%s: roundTripSafeMid(%q, %q) = %v, want %v", c.name, c.line, c.dst, got, c.want)
+		}
+	}
+}
+
+func TestRoundTripSafeMids(t *testing.T) {
+	cases := []struct {
+		name string
+		mids []string
+		want bool
+	}{
+		{"single x0 write", []string{"\tldur x0, [x29, #-16]"}, true},
+		{"x0 written later in the run", []string{"\tldur x2, [x29, #-8]", "\tmov x0, x2"}, true},
+		// Nothing in the run frees x0, so the push was not this pattern.
+		{"never writes x0", []string{"\tldur x2, [x29, #-8]", "\tadd x2, x2, #1"}, false},
+		{"empty run", nil, false},
+		// One unsafe line disqualifies the whole run.
+		{"call in the run", []string{"\tldur x0, [x29, #-8]", "\tbl f"}, false},
+		{"names the destination", []string{"\tldur x0, [x29, #-8]", "\tadd x2, x1, x2"}, false},
+	}
+	for _, c := range cases {
+		if got := roundTripSafeMids(c.mids, "x1"); got != c.want {
+			t.Errorf("%s: roundTripSafeMids(%q) = %v, want %v", c.name, c.mids, got, c.want)
+		}
+	}
+}
+
+func TestMentionsReg(t *testing.T) {
+	cases := []struct {
+		s, reg string
+		want   bool
+	}{
+		{"x1, x2", "x1", true},
+		{"x10, x2", "x1", false},
+		{"[sp, #8]", "sp", true},
+		{"[x29, #-8]", "sp", false},
+		{"#0x1f", "x1", false},
+		{"x2, x1", "x1", true},
+		{"w1, w2", "w1", true},
+		{"", "x1", false},
+	}
+	for _, c := range cases {
+		if got := mentionsReg(c.s, c.reg); got != c.want {
+			t.Errorf("mentionsReg(%q, %q) = %v, want %v", c.s, c.reg, got, c.want)
+		}
+	}
+}

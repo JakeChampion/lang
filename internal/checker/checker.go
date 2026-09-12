@@ -708,6 +708,23 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// WinSize — `window_size(fd)` shape: how large the terminal
+		// on the other end of a descriptor is, in character cells.
+		//
+		// The kernel's `struct winsize` also carries a pixel width
+		// and height. They are absent here because they are not a
+		// second measurement of the same thing: the two cell counts
+		// are what the kernel is told on every resize, and the pixel
+		// pair is zero on most terminals, so reporting it would hand
+		// a caller a 0 it cannot tell from "this terminal is 0
+		// pixels wide". A consumer for it can add it.
+		{
+			Name: "WinSize",
+			Fields: []ast.Param{
+				{Name: "rows", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "cols", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -1226,6 +1243,59 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.StringType{},
 	}
+	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_len /
+	// buf_take / buf_free (#8773) — the capacity-carrying string
+	// builder, the strbuf above without the singleton. A builder is a
+	// NUMBER, the address of its own control block, the way an open
+	// file is a descriptor: any number of them may be live at once and
+	// they nest. The capacity travels with the buffer, so an append is
+	// a compare, a memcpy and a length store — no refcount check (a
+	// builder's buffer is uniquely owned by construction) and no size
+	// class re-derived per call, which is what `s = s + piece` pays.
+	//
+	// buf_take hands the accumulated bytes over as a string WITHOUT
+	// copying them — the buffer is laid out as a string block from the
+	// start — and leaves the builder empty and still usable, so a
+	// flush loop keeps one builder rather than one per line.
+	//
+	// buf_free releases the buffer and the control block. A builder is
+	// not refcounted and has no drop, so a handle that is never freed
+	// leaks, exactly as an fd that is never closed does. Programs want
+	// std/io_buffered's writers rather than these directly.
+	//
+	// The handle is `usize` rather than `number`: it is an address, so it
+	// must be pointer-width on the natives and 32 bits on wasm32, which is
+	// exactly what WidthPtr resolves to. A plain `number` is 32 bits
+	// everywhere and would truncate one.
+	bufH := ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	c.info.FuncSigs["buf_new"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: bufH,
+	}
+	c.info.FuncSigs["buf_push"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_range"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_len"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["buf_take"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.StringType{},
+	}
+	c.info.FuncSigs["buf_free"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.VoidType{},
+	}
 	// __rc_inc / __rc_dec / __rc_get — direct access to the
 	// refcount machinery for debugging and Phase 1 testing.
 	// They bypass the normal alias-tracking that Phase 1c/d
@@ -1401,6 +1471,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{
 			ast.StringType{},
 			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __sum_bytes(s) → i32: the sum of every byte of `s`, wrapped to 32 bits.
+	// The sixth fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3) and the
+	// family's first true reduction — __count_byte reduces over a predicate,
+	// where this one carries the bytes themselves into the accumulator.
+	//
+	// The result WRAPS. That is not a concession: System V `sum` is defined
+	// as a wrapping 32-bit accumulator (std/hash's SysvSum), and it is also
+	// what every target's vector sequence produces without an extra widening
+	// step. A string longer than 16 MiB overflows i32 by design and the value
+	// stays exact modulo 2^32.
+	//
+	// No `from`, for __count_byte's reason: a partial sum is a slice-then-sum
+	// and a cursor would add a clamp with no caller. An empty string sums to 0.
+	c.info.FuncSigs["__sum_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
@@ -2627,6 +2716,36 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["isatty"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},
+	}
+	// window_size(fd): Result[WinSize, IoError] — how many rows and
+	// columns the terminal on the other end of `fd` has,
+	// `ioctl(fd, TIOCGWINSZ, &ws)`. What `ls -C` lays its columns out
+	// against and what `stty size` prints.
+	//
+	// A Result rather than a pair of zeroes, because "this descriptor
+	// is not a terminal" is ENOTTY and a caller has to tell it from a
+	// terminal that answered: `ls` falls back to COLUMNS and then to
+	// 80 exactly when the question has no answer, and a 0x0 would send
+	// it down the one-per-line path instead.
+	//
+	// The size is the kernel's record of what the terminal last told
+	// it, so it is a fact about the descriptor and not about the
+	// process — which is why `fd` is the argument rather than an
+	// implied stdout. A descriptor that is a terminal always answers;
+	// a resize between the call and the write is the caller's race,
+	// the same one every terminal program has.
+	//
+	// Gated on `tty`, which no wasm profile grants. `isatty` stays
+	// ungated because a target with no terminal can answer it — "no" is
+	// the truth there — but there is no equivalent truthful answer to
+	// how wide a terminal that does not exist is. E066 refuses it
+	// instead (docs/FREESTANDING-CORE.md).
+	c.info.FuncSigs["window_size"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "WinSize"},
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 	// target_os(): string — the compile target's environment ("linux",
 	// "darwin", "android", "wasi", "wasi-http", "freestanding"), never

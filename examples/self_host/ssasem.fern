@@ -83,9 +83,20 @@ pub function is_u8(t: typeinfo.Type): boolean {
     return false;
 }
 
+// A signed 64-bit integer. Unlike the byte it needs a slot of its own, which
+// only wasm spells out; the register backends already give every value a
+// 64-bit one.
+pub function is_i64(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == 64 && !i.unsigned && !i.is_char; }
+    return false;
+}
+
 // The integer types this vocabulary admits. An operator is written for one of
 // them at a time: both operands carry the same type and so does the result.
-pub function is_integer(t: typeinfo.Type): boolean { return is_i32(t) || is_u8(t); }
+// The checker auto-widens the narrower side of a mixed-width operator, but the
+// tree this producer reads is not rewritten with that conversion, so a mixed
+// operator is refused here rather than guessed at.
+pub function is_integer(t: typeinfo.Type): boolean { return is_i32(t) || is_u8(t) || is_i64(t); }
 
 function is_bool(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
@@ -115,11 +126,19 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// An integer constant carries its value in the instruction's i32 immediate, and
-// the physical form pushes it with no mask, so a narrow type's constant has to
-// be in range HERE rather than be wrapped later.
+// A narrow integer constant carries its value in the instruction's i32
+// immediate, and the physical form pushes it with no mask, so its type's range
+// has to hold HERE rather than be wrapped later. A 64-bit one does not fit
+// that immediate at all, so it carries the literal's SOURCE TEXT instead — the
+// form the backends splice straight into a 64-bit immediate, and the one the
+// AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (!is_integer(result)) { return "integer constant type"; }
+    if (is_i64(result)) {
+        if (ins.str == "" || ins.imm != 0) { return "wide constant needs its literal text"; }
+        return "";
+    }
+    if (ins.str != "") { return "narrow constant carries text"; }
     if (is_u8(result) && (ins.imm < 0 || ins.imm > 255)) { return "integer constant range"; }
     return "";
 }
@@ -403,8 +422,11 @@ function string_result(op: string): typeinfo.Type {
     return typeinfo.unchecked();
 }
 
+// Negation keeps its operand's type, at either signed width. A byte has no
+// negation here: the result of one leaves the range the type names, and what
+// the source would mean by it is not the wrap this boundary would emit.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-    if (op == "-" && is_i32(operand)) { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+    if (op == "-" && (is_i32(operand) || is_i64(operand))) { return operand; }
     if (op == "!" && is_bool(operand)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }

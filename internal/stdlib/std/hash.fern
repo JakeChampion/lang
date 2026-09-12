@@ -195,9 +195,20 @@ function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
     return SysvSum { sum: sum, len: s.len + (n as u64) };
 }
 
+// The string entry point is the one the utilities run: `cksum -a sysv` and
+// `sum -s` both read 64 KiB chunks as strings, so this is where the kernel
+// pays. `update_bytes` keeps the indexed loop because `[u8]` is not the
+// kernel family's operand type — the same split `__count_byte` has, where
+// `s.count_byte(b)` is string-only and there is no `[u8]` counterpart.
+//
+// The two must agree byte for byte, and what pins them is
+// examples/tests/hash_checksums_test.fern: it streams the 10,003-byte
+// non-UTF-8 pattern through BOTH and compares the results.
 pub function (s: SysvSum) update(chunk: string): SysvSum {
-    s = __sysv_sum_absorb(s, chunk.as_bytes());
-    return s;
+    return SysvSum {
+        sum: s.sum + (__sum_bytes(chunk) as u32),
+        len: s.len + (chunk.as_bytes().len() as u64)
+    };
 }
 
 pub function (s: SysvSum) update_bytes(chunk: [u8]): SysvSum {

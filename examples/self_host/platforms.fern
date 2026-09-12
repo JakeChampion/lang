@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "tty", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -305,6 +305,12 @@ pub function gated_builtins(): Gate[] {
         // that creates one, and a regular file standing in for a FIFO would
         // be the wrong answer presented as the right one.
         Gate { builtin: "mknod", capability: "fsnode" },
+        // How large the terminal on the other end of a descriptor is. A
+        // target with no terminal cannot answer: 0x0 is not "there is no
+        // terminal" but "the terminal is empty", and a caller laying out
+        // columns cannot tell those apart. `isatty` stays core beside it
+        // because "no" IS the truthful answer to its question.
+        Gate { builtin: "window_size", capability: "tty" },
 
         // Permission bits on a filesystem entry, which is a separate
         // capability from having a filesystem: a host can offer files and no
@@ -397,6 +403,8 @@ pub function core_builtins(): string[] {
             "map_new", "cell_new", "string_from_bytes_unchecked",
             "slice_unchecked",
             "strbuf_reset", "strbuf_append", "strbuf_take",
+            "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
+            "buf_len", "buf_take", "buf_free",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop"];
 }
