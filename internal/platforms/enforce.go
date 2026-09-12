@@ -45,6 +45,11 @@ var gatedBuiltins = map[string]string{
 	// A process table with pids in it to ask about, which is the same
 	// host property fork / exec / waitpid need.
 	"process_alive": "proc",
+	// The same process table, named as a signal target rather than
+	// merely looked up. Not `signal`: that capability is the disposition
+	// of signals arriving HERE, which wasi-cli can honestly no-op, while
+	// there is no honest no-op for delivering one somewhere else.
+	"signal_send": "proc",
 
 	// A kernel-enforced ceiling on a process resource. Its own
 	// capability rather than `proc`: that one is the authority to have

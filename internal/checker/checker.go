@@ -2063,6 +2063,44 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},
 	}
+	// signal_send(pid, sig): Result[void, IoError] — `kill(pid, sig)`,
+	// the whole syscall of which `process_alive` is the signal-0 corner.
+	//
+	// `pid` is passed through exactly as kill(2) reads it, because the
+	// spellings the liveness query rejects are the ones a sender wants:
+	// a negative `pid` is the process GROUP `-pid`, 0 is the caller's own
+	// group, and -1 is every process the caller may signal. A sender that
+	// means one process says so by passing a positive number.
+	//
+	// `sig` of 0 delivers nothing and runs the permission and existence
+	// checks only; that is the spelling `process_alive` wraps, which stays
+	// because a boolean is the better answer to a liveness question than
+	// a Result the caller has to read an errno text out of.
+	//
+	// The error is a Result rather than a boolean because the three errnos
+	// kill(2) can return say different things and a caller acts on each:
+	// ESRCH (no such process), EPERM (it exists and is not yours), EINVAL
+	// (no such signal). None of the three is one of the errnos
+	// `__fern_io_error` gives a named variant, so all three arrive as
+	// `Other("", strerror)` — the empty path being honest, since the
+	// primitive never saw the operand text the caller parsed the pid from.
+	// `gnu.io_error_text` is how a caller reads the three apart, the way
+	// `is_broken_pipe` already reads EPIPE.
+	//
+	// Gated on `proc`, beside fork / exec / waitpid / process_alive:
+	// signalling needs a host with a process table to name a target in,
+	// and neither WASI preview has one, so E066 refuses it there. Not on
+	// `signal`, which wasi-cli grants for the disposition calls only.
+	c.info.FuncSigs["signal_send"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return a path to it.
 	// `prefix` is appended to a random suffix so concurrent

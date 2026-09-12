@@ -1639,8 +1639,10 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     return s;
 }
 
-// needs_fs_runtime is the gate on the filesystem runtime bundle: every
-// need whose generated Fern body is emitted from that block.
+// needs_fs_runtime is the gate on the io_error call-graph bundle: every
+// need whose generated Fern body is emitted from that block. The filesystem
+// is all of it bar `signal_send`, which is there because it classifies an
+// errno the same way and so shares the same call graph.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "stat", "lstat", "statfs", "access", "read_file",
@@ -1649,7 +1651,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
-        "remove_dir_all", "open_file", "writer_write", "reader"
+        "remove_dir_all", "open_file", "writer_write", "reader",
+        "signal_send"
     ]);
 }
 
@@ -1682,7 +1685,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
-        "access", "subprocess"
+        "access", "subprocess", "signal_send"
     ]);
 }
 
@@ -5127,6 +5130,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // needs no marshalling.
             s = s.write("    call __fn___fern_process_alive\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("process_alive");
+        } else if (o.kind_tag == 285) {  // signal_send
+            // [pid][sig] (sig on top) -> Result[void, IoError]. Two operands
+            // in param order but on the wrong end of the stack, so pop both
+            // and re-push with param[0] (pid) on top.
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_signal_send\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("signal_send");
         } else if (o.kind_tag == 272) {  // rlimit_nofile
             // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
             // full-width i64 in %rax.
@@ -8801,6 +8811,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
+        if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86_64"); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64"); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod("x86_64"); }
         if (s.has_need("chown_at")) { fs_src = fs_src + " " + asmcore.rt_src_chown_at("x86_64"); }

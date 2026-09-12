@@ -1289,6 +1289,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // that pid exists, else 0.
             s = s.write("    bl __fn___fern_process_alive\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
             s = s.need("process_alive");
+        } else if (o.kind_tag == 285) {  // signal_send
+            // [pid][sig] (sig on top) -> Result[void, IoError]. Two operands
+            // in param order but on the wrong end of the stack, so pop both
+            // and re-push with param[0] (pid) on top.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_signal_send\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("signal_send");
         } else if (o.kind_tag == 272) {  // rlimit_nofile
             // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
             // full-width i64 in x0.
@@ -7054,6 +7060,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename(tgt); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod(tgt); }
+        if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send(tgt); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate(tgt); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod(tgt); }
         if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size(tgt); }
@@ -7948,9 +7955,11 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     return s;
 }
 
-// needs_fs_runtime is the gate on the filesystem runtime bundle: every
+// needs_fs_runtime is the gate on the io_error call-graph bundle: every
 // need whose generated Fern body is emitted from that block, __fern_io_error
-// included — they share one call graph, so they are emitted together.
+// included — they share one call graph, so they are emitted together. The
+// filesystem is all of it bar `signal_send`, which classifies an errno the
+// same way and so belongs to the same graph.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
@@ -7959,7 +7968,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "mknod", "chown_at", "window_size", "set_file_times", "read_link",
         "chdir", "umask",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
-        "remove_dir_all", "open_file", "writer_write", "reader"
+        "remove_dir_all", "open_file", "writer_write", "reader",
+        "signal_send"
     ]);
 }
 

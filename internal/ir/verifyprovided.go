@@ -289,6 +289,7 @@ var providedSigs = map[string]providedSig{
 	"isatty":                        {1, rWord},
 	"window_size":                   {1, rWord},
 	"process_alive":                 {1, rWord},
+	"signal_send":                   {2, rWord},
 	"rlimit_nofile":                 {0, rWord},
 	"access":                        {2, rWord},
 	"geteuid":                       {0, rWord},

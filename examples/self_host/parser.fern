@@ -8050,6 +8050,9 @@ pub function builtin_function_names(): string[] {
         // Liveness of one pid — kill(pid, 0), the zero signal that runs
         // every check kill(2) makes and delivers nothing (#8767).
         "process_alive",
+        // The whole of kill(2): deliver `sig` to `pid`, or to the process
+        // group a non-positive `pid` names.
+        "signal_send",
         // stdin / readers
         "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
         // the two halves of the compile target's name, literals once compiled

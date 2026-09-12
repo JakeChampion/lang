@@ -219,6 +219,7 @@ var rcResultOwned = map[string]bool{
 	"statfs":          true,
 	"chdir":           true,
 	"window_size":     true,
+	"signal_send":     true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -302,6 +303,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"read_link":                  true,
 	"rename":                     true,
 	"chmod":                      true,
+	"signal_send":                true,
 	"set_file_times":             true,
 	"truncate":                   true,
 	"mknod":                      true,
