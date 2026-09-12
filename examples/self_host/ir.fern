@@ -678,6 +678,16 @@ pub function op_truncate(): Op { return op0("truncate"); }
 // major[11:0], then minor[19:8] from bit 20), and XNU does not. Refused on
 // wasm, where neither preview can create a special file (capability `fsnode`).
 pub function op_mknod(): Op { return op0("mknod"); }
+// `chown_at` takes [path, uid, gid, follow] and pushes Result[void, IoError]:
+// fchownat(2). -1 for either id leaves that half alone, which is the kernel's
+// own convention and why there is one op here rather than a chown and a chgrp
+// — `chgrp` is this with the uid left at -1.
+//
+// `follow` false is lchown(2): the LINK's ownership changes and the target's
+// does not, which is what `chown -h` and every -R walk that meets a symlink
+// need. Refused on wasm, where neither preview records an owner on an entry
+// at all (capability `fsowner`).
+pub function op_chown_at(): Op { return op0("chown_at"); }
 // `set_file_times` takes [path, atime_sec, atime_nsec, mtime_sec, mtime_nsec,
 // flags] — six operands, the widest op here — and pushes Result[void,
 // IoError]. Each timestamp is a whole second since the epoch plus a
@@ -1674,10 +1684,11 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 275, then 277..279, then 298 — 276 (window_size),
-// 280 (proc_exec_as) and 291..297 (the buf_* builder) were taken out of order
-// by branches in flight (re-grep rather than trusting this line — it has been
-// stale before, which is the drift the paragraph below is about).
+// NEXT FREE EXTENSION ID: 277..279, then 298 — 275 (chown_at), 276
+// (window_size), 280 (proc_exec_as) and 291..297 (the buf_* builder) were
+// taken out of order by branches in flight (re-grep rather than trusting this
+// line — it has been stale before, which is the drift the paragraph below is
+// about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1902,6 +1913,7 @@ function kind_id_len8(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len8_a(name); }
     if (c == b'b') { return kind_id_len8_b(name); }
+    if (c == b'c' && name == "chown_at") { return 275; }
     if (c == b'f' && name == "f32_bits") { return 14; }
     if (c == b'f' && name == "f64_bits") { return 16; }
     if (c == b'h' && name == "hostname") { return 240; }
@@ -2506,6 +2518,7 @@ function kind_name_4(id: i32): string {
     if (id == 272) { return "rlimit_nofile"; }
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
+    if (id == 275) { return "chown_at"; }
     if (id == 276) { return "window_size"; }
     if (id == 280) { return "proc_exec_as"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
@@ -2710,6 +2723,7 @@ pub function op_pops(o: Op): i32 {
     if (t == 228) { return 6; }                       // syscall5
     if (t == 269) { return 6; }                       // set_file_times: path + two timespecs + flags
     if (t == 274) { return 4; }                       // mknod: path + mode + major + minor
+    if (t == 275) { return 4; }                       // chown_at: path + uid + gid + follow
     // Variadic: the immediate is the count. arr_make / struct_make /
     // tuple_make pop their elements; call_direct pops its arguments.
     if (t == 87 || t == 138 || t == 142 || t == 149) { return o.i32_imm; }

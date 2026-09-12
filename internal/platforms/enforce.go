@@ -160,6 +160,15 @@ var gatedBuiltins = map[string]string{
 	// presented as the right one.
 	"mknod": "fsnode",
 
+	// Who OWNS an entry. A host can have files, directories and
+	// permission bits and still have no users to attach them to, which
+	// is what both WASI previews are: preview 1's `filestat` has no uid
+	// or gid field and the component model's `descriptor-stat` has none
+	// either. It is not `userid`, which is the PROCESS's ids: that one
+	// is unanswerable because a component has no identity, this one
+	// because an entry has no owner to name.
+	"chown_at": "fsowner",
+
 	// Permission bits on a filesystem entry, which is a separate
 	// capability from having a filesystem: a host can offer files and no
 	// mode word to set on them. `access` is the READ of the same

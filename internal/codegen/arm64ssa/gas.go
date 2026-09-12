@@ -1288,6 +1288,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"chmod":                         emitChmodHelper,
 	"truncate":                      emitTruncateHelper,
 	"mknod":                         emitMknodHelper,
+	"chown_at":                      emitChownAtHelper,
 	"set_file_times":                emitSetFileTimesHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
@@ -3282,6 +3283,7 @@ var runtimeHelperDeps = map[string][]string{
 	"chmod":                         {"__fern_io_error"},
 	"truncate":                      {"__fern_io_error"},
 	"mknod":                         {"__fern_io_error"},
+	"chown_at":                      {"__fern_io_error"},
 	"set_file_times":                {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
@@ -3352,6 +3354,7 @@ var heapUsingHelpers = map[string]bool{
 	"chmod":                         true,
 	"truncate":                      true,
 	"mknod":                         true,
+	"chown_at":                      true,
 	"statfs":                        true,
 	"window_size":                   true,
 	"set_file_times":                true,
@@ -5838,6 +5841,26 @@ func emitMknodHelper(w func(string, ...any)) {
 		w("\torr x3, x3, x9, lsl #8")
 		w("\tand x9, x24, #1048320")
 		w("\torr x3, x3, x9, lsl #12")
+	})(w)
+}
+
+// emitChownAtHelper writes chown_at(path, uid, gid, follow) ->
+// Result[void, IoError]: fchownat(AT_FDCWD, path, uid, gid,
+// follow ? 0 : AT_SYMLINK_NOFOLLOW).
+//
+// The ids move as 32-bit registers, which is what makes -1 mean "leave
+// this one alone": uid_t is unsigned, so `w` hands the kernel the
+// 0xffffffff it compares against.
+func emitChownAtHelper(w func(string, ...any)) {
+	emitPathOpHelper("chown_at", "chwn", 54, 1, 3, func(w func(string, ...any)) {
+		w("\tmov x0, #100")
+		w("\tneg x0, x0") // AT_FDCWD
+		w("\tmov x1, x20")
+		w("\tmov w2, w21") // uid
+		w("\tmov w3, w22") // gid
+		w("\tmov x4, #256")
+		w("\tcmp x24, #0")
+		w("\tcsel x4, xzr, x4, ne") // follow clears AT_SYMLINK_NOFOLLOW
 	})(w)
 }
 

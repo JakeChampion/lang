@@ -1547,6 +1547,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.need("heap"); s = s.need("mknod");
             s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
             s = s.write("    str x3, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_mknod\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 275) {  // chown_at
+            // [pathbox][uid][gid][follow] (follow on top) -> Result[void,
+            // IoError]. Same reversal as mknod's, over the same four slots.
+            s = s.need("heap"); s = s.need("chown_at");
+            s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write("    str x3, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_chown_at\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 273) {  // truncate
             // [pathbox][length] (length on top) -> Result[void, IoError].
             // Same reversal as chmod; the length is a full 64-bit word.
@@ -7000,6 +7006,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate(tgt); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod(tgt); }
         if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size(tgt); }
+        if (s.has_need("chown_at")) { fs_src = fs_src + " " + asmcore.rt_src_chown_at(tgt); }
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times(tgt); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link(tgt); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask(tgt); }
@@ -7891,7 +7898,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
         "remove_file", "create_dir_all", "create_dir", "remove_dir",
         "create_link", "create_symlink", "rename", "chmod", "truncate",
-        "mknod", "window_size", "set_file_times", "read_link", "umask",
+        "mknod", "chown_at", "window_size", "set_file_times", "read_link", "umask",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);

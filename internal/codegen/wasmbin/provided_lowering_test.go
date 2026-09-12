@@ -87,6 +87,11 @@ var providedRefusedByPlatform = map[string]bool{
 	// and a regular file standing in for one would read back as the
 	// wrong kind rather than as a missing one.
 	"mknod": true,
+	// `fsowner` — the user and the group an entry belongs to. Neither
+	// preview records one: preview 1's `filestat` has no uid or gid
+	// field and the component model's `descriptor-stat` none either, so
+	// there is nothing to set and no owner a success would describe.
+	"chown_at": true,
 	// `umask` is the process's own half of the same property: the mode
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.
