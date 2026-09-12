@@ -1646,8 +1646,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "stat", "lstat", "statfs", "access", "read_file",
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "window_size", "set_file_times", "read_link",
-        "chdir",
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);
@@ -1663,8 +1663,8 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "remove_file", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "window_size", "set_file_times", "read_link",
-        "chdir"
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir"
     ]);
 }
 
@@ -1679,8 +1679,8 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "window_size", "set_file_times", "read_link",
-        "chdir",
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "subprocess"
     ]);
@@ -5465,6 +5465,12 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_mknod\n    addq $32, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("mknod");
+        } else if (o.kind_tag == 275) {  // chown_at
+            // [pathbox][uid][gid][follow] (follow on top) -> Result[void,
+            // IoError]. Four operands, reversed the same way as mknod's.
+            s = s.write("    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_chown_at\n    addq $32, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("chown_at");
         } else if (o.kind_tag == 273) {  // truncate
             // [pathbox][length] (length on top) -> Result[void, IoError].
             // Same reversal as chmod; the length is a full 64-bit word.
@@ -8758,6 +8764,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64"); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod("x86_64"); }
+        if (s.has_need("chown_at")) { fs_src = fs_src + " " + asmcore.rt_src_chown_at("x86_64"); }
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86_64"); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link("x86_64"); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask("x86_64"); }

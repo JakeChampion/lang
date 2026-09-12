@@ -82,6 +82,11 @@ var BuiltinCaps = map[string]string{
 	// package question has none of the target question's subtlety here:
 	// it is filesystem reach.
 	"mknod": "fs",
+	// Setting an entry's owner or group rewrites who may reach it, and
+	// the entry is a filesystem one. For the PACKAGE question the only
+	// thing that matters is whether filesystem reach should be visible,
+	// so this sits with `chmod` rather than getting a split of its own.
+	"chown_at": "fs",
 	// The process file-mode creation mask. Reading it is ambient
 	// information about the process, but SETTING it changes the mode of
 	// every file and directory anything creates afterwards — a

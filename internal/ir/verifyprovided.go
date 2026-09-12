@@ -337,6 +337,7 @@ var providedSigs = map[string]providedSig{
 	"set_file_times":                {7, rWord},
 	"truncate":                      {3, rWord},
 	"mknod":                         {5, rWord},
+	"chown_at":                      {5, rWord},
 	"umask":                         {1, rWord},
 	"sleep_ms":                      {-1, rVoid},
 	"sleep_ns":                      {-1, rVoid},

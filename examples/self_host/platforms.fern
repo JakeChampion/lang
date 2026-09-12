@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "tty", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -311,6 +311,13 @@ pub function gated_builtins(): Gate[] {
         // columns cannot tell those apart. `isatty` stays core beside it
         // because "no" IS the truthful answer to its question.
         Gate { builtin: "window_size", capability: "tty" },
+
+        // Who an entry BELONGS to. A host can have files, directories and
+        // permission bits and still have no users to attach them to, which
+        // is what both WASI previews are: preview 1's filestat has no uid
+        // or gid field and the component model's descriptor-stat none
+        // either. Not `userid`, which is the PROCESS's own ids.
+        Gate { builtin: "chown_at", capability: "fsowner" },
 
         // Permission bits on a filesystem entry, which is a separate
         // capability from having a filesystem: a host can offer files and no
