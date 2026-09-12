@@ -13936,7 +13936,8 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // backend intercepts unconditionally; this is strictly safer). No
     // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
     if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
-            || fa.field == "stat" || fa.field == "seek")
+            || fa.field == "stat" || fa.field == "seek"
+            || fa.field == "fsync" || fa.field == "fdatasync" || fa.field == "syncfs")
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
         // Reader.read_line() (#4369) -> Option[string] (Some(line incl.
@@ -17295,7 +17296,8 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
 function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): string {
     if (decl_is_struct(s.frame.structs, expr_struct_type(obj, s)) || expr_enum_type(obj, s) != ""
         || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
-    if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek") {
+    if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
+        || field == "fsync" || field == "fdatasync" || field == "syncfs") {
         return s.opt_ret_type("Reader." + field);
     }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }

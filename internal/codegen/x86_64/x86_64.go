@@ -231,8 +231,8 @@ const (
 	sysClose = 3
 	// fstat(2) / lseek(2): x86-64 syscalls 5 / 8, backing the Reader /
 	// Writer `stat` and `seek` methods.
-	sysFstat     = 5
-	sysLseek     = 8
+	sysFstat = 5
+	sysLseek = 8
 	// Write-back: fsync(2) / fdatasync(2) on one descriptor, syncfs(2)
 	// on the filesystem holding it, and sync(2) on every filesystem.
 	// Numbers from arch/x86/entry/syscalls/syscall_64.tbl.

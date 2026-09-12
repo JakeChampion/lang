@@ -581,6 +581,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_fd_stat")
+				case "__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs":
+					// (r) → i32 — write-back of the handle;
+					// Option[IoError]. syncfs reaches no import:
+					// neither preview has a per-filesystem flush,
+					// so its body is the Unsupported refusal.
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_reader_seek":
 					// (r, offset, whence) → i32 — lseek of the
 					// handle; Result[i64, IoError].

@@ -1642,13 +1642,12 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // needs_fs_runtime is the gate on the filesystem runtime bundle: every
 // need whose generated Fern body is emitted from that block.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
-    return s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
-    return s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
     return s.any_need([
         "stat", "lstat", "statfs", "access", "read_file",
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);
@@ -1659,20 +1658,13 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 // filesystem need added to one and not the other leaves the helper
 // referencing a shape label the literal pool never interned.
 function needs_io_error_shapes(s: asmcore.EmitState): boolean {
-    return s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
-            || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all")
-            || s.has_need("temp_dir") || s.has_need("create_dir_all")
-            || s.has_need("create_dir") || s.has_need("remove_dir")
-            || s.has_need("create_link") || s.has_need("create_symlink")
-            || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times")
-            || s.has_need("read_link");
-            || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync") || s.has_need("set_file_times")
     return s.any_need([
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
         "remove_file", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link"
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ]);
 }
 
@@ -1681,8 +1673,6 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
 // allocate, so a program that never allocates directly still pulls the
 // runtime in through one of them.
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
-    return s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("environ") || s.has_need("getgroups") || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("subprocess");
-    return s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("environ") || s.has_need("getgroups") || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("subprocess");
     return s.any_need([
         "heap", "i32_to_string", "u32_to_string", "str_to_i32", "chr",
         "read_int", "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
@@ -1691,7 +1681,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
-        "access", "subprocess"
+        "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess"
     ]);
 }
 

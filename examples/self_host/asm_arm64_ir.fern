@@ -3593,8 +3593,6 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("set_file_times") || s.has_need("statfs") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("rlimit_nofile") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("set_file_times") || s.has_need("statfs") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("rlimit_nofile") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync")) {
     if (s.any_need([
         "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
         "read_file", "read_file_bytes", "random_i32", "sleep_ms",
@@ -3603,7 +3601,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "eprint", "read_int", "udp_send", "isatty", "window_size",
         "rlimit_nofile", "signal_ignore", "signal_default", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
-        "fd_stat"
+        "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync"
     ])) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
     }
@@ -7920,6 +7918,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "remove_file", "create_dir_all", "create_dir", "remove_dir",
         "create_link", "create_symlink", "rename", "chmod", "truncate",
         "mknod", "chown_at", "window_size", "set_file_times", "read_link", "umask",
+        "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);

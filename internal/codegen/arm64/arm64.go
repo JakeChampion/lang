@@ -13066,15 +13066,15 @@ func (g *generator) emitFdSyncRuntime(sym, lp, call string) {
 		g.emit("mov x1, #1") // F_GETFD
 		g.emit("mov x2, #0")
 		g.syscall("fcntl")
-		g.emit("tbnz x0, #63, ." + lp + "_err")
+		g.emit("tbnz x0, #63, .%s_err", lp)
 		g.syscall("sync")
 		g.emit("mov x0, #0")
 	} else {
 		g.syscall(call)
 	}
-	g.emit("tbnz x0, #63, ." + lp + "_err")
+	g.emit("tbnz x0, #63, .%s_err", lp)
 	g.emitPayloadlessResultBox(16, 1) // None
-	g.emit("b ." + lp + "_ret")
+	g.emit("b .%s_ret", lp)
 	g.label("." + lp + "_err")
 	g.emit("neg x19, x0") // errno
 	g.emit("mov x0, x19")

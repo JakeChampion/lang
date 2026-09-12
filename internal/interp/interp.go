@@ -2554,6 +2554,13 @@ func fileStatValue(info os.FileInfo) *Struct {
 	}
 }
 
+// errClosedHandle marks a Reader / Writer whose fd is no longer in the
+// open-file table. Every compiled backend hands such a handle straight to the
+// kernel and gets EBADF back, so the methods below answer EBADF rather than
+// failing the interpreter: a program that closes twice, or stats what it
+// closed, did nothing illegal (#8569 is the same finding for `close`).
+var errClosedHandle = errors.New("handle closed")
+
 // streamFile is the *os.File behind a Reader / Writer: the stdio streams
 // while they are still the process's own, else the open-file table. A
 // stdio stream a test replaced with a buffer is no file, and the methods
@@ -2574,7 +2581,7 @@ func streamFile(i *Interp, v Value) (*os.File, error) {
 	default:
 		f, ok := i.openFiles[fd]
 		if !ok {
-			return nil, fmt.Errorf("handle with fd=%d not registered (closed already?)", fd)
+			return nil, errClosedHandle
 		}
 		return f, nil
 	}
@@ -2590,6 +2597,9 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("stat: expected 1 arg")
 	}
 	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2614,6 +2624,9 @@ func syncMethod(i *Interp, name string, args []Value, call func(int) error) (Val
 		return nil, fmt.Errorf("%s: expected 1 arg", name)
 	}
 	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2669,6 +2682,9 @@ func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.seek: expected 3 args")
 	}
 	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}

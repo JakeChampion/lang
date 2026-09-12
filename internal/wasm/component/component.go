@@ -1860,7 +1860,7 @@ type FsFeatures struct {
 	// per-FILESYSTEM at all, so `syncfs` reaches no import here.
 	Sync     bool // sync
 	SyncData bool // sync-data
-	Stat    bool // stat-at
+	Stat     bool // stat-at
 	// StatSelf is `stat` on the descriptor itself — the fstat behind a
 	// Reader / Writer's `.stat()`. It shares stat-at's result record, so
 	// the two are declared together.
