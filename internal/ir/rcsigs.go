@@ -315,6 +315,11 @@ var rcInertBuiltins = map[string]bool{
 	// Native-only for the same reason — no wasm world has a volume to
 	// measure — so it too is classified under the builtin name.
 	"statfs": true,
+	// (fd) → Result[WinSize, IoError]. A scalar in, and the two counts
+	// in the record it fills are scalars too. Native-only — no wasm
+	// world has a terminal to measure — so it is named here the way
+	// `statfs` is.
+	"window_size": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066

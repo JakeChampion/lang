@@ -781,6 +781,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
+	if g.usesWindowSize {
+		g.emitWindowSizeRuntime()
+	}
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
 	}
@@ -8727,6 +8730,72 @@ func (g *generator) emitIsattyRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWindowSizeRuntime emits `__fern_window_size(fd)` in w0 →
+// Result[WinSize, IoError] — one TIOCGWINSZ ioctl into an 8-byte
+// `struct winsize`, whose two cell counts widen into the record. The
+// pixel pair the kernel fills beside them has no field to land in.
+//
+// The request number is the usual dual-table pair; the record's layout
+// is the same four u16s on both kernels. A descriptor that is not a
+// terminal answers ENOTTY, which is the refusal a caller falls back to
+// COLUMNS on, classified against an empty path as every
+// descriptor-shaped failure is.
+func (g *generator) emitWindowSizeRuntime() {
+	const linuxTiocgwinsz = 0x5413
+	const darwinTiocgwinsz = 0x40087468
+	g.line("")
+	g.line(".global __fern_window_size")
+	g.typeDirective("__fern_window_size")
+	g.label("__fern_window_size")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	// The 8-byte winsize lands in the 16-byte slot below the frame.
+	g.emit("sub sp, sp, #16")
+	// The fd is an i32 value, so the high half of x0 is whatever the
+	// producer left there; ioctl reads the whole register.
+	g.emit("mov w0, w0")
+	if g.darwin {
+		g.emit("ldr x1, =%d", darwinTiocgwinsz)
+	} else {
+		g.emit("mov x1, #%d", linuxTiocgwinsz)
+	}
+	g.emit("mov x2, sp")
+	g.syscall("ioctl")
+	g.emit("ldrh w19, [sp]")     // ws_row
+	g.emit("ldrh w20, [sp, #2]") // ws_col
+	g.emit("add sp, sp, #16")
+	g.emit("tbnz x0, #63, .Lwsz_err")
+	g.emit("mov x0, #%d", ir.WinSize.Bytes)
+	g.emit("bl __fern_alloc_box")
+	g.emit("str x19, [x0, #%d]", ir.WinSize.Rows)
+	g.emit("str x20, [x0, #%d]", ir.WinSize.Cols)
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x19, [x0, #8]")
+	g.emit("b .Lwsz_return")
+
+	g.label(".Lwsz_err")
+	g.emit("neg x0, x0")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lwsz_return")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_window_size")
+	g.line(".ltorg")
+}
+
 // emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
 // `__fern_signal_default(sig)` — one sigaction each, setting `sa_handler`
 // to SIG_IGN or SIG_DFL and leaving every other field zero.
@@ -12795,6 +12864,9 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
+	// ioctl projected onto WinSize, with the errno as an IoError.
+	usesWindowSize bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -17093,6 +17165,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true
+		case "window_size":
+			// window_size(fd): Result[WinSize, IoError].
+			target = "__fern_window_size"
+			g.usesWindowSize = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "signal_ignore":
 			target = "__fern_signal_ignore"
 			g.usesSignalDisposition = true

@@ -145,7 +145,7 @@ pub function builtin_caps(): BuiltinCap[] {
 // Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
     return ["putchar", "print", "write", "eprint", "read_line",
-            "stdin", "stdout", "stderr", "isatty", "target_os", "target_arch", "args", "exit",
+            "stdin", "stdout", "stderr", "isatty", "window_size", "target_os", "target_arch", "args", "exit",
             "signal_ignore", "signal_default",
             "geteuid", "getegid", "getuid", "getgid", "getgroups",
             "rlimit_nofile",

@@ -210,6 +210,7 @@ var rcResultOwned = map[string]bool{
 	"chmod":           true,
 	"mknod":           true,
 	"statfs":          true,
+	"window_size":     true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The

@@ -582,6 +582,11 @@ pub function op_timer_fd(): Op { return op0("timer_fd"); }
 // Lowers to __fern_isatty, one terminal-attribute ioctl. std/cli's colour gate
 // is the caller — no terminal means plain text.
 pub function op_isatty(): Op { return op0("isatty"); }
+// `window_size` takes one operand [fd] and pushes Result[WinSize, IoError]:
+// one TIOCGWINSZ ioctl, the terminal's row and column counts. Refused on wasm,
+// where no world has a terminal to measure (capability `tty`) — unlike
+// `isatty`, whose question a target with no terminal can still answer.
+pub function op_window_size(): Op { return op0("window_size"); }
 
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
@@ -1631,7 +1636,7 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 275 (re-grep rather than trusting this line — it has
+// NEXT FREE EXTENSION ID: 277 (re-grep rather than trusting this line — it has
 // been stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
@@ -2047,6 +2052,7 @@ function kind_id_len11(name: string): i32 {
     if (c == b's') { return kind_id_len11_s(name); }
     if (c == b't' && name == "tcp_connect") { return 193; }
     if (c == b'u' && name == "uname_field") { return 250; }
+    if (c == b'w' && name == "window_size") { return 276; }
     return 0;
 }
 
@@ -2445,6 +2451,7 @@ function kind_name_4(id: i32): string {
     if (id == 272) { return "rlimit_nofile"; }
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
+    if (id == 276) { return "window_size"; }
     return "invalid";
 }
 
@@ -2553,6 +2560,7 @@ function pops1_io(t: i32): boolean {
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
+        || t == 276                                                      // window_size
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -4239,6 +4247,8 @@ pub function op_allocates(tag: i32): boolean {
     // statfs boxes a fresh FsStat struct + a Result wrapper, and heap-builds the
     // NUL-terminated path it hands the kernel.
     if (tag == 270) { return true; }
+    // window_size boxes a fresh WinSize struct + a Result wrapper.
+    if (tag == 276) { return true; }
     // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
     if (tag == 241 || tag == 242) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr

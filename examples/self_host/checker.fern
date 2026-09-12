@@ -1523,7 +1523,8 @@ function is_reserved_struct_name(name: string): boolean {
     "BytesWriter", "Cell", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
-    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "Writer", "Zoned"
+    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
+    "Zoned"
   ];
   return util.index_of_str(reserved, name) >= 0;
 }
@@ -11409,7 +11410,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
     "__alloc_u8", "args", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "stderr", "stdin",
     "stdout", "strbuf_take", "target_arch", "target_os", "tcp_recv",
-    "uname_field"
+    "uname_field", "window_size"
   ];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }

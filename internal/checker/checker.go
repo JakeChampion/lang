@@ -708,6 +708,23 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// WinSize — `window_size(fd)` shape: how large the terminal
+		// on the other end of a descriptor is, in character cells.
+		//
+		// The kernel's `struct winsize` also carries a pixel width
+		// and height. They are absent here because they are not a
+		// second measurement of the same thing: the two cell counts
+		// are what the kernel is told on every resize, and the pixel
+		// pair is zero on most terminals, so reporting it would hand
+		// a caller a 0 it cannot tell from "this terminal is 0
+		// pixels wide". A consumer for it can add it.
+		{
+			Name: "WinSize",
+			Fields: []ast.Param{
+				{Name: "rows", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "cols", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -2552,6 +2569,36 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["isatty"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},
+	}
+	// window_size(fd): Result[WinSize, IoError] — how many rows and
+	// columns the terminal on the other end of `fd` has,
+	// `ioctl(fd, TIOCGWINSZ, &ws)`. What `ls -C` lays its columns out
+	// against and what `stty size` prints.
+	//
+	// A Result rather than a pair of zeroes, because "this descriptor
+	// is not a terminal" is ENOTTY and a caller has to tell it from a
+	// terminal that answered: `ls` falls back to COLUMNS and then to
+	// 80 exactly when the question has no answer, and a 0x0 would send
+	// it down the one-per-line path instead.
+	//
+	// The size is the kernel's record of what the terminal last told
+	// it, so it is a fact about the descriptor and not about the
+	// process — which is why `fd` is the argument rather than an
+	// implied stdout. A descriptor that is a terminal always answers;
+	// a resize between the call and the write is the caller's race,
+	// the same one every terminal program has.
+	//
+	// Gated on `tty`, which no wasm profile grants. `isatty` stays
+	// ungated because a target with no terminal can answer it — "no" is
+	// the truth there — but there is no equivalent truthful answer to
+	// how wide a terminal that does not exist is. E066 refuses it
+	// instead (docs/FREESTANDING-CORE.md).
+	c.info.FuncSigs["window_size"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "WinSize"},
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 	// target_os(): string — the compile target's environment ("linux",
 	// "darwin", "android", "wasi", "wasi-http", "freestanding"), never
