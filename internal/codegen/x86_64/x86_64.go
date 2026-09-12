@@ -764,6 +764,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesSumBytes {
+		g.emitSumBytesRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -874,6 +877,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
+	}
+	if g.usesWindowSize {
+		g.emitWindowSizeRuntime()
 	}
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
@@ -1147,6 +1153,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
+	usesSumBytes bool
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1242,6 +1250,9 @@ type generator struct {
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
+	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
+	// ioctl projected onto WinSize, with the errno as an IoError.
+	usesWindowSize bool
 	// usesSignalDisposition pulls in both `__fern_signal_ignore` and
 	// `__fern_signal_default`; they differ by one immediate, so they
 	// share a body and one flag rather than splitting into two.
@@ -1680,6 +1691,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRmemchr = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
+	case "__fern_sum_bytes":
+		g.usesSumBytes = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -1863,6 +1876,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "isatty":
 		g.usesIsatty = true
+	case "window_size":
+		g.usesWindowSize = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "signal_ignore", "signal_default":
 		g.usesSignalDisposition = true
 	case "env":
@@ -3542,6 +3559,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_statfs"
 		case "isatty":
 			target = "__fern_isatty"
+		case "window_size":
+			target = "__fern_window_size"
 		case "signal_ignore":
 			target = "__fern_signal_ignore"
 		case "signal_default":
@@ -10517,6 +10536,51 @@ func (g *generator) emitCountByteRuntime() {
 	g.line(".size __fern_count_byte, .-__fern_count_byte")
 }
 
+// emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
+// added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The SSE2 sequence this
+// wants is psadbw against a zero register plus paddq, both already inside the
+// declared baseline and both already encodable by internal/native/x86tbl, so
+// this body is the one in the family whose vectorisation costs no assembler
+// work — but §3.4's ordering puts the scalar lowering in all eight backends
+// first, and this is that step.
+//
+// `movzx` is the whole of the sign question: a byte is unsigned, so 0xff
+// contributes 255. The accumulate is a 32-bit `add`, so the wrap the builtin
+// promises is the register width rather than anything this body does.
+//
+// rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
+// may be an inline SSO string that has to be spilled to get an address.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func (g *generator) emitSumBytesRuntime() {
+	g.line("")
+	g.line(".globl __fern_sum_bytes")
+	g.line(".type __fern_sum_bytes, @function")
+	g.label("__fern_sum_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emit("xor eax, eax") // running sum
+	g.emit("xor edx, edx") // cursor, as an INDEX
+	g.label(".Lsum_bytes_scan")
+	g.emit("cmp edx, ecx")
+	g.emit("jge .Lsum_bytes_ret")
+	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("add eax, r8d")
+	g.emit("add edx, 1")
+	g.emit("jmp .Lsum_bytes_scan")
+	g.label(".Lsum_bytes_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sum_bytes, .-__fern_sum_bytes")
+}
+
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
 // if a and b have the same length AND the same bytes, else 1.
 // Pure equality comparator (no lex ordering), matching arm64.
@@ -12934,6 +12998,71 @@ func (g *generator) emitIsattyRuntime() {
 	g.emit("movzx eax, al")
 	g.emit("ret")
 	g.line(".size __fern_isatty, .-__fern_isatty")
+}
+
+// emitWindowSizeRuntime emits `__fern_window_size(fd) →
+// Result[WinSize, IoError]` — one TIOCGWINSZ ioctl into an 8-byte
+// `struct winsize`, whose two cell counts widen into the record. The
+// pixel pair the kernel fills beside them has no field to land in.
+//
+// A descriptor that is not a terminal answers ENOTTY, and that refusal
+// is the point: it is what a caller falls back to COLUMNS on. It is
+// classified against an empty path, as every descriptor-shaped failure
+// is — the fd is the subject and it has no name.
+//
+// System V: edi = fd.
+func (g *generator) emitWindowSizeRuntime() {
+	const tiocgwinsz = 0x5413
+	g.line("")
+	g.line(".globl __fern_window_size")
+	g.line(".type __fern_window_size, @function")
+	g.label("__fern_window_size")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	// 3 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and leaves the
+	// 8-byte winsize buffer at [rsp].
+	g.emit("sub rsp, 24")
+	// The fd is an i32 value, so the high half of rdi is whatever the
+	// producer left there; ioctl reads the whole register.
+	g.emit("mov edi, edi")
+	g.emit(fmt.Sprintf("mov esi, %d", tiocgwinsz))
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysIoctl)
+	g.emit("test rax, rax")
+	g.emit("js .Lwsz_err")
+	g.emit("movzx ebx, word ptr [rsp]")      // ws_row
+	g.emit("movzx r12d, word ptr [rsp + 2]") // ws_col
+	g.emit(fmt.Sprintf("mov edi, %d", ir.WinSize.Bytes))
+	g.emit("call __fern_alloc_box")
+	g.emit(fmt.Sprintf("mov [rax + %d], rbx", ir.WinSize.Rows))
+	g.emit(fmt.Sprintf("mov [rax + %d], r12", ir.WinSize.Cols))
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lwsz_return")
+
+	g.label(".Lwsz_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lwsz_return")
+	g.emit("add rsp, 24")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_window_size, .-__fern_window_size")
 }
 
 // emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and

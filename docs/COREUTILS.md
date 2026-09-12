@@ -1118,27 +1118,58 @@ for three different reasons:
   SHA-NI, a hardware instruction, so that row is not a codegen comparison
   either; `blake2b` at 0.45× and `sm3` at 0.44× are, and they are the same
   4× gap `b2sum` measures against plain portable C.
-The slicing-by-8 re-measure, 2026-09-11, **macOS arm64 (Apple Silicon), a
+The slicing-by-8 re-measure, 2026-09-12, **macOS arm64 (Apple Silicon), a
 different machine from the table above and not comparable to it row for
-row** — all four columns come from one hyperfine run on that machine, over
-the same 62 MiB / 8 000 000-line file, GNU coreutils 9.10 and uutils 0.6.0.
-Taken under load from other agents on the same box, so the σ is wide:
+row.** Same 62 MiB / 8 000 000-line file, GNU coreutils 9.10 and uutils
+0.6.0, every column from one hyperfine run:
 
 | workload | fern before (ms) | fern after (ms) | gnu (ms) | uutils (ms) | gnu / fern after | uutils / fern after |
 |---|---|---|---|---|---|---|
-| `cksum` of a 62 MiB file | 347.1 ± 31.6 | 210.2 ± 17.9 | 40.6 ± 3.8 | 287.9 ± 128.1 | 0.19× | 1.37× |
+| `cksum` of a 62 MiB file | 310.9 ± 45.7 | 199.7 ± 33.2 | 35.7 ± 0.4 | 9.8 ± 0.3 | 0.18× | 0.06× |
 
-1.65× on the CRC, and it moves the utility from behind uutils to ahead of
-it. Slicing-by-16 was measured in the same pass and is a wash (180.5 ms of
-user time against 183.0 over 40 runs), so the table stays at eight and does
-not pay for 4096 entries per hasher.
+1.56× on the CRC, 1.62× in user time (288.2 ms against 177.6).
+Slicing-by-16 was measured in the same pass and is a wash — 183.0 ms of user
+time against slicing-by-8's 180.5 over 40 runs — so the table stays at eight
+rather than paying for 4096 entries per hasher.
+
+**On this host GNU's `cksum` has no hardware CRC path at all**, and that
+changes what its column means. The binary links no libcrypto, carries no
+`pclmul` / `vmull` / `pmull` / `neon` string, and `--debug` prints no
+implementation line, so its 35.7 ms is coreutils' own generic table at
+0.47 ns a byte. The 5.6× Fern still gives away to it is therefore SCALAR
+CODEGEN — bounds checks, the #8425 stack-slot induction variable, #8782's
+register allocation — and not a missing instruction. uutils' 9.8 ms is
+0.06 ns a byte, which only the carry-less fold reaches, and THAT is the
+column the `pclmulqdq` / `pmull` encodings would be for.
+
+Ranking the three on this host, which is the honest summary: uutils (folding)
+9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
+
+`sum -s` on the same host and the same file, one hyperfine run, before and
+after `SysvSum` moved onto `__sum_bytes` (#9052). The kernel is SCALAR on
+every backend here; no vector body has landed yet:
+
+| workload | fern before (ms) | fern after (ms) | gnu (ms) | uutils (ms) | gnu / fern after | uutils / fern after |
+|---|---|---|---|---|---|---|
+| `sum -s` of a 62 MiB file | 110.1 ± 1.6 | 23.5 ± 0.5 | 8.6 ± 0.3 | 14.8 ± 0.7 | 0.37× | 0.63× |
+
+**4.7×, and none of it is vectorisation** — 104.1 ms of user time against
+18.1. What the kernel removed is the per-byte cost the Fern loop carried and
+a runtime helper does not: a bounds check per byte, the #8425 stack-slot
+induction variable, and the `SysvSum` struct rebuilt per chunk. That is worth
+recording on its own, because it says how much of this family's remaining gap
+is the loop body rather than the instruction set. GNU's 2.5 ms of user time
+(0.04 ns a byte) is the auto-vectorised `sum += *p`, and closing to it is
+what `psadbw` / `uaddlp` are for.
 
 - **`sysv` and `bsd` are the interesting middle.** Both are a sum over every
   byte with no table, and `bsd` at 0.87× is the closest any throughput row in
   this document comes to GNU without a hardware instruction on either side.
-  `sysv` at 0.17× is the outlier: GNU's is a plain `sum += *p` that a C
-  compiler auto-vectorises, and nothing in `std/hash` does. That wants a
-  byte-sum kernel in the `__count_byte` family — #9052.
+  `sysv` at 0.17× was the outlier: GNU's is a plain `sum += *p` that a C
+  compiler auto-vectorises, and the Fern loop was an indexed byte read.
+  `std/hash`'s `SysvSum` now calls the `__sum_bytes` kernel (#9052), which
+  is 4.7× on the macOS arm64 box measured below and still SCALAR — the
+  vector bodies are a follow-up.
 
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.

@@ -617,6 +617,7 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
+	i.Builtins["window_size"] = &Builtin{Fn: builtinWindowSize}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
@@ -991,6 +992,26 @@ func New() *Interp {
 			}
 		}
 		return Number(n), nil
+	}}
+	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
+	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
+	//
+	// The accumulator is uint32 so the wrap is the language's, not Go's int:
+	// every backend's vector sequence wraps at 32 bits, and the interpreter
+	// has to agree with them on a string long enough to reach it.
+	i.Builtins["__sum_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("__sum_bytes: expected 1 arg, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__sum_bytes: expected a string, got %T", args[0])
+		}
+		var sum uint32
+		for _, c := range []byte(string(s)) {
+			sum += uint32(c)
+		}
+		return Number(int32(sum)), nil
 	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
@@ -3736,6 +3757,32 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("isatty: expected number arg, got %T", args[0])
 	}
 	return Bool(tty.IsTerminal(int(fd))), nil
+}
+
+// builtinWindowSize answers `window_size(fd)` against the real fd the
+// interpreter process holds, so `fern -interp` measures the same terminal
+// the compiled binary would.
+func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("window_size: expected 1 arg, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("window_size: expected number arg, got %T", args[0])
+	}
+	rows, cols, err := tty.WindowSize(int(fd))
+	if err != nil {
+		// Path-less, the way a failed read or fstat is: the descriptor
+		// is the subject and it has no name.
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(&Struct{
+		TypeName: "WinSize",
+		Fields: map[string]Value{
+			"rows": Number(int64(rows)),
+			"cols": Number(int64(cols)),
+		},
+	}), nil
 }
 
 // builtinTargetOS answers `target_os()` with the interpreter's host: under

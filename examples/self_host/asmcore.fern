@@ -1200,6 +1200,24 @@ pub function rt_src_isatty(t: string): string {
     return "function __fern_isatty(fd: i32): i32 { var buf: i32 = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf) == 0) { return 1; } return 0; }";
 }
 
+// rt_src_window_size backs `window_size(fd)` (syscall-leaf) ->
+// Result[WinSize, IoError]: one TIOCGWINSZ ioctl into the kernel's 8-byte
+// `struct winsize`, whose first two u16s are the row and column counts. Its
+// REQUEST number is the platform difference, the way isatty's is: Linux
+// spells TIOCGWINSZ 0x5413 (21523), XNU 0x40087468 (1074295912).
+//
+// The two counts are read a byte at a time and recombined little-endian,
+// because `__raw_load8` is the only width this runtime dialect loads below a
+// pointer. The pixel pair beside them in the record has no field to land in.
+//
+// A descriptor that is not a terminal answers ENOTTY, classified against an
+// empty path the way `fd_stat`'s is: the fd is the subject and has no name.
+pub function rt_src_window_size(t: string): string {
+    var req: string = "21523";
+    if (t == "arm64-darwin") { req = "1074295912"; }
+    return "function __fern_window_size(fd: i32): Result[WinSize, IoError] { var buf: i32 = __raw_scratch(16); var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } var r: i32 = __raw_load8(buf, 0) + __raw_load8(buf, 1) * 256; var c: i32 = __raw_load8(buf, 2) + __raw_load8(buf, 3) * 256; return Ok(WinSize { rows: (r as i64), cols: (c as i64) }); }";
+}
+
 // rt_src_process_alive backs `process_alive(pid)` (syscall-leaf) -> 1 when a
 // process with that pid exists, 0 when it does not.
 //
@@ -4132,6 +4150,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "mknod") { return ty_option(ty_unknown()); }
     if (id.name == "set_file_times") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
+    // window_size(fd) -> Result[WinSize, IoError]. "unknown" for the same
+    // reason subprocess below is: the struct's fields resolve through the
+    // shape-pointer dispatch path.
+    if (id.name == "window_size") { return ty_unknown(); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
     // fields resolve through the shape-pointer dispatch path
@@ -4823,6 +4845,18 @@ pub function (s: EmitState) has_need(name: string): boolean {
     var i: i32 = 0;
     while (i < s.needed.len()) {
         if (s.needed[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// any_need is has_need over a list: the shape every runtime-bundle gate in the
+// two native emitters wants. Each of those used to be a `||` chain thirty-odd
+// calls long, where a need added to one and not its sibling is invisible.
+pub function (s: EmitState) any_need(names: string[]): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (s.has_need(names[i])) { return true; }
         i = i + 1;
     }
     return false;
@@ -6087,6 +6121,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_read_link", "__fn___fern_umask",
         "__fn___fern_chmod", "__fn___fern_set_file_times", "__fn___fern_truncate",
         "__fn___fern_mknod",
+        "__fn___fern_window_size",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's

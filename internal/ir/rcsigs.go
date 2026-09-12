@@ -324,6 +324,11 @@ var rcInertBuiltins = map[string]bool{
 	// Native-only for the same reason — no wasm world has a volume to
 	// measure — so it too is classified under the builtin name.
 	"statfs": true,
+	// (fd) → Result[WinSize, IoError]. A scalar in, and the two counts
+	// in the record it fills are scalars too. Native-only — no wasm
+	// world has a terminal to measure — so it is named here the way
+	// `statfs` is.
+	"window_size": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066
@@ -402,7 +407,8 @@ var rcInert = map[string]bool{
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
 	"__fern_rmemchr": true, "__fern_count_byte": true,
-	"__fern_ceil_f64": true, "__fern_cos_f64": true,
+	"__fern_sum_bytes": true,
+	"__fern_ceil_f64":  true, "__fern_cos_f64": true,
 	"__fern_create_dir_all": true, "__fern_env": true, "__fern_env_at": true,
 	"__fern_env_count": true, "__fern_eprint": true, "__fern_exit": true,
 	"__fern_exp_f64": true, "__fern_floor_f64": true,

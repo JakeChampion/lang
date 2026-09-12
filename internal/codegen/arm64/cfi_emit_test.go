@@ -193,14 +193,29 @@ func TestDarwinEmitsCFI(t *testing.T) {
 	}
 }
 
-// findArm64Gcc locates a gcc that targets aarch64, verified by assembling a
-// probe rather than by name: the cross-compiler is `aarch64-linux-gnu-gcc`
-// on an x86-64 host but plain `gcc` on an aarch64 one, so a name-only lookup
-// either misses the native tool or picks up the wrong architecture's. The
-// x86-64 sibling of this test learned that the hard way on an aarch64
-// runner.
+// findArm64Gcc locates a gcc that assembles what this emitter writes: aarch64
+// instructions in ELF. Both halves are probed rather than assumed from the
+// name. The architecture half, because the cross-compiler is
+// `aarch64-linux-gnu-gcc` on an x86-64 host but plain `gcc` on an aarch64 one,
+// so a name-only lookup either misses the native tool or picks up the wrong
+// architecture's — the x86-64 sibling learned that on an aarch64 runner.
+//
+// The object-format half, because being aarch64 is not sufficient. On Apple
+// Silicon `clang` assembles aarch64 happily and targets Mach-O, then rejects
+// every ELF directive the emitter writes, so a probe of instructions alone
+// selects a tool that cannot assemble the real input and the test fails where
+// it should have skipped. The probe therefore carries the `.type`, `.size` and
+// `@progbits` directives that distinguish the two formats.
 func findArm64Gcc(t *testing.T) string {
 	t.Helper()
+	const probeSrc = ".text\n" +
+		".globl _start\n" +
+		".type _start, %function\n" +
+		"_start:\n" +
+		"\tstp x29, x30, [sp, #-16]!\n" +
+		"\tret\n" +
+		".size _start, .-_start\n" +
+		".section .text.probe,\"ax\",@progbits\n"
 	for _, name := range []string{"aarch64-linux-gnu-gcc", "gcc", "clang"} {
 		bin, err := exec.LookPath(name)
 		if err != nil {
@@ -208,14 +223,14 @@ func findArm64Gcc(t *testing.T) string {
 		}
 		dir := t.TempDir()
 		probe := filepath.Join(dir, "probe.s")
-		if err := os.WriteFile(probe, []byte(".text\n.globl _start\n_start:\n\tstp x29, x30, [sp, #-16]!\n\tret\n"), 0o644); err != nil {
+		if err := os.WriteFile(probe, []byte(probeSrc), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if exec.Command(bin, "-c", "-o", filepath.Join(dir, "probe.o"), probe).Run() == nil {
 			return bin
 		}
 	}
-	t.Skip("no gcc/clang on PATH that assembles aarch64")
+	t.Skip("no gcc/clang on PATH that assembles aarch64 ELF")
 	return ""
 }
 

@@ -146,6 +146,11 @@ var Ungated = map[string]bool{
 	"stdout":    true,
 	"stderr":    true,
 	"isatty":    true,
+	// How large the terminal on the other end of a descriptor is. The
+	// descriptor was handed to the process by whoever started it and
+	// its geometry is one more fact about it, so a dependency that asks
+	// reaches nothing `isatty` did not already let it reach.
+	"window_size": true,
 	// The process's own ids — effective, real, and the supplementary
 	// group set. Reading them reaches nothing:
 	// the identity was chosen by whoever exec'd the program, and a

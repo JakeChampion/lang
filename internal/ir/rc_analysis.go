@@ -1397,7 +1397,7 @@ func pureReadReceiverBuiltin(name string) bool {
 //   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
-//   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
+//   - __memchr / __rmemchr / __ascii_run / __count_byte / __sum_bytes scan the
 //     bytes and return a scalar, and __mismatch does the same for its
 //     TWO strings — both are read to the first difference and neither
 //     is retained;
@@ -1426,6 +1426,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"__rmemchr":                   {0},
 	"__ascii_run":                 {0},
 	"__count_byte":                {0},
+	"__sum_bytes":                 {0},
 	"__mismatch":                  {0, 2},
 	"__method_Map_get":            {1},
 	"__method_Map_get_or":         {1},

@@ -203,6 +203,14 @@ var gatedBuiltins = map[string]string{
 	"signal_ignore":  "signal",
 	"signal_default": "signal",
 
+	// How large the terminal on the other end of a descriptor is. A
+	// target with no terminal cannot answer: 0x0 is not "there is no
+	// terminal" but "the terminal is empty", and a caller laying out
+	// columns cannot tell those apart. `isatty` stays core beside this
+	// because "no" IS the truthful answer to its question
+	// (docs/FREESTANDING-CORE.md).
+	"window_size": "tty",
+
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and
 	// answers the empty string, which is a fact about a component rather

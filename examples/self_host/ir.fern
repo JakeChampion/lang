@@ -510,6 +510,21 @@ pub function op_rmemchr(): Op { return op0("rmemchr"); }
 // nothing can equal it, and an empty string counts 0 because it has no bytes.
 pub function op_count_byte(): Op { return op0("count_byte"); }
 
+// sum_bytes (docs/ATLAS-PLATFORM-PLAN.md §3.3, sixth kernel): pops [str] →
+// the i32 sum of every byte, wrapped to 32 bits. Allocates nothing and reads
+// only the source bytes.
+//
+// The family's first true REDUCTION: count_byte reduces over a predicate,
+// where this one carries the bytes themselves into the accumulator. It is
+// also the only member with a single operand, so it is the one whose stack
+// effect a port is most likely to copy wrong from its neighbour.
+//
+// The result WRAPS rather than saturating, because System V `sum` is defined
+// that way (std/hash's SysvSum) and because that is what a 32-bit accumulator
+// produces on every target. No cursor and no byte operand, so there is
+// nothing to clamp and no range guard: an empty string sums to 0.
+pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
+
 // ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
 // → the i32 index of the first byte at or after `from` whose high bit is set,
 // or the string's length if the rest is ASCII. Allocates nothing and reads only
@@ -582,6 +597,11 @@ pub function op_timer_fd(): Op { return op0("timer_fd"); }
 // Lowers to __fern_isatty, one terminal-attribute ioctl. std/cli's colour gate
 // is the caller — no terminal means plain text.
 pub function op_isatty(): Op { return op0("isatty"); }
+// `window_size` takes one operand [fd] and pushes Result[WinSize, IoError]:
+// one TIOCGWINSZ ioctl, the terminal's row and column counts. Refused on wasm,
+// where no world has a terminal to measure (capability `tty`) — unlike
+// `isatty`, whose question a target with no terminal can still answer.
+pub function op_window_size(): Op { return op0("window_size"); }
 
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
@@ -1654,8 +1674,10 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 298 (re-grep rather than trusting this line — it has
-// been stale before, which is the drift the paragraph below is about).
+// NEXT FREE EXTENSION ID: 275, then 277..279, then 298 — 276 (window_size),
+// 280 (proc_exec_as) and 291..297 (the buf_* builder) were taken out of order
+// by branches in flight (re-grep rather than trusting this line — it has been
+// stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1997,6 +2019,7 @@ function kind_id_len9_r(name: string): i32 {
 }
 
 function kind_id_len9_s(name: string): i32 {
+    if (name == "sum_bytes") { return 253; }
     if (name == "store_i32") { return 72; }
     if (name == "store_ptr") { return 73; }
     if (name == "store_i64") { return 199; }
@@ -2080,6 +2103,7 @@ function kind_id_len11(name: string): i32 {
     if (c == b's') { return kind_id_len11_s(name); }
     if (c == b't' && name == "tcp_connect") { return 193; }
     if (c == b'u' && name == "uname_field") { return 250; }
+    if (c == b'w' && name == "window_size") { return 276; }
     return 0;
 }
 
@@ -2445,6 +2469,7 @@ function kind_name_4(id: i32): string {
     if (id == 227) { return "ascii_run"; }
     if (id == 234) { return "rmemchr"; }
     if (id == 235) { return "count_byte"; }
+    if (id == 253) { return "sum_bytes"; }
     if (id == 228) { return "syscall5"; }
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
@@ -2481,6 +2506,7 @@ function kind_name_4(id: i32): string {
     if (id == 272) { return "rlimit_nofile"; }
     if (id == 273) { return "truncate"; }
     if (id == 274) { return "mknod"; }
+    if (id == 276) { return "window_size"; }
     if (id == 280) { return "proc_exec_as"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     return "invalid";
@@ -2578,6 +2604,7 @@ function pops1_mem(t: i32): boolean {
         || t == 81 || t == 205 || t == 224                               // raw_alloc, raw_scratch, raw_arr_box
         || t == 90 || t == 91                                            // arr_len, arr_rc
         || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
+        || t == 253                                                      // sum_bytes
         || t == 106 || t == 107 || t == 109 || t == 110                  // str_to_upper/lower, str_trim, str_reverse
         || t == 113                                                      // str_lines
         || t == 118                                                      // strbuf_append
@@ -2604,6 +2631,7 @@ function pops1_io(t: i32): boolean {
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
+        || t == 276                                                      // window_size
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -4305,6 +4333,8 @@ pub function op_allocates(tag: i32): boolean {
     // statfs boxes a fresh FsStat struct + a Result wrapper, and heap-builds the
     // NUL-terminated path it hands the kernel.
     if (tag == 270) { return true; }
+    // window_size boxes a fresh WinSize struct + a Result wrapper.
+    if (tag == 276) { return true; }
     // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
     if (tag == 241 || tag == 242) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
@@ -4356,6 +4386,11 @@ pub function op_allocates(tag: i32): boolean {
 // oversized-function miscompile threshold, #2720). The membership is a property
 // of the IR op set — not of any one target — so it lives here and both backends
 // share it; a new string op is taught to every backend's dispatch at once.
+//
+// fern-lint: allow cyclomatic-complexity
+// A flat membership test over opcode tags, so its complexity counts OPS rather
+// than logic: every `||` is one row of a table, there is no path through it to
+// get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106
@@ -4364,7 +4399,7 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
-        || tag == 234 || tag == 235 || tag == 245;
+        || tag == 234 || tag == 235 || tag == 245 || tag == 253;
 }
 
 // --- Structured-scope navigation over an op stream ---

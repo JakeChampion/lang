@@ -1229,6 +1229,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
+	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -1303,6 +1304,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"process_alive":                 emitProcessAliveHelper,
 	"rlimit_nofile":                 emitRlimitNofileHelper,
 	"statfs":                        emitStatfsHelper,
+	"window_size":                   emitWindowSizeHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
@@ -2006,6 +2008,61 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tcmp x0, #0")
 	w("\tcset w0, eq")
 	w("\tadd sp, sp, #80")
+	w("\tret")
+}
+
+// emitWindowSizeHelper writes window_size(fd) -> Result[WinSize, IoError]:
+// one TIOCGWINSZ ioctl into an 8-byte `struct winsize`, whose two cell counts
+// widen into the record. The pixel pair the kernel fills beside them has no
+// field to land in.
+//
+// A descriptor that is not a terminal answers ENOTTY, which is the refusal a
+// caller falls back to COLUMNS on; it is classified against an empty path, as
+// every descriptor-shaped failure is.
+func emitWindowSizeHelper(w func(string, ...any)) {
+	const tiocgwinsz = 0x5413
+	w("")
+	w("%s:", fnLabel("window_size"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	// The fd is an i32 value, so the high half of x0 is whatever the producer
+	// left there; ioctl reads the whole register.
+	w("\tmov w0, w0")
+	w("\tmov x1, #%d", tiocgwinsz)
+	w("\tadd x2, sp, #48")
+	w("\tmov x8, #29") // ioctl
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssawsz_err")
+	w("\tldrh w19, [sp, #48]") // ws_row
+	w("\tldrh w20, [sp, #50]") // ws_col
+	// WinSize box: {rc=1, then the field area}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #%d", 8+ir.WinSize.Bytes)
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")    // rc = 1
+	w("\tadd x21, x4, #8") // WinSize data
+	w("\tstr x19, [x21, #%d]", ir.WinSize.Rows)
+	w("\tstr x20, [x21, #%d]", ir.WinSize.Cols)
+	emitOptionBox(w, 0, "x21")
+	w("\tb .Lssawsz_ret")
+	w(".Lssawsz_err:")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	emitStatErrBox(w)
+	w(".Lssawsz_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
 	w("\tret")
 }
 
@@ -3210,6 +3267,7 @@ var runtimeHelperDeps = map[string][]string{
 	"stat":                          {"__fern_io_error"},
 	"lstat":                         {"__fern_io_error"},
 	"statfs":                        {"__fern_io_error"},
+	"window_size":                   {"__fern_io_error"},
 	"access":                        {"__fern_io_error"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
@@ -3294,6 +3352,8 @@ var heapUsingHelpers = map[string]bool{
 	"chmod":                         true,
 	"truncate":                      true,
 	"mknod":                         true,
+	"statfs":                        true,
+	"window_size":                   true,
 	"set_file_times":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
@@ -4471,6 +4531,44 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_rmemchr_found:")
 	w("\tmov x0, x2")
+	w("\tret")
+}
+
+// emitSumBytesHelper writes __fern_sum_bytes(s) -> every byte of `s` added
+// into a 32-bit accumulator that wraps (docs/ATLAS-PLATFORM-PLAN.md §3.3,
+// sixth kernel).
+//
+// SCALAR (§3.4 step 1). The NEON sequence this wants is uaddlp/uadalp, neither
+// of which internal/native/arm64 can encode yet, and §3.3a's rule is to land
+// the encodings before the vector body rather than after.
+//
+// `ldrb` zero-extends, which is the whole of the sign question: a byte is
+// unsigned and 0xff contributes 255. The accumulate is `add w4, w4, w6`, a
+// 32-bit add, so the wrap is the register width.
+//
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], so the single argument lands in x0 with no slot arithmetic — where
+// the native arm64 twin spends a frame unboxing a two-word SSO string first.
+// Leaf: no frame, and every register it touches is caller-saved.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func emitSumBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_sum_bytes"))
+	w("\tldur w2, [x0, #-4]")   // len
+	w("\tmov w4, #0")           // running sum
+	w("\tmov x8, x0")           // cursor
+	w("\tadd x9, x0, w2, uxtw") // end = data + len
+	w(".Lssa_sum_bytes_loop:")
+	w("\tcmp x8, x9")
+	w("\tb.ge .Lssa_sum_bytes_ret")
+	w("\tldrb w6, [x8]")
+	w("\tadd w4, w4, w6")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_sum_bytes_loop")
+	w(".Lssa_sum_bytes_ret:")
+	w("\tmov w0, w4")
 	w("\tret")
 }
 

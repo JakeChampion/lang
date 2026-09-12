@@ -75,7 +75,7 @@ function main(): i32 {
         "read_link", "umask", "sleep_ns", "rename",
         "chmod", "set_file_times", "statfs",
         "process_alive", "rlimit_nofile", "truncate", "mknod",
-        "proc_exec_as",
+        "window_size", "proc_exec_as",
         "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
         "buf_len", "buf_take", "buf_free"
     ];
@@ -184,7 +184,7 @@ function main(): i32 {
         ir.op_rename(),
         ir.op_chmod(), ir.op_set_file_times(), ir.op_statfs(),
         ir.op_process_alive(), ir.op_rlimit_nofile(), ir.op_truncate(), ir.op_mknod(),
-        ir.op_proc_exec_as(),
+        ir.op_window_size(), ir.op_proc_exec_as(),
         ir.op_buf_new(), ir.op_buf_push(), ir.op_buf_push_range(),
         ir.op_buf_push_byte(), ir.op_buf_len(), ir.op_buf_take(),
         ir.op_buf_free()
@@ -208,7 +208,7 @@ function main(): i32 {
         "read_link", "umask", "sleep_ns", "rename",
         "chmod", "set_file_times", "statfs",
         "process_alive", "rlimit_nofile", "truncate", "mknod",
-        "proc_exec_as",
+        "window_size", "proc_exec_as",
         "buf_new", "buf_push", "buf_push_range",
         "buf_push_byte", "buf_len", "buf_take",
         "buf_free"

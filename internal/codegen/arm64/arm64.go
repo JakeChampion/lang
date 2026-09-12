@@ -727,6 +727,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesSumBytes {
+		g.emitSumBytesRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -780,6 +783,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
+	}
+	if g.usesWindowSize {
+		g.emitWindowSizeRuntime()
 	}
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
@@ -4806,6 +4812,52 @@ func (g *generator) emitCountByteRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_count_byte")
+}
+
+// emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
+// added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The NEON sequence this
+// wants is uaddlp/uadalp, neither of which internal/native/arm64 can encode
+// yet, and §3.3a's rule is to land the encodings before the vector body
+// rather than after.
+//
+// `ldrb` zero-extends, which is the whole of the sign question: a byte is
+// unsigned and 0xff contributes 255. The accumulate is `add w0, w0, w10`, a
+// 32-bit add, so the wrap the builtin promises is the register width rather
+// than anything this body does.
+//
+// Two-word string ABI as __count_byte's — x0 = data word, x1 = length word —
+// and the same 48-byte frame, because emitStrDataPtr2W needs 16 bytes of
+// scratch to spill an inline SSO string.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func (g *generator) emitSumBytesRuntime() {
+	g.line("")
+	g.line(".global __fern_sum_bytes")
+	g.typeDirective("__fern_sum_bytes")
+	g.label("__fern_sum_bytes")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("mov w0, #0")                     // running sum
+	g.emit("mov x8, x7")                     // cursor
+	g.emit("add x9, x7, w6, uxtw")           // end = data + len
+	g.label(".Lsum_bytes_loop")
+	g.emit("cmp x8, x9")
+	g.emit("b.ge .Lsum_bytes_ret")
+	g.emit("ldrb w10, [x8]")
+	g.emit("add w0, w0, w10")
+	g.emit("add x8, x8, #1")
+	g.emit("b .Lsum_bytes_loop")
+	g.label(".Lsum_bytes_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_sum_bytes")
 }
 
 // emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
@@ -9179,6 +9231,72 @@ func (g *generator) emitIsattyRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWindowSizeRuntime emits `__fern_window_size(fd)` in w0 →
+// Result[WinSize, IoError] — one TIOCGWINSZ ioctl into an 8-byte
+// `struct winsize`, whose two cell counts widen into the record. The
+// pixel pair the kernel fills beside them has no field to land in.
+//
+// The request number is the usual dual-table pair; the record's layout
+// is the same four u16s on both kernels. A descriptor that is not a
+// terminal answers ENOTTY, which is the refusal a caller falls back to
+// COLUMNS on, classified against an empty path as every
+// descriptor-shaped failure is.
+func (g *generator) emitWindowSizeRuntime() {
+	const linuxTiocgwinsz = 0x5413
+	const darwinTiocgwinsz = 0x40087468
+	g.line("")
+	g.line(".global __fern_window_size")
+	g.typeDirective("__fern_window_size")
+	g.label("__fern_window_size")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	// The 8-byte winsize lands in the 16-byte slot below the frame.
+	g.emit("sub sp, sp, #16")
+	// The fd is an i32 value, so the high half of x0 is whatever the
+	// producer left there; ioctl reads the whole register.
+	g.emit("mov w0, w0")
+	if g.darwin {
+		g.emit("ldr x1, =%d", darwinTiocgwinsz)
+	} else {
+		g.emit("mov x1, #%d", linuxTiocgwinsz)
+	}
+	g.emit("mov x2, sp")
+	g.syscall("ioctl")
+	g.emit("ldrh w19, [sp]")     // ws_row
+	g.emit("ldrh w20, [sp, #2]") // ws_col
+	g.emit("add sp, sp, #16")
+	g.emit("tbnz x0, #63, .Lwsz_err")
+	g.emit("mov x0, #%d", ir.WinSize.Bytes)
+	g.emit("bl __fern_alloc_box")
+	g.emit("str x19, [x0, #%d]", ir.WinSize.Rows)
+	g.emit("str x20, [x0, #%d]", ir.WinSize.Cols)
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x19, [x0, #8]")
+	g.emit("b .Lwsz_return")
+
+	g.label(".Lwsz_err")
+	g.emit("neg x0, x0")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lwsz_return")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_window_size")
+	g.line(".ltorg")
+}
+
 // emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
 // `__fern_signal_default(sig)` — one sigaction each, setting `sa_handler`
 // to SIG_IGN or SIG_DFL and leaving every other field zero.
@@ -13204,6 +13322,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
+	usesSumBytes bool
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesTcp pulls in the full TCP socket runtime
@@ -13247,6 +13367,9 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
+	// ioctl projected onto WinSize, with the errno as an IoError.
+	usesWindowSize bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -17426,6 +17549,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRmemchr = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
+		case "__fern_sum_bytes":
+			g.usesSumBytes = true
 		case "__fern_ascii_run":
 			g.usesAsciiRun = true
 		case "__fern_heap_bump_bytes":
@@ -17616,6 +17741,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "isatty":
 			target = "__fern_isatty"
 			g.usesIsatty = true
+		case "window_size":
+			// window_size(fd): Result[WinSize, IoError].
+			target = "__fern_window_size"
+			g.usesWindowSize = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "signal_ignore":
 			target = "__fern_signal_ignore"
 			g.usesSignalDisposition = true
