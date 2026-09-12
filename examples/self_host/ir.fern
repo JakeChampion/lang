@@ -4317,6 +4317,11 @@ pub function op_allocates(tag: i32): boolean {
 // oversized-function miscompile threshold, #2720). The membership is a property
 // of the IR op set — not of any one target — so it lives here and both backends
 // share it; a new string op is taught to every backend's dispatch at once.
+//
+// fern-lint: allow cyclomatic-complexity
+// A flat membership test over opcode tags, so its complexity counts OPS rather
+// than logic: every `||` is one row of a table, there is no path through it to
+// get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106

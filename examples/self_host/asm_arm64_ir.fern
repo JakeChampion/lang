@@ -505,37 +505,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
         return s;
     }
-    if (o.kind_tag == 253) {  // sum_bytes
-        // operand stack [box] -> every byte of the string added into a
-        // 32-bit accumulator that wraps.
-        //
-        // SCALAR (§3.4 step 1). The NEON sequence this wants is uaddlp into
-        // uadalp, neither of which the self-host arm64 assembler can encode
-        // yet, and §3.3a's rule is to land the encodings before the vector
-        // body rather than after.
-        //
-        // ldrb zero-extends, which is the whole of the sign question: a byte
-        // is unsigned and 0xff contributes 255. `add w7, w7, w4` writes the
-        // low 32 bits and zeroes the top of x7, so the wrap is the register
-        // width and the stored value is already the i32 the op promises.
-        //
-        // x5 is the cursor POINTER, x6 the end, x7 the running sum.
-        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var sb_loop: string = slo.name;
-        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
-        var sb_done: string = slo2.name;
-        s = slo2.state;
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-        s = s.write("    mov x7, #0\n");
-        s = s.write("    mov x5, x0\n    add x6, x0, x3\n");
-        s = s.write(sb_loop + ":\n");
-        s = s.write("    cmp x5, x6\n    b.ge " + sb_done + "\n");
-        s = s.write("    ldrb w4, [x5]\n    add w7, w7, w4\n");
-        s = s.write("    add x5, x5, #1\n    b " + sb_loop + "\n");
-        s = s.write(sb_done + ":\n    str x7, [sp, #-16]!\n");
-        return s;
-    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.
