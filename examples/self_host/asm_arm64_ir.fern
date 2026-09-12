@@ -7542,7 +7542,14 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // need whose generated Fern body is emitted from that block, __fern_io_error
 // included — they share one call graph, so they are emitted together.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
-    return s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("chown_at") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
+    return s.has_any_need([
+        "read_file", "read_file_bytes", "write_file", "write_file_exec",
+        "remove_file", "create_dir_all", "create_dir", "remove_dir",
+        "create_link", "create_symlink", "rename", "chmod", "truncate",
+        "mknod", "chown_at", "set_file_times", "read_link", "umask",
+        "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
+        "remove_dir_all", "open_file", "writer_write", "reader"
+    ]);
 }
 
 pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {

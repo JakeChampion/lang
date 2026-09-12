@@ -4855,6 +4855,19 @@ pub function (s: EmitState) has_need(name: string): boolean {
     return false;
 }
 
+// has_any_need is has_need over a set. The runtime-bundle gates each ask
+// whether ANY of two or three dozen needs is marked, and written as a chain
+// of `||` that is one boolean run per name — unreadable, and a branch each
+// for the complexity ratchet, for a question that is really list membership.
+pub function (s: EmitState) has_any_need(names: string[]): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (s.has_need(names[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function (s: EmitState) mark_print_int(): EmitState {
     return s.need("print_int");
 }
