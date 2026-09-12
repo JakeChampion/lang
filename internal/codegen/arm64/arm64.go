@@ -824,6 +824,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
 	}
+	if g.usesStrBuilder {
+		g.emitStrBuilderRuntime()
+	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
@@ -6494,6 +6497,274 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("ret")
 	}
 	g.sizeDirective("__fern_strbuf_take")
+	g.line(".ltorg")
+}
+
+// emitStrBuilderRuntime emits the capacity-carrying string builder
+// (#8773) — the multi-instance successor to the single global strbuf.
+// arm64 mirror of the x86_64 emission; see that comment for the shape.
+//
+// The arm64 half is the simpler of the two, because `[data-4]` here is
+// the allocator's requested payload size rather than the string's
+// length: a buffer allocated at its CAPACITY and handed over holding
+// fewer bytes still frees at the capacity, so the handoff needs no
+// leak-census correction and strands nothing in a smaller class. The
+// length travels in the second word of the string instead.
+//
+// Written for the two-word string ABI only: arm64.Emit pins
+// ast.TwoWordOverride on for the whole emission.
+func (g *generator) emitStrBuilderRuntime() {
+	// __fern_buf_new(cap) -> handle
+	g.line("")
+	g.line(".global __fern_buf_new")
+	g.typeDirective("__fern_buf_new")
+	g.label("__fern_buf_new")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0")
+	g.emit("cmp x19, #16") // a floor, so the doubling has something to double
+	g.emit("b.hs .Lbufnew_cap")
+	g.emit("mov x19, #16")
+	g.label(".Lbufnew_cap")
+	g.emit("mov w0, #32")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x20, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str x0, [x20]")
+	g.emit("str xzr, [x20, #8]")
+	g.emit("str x19, [x20, #16]")
+	g.emit("str x19, [x20, #24]")
+	g.emit("mov x0, x20")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_new")
+
+	// __fern_buf_reserve(H, need): replace the buffer with one of at
+	// least `need` bytes, doubling from the current capacity (or from
+	// the reserve, when a take left the builder unarmed), and carry the
+	// live bytes across. Internal — no Fern builtin reaches it directly.
+	g.line("")
+	g.line(".global __fern_buf_reserve")
+	g.typeDirective("__fern_buf_reserve")
+	g.label("__fern_buf_reserve")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("ldr x21, [x19, #16]")
+	g.emit("cbnz x21, .Lbufres_dbl")
+	g.emit("ldr x21, [x19, #24]")
+	g.emit("cbnz x21, .Lbufres_dbl")
+	g.emit("mov x21, #64")
+	g.label(".Lbufres_dbl")
+	g.emit("cmp x21, x20")
+	g.emit("b.hs .Lbufres_alloc")
+	g.emit("lsl x21, x21, #1")
+	g.emit("b .Lbufres_dbl")
+	g.label(".Lbufres_alloc")
+	g.emit("mov x0, x21")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x22, x0")
+	g.emit("ldr x2, [x19, #8]")
+	g.emit("cbz x2, .Lbufres_nocopy")
+	g.emit("mov x0, x22")
+	g.emit("ldr x1, [x19]")
+	g.emit("bl __fern_memcpy")
+	g.label(".Lbufres_nocopy")
+	g.emit("ldr x0, [x19]")
+	g.emit("cbz x0, .Lbufres_store")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("bl __fern_box_free")
+	g.label(".Lbufres_store")
+	g.emit("str x22, [x19]")
+	g.emit("str x21, [x19, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_reserve")
+
+	// __fern_buf_push(H, s_data, s_len): append every byte of `s`.
+	// Frame 64: fp/lr, x19..x22, then a 16-byte inline-string spill at
+	// [x29 + 48] for emitStrDataPtr2W.
+	g.line("")
+	g.line(".global __fern_buf_push")
+	g.typeDirective("__fern_buf_push")
+	g.label("__fern_buf_push")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("mov x21, x2")
+	g.emitStrLen2W("w22", "x21")
+	g.emit("cbz w22, .Lbufpush_done")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x22")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufpush_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufpush_fits")
+	g.emitStrDataPtr2W("x1", "x20", "x21", 48)
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x0, x0, x3")
+	g.emit("mov x2, x22")
+	g.emit("bl __fern_memcpy")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x22")
+	g.emit("str x0, [x19, #8]")
+	g.label(".Lbufpush_done")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push")
+
+	// __fern_buf_push_range(H, s_data, s_len, lo, hi): append `s[lo:hi]`
+	// with no intermediate string. An empty or inverted range is a
+	// no-op; the bounds themselves are the caller's, as with
+	// slice_unchecked. Frame 80: fp/lr, x19..x24, spill at [x29 + 64].
+	g.line("")
+	g.line(".global __fern_buf_push_range")
+	g.typeDirective("__fern_buf_push_range")
+	g.label("__fern_buf_push_range")
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("mov x21, x2")
+	g.emit("mov x22, x3")     // lo
+	g.emit("sub x23, x4, x3") // n = hi - lo
+	g.emit("cmp x23, #0")
+	g.emit("b.le .Lbufrange_done")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x23")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufrange_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufrange_fits")
+	g.emitStrDataPtr2W("x1", "x20", "x21", 64)
+	g.emit("add x1, x1, x22")
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x3, [x19, #8]")
+	g.emit("add x0, x0, x3")
+	g.emit("mov x2, x23")
+	g.emit("bl __fern_memcpy")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, x23")
+	g.emit("str x0, [x19, #8]")
+	g.label(".Lbufrange_done")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_range")
+
+	// __fern_buf_push_byte(H, x): append the low byte of `x`.
+	g.line("")
+	g.line(".global __fern_buf_push_byte")
+	g.typeDirective("__fern_buf_push_byte")
+	g.label("__fern_buf_push_byte")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, #1")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufbyte_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufbyte_fits")
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x1, [x19, #8]")
+	g.emit("add x0, x0, x1")
+	g.emit("strb w20, [x0]")
+	g.emit("add x1, x1, #1")
+	g.emit("str x1, [x19, #8]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_byte")
+
+	// __fern_buf_len(H) -> len
+	g.line("")
+	g.line(".global __fern_buf_len")
+	g.typeDirective("__fern_buf_len")
+	g.label("__fern_buf_len")
+	g.emit("ldr x0, [x0, #8]")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_len")
+
+	// __fern_buf_take(H) -> (data, len): hand the accumulated bytes over
+	// as a string without copying them, and leave the builder empty but
+	// still usable — the reserve survives, so the next push allocates
+	// once at full width rather than growing back up. Heap form: the
+	// length word carries the byte count with the inline flag clear.
+	// An empty build answers the canonical inline empty and keeps its
+	// buffer, so a flush that finds nothing costs no allocation.
+	g.line("")
+	g.line(".global __fern_buf_take")
+	g.typeDirective("__fern_buf_take")
+	g.label("__fern_buf_take")
+	g.emit("ldr x1, [x0, #8]")
+	g.emit("cbz x1, .Lbuftake_empty")
+	g.emit("ldr x2, [x0]")
+	g.emit("str xzr, [x0]")
+	g.emit("str xzr, [x0, #8]")
+	g.emit("str xzr, [x0, #16]")
+	g.emit("mov x0, x2")
+	g.emit("ret")
+	g.label(".Lbuftake_empty")
+	g.emit("mov x0, xzr")
+	g.emit("movz x1, #0x8000, lsl #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_take")
+
+	// __fern_buf_free(H): release the buffer (when the builder still
+	// owns one) and the control block.
+	g.line("")
+	g.line(".global __fern_buf_free")
+	g.typeDirective("__fern_buf_free")
+	g.label("__fern_buf_free")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("mov x19, x0")
+	g.emit("cbz x19, .Lbuffree_ret")
+	g.emit("ldr x0, [x19]")
+	g.emit("cbz x0, .Lbuffree_ctl")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("bl __fern_box_free")
+	g.label(".Lbuffree_ctl")
+	g.emit("mov x0, x19")
+	g.emit("mov x1, #32")
+	g.emit("bl __fern_box_free")
+	g.label(".Lbuffree_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_free")
 	g.line(".ltorg")
 }
 
@@ -13012,6 +13283,11 @@ type generator struct {
 	// global mutable scratch buffer primitive for O(1) amortised
 	// append. Mirror of the x86_64 backend's emission.
 	usesStrBuf bool
+	// usesStrBuilder — the capacity-carrying builder family (#8773).
+	// Unlike the strbuf above there may be any number of them at once; a
+	// builder is the address of its control block, handed to Fern as a
+	// usize. Mirror of the x86_64 backend's emission.
+	usesStrBuilder bool
 
 	// usesExit pulls in `__fern_exit(code)` — direct exit syscall.
 	// Doesn't return; the post-call push x0 the caller emits is
@@ -14386,6 +14662,13 @@ func returnIsString(g *generator, op ir.Op, name string) bool {
 		// The in-place-when-unique self-append and its fused range twin
 		// both hand back a (data, len) pair: the same buffer with a longer
 		// length on the fast path, __fern_strcat's fresh one otherwise.
+		return true
+	case "buf_take":
+		// The capacity-carrying builder's handover (#8773): the buffer
+		// itself as (data, len), with no copy. Absent from this table it
+		// would push one word and the consumer would read the slot below
+		// as the length — the silent wrong answer arm64_strbuf_test.go
+		// exists for.
 		return true
 	case "string_from_bytes_unchecked", "__str_slice", "strbuf_take", "hostname",
 		"uname_field", "getcwd":
@@ -17193,6 +17476,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__fern_exit"
 			g.usesExit = true
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len", "buf_take", "buf_free":
+			target = "__fern_" + target
+			g.usesStrBuilder = true
+			// Every entry point but buf_len can reach the allocator, the
+			// copier and the freelist through __fern_buf_reserve, so pull
+			// the three in for the whole family rather than per name.
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesFree = true
+			g.usesBoxFree = true
 		case "strbuf_reset":
 			target = "__fern_strbuf_reset"
 			g.usesStrBuf = true

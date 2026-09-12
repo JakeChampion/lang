@@ -8083,6 +8083,10 @@ pub function builtin_function_names(): string[] {
         // like the `bool`/`boolean` one; not differentially tested.)
         "map_new", "map_new_i32", "strbuf_append", "strbuf_reset",
         "strbuf_take", "string_from_bytes_unchecked", "slice_unchecked", "chr", "len",
+        // the capacity-carrying string builder (#8773): a handle is the
+        // address of its own control block, so any number are live at once.
+        "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len",
+        "buf_take", "buf_free",
         // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
         // front-end builtin (like map_new); get/set are method calls, not
         // bare names, so only the constructor needs the E001 suppression.

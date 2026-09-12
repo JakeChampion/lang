@@ -278,6 +278,15 @@ var rcInertBuiltins = map[string]bool{
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
 
+	// The capacity-carrying builder (#8773). `buf_push` / `buf_push_range`
+	// memcpy the piece past the buffer tail and retain nothing; the rest
+	// take and return scalars. `buf_free` releases the builder's own
+	// blocks, which is the wholesale-invalidation axis `__heap_release_to`
+	// is filed under above and not one this table answers.
+	"buf_new": true, "buf_push": true, "buf_push_range": true,
+	"buf_push_byte": true, "buf_len": true, "buf_take": true,
+	"buf_free": true,
+
 	"proc_exec": true, "proc_fork": true, "proc_waitpid": true,
 	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
 	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
@@ -384,7 +393,11 @@ var rcInert = map[string]bool{
 	"__arr_idx_8_nc": true, "__arr_idx_nc": true, "__build_io_error": true,
 	"__bytes_to_lang_string": true, "__fern_abs_f64": true,
 	"__fern_alloc": true, "__fern_alloc_box": true, "__fern_alloc_rc1": true,
-	"__fern_arg_at": true, "__fern_arg_count": true, "__fern_args": true,
+	// The builder's growth step (#8773). Its arguments are a handle and a
+	// byte count, and the buffer it replaces belongs to the builder rather
+	// than to any caller's books.
+	"__fern_buf_reserve": true,
+	"__fern_arg_at":      true, "__fern_arg_count": true, "__fern_args": true,
 	"__fern_environ":               true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,

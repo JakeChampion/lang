@@ -150,6 +150,8 @@ pub function ungated(): string[] {
             "geteuid", "getegid", "getuid", "getgid", "getgroups",
             "rlimit_nofile",
             "strbuf_reset", "strbuf_append", "strbuf_take",
+            "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
+            "buf_len", "buf_take", "buf_free",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
             "map_new", "cell_new", "string_from_bytes_unchecked",

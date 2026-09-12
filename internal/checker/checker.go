@@ -1226,6 +1226,59 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.StringType{},
 	}
+	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_len /
+	// buf_take / buf_free (#8773) — the capacity-carrying string
+	// builder, the strbuf above without the singleton. A builder is a
+	// NUMBER, the address of its own control block, the way an open
+	// file is a descriptor: any number of them may be live at once and
+	// they nest. The capacity travels with the buffer, so an append is
+	// a compare, a memcpy and a length store — no refcount check (a
+	// builder's buffer is uniquely owned by construction) and no size
+	// class re-derived per call, which is what `s = s + piece` pays.
+	//
+	// buf_take hands the accumulated bytes over as a string WITHOUT
+	// copying them — the buffer is laid out as a string block from the
+	// start — and leaves the builder empty and still usable, so a
+	// flush loop keeps one builder rather than one per line.
+	//
+	// buf_free releases the buffer and the control block. A builder is
+	// not refcounted and has no drop, so a handle that is never freed
+	// leaks, exactly as an fd that is never closed does. Programs want
+	// std/io_buffered's writers rather than these directly.
+	//
+	// The handle is `usize` rather than `number`: it is an address, so it
+	// must be pointer-width on the natives and 32 bits on wasm32, which is
+	// exactly what WidthPtr resolves to. A plain `number` is 32 bits
+	// everywhere and would truncate one.
+	bufH := ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	c.info.FuncSigs["buf_new"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: bufH,
+	}
+	c.info.FuncSigs["buf_push"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_range"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_len"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["buf_take"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.StringType{},
+	}
+	c.info.FuncSigs["buf_free"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.VoidType{},
+	}
 	// __rc_inc / __rc_dec / __rc_get — direct access to the
 	// refcount machinery for debugging and Phase 1 testing.
 	// They bypass the normal alias-tracking that Phase 1c/d

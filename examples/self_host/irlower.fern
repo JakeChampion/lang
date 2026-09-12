@@ -7489,6 +7489,9 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // strbuf_take() snapshots the global string-builder into a fresh
                     // string box (so `return strbuf_take()` str-tracks the result).
                     if (cid.name == "strbuf_take" && c.args.len() == 0) { return true; }
+                    // buf_take(h) hands the builder's own buffer over as a
+                    // string box without copying it.
+                    if (cid.name == "buf_take" && c.args.len() == 1) { return true; }
                     // An erased-generic fn whose return mirrors argument i
                     // (`idg[T](x: T): T`, the "name|$arg<i>" registry entry):
                     // the call is a string exactly when THAT argument is.
@@ -12156,6 +12159,57 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     }
     if (cid.name == "strbuf_take" && c.args.len() == 0) {
         return s.emit(ir.op_strbuf_take());
+    }
+    // The capacity-carrying string builder (#8773) — the same accumulator with
+    // the handle made explicit, so any number are live at once. Every arm
+    // lowers its arguments left to right and emits the op; `buf_push` /
+    // `buf_push_range` / `buf_push_byte` / `buf_free` are statement ops (push a
+    // dummy the statement-level drop takes), `buf_new` / `buf_len` / `buf_take`
+    // are value ops. `buf_take` is str-tracked in expr_is_str.
+    if (cid.name == "buf_new" && c.args.len() == 1) {
+        var bns: LowerState = lower_expr(c.args[0], s);
+        if (!bns.ok) { return bns; }
+        return bns.emit(ir.op_buf_new());
+    }
+    if (cid.name == "buf_push" && c.args.len() == 2) {
+        var bps: LowerState = lower_expr(c.args[0], s);
+        if (!bps.ok) { return bps; }
+        bps = lower_expr(c.args[1], bps);
+        if (!bps.ok) { return bps; }
+        return bps.emit(ir.op_buf_push());
+    }
+    if (cid.name == "buf_push_range" && c.args.len() == 4) {
+        var brs: LowerState = lower_expr(c.args[0], s);
+        if (!brs.ok) { return brs; }
+        brs = lower_expr(c.args[1], brs);
+        if (!brs.ok) { return brs; }
+        brs = lower_expr(c.args[2], brs);
+        if (!brs.ok) { return brs; }
+        brs = lower_expr(c.args[3], brs);
+        if (!brs.ok) { return brs; }
+        return brs.emit(ir.op_buf_push_range());
+    }
+    if (cid.name == "buf_push_byte" && c.args.len() == 2) {
+        var bbs: LowerState = lower_expr(c.args[0], s);
+        if (!bbs.ok) { return bbs; }
+        bbs = lower_expr(c.args[1], bbs);
+        if (!bbs.ok) { return bbs; }
+        return bbs.emit(ir.op_buf_push_byte());
+    }
+    if (cid.name == "buf_len" && c.args.len() == 1) {
+        var bls: LowerState = lower_expr(c.args[0], s);
+        if (!bls.ok) { return bls; }
+        return bls.emit(ir.op_buf_len());
+    }
+    if (cid.name == "buf_take" && c.args.len() == 1) {
+        var bts: LowerState = lower_expr(c.args[0], s);
+        if (!bts.ok) { return bts; }
+        return bts.emit(ir.op_buf_take());
+    }
+    if (cid.name == "buf_free" && c.args.len() == 1) {
+        var bfs: LowerState = lower_expr(c.args[0], s);
+        if (!bfs.ok) { return bfs; }
+        return bfs.emit(ir.op_buf_free());
     }
     // Built-in `i32_to_string(n)` — the free-function spelling of
     // `n.to_string()` on an i32: route to the __fern_i32_to_string
@@ -65129,19 +65183,21 @@ function borrow_reg_record(key: string, flags: string): string {
 // The method key is seeded only while no user receiver method is named `write`:
 // the escape walks see no receiver type, so the name alone must settle it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__mismatch"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__mismatch"];
     for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
     return keys.append("Writer.write");
 }
 
 // copying_builtin_flags: the per-parameter borrowability flag string for one
-// copying-builtin key. Every key but __mismatch copies a single string at
-// position 0; __mismatch reads TWO ranges and retains neither, so positions 0
-// and 2 both carry the credit (native's copyingBuiltinArgs["__mismatch"] is
-// {0, 2}). A position past the string's end reads as not borrowable, which is
-// what the i32 parameters want.
+// copying-builtin key. Most keys copy a single string at position 0;
+// __mismatch reads TWO ranges and retains neither, so positions 0 and 2 both
+// carry the credit (native's copyingBuiltinArgs["__mismatch"] is {0, 2}), and
+// the two buf_push forms take the builder handle at position 0, so the string
+// they copy is at position 1. A position past the string's end reads as not
+// borrowable, which is what the i32 parameters want.
 function copying_builtin_flags(key: string): string {
     if (key == "__mismatch") { return "10100"; }
+    if (key == "buf_push" || key == "buf_push_range") { return "01"; }
     return "1";
 }
 

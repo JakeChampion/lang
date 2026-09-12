@@ -1387,6 +1387,9 @@ func pureReadReceiverBuiltin(name string) bool {
 //
 //   - strbuf_append memcpys the string's bytes past the buffer tail
 //     and returns void (its runtime doc, all three implementations);
+//   - buf_push / buf_push_range do the same into a capacity-carrying
+//     builder, and the piece is the argument at position 1 — position 0
+//     is the builder's handle;
 //   - print / write / eprint write the bytes to an fd, void result;
 //   - `w.write(s)` (__fern_writer_write) writes the bytes to the
 //     Writer's fd and returns a fresh Option[IoError] box holding an
@@ -1412,6 +1415,8 @@ func pureReadReceiverBuiltin(name string) bool {
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string][]int{
 	"strbuf_append":               {0},
+	"buf_push":                    {1},
+	"buf_push_range":              {1},
 	"print":                       {0},
 	"write":                       {0},
 	"eprint":                      {0},
