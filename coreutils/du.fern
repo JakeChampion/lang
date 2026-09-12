@@ -39,6 +39,8 @@ import "std/i64";
 import "std/io_buffered";
 import "core/map";
 import "./lib/gnu";
+import "./lib/timefmt";
+import "./lib/tz";
 import "./lib/blocks";
 
 function opt_null(): i32 {
@@ -183,7 +185,7 @@ function time_ctime(): i32 {
 // rounding UP). `suffix` is what a bare `-BK` prints after each number,
 // derived from the final divisor rather than echoed from the spec —
 // which is why `--inodes -BKiB` prints `B` and not `KiB`.
-pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: string, excludes: string[], one_file_system: boolean, terminator: string }
+pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: string, zone: tz.Zone, excludes: string[], one_file_system: boolean, terminator: string }
 
 function help_text(): string {
   var out: string = "";
@@ -227,379 +229,6 @@ function help_text(): string {
   out = out + "      --help        display this help and exit\n";
   out = out + "      --version     output version information and exit\n";
   return out;
-}
-
-// ---- time ------------------------------------------------------------------
-// Howard Hinnant's era arithmetic, which folds the pre-epoch branch
-// into the same closed form as the rest.
-struct Civil { year: i64, month: i32, day: i32, yday: i32, wday: i32 }
-
-function is_leap(y: i64): boolean {
-  if (y % (4 as i64) != 0 as i64) {
-    return false;
-  }
-  if (y % (100 as i64) != 0 as i64) {
-    return true;
-  }
-  return y % (400 as i64) == 0 as i64;
-}
-
-function year_day(y: i64, m: i32, d: i32): i32 {
-  var cum: i32[] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  var n: i32 = cum[m - 1] + d;
-  if (m > 2 && is_leap(y)) {
-    n = n + 1;
-  }
-  return n;
-}
-
-function civil_from_days(z0: i64): Civil {
-  var z: i64 = z0 + 719468 as i64;
-  var era: i64 = z / (146097 as i64);
-  if (z < 0 as i64 && z % (146097 as i64) != 0 as i64) {
-    era = era - 1 as i64;
-  }
-  var doe: i64 = z - era * (146097 as i64);
-  var yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
-  var y: i64 = yoe + era * (400 as i64);
-  var doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
-  var mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
-  var d: i64 = doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64;
-  var m: i64 = mp + 3 as i64;
-  if (mp >= 10 as i64) {
-    m = mp - 9 as i64;
-    y = y + 1 as i64;
-  }
-  var wd: i64 = (z0 + 4 as i64) % (7 as i64);
-  if (wd < 0 as i64) {
-    wd = wd + 7 as i64;
-  }
-  return Civil { year: y, month: m as i32, day: d as i32, yday: year_day(y, m as i32, d as i32), wday: wd as i32 };
-}
-
-function days_from_civil(y0: i64, m: i32, d: i32): i64 {
-  var y: i64 = y0;
-  if (m <= 2) {
-    y = y - 1 as i64;
-  }
-  var era: i64 = y / (400 as i64);
-  if (y < 0 as i64 && y % (400 as i64) != 0 as i64) {
-    era = era - 1 as i64;
-  }
-  var yoe: i64 = y - era * (400 as i64);
-  var mp: i64 = m as i64 - 3 as i64;
-  if (m <= 2) {
-    mp = m as i64 + 9 as i64;
-  }
-  var doy: i64 = (153 as i64 * mp + 2 as i64) / (5 as i64) + d as i64 - 1 as i64;
-  var doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
-  return era * (146097 as i64) + doe - 719468 as i64;
-}
-
-// `Tm` — the broken-down time strftime renders, in UTC.
-struct Tm { c: Civil, hour: i32, min: i32, sec: i32, nsec: i64, epoch: i64 }
-
-function break_time(sec: i64, nsec: i64): Tm {
-  var days: i64 = sec / (86400 as i64);
-  var rest: i64 = sec % (86400 as i64);
-  if (rest < 0 as i64) {
-    days = days - 1 as i64;
-    rest = rest + 86400 as i64;
-  }
-  return Tm { c: civil_from_days(days), hour: (rest / (3600 as i64)) as i32, min: (rest / (60 as i64) % (60 as i64)) as i32, sec: (rest % (60 as i64)) as i32, nsec: nsec, epoch: sec };
-}
-
-function pad_num(n: i64, width: i32, fill: i32): string {
-  var neg: boolean = n < 0 as i64;
-  var mag: u64 = n as u64;
-  if (neg) {
-    mag = 0 as u64 - n as u64;
-  }
-  var digits: string = mag.to_string();
-  var pad: string = "";
-  var need: i32 = width - digits.len();
-  if (neg) {
-    need = need - 1;
-  }
-  while (need > 0) {
-    pad = pad + string_from_bytes_unchecked([fill as u8]);
-    need = need - 1;
-  }
-  if (neg) {
-    return "-" + pad + digits;
-  }
-  return pad + digits;
-}
-
-function day_name(w: i32): string {
-  var names: string[] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  return names[w];
-}
-
-function month_name(m: i32): string {
-  var names: string[] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  return names[m - 1];
-}
-
-// The ISO 8601 week-based year and week number.
-function iso_week(t: Tm): (i64, i32) {
-  var wday: i32 = t.c.wday;
-  if (wday == 0) {
-    wday = 7;
-  }
-  var thursday: i64 = days_from_civil(t.c.year, t.c.month, t.c.day) + (4 - wday) as i64;
-  var wy: Civil = civil_from_days(thursday);
-  var jan1: i64 = days_from_civil(wy.year, 1, 1);
-  return (wy.year, ((thursday - jan1) / (7 as i64)) as i32 + 1);
-}
-
-function upper_ascii(s: string): string {
-  var bs: u8[] = [];
-  var i: i32 = 0;
-  while (i < s.len()) {
-    var b: i32 = s[i] as i32;
-    if (b >= 97 && b <= 122) {
-      b = b - 32;
-    }
-    bs = bs.append(b as u8);
-    i = i + 1;
-  }
-  return string_from_bytes_unchecked(bs);
-}
-
-function known_conversion(c: i32): boolean {
-  var letters: string = "aAbBcCdDeFgGhHIjklmMnNpPqrRsStTuUVwWxXyYzZ%";
-  var i: i32 = 0;
-  while (i < letters.len()) {
-    if (letters[i] as i32 == c) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-// `strftime(fmt, t)` — the C-locale conversions in UTC, with glibc's
-// flags (`-` no pad, `_` space pad, `0` zero pad, `^` upper) and field
-// width. An unknown conversion is copied out verbatim, as glibc does.
-function strftime(fmt: string, t: Tm): string {
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < fmt.len()) {
-    var ch: i32 = fmt[i] as i32;
-    if (ch != 37) {
-      out = out + string_from_bytes_unchecked([ch as u8]);
-      i = i + 1;
-      continue;
-    }
-    var j: i32 = i + 1;
-    var no_pad: boolean = false;
-    var space_pad: boolean = false;
-    var zero_pad: boolean = false;
-    var upper: boolean = false;
-    while (j < fmt.len()) {
-      var f: i32 = fmt[j] as i32;
-      if (f == 45) {
-        no_pad = true;
-      } else if (f == 95) {
-        space_pad = true;
-      } else if (f == 48) {
-        zero_pad = true;
-      } else if (f == 94 || f == 35) {
-        upper = true;
-      } else {
-        break;
-      }
-      j = j + 1;
-    }
-    var width: i32 = 0;
-    while (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
-      width = width * 10 + (fmt[j] as i32 - 48);
-      j = j + 1;
-    }
-    // E and O select alternative representations, which the C locale
-    // does not have; glibc falls back to the plain conversion.
-    if (j < fmt.len() && (fmt[j] as i32 == 69 || fmt[j] as i32 == 79)) {
-      j = j + 1;
-    }
-    if (j >= fmt.len()) {
-      out = out + slice_unchecked(fmt, i, fmt.len());
-      i = fmt.len();
-      continue;
-    }
-    var conv: i32 = fmt[j] as i32;
-    if (!known_conversion(conv)) {
-      out = out + slice_unchecked(fmt, i, j + 1);
-      i = j + 1;
-      continue;
-    }
-    var piece: string = conversion(conv, t, width, no_pad, space_pad, zero_pad);
-    if (upper) {
-      piece = upper_ascii(piece);
-    }
-    out = out + piece;
-    i = j + 1;
-  }
-  return out;
-}
-
-// One conversion's text.
-function conversion(c: i32, t: Tm, width: i32, no_pad: boolean, space_pad: boolean, zero_pad: boolean): string {
-  if (c == 37) {
-    return "%";
-  }
-  if (c == 110) {
-    return "\n";
-  }
-  if (c == 116) {
-    return "\t";
-  }
-  if (c == 97) {
-    return slice_unchecked(day_name(t.c.wday), 0, 3) + "";
-  }
-  if (c == 65) {
-    return day_name(t.c.wday);
-  }
-  if (c == 98 || c == 104) {
-    return slice_unchecked(month_name(t.c.month), 0, 3) + "";
-  }
-  if (c == 66) {
-    return month_name(t.c.month);
-  }
-  if (c == 99) {
-    return strftime("%a %b %e %H:%M:%S %Y", t);
-  }
-  if (c == 68 || c == 120) {
-    return strftime("%m/%d/%y", t);
-  }
-  if (c == 70) {
-    return strftime("%Y-%m-%d", t);
-  }
-  if (c == 114) {
-    return strftime("%I:%M:%S %p", t);
-  }
-  if (c == 82) {
-    return strftime("%H:%M", t);
-  }
-  if (c == 84 || c == 88) {
-    return strftime("%H:%M:%S", t);
-  }
-  if (c == 112) {
-    if (t.hour < 12) {
-      return "AM";
-    }
-    return "PM";
-  }
-  if (c == 80) {
-    if (t.hour < 12) {
-      return "am";
-    }
-    return "pm";
-  }
-  if (c == 90) {
-    return "UTC";
-  }
-  if (c == 122) {
-    return "+0000";
-  }
-  if (c == 78) {
-    return pad_num(t.nsec, 9, 48);
-  }
-  return numeric_conversion(c, t, width, no_pad, space_pad, zero_pad);
-}
-
-// The conversions that are a number, with the field width each one pads
-// to by default.
-function numeric_conversion(c: i32, t: Tm, width: i32, no_pad: boolean, space_pad: boolean, zero_pad: boolean): string {
-  var value: i64 = 0 as i64;
-  var w: i32 = 2;
-  var fill: i32 = 48;
-  if (c == 100) {
-    value = t.c.day as i64;
-  } else if (c == 101) {
-    value = t.c.day as i64;
-    fill = 32;
-  } else if (c == 109) {
-    value = t.c.month as i64;
-  } else if (c == 72) {
-    value = t.hour as i64;
-  } else if (c == 107) {
-    value = t.hour as i64;
-    fill = 32;
-  } else if (c == 73 || c == 108) {
-    var h: i32 = t.hour % 12;
-    if (h == 0) {
-      h = 12;
-    }
-    value = h as i64;
-    if (c == 108) {
-      fill = 32;
-    }
-  } else if (c == 77) {
-    value = t.min as i64;
-  } else if (c == 83) {
-    value = t.sec as i64;
-  } else if (c == 106) {
-    value = t.c.yday as i64;
-    w = 3;
-  } else if (c == 121) {
-    var yy: i64 = t.c.year % (100 as i64);
-    if (yy < 0 as i64) {
-      yy = yy + 100 as i64;
-    }
-    value = yy;
-  } else if (c == 89) {
-    value = t.c.year;
-    w = 4;
-  } else if (c == 67) {
-    value = t.c.year / (100 as i64);
-  } else if (c == 117) {
-    var wd: i32 = t.c.wday;
-    if (wd == 0) {
-      wd = 7;
-    }
-    value = wd as i64;
-    w = 1;
-  } else if (c == 119) {
-    value = t.c.wday as i64;
-    w = 1;
-  } else if (c == 113) {
-    value = ((t.c.month - 1) / 3 + 1) as i64;
-    w = 1;
-  } else if (c == 115) {
-    value = t.epoch;
-    w = 1;
-  } else if (c == 71) {
-    value = iso_week(t).0;
-    w = 4;
-  } else if (c == 103) {
-    var gy: i64 = iso_week(t).0 % (100 as i64);
-    if (gy < 0 as i64) {
-      gy = gy + 100 as i64;
-    }
-    value = gy;
-  } else if (c == 86) {
-    value = iso_week(t).1 as i64;
-  } else if (c == 85) {
-    value = ((t.c.yday + 6 - t.c.wday) / 7) as i64;
-  } else {
-    var mw: i32 = t.c.wday;
-    if (mw == 0) {
-      mw = 7;
-    }
-    value = ((t.c.yday + 7 - mw) / 7) as i64;
-  }
-  if (no_pad) {
-    w = 1;
-  } else if (space_pad) {
-    fill = 32;
-  } else if (zero_pad) {
-    fill = 48;
-  }
-  if (width > w) {
-    w = width;
-  }
-  return pad_num(value, w, fill);
 }
 
 // ---- exclusion -------------------------------------------------------------
@@ -908,7 +537,7 @@ function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
 function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
   var line: string = blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t";
   if (c.time_kind != time_none()) {
-    line = line + strftime(c.time_format, break_time(tsec, tnsec)) + "\t";
+    line = line + timefmt.strftime(c.time_format, c.zone, tsec, tnsec) + "\t";
   }
   return o.write_string(line + display + c.terminator);
 }
@@ -1443,7 +1072,7 @@ function main(): i32 {
   var argv: string[] = args();
   var opts: gnu.Opt[] = declare_options();
 
-  var c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: "%Y-%m-%d %H:%M", excludes: [], one_file_system: false, terminator: "\n" };
+  var c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: "%Y-%m-%d %H:%M", zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
   var unit: blocks.Unit = blocks.default_unit();
   var summarize: boolean = false;
   var depth_text: string = "";
@@ -1568,6 +1197,10 @@ function main(): i32 {
     gnu.error("warning: options --apparent-size and -b are ineffective with --inodes");
   }
   if (c.time_kind != time_none()) {
+    // The zone is resolved only when a timestamp will be printed: tzset(3)
+    // reads the environment and then a TZif file, and a du that prints no
+    // time should not pay for either.
+    c = Conf { ...c, zone: tz.local_zone() };
     if (have_style) {
       c = Conf { ...c, time_format: style_format(style) };
     } else {

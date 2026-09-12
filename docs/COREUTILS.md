@@ -290,7 +290,16 @@ coreutils/
                     rule in its footer past the transition table, and
                     the rule string itself when no file answers — with
                     the offset AND the abbreviation (`EST`, `+0545`) in
-                    force at an instant, for who, pinky and pr's header
+                    force at an instant
+  lib/timefmt.fern  C-locale nstrftime over the broken-down LOCAL time
+                    lib/tz.fern resolves: gnulib's `-` `_` `0` `^` `#`
+                    flags, an optional field width, the `E` / `O`
+                    modifiers the C locale has no alternative for, and
+                    the `:` repetitions of `%z`, with an unknown
+                    conversion copied out percent and all. `%z` / `%Z`
+                    read off the same lookup the fields came from, so a
+                    stamp and its zone can never name different
+                    instants. For du, pr, stat, ls, who, pinky and date
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
@@ -1276,15 +1285,6 @@ either compiler. #9089 carries all four. The corpus reaches EXDEV for real
 through the harness's `crossDev` field — `/dev/shm` is tmpfs where `/tmp` is
 ext4 — but only under `--no-copy` / `-n` / `--update=none`, which prove the
 errno is reported identically.
-
-**`du --time` renders in UTC.** GNU calls `localtime_r`, which resolves `TZ`
-and then `/etc/localtime`. `lib/tz.fern` can answer that now, but `du.fern`
-was written against a tree that predated it and formats the stamp as UTC,
-printing `UTC` / `+0000` for `%Z` / `%z`. The parity gate pins `TZ=UTC`, so
-the corpus is exact and the divergence is invisible to it — on a machine in
-any other zone every `--time` line is off by the offset. #9076 tracks moving
-it onto the shared module, along with the C-locale strftime `du.fern` carries,
-which is the half `lib/tz.fern` still lacks.
 
 **`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
 so a component 8 KiB down is `File name too long` where GNU's fts, which opens
