@@ -80,3 +80,46 @@ func TestArm64LinuxOpenFlagsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// The same family one level down: fstatat's FLAGS word. Darwin's
+// AT_SYMLINK_NOFOLLOW is 0x20 where Linux's is 0x100, and XNU rejects an
+// unknown flag bit with EINVAL instead of ignoring it — so the Linux
+// constant did not degrade `lstat` into a follow, it failed every call,
+// existing path or not. A directory walk was impossible on the target
+// while both the x86-64 and arm64-linux legs stayed green.
+//
+// AT_REMOVEDIR and AT_EACCESS were already translated beside it, which is
+// what made this one hard to see.
+const lstatFlagSrc = `function main(): i32 {
+    match (lstat("/tmp/fern-ls")) {
+        Ok(s) => {},
+        Err(e) => {}
+    }
+    match (stat("/tmp/fern-st")) {
+        Ok(s) => {},
+        Err(e) => {}
+    }
+    return 0;
+}`
+
+func TestArm64DarwinStatFlagsAreXNUs(t *testing.T) {
+	asm := compile(t, lstatFlagSrc, Options{Darwin: true})
+	body := helperBody(asm, "__fern_lstat")
+	if body == "" {
+		t.Fatal("__fern_lstat not emitted; the test cannot guard a helper that is absent")
+	}
+	if !strings.Contains(body, "#32") {
+		t.Error("arm64-darwin __fern_lstat does not pass XNU's AT_SYMLINK_NOFOLLOW (0x20): every lstat returns EINVAL, so no directory walk can classify an entry")
+	}
+	if strings.Contains(body, "#256") {
+		t.Error("arm64-darwin __fern_lstat still passes the LINUX AT_SYMLINK_NOFOLLOW (0x100), which XNU rejects with EINVAL")
+	}
+}
+
+// The Linux word must not move while the Darwin one is being pinned.
+func TestArm64LinuxStatFlagsUnchanged(t *testing.T) {
+	asm := compile(t, lstatFlagSrc, Options{})
+	if body := helperBody(asm, "__fern_lstat"); body == "" || !strings.Contains(body, "#256") {
+		t.Error("arm64-linux __fern_lstat no longer passes AT_SYMLINK_NOFOLLOW (0x100)")
+	}
+}

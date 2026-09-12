@@ -10311,6 +10311,17 @@ func (g *generator) atRemoveDir() int {
 	return 0x200
 }
 
+// atSymlinkNofollow is AT_SYMLINK_NOFOLLOW: 0x100 on Linux, 0x20 on
+// Darwin. Darwin rejects an unknown flag bit with EINVAL rather than
+// ignoring it, so a Linux constant here does not degrade to a follow —
+// it fails every call.
+func (g *generator) atSymlinkNofollow() int {
+	if g.darwin {
+		return 0x20
+	}
+	return 0x100
+}
+
 // emitReadLinkRuntime emits `__fern_read_link(path) → Result[string,
 // IoError]` — readlinkat(AT_FDCWD, path, buf, 4096).
 //
@@ -11110,11 +11121,11 @@ func (g *generator) emitFdStatRuntime() {
 // a directory walk needs to choose between recursing, reading and
 // skipping (#7982).
 func (g *generator) emitLstatRuntime() {
-	g.emitStatLikeRuntime("__fern_lstat", 256, "lst2w", false)
+	g.emitStatLikeRuntime("__fern_lstat", g.atSymlinkNofollow(), "lst2w", false)
 }
 
 // emitStatLikeRuntime is the shared body. `atFlags` is fstatat's
-// flags word — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to —
+// flags word — 0 to follow, atSymlinkNofollow not to —
 // and `lp` prefixes the local labels so the helpers can all be
 // emitted into one object. `byFd` selects fstat of the fd at [x0]
 // over fstatat of a path.
