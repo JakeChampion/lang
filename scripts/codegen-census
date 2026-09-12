@@ -94,7 +94,14 @@ report() {
       stack=$(( $(count "^${TAB}str x[0-9]+, \[sp, #-16\]!$") + $(count "^${TAB}ldr x[0-9]+, \[sp\], #16$") ))
       pad=0
       shuffle=$(count "^${TAB}mov x[0-9]+, x[0-9]+$")
-      reload=$(count "^${TAB}(ldur|stur) ")
+      # Frame traffic is x29-relative on the stack machine and sp-relative on
+      # the SSA path, which uses sp as a fixed frame base. Counting only the
+      # first read the second as ~zero: 2,264 against an actual 318,238 on
+      # checker_run. The pre/post-index forms are the operand stack and are
+      # counted above, so the offset forms here cannot double-count them.
+      reload=$(( $(count "^${TAB}(ldur|stur) ") \
+        + $(count "^${TAB}[a-z]+ +[wx][0-9]+, \[sp(, #[0-9]+)?\]$") \
+        + $(count "^${TAB}(ldp|stp) .*\[sp, #[0-9]+\]$") ))
       ;;
     *) echo "codegen-census: unknown isa $isa" >&2; return 1 ;;
   esac

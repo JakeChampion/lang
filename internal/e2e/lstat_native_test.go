@@ -105,3 +105,14 @@ func TestArm64Lstat(t *testing.T) {
 		t.Errorf("exit = %d, want 0 — see lstatProbeSource for which pair disagreed\n%s", code, out)
 	}
 }
+
+// The Darwin leg, where the flag word differs. XNU's AT_SYMLINK_NOFOLLOW
+// is 0x20 against Linux's 0x100 and an unknown bit is EINVAL rather than
+// ignored, so the Linux constant failed every lstat instead of quietly
+// following the link — which the two legs above cannot see. The textual
+// sibling is TestArm64DarwinStatFlagsAreXNUs in internal/codegen/arm64,
+// which runs on every host.
+func TestArm64DarwinLstat(t *testing.T) {
+	file, linkToFile, linkToDir, dir := lstatProbeTree(t)
+	buildAndRunDarwin(t, t.TempDir(), lstatProbeSource(file, linkToFile, linkToDir, dir))
+}

@@ -8072,6 +8072,8 @@ pub function builtin_function_names(): string[] {
         // the entries that are neither a file nor a directory: a FIFO, and a
         // character or block device node
         "mknod",
+        // how wide the terminal on the other end of a descriptor is
+        "window_size",
         // the process's own effective ids, which `test -O` / `-G` compare a
         // file's owner against, and the machine's node name
         "geteuid", "getegid", "hostname",
@@ -8097,6 +8099,10 @@ pub function builtin_function_names(): string[] {
         // like the `bool`/`boolean` one; not differentially tested.)
         "map_new", "map_new_i32", "strbuf_append", "strbuf_reset",
         "strbuf_take", "string_from_bytes_unchecked", "slice_unchecked", "chr", "len",
+        // the capacity-carrying string builder (#8773): a handle is the
+        // address of its own control block, so any number are live at once.
+        "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len",
+        "buf_take", "buf_free",
         // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
         // front-end builtin (like map_new); get/set are method calls, not
         // bare names, so only the constructor needs the E001 suppression.
@@ -8188,6 +8194,15 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fvf = fvf.append(StructFieldDecl { name: "name_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
         fvf = fvf.append(StructFieldDecl { name: "path_max", type_name: "i64", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
+    }
+    // WinSize: the builtin struct returned by window_size(fd) — how many rows
+    // and columns the terminal on the other end of it has. Same injection
+    // pattern and the same reason as FsStat above.
+    if (!struct_declared(structs, "WinSize")) {
+        var wsf: StructFieldDecl[] = [];
+        wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "" });
+        structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess

@@ -158,6 +158,30 @@ function f_cc(op: string): string {
     return "ne";
 }
 
+// emit_ssa_buf emits the capacity-carrying string builder's seven ops (#8773).
+// The __fern_ssa_buf_* helpers take the AAPCS register ABI, so each operand is
+// loaded through x9 into its argument register in turn; the three value ops
+// store x0 back into the result's home and the four void ones store nothing.
+function emit_ssa_buf(reg_of: i32[], widths: i32[], ins: ssa.SInst, out: string): string {
+    out = load_op(reg_of, widths, ins.args[0], "a", out);
+    out = out + "    mov x0, x9\n";
+    if (ins.args.len() > 1) {
+        out = load_op(reg_of, widths, ins.args[1], "a", out);
+        out = out + "    mov x1, x9\n";
+    }
+    if (ins.args.len() > 2) {
+        out = load_op(reg_of, widths, ins.args[2], "a", out);
+        out = out + "    mov x2, x9\n";
+        out = load_op(reg_of, widths, ins.args[3], "a", out);
+        out = out + "    mov x3, x9\n";
+    }
+    out = out + "    bl __fern_ssa_" + ssa.kind_name(ins.kind_tag) + "\n";
+    if (ins.kind_tag == 28 || ins.kind_tag == 32 || ins.kind_tag == 33) {
+        return store_reg(reg_of, ins.result, "x0", 64, out);
+    }
+    return out;
+}
+
 function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[], fname: string, out: string): string {
     if (ins.kind_tag == 5) {  // const_str
         // Pointer to the static [len, bytes…] string constant (64-bit; stored
@@ -359,6 +383,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         out = out + "    mov x8, #93\n";
         return out + "    svc #0\n";
     }
+    if (ins.kind_tag >= 28 && ins.kind_tag <= 34) { return emit_ssa_buf(reg_of, widths, ins, out); }
     if (ins.kind_tag == 23) { return out + "    bl __fern_ssa_strbuf_reset\n"; }
     if (ins.kind_tag == 24) {  // strbuf_append
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // string → x9
@@ -725,6 +750,130 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     parts = parts.append("    add x12, x15, #1\n    lsl x12, x12, #3\n    str w14, [x13, x12]\n");   // result[i+1] = byte
     parts = parts.append("    add x15, x15, #1\n    b .Lsbt_loop\n");
     parts = parts.append(".Lsbt_fin:\n    str xzr, [x11]\n    mov x0, x13\n    ret\n");
+    // The capacity-carrying string builder (#8773) — the accumulator above with
+    // the handle made explicit, so any number are live at once and they nest. A
+    // handle is the address of a 32-byte control block: [H+0] data, [H+8] len,
+    // [H+16] cap, [H+24] reserve. The arm64 twin of ssa_x86's bundle.
+    //
+    // The buffer is (cap+1) words in the SSA layout's own shape — [len@word0,
+    // one byte per 8-byte word] — so it IS a string already, which is what
+    // makes take zero-copy: it stamps the length into word 0 and hands the same
+    // pointer back, leaving the builder empty and still armed at its reserve.
+    // Growth doubles. buf_free is a no-op: __fern_ssa_alloc is a pure bump with
+    // no freelist, so there is nothing for a block to go back to.
+    parts = parts.append("__fern_ssa_buf_new:\n");            // x0 = cap -> x0 = handle
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n    cmp x19, #16\n    b.hs .Lsbufnew_cap\n    mov x19, #16\n");
+    parts = parts.append(".Lsbufnew_cap:\n");
+    parts = parts.append("    mov x0, #32\n    bl __fern_ssa_alloc\n    mov x20, x0\n");
+    parts = parts.append("    add x0, x19, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n");   // (cap+1) words
+    parts = parts.append("    str x0, [x20]\n    str xzr, [x20, #8]\n");
+    parts = parts.append("    str x19, [x20, #16]\n    str x19, [x20, #24]\n");
+    parts = parts.append("    mov x0, x20\n");
+    parts = parts.append("    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
+    // reserve(x0 = H, x1 = need): a wider buffer, doubling from the current
+    // capacity (or from the reserve, when a take left the builder unarmed),
+    // with the live words carried across. Internal — no builtin reaches it.
+    parts = parts.append("__fern_ssa_buf_reserve:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n    mov x20, x1\n");
+    parts = parts.append("    ldr x21, [x19, #16]\n    cbnz x21, .Lsbufres_dbl\n");
+    parts = parts.append("    ldr x21, [x19, #24]\n    cbnz x21, .Lsbufres_dbl\n");
+    parts = parts.append("    mov x21, #64\n");
+    parts = parts.append(".Lsbufres_dbl:\n    cmp x21, x20\n    b.hs .Lsbufres_alloc\n");
+    parts = parts.append("    lsl x21, x21, #1\n    b .Lsbufres_dbl\n");
+    parts = parts.append(".Lsbufres_alloc:\n");
+    parts = parts.append("    add x0, x21, #1\n    lsl x0, x0, #3\n    bl __fern_ssa_alloc\n    mov x22, x0\n");
+    parts = parts.append("    ldr x9, [x19, #8]\n    cbz x9, .Lsbufres_store\n");
+    parts = parts.append("    ldr x10, [x19]\n    mov x11, #0\n");
+    parts = parts.append(".Lsbufres_copy:\n    cmp x11, x9\n    b.ge .Lsbufres_store\n");
+    parts = parts.append("    add x12, x11, #1\n    lsl x12, x12, #3\n");
+    parts = parts.append("    ldr w13, [x10, x12]\n    str w13, [x22, x12]\n");
+    parts = parts.append("    add x11, x11, #1\n    b .Lsbufres_copy\n");
+    parts = parts.append(".Lsbufres_store:\n");
+    parts = parts.append("    str x22, [x19]\n    str x21, [x19, #16]\n");
+    parts = parts.append("    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n");
+    parts = parts.append("    ldp x29, x30, [sp], #16\n    ret\n");
+    // push(x0 = H, x1 = string): append every byte-word of the string.
+    parts = parts.append("__fern_ssa_buf_push:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n    mov x20, x1\n");
+    parts = parts.append("    ldr w21, [x20]\n    uxtw x21, w21\n");
+    parts = parts.append("    cbz x21, .Lsbufpush_done\n");
+    parts = parts.append("    ldr x0, [x19, #8]\n    add x0, x0, x21\n");
+    parts = parts.append("    ldr x1, [x19, #16]\n    cmp x0, x1\n    b.ls .Lsbufpush_fits\n");
+    parts = parts.append("    mov x1, x0\n    mov x0, x19\n    bl __fern_ssa_buf_reserve\n");
+    parts = parts.append(".Lsbufpush_fits:\n");
+    parts = parts.append("    ldr x9, [x19]\n    ldr x10, [x19, #8]\n    mov x11, #0\n");
+    parts = parts.append(".Lsbufpush_loop:\n    cmp x11, x21\n    b.ge .Lsbufpush_fin\n");
+    parts = parts.append("    add x12, x11, #1\n    lsl x12, x12, #3\n    ldr w13, [x20, x12]\n");
+    parts = parts.append("    add x14, x10, x11\n    add x14, x14, #1\n    lsl x14, x14, #3\n");
+    parts = parts.append("    str w13, [x9, x14]\n");
+    parts = parts.append("    add x11, x11, #1\n    b .Lsbufpush_loop\n");
+    parts = parts.append(".Lsbufpush_fin:\n");
+    parts = parts.append("    ldr x0, [x19, #8]\n    add x0, x0, x21\n    str x0, [x19, #8]\n");
+    parts = parts.append(".Lsbufpush_done:\n");
+    parts = parts.append("    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n");
+    parts = parts.append("    ldp x29, x30, [sp], #16\n    ret\n");
+    // push_range(x0 = H, x1 = s, x2 = lo, x3 = hi): append s[lo:hi] with no
+    // intermediate string. An empty or inverted range is a no-op; the bounds
+    // are the caller's, as with slice_unchecked.
+    parts = parts.append("__fern_ssa_buf_push_range:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n    mov x20, x1\n    mov x22, x2\n");
+    parts = parts.append("    sub x21, x3, x2\n");                        // n = hi - lo
+    parts = parts.append("    cmp x21, #0\n    b.le .Lsbufrange_done\n");
+    parts = parts.append("    ldr x0, [x19, #8]\n    add x0, x0, x21\n");
+    parts = parts.append("    ldr x1, [x19, #16]\n    cmp x0, x1\n    b.ls .Lsbufrange_fits\n");
+    parts = parts.append("    mov x1, x0\n    mov x0, x19\n    bl __fern_ssa_buf_reserve\n");
+    parts = parts.append(".Lsbufrange_fits:\n");
+    parts = parts.append("    ldr x9, [x19]\n    ldr x10, [x19, #8]\n    mov x11, #0\n");
+    parts = parts.append(".Lsbufrange_loop:\n    cmp x11, x21\n    b.ge .Lsbufrange_fin\n");
+    parts = parts.append("    add x12, x22, x11\n    add x12, x12, #1\n    lsl x12, x12, #3\n");
+    parts = parts.append("    ldr w13, [x20, x12]\n");
+    parts = parts.append("    add x14, x10, x11\n    add x14, x14, #1\n    lsl x14, x14, #3\n");
+    parts = parts.append("    str w13, [x9, x14]\n");
+    parts = parts.append("    add x11, x11, #1\n    b .Lsbufrange_loop\n");
+    parts = parts.append(".Lsbufrange_fin:\n");
+    parts = parts.append("    ldr x0, [x19, #8]\n    add x0, x0, x21\n    str x0, [x19, #8]\n");
+    parts = parts.append(".Lsbufrange_done:\n");
+    parts = parts.append("    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n");
+    parts = parts.append("    ldp x29, x30, [sp], #16\n    ret\n");
+    // push_byte(x0 = H, x1 = x): append the low byte of x.
+    parts = parts.append("__fern_ssa_buf_push_byte:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    stp x19, x20, [sp, #-16]!\n");
+    parts = parts.append("    mov x19, x0\n    mov x20, x1\n");
+    parts = parts.append("    ldr x0, [x19, #8]\n    add x0, x0, #1\n");
+    parts = parts.append("    ldr x1, [x19, #16]\n    cmp x0, x1\n    b.ls .Lsbufbyte_fits\n");
+    parts = parts.append("    mov x1, x0\n    mov x0, x19\n    bl __fern_ssa_buf_reserve\n");
+    parts = parts.append(".Lsbufbyte_fits:\n");
+    parts = parts.append("    ldr x9, [x19]\n    ldr x10, [x19, #8]\n");
+    parts = parts.append("    add x11, x10, #1\n    lsl x11, x11, #3\n");
+    parts = parts.append("    and w12, w20, #0xff\n    str w12, [x9, x11]\n");
+    parts = parts.append("    add x10, x10, #1\n    str x10, [x19, #8]\n");
+    parts = parts.append("    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
+    // len(x0 = H) -> x0 = the bytes accumulated so far.
+    parts = parts.append("__fern_ssa_buf_len:\n    ldr x0, [x0, #8]\n    ret\n");
+    // take(x0 = H) -> x0 = string. An empty build answers a fresh empty string
+    // and KEEPS its buffer, so a flush that finds nothing allocates one word
+    // rather than a whole buffer.
+    parts = parts.append("__fern_ssa_buf_take:\n");
+    parts = parts.append("    ldr x9, [x0, #8]\n    cbz x9, .Lsbuftake_empty\n");
+    parts = parts.append("    ldr x10, [x0]\n    str w9, [x10]\n");
+    parts = parts.append("    str xzr, [x0]\n    str xzr, [x0, #8]\n    str xzr, [x0, #16]\n");
+    parts = parts.append("    mov x0, x10\n    ret\n");
+    parts = parts.append(".Lsbuftake_empty:\n");
+    parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    parts = parts.append("    mov x0, #8\n    bl __fern_ssa_alloc\n    str wzr, [x0]\n");
+    parts = parts.append("    ldp x29, x30, [sp], #16\n    ret\n");
+    // free(x0 = H): nothing to reclaim — this backend's allocator bumps and
+    // never recycles, so the call exists only to keep the op's shape.
+    parts = parts.append("__fern_ssa_buf_free:\n    ret\n");
     // File I/O — read_file / write_file lowered to the Linux aarch64 syscall
     // runtime (openat=56, read=63, write=64, close=57, lseek=62; AT_FDCWD
     // -100). Strings here use the SSA [len, byte-per-8-byte-word] layout, so
