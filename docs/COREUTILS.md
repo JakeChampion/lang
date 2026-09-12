@@ -156,6 +156,19 @@ harness runs GNU and Fern and diffs. A case costs one line, and a case cannot
 record a wrong expectation, which is what makes the corpus cheap to grow and
 hard to get wrong. See the package doc in `harness_test.go`.
 
+**The reference is a BINARY, not a directory.** The harness chooses one
+directory by probing `yes --version`, but it then verifies the utility's own
+binary inside it and looks in the remaining candidates when that one is not
+GNU coreutils. That is not caution for its own sake: `/usr/bin/uptime` on
+Debian and Ubuntu belongs to **procps**, because their coreutils package does
+not build coreutils' own — nor `kill`'s. Trusting the directory would have
+compared Fern against a different program and reported the difference as
+Fern's bug. `FERN_GNU_COREUTILS` therefore takes a PATH-style LIST, so a host
+supplies what its distribution leaves out beside `/usr/bin` rather than
+instead of it, and `scripts/devbox` and the `test-units` lane both build the
+one missing binary and point at it. A reference that cannot be found is a
+FAILURE naming the utility, never a skip.
+
 A case may also ask for a working directory of its own — a fresh one per
 SIDE, seeded by a function it names — and the TREE it leaves behind is then
 compared alongside the streams, name by name and byte by byte. `split` is
@@ -1257,7 +1270,7 @@ the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 
 **`chcon` refuses the context change itself, and there is no answer that
 would not.** A security context is an extended attribute; there is no
-`getxattr` or `setxattr` (#9098), so the one step the utility exists for
+`getxattr` (#9098) or `setxattr` (#9154), so the one step it exists for
 cannot happen. What makes this a divergence rather than a gap is that GNU
 does not refuse either: on a machine with no SELinux it calls
 `setfilecon(3)` and reports whatever the call failed with, and WHICH errno
@@ -1304,6 +1317,25 @@ between the GNU leg and the Fern leg are the ones reporting no blocks at all,
 and flushing changes nothing there. #9089 carries the four sync calls and the
 classifications they need; #9102 was filed separately for this caller and is the
 same builtin.
+
+**`uptime` is Linux-only, and says so.** The three load averages are
+`/proc/loadavg`, which is what glibc's `getloadavg(3)` reads; Darwin answers
+the same question through `sysctl(KERN_BOOTTIME)` and `getloadavg(3)` with no
+file behind either and no primitive for it. A build for another target
+therefore REFUSES after the option scan — `the load averages are read from
+/proc/loadavg, which darwin does not have`, exit 1 — rather than printing the
+line without its load clause. That shape is one GNU also produces, when
+`getloadavg` fails, so printing it would look like an answer instead of a gap.
+`--help` and `--version` still answer everywhere, because the refusal comes
+after the scan.
+
+Two things about the reference are worth writing down, because both cost a
+round of wrong work. GNU coreutils' `uptime` has **no `-p` and no `-s`** —
+those are procps', as is the `/usr/bin/uptime` on most Linux distributions —
+and **where it takes its boot time changed in 9.4**: 9.1 reads `/proc/uptime`
+and lets it OVERRIDE the utmp `BOOT_TIME` record, so a fixture database proves
+nothing against it, while 9.4 and 9.10 take the record. The oracle is pinned
+to 9.4 for that reason.
 
 **`df` is Linux-only.** `statfs` answers the counts on every native target, but
 not the device, the mount point or the type NAME, and those come from
@@ -1786,7 +1818,10 @@ groups are the order of work. Each sub-issue names its group.
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` `stty` `uptime`, `pathchk` (done — it needed no new primitive:
+  `shred` `stty`, `uptime` (done — no new primitive: the boot time and the
+  session count are the utmp database `read_file_bytes` already reads, the
+  clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
+  `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
   `lstat` is the whole of the default mode and `statfs` from #9062 carries
   the per-directory `name_max` its component walk holds a name to, which is
   exactly the caller that builtin's own doc comment predicted; `pathconf` /

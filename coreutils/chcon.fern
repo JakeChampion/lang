@@ -5,8 +5,8 @@
 //   chcon [OPTION]... --reference=RFILE FILE...
 //
 // The SELinux security context of a file is an extended attribute, and
-// Fern has no primitive that reads or writes one — no `getxattr`, no
-// `setxattr`, no `getfilecon`. So the step this utility exists for is
+// Fern has no primitive that reads or writes one — no `getxattr` (#9098),
+// no `setxattr` (#9154). So the step this utility exists for is
 // REFUSED, and everything up to it is exact. What "up to it" covers is
 // most of chcon: the option grammar, the three mutually exclusive ways
 // of naming a context, the operand-count rules, the `-R` traversal with

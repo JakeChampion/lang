@@ -35,6 +35,44 @@ RUN apt-get update \
     done \
  && [ -e /usr/bin/aarch64-linux-gnu-gcc ] || ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc
 
+# GNU coreutils' own `uptime`, which Debian does not ship: their coreutils
+# package does not build it, and `/usr/bin/uptime` on the distributions that
+# have one at all belongs to procps -- a different program with different
+# options and different output. The corpus gate for uptime(1) has no oracle
+# without this, and a gate with no oracle is a SKIP reporting `ok`.
+#
+# The version is PINNED rather than taken from the image, and it is not the
+# image's own 9.1. Where uptime gets its boot time changed in 9.4: 9.1 reads
+# /proc/uptime and lets it OVERRIDE the utmp BOOT_TIME record, so a corpus
+# handing it a database would be measuring the container's real uptime
+# instead of the fixture's. 9.4 and the 9.10 this project is held to both
+# take the record, and 9.4 is what the CI image's own coreutils is.
+#
+# `make` in full rather than `make src/uptime`: a named target skips the
+# gnulib header generation the build depends on and dies on a missing
+# stdckdint.h.
+ARG GNU_UPTIME_VERSION=9.4
+RUN set -eux; \
+    ver="$GNU_UPTIME_VERSION"; \
+    cd /tmp; \
+    curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"; \
+    tar xf "coreutils-$ver.tar.xz"; \
+    cd "coreutils-$ver"; \
+    FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux; \
+    make -j"$(nproc)"; \
+    install -D src/uptime /opt/gnu-coreutils/bin/uptime; \
+    cd /; rm -rf "/tmp/coreutils-$ver" "/tmp/coreutils-$ver.tar.xz"; \
+    /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)'
+
+# hyperfine and python3 for scripts/coreutils-bench: it is the repo's own
+# benchmark runner and could not run in the repo's own Linux image, which
+# matters for the utilities that cannot run on the macOS host at all.
+# Placed after the coreutils build so an edit here does not rebuild it.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      hyperfine python3 \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /work
 COPY mise.toml mise.lock /work/
 COPY scripts/toolchain-env /work/scripts/toolchain-env
@@ -50,6 +88,7 @@ RUN set -eux; \
 # GOPATH stays at the golang image's /go so the module-cache volume
 # scripts/devbox mounts keeps its name.
 ENV PATH=/root/.local/bin:/root/.local/share/mise/shims:$PATH \
+    FERN_GNU_COREUTILS=/usr/bin:/opt/gnu-coreutils/bin \
     FERN_WASI_ADAPTER=/opt/adapter.wasm \
     GOPATH=/go \
     GOFLAGS=-buildvcs=false
@@ -58,8 +97,10 @@ ENV PATH=/root/.local/bin:/root/.local/share/mise/shims:$PATH \
 # cross-arch e2e test skips on a failed lookup and a skipped test reports `ok`,
 # so a half-built image would report a green sweep having run nothing.
 RUN set -eux; \
-    for t in go wasmtime wasm-tools qemu-x86_64 qemu-aarch64 x86_64-linux-gnu-gcc aarch64-linux-gnu-gcc; do \
+    for t in go wasmtime wasm-tools qemu-x86_64 qemu-aarch64 x86_64-linux-gnu-gcc aarch64-linux-gnu-gcc hyperfine python3; do \
       command -v "$t" >/dev/null || (echo "missing tool in image: $t" >&2; exit 1); \
     done; \
     go version; wasmtime --version; wasm-tools --version; \
-    test -f "$FERN_WASI_ADAPTER"
+    test -f "$FERN_WASI_ADAPTER"; \
+    /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)' \
+      || (echo "the oracle uptime is not GNU coreutils; the corpus gate for it would have none" >&2; exit 1)
