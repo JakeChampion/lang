@@ -1670,6 +1670,10 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         if (util.index_of_str(ids, "proc_waitpid") >= 0) { return "proc_waitpid"; }
         if (util.index_of_str(ids, "proc_exec") >= 0) { return "proc_exec"; }
         if (util.index_of_str(ids, "proc_exec_as") >= 0) { return "proc_exec_as"; }
+        // chdir (#9090) — WASI resolves every path against a preopened
+        // descriptor, so there is no process working directory to move.
+        // The same absence that withholds getcwd.
+        if (util.index_of_str(ids, "chdir") >= 0) { return "chdir"; }
         // process_alive (#8767) — the same missing process table. A component
         // is one instance with no pids to ask about, which is why
         // platforms.fern withholds it on the `proc` capability; naming it here
@@ -1715,6 +1719,9 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "rlimit_nofile") {
         return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)\n";
+    }
+    if (name == "chdir") {
+        return "error: chdir is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process working directory to change)\n";
     }
     if (name == "statfs") {
         return "error: statfs is not supported on the wasm target (neither preview has a volume to measure: a preopen is a capability handle, not a mount, so it reports neither a size nor a name-length limit)\n";
@@ -4066,6 +4073,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = emit_wasm_isatty(parts);
     } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
         parts = emit_wasm_signal_disposition(parts);
+    } else if (o.kind_tag == 278) {  // signal_mask
+        parts = emit_wasm_signal_mask(parts);
+    } else if (o.kind_tag == 279) {  // signal_disposition
+        parts = emit_wasm_signal_disposition_read(parts);
     } else if (o.kind_tag == 240) {  // hostname
         parts = emit_wasm_hostname(bctmp, parts);
     } else if (o.kind_tag == 189) {  // wasm_timer_pollable
@@ -12614,6 +12625,27 @@ function emit_wasm_signal_disposition(parts: string[]): string[] {
     // missing import (compare hostname's ""). The signal number is on the
     // stack and unused; the 0 stands in for the sigaction return the native
     // helpers push, so the statement-level drop balances the same way.
+    parts = parts.append("    drop\n    i32.const 0\n");
+
+    return parts;
+}
+
+function emit_wasm_signal_mask(parts: string[]): string[] {
+    // signal_mask(how, mask) -> 0. A component is never sent a signal, so its
+    // blocked set is empty; and since signal_ignore is itself a no-op here,
+    // nothing can have moved it. Blocking what cannot arrive is the same
+    // no-op the setters already are, so 0 is a measurement and not a guess.
+    // Both operands are on the stack and unused.
+    parts = parts.append("    drop\n    drop\n    i64.const 0\n");
+
+    return parts;
+}
+
+function emit_wasm_signal_disposition_read(parts: string[]): string[] {
+    // signal_disposition(sig) -> 0, every signal at its default. Consistent
+    // with the setters rather than independently invented: they do nothing, so
+    // no disposition ever moved off the default. The signal number is on the
+    // stack and unused.
     parts = parts.append("    drop\n    i32.const 0\n");
 
     return parts;

@@ -888,7 +888,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_wasm_poll")
 				case "isatty":
 					needs.add("isatty")
-				case "signal_ignore", "signal_default":
+				case "signal_ignore", "signal_default", "signal_mask", "signal_disposition":
 					needs.add(op.Str)
 				case "hostname":
 					needs.add("hostname")
@@ -1991,19 +1991,39 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildIsattyBody,
 	},
 	"signal_ignore": {
-		// (sig: i32) → () — set one signal to SIG_IGN. Nothing can
+		// (sig: i32) → i32 — set one signal to SIG_IGN. Nothing can
 		// deliver a signal to a component, so there is nothing to
 		// ignore and doing nothing is the whole truth about it
-		// (compare hostname's ""). See buildSignalDispositionBody.
+		// (compare hostname's ""). The result is the errno the
+		// natives report; nothing here can fail, so it is 0. See
+		// buildSignalDispositionBody.
 		params:  []byte{encode.ValtypeI32},
-		results: nil,
+		results: []byte{encode.ValtypeI32},
 		body:    buildSignalDispositionBody,
 	},
 	"signal_default": {
-		// (sig: i32) → () — the same no-op in the other direction.
+		// (sig: i32) → i32 — the same no-op in the other direction.
 		params:  []byte{encode.ValtypeI32},
-		results: nil,
+		results: []byte{encode.ValtypeI32},
 		body:    buildSignalDispositionBody,
+	},
+	"signal_mask": {
+		// (how: i32, mask: i64) → i64, the mask that was blocked
+		// before the call. Nothing can deliver a signal, so nothing
+		// is ever blocked and the answer is 0 — not a stand-in, but
+		// what the blocked set of a component actually is, and
+		// consistent with signal_ignore doing nothing.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: []byte{encode.ValtypeI64},
+		body:    buildSignalMaskBody,
+	},
+	"signal_disposition": {
+		// (sig: i32) → i32. Every signal is at its default, which is
+		// the truth rather than a guess: the two setters are no-ops
+		// here, so nothing ever moved a disposition away from it.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSignalDispositionReadBody,
 	},
 	"hostname": {
 		// () → (data, len): the kernel's node name. Neither WASI

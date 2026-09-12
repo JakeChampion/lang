@@ -1646,7 +1646,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "stat", "lstat", "statfs", "access", "read_file",
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);
@@ -1662,7 +1663,8 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "remove_file", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link"
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir"
     ]);
 }
 
@@ -1677,7 +1679,8 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "subprocess"
     ]);
@@ -5235,13 +5238,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // Allocates the NUL-term buffer + the Result box, so heap +
             // open_file needs.
             //
-            // 0600 for the EXCLUSIVE opener, 0644 for the rest: its callers are
+            // 0600 for the EXCLUSIVE opener, 0666 for the rest: its callers are
             // creating a file only they should hold (gnulib's create_temp_file
             // is 0600 for the same reason), and a spool of piped input must not
             // be world-readable while it exists. The imm is the canonical
             // x86-64 flag word — asmcore's helper translates it per target — so
             // 193 identifies the exclusive opener on every one.
-            var open_mode: i32 = 420;
+            var open_mode: i32 = 438;
             if (o.i32_imm == 193) { open_mode = 384; }
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $" + util.i32_to_string(open_mode) + ", %rdx\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_res\n    addq $24, %rsp\n    pushq %rax\n");
@@ -5414,6 +5417,20 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [pathbox] IS param[0] (+16) — one rmdir(2), ENOTEMPTY included.
             s = s.write("    call __fn___fern_remove_dir\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("remove_dir");
+        } else if (o.kind_tag == 277) {  // chdir
+            // [pathbox] IS param[0] (+16) — one chdir(2).
+            s = s.write("    call __fn___fern_chdir\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("chdir");
+        } else if (o.kind_tag == 278) {  // signal_mask
+            // [how][mask] with mask on top; the stack ABI wants param[0]
+            // (how) on top, so re-push the popped pair in reverse.
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_signal_mask\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("signal_mask");
+        } else if (o.kind_tag == 279) {  // signal_disposition
+            // [sig] IS param[0] already; the stack ABI needs no marshalling.
+            s = s.write("    call __fn___fern_signal_disposition\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("signal_disposition");
         } else if (o.kind_tag == 262) {  // create_link
             // [targetbox][pathbox] (path on top) -> Result[void, IoError].
             s = s.write("    popq %rsi\n    popq %rdi\n");
@@ -8661,7 +8678,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
         "eprint", "read_int", "udp_send", "isatty", "window_size",
-        "rlimit_nofile", "signal_ignore", "signal_default", "access",
+        "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
+        "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
         "fd_stat"
     ])) {
@@ -8739,6 +8757,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86_64"); }
         if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86_64"); }
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86_64"); }
+        if (s.has_need("chdir")) { fs_src = fs_src + " " + asmcore.rt_src_chdir("x86_64"); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link("x86_64"); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
@@ -8787,6 +8806,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("rlimit_nofile")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), all_structs, s);
+    }
+    if (s.has_need("signal_mask")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86_64"), all_structs, s);
+    }
+    if (s.has_need("signal_disposition")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86_64"), all_structs, s);
     }
     if (s.has_need("signal_ignore")) {
         s = s.write("    .text\n");

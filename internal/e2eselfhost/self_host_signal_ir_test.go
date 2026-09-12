@@ -58,6 +58,46 @@ var signalDispositionCases = []struct {
 	{"signal_default restores the kill", []string{"ignore", "restore"}, 141},
 }
 
+// signalReadOpsProg exercises the two read ops the SIGPIPE contract cannot —
+// the previous-mask return of signal_mask and the disposition enum — always
+// as TRANSITIONS from a known state, because the binary inherits both from
+// whatever exec'd it. SIGINT (2) is every kernel, so its bit works on both
+// legs; the exit code names the failing step.
+const signalReadOpsProg = `function main(): i32 {
+    var bit: i64 = 2 as i64;
+    signal_mask(1, bit);
+    if ((signal_mask(0, 0 as i64) & bit) != (0 as i64)) { return 71; }
+    var prev: i64 = signal_mask(0, bit);
+    if ((prev & bit) != (0 as i64)) { return 72; }
+    if ((signal_mask(0, 0 as i64) & bit) == (0 as i64)) { return 73; }
+    var p2: i64 = signal_mask(1, bit);
+    if ((p2 & bit) == (0 as i64)) { return 74; }
+    if (signal_default(2) != 0) { return 75; }
+    if (signal_disposition(2) != 0) { return 76; }
+    if (signal_ignore(2) != 0) { return 77; }
+    if (signal_disposition(2) != 1) { return 78; }
+    if (signal_default(2) != 0) { return 79; }
+    if (signal_disposition(2) != 0) { return 80; }
+    return 0;
+}`
+
+// runSignalReadOps runs a program compiled from signalReadOpsProg to its own
+// exit, with `runner` as the emulator prefix an aarch64 binary needs on an
+// x86 host.
+func runSignalReadOps(t *testing.T, runner []string, prog string) int {
+	t.Helper()
+	cmd := exec.Command(prog)
+	if len(runner) != 0 {
+		full := append(append([]string{}, runner...), prog)
+		cmd = exec.Command(full[0], full[1:]...)
+	}
+	_ = cmd.Run()
+	if cmd.ProcessState == nil {
+		t.Fatal("signal read-ops program did not run")
+	}
+	return cmd.ProcessState.ExitCode()
+}
+
 // #8792: signal_ignore / signal_default must lower on the self-host x86-64 IR
 // path, with native's shape — one i32 in, nothing a caller reads out.
 func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
@@ -85,6 +125,17 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 		if got := runWithClosedStdout(t, nil, progBin, tc.argv...); got != tc.want {
 			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
 		}
+	}
+
+	// The read ops make no SIGPIPE and cannot be probed by the disposition
+	// contract, so they get their own run through the same driver.
+	readAsm := runCapture(t, gcc, runner, driverBin, []byte(signalReadOpsProg+"\n"))
+	if len(readAsm) == 0 {
+		t.Fatal("self-host compiler emitted 0 bytes for the signal read-ops program")
+	}
+	readBin := buildBin(t, gcc, dir, "signal_read_ops", string(readAsm))
+	if got := runSignalReadOps(t, nil, readBin); got != 0 {
+		t.Errorf("signal read ops: exit = %d, want 0 (the exit code names the failing step)", got)
 	}
 }
 
@@ -142,5 +193,20 @@ func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
 		if got := runWithClosedStdout(t, runner, progBin, tc.argv...); got != tc.want {
 			t.Errorf("%s: exit = %d, want %d (#8827)", tc.name, got, tc.want)
 		}
+	}
+
+	// The read ops go through the same arm64 driver and binary path, under
+	// qemu where this host is x86.
+	readSrc := filepath.Join(t.TempDir(), "signal_read_ops.fern")
+	if err := os.WriteFile(readSrc, []byte(signalReadOpsProg+"\n"), 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	readOut, err := exec.Command(mmc, readSrc, "-target", "arm64-linux").Output()
+	if err != nil {
+		t.Fatalf("self-host arm64 emit failed for the read ops: %v", err)
+	}
+	readBin := buildBinArm64(t, gcc, dir, "signal_read_ops", string(readOut))
+	if got := runSignalReadOps(t, runner, readBin); got != 0 {
+		t.Errorf("signal read ops: exit = %d, want 0 (the exit code names the failing step)", got)
 	}
 }
