@@ -12517,6 +12517,7 @@ function lower_call_path4(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): L
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
     if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
+    if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
     return false;
 }
@@ -12529,6 +12530,8 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //   __rmemchr(s, byte, from)    → the LAST at or before it; `from` clamps DOWN
 //                                 to len-1 where memchr's clamps UP to 0.
 //   __count_byte(s, byte)       → the tally; no cursor, so nothing to clamp.
+//   __sum_bytes(s)              → the wrapped 32-bit sum of every byte, and
+//                                 the only one taking a single operand.
 //   __ascii_run(s, from)        → the first high-bit byte, or the LENGTH, so a
 //                                 caller can skip a run branch-free.
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
@@ -12545,6 +12548,7 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__memchr") { return k.emit(ir.op_memchr()); }
     if (cid.name == "__rmemchr") { return k.emit(ir.op_rmemchr()); }
     if (cid.name == "__count_byte") { return k.emit(ir.op_count_byte()); }
+    if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
     return k.emit(ir.op_mismatch());
 }
@@ -65182,7 +65186,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // The method key is seeded only while no user receiver method is named `write`:
 // the escape walks see no receiver type, so the name alone must settle it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__mismatch"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch"];
     for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
     return keys.append("Writer.write");
 }

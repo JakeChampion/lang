@@ -91,6 +91,7 @@ func TestGoAssemblerAcceptsEveryRow(t *testing.T) {
 		"arm64_vshift_entry":     "%s v0.4s, v1.4s, #3",
 		"arm64_vpermute_opc":     "%s v0.16b, v1.16b, v2.16b",
 		"arm64_across_entry":     "%s b0, v1.16b",
+		"arm64_pairlong_entry":   "%s v0.8h, v1.16b",
 	}
 	for _, tbl := range arm64tbl.VecTables {
 		form, ok := forms[tbl.FernFn]

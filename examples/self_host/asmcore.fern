@@ -4186,6 +4186,12 @@ function builtin_i32_names(): string[] {
         // are real counts rather than sentinels — an out-of-range
         // byte and an empty string both genuinely count 0.
         "__count_byte",
+        // __sum_bytes(s): every byte of `s` added into a 32-bit
+        // accumulator that wraps (ATLAS-PLATFORM-PLAN §3.3, sixth
+        // kernel). i32 like its four siblings, and the only one with
+        // a single operand — it has no byte to compare and no cursor,
+        // so an empty string is its one degenerate case and sums to 0.
+        "__sum_bytes",
         // __mismatch(a, ao, b, bo, n): the offset of the first byte where
         // a[ao..ao+n) and b[bo..bo+n) differ, or the CLAMPED n when the
         // two ranges are equal (#8791, fifth kernel). i32 like its four
