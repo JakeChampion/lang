@@ -12444,12 +12444,13 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
     return a2.emit(ir.op_proc_exec_as());
 }
 
-// is_dirlink_call recognises the eight single-step directory, link and
-// permission primitives. The ARITY is part of the test so a call with the
+// is_dirlink_call recognises the nine single-step directory, link, working-
+// directory and permission primitives. The ARITY is part of the test so a call with the
 // wrong number of arguments falls through to the ordinary named-call path.
 function is_dirlink_call(name: string, argc: i32): boolean {
     if (name == "create_dir" || name == "chmod") { return argc == 2; }
     if (name == "remove_dir" || name == "read_link" || name == "umask") { return argc == 1; }
+    if (name == "chdir") { return argc == 1; }
     if (name == "create_link" || name == "create_symlink" || name == "rename") { return argc == 2; }
     return false;
 }
@@ -12463,6 +12464,7 @@ function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState):
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "remove_dir") { return a0.emit(ir.op_remove_dir()); }
+    if (cid.name == "chdir") { return a0.emit(ir.op_chdir()); }
     if (cid.name == "read_link") { return a0.emit(ir.op_read_link()); }
     if (cid.name == "umask") { return a0.emit(ir.op_umask()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
@@ -12547,15 +12549,20 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     return k.emit(ir.op_mismatch());
 }
 
-// is_signal_call recognises the two disposition builtins. The ARITY is part of
-// the test, as it is for is_os_query_call: a call with the wrong number of
-// arguments falls through to the ordinary named-call path.
+// is_signal_call recognises the four signal builtins: the two dispositions, the
+// blocked mask, and the disposition READ. The ARITY is part of the test, as it
+// is for is_os_query_call: a call with the wrong number of arguments falls
+// through to the ordinary named-call path.
 function is_signal_call(name: string, argc: i32): boolean {
+    if (name == "signal_mask") { return argc == 2; }
+    if (name == "signal_disposition") { return argc == 1; }
     return (name == "signal_ignore" || name == "signal_default") && argc == 1;
 }
 
-// lower_call_signal lowers signal_ignore(sig) / signal_default(sig) — set one
-// signal's disposition to SIG_IGN or SIG_DFL (#8792).
+// lower_call_signal lowers the four: signal_ignore(sig) / signal_default(sig)
+// set one disposition to SIG_IGN or SIG_DFL (#8792), signal_disposition(sig)
+// reads one back, and signal_mask(how, mask) moves the blocked set and answers
+// what it was (#9090).
 //
 // These are NOT os_queries: that arm asks the OS about the process, and these
 // change it, so widening its name to cover them would make it say less than it
@@ -12565,6 +12572,12 @@ function is_signal_call(name: string, argc: i32): boolean {
 function lower_call_signal(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
+    if (cid.name == "signal_disposition") { return a0.emit(ir.op_signal_disposition()); }
+    if (cid.name == "signal_mask") {
+        var a1: LowerState = lower_i64(c.args[1], a0);
+        if (!a1.ok) { return a1; }
+        return a1.emit(ir.op_signal_mask());
+    }
     if (cid.name == "signal_ignore") { return a0.emit(ir.op_signal_ignore()); }
     return a0.emit(ir.op_signal_default());
 }
@@ -70761,6 +70774,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "remove_file") { return "Result[void, IoError]"; }
     if (name == "create_dir_all") { return "Result[void, IoError]"; }
     if (name == "create_dir") { return "Result[void, IoError]"; }
+    if (name == "chdir") { return "Result[void, IoError]"; }
     if (name == "remove_dir") { return "Result[void, IoError]"; }
     if (name == "create_link") { return "Result[void, IoError]"; }
     if (name == "create_symlink") { return "Result[void, IoError]"; }
