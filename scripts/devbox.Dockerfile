@@ -35,34 +35,38 @@ RUN apt-get update \
     done \
  && [ -e /usr/bin/aarch64-linux-gnu-gcc ] || ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc
 
-# GNU coreutils' own `uptime`, which Debian does not ship: their coreutils
-# package does not build it, and `/usr/bin/uptime` on the distributions that
-# have one at all belongs to procps -- a different program with different
-# options and different output. The corpus gate for uptime(1) has no oracle
-# without this, and a gate with no oracle is a SKIP reporting `ok`.
+# GNU coreutils, built, because the image's own is not an oracle the corpus
+# can be held to. internal/coreutils compares each utility against the GNU
+# binary of the same name and docs/COREUTILS.md pins that to 9.4 OR NEWER;
+# debian:bookworm ships 9.1, so a corpus run in here was measuring a version
+# out of support and failing for reasons that were nothing to do with Fern.
 #
-# The version is PINNED rather than taken from the image, and it is not the
-# image's own 9.1. Where uptime gets its boot time changed in 9.4: 9.1 reads
-# /proc/uptime and lets it OVERRIDE the utmp BOOT_TIME record, so a corpus
-# handing it a database would be measuring the container's real uptime
-# instead of the fixture's. 9.4 and the 9.10 this project is held to both
-# take the record, and 9.4 is what the CI image's own coreutils is.
+# Two things 9.1 gets differently, both of which a corpus run trips over:
+# `uptime` reads /proc/uptime and lets it OVERRIDE the utmp BOOT_TIME record,
+# so a fixture database proves nothing against it, and `comm`'s write-error
+# wording differs. 9.4 is the version the CI image's own coreutils is, so a
+# green run in here means the same thing a green lane does.
 #
-# `make` in full rather than `make src/uptime`: a named target skips the
-# gnulib header generation the build depends on and dies on a missing
-# stdckdint.h.
-ARG GNU_UPTIME_VERSION=9.4
+# It also SUPPLIES what Debian leaves out: their coreutils package does not
+# build `uptime` or `kill` at all, and the `/usr/bin/uptime` most Linux
+# distributions do have belongs to procps -- a different program.
+#
+# `make` in full rather than a named target: a target skips the gnulib header
+# generation the build depends on and dies on a missing stdckdint.h.
+ARG GNU_COREUTILS_VERSION=9.4
 RUN set -eux; \
-    ver="$GNU_UPTIME_VERSION"; \
+    ver="$GNU_COREUTILS_VERSION"; \
     cd /tmp; \
     curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"; \
     tar xf "coreutils-$ver.tar.xz"; \
     cd "coreutils-$ver"; \
     FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux; \
     make -j"$(nproc)"; \
-    install -D src/uptime /opt/gnu-coreutils/bin/uptime; \
+    make install prefix=/opt/gnu-coreutils; \
+    rm -rf /opt/gnu-coreutils/share /opt/gnu-coreutils/libexec; \
     cd /; rm -rf "/tmp/coreutils-$ver" "/tmp/coreutils-$ver.tar.xz"; \
-    /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)'
+    /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)'; \
+    /opt/gnu-coreutils/bin/yes --version | head -1 | grep -q '(GNU coreutils)'
 
 # hyperfine and python3 for scripts/coreutils-bench: it is the repo's own
 # benchmark runner and could not run in the repo's own Linux image, which
@@ -88,7 +92,7 @@ RUN set -eux; \
 # GOPATH stays at the golang image's /go so the module-cache volume
 # scripts/devbox mounts keeps its name.
 ENV PATH=/root/.local/bin:/root/.local/share/mise/shims:$PATH \
-    FERN_GNU_COREUTILS=/usr/bin:/opt/gnu-coreutils/bin \
+    FERN_GNU_COREUTILS=/opt/gnu-coreutils/bin:/usr/bin \
     FERN_WASI_ADAPTER=/opt/adapter.wasm \
     GOPATH=/go \
     GOFLAGS=-buildvcs=false
@@ -102,5 +106,6 @@ RUN set -eux; \
     done; \
     go version; wasmtime --version; wasm-tools --version; \
     test -f "$FERN_WASI_ADAPTER"; \
-    /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)' \
-      || (echo "the oracle uptime is not GNU coreutils; the corpus gate for it would have none" >&2; exit 1)
+    "${FERN_GNU_COREUTILS%%:*}/yes" --version | head -1 | grep -q '(GNU coreutils)' \
+      || (echo "the corpus oracle is not GNU coreutils; internal/coreutils would have none" >&2; exit 1); \
+    "${FERN_GNU_COREUTILS%%:*}/uptime" --version | head -1
