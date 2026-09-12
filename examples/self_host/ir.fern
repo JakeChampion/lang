@@ -1641,14 +1641,17 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … chown_at=275): not
+// Extension tags beyond kind_count() (struct_copy=198 … proc_exec_as=280): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 276 (re-grep rather than trusting this line — it has
-// been stale before, which is the drift the paragraph below is about).
+// NEXT FREE EXTENSION ID: 276, then 281 (re-grep rather than trusting this
+// line — it has been stale before, which is the drift the paragraph below is
+// about). The space is not dense here either: chown_at took 275 and
+// proc_exec_as 280 on branches cut from the same base, so 276..279 are a hole
+// rather than a reservation.
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -2471,7 +2474,7 @@ function kind_name_4(id: i32): string {
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … chown_at=275)
+// extension tags beyond kind_count() (struct_copy=198 … proc_exec_as=280)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
