@@ -4817,15 +4817,24 @@ func (g *generator) emitCountByteRuntime() {
 // emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
 // added into a 32-bit accumulator that wraps.
 //
-// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The NEON sequence this
-// wants is uaddlp/uadalp, neither of which internal/native/arm64 can encode
-// yet, and §3.3a's rule is to land the encodings before the vector body
-// rather than after.
+// NEON, 16 bytes an iteration (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 3).
 //
-// `ldrb` zero-extends, which is the whole of the sign question: a byte is
-// unsigned and 0xff contributes 255. The accumulate is `add w0, w0, w10`, a
-// 32-bit add, so the wrap the builtin promises is the register width rather
-// than anything this body does.
+// A sum needs WIDENING where __count_byte's population did not, and that is
+// the whole shape of this body. cmeq+cnt+addv works there because a block's
+// count is at most 128 and fits the byte addv writes; a block's SUM is at
+// most 16 x 255 = 4080 and does not fit a byte at all. So the fold goes up in
+// two steps instead: uaddlp turns 16 bytes into 8 halves (2 x 255, which
+// cannot overflow), and uadalp ACCUMULATES those pairs into four 32-bit
+// lanes — accumulate, not replace, which is what keeps the running total in
+// the vector register across iterations rather than spilling it to a scalar
+// every block. addv over the four lanes at the end is the only horizontal
+// step, and 2^32 / 4080 blocks is far past any string, so no lane can
+// overflow before it.
+//
+// `ldrb` in the tail zero-extends and the vector path is unsigned throughout,
+// which is the whole of the sign question: a byte is unsigned and 0xff
+// contributes 255. The accumulate is 32-bit, so the wrap the builtin promises
+// is the register width rather than anything this body does.
 //
 // Two-word string ABI as __count_byte's — x0 = data word, x1 = length word —
 // and the same 48-byte frame, because emitStrDataPtr2W needs 16 bytes of
@@ -4845,15 +4854,38 @@ func (g *generator) emitSumBytesRuntime() {
 	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
 	g.emitStrLen2W("w6", "x5")               // w6 = byte length
 	g.emit("mov w0, #0")                     // running sum
-	g.emit("mov x8, x7")                     // cursor
+	g.emit("mov x8, x7")                     // cursor, as a POINTER: ld1 has no indexed form
 	g.emit("add x9, x7, w6, uxtw")           // end = data + len
-	g.label(".Lsum_bytes_loop")
+	// v2.4s is the running vector accumulator, zeroed once. uadalp adds into
+	// it, so nothing here reads it back until the horizontal fold.
+	g.emit("movi v2.4s, #0")
+	g.label(".Lsum_bytes_vec")
+	g.emit("sub x10, x9, x8")
+	g.emit("cmp x10, #16")
+	g.emit("b.lt .Lsum_bytes_fold")
+	// Unaligned load, and never past the string: the branch above entered
+	// this only with a full block left. NEON has no alignment requirement,
+	// so there is no scalar prologue to pay either.
+	g.emit("ld1 {v0.16b}, [x8]")
+	g.emit("uaddlp v1.8h, v0.16b")
+	g.emit("uadalp v2.4s, v1.8h")
+	g.emit("add x8, x8, #16")
+	g.emit("b .Lsum_bytes_vec")
+	// Horizontal fold, once: four 32-bit lanes into w0. addv writes a single
+	// s register and zeroes the rest, so fmov hands the total over with
+	// nothing to mask off.
+	g.label(".Lsum_bytes_fold")
+	g.emit("addv s0, v2.4s")
+	g.emit("fmov w0, s0")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+	// string shorter than one block.
+	g.label(".Lsum_bytes_tail")
 	g.emit("cmp x8, x9")
 	g.emit("b.ge .Lsum_bytes_ret")
 	g.emit("ldrb w10, [x8]")
 	g.emit("add w0, w0, w10")
 	g.emit("add x8, x8, #1")
-	g.emit("b .Lsum_bytes_loop")
+	g.emit("b .Lsum_bytes_tail")
 	g.label(".Lsum_bytes_ret")
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
