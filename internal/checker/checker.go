@@ -1728,6 +1728,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// open_appender / open_exclusive all return `Result[Reader|Writer, IoError]`
 	// — the runtime helpers do the path_open / open(2) and
 	// wrap the resulting fd in a Reader or Writer struct.
+	//
+	// `open_writer` and `open_appender` CREATE with 0666 and let the
+	// process umask filter it, which is what `open(2)`'s conventional
+	// mode, Go's `os.Create` and C's `fopen` all do. A fixed 0644 would
+	// ignore the mask's group and other write policy with no way to ask
+	// for it back. `open_exclusive` is 0600 instead — see its own note.
 	readerType := ast.StructType{Name: "Reader"}
 	writerType := ast.StructType{Name: "Writer"}
 	ioErrType := ast.EnumType{Name: "IoError"}

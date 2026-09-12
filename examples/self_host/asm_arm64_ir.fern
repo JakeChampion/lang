@@ -1395,11 +1395,11 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // fresh Result[Reader|Writer, IoError] box. Body emitted in the fs
             // bundle below, gated on open_file.
             //
-            // 0600 for the EXCLUSIVE opener, 0644 for the rest — see the
+            // 0600 for the EXCLUSIVE opener, 0666 for the rest — see the
             // x86-64 emitter for why. 193 is the canonical x86-64 flag word
             // the helper translates per target.
             s = s.need("heap"); s = s.need("open_file");
-            var open_mode: i32 = 420;
+            var open_mode: i32 = 438;
             if (o.i32_imm == 193) { open_mode = 384; }
             s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #" + util.i32_to_string(open_mode) + "\n");
             s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_res\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");

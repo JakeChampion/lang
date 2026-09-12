@@ -15534,8 +15534,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		mode  int
 	}{
 		{"__fern_open_reader", 0, 0},
-		{"__fern_open_writer", oflagCreatTrunc, 0644},
-		{"__fern_open_appender", oflagCreatAppend, 0644},
+		{"__fern_open_writer", oflagCreatTrunc, 0666},
+		{"__fern_open_appender", oflagCreatAppend, 0666},
 		{"__fern_open_exclusive", oflagCreatExcl, 0600},
 	} {
 		g.line("")
