@@ -311,6 +311,18 @@ func zero_n {
     ret v3
 }
 
+modes 1 result P
+v0:i32 v1:i32 v2:i32 v3:i32[] v4:P
+func out_of_order {
+  b0:
+    v0 = param 0
+    v1 = const_int 1
+    v2 = binary + v0 v1
+    v3 = array_new v0 v2
+    v4 = record_new v0 v3
+    ret v4
+}
+
 refused unsupported record literal
 modes 2 result i32
 v0:string v1:i32
