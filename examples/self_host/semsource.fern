@@ -43,6 +43,7 @@ struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
 function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false }; }
+function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
@@ -197,9 +198,10 @@ function integer_literal(text: string): boolean {
 
 // A literal's width is the suffix the lexer read, which a byte literal
 // (`b'x'`) carries as much as a written `7u8` does. An unsuffixed decimal is
-// an i32; the other widths have no constant form here yet.
+// an i32; the unsigned and pointer widths have no constant form here yet.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
+    if (suffix == "i64") { return t_i64(); }
     if (suffix == "" || suffix == "i32") { return t_i32(); }
     return typeinfo.unchecked();
 }
@@ -209,11 +211,15 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
+// A 64-bit literal does not fit the instruction's i32 immediate, so it carries
+// its SOURCE TEXT instead — which is also how the AST lowering hands the same
+// literal to the backends, rather than through a parse and re-format.
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (parser.is_unit_literal(n) || n.is_float || !integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    if (ssasem.is_i64(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
 

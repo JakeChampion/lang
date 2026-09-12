@@ -18,22 +18,35 @@ function empty(why: string): irlower.LowerResult {
 
 // This physical boundary refuses types whose stack representation is not
 // implemented here, even when the unit planner knows their abstract
-// ownership: 64-bit scalars, string views, and a record with no schema or with
-// type arguments (its box is named by the bare declaration). A byte is not one
-// of them — it rides the same i32-shaped slot, narrowed by the wrap below.
+// ownership: floats, string views, and a record with no schema or with type
+// arguments (its box is named by the bare declaration). The byte rides the
+// same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
+// integer gets a slot of its own, which is a VALUE here but never a container
+// element (narrow_slot).
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-    for elem in tup.elements { if (!supported(elem, f)) { return false; } }
+    for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
-    return i.width == 32 || (i.width == 8 && i.unsigned);
+    return i.width == 32 || (i.width == 8 && i.unsigned) || (i.width == 64 && !i.unsigned);
+}
+
+// A value that fits the ONE i32-shaped word every container this boundary
+// builds stores per element. `op_arr_make` and `op_arr_get` are emitted at
+// width 32, and `op_struct_make` withholds the per-field store width (the -1
+// declaration index), so a 64-bit element would be written through a 32-bit
+// slot on wasm. A 64-bit scalar is therefore a value here and not an element.
+function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t); }
+
+function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
+    return narrow_slot(t) && supported(t, f);
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return ssasem.is_string(t); }
-    if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
+    if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(u) = t { return u.args.len() == 0 && semrecords.find_enum(f.enums, t) >= 0; }
@@ -277,6 +290,15 @@ function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
 // here at all, and an array or tuple of scalars needs only its own box
 // released. Asking `supported` of every field instead refuses a function for
 // a field it never reads.
+// A construction writes one word per operand, so an operand that needs a wider
+// store has no form here — the same rule `narrow_slot` states for an array or
+// tuple element, applied to a record or variant field, which only a
+// construction reveals (the drop walk never reads a scalar field at all).
+function construction_error(f: ssasem.Func, ins: ssa.SInst): string {
+    for arg in ins.args { if (!narrow_slot(f.values[arg])) { return "unsupported physical RC construction element"; } }
+    return "";
+}
+
 function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeArray(a) = t { return walkable(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return walkable_tuple(tup, f); }
@@ -404,9 +426,19 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
     for b in f.graph.blocks {
         for ins in b.insts {
             if (!supported_op(ins.kind_tag)) { return "unsupported physical RC operation"; }
+            if (builds(ins.kind_tag)) {
+                why = construction_error(f, ins);
+                if (why != "") { return why; }
+            }
         }
     }
     return "";
+}
+
+// The operations that write a value into a container's slot.
+function builds(k: i32): boolean {
+    return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
+        || k == ssasem.variant_new() || k == ssasem.append();
 }
 
 // Everything that is not a container operation: the constants, a parameter, a
@@ -436,13 +468,24 @@ function identity_op(k: i32): boolean {
 
 function supported_op(k: i32): boolean { return value_op(k) || container_op(k); }
 
+// A value's SSA id is its local slot, so the slot lists are a walk of the
+// value types. Only wasm reads them: it spells each local and the result in
+// the function's type, where the register backends give every value the same
+// 64-bit slot and ignore the distinction.
+function result_kind(t: typeinfo.Type): i32 {
+    if (ssasem.is_i64(t)) { return irlower.result_i64(); }
+    return irlower.result_i32();
+}
+
 function frame(f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = empty("");
-    r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals };
+    r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
+        result_kind: result_kind(f.result) };
     var vi: i32 = 0;
     while (vi < f.values.len()) {
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
         if let typeinfo.TypeString(_) = f.values[vi] { r = irlower.LowerResult { ...r, str_slots: r.str_slots.append(vi) }; }
+        if (ssasem.is_i64(f.values[vi])) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) }; }
         vi = vi + 1;
     }
     return r;
@@ -488,26 +531,49 @@ function wrap_kind(t: typeinfo.Type): string {
 // a fresh box; string equality reads both operands. The verifier admits no
 // other string operator (ssasem.string_result), so a string binary that is
 // not `+` is `==` or `!=`.
+// The width the operator RUNS at, which a comparison's boolean result does not
+// name — its operands do.
+function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
+    if (ssasem.is_i64(f.values[ins.args[0]])) { return 64; }
+    return 0;
+}
+
+// A string `+` is the runtime's concatenation, a fresh box; string equality
+// reads both operands. The verifier admits no other string operator
+// (ssasem.string_result), so a string binary that is not `+` is `==` or `!=`.
+function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
+    r = emit(r, ir.op_str_eq());
+    if (ins.str == "!=") { return emit(r, ir.op_bin("not", 0, false)); }
+    return r;
+}
+
 function scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.cast()) { return cast(r, f, ins); }
-    if (ins.kind_tag == 9 && ssasem.is_string(f.values[ins.args[0]])) {
-        if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
-        r = emit(r, ir.op_str_eq());
-        if (ins.str == "!=") { r = emit(r, ir.op_bin("not", 0, false)); }
-        return r;
-    }
+    if (ins.kind_tag == 9 && ssasem.is_string(f.values[ins.args[0]])) { return string_binary(r, ins); }
     if (ins.kind_tag == 10 && ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
-    if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(binary_kind(ins.str), 0, false)); }
-    else { r = emit(r, ir.op_bin("sub", 0, false)); }
-    if (!wraps(ins.str)) { return r; }
+    var w: i32 = operand_width(f, ins);
+    if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(binary_kind(ins.str), w, false)); }
+    else { r = emit(r, ir.op_bin("sub", w, false)); }
+    // The 64-bit operators are already full-width, so only a narrower result
+    // can leave the range its type names.
+    if (!wraps(ins.str) || ssasem.is_i64(f.values[ins.result])) { return r; }
     return emit(r, ir.op_int_cast(wrap_kind(f.values[ins.result])));
 }
 
-// A conversion between the integer types. A widening moves no bits: the
-// operand already holds a value inside the destination's range, because the
-// narrower type's own producing sites keep it there. Only a narrowing masks.
+// A conversion between the integer types, in the two domains the stack IR
+// separates. Crossing the 64-bit boundary is an explicit extend or wrap; a
+// narrowing inside the i32 domain is a mask, and a widening inside it moves no
+// bits at all, because the narrower type's own producing sites keep its value
+// in range.
 function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    if (!ssasem.is_u8(f.values[ins.result]) || ssasem.is_u8(f.values[ins.args[0]])) { return r; }
+    var from: typeinfo.Type = f.values[ins.args[0]];
+    var to: typeinfo.Type = f.values[ins.result];
+    if (ssasem.is_i64(from) && ssasem.is_i64(to)) { return r; }
+    if (ssasem.is_i64(to)) { return emit(r, ir.op_int_extend(ssasem.is_u8(from))); }
+    if (ssasem.is_i64(from)) { r = emit(r, ir.op_int_wrap(false)); }
+    else if (ssasem.is_u8(from)) { return r; }
+    if (!ssasem.is_u8(to)) { return r; }
     return emit(r, ir.op_int_cast("u8"));
 }
 
@@ -543,11 +609,25 @@ function variant(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     return emit(r, ir.op_struct_get(ins.imm, 0));
 }
 
+// Zero at a given width: a 64-bit literal reaches the backends as source text,
+// which they splice into a 64-bit immediate, and nothing narrower needs one.
+function zero(t: typeinfo.Type): ir.Op {
+    if (ssasem.is_i64(t)) { return ir.op_const_i64_text("0"); }
+    return ir.op_const_i32(0);
+}
+
+function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == 1 && ssasem.is_i64(f.values[ins.result])) { return emit(r, ir.op_const_i64_text(ins.str)); }
+    if (ins.kind_tag == 5) { return emit(r, ir.op_const_str(ins.str)); }
+    return emit(r, ir.op_const_i32(ins.imm));
+}
+
 function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    if (ins.kind_tag == 10 && ins.str == "-") { r = emit(r, ir.op_const_i32(0)); }
+    // Negation is a zero-minus, so the zero is pushed at the operand's own
+    // width or the two sides of the subtraction disagree.
+    if (ins.kind_tag == 10 && ins.str == "-") { r = emit(r, zero(f.values[ins.args[0]])); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
-    if (ins.kind_tag == 1 || ins.kind_tag == 2) { r = emit(r, ir.op_const_i32(ins.imm)); }
-    if (ins.kind_tag == 5) { r = emit(r, ir.op_const_str(ins.str)); }
+    if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 5) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
     if (container_op(ins.kind_tag)) { r = container(r, f, ins); }
     // A call's counted parameters were supplied before its operands were

@@ -570,6 +570,30 @@ func hex_mask {
     ret v4
 }
 
-refused cast contract
+modes 1 result i32
+v0:i32 v1:i64 v2:i64 v3:i64 v4:i64 v5:boolean v6:i64 v7:i64 v8:i32 v9:i64 v10:i64 v11:i32
+func wide_ops {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    v2 = const_int 1000000007
+    v3 = binary * v1 v2
+    v4 = const_int 0
+    v5 = binary > v3 v4
+    brif v5 b1 b2
+  b1:
+    v6 = const_int 32
+    v7 = binary >> v3 v6
+    v8 = cast v7
+    ret v8
+  b2:
+    br b3
+  b3:
+    v9 = const_int 0
+    v10 = binary - v9 v3
+    v11 = cast v10
+    ret v11
+}
+
 refused cast contract
 refused operator contract
