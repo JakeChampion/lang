@@ -14037,6 +14037,37 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P5 — the operand stack round trip around a materialisation whose result
+	// is copied out. The push protects x0 across a chain that builds a value in
+	// it, the copy takes that value somewhere else, and the pop puts the old x0
+	// straight back:
+	//
+	//   str x0, [sp, #-16]! / ldur x0, [x29, #-8] / mov x1, x0 / ldr x0, [sp], #16
+	//     =>  ldur x1, [x29, #-8]
+	//
+	// Writing the chain's result where it was going to be copied leaves x0
+	// untouched, so the save and restore have nothing to protect. Three
+	// instructions go per site. This is the twin of the self-host emitter's P5
+	// (examples/self_host/asm_arm64_ir.fern); P4 above handles the disjoint
+	// case where the pop goes somewhere other than x0 and there is no copy.
+	if popped, k, isPop := matchPopReg(w[n-1]); isPop && popped == "x0" {
+		if dst, ok := matchCopyFromX0(w[n-2]); ok {
+			for clen := 1; clen <= peepWindow-3; clen++ {
+				pi := n - 3 - clen
+				if pi < 0 {
+					break
+				}
+				if k2, isPush := matchPushImm(w[pi]); !isPush || k2 != k {
+					continue
+				}
+				if renamed, ok := renameChainTo(w[pi+1:n-2], dst); ok {
+					g.peepWin = append(w[:pi], renamed...)
+					return
+				}
+			}
+		}
+	}
+
 	// P2 — dead branch: an unconditional `b L` immediately followed by the
 	// label `L:` is a no-op fall-through. Drop the branch; the label stays
 	// for other branches. Only the bare unconditional `b ` matches — `bl`
@@ -14063,6 +14094,119 @@ var roundTripMidOps = map[string]bool{
 	"eor": true, "lsl": true, "lsr": true, "asr": true, "ror": true,
 	"mul": true, "ldr": true, "ldur": true, "ldrb": true, "ldrh": true,
 	"ldrsw": true, "ldrsb": true, "ldrsh": true, "sxtw": true, "uxtw": true,
+}
+
+// matchCopyFromX0 matches `\tmov xD, x0` and returns xD. x0 itself is not a
+// copy, and x16 is excluded because the Darwin syscall rewrite keys off
+// literal x16 / x8 lines.
+func matchCopyFromX0(line string) (string, bool) {
+	const pfx = "\tmov x"
+	const sfx = ", x0"
+	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
+		return "", false
+	}
+	num := line[len(pfx) : len(line)-len(sfx)]
+	if num == "" || num == "0" || num == "8" || num == "16" || num == "29" {
+		return "", false
+	}
+	for i := 0; i < len(num); i++ {
+		if num[i] < '0' || num[i] > '9' {
+			return "", false
+		}
+	}
+	return "x" + num, true
+}
+
+// renameChainTo rewrites a materialisation chain to build its value in `dst`
+// instead of x0, so the push/copy/pop around it can go. It returns false
+// unless every line is one it can account for.
+//
+// A chain line writes x0 or x16 and reads nothing but x0, x16, x29 and
+// immediates. x16 is the emitter's own address scratch and keeps its name; the
+// x0 the chain threads becomes `dst`. The exception is a read of x0 on the
+// FIRST line: that reads the value the push saved, which after the rewrite is
+// still sitting in x0, so it must NOT be renamed. The last line has to write
+// x0, since that is what the copy took.
+func renameChainTo(chain []string, dst string) ([]string, bool) {
+	if len(chain) == 0 || dst == "x16" || dst == "x29" {
+		return nil, false
+	}
+	wdst := "w" + dst[1:]
+	out := make([]string, 0, len(chain))
+	lastWritesX0 := false
+	for i, line := range chain {
+		if !strings.HasPrefix(line, "\t") {
+			return nil, false
+		}
+		body := line[1:]
+		sp := strings.IndexByte(body, ' ')
+		if sp <= 0 || !roundTripMidOps[body[:sp]] {
+			return nil, false
+		}
+		mnemonic, args := body[:sp], body[sp+1:]
+		comma := strings.IndexByte(args, ',')
+		if comma < 0 {
+			return nil, false
+		}
+		destReg, rest := args[:comma], args[comma+1:]
+		// Every register the line mentions has to be one this rule accounts
+		// for, or renaming it would change what some other line reads. sp is
+		// checked by name because it is not an x/w register: the push this
+		// rule deletes is what put it where the line sees it.
+		if mentionsReg(args, "sp") {
+			return nil, false
+		}
+		for _, m := range regTokens(args) {
+			if m != "x0" && m != "w0" && m != "x16" && m != "x29" {
+				return nil, false
+			}
+		}
+		writesX0 := destReg == "x0" || destReg == "w0"
+		if !writesX0 && destReg != "x16" {
+			return nil, false
+		}
+		lastWritesX0 = writesX0
+		if writesX0 {
+			if destReg == "x0" {
+				destReg = dst
+			} else {
+				destReg = wdst
+			}
+		}
+		if i > 0 {
+			rest = strings.ReplaceAll(rest, "x0", dst)
+			rest = strings.ReplaceAll(rest, "w0", wdst)
+		}
+		out = append(out, "\t"+mnemonic+" "+destReg+","+rest)
+	}
+	if !lastWritesX0 {
+		return nil, false
+	}
+	return out, true
+}
+
+// regTokens returns every `x`/`w` register name in `s`, as whole tokens, so
+// "x10" is not read as "x1" and a hex literal is not read as a register.
+func regTokens(s string) []string {
+	var out []string
+	for i := 0; i < len(s); i++ {
+		if s[i] != 'x' && s[i] != 'w' {
+			continue
+		}
+		if i > 0 && isRegTokenByte(s[i-1]) {
+			continue
+		}
+		j := i + 1
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if j == i+1 || (j < len(s) && isRegTokenByte(s[j])) {
+			continue
+		}
+		out = append(out, s[i:j])
+		i = j - 1
+	}
+	return out
 }
 
 // roundTripSafeMids reports whether the run `mids` may sit between a push and
