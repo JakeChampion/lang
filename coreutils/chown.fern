@@ -163,7 +163,7 @@ pub struct Settings {
 
 // What one run does to every file: the spec it is moving them to, and the
 // ownership it insists they currently have.
-pub struct Target { spec: owner.Spec, from: owner.Spec, has_from: boolean }
+pub struct Target { spec: owner.Spec, from: owner.Spec, has_from: boolean, db: owner.Db }
 
 pub struct St { out: gnu.Stdio, status: i32 }
 
@@ -440,7 +440,7 @@ function describe(t: Target, s: Settings, path: string, old_uid: i64, old_gid: i
     noun = "group of ";
   }
   var to: string = t.spec.render(s.chgrp_mode);
-  var from: string = owner.current_label(old_uid, old_gid, t.spec.names_group(), gv);
+  var from: string = owner.current_label(t.db, old_uid, old_gid, t.spec.names_group(), gv);
   if (failed) {
     var head: string = "failed to change " + noun + gnu.quotea(path);
     if (known) {
@@ -638,10 +638,11 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
   }
 
   var st: St = St { out: gnu.stdio_new(), status: 0 };
-  var t: Target = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false };
+  var db: owner.Db = owner.db_load();
+  var t: Target = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false, db: db };
 
   if (p.has_from) {
-    var f: owner.Parsed = owner.parse(p.from);
+    var f: owner.Parsed = owner.parse(db, p.from);
     if (f.warn_dot) {
       gnu.error(owner.dot_warning(p.from));
     }
@@ -668,9 +669,9 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
       }
     }
   } else if (has_spec) {
-    var parsed: owner.Parsed = owner.parse_group_only(spec_text);
+    var parsed: owner.Parsed = owner.parse_group_only(db, spec_text);
     if (!chgrp_mode) {
-      parsed = owner.parse(spec_text);
+      parsed = owner.parse(db, spec_text);
     }
     if (parsed.warn_dot) {
       gnu.error(owner.dot_warning(spec_text));

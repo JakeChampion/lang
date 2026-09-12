@@ -60,6 +60,17 @@ import "./pwdb";
 // convention and what an omitted half compiles to. The names are carried
 // alongside the numbers because the -v wording needs to know whether a half
 // was written symbolically, not just what it resolved to.
+// The two databases, read ONCE. Every lookup here takes it rather than a path:
+// `chown -Rv` over a tree resolves a user and a group per line, and a lookup
+// that re-read /etc/passwd each time made the walk quadratic in the file's
+// size — measured at three to four times GNU's time on a 400-entry tree before
+// this existed.
+pub struct Db { pw: string, gr: string }
+
+pub function db_load(): Db {
+  return Db { pw: pwdb.passwd_text(), gr: pwdb.group_text() };
+}
+
 pub struct Spec {
   uid: i64,
   gid: i64,
@@ -148,7 +159,7 @@ function after_plus(tok: string): string {
 
 // Resolve the user half. A name is looked up before a number, so a login
 // name that is all digits still wins over the id that reads the same.
-function resolve_user(tok: string, into: Spec): Option[Spec] {
+function resolve_user(db: Db, tok: string, into: Spec): Option[Spec] {
   if (forced_numeric(tok)) {
     match (parse_number(after_plus(tok))) {
       Some(n) => {
@@ -159,7 +170,7 @@ function resolve_user(tok: string, into: Spec): Option[Spec] {
       }
     }
   }
-  match (pwdb.user_by_name(tok)) {
+  match (pwdb.user_by_name_in(db.pw, tok)) {
     Some(u) => {
       return Some(Spec { ...into, uid: u.uid, uname: tok, has_uname: true });
     },
@@ -175,7 +186,7 @@ function resolve_user(tok: string, into: Spec): Option[Spec] {
   }
 }
 
-function resolve_group(tok: string, into: Spec): Option[Spec] {
+function resolve_group(db: Db, tok: string, into: Spec): Option[Spec] {
   if (forced_numeric(tok)) {
     match (parse_number(after_plus(tok))) {
       Some(n) => {
@@ -186,7 +197,7 @@ function resolve_group(tok: string, into: Spec): Option[Spec] {
       }
     }
   }
-  match (pwdb.group_by_name(tok)) {
+  match (pwdb.group_by_name_in(db.gr, tok)) {
     Some(g) => {
       return Some(Spec { ...into, gid: g.gid, gname: tok, has_gname: true });
     },
@@ -206,13 +217,13 @@ function resolve_group(tok: string, into: Spec): Option[Spec] {
 // and the name it prints as is the group database's, not the user's. It
 // needs a SYMBOLIC user to hang off — there is no login group for a bare
 // number — which is why `501:` is `invalid spec` where `root:` is fine.
-function login_group(sp: Spec): Option[Spec] {
+function login_group(db: Db, sp: Spec): Option[Spec] {
   if (!sp.has_uname) {
     return None;
   }
-  match (pwdb.user_by_name(sp.uname)) {
+  match (pwdb.user_by_name_in(db.pw, sp.uname)) {
     Some(u) => {
-      match (pwdb.group_name(u.gid)) {
+      match (pwdb.group_name_in(db.gr, u.gid)) {
         Some(n) => {
           return Some(Spec { ...sp, gid: u.gid, gname: n, has_gname: true });
         },
@@ -242,7 +253,7 @@ function split_first(s: string, sep: i32): Option[(string, string)] {
 // One attempt at a two-part spec. `trailing` says the separator was there
 // with nothing after it, which is the login-group form rather than an empty
 // group.
-function parse_split(user_tok: string, group_tok: string): Parsed {
+function parse_split(db: Db, user_tok: string, group_tok: string): Parsed {
   var sp: Spec = spec_none();
   // A separator with nothing after it is the login-group form, and EVERY way
   // it can fail is `invalid spec` — including a user half that does not
@@ -251,7 +262,7 @@ function parse_split(user_tok: string, group_tok: string): Parsed {
   // same one with an empty group.
   var trailing: boolean = group_tok.len() == 0 && user_tok.len() > 0;
   if (user_tok.len() > 0) {
-    match (resolve_user(user_tok, sp)) {
+    match (resolve_user(db, user_tok, sp)) {
       Some(next) => {
         sp = next;
       },
@@ -268,7 +279,7 @@ function parse_split(user_tok: string, group_tok: string): Parsed {
       // `:` on its own: both halves omitted, so nothing is changed.
       return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
     }
-    match (login_group(sp)) {
+    match (login_group(db, sp)) {
       Some(next) => {
         return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
       },
@@ -277,7 +288,7 @@ function parse_split(user_tok: string, group_tok: string): Parsed {
       }
     }
   }
-  match (resolve_group(group_tok, sp)) {
+  match (resolve_group(db, group_tok, sp)) {
     Some(next) => {
       return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
     },
@@ -288,12 +299,12 @@ function parse_split(user_tok: string, group_tok: string): Parsed {
 }
 
 // The whole string as a user name and nothing else.
-function parse_user_only(spec: string): Parsed {
+function parse_user_only(db: Db, spec: string): Parsed {
   var sp: Spec = spec_none();
   if (spec.len() == 0) {
     return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
   }
-  match (resolve_user(spec, sp)) {
+  match (resolve_user(db, spec, sp)) {
     Some(next) => {
       return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
     },
@@ -304,23 +315,23 @@ function parse_user_only(spec: string): Parsed {
 }
 
 // `chown`'s operand, and both utilities' `--from=`.
-pub function parse(spec: string): Parsed {
+pub function parse(db: Db, spec: string): Parsed {
   match (split_first(spec, 58)) {
     Some(parts) => {
-      return parse_split(parts.0, parts.1);
+      return parse_split(db, parts.0, parts.1);
     },
     None => {}
   }
   match (split_first(spec, 46)) {
     Some(parts) => {
-      var dotted: Parsed = parse_split(parts.0, parts.1);
+      var dotted: Parsed = parse_split(db, parts.0, parts.1);
       if (dotted.ok) {
         return Parsed { ...dotted, warn_dot: true };
       }
       // The dot was not a separator after all. Whatever went wrong in the
       // split is discarded: what is reported is the failure of the retry,
       // which is always a user one.
-      var whole: Parsed = parse_user_only(spec);
+      var whole: Parsed = parse_user_only(db, spec);
       if (whole.ok) {
         return whole;
       }
@@ -328,17 +339,17 @@ pub function parse(spec: string): Parsed {
     },
     None => {}
   }
-  return parse_user_only(spec);
+  return parse_user_only(db, spec);
 }
 
 // `chgrp`'s operand. The whole thing is one group token: no split, so a
 // colon or a dot in it is part of the name and fails as one.
-pub function parse_group_only(spec: string): Parsed {
+pub function parse_group_only(db: Db, spec: string): Parsed {
   var sp: Spec = spec_none();
   if (spec.len() == 0) {
     return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
   }
-  match (resolve_group(spec, sp)) {
+  match (resolve_group(db, spec, sp)) {
     Some(next) => {
       return Parsed { ok: true, spec: next, kind: err_none(), warn_dot: false };
     },
@@ -413,8 +424,8 @@ pub function (sp: Spec) names_group(): boolean {
 
 // An id as the -v line shows it: the database's name for it, or the number
 // when nothing claims it.
-pub function user_label(uid: i64): string {
-  match (pwdb.user_by_uid(uid)) {
+pub function user_label(db: Db, uid: i64): string {
+  match (pwdb.user_by_uid_in(db.pw, uid)) {
     Some(u) => {
       return u.name;
     },
@@ -424,8 +435,8 @@ pub function user_label(uid: i64): string {
   }
 }
 
-pub function group_label(gid: i64): string {
-  match (pwdb.group_name(gid)) {
+pub function group_label(db: Db, gid: i64): string {
+  match (pwdb.group_name_in(db.gr, gid)) {
     Some(n) => {
       return n;
     },
@@ -437,12 +448,12 @@ pub function group_label(gid: i64): string {
 
 // The "from" / "retained as" half: what the entry is NOW, rendered to the
 // same shape the spec will be.
-pub function current_label(uid: i64, gid: i64, with_group: boolean, group_verb: boolean): string {
+pub function current_label(db: Db, uid: i64, gid: i64, with_group: boolean, group_verb: boolean): string {
   if (group_verb) {
-    return group_label(gid);
+    return group_label(db, gid);
   }
   if (with_group) {
-    return user_label(uid) + ":" + group_label(gid);
+    return user_label(db, uid) + ":" + group_label(db, gid);
   }
-  return user_label(uid);
+  return user_label(db, uid);
 }
