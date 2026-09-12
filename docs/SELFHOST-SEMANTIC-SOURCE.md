@@ -40,10 +40,13 @@ Unsupported constructs refuse the whole function with a reason.
   functional update (`T { ...base, f: v }`) reads each field it does not
   replace off the base as a `record_get`, in the order `semir.build_record`
   uses: the base, then the replaced fields in written order, then the
-  projections. The plain literal's declaration order is enforced HERE, by
-  refusing a literal whose names do not match the schema in order — neither
-  checker requires it, and that refusal is what makes the positional
-  construction sound.
+  projections. A plain literal names every field exactly once in whatever
+  order the source likes, which neither checker constrains, so its fields are
+  PLACED by name the way an update's are — evaluated in written order, which
+  is where a side effect between two of them would show, and assembled into
+  declaration order for the positional construction. Placement is total: as
+  many fields as the schema declares, each naming a distinct slot, covers
+  every slot exactly once.
 - String literals as the SSA `const_str` constant, string `+` as a fresh
   concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
   beside the scalar rules. A string constant and a concatenation are units
@@ -247,7 +250,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 4,171 of its 7,648
+Measured against the whole loaded self-hosted compiler, 4,183 of its 7,652
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -265,16 +268,19 @@ leaves at once.
 
 The leaves are now led by callees with no semantic contract, then bindings
 whose declared type is a string VIEW (`str`) where the producer has an owned
-`string`, record literals, calls of a builtin with no contract here, and
-destructuring. A further 186 functions produce and plan but are refused by the
+`string`, calls of a builtin with no contract here, record FIELD types — 368
+of which are one record, `ir.Op`, whose `i64` and `f64` fields this boundary
+does not admit — and destructuring. A further 186 functions produce and plan but are refused by the
 unit planner for an `.append` whose receiver is not moved, and 1 by physical
 RC lowering for an `i64` array element.
 
-Next, by measured leaf: `str`, the borrowed string view, which is what
-`slice_unchecked` actually hands back and what every scanning loop in this
-compiler binds. Then i64, which the remaining width refusals, the casts to and
-from it and the last physical-RC refusal all wait behind, and which unlike u8
-needs its own 64-bit slot and constant form. Then record literals. The
+Next, by measured leaf: the 64-bit scalars. i64 alone covers the remaining
+width refusals, the casts to and from it and the last physical-RC refusal;
+`ir.Op` needs f64 beside it, and beyond that the per-field store width a
+construction withholds today (the -1 declaration index), because a wide field
+built through an i32 slot is a wasm miscompile rather than a refusal. Then
+`str`, the borrowed string view, which is what `slice_unchecked` actually
+hands back and what every scanning loop in this compiler binds. The
 `.append` receiver gate stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the
