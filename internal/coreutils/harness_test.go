@@ -18,8 +18,10 @@ package coreutils
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -407,22 +409,50 @@ func gnuCandidates() []string {
 	return dirs
 }
 
+// The probe reads at most this much and waits at most this long. BSD
+// yes(1) takes `--version` as the string to REPEAT and prints it until
+// killed, so an unbounded read of a candidate that is not GNU grows
+// without limit: /usr/bin is on the candidate list and is BSD on macOS,
+// where the probe reached 26 GB in five seconds and the test binary was
+// killed with no diagnostic but `signal: killed`.
+const (
+	gnuProbeBytes   = 4096
+	gnuProbeTimeout = 10 * time.Second
+)
+
 // gnuVersion reports the coreutils version `dir` holds, or an error if
 // it does not hold GNU coreutils at all. `yes --version` is the probe:
 // every utility in the corpus answers it, and yes(1) is the one that
 // exists nowhere else under that name.
+//
+// The version line is decided by the output's first line, so the probe
+// takes one bounded chunk and kills the child rather than waiting for
+// an exit. A candidate that writes nothing before the deadline is not
+// the reference either, so the timeout is an answer and not a hang.
 func gnuVersion(dir string) (string, error) {
 	bin := filepath.Join(dir, "yes")
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
 	argv := crossArgv(bin, "--version")
-	out, err := exec.Command(argv[0], argv[1:]...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), gnuProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err
 	}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, gnuProbeBytes))
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
 	first, _, _ := strings.Cut(string(out), "\n")
 	if !strings.Contains(first, "(GNU coreutils)") {
+		if len(out) == 0 && readErr != nil {
+			return "", fmt.Errorf("%s: %w", bin, readErr)
+		}
 		return "", fmt.Errorf("%s is not GNU coreutils: %q", bin, first)
 	}
 	return strings.TrimSpace(first), nil
