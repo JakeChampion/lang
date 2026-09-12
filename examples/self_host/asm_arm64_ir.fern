@@ -1678,6 +1678,8 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // the drop.
             s = s.mark_heap(); s = s.need("strbuf");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_strbuf_append\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag >= 281 && o.kind_tag <= 287) {  // the buf_* builder
+            s = emit_arm64_op_buf(o, s);
         } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
             // (a value op; allocates via __fern_str_box in the heap runtime).
@@ -2055,6 +2057,36 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
     s = s.write("    str x0, [sp, #-16]!\n");
 
     return s;
+}
+
+// emit_arm64_op_buf emits the capacity-carrying string builder's seven ops
+// (#8773). The __fern_buf_* bundle takes the register ABI, so the operands pop
+// straight into x0.. in order. Each arm pushes x0: the handle, the length or
+// the string box for the value ops, and the helper's return as the dummy a
+// statement-level drop takes for the rest. buf_new / buf_take allocate and
+// buf_free returns blocks to the freelists, so all seven pull the heap in.
+function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    s = s.mark_heap(); s = s.need("buf");
+    if (o.kind_tag == 281) {                                  // buf_new
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_new\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 282) {                                  // buf_push
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 283) {                                  // buf_push_range
+        s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        return s.write("    bl __fern_buf_push_range\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 284) {                                  // buf_push_byte
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_byte\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 285) {                                  // buf_len
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_len\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 286) {                                  // buf_take
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_take\n    str x0, [sp, #-16]!\n");
+    }
+    return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_free\n    str x0, [sp, #-16]!\n");  // buf_free
 }
 
 function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -4158,6 +4190,33 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
     return lc_bump_free_add(s, words + ", lsl #3", t1, t2);
 }
 
+// buf_block_free emits the inline release of one BARE byte block — the string
+// builder's buffer, or its control block — onto the size-class freelist
+// __fern_alloc pops from, `ptr` naming the block and `words` its class. The
+// same stores __fn___fern_str_free's data-buffer arm makes, with the fused
+// arm's large-tier branch; neither block carries an rc word, so there is no rc
+// to clear first. `ptr` and `words` must avoid x1..x4, which __fern_large_push
+// clobbers; x3 / x9 / x10 are this helper's own scratch. `lbl` distinguishes
+// one call site's labels from another's.
+function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp " + words + ", x9\n");
+    s = s.write("    b.hs ." + lbl + "_large\n");
+    s = lc_bump_free_words(s, words, "x3", "x10");
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x10, [x3, " + words + ", lsl #3]\n");
+    s = s.write("    str x10, [" + ptr + "]\n");
+    s = s.write("    str " + ptr + ", [x3, " + words + ", lsl #3]\n");
+    s = s.write("    b ." + lbl + "_done\n");
+    s = s.write("." + lbl + "_large:\n");
+    s = s.write("    mov x1, " + ptr + "\n");
+    s = s.write("    lsl x2, " + words + ", #3\n");
+    s = s.write("    bl __fern_large_push\n");
+    s = s.write("." + lbl + "_done:\n");
+    return s;
+}
+
 // mov_fused_marker materialises the 32-bit word a FUSED string box carries at
 // base+4 — the four bytes the rc word's 8-byte slot has always had spare —
 // saying its data buffer is inside the same block, so __fn___fern_str_free
@@ -4697,6 +4756,285 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_strbuf_take, .-__fern_strbuf_take\n");
+    }
+
+    // The capacity-carrying string builder (#8773) — the accumulator above with
+    // the handle made explicit, so any number of builders are live at once and
+    // they nest. A handle is the address of a 32-byte control block:
+    //   [H +  0] data     — the buffer, 0 when a take left the builder unarmed
+    //   [H +  8] len      — bytes accumulated so far
+    //   [H + 16] cap      — bytes the buffer holds before it has to grow
+    //   [H + 24] reserve  — the capacity a re-arm after a take starts from
+    // The arm64 twin of asm_ir's bundle, register ABI like the strbuf helpers.
+    // The buffer is a bare byte block, which is what the SEPARATE-BUFFER string
+    // form wants: __fern_buf_take hands it straight to __fern_str_box, so the
+    // accumulated bytes are never copied and only the 24-byte box is allocated.
+    // That block was taken at the buffer's CAPACITY and __fn___fern_str_free
+    // returns it at its LENGTH's size class — bounded internal fragmentation,
+    // not unsoundness, since a block on a class's freelist is only ever reused
+    // as that class.
+    //
+    // Unlike the strbuf above, a grown-past buffer is RETURNED to the freelist
+    // rather than left to the arena: a builder that doubles its way up from the
+    // floor would otherwise strand every prefix it passed through.
+    if (s.has_need("buf")) {
+        // __fern_buf_new(x0 = cap) -> x0 = handle. The floor gives the doubling
+        // something to double.
+        s = s.write(".globl __fern_buf_new\n");
+        s = s.write(".type __fern_buf_new, %function\n");
+        s = s.write("__fern_buf_new:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    cmp x19, #16\n");
+        s = s.write("    b.hs .Lbufnew_cap\n");
+        s = s.write("    mov x19, #16\n");
+        s = s.write(".Lbufnew_cap:\n");
+        s = s.write("    mov x0, #32\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x20, x0\n");                       // control block
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x0, [x20]\n");                     // data
+        s = s.write("    str xzr, [x20, #8]\n");                // len
+        s = s.write("    str x19, [x20, #16]\n");               // cap
+        s = s.write("    str x19, [x20, #24]\n");               // reserve
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_new, .-__fern_buf_new\n");
+        // __fern_buf_reserve(x0 = H, x1 = need): replace the buffer with one of
+        // at least `need` bytes, doubling from the current capacity (or from
+        // the reserve, when a take left the builder unarmed), and carry the
+        // live bytes across. Internal — no Fern builtin reaches it.
+        s = s.write(".globl __fern_buf_reserve\n");
+        s = s.write(".type __fern_buf_reserve, %function\n");
+        s = s.write("__fern_buf_reserve:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");                       // H
+        s = s.write("    mov x20, x1\n");                       // need
+        s = s.write("    ldr x21, [x19, #16]\n");               // cap
+        s = s.write("    cbnz x21, .Lbufres_dbl\n");
+        s = s.write("    ldr x21, [x19, #24]\n");               // reserve
+        s = s.write("    cbnz x21, .Lbufres_dbl\n");
+        s = s.write("    mov x21, #64\n");
+        s = s.write(".Lbufres_dbl:\n");
+        s = s.write("    cmp x21, x20\n");
+        s = s.write("    b.hs .Lbufres_alloc\n");
+        s = s.write("    lsl x21, x21, #1\n");
+        s = s.write("    b .Lbufres_dbl\n");
+        s = s.write(".Lbufres_alloc:\n");
+        s = s.write("    mov x0, x21\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x22, x0\n");                       // new buffer
+        s = s.write("    ldr x2, [x19, #8]\n");                 // live bytes
+        s = s.write("    cbz x2, .Lbufres_nocopy\n");
+        s = s.write("    ldr x1, [x19]\n");                     // old buffer
+        s = s.write("    mov x3, x22\n");
+        s = s.write(".Lbufres_copy:\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    strb w4, [x3], #1\n");
+        s = s.write("    sub x2, x2, #1\n");
+        s = s.write("    cbnz x2, .Lbufres_copy\n");
+        s = s.write(".Lbufres_nocopy:\n");
+        s = s.write("    ldr x5, [x19]\n");                     // old buffer
+        s = s.write("    cbz x5, .Lbufres_store\n");
+        s = s.write("    ldr x6, [x19, #16]\n");                // at the OLD capacity
+        s = s.write("    add x6, x6, #7\n");
+        s = s.write("    lsr x6, x6, #3\n");
+        s = buf_block_free(s, "x5", "x6", "Lbufres_old");
+        s = s.write(".Lbufres_store:\n");
+        s = s.write("    str x22, [x19]\n");
+        s = s.write("    str x21, [x19, #16]\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_reserve, .-__fern_buf_reserve\n");
+        // __fern_buf_push(x0 = H, x1 = string box): append every byte of the
+        // box's data. Box form only, like __fern_strbuf_append's operand.
+        s = s.write(".globl __fern_buf_push\n");
+        s = s.write(".type __fern_buf_push, %function\n");
+        s = s.write("__fern_buf_push:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    ldr x21, [x20, #8]\n");                // src len
+        s = s.write("    cbz x21, .Lbufpush_done\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, x21\n");                   // len after this push
+        s = s.write("    ldr x1, [x19, #16]\n");
+        s = s.write("    cmp x0, x1\n");
+        s = s.write("    b.ls .Lbufpush_fits\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_buf_reserve\n");
+        s = s.write(".Lbufpush_fits:\n");
+        s = s.write("    ldr x1, [x20]\n");                     // src data
+        s = s.write("    ldr x3, [x19]\n");
+        s = s.write("    ldr x4, [x19, #8]\n");
+        s = s.write("    add x3, x3, x4\n");                    // dst = data + len
+        s = s.write("    mov x2, x21\n");
+        s = s.write(".Lbufpush_loop:\n");
+        s = s.write("    ldrb w5, [x1], #1\n");
+        s = s.write("    strb w5, [x3], #1\n");
+        s = s.write("    sub x2, x2, #1\n");
+        s = s.write("    cbnz x2, .Lbufpush_loop\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, x21\n");
+        s = s.write("    str x0, [x19, #8]\n");
+        s = s.write(".Lbufpush_done:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_push, .-__fern_buf_push\n");
+        // __fern_buf_push_range(x0 = H, x1 = box, x2 = lo, x3 = hi): append
+        // s[lo:hi] with no intermediate string. An empty or inverted range is a
+        // no-op; the bounds are the caller's, as with slice_unchecked.
+        s = s.write(".globl __fern_buf_push_range\n");
+        s = s.write(".type __fern_buf_push_range, %function\n");
+        s = s.write("__fern_buf_push_range:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    mov x21, x2\n");                       // lo
+        s = s.write("    sub x22, x3, x2\n");                   // n = hi - lo
+        s = s.write("    cmp x22, #0\n");
+        s = s.write("    b.le .Lbufrange_done\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, x22\n");
+        s = s.write("    ldr x1, [x19, #16]\n");
+        s = s.write("    cmp x0, x1\n");
+        s = s.write("    b.ls .Lbufrange_fits\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_buf_reserve\n");
+        s = s.write(".Lbufrange_fits:\n");
+        s = s.write("    ldr x1, [x20]\n");
+        s = s.write("    add x1, x1, x21\n");                   // src = data + lo
+        s = s.write("    ldr x3, [x19]\n");
+        s = s.write("    ldr x4, [x19, #8]\n");
+        s = s.write("    add x3, x3, x4\n");
+        s = s.write("    mov x2, x22\n");
+        s = s.write(".Lbufrange_loop:\n");
+        s = s.write("    ldrb w5, [x1], #1\n");
+        s = s.write("    strb w5, [x3], #1\n");
+        s = s.write("    sub x2, x2, #1\n");
+        s = s.write("    cbnz x2, .Lbufrange_loop\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, x22\n");
+        s = s.write("    str x0, [x19, #8]\n");
+        s = s.write(".Lbufrange_done:\n");
+        s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_push_range, .-__fern_buf_push_range\n");
+        // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x.
+        s = s.write(".globl __fern_buf_push_byte\n");
+        s = s.write(".type __fern_buf_push_byte, %function\n");
+        s = s.write("__fern_buf_push_byte:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, #1\n");
+        s = s.write("    ldr x1, [x19, #16]\n");
+        s = s.write("    cmp x0, x1\n");
+        s = s.write("    b.ls .Lbufbyte_fits\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_buf_reserve\n");
+        s = s.write(".Lbufbyte_fits:\n");
+        s = s.write("    ldr x0, [x19]\n");
+        s = s.write("    ldr x1, [x19, #8]\n");
+        s = s.write("    add x0, x0, x1\n");
+        s = s.write("    strb w20, [x0]\n");
+        s = s.write("    add x1, x1, #1\n");
+        s = s.write("    str x1, [x19, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_push_byte, .-__fern_buf_push_byte\n");
+        // __fern_buf_len(x0 = H) -> x0 = len.
+        s = s.write(".globl __fern_buf_len\n");
+        s = s.write(".type __fern_buf_len, %function\n");
+        s = s.write("__fern_buf_len:\n");
+        s = s.write("    ldr x0, [x0, #8]\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_len, .-__fern_buf_len\n");
+        // __fern_buf_take(x0 = H) -> x0 = string box. The accumulated bytes
+        // move without being copied: the buffer BECOMES the box's data and the
+        // builder is left empty but still usable, its reserve intact, so the
+        // next push re-arms at full width. An empty build answers a box over a
+        // null buffer — __fn___fern_str_free's low-address guard skips it — and
+        // keeps the buffer it has, so a flush that finds nothing costs one box.
+        s = s.write(".globl __fern_buf_take\n");
+        s = s.write(".type __fern_buf_take, %function\n");
+        s = s.write("__fern_buf_take:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x20, [x19, #8]\n");                // len
+        s = s.write("    cbz x20, .Lbuftake_empty\n");
+        s = s.write("    ldr x0, [x19]\n");                     // data
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    bl __fern_str_box\n");
+        s = s.write("    str xzr, [x19]\n");
+        s = s.write("    str xzr, [x19, #8]\n");
+        s = s.write("    str xzr, [x19, #16]\n");
+        s = s.write("    b .Lbuftake_ret\n");
+        s = s.write(".Lbuftake_empty:\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    mov x1, #0\n");
+        s = s.write("    bl __fern_str_box\n");
+        s = s.write(".Lbuftake_ret:\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_take, .-__fern_buf_take\n");
+        // __fern_buf_free(x0 = H): release the buffer (when the builder still
+        // owns one) and the control block. A builder is not refcounted and has
+        // no drop, so a handle that is never freed leaks, exactly as an fd that
+        // is never closed does.
+        s = s.write(".globl __fern_buf_free\n");
+        s = s.write(".type __fern_buf_free, %function\n");
+        s = s.write("__fern_buf_free:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    cbz x19, .Lbuffree_ret\n");
+        s = s.write("    ldr x5, [x19]\n");
+        s = s.write("    cbz x5, .Lbuffree_ctl\n");
+        s = s.write("    ldr x6, [x19, #16]\n");
+        s = s.write("    add x6, x6, #7\n");
+        s = s.write("    lsr x6, x6, #3\n");
+        s = buf_block_free(s, "x5", "x6", "Lbuffree_data");
+        s = s.write(".Lbuffree_ctl:\n");
+        s = s.write("    mov x5, x19\n");
+        s = s.write("    mov x6, #4\n");                        // 32 bytes = 4 words
+        s = buf_block_free(s, "x5", "x6", "Lbuffree_ctlblk");
+        s = s.write(".Lbuffree_ret:\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_free, .-__fern_buf_free\n");
     }
 
     // Low-level memory intrinsics (`__alloc` / `__free` / the
