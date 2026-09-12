@@ -24,7 +24,8 @@ func init() {
 // `Operation not permitted` from the kernel where it was configured with
 // it and the caller may not write `security.*`. Nothing a Fern binary
 // can compute predicts that byte. docs/COREUTILS.md records the
-// divergence and #9098 is the primitive that closes it.
+// divergence; #9154 is the primitive that closes it, and #9098 the one
+// the --reference and component forms additionally need.
 //
 // What that leaves is most of chcon's observable surface, and it is
 // worth the file:
@@ -187,18 +188,44 @@ func chconCases(t *testing.T) []invocation {
 
 	// The directory fts reports instead of descending into. Every case
 	// here names a path that exists, so each gets the fixture.
-	for _, c := range []invocation{
-		{name: "an unreadable directory", args: []string{"-R", ctx, "noperm"}},
-		{name: "and verbosely", args: []string{"-R", "-v", ctx, "noperm"}},
-		{name: "physically", args: []string{"-R", "-P", ctx, "noperm"}},
-		{name: "logically", args: []string{"-R", "-L", ctx, "noperm"}},
-		{name: "by a component option", args: []string{"-R", "-t", "t", "noperm"}},
-		{name: "a missing operand beside it", args: []string{"-R", ctx, "noperm", "nosuchz"}},
-	} {
-		c.seedTree = chconTree
-		cases = append(cases, c)
+	//
+	// They need a caller that a mode-000 directory actually stops. Root
+	// bypasses the check, descends, and reaches the context change --
+	// which is the refused step, so the comparison would be about the
+	// refusal rather than about the walk. The repo's own Linux container
+	// runs as root, so this is a real environment and not a hypothetical
+	// one; the cases are omitted there rather than failing, and the log
+	// says the coverage was not taken.
+	if dirIsUnreadable(t) {
+		for _, c := range []invocation{
+			{name: "an unreadable directory", args: []string{"-R", ctx, "noperm"}},
+			{name: "and verbosely", args: []string{"-R", "-v", ctx, "noperm"}},
+			{name: "physically", args: []string{"-R", "-P", ctx, "noperm"}},
+			{name: "logically", args: []string{"-R", "-L", ctx, "noperm"}},
+			{name: "by a component option", args: []string{"-R", "-t", "t", "noperm"}},
+			{name: "a missing operand beside it", args: []string{"-R", ctx, "noperm", "nosuchz"}},
+		} {
+			c.seedTree = chconTree
+			cases = append(cases, c)
+		}
+	} else {
+		t.Logf("running as a caller a mode-000 directory does not stop, so chcon's `cannot read directory` cases are not in this run")
 	}
 	return cases
+}
+
+// dirIsUnreadable reports whether a mode-000 directory stops THIS process.
+// It is a question about the caller, not about the platform: root reads it
+// anyway.
+func dirIsUnreadable(t *testing.T) bool {
+	t.Helper()
+	d := filepath.Join(t.TempDir(), "probe")
+	if err := os.Mkdir(d, 0o000); err != nil {
+		t.Fatalf("mkdir probe: %v", err)
+	}
+	_, err := os.ReadDir(d)
+	_ = os.Chmod(d, 0o755)
+	return err != nil
 }
 
 func TestChcon(t *testing.T) {

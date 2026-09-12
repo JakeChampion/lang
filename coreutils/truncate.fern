@@ -1,0 +1,632 @@
+// truncate.fern — GNU-compatible `truncate`.
+//
+//   truncate [-c] [-o] [-r RFILE] [-s SIZE] FILE...
+//
+// The substance is the SIZE grammar, which is three layers and none of
+// them is the obvious one.
+//
+// The outer layer is truncate's own: leading blanks, then at most one of
+// `<` `>` `/` `%`, then blanks again, then at most one of `+` `-`. A
+// second modifier after the first is `multiple relative modifiers
+// specified`, and the `+` / `-` is NOT consumed — strtoimax reads it as
+// the number's sign, which is why `- 5` is not a number while `  5` is.
+// Everything reported from here on quotes the string as it stands at
+// this point, so `truncate -s ' 5 '` complains about `'5 '` and
+// `-s '<<5'` about `'<5'`.
+//
+// The middle layer is gnulib's xstrtoimax over the suffix set
+// `EgGkKmMPQRtTYZ` — upper case throughout except `g`, `k`, `m` and `t`,
+// so `1G` and `1g` agree while `1P` is a size and `1p` is not a number.
+// Each is a power of 1024 bare or followed by `iB`, and of 1000 followed
+// by `B` (or by the obsolescent `D`). A suffix with NO digits before it
+// is the number 1, so `truncate -s K` is 1024 bytes.
+//
+// The inner layer is what the number MEANS, and it needs the file:
+// `+`/`-` adds, `<` and `>` bound, `/` and `%` round down and up, and
+// `-r` replaces "the file's own size" with the reference's. A result
+// below zero is zero rather than an error, while one past the maximum is
+// `overflow extending size of file` — the two ends differ because only
+// the second cannot be represented.
+//
+// `-o` multiplies the number by the FILE's IO block size, read from the
+// descriptor rather than from the name, so it can differ per operand.
+//
+// The open is where most diagnostics come from, because GNU opens
+// `O_WRONLY | O_CREAT` — no `O_TRUNC` — before it knows the size: a
+// directory is `cannot open 'd' for writing: Is a directory`, and a file
+// whose ftruncate then fails has still been CREATED. `open_appender` is
+// that open plus `O_APPEND`, which nothing here writes through, so it
+// answers the same errno for the same name. `-c` has no non-creating
+// form to reach for, so it asks `stat` first and skips a name that is
+// not there — which is exactly the errno GNU's `O_CREAT`-less open
+// singles out.
+//
+// One descriptor does the whole of the rest: the fstat the modifiers
+// need and the ftruncate that resizes, exactly as GNU does. Resizing by
+// NAME instead would be a second path resolution with a second
+// permission check, and `umask 222` is enough to make the two disagree —
+// the file the run just created is 0444, which the open already holds a
+// writable descriptor to and a fresh truncate(2) is refused.
+import "std/string";
+import "std/i64";
+import "./lib/gnu";
+
+function opt_no_create(): i32 {
+  return 1;
+}
+
+function opt_io_blocks(): i32 {
+  return 2;
+}
+
+function opt_reference(): i32 {
+  return 3;
+}
+
+function opt_size(): i32 {
+  return 4;
+}
+
+// How the SIZE relates to the size the file already has.
+function rm_abs(): i32 {
+  return 0;
+}
+
+function rm_rel(): i32 {
+  return 1;
+}
+
+function rm_max(): i32 {
+  return 2;
+}
+
+function rm_min(): i32 {
+  return 3;
+}
+
+function rm_rdn(): i32 {
+  return 4;
+}
+
+function rm_rup(): i32 {
+  return 5;
+}
+
+function i64_max(): i64 {
+  return 9223372036854775807 as i64;
+}
+
+function i64_min(): i64 {
+  return 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " OPTION... FILE...\n";
+  out = out + "Shrink or extend the size of each FILE to the specified size\n";
+  out = out + "\n";
+  out = out + "A FILE argument that does not exist is created.\n";
+  out = out + "\n";
+  out = out + "If a FILE is larger than the specified size, the extra data is lost.\n";
+  out = out + "If a FILE is shorter, it is extended and the sparse extended part (hole)\n";
+  out = out + "reads as zero bytes.\n";
+  out = out + "\n";
+  out = out + "  -c, --no-create        do not create any files\n";
+  out = out + "  -o, --io-blocks        treat SIZE as number of IO blocks instead of bytes\n";
+  out = out + "  -r, --reference=RFILE  base size on RFILE\n";
+  out = out + "  -s, --size=SIZE        set or adjust the file size by SIZE bytes\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The SIZE argument is an integer and optional unit (example: 10K is 10*1024).\n";
+  out = out + "Units are K,M,G,T,P,E,Z,Y,R,Q (powers of 1024) or KB,MB,... (powers of 1000).\n";
+  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out = out + "\n";
+  out = out + "SIZE may also be prefixed by one of the following modifying characters:\n";
+  out = out + "'+' extend by, '-' reduce by, '<' at most, '>' at least,\n";
+  out = out + "'/' round down to multiple of, '%' round up to multiple of.\n";
+  return out;
+}
+
+// ---- the number ------------------------------------------------------------
+//
+// `parse_len` is gnulib's xstrtoimax over truncate's suffix set. The
+// status is 0 for a number, 1 for a string that is not one, and 2 for a
+// value past intmax_t — 2 alone carries EOVERFLOW's strerror text, which
+// is why a value that overflows AND has a stray byte after it (`1Zx`)
+// reports without it.
+struct Parsed { value: i64, status: i32 }
+
+function st_ok(): i32 {
+  return 0;
+}
+
+function st_invalid(): i32 {
+  return 1;
+}
+
+function st_overflow(): i32 {
+  return 2;
+}
+
+// The power of 1024 the suffix `c` stands for, or 0 when it is not one
+// of truncate's. `b`, `B`, `c` and `w` are gnulib suffixes this utility
+// does not accept, so `1b` is not a size here though it is one to
+// `head -c`.
+function suffix_power(c: i32): i32 {
+  if (c == 75 || c == 107) {
+    return 1;
+  }
+  if (c == 77 || c == 109) {
+    return 2;
+  }
+  if (c == 71 || c == 103) {
+    return 3;
+  }
+  if (c == 84 || c == 116) {
+    return 4;
+  }
+  if (c == 80) {
+    return 5;
+  }
+  if (c == 69) {
+    return 6;
+  }
+  if (c == 90) {
+    return 7;
+  }
+  if (c == 89) {
+    return 8;
+  }
+  if (c == 82) {
+    return 9;
+  }
+  if (c == 81) {
+    return 10;
+  }
+  return 0;
+}
+
+// What strtoimax reads from the start of `s`: leading blanks, an
+// optional sign, then base-ten digits. `end` is one past the last digit,
+// or 0 when there were none — strtol's `p == s`, the condition that lets
+// a bare suffix stand for the number 1.
+struct Digits { value: i64, end: i32, over: boolean }
+
+function scan_digits(s: string): Digits {
+  var i: i32 = 0;
+  while (i < s.len() && gnu.is_blank(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  var start: i32 = i;
+  var v: i64 = 0 as i64;
+  var over: boolean = false;
+  // Accumulated with the sign already applied, so that the negative end
+  // of the range is reachable: -9223372036854775808 is a size and its
+  // positive counterpart is not.
+  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
+    var d: i64 = (s[i] as i32 - 48) as i64;
+    if (neg) {
+      d = 0 as i64 - d;
+    }
+    match (v.checked_mul(10 as i64)) {
+      Some(m) => {
+        match (m.checked_add(d)) {
+          Some(a) => {
+            v = a;
+          },
+          None => {
+            over = true;
+          }
+        }
+      },
+      None => {
+        over = true;
+      }
+    }
+    i = i + 1;
+  }
+  if (i == start) {
+    return Digits { value: 0 as i64, end: 0, over: false };
+  }
+  return Digits { value: v, end: i, over: over };
+}
+
+// `v` multiplied by `base` `power` times, reporting overflow rather than
+// wrapping.
+function scale(v: i64, base: i64, power: i32): (i64, boolean) {
+  var out: i64 = v;
+  var over: boolean = false;
+  var k: i32 = 0;
+  while (k < power) {
+    match (out.checked_mul(base)) {
+      Some(m) => {
+        out = m;
+      },
+      None => {
+        over = true;
+      }
+    }
+    k = k + 1;
+  }
+  return (out, over);
+}
+
+function parse_len(s: string): Parsed {
+  var d: Digits = scan_digits(s);
+  var v: i64 = d.value;
+  var over: boolean = d.over;
+  var p: i32 = d.end;
+  if (p == 0) {
+    // strtoimax read nothing, so the suffix is looked for at the start
+    // of the string rather than after any blanks it skipped.
+    if (s.len() == 0 || suffix_power(s[0] as i32) == 0) {
+      return Parsed { value: 0 as i64, status: st_invalid() };
+    }
+    v = 1 as i64;
+  }
+  if (p < s.len() && suffix_power(s[p] as i32) > 0) {
+    var base: i64 = 1024 as i64;
+    var eaten: i32 = 1;
+    if (p + 2 < s.len() && s[p + 1] as i32 == 105 && s[p + 2] as i32 == 66) {
+      eaten = 3;
+    } else if (p + 1 < s.len() && (s[p + 1] as i32 == 66 || s[p + 1] as i32 == 68)) {
+      base = 1000 as i64;
+      eaten = 2;
+    }
+    var scaled: (i64, boolean) = scale(v, base, suffix_power(s[p] as i32));
+    v = scaled.0;
+    over = over || scaled.1;
+    p = p + eaten;
+  }
+  if (p != s.len()) {
+    return Parsed { value: 0 as i64, status: st_invalid() };
+  }
+  if (over) {
+    return Parsed { value: 0 as i64, status: st_overflow() };
+  }
+  return Parsed { value: v, status: st_ok() };
+}
+
+// ---- the SIZE operand ------------------------------------------------------
+struct Size { rel: i32, value: i64 }
+
+// The whole of `-s`. Never returns on a fault: a second modifier is a
+// usage error with the `Try …` line under it, a number that is not one
+// is a plain diagnostic.
+function parse_size(text: string): Size {
+  var i: i32 = 0;
+  while (i < text.len() && gnu.is_blank(text[i] as i32)) {
+    i = i + 1;
+  }
+  var rel: i32 = rm_abs();
+  if (i < text.len()) {
+    var c: i32 = text[i] as i32;
+    if (c == 60) {
+      rel = rm_max();
+    } else if (c == 62) {
+      rel = rm_min();
+    } else if (c == 47) {
+      rel = rm_rdn();
+    } else if (c == 37) {
+      rel = rm_rup();
+    }
+    if (rel != rm_abs()) {
+      i = i + 1;
+      while (i < text.len() && gnu.is_blank(text[i] as i32)) {
+        i = i + 1;
+      }
+    }
+  }
+  var rest: string = slice_unchecked(text, i, text.len()) + "";
+  if (rest.len() > 0 && (rest[0] as i32 == 43 || rest[0] as i32 == 45)) {
+    if (rel != rm_abs()) {
+      gnu.die_usage("multiple relative modifiers specified", 1);
+    }
+    rel = rm_rel();
+  }
+  var p: Parsed = parse_len(rest);
+  if (p.status == st_overflow()) {
+    gnu.error("Invalid number: " + gnu.quote(rest) + ": Value too large for defined data type");
+    exit(1);
+  }
+  if (p.status == st_invalid()) {
+    gnu.error("Invalid number: " + gnu.quote(rest));
+    exit(1);
+  }
+  return Size { rel: rel, value: p.value };
+}
+
+// ---- one file --------------------------------------------------------------
+struct Cfg { rel: i32, size: i64, ref_size: i64, has_ref: boolean, no_create: boolean, io_blocks: boolean }
+
+// The two numbers the descriptor is asked for. Both are zero when the
+// fstat was not needed, in which case nothing reads them.
+struct Info { size: i64, blksize: i64 }
+
+// The IO block size gnulib's ST_BLKSIZE reports: the filesystem's own
+// unless that is not a usable number, in which case DEV_BSIZE.
+function block_size(info: Info): i64 {
+  if (info.blksize <= 0 as i64) {
+    return 512 as i64;
+  }
+  return info.blksize;
+}
+
+// `-o`: the SIZE counts blocks, so it is multiplied by the block size of
+// THIS file. The guard divides rather than multiplies, since the product
+// is the thing that would overflow.
+function scale_blocks(cfg: Cfg, info: Info, name: string): (i64, boolean) {
+  if (!cfg.io_blocks) {
+    return (cfg.size, true);
+  }
+  var bs: i64 = block_size(info);
+  if (cfg.size < i64_min() / bs || i64_max() / bs < cfg.size) {
+    gnu.error("overflow in " + cfg.size.to_string() + " * " + bs.to_string() + " byte blocks for file " + gnu.quotea(name));
+    return (0 as i64, false);
+  }
+  return (cfg.size * bs, true);
+}
+
+// `fsize` rounded up to a multiple of `ssize`, in unsigned arithmetic
+// because GNU's is: the product can pass the signed maximum, and the
+// off_t it is then stored in goes negative and is clamped to zero by the
+// caller rather than reported.
+function round_up(fsize: i64, ssize: i64): i64 {
+  var q: i64 = fsize / ssize;
+  if (fsize % ssize != 0 as i64) {
+    q = q + 1 as i64;
+  }
+  return (q as u64 * (ssize as u64)) as i64;
+}
+
+// The length the file is to end up with, once a modifier has been
+// applied. `ok` false means a diagnostic has already been printed.
+struct Target { size: i64, ok: boolean }
+
+function relative_target(cfg: Cfg, info: Info, ssize: i64, name: string): Target {
+  var fsize: i64 = info.size;
+  if (cfg.has_ref) {
+    fsize = cfg.ref_size;
+  } else if (fsize < 0 as i64) {
+    gnu.error(gnu.quotea(name) + " has unusable, apparently negative size");
+    return Target { size: 0 as i64, ok: false };
+  }
+  var nsize: i64 = fsize;
+  if (cfg.rel == rm_min()) {
+    nsize = fsize.max(ssize);
+  } else if (cfg.rel == rm_max()) {
+    nsize = fsize.min(ssize);
+  } else if (cfg.rel == rm_rdn()) {
+    nsize = fsize / ssize * ssize;
+  } else if (cfg.rel == rm_rup()) {
+    nsize = round_up(fsize, ssize);
+  } else if (ssize >= 0 as i64) {
+    // A sum past the maximum cannot be represented and is a fault; a
+    // sum below zero is simply zero, which is why only this arm reports.
+    match (fsize.checked_add(ssize)) {
+      Some(a) => {
+        nsize = a;
+      },
+      None => {
+        gnu.error("overflow extending size of file " + gnu.quotea(name));
+        return Target { size: 0 as i64, ok: false };
+      }
+    }
+  } else {
+    nsize = fsize + ssize;
+  }
+  if (nsize < 0 as i64) {
+    nsize = 0 as i64;
+  }
+  return Target { size: nsize, ok: true };
+}
+
+// The size and block size the descriptor reports. GNU only fstats when a
+// modifier or `-o` needs one, and only then can the fstat's own failure
+// be reported — so the `needed` test is not an optimisation, it decides
+// whether a diagnostic exists.
+function measure(w: Writer, cfg: Cfg, name: string): (Info, boolean) {
+  var needed: boolean = cfg.io_blocks || cfg.rel != rm_abs() && !cfg.has_ref;
+  if (!needed) {
+    return (Info { size: 0 as i64, blksize: 0 as i64 }, true);
+  }
+  match (w.stat()) {
+    Ok(st) => {
+      return (Info { size: st.size, blksize: st.blksize }, true);
+    },
+    Err(e) => {
+      gnu.error("cannot fstat " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      return (Info { size: 0 as i64, blksize: 0 as i64 }, false);
+    }
+  }
+}
+
+// The length the operand ends up at, and the ftruncate that gets it
+// there — on the descriptor already open, never on the name.
+//
+// The two are not interchangeable. A file the run has just CREATED under
+// a restrictive mask is one a fresh path resolution may no longer open:
+// `umask 222` leaves it 0444, and a path-based truncate(2) is then
+// EACCES to an unprivileged caller where the descriptor, whose
+// permission check happened at the open, resizes it happily. Resizing
+// through the handle also closes the window between the fstat the
+// modifiers read and the resize that acts on it.
+function resize(w: Writer, cfg: Cfg, info: Info, name: string): boolean {
+  var scaled: (i64, boolean) = scale_blocks(cfg, info, name);
+  if (!scaled.1) {
+    return false;
+  }
+  var nsize: i64 = scaled.0;
+  if (cfg.rel != rm_abs()) {
+    var t: Target = relative_target(cfg, info, scaled.0, name);
+    if (!t.ok) {
+      return false;
+    }
+    nsize = t.size;
+  }
+  match (w.truncate(nsize)) {
+    None => {
+      return true;
+    },
+    Some(e) => {
+      gnu.error("failed to truncate " + gnu.quotea(name) + " at " + nsize.to_string() + " bytes: " + gnu.io_error_text(e));
+      return false;
+    }
+  }
+}
+
+// `-c` has no non-creating open to offer, so the question "is this name
+// there at all" is asked of `stat` — which follows the final symlink
+// exactly as the open would, so a dangling link is `No such file or
+// directory` on both sides and is the one errno `-c` passes over.
+function missing_is_skipped(name: string): (boolean, boolean) {
+  match (stat(name)) {
+    Ok(_) => {
+      return (false, true);
+    },
+    Err(e) => {
+      var text: string = gnu.io_error_text(e);
+      if (text == "No such file or directory") {
+        return (true, true);
+      }
+      gnu.error("cannot open " + gnu.quotea(name) + " for writing: " + text);
+      return (true, false);
+    }
+  }
+}
+
+function do_file(cfg: Cfg, name: string): boolean {
+  if (cfg.no_create) {
+    var skip: (boolean, boolean) = missing_is_skipped(name);
+    if (skip.0) {
+      return skip.1;
+    }
+  }
+  match (open_appender(name)) {
+    Ok(w) => {
+      var ok: boolean = false;
+      var got: (Info, boolean) = measure(w, cfg, name);
+      if (got.1) {
+        ok = resize(w, cfg, got.0, name);
+      }
+      w.close();
+      return ok;
+    },
+    Err(e) => {
+      gnu.error("cannot open " + gnu.quotea(name) + " for writing: " + gnu.io_error_text(e));
+      return false;
+    }
+  }
+}
+
+// ---- the option scan -------------------------------------------------------
+struct Scan { size: Size, size_given: boolean, ref_text: string, ref_given: boolean, no_create: boolean, io_blocks: boolean }
+
+// `-s` is read where it is written, not once at the end: `truncate -s 1p
+// -s 5` stops at the first, which a scan that kept only the last value
+// would accept.
+function scan_options(): (Scan, string[]) {
+  var opts: gnu.Opt[] = [];
+  // Declaration order is visible in the ambiguity list: `truncate --=x`
+  // names these four in this order.
+  opts = opts.append(gnu.flag("c", "no-create", opt_no_create()));
+  opts = opts.append(gnu.flag("o", "io-blocks", opt_io_blocks()));
+  opts = opts.append(gnu.valued("r", "reference", opt_reference()));
+  opts = opts.append(gnu.valued("s", "size", opt_size()));
+
+  var s: Scan = Scan { size: Size { rel: rm_abs(), value: 0 as i64 }, size_given: false, ref_text: "", ref_given: false, no_create: false, io_blocks: false };
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "truncate", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_no_create()) {
+          s = Scan { ...s, no_create: true };
+        } else if (m.id == opt_io_blocks()) {
+          s = Scan { ...s, io_blocks: true };
+        } else if (m.id == opt_reference()) {
+          s = Scan { ...s, ref_text: m.value, ref_given: true };
+        } else {
+          s = Scan { ...s, size: parse_size(m.value), size_given: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// The reference's size. A failure here ends the run before any operand
+// is touched, and it is the one diagnostic that names the RFILE. The
+// return past the match is what the checker asks for: `exit` is an
+// ordinary call to it.
+function reference_size(name: string): i64 {
+  match (stat(name)) {
+    Ok(st) => {
+      return st.size;
+    },
+    Err(e) => {
+      gnu.error("cannot stat " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      exit(1);
+    }
+  }
+  return 0 as i64;
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options();
+  var s: Scan = scanned.0;
+
+  if (!s.size_given && !s.ref_given) {
+    gnu.die_usage("you must specify either '--size' or '--reference'", 1);
+  }
+  if (s.ref_given && s.size_given && s.size.rel == rm_abs()) {
+    gnu.die_usage("you must specify a relative '--size' with '--reference'", 1);
+  }
+  if (s.io_blocks && !s.size_given) {
+    gnu.die_usage("'--io-blocks' was specified but '--size' was not", 1);
+  }
+  if ((s.size.rel == rm_rdn() || s.size.rel == rm_rup()) && s.size.value == 0 as i64) {
+    // Not a usage error: no `Try …` line follows it.
+    gnu.error("division by zero");
+    exit(1);
+  }
+
+  var operands: string[] = scanned.1;
+  if (operands.len() == 0) {
+    gnu.die_usage("missing file operand", 1);
+  }
+
+  var ref_size: i64 = 0 as i64;
+  if (s.ref_given) {
+    ref_size = reference_size(s.ref_text);
+  }
+  // With `-r` and no `-s` the reference's size IS the target, absolutely.
+  var value: i64 = s.size.value;
+  if (!s.size_given) {
+    value = ref_size;
+  }
+
+  var cfg: Cfg = Cfg { rel: s.size.rel, size: value, ref_size: ref_size, has_ref: s.ref_given, no_create: s.no_create, io_blocks: s.io_blocks };
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    if (!do_file(cfg, operands[i])) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}

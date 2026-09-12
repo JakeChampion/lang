@@ -47,7 +47,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **13**, all `astwalk`'s — 10 fold spine, 3 accumulator map spine | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **115**: 102 nested named functions across 5 modules, plus 13 arrow lambdas across 4 modules. Capture-contract integration removes two reconstruction visitors and adds the AST splicer identity hook. | pinned |
+| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **116**: 103 nested named functions across 5 modules, plus 13 arrow lambdas across 4 modules. Capture-contract integration removes two reconstruction visitors and adds the AST splicer identity hook. | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,150** in 8 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **7** spellings in 3 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, and `printer`'s line-id table for the linear-space diff, #8611) | pinned |

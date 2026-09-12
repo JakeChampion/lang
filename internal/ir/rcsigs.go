@@ -273,7 +273,7 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Reader_read_line": true, "__method_Reader_seek": true,
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
-	"__method_Writer_write": true,
+	"__method_Writer_truncate": true, "__method_Writer_write": true,
 
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
@@ -472,7 +472,8 @@ var rcInert = map[string]bool{
 	"__fern_wasm_poll":  true, "__fern_wasm_pollable_drop": true,
 	"__fern_wasm_timer_pollable": true, "__fern_write": true,
 	"__fern_write_file": true, "__fern_writer_close": true,
-	"__fern_writer_write": true, "__http_entry": true, "__load_i32": true,
+	"__fern_writer_truncate": true,
+	"__fern_writer_write":    true, "__http_entry": true, "__load_i32": true,
 	"__load_i64": true, "__load_ptr": true, "__load_u8": true, "__memcpy": true,
 	"__memset": true, "__method_string_as_bytes": true,
 	"__network_handle": true, "__ptr_width": true, "__slice_idx": true,

@@ -1977,6 +1977,20 @@ function arm64_across_entry(mnem: string): i32 {
 }
 // END GENERATED ARM64 ACROSS_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 PAIRLONG_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
+// Widening pairwise add. The size mask is the SOURCE arrangement's;
+// the destination is one element size up with half the lanes.
+function arm64_pairlong_entry(mnem: string): i32 {
+    match (mnem) {
+        "saddlp" => { return arm64_vec_entry(false, 2, 7); },
+        "uaddlp" => { return arm64_vec_entry(true, 2, 7); },
+        "sadalp" => { return arm64_vec_entry(false, 6, 7); },
+        "uadalp" => { return arm64_vec_entry(true, 6, 7); },
+        _ => { return 0 - 1; }
+    }
+}
+// END GENERATED ARM64 PAIRLONG_ENTRY TABLE
+
 // arm64_gas_scalar_class decodes a bN/hN/sN/dN scalar SIMD register to its
 // element-size class (0=B, 1=H, 2=S, 3=D), or -1. arm64_gas_scalar_reg gives
 // the number.
