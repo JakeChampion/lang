@@ -151,15 +151,7 @@ function deref_no(): i32 {
   return 2;
 }
 
-pub struct Settings {
-  verbosity: i32,
-  quiet: boolean,
-  recursive: boolean,
-  preserve_root: boolean,
-  deref: i32,
-  traverse: i32,
-  chgrp_mode: boolean,
-}
+pub struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean, deref: i32, traverse: i32, chgrp_mode: boolean }
 
 // What one run does to every file: the spec it is moving them to, and the
 // ownership it insists they currently have.
@@ -231,14 +223,7 @@ pub function option_table(chgrp_mode: boolean): gnu.Opt[] {
   return opts;
 }
 
-pub struct Parsed {
-  s: Settings,
-  from: string,
-  has_from: boolean,
-  reference: string,
-  has_reference: boolean,
-  files: string[],
-}
+pub struct Parsed { s: Settings, from: string, has_from: boolean, reference: string, has_reference: boolean, files: string[] }
 
 // `--reference` takes an argument, which the table above declares as a flag
 // so the declaration ORDER stays readable; it is re-declared here with its
@@ -260,15 +245,7 @@ function table_with_reference(chgrp_mode: boolean): gnu.Opt[] {
 }
 
 pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
-  var s: Settings = Settings {
-    verbosity: v_quiet(),
-    quiet: false,
-    recursive: false,
-    preserve_root: false,
-    deref: deref_default(),
-    traverse: trav_p(),
-    chgrp_mode: chgrp_mode,
-  };
+  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_default(), traverse: trav_p(), chgrp_mode: chgrp_mode };
   var from: string = "";
   var has_from: boolean = false;
   var reference: string = "";
@@ -314,14 +291,7 @@ pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
       }
     }
   }
-  return Parsed {
-    s: s,
-    from: from,
-    has_from: has_from,
-    reference: reference,
-    has_reference: has_reference,
-    files: g.operands(),
-  };
+  return Parsed { s: s, from: from, has_from: has_from, reference: reference, has_reference: has_reference, files: g.operands() };
 }
 
 // ---- paths -----------------------------------------------------------------
@@ -349,11 +319,11 @@ function s_ifmt(): u32 {
 }
 
 function is_dir_mode(m: u32): boolean {
-  return (m & s_ifmt()) == (16384 as u32);
+  return (m & s_ifmt()) == 16384 as u32;
 }
 
 function is_link_mode(m: u32): boolean {
-  return (m & s_ifmt()) == (40960 as u32);
+  return (m & s_ifmt()) == 40960 as u32;
 }
 
 // ---- diagnostics -----------------------------------------------------------
@@ -429,7 +399,6 @@ function descends_links(s: Settings, top: boolean): boolean {
 }
 
 // ---- one entry -------------------------------------------------------------
-
 // The line a change, a no-op or a failure prints. `old_uid` / `old_gid` are
 // what the entry carried before; an unreadable entry has none, and the
 // "from" clause is left off rather than filled with a guess.
@@ -469,10 +438,10 @@ function from_matches(t: Target, uid: i64, gid: i64): boolean {
   if (!t.has_from) {
     return true;
   }
-  if (t.from.uid >= (0 as i64) && t.from.uid != uid) {
+  if (t.from.uid >= 0 as i64 && t.from.uid != uid) {
     return false;
   }
-  if (t.from.gid >= (0 as i64) && t.from.gid != gid) {
+  if (t.from.gid >= 0 as i64 && t.from.gid != gid) {
     return false;
   }
   return true;
@@ -488,8 +457,8 @@ function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid
   }
   var want_uid: i64 = t.spec.uid;
   var want_gid: i64 = t.spec.gid;
-  var changed: boolean = want_uid >= (0 as i64) && want_uid != uid || want_gid >= (0 as i64) && want_gid != gid;
-  if (want_uid < (0 as i64) && want_gid < (0 as i64)) {
+  var changed: boolean = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
+  if (want_uid < 0 as i64 && want_gid < 0 as i64) {
     // Nothing to ask the kernel for. GNU still makes the call; the
     // observable difference would be an errno on an entry it could not
     // touch, and -1/-1 cannot fail where the entry was stattable.
@@ -507,7 +476,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid
     },
     Err(e) => {
       var noun: string = "changing ownership of ";
-      if (t.spec.uid < (0 as i64)) {
+      if (t.spec.uid < 0 as i64) {
         noun = "changing group of ";
       }
       st = fail_quiet(st, s, noun + gnu.quotea(path) + ": " + gnu.io_error_text(e));
@@ -524,7 +493,6 @@ function unreachable(st0: St, s: Settings, t: Target, path: string, msg: string)
 }
 
 // ---- the walk --------------------------------------------------------------
-
 struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean }
 
 // What the walk needs to know about an entry: the ownership the call will
@@ -607,7 +575,6 @@ function is_root(path: string): boolean {
 }
 
 // ---- main ------------------------------------------------------------------
-
 pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
   var p: Parsed = parse(argv, chgrp_mode, name);
   var s: Settings = p.s;

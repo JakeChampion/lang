@@ -71,27 +71,31 @@ pub function db_load(): Db {
   return Db { pw: pwdb.passwd_text(), gr: pwdb.group_text() };
 }
 
-pub struct Spec {
-  uid: i64,
-  gid: i64,
-  uname: string,
-  has_uname: boolean,
-  gname: string,
-  has_gname: boolean,
-}
+pub struct Spec { uid: i64, gid: i64, uname: string, has_uname: boolean, gname: string, has_gname: boolean }
 
 pub function spec_none(): Spec {
-  return Spec { uid: 0 - (1 as i64), gid: 0 - (1 as i64), uname: "", has_uname: false, gname: "", has_gname: false };
+  return Spec { uid: 0 - 1 as i64, gid: 0 - 1 as i64, uname: "", has_uname: false, gname: "", has_gname: false };
 }
 
 // `kind` is which diagnostic to print, and it is part of the result rather
 // than of the caller because the grammar decides it: a failure in the user
 // half and a failure reached through the dot fallback are both `invalid
 // user`, however the spec was written.
-pub function err_none(): i32 { return 0; }
-pub function err_user(): i32 { return 1; }
-pub function err_group(): i32 { return 2; }
-pub function err_spec(): i32 { return 3; }
+pub function err_none(): i32 {
+  return 0;
+}
+
+pub function err_user(): i32 {
+  return 1;
+}
+
+pub function err_group(): i32 {
+  return 2;
+}
+
+pub function err_spec(): i32 {
+  return 3;
+}
 
 pub struct Parsed { ok: boolean, spec: Spec, kind: i32, warn_dot: boolean }
 
@@ -364,7 +368,6 @@ pub function dot_warning(spec: string): string {
 }
 
 // ---- what a -v line says ----------------------------------------------------
-
 // Whether the line is about "group of" rather than "ownership of". Only a
 // spec that is a group and ONLY a group, written as a number, takes the
 // group verb under `chown`; `chgrp` takes it whenever it has a group at all.
@@ -372,14 +375,14 @@ pub function dot_warning(spec: string): string {
 // and is not: `chown :80` says "group of" and `chown :admin` says
 // "ownership of".
 pub function (sp: Spec) group_verb(chgrp_mode: boolean): boolean {
-  if (sp.uid < (0 as i64) && sp.gid < (0 as i64)) {
+  if (sp.uid < 0 as i64 && sp.gid < 0 as i64) {
     return false;
   }
   if (sp.has_gname) {
     return chgrp_mode;
   }
-  if (sp.gid >= (0 as i64)) {
-    return !sp.has_uname && sp.uid < (0 as i64);
+  if (sp.gid >= 0 as i64) {
+    return !sp.has_uname && sp.uid < 0 as i64;
   }
   return false;
 }
@@ -387,7 +390,7 @@ pub function (sp: Spec) group_verb(chgrp_mode: boolean): boolean {
 // The "to" half. Empty when the spec changes nothing, which is the one case
 // with no clause at all: `ownership of 'f' retained`, full stop.
 pub function (sp: Spec) render(chgrp_mode: boolean): string {
-  if (sp.uid < (0 as i64) && sp.gid < (0 as i64)) {
+  if (sp.uid < 0 as i64 && sp.gid < 0 as i64) {
     return "";
   }
   if (sp.has_gname) {
@@ -400,11 +403,11 @@ pub function (sp: Spec) render(chgrp_mode: boolean): string {
     }
     return u + ":" + sp.gname;
   }
-  if (sp.gid >= (0 as i64)) {
+  if (sp.gid >= 0 as i64) {
     if (sp.has_uname) {
       return sp.uname + ":" + sp.gid.to_string();
     }
-    if (sp.uid >= (0 as i64)) {
+    if (sp.uid >= 0 as i64) {
       return sp.uid.to_string() + ":" + sp.gid.to_string();
     }
     return sp.gid.to_string();
@@ -419,7 +422,7 @@ pub function (sp: Spec) render(chgrp_mode: boolean): string {
 // half carries one: `chown root f` reports `from jakechampion` and
 // `chown root:wheel f` reports `from jakechampion:wheel`.
 pub function (sp: Spec) names_group(): boolean {
-  return sp.gid >= (0 as i64) || sp.has_gname;
+  return sp.gid >= 0 as i64 || sp.has_gname;
 }
 
 // An id as the -v line shows it: the database's name for it, or the number
