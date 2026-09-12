@@ -40,10 +40,13 @@ Unsupported constructs refuse the whole function with a reason.
   functional update (`T { ...base, f: v }`) reads each field it does not
   replace off the base as a `record_get`, in the order `semir.build_record`
   uses: the base, then the replaced fields in written order, then the
-  projections. The plain literal's declaration order is enforced HERE, by
-  refusing a literal whose names do not match the schema in order — neither
-  checker requires it, and that refusal is what makes the positional
-  construction sound.
+  projections. A plain literal names every field exactly once in whatever
+  order the source likes, which neither checker constrains, so its fields are
+  PLACED by name the way an update's are — evaluated in written order, which
+  is where a side effect between two of them would show, and assembled into
+  declaration order for the positional construction. Placement is total: as
+  many fields as the schema declares, each naming a distinct slot, covers
+  every slot exactly once.
 - String literals as the SSA `const_str` constant, string `+` as a fresh
   concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
   beside the scalar rules. A string constant and a concatenation are units
@@ -60,11 +63,13 @@ Unsupported constructs refuse the whole function with a reason.
   needs a guard, a branch or an abort path here.
 
   Each runs at ONE width: both operands carry the same integer type and so
-  does the result. Fern has no implicit numeric conversion, so that is the
-  checker's rule too, and an operator over two different widths is refused
-  rather than silently promoted.
+  does the result. Fern has no implicit numeric CONVERSION, so a byte and an
+  i32 cannot meet at all. The checker does auto-widen the narrower side of a
+  same-signedness pair (`i64 + i32`), rewriting the operand with a cast, but
+  the tree this producer reads is not the rewritten one — so a mixed-width
+  operator is refused here rather than promoted on a guess.
 
-- The two integer types are i32 and u8. A byte rides the same i32-shaped slot
+- The integer types are i32, u8 and i64. A byte rides the same i32-shaped slot
   on every backend, so it costs no new physical representation — what
   distinguishes it is the range, and `+`, `-`, `*` and `<<` mask their result
   back to it. **So does an i32's**: the stack IR runs the operators in a
@@ -74,13 +79,35 @@ Unsupported constructs refuse the whole function with a reason.
   fixture now pins both widths through a comparison (a printed result is
   truncated on its way out and reads the same either way).
 
+- An i64 gets a slot of its own, which only wasm spells out: in the function's
+  type for a parameter and a result (`irlower.result_i64`), and in its locals
+  otherwise. Its operators run at width 64 and are already full-width, so
+  nothing masks after them; negation pushes its zero at that width too, or the
+  subtraction's two sides disagree. A 64-bit literal does not fit the semantic
+  constant's i32 immediate at all, so it carries the literal's SOURCE TEXT
+  instead — the form the backends splice straight into a 64-bit immediate, and
+  the one the AST lowering already uses for the same literal.
+
+  It is a VALUE here and never a container ELEMENT. Every container this
+  boundary builds stores one i32-shaped word per slot — `op_arr_make` and
+  `op_arr_get` are emitted at width 32, and `op_struct_make` withholds the
+  per-field store width (the -1 declaration index) — so a wide element would be
+  written through a narrow store on wasm. An array or tuple TYPE carrying one
+  is refused; a record or variant type says nothing about its fields, so the
+  refusal there is on the construction's operand, which is the one place a wide
+  field shows (the drop walk never reads a scalar field at all).
+
+  u64 and usize are not admitted: they select the unsigned operators, which is
+  a second signedness rule and not just a second width.
+
 - A cast between the integer types, as the semantic `cast` kind. `e as T`
   reaches the producer as a unary whose operator names T, and the destination
-  is the checker's type for the whole expression rather than the spelling. A
-  narrowing masks; a widening emits nothing, because the narrower type's own
-  producing sites keep its value in range. A cast to or from anything that is
-  not one of these integers — a float, a string, the `as?` downcast — is
-  refused.
+  is the checker's type for the whole expression rather than the spelling.
+  Crossing the 64-bit boundary is an explicit extend or wrap; inside the i32
+  domain a narrowing masks and a widening emits nothing, because the narrower
+  type's own producing sites keep its value in range. A cast to or from
+  anything that is not one of these integers — a float, a string, the `as?`
+  downcast — is refused.
 
 - Integer literals in both bases the lexer writes, decimal and hexadecimal.
   A suffix names the type outright, which is how a byte literal (`b'x'`)
@@ -128,8 +155,8 @@ Unsupported constructs refuse the whole function with a reason.
   source alive for it.
 
 Refused, each with its own reason: calls of the remaining builtins, local
-function values and void functions, floats in expressions, integer widths
-other than i32 and u8, string views (`str`), string ordering, generic records,
+function values and void functions, floats in expressions, the unsigned and
+pointer integer widths, string views (`str`), string ordering, generic records,
 destructuring, labelled loops, match guards and the pattern shapes above,
 `defer`, closures, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
@@ -197,6 +224,13 @@ COMPARISON rather than a printed value, because a printed result is truncated
 to 32 bits on its way out and reads the same whether the register held the
 wrapped value or the wide one.
 
+The wide fixtures answer with numbers that need more than 32 bits to reach:
+`1i64 << 40` read at the low word is 0 where a masked 32-bit count would give
+256, and a product past 2^32 read through `>> 32` is 1 where a wrapped one is
+0. One pair crosses a produced-to-produced call as a result and then as a
+parameter, which is where a lost slot class is a wasm validation error rather
+than a wrong number.
+
 ```sh
 go test ./internal/e2eselfhost -run 'TestSelfHostSemanticSource' -count=1
 go test ./internal/e2eselfhost -run 'TestSelfHostSSAPhysicalRC|TestSelfHostSSAUnits|TestSelfHostSSASemantic|TestSelfHostSSADependencyVerification|TestSelfHostSSALifetime' -count=1
@@ -247,7 +281,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 4,171 of its 7,648
+Measured against the whole loaded self-hosted compiler, 4,428 of its 7,656
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -265,16 +299,18 @@ leaves at once.
 
 The leaves are now led by callees with no semantic contract, then bindings
 whose declared type is a string VIEW (`str`) where the producer has an owned
-`string`, record literals, calls of a builtin with no contract here, and
-destructuring. A further 186 functions produce and plan but are refused by the
+`string`, calls of a builtin with no contract here, FLOAT literals — 368 of
+which are one record's `f64` field, `ir.Op`'s — and destructuring. A further 186 functions produce and plan but are refused by the
 unit planner for an `.append` whose receiver is not moved, and 1 by physical
 RC lowering for an `i64` array element.
 
 Next, by measured leaf: `str`, the borrowed string view, which is what
 `slice_unchecked` actually hands back and what every scanning loop in this
-compiler binds. Then i64, which the remaining width refusals, the casts to and
-from it and the last physical-RC refusal all wait behind, and which unlike u8
-needs its own 64-bit slot and constant form. Then record literals. The
+compiler binds. Then f64, which `ir.Op` waits behind along with i64 — and
+beyond it the per-field store width a construction withholds today (the -1
+declaration index), because a wide field built through a narrow slot is a wasm
+miscompile rather than a refusal, which is why i64 is a value here and not an
+element. The
 `.append` receiver gate stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the

@@ -596,6 +596,35 @@ func duCases(t *testing.T) []invocation {
 	add("time-newline-value", "--time=x\ny", "-s", "d")
 	add("time-optional-arg-not-consumed", "--time", "atime", "-s")
 
+	// --- --time in a zone that is not UTC ---------------------------------
+	//
+	// The harness pins TZ=UTC (baseEnv), so every case above is exact
+	// whatever this utility does with a zone — which is how `du --time`
+	// shipped rendering UTC where GNU calls localtime_r (#9076). These
+	// cases pass TZ per-case so the difference is visible: a fixed-offset
+	// POSIX rule, a negative one, one with a DST rule that the pinned 2030
+	// stamps fall either side of, a named zone that resolves under TZDIR,
+	// and the spellings tzset(3) accepts for "no zone at all".
+	env("tz-fixed-east", []string{"TZ=XXX-5"}, "--time", "-s", "d")
+	env("tz-fixed-west", []string{"TZ=YYY8"}, "--time", "-s", "d")
+	env("tz-half-hour", []string{"TZ=ZZZ-5:30"}, "--time", "-s", "d")
+	env("tz-angle-name", []string{"TZ=<-03>3"}, "--time", "-s", "d")
+	env("tz-dst-rule", []string{"TZ=EST5EDT,M3.2.0/2,M11.1.0/2"}, "--time", "-s", "d")
+	env("tz-dst-rule-atime", []string{"TZ=EST5EDT,M3.2.0/2,M11.1.0/2"}, "--time=atime", "-s", "d")
+	env("tz-named-zone", []string{"TZ=America/New_York"}, "--time", "-s", "d")
+	env("tz-named-colon", []string{"TZ=:America/New_York"}, "--time", "-s", "d")
+	env("tz-named-utc", []string{"TZ=UTC0"}, "--time", "-s", "d")
+	env("tz-empty", []string{"TZ="}, "--time", "-s", "d")
+	env("tz-bogus", []string{"TZ=Not/AZone"}, "--time", "-s", "d")
+	// The two conversions that read the zone off the same lookup the
+	// broken-down fields came from, rather than off a second one.
+	env("tz-zone-name", []string{"TZ=EST5EDT,M3.2.0/2,M11.1.0/2"},
+		"--time-style=+%Z|%z|%:z", "--time", "-s", "d")
+	env("tz-full-iso", []string{"TZ=EST5EDT,M3.2.0/2,M11.1.0/2"},
+		"--time-style=full-iso", "--time", "-s", "d")
+	// %s is the epoch second, which a zone must NOT move.
+	env("tz-epoch-unmoved", []string{"TZ=XXX-5"}, "--time-style=+%s", "--time", "-s", "d")
+
 	// --- --time-style ---------------------------------------------------
 	add("style-full-iso", "--time-style=full-iso", "--time", "-s", "d")
 	add("style-iso", "--time-style=iso", "--time", "-s", "d")

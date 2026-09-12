@@ -1371,6 +1371,9 @@ func asmVecClass(a *Assembler, mnem string, ops []string) (handled bool, err err
 	if _, ok := vecPermuteOps[mnem]; ok {
 		return true, asmVecPermute(a, mnem, ops)
 	}
+	if _, ok := vecPairwiseLongOps[mnem]; ok {
+		return true, asmVecPairwiseLong(a, mnem, ops)
+	}
 	return false, nil
 }
 
@@ -1842,6 +1845,38 @@ func asmSmov(a *Assembler, ops []string) error {
 }
 
 // The across-lanes reductions; the flag is widening (saddlv/uaddlv).
+var vecPairwiseLongOps = vecTableUOS(arm64tbl.VecPairwiseLong)
+
+// asmVecPairwiseLong assembles the widening pairwise adds. The encoding is an
+// ordinary two-register-misc word carrying the SOURCE arrangement, so the
+// destination's is checked rather than encoded: one element size up, and the
+// same Q, which together mean half as many lanes. Getting that wrong is the
+// failure this rejects rather than encodes — `uaddlp v0.16b, v1.16b` names a
+// destination that cannot hold the sums, and an encoder that ignored the
+// destination would emit a valid-looking word for it.
+func asmVecPairwiseLong(a *Assembler, mnem string, ops []string) error {
+	e := vecPairwiseLongOps[mnem]
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects Vd.<Ta>, Vn.<Tb>", mnem)
+	}
+	rd, td, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, tn, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, tn, e.sizes); err != nil {
+		return err
+	}
+	if td.size != tn.size+1 || td.q != tn.q {
+		return fmt.Errorf("%s destination .%s must be one element size up from .%s with the same lane count halved", mnem, td, tn)
+	}
+	a.Emit(Vec2Misc(rd, rn, e.opcode, tn.size, tn.q, e.u))
+	return nil
+}
+
 var vecAcrossOps = vecTableUOFlag(arm64tbl.VecAcross)
 
 // asmVecAcross handles the across-lanes reductions (`addv Bd, Vn.16b`, the

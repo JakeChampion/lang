@@ -80,6 +80,31 @@ function test_sysv_sum(): test.TestOutcome {
     return test.assert_eq(s.blocks(), 20 as u64);
 }
 
+// __chunk copies msg[from..from+n) into an owned array and reads it as a
+// string: string_from_bytes_unchecked takes u8[], and a `msg[a:b]` slice is a
+// [u8] view.
+function __chunk(msg: u8[], from: i32, n: i32): string {
+    var b: u8[] = __alloc_u8(n);
+    var k: i32 = 0;
+    while (k < n) { b = b.with(k, msg[from + k]); k = k + 1; }
+    return string_from_bytes_unchecked(b);
+}
+
+// update(string) and update_bytes([u8]) are separate implementations —
+// the first is __sum_bytes, the second an indexed loop — so they are streamed
+// over the same bytes at the same 7-byte boundaries and required to agree.
+function test_sysv_sum_string_updates(): test.TestOutcome {
+    var msg: u8[] = __pseudo();
+    var s: hash.SysvSum = hash.sysv_sum_new();
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { s = s.update(__chunk(msg, i, 7)); i = i + 7; }
+    s = s.update(__chunk(msg, i, 10003 - i));
+    if (s.finish() != 29049) { return test.fail("chunked string"); }
+    if (s.len() != (10003 as u64)) { return test.fail("len"); }
+    var b: hash.SysvSum = hash.sysv_sum_new().update_bytes(msg);
+    return test.assert_eq(s.finish(), b.finish());
+}
+
 // Block counts round up: one byte past a block boundary is one more block, and
 // the empty input is zero blocks.
 function test_block_counts(): test.TestOutcome {
@@ -101,6 +126,7 @@ function main(): i32 {
     r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);
     r = r.it("bsd sum", test_bsd_sum);
     r = r.it("sysv sum", test_sysv_sum);
+    r = r.it("sysv sum string updates", test_sysv_sum_string_updates);
     r = r.it("block counts", test_block_counts);
     return r.finish();
 }

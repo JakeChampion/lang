@@ -178,14 +178,18 @@ func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
 function refused(r: irlower.LowerResult, why: string): boolean {
     return !r.ok && r.why == why && r.ops.len() == 0 && r.n_locals == 0 && r.n_params == 0;
 }
-// The width masks one lowered graph emits, concatenated — "" when it emits
-// none. A contract the planner refuses comes back as its reason instead, so
-// one helper covers both what an operation is allowed to be and what it
+// The width conversions one lowered graph emits, concatenated — "" when it
+// emits none. A contract the planner refuses comes back as its reason instead,
+// so one helper covers both what an operation is allowed to be and what it
 // lowers to.
 function masks(r: irlower.LowerResult): string {
     if (!r.ok) { return "lower:" + r.why; }
     var out: string = "";
-    for o in r.ops { if (o.kind_tag == ir.kind_id("int_cast")) { out = out + o.str; } }
+    for o in r.ops {
+        if (o.kind_tag == ir.kind_id("int_cast")) { out = out + o.str; }
+        if (o.kind_tag == ir.kind_id("int_extend")) { out = out + "extend"; }
+        if (o.kind_tag == ir.kind_id("int_wrap")) { out = out + "wrap"; }
+    }
     return out;
 }
 function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): string {
@@ -197,6 +201,13 @@ function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): stri
     var p = ssaunits.plan(f, [1, 1]);
     if (!p.ok) { return "plan:" + p.why; }
     return masks(ssarc.lower(f, [1, 1], p));
+}
+function wide_binary(t: typeinfo.Type, result: typeinfo.Type, op: string): ssasem.Func {
+    var g = ssa.SFunc { name: "wbin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
+    return ssasem.Func { graph: g, values: [t, t, result], params: [t, t], result: result,
+        records: [], enums: [], calls: [] };
 }
 function cast_masks(from: typeinfo.Type, to: typeinfo.Type): string {
     var g = ssa.SFunc { name: "cast", nparams: 1, nvals: 2, entry: 7, takes_env: false,
@@ -534,6 +545,70 @@ function main(): i32 {
     var kOver = ssasem.Func { ...kFunc, graph: ssa.SFunc { ...kGraph,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 256)], term: ret(0) }] } };
     if (ssaunits.plan(kOver, []).why != "integer constant range") { return 84; }
+    // A 64-bit value gets a slot of its own. Its operators run at width 64 and
+    // are already full-width, so nothing masks after them; crossing into and
+    // out of that domain is an explicit extend and wrap.
+    var i64ty: typeinfo.Type = typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false };
+    if (binary_masks("+", i64ty, i64ty) != "") { eprint(binary_masks("+", i64ty, i64ty)); return 85; }
+    if (binary_masks("<<", i64ty, i64ty) != "") { return 86; }
+    if (binary_masks("<", i64ty, bt) != "") { return 87; }
+    if (cast_masks(i32ty, i64ty) != "extend") { eprint(cast_masks(i32ty, i64ty)); return 88; }
+    if (cast_masks(u8ty, i64ty) != "extend") { return 89; }
+    if (cast_masks(i64ty, i32ty) != "wrap") { return 90; }
+    if (cast_masks(i64ty, u8ty) != "wrapu8") { eprint(cast_masks(i64ty, u8ty)); return 91; }
+    if (cast_masks(i64ty, i64ty) != "") { return 92; }
+    // The width-64 operator selection is what a compare at that width needs,
+    // so it is read off the OPERANDS rather than off a boolean result.
+    var wideBin = ssarc.lower(wide_binary(i64ty, bt, "<"), [1, 1], ssaunits.plan(wide_binary(i64ty, bt, "<"), [1, 1]));
+    if (!wideBin.ok) { eprint(wideBin.why); return 93; }
+    var sawWide: boolean = false;
+    for o in wideBin.ops { if (o.kind_tag == ir.kind_id("lt_s") && o.width == 64) { sawWide = true; } }
+    if (!sawWide) { return 94; }
+    // A wide value is a VALUE here and never a container ELEMENT: every
+    // container this boundary builds stores one i32-shaped word per slot, so a
+    // 64-bit element would be written through a narrow store on wasm.
+    var wideArr: typeinfo.Type = typeinfo.TypeArray { elem: i64ty };
+    var wideArrFunc = ssasem.Func { graph: g, values: [wideArr], params: [wideArr], result: wideArr,
+        records: [], enums: [], calls: [] };
+    if (!refused(ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2])), "unsupported physical RC value type")) { return 95; }
+    var buildGraph = ssa.SFunc { name: "build", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            inst(ssasem.tuple_new(), 1, [0, 0], 0)], term: ret(1) }] };
+    var wideTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i64ty, i64ty] };
+    var buildFunc = ssasem.Func { graph: buildGraph, values: [i64ty, wideTup], params: [i64ty], result: wideTup,
+        records: [], enums: [], calls: [] };
+    if (!refused(ssarc.lower(buildFunc, [1], ssaunits.plan(buildFunc, [1])), "unsupported physical RC value type")) { return 96; }
+    // The same rule where the container's own type says nothing about it. A
+    // record is named by its declaration, so a wide FIELD is invisible to the
+    // type check above and to the drop walk, which never reads a scalar field
+    // at all — the construction is the one place it shows.
+    var narrowTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i32ty, i32ty] };
+    var sneakFunc = ssasem.Func { graph: buildGraph, values: [i64ty, narrowTup], params: [i64ty], result: narrowTup,
+        records: [], enums: [], calls: [] };
+    if (ssaunits.plan(sneakFunc, [1]).ok) { return 97; }
+    var wide64Ty: typeinfo.Type = typeinfo.TypeStruct { name: "Wide64", args: [] };
+    var wide64Schema = semrecords.Record { ty: wide64Ty, fields: [semrecords.Field { name: "n", ty: i64ty }] };
+    var wide64Graph = ssa.SFunc { name: "mkwide", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
+    var wide64Func = ssasem.Func { graph: wide64Graph, values: [i64ty, wide64Ty], params: [i64ty], result: wide64Ty,
+        records: [wide64Schema], enums: [], calls: [] };
+    var wide64Plan = ssaunits.plan(wide64Func, [1]);
+    if (!wide64Plan.ok) { eprint(wide64Plan.why); return 101; }
+    if (!refused(ssarc.lower(wide64Func, [1], wide64Plan), "unsupported physical RC construction element")) { return 102; }
+    // A wide constant cannot fit the instruction's immediate, so it carries the
+    // literal's text; a narrow one carries none, and neither may carry both.
+    var wideK = ssa.SFunc { name: "wk", nparams: 0, nvals: 1, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
+    var wideKFunc = ssasem.Func { graph: wideK, values: [i64ty], params: [], result: i64ty,
+        records: [], enums: [], calls: [] };
+    if (!ssaunits.plan(wideKFunc, []).ok) { eprint(ssaunits.plan(wideKFunc, []).why); return 98; }
+    var noText = ssasem.Func { ...wideKFunc, graph: ssa.SFunc { ...wideK,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] } };
+    if (ssaunits.plan(noText, []).why != "wide constant needs its literal text") { return 99; }
+    var narrowText = ssasem.Func { graph: wideK, values: [i32ty], params: [], result: i32ty,
+        records: [], enums: [], calls: [] };
+    if (ssaunits.plan(narrowText, []).why != "narrow constant carries text") { return 100; }
     return 0;
 }
 `

@@ -290,7 +290,16 @@ coreutils/
                     rule in its footer past the transition table, and
                     the rule string itself when no file answers — with
                     the offset AND the abbreviation (`EST`, `+0545`) in
-                    force at an instant, for who, pinky and pr's header
+                    force at an instant
+  lib/timefmt.fern  C-locale nstrftime over the broken-down LOCAL time
+                    lib/tz.fern resolves: gnulib's `-` `_` `0` `^` `#`
+                    flags, an optional field width, the `E` / `O`
+                    modifiers the C locale has no alternative for, and
+                    the `:` repetitions of `%z`, with an unknown
+                    conversion copied out percent and all. `%z` / `%Z`
+                    read off the same lookup the fields came from, so a
+                    stamp and its zone can never name different
+                    instants. For du, pr, stat, ls, who, pinky and date
   lib/sys.fern      the five fields of the kernel's utsname record, by
                     name, for the utilities that print the record
                     (uname) or one field of it (arch)
@@ -1118,27 +1127,58 @@ for three different reasons:
   SHA-NI, a hardware instruction, so that row is not a codegen comparison
   either; `blake2b` at 0.45× and `sm3` at 0.44× are, and they are the same
   4× gap `b2sum` measures against plain portable C.
-The slicing-by-8 re-measure, 2026-09-11, **macOS arm64 (Apple Silicon), a
+The slicing-by-8 re-measure, 2026-09-12, **macOS arm64 (Apple Silicon), a
 different machine from the table above and not comparable to it row for
-row** — all four columns come from one hyperfine run on that machine, over
-the same 62 MiB / 8 000 000-line file, GNU coreutils 9.10 and uutils 0.6.0.
-Taken under load from other agents on the same box, so the σ is wide:
+row.** Same 62 MiB / 8 000 000-line file, GNU coreutils 9.10 and uutils
+0.6.0, every column from one hyperfine run:
 
 | workload | fern before (ms) | fern after (ms) | gnu (ms) | uutils (ms) | gnu / fern after | uutils / fern after |
 |---|---|---|---|---|---|---|
-| `cksum` of a 62 MiB file | 347.1 ± 31.6 | 210.2 ± 17.9 | 40.6 ± 3.8 | 287.9 ± 128.1 | 0.19× | 1.37× |
+| `cksum` of a 62 MiB file | 310.9 ± 45.7 | 199.7 ± 33.2 | 35.7 ± 0.4 | 9.8 ± 0.3 | 0.18× | 0.06× |
 
-1.65× on the CRC, and it moves the utility from behind uutils to ahead of
-it. Slicing-by-16 was measured in the same pass and is a wash (180.5 ms of
-user time against 183.0 over 40 runs), so the table stays at eight and does
-not pay for 4096 entries per hasher.
+1.56× on the CRC, 1.62× in user time (288.2 ms against 177.6).
+Slicing-by-16 was measured in the same pass and is a wash — 183.0 ms of user
+time against slicing-by-8's 180.5 over 40 runs — so the table stays at eight
+rather than paying for 4096 entries per hasher.
+
+**On this host GNU's `cksum` has no hardware CRC path at all**, and that
+changes what its column means. The binary links no libcrypto, carries no
+`pclmul` / `vmull` / `pmull` / `neon` string, and `--debug` prints no
+implementation line, so its 35.7 ms is coreutils' own generic table at
+0.47 ns a byte. The 5.6× Fern still gives away to it is therefore SCALAR
+CODEGEN — bounds checks, the #8425 stack-slot induction variable, #8782's
+register allocation — and not a missing instruction. uutils' 9.8 ms is
+0.06 ns a byte, which only the carry-less fold reaches, and THAT is the
+column the `pclmulqdq` / `pmull` encodings would be for.
+
+Ranking the three on this host, which is the honest summary: uutils (folding)
+9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
+
+`sum -s` on the same host and the same file, one hyperfine run, before and
+after `SysvSum` moved onto `__sum_bytes` (#9052). The kernel is SCALAR on
+every backend here; no vector body has landed yet:
+
+| workload | fern before (ms) | fern after (ms) | gnu (ms) | uutils (ms) | gnu / fern after | uutils / fern after |
+|---|---|---|---|---|---|---|
+| `sum -s` of a 62 MiB file | 110.1 ± 1.6 | 23.5 ± 0.5 | 8.6 ± 0.3 | 14.8 ± 0.7 | 0.37× | 0.63× |
+
+**4.7×, and none of it is vectorisation** — 104.1 ms of user time against
+18.1. What the kernel removed is the per-byte cost the Fern loop carried and
+a runtime helper does not: a bounds check per byte, the #8425 stack-slot
+induction variable, and the `SysvSum` struct rebuilt per chunk. That is worth
+recording on its own, because it says how much of this family's remaining gap
+is the loop body rather than the instruction set. GNU's 2.5 ms of user time
+(0.04 ns a byte) is the auto-vectorised `sum += *p`, and closing to it is
+what `psadbw` / `uaddlp` are for.
 
 - **`sysv` and `bsd` are the interesting middle.** Both are a sum over every
   byte with no table, and `bsd` at 0.87× is the closest any throughput row in
   this document comes to GNU without a hardware instruction on either side.
-  `sysv` at 0.17× is the outlier: GNU's is a plain `sum += *p` that a C
-  compiler auto-vectorises, and nothing in `std/hash` does. That wants a
-  byte-sum kernel in the `__count_byte` family — #9052.
+  `sysv` at 0.17× was the outlier: GNU's is a plain `sum += *p` that a C
+  compiler auto-vectorises, and the Fern loop was an indexed byte read.
+  `std/hash`'s `SysvSum` now calls the `__sum_bytes` kernel (#9052), which
+  is 4.7× on the macOS arm64 box measured below and still SCALAR — the
+  vector bodies are a follow-up.
 
 The startup row is the static-binary margin, widened as it is for the seven:
 GNU dlopens libcrypto before it hashes a hundred bytes.
@@ -1215,6 +1255,32 @@ in a context. No machine the corpus runs on has SELinux, so the compared path is
 the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 (`-Z`, a bare `--context`) and carries on.
 
+**`chcon` refuses the context change itself, and there is no answer that
+would not.** A security context is an extended attribute; there is no
+`getxattr` or `setxattr` (#9098), so the one step the utility exists for
+cannot happen. What makes this a divergence rather than a gap is that GNU
+does not refuse either: on a machine with no SELinux it calls
+`setfilecon(3)` and reports whatever the call failed with, and WHICH errno
+that is belongs to the build and to the caller rather than to chcon —
+`Operation not supported` from gnulib's stub where coreutils was configured
+without libselinux, `Operation not permitted` from the kernel where it was
+configured with it and the caller may not write `security.*`. No Fern binary
+can predict that byte. So GNU's frame is kept and our own sentence sits in
+the errno slot: `failed to change context of 'f' to 'ctx': setting a
+security context is not supported on this system`, exit 1, nothing changed
+— which is the same outcome in kind, since on such a machine GNU changes
+nothing either. `--reference` and the `-u -r -t -l` component form need the
+READ side of the same attribute and are refused the same way.
+
+The corpus is therefore the 96 invocations that never reach the call: the
+whole option grammar, the two `-R` traversal combinations GNU rejects
+outright, the operand counts, `cannot access`, `cannot read directory` —
+reachable with a real directory, because fts reports it INSTEAD of yielding
+the visit the change hangs off — and every spelling of the root failsafe.
+`conflicting security context specifiers given` is unreachable on such a
+machine: GNU checks it AFTER reading the reference file, which has already
+failed. `chcon.fern` keeps that order rather than tidying it.
+
 **`mkdir`'s post-creation chmod failing is the one wording in the utility the
 reference binary has never been made to print.** A directory this process just
 created is one it owns and may chmod — a setgid one in a group it does not
@@ -1289,15 +1355,6 @@ either compiler. #9089 carries all four. The corpus reaches EXDEV for real
 through the harness's `crossDev` field — `/dev/shm` is tmpfs where `/tmp` is
 ext4 — but only under `--no-copy` / `-n` / `--update=none`, which prove the
 errno is reported identically.
-
-**`du --time` renders in UTC.** GNU calls `localtime_r`, which resolves `TZ`
-and then `/etc/localtime`. `lib/tz.fern` can answer that now, but `du.fern`
-was written against a tree that predated it and formats the stamp as UTC,
-printing `UTC` / `+0000` for `%Z` / `%z`. The parity gate pins `TZ=UTC`, so
-the corpus is exact and the divergence is invisible to it — on a machine in
-any other zone every `--time` line is off by the offset. #9076 tracks moving
-it onto the shared module, along with the C-locale strftime `du.fern` carries,
-which is the half `lib/tz.fern` still lacks.
 
 **`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
 so a component 8 KiB down is `File name too long` where GNU's fts, which opens
@@ -1723,7 +1780,9 @@ groups are the order of work. Each sub-issue names its group.
   the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` (done),
-  `chown` `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
+  `chown` `chgrp` `runcon`, `chcon` (done — the option grammar, the walk and
+  every diagnostic before the context change; the change itself has no
+  primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
