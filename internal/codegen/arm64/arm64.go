@@ -13381,11 +13381,12 @@ func (g *generator) label(name string) {
 }
 
 // peepWindow is how many recently emitted logical lines are held back from
-// `out` so the streaming peephole can rewrite the tail in place. The longest
-// arm64 pattern is 2 lines; 4 leaves margin while bounding held memory to
-// O(1) — a self-host `.s` is hundreds of MB and a whole-text post-pass would
-// spike RAM. (Mirror of the x86-64 backend's peephole.)
-const peepWindow = 4
+// `out` so the streaming peephole can rewrite the tail in place. P4's push /
+// run / pop is the longest pattern and reaches peepWindow-2 instructions
+// between the pair, so this bounds how far apart a round trip can be and still
+// be seen. It stays O(1) — a self-host `.s` is hundreds of MB and a whole-text
+// post-pass would spike RAM.
+const peepWindow = 6
 
 // retargetLocals rewrites ELF's ".L" temporary-symbol prefix to Mach-O's
 // bare "L". Only the leading "." is dropped, so ".Lret_3" becomes "Lret_3"
@@ -13541,14 +13542,22 @@ func (g *generator) peepholeTail() {
 	// why the push exists — so <op> may not mention xD in either width, or it
 	// would read the moved value instead of what it held before. This is the
 	// arm64 twin of x86-64's P5.
-	if n >= 3 {
-		if k, ok := matchPushImm(w[n-3]); ok {
-			if dst, k2, ok2 := matchPopReg(w[n-1]); ok2 && k2 == k && dst != "x0" {
-				if roundTripSafeMid(w[n-2], dst) {
-					mid := w[n-2]
-					g.peepWin = append(w[:n-3], "\tmov "+dst+", x0", mid)
-					return
-				}
+	if dst, k, ok := matchPopReg(w[n-1]); ok && dst != "x0" {
+		// The run between the push and the pop keeps both its order and its
+		// indices; only the push becomes the `mov` and the pop goes, so the
+		// rewrite is a one-element shortening rather than a rebuild.
+		for gap := 1; gap <= peepWindow-2; gap++ {
+			pi := n - gap - 2
+			if pi < 0 {
+				break
+			}
+			if k2, isPush := matchPushImm(w[pi]); !isPush || k2 != k {
+				continue
+			}
+			if roundTripSafeMids(w[pi+1:n-1], dst) {
+				w[pi] = "\tmov " + dst + ", x0"
+				g.peepWin = w[:n-1]
+				return
 			}
 		}
 	}
@@ -13581,11 +13590,36 @@ var roundTripMidOps = map[string]bool{
 	"ldrsw": true, "ldrsb": true, "ldrsh": true, "sxtw": true, "uxtw": true,
 }
 
+// roundTripSafeMids reports whether the run `mids` may sit between a push and
+// its pop with the pushed value rerouted to `dst` ahead of all of it. At least
+// one of them must write x0: freeing x0 is the only reason the push is there,
+// and a run that never touches it is some other pattern.
+func roundTripSafeMids(mids []string, dst string) bool {
+	wroteX0 := false
+	for _, m := range mids {
+		if !roundTripSafeMid(m, dst) {
+			return false
+		}
+		if writesX0(m) {
+			wroteX0 = true
+		}
+	}
+	return wroteX0
+}
+
+// writesX0 reports whether `line`'s destination operand is x0 or w0. Only
+// called on a line roundTripSafeMid has already accepted, so it has a
+// mnemonic, a space and an operand list.
+func writesX0(line string) bool {
+	args := line[strings.IndexByte(line, ' ')+1:]
+	return strings.HasPrefix(args, "x0, ") || strings.HasPrefix(args, "w0, ")
+}
+
 // roundTripSafeMid reports whether `line` may sit between a push and its pop
-// with the pushed value rerouted to `dst` ahead of it. The instruction must
-// write x0 (the reason the push is there), must leave sp alone, and must not
-// name `dst` in either width — P4 moves the value into `dst` BEFORE this line,
-// so a read of it here would see the moved value rather than the old one.
+// with the pushed value rerouted to `dst` ahead of it. It must leave sp alone
+// and must not name `dst` in either width — P4 moves the value into `dst`
+// BEFORE this line, so a read of it here would see the moved value rather than
+// the old one.
 func roundTripSafeMid(line, dst string) bool {
 	if !strings.HasPrefix(line, "\t") {
 		return false
@@ -13595,14 +13629,13 @@ func roundTripSafeMid(line, dst string) bool {
 	if sp <= 0 || !roundTripMidOps[body[:sp]] {
 		return false
 	}
+	// The whole operand list is checked, destination included: a line that
+	// WRITES dst is as unsafe as one that reads it, since the moved value has
+	// to survive to the pop's old position.
 	args := body[sp+1:]
-	if !strings.HasPrefix(args, "x0, ") && !strings.HasPrefix(args, "w0, ") {
-		return false
-	}
-	rest := args[len("x0, "):]
-	return !mentionsReg(rest, "sp") &&
-		!mentionsReg(rest, dst) &&
-		!mentionsReg(rest, "w"+dst[1:])
+	return !mentionsReg(args, "sp") &&
+		!mentionsReg(args, dst) &&
+		!mentionsReg(args, "w"+dst[1:])
 }
 
 // mentionsReg reports whether `s` names register `reg` as a whole token, so
