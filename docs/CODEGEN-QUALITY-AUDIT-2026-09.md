@@ -410,6 +410,41 @@ already complete and already fuzzed.
 
 ## 5. The SSA path: half the code on kernels, 1.34× on the compiler
 
+> **Re-measured, 2026-09-12 — the inversion this section is named after is
+> GONE, and with it §6.1's reason for holding B5.** On arm64 the SSA backend
+> now emits FEWER instructions than the stack machine at every scale measured,
+> the compiler driver included:
+>
+> | program | arm64 default | arm64 SSA | |
+> |---|---:|---:|---:|
+> | `coreutils/cat.fern` | 38,180 | 13,596 | **0.36×** |
+> | `coreutils/wc.fern` | 42,371 | 15,652 | **0.37×** |
+> | `coreutils/sort.fern` | 71,340 | 43,163 | **0.60×** |
+> | `coreutils/b2sum.fern` | 92,124 | 69,893 | **0.76×** |
+> | `examples/self_host/checker_run.fern` | 753,872 | 675,775 | **0.90×** |
+>
+> `scripts/codegen-census`, `bin/fern` at `0e1ca4b49`. The driver row is the one
+> that matters: 0.90× where §5.0's table recorded 1.44×. Both sides moved — the
+> stack machine came down from 1,149,869 and the SSA path from 1,655,366 — so
+> this is not the stack machine regressing into a win.
+>
+> On `__blake2b_blocks` (`internal/stdlib/std/crypto.fern`), 12 rounds × 8 G ×
+> 12 ops over 43 live u64 locals, the kernel this matters most on:
+>
+> | | instructions | operand stack | frame |
+> |---|---:|---:|---:|
+> | default | 9,167 | 2,473 | 2,896 |
+> | SSA | **5,900** | **0** | 1,504 |
+>
+> **`-backend ssa` accepts every one of these programs**, which §5.2's account
+> of the x86-64 twin refusing real programs should not be read as implying of
+> the arm64 one. What is NOT measured here is wall time: `-backend ssa` is
+> arm64-linux only, so on an Apple Silicon host there is no way to run its
+> output — no `-target arm64-darwin` (the SSA runtime issues Linux `svc #0`
+> with the number in x8 at 117 sites, so this is a syscall-ABI port, not a CLI
+> gate), and the `internal/e2e` arm64-SSA tests all SKIP without qemu-aarch64.
+> Every figure above is a static instruction count.
+
 `internal/ssa` + `internal/codegen/arm64ssa` is a real register-allocating
 backend, reachable as `-backend ssa -target arm64-linux`. Its status is better
 than `docs/SSA-DECISION.md` and the CLI's own help text say — both still
@@ -465,6 +500,9 @@ comfortably on ordinary programs and loses only at the driver's scale:
 | `sort_ints` | 2,712 | 1,555 | 0.57× |
 | `string_scan` | 1,455 | 853 | 0.59× |
 | `checker_run.fern` | 1,149,869 | 1,655,366 | **1.44×** |
+
+As of 2026-09-12 the last row is 753,872 / 675,775 = 0.90×; see §5's header. The
+paragraph below describes the state this table was taken in, not the state now.
 
 That shape is the diagnosis. A backend that were simply missing folds would
 lose everywhere; one that loses only on a million-instruction program with very
@@ -582,7 +620,14 @@ stack machine's inline guard — so inlining would trade static size for runtime
 The 1.7× `box_free` call-site gap is a lowering difference, not a call-sequence
 cost, and is its own investigation.
 
-**B5 is not reachable yet.** The inversion is narrowed, not closed, and the
+**B5's blocker is gone as of 2026-09-12** — `checker_run.fern` is 0.90× the
+stack machine, not 1.44×, and B4's "expect ~1.0–1.1 M against the default's
+1.5 M" came in at 675,775 against 753,872. What remains before flipping the
+default is evidence rather than instruction count: the wall-clock and
+retired-instruction halves are unmeasured (§5's header says why), and B1/B3
+below are still open. The assessment this paragraph recorded, for the record:
+
+**B5 was not reachable.** The inversion is narrowed, not closed, and the
 honest ratio depends on when it is measured: 1.10× the stack machine as it stood
 before this work, 1.44× the stack machine as it stands after, because tier A
 moved that target in the same PR. Defaulting arm64 to the SSA backend is still
@@ -676,12 +721,19 @@ cross-block analysis to.
     `checker_run.fern`, a much smaller program with a much shallower drop
     tail.)
 - **Frame traffic on the SSA path**, still the largest single item anywhere in
-  this document: 869,756 of the 1,657,173 instructions it emits for
-  `checker_run.fern` are frame-relative loads and stores — **52.5%**. Note
-  `scripts/codegen-census` does *not* show this: it counts a frame reload as
-  useful work by design, so its `stack=0` for this backend is a deliberate floor
-  and not a contradiction. **What this is NOT is a spill-selection problem** —
-  see §6.4, which is the measurement, not a guess.
+  this document: 315,605 of the 675,775 instructions it emits for
+  `checker_run.fern` are frame-relative loads and stores — **46.7%**
+  (2026-09-12; it was 869,756 of 1,657,173, 52.5%, when this was written, so the
+  share has narrowed and the absolute count has fallen by a third).
+  `scripts/codegen-census` reports this directly. It did not until 2026-09-12:
+  its arm64 frame metric counted only the x29-relative `ldur` / `stur` the stack
+  machine uses, and this backend addresses its frame through `sp`, so the column
+  read 2,264 against an actual 315,605. **What this is NOT is a spill-selection
+  problem** — see §6.4, which is the measurement, not a guess.
+- **Coalescing on the SSA path is where it was.** 127,880 register-to-register
+  `mov`s on `checker_run.fern`, 18.9% of its output, against §5's 373,433 and
+  18.5%: the absolute count fell with everything else and the share did not.
+  Tier B's B3 is open.
 
 ### 6.3 A gate, so this cannot regress silently
 
