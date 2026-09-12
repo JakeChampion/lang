@@ -1,0 +1,664 @@
+// chown.fern — GNU-compatible `chown`.
+//
+//   chown [OPTION]... [OWNER][:[GROUP]] FILE...
+//   chown [OPTION]... --reference=RFILE FILE...
+//
+// One fchownat(2) per entry. `lib/owner.fern` is the OWNER[:[GROUP]] operand
+// — the grammar, the `.` fallback, and the wording a `-v` line is built from
+// — and it is shared with `chgrp`, which is this utility with the user half
+// taken away and `--from=` left whole.
+//
+// ---- the walk is POST-order, and chmod's is not ------------------------------
+//
+// `chown -R` visits a directory's children BEFORE the directory itself; GNU
+// hands fts FTS_POST for chown and takes the pre-order visit for chmod. It is
+// observable in two ways: the order `-v` prints, and the order the calls
+// happen in — a directory chowned to an owner that cannot then read it is
+// still fully walked here, where a pre-order walk would have locked itself
+// out. Children come back in raw readdir order; GNU hands fts no comparator.
+//
+// ---- which symlinks are followed, and which are descended --------------------
+//
+// Two separate questions, and `-R` changes the answer to the first one.
+//
+// FOLLOWED is whether the call lands on the link or its target. Without `-R`
+// the default is to follow; `-h` / `--no-dereference` turns that off. With
+// `-R` the default becomes `-P`, which does NOT follow — so `chown -R` over a
+// tree changes the symlinks in it rather than what they point at, and that is
+// the default. `-H` and `-L` both restore following. `-L` beats `-h` whatever
+// order they are written in, because the traversal flag is applied after.
+//
+// DESCENDED is whether a symlink that resolves to a directory is walked into.
+// `-P` never, `-H` only for a command-line operand, `-L` always. Last of the
+// three wins. So `-H` on a symlinked tree chowns what the inner symlinks
+// point at while still refusing to walk through them.
+//
+// `-R --dereference` with neither `-H` nor `-L` is the one option combination
+// refused outright: following every link while descending none would visit a
+// tree the operands do not describe.
+//
+// ---- --from is a filter, not a condition to report ---------------------------
+//
+// A file whose current ownership does not match `--from=` is not an error and
+// not a skip worth mentioning: it takes the ordinary "retained" line and the
+// exit status stays 0. That is what makes `--from` safe to sweep a tree with.
+//
+// ---- the one thing this cannot do -------------------------------------------
+//
+// GNU's fts is fd-relative — it holds a descriptor on each directory and
+// calls fchownat against it — so a tree renamed underneath a running
+// `chown -R` cannot be tricked into chowning something outside it, and a path
+// longer than PATH_MAX is still reachable. The runtime has no fd-relative
+// traversal (#9074 / #9078), so the walk below concatenates paths: it meets
+// ENAMETOOLONG partway down a tree GNU finishes, and a concurrent rename of an
+// interior directory can redirect a chown to another subtree. Nothing in the
+// corpus renames anything under a running chown, so the two agree there; the
+// gap is real all the same.
+import "std/array";
+import "./lib/gnu";
+import "./lib/owner";
+
+function opt_changes(): i32 {
+  return 1;
+}
+
+function opt_silent(): i32 {
+  return 2;
+}
+
+function opt_verbose(): i32 {
+  return 3;
+}
+
+function opt_dereference(): i32 {
+  return 4;
+}
+
+function opt_no_dereference(): i32 {
+  return 5;
+}
+
+function opt_from(): i32 {
+  return 6;
+}
+
+function opt_no_preserve_root(): i32 {
+  return 7;
+}
+
+function opt_preserve_root(): i32 {
+  return 8;
+}
+
+function opt_reference(): i32 {
+  return 9;
+}
+
+function opt_recursive(): i32 {
+  return 10;
+}
+
+function opt_trav_h(): i32 {
+  return 11;
+}
+
+function opt_trav_l(): i32 {
+  return 12;
+}
+
+function opt_trav_p(): i32 {
+  return 13;
+}
+
+function v_quiet(): i32 {
+  return 0;
+}
+
+function v_changes(): i32 {
+  return 1;
+}
+
+function v_all(): i32 {
+  return 2;
+}
+
+// The three traversal flags, in the order they are declared so `last wins`
+// is a plain assignment.
+function trav_p(): i32 {
+  return 0;
+}
+
+function trav_h(): i32 {
+  return 1;
+}
+
+function trav_l(): i32 {
+  return 2;
+}
+
+// `deref` is a TRISTATE rather than a boolean: the default differs between
+// the recursive and the non-recursive form, so "the caller did not say" has
+// to survive parsing.
+function deref_default(): i32 {
+  return 0;
+}
+
+function deref_yes(): i32 {
+  return 1;
+}
+
+function deref_no(): i32 {
+  return 2;
+}
+
+pub struct Settings { verbosity: i32, quiet: boolean, recursive: boolean, preserve_root: boolean, deref: i32, traverse: i32, chgrp_mode: boolean }
+
+// What one run does to every file: the spec it is moving them to, and the
+// ownership it insists they currently have.
+pub struct Target { spec: owner.Spec, from: owner.Spec, has_from: boolean, db: owner.Db }
+
+pub struct St { out: gnu.Stdio, status: i32 }
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [OWNER][:[GROUP]] FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
+  out = out + "Change the owner and/or group of each FILE to OWNER and/or GROUP.\n";
+  out = out + "With --reference, change the owner and group of each FILE to those of RFILE.\n";
+  out = out + "\n";
+  out = out + "  -c, --changes          like verbose but report only when a change is made\n";
+  out = out + "  -f, --silent, --quiet  suppress most error messages\n";
+  out = out + "  -v, --verbose          output a diagnostic for every file processed\n";
+  out = out + "      --dereference      affect the referent of each symbolic link (this is\n";
+  out = out + "                         the default), rather than the symbolic link itself\n";
+  out = out + "  -h, --no-dereference   affect symbolic links instead of any referenced file\n";
+  out = out + "      --from=CURRENT_OWNER:CURRENT_GROUP\n";
+  out = out + "                         change the ownership of each file only if its\n";
+  out = out + "                         current owner and/or group match those specified here.\n";
+  out = out + "                         Either may be omitted, in which case a match\n";
+  out = out + "                         is not required for the omitted attribute\n";
+  out = out + "      --no-preserve-root  do not treat '/' specially (the default)\n";
+  out = out + "      --preserve-root    fail to operate recursively on '/'\n";
+  out = out + "      --reference=RFILE  use RFILE's ownership rather than specifying values.\n";
+  out = out + "                         RFILE is always dereferenced if a symbolic link.\n";
+  out = out + "  -R, --recursive        operate on files and directories recursively\n";
+  out = out + "\n";
+  out = out + "The following options modify how a hierarchy is traversed when the -R\n";
+  out = out + "option is also specified.  If more than one is specified, only the final\n";
+  out = out + "one takes effect. -P is the default.\n";
+  out = out + "\n";
+  out = out + "  -H                     if a command line argument is a symlink to a directory,\n";
+  out = out + "                         traverse it\n";
+  out = out + "  -L                     traverse every symbolic link to a directory encountered\n";
+  out = out + "  -P                     do not traverse any symbolic links\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Owner is unchanged if missing.  Group is unchanged if missing, but changed\n";
+  out = out + "to login group if implied by a ':' following a symbolic OWNER.\n";
+  out = out + "OWNER and GROUP may be numeric as well as symbolic.\n";
+  return out;
+}
+
+// The long options in GNU's declaration order, which is visible: the
+// ambiguity list prints candidates in it, so `--r` names '--recursive' before
+// '--reference' and `--no` names '--no-dereference' before
+// '--no-preserve-root'. `--help` and `--version` are appended by getopt_new.
+pub function option_table(chgrp_mode: boolean): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
+  opts = opts.append(gnu.flag("c", "changes", opt_changes()));
+  opts = opts.append(gnu.flag("", "dereference", opt_dereference()));
+  opts = opts.append(gnu.valued("", "from", opt_from()));
+  opts = opts.append(gnu.flag("h", "no-dereference", opt_no_dereference()));
+  opts = opts.append(gnu.flag("", "no-preserve-root", opt_no_preserve_root()));
+  opts = opts.append(gnu.flag("", "preserve-root", opt_preserve_root()));
+  opts = opts.append(gnu.flag("f", "quiet", opt_silent()));
+  opts = opts.append(gnu.flag("", "reference", opt_reference()));
+  opts = opts.append(gnu.flag("", "silent", opt_silent()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("H", "", opt_trav_h()));
+  opts = opts.append(gnu.flag("L", "", opt_trav_l()));
+  opts = opts.append(gnu.flag("P", "", opt_trav_p()));
+  return opts;
+}
+
+pub struct Parsed { s: Settings, from: string, has_from: boolean, reference: string, has_reference: boolean, files: string[] }
+
+// `--reference` takes an argument, which the table above declares as a flag
+// so the declaration ORDER stays readable; it is re-declared here with its
+// argument. Keeping the two apart would put `reference` in the wrong place in
+// every ambiguity list.
+function table_with_reference(chgrp_mode: boolean): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  var base: gnu.Opt[] = option_table(chgrp_mode);
+  var i: i32 = 0;
+  while (i < base.len()) {
+    if (base[i].id == opt_reference()) {
+      opts = opts.append(gnu.valued("", "reference", opt_reference()));
+    } else {
+      opts = opts.append(base[i]);
+    }
+    i = i + 1;
+  }
+  return opts;
+}
+
+pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
+  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_default(), traverse: trav_p(), chgrp_mode: chgrp_mode };
+  var from: string = "";
+  var has_from: boolean = false;
+  var reference: string = "";
+  var has_reference: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(argv, table_with_reference(chgrp_mode), name, help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_changes()) {
+          s = Settings { ...s, verbosity: v_changes() };
+        } else if (m.id == opt_silent()) {
+          s = Settings { ...s, quiet: true };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, verbosity: v_all() };
+        } else if (m.id == opt_dereference()) {
+          s = Settings { ...s, deref: deref_yes() };
+        } else if (m.id == opt_no_dereference()) {
+          s = Settings { ...s, deref: deref_no() };
+        } else if (m.id == opt_from()) {
+          from = m.value;
+          has_from = true;
+        } else if (m.id == opt_no_preserve_root()) {
+          s = Settings { ...s, preserve_root: false };
+        } else if (m.id == opt_preserve_root()) {
+          s = Settings { ...s, preserve_root: true };
+        } else if (m.id == opt_reference()) {
+          reference = m.value;
+          has_reference = true;
+        } else if (m.id == opt_recursive()) {
+          s = Settings { ...s, recursive: true };
+        } else if (m.id == opt_trav_h()) {
+          s = Settings { ...s, traverse: trav_h() };
+        } else if (m.id == opt_trav_l()) {
+          s = Settings { ...s, traverse: trav_l() };
+        } else if (m.id == opt_trav_p()) {
+          s = Settings { ...s, traverse: trav_p() };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return Parsed { s: s, from: from, has_from: has_from, reference: reference, has_reference: has_reference, files: g.operands() };
+}
+
+// ---- paths -----------------------------------------------------------------
+// fts trims a RUN of trailing slashes to one before the operand is printed,
+// and leaves `/` and `//` alone: `d///` is `d/`, `///` is `/`.
+function fts_trim(p: string): string {
+  var n: i32 = p.len();
+  if (n > 2 && p[n - 1] as i32 == 47) {
+    while (n > 1 && p[n - 2] as i32 == 47) {
+      n = n - 1;
+    }
+  }
+  return slice_unchecked(p, 0, n) + "";
+}
+
+function child_path(dir: string, name: string): string {
+  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+function s_ifmt(): u32 {
+  return 61440 as u32;
+}
+
+function is_dir_mode(m: u32): boolean {
+  return (m & s_ifmt()) == 16384 as u32;
+}
+
+function is_link_mode(m: u32): boolean {
+  return (m & s_ifmt()) == 40960 as u32;
+}
+
+// ---- diagnostics -----------------------------------------------------------
+// A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
+// the message, not the failure.
+function fail_quiet(st: St, s: Settings, msg: string): St {
+  if (s.quiet) {
+    return St { ...st, status: 1 };
+  }
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+// A diagnostic `-f` does NOT silence: the root failsafe and a `--reference`
+// that cannot be read.
+function fail_loud(st: St, msg: string): St {
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+function say(st: St, s: Settings, line: string): St {
+  if (s.verbosity != v_all()) {
+    return st;
+  }
+  return St { ...st, out: st.out.fwrite(line) };
+}
+
+// ---- the root failsafe -----------------------------------------------------
+// Compared by device and inode, so every spelling of `/` is caught — `//`,
+// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
+function is_root_dir(info: FileStat): boolean {
+  match (stat("/")) {
+    Ok(root) => {
+      return info.dev == root.dev && info.ino == root.ino;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+function refuse_root(st0: St, path: string): St {
+  var same: string = "";
+  if (path != "/") {
+    same = " (same as '/')";
+  }
+  var st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  return fail_loud(st, "use --no-preserve-root to override this failsafe");
+}
+
+// ---- the two symlink questions ---------------------------------------------
+// Whether the CALL lands on the link or its target. Under -R the default
+// flips to not following, and -L restores it however it was ordered against
+// -h, because the traversal flag is applied after the dereference one.
+function follows(s: Settings): boolean {
+  if (s.recursive && s.traverse == trav_l()) {
+    return true;
+  }
+  if (s.deref == deref_no()) {
+    return false;
+  }
+  if (s.recursive && s.traverse == trav_p()) {
+    return false;
+  }
+  return true;
+}
+
+// Whether a symlink that resolves to a directory is walked into. `top` marks
+// a command-line operand, which is the only place -H differs from -P.
+function descends_links(s: Settings, top: boolean): boolean {
+  if (s.traverse == trav_l()) {
+    return true;
+  }
+  return s.traverse == trav_h() && top;
+}
+
+// ---- one entry -------------------------------------------------------------
+// The line a change, a no-op or a failure prints. `old_uid` / `old_gid` are
+// what the entry carried before; an unreadable entry has none, and the
+// "from" clause is left off rather than filled with a guess.
+function describe(t: Target, s: Settings, path: string, old_uid: i64, old_gid: i64, known: boolean, changed: boolean, failed: boolean): string {
+  var gv: boolean = t.spec.group_verb(s.chgrp_mode);
+  var noun: string = "ownership of ";
+  if (gv) {
+    noun = "group of ";
+  }
+  var to: string = t.spec.render(s.chgrp_mode);
+  var from: string = owner.current_label(t.db, old_uid, old_gid, t.spec.names_group(), gv);
+  if (failed) {
+    var head: string = "failed to change " + noun + gnu.quotea(path);
+    if (known) {
+      if (to.len() == 0) {
+        return head + "\n";
+      }
+      return head + " from " + from + " to " + to + "\n";
+    }
+    if (to.len() == 0) {
+      return head + "\n";
+    }
+    return head + " to " + to + "\n";
+  }
+  if (changed) {
+    return "changed " + noun + gnu.quotea(path) + " from " + from + " to " + to + "\n";
+  }
+  if (to.len() == 0) {
+    return noun + gnu.quotea(path) + " retained\n";
+  }
+  return noun + gnu.quotea(path) + " retained as " + from + "\n";
+}
+
+// Whether this entry is one `--from` selects. An omitted half matches
+// anything, which is what makes `--from=:staff` a group-only filter.
+function from_matches(t: Target, uid: i64, gid: i64): boolean {
+  if (!t.has_from) {
+    return true;
+  }
+  if (t.from.uid >= 0 as i64 && t.from.uid != uid) {
+    return false;
+  }
+  if (t.from.gid >= 0 as i64 && t.from.gid != gid) {
+    return false;
+  }
+  return true;
+}
+
+function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid: i64): St {
+  var st: St = st0;
+  if (!from_matches(t, uid, gid)) {
+    if (s.verbosity == v_all()) {
+      return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
+    }
+    return st;
+  }
+  var want_uid: i64 = t.spec.uid;
+  var want_gid: i64 = t.spec.gid;
+  var changed: boolean = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
+  if (want_uid < 0 as i64 && want_gid < 0 as i64) {
+    // Nothing to ask the kernel for. GNU still makes the call; the
+    // observable difference would be an errno on an entry it could not
+    // touch, and -1/-1 cannot fail where the entry was stattable.
+    if (s.verbosity == v_all()) {
+      return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
+    }
+    return st;
+  }
+  match (chown_at(path, want_uid as i32, want_gid as i32, follows(s))) {
+    Ok(_) => {
+      if (s.verbosity == v_all() || s.verbosity == v_changes() && changed) {
+        st = St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, changed, false)) };
+      }
+      return st;
+    },
+    Err(e) => {
+      var noun: string = "changing ownership of ";
+      if (t.spec.uid < 0 as i64) {
+        noun = "changing group of ";
+      }
+      st = fail_quiet(st, s, noun + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return say(st, s, describe(t, s, path, uid, gid, true, false, true));
+    }
+  }
+}
+
+// The entry could not be reached at all. `-v` still prints its line, with no
+// "from" clause because nothing was read to put in one.
+function unreachable(st0: St, s: Settings, t: Target, path: string, msg: string): St {
+  var st: St = fail_quiet(st0, s, msg);
+  return say(st, s, describe(t, s, path, 0 as i64, 0 as i64, false, false, true));
+}
+
+// ---- the walk --------------------------------------------------------------
+struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean }
+
+// What the walk needs to know about an entry: the ownership the call will
+// report moving FROM, and whether it is a directory to descend.
+//
+// Which of lstat and stat answers depends on the traversal flag, and the two
+// can disagree in a way that matters: under `-L` a symlink's target decides
+// both, and a BROKEN one has no answer at all — that is the `cannot
+// dereference` path rather than `cannot access`.
+function look(s: Settings, path: string, top: boolean): (Seen, string) {
+  var want_target: boolean = follows(s) || descends_links(s, top);
+  match (lstat(path)) {
+    Ok(li) => {
+      if (!want_target || !is_link_mode(li.mode)) {
+        return (Seen { ok: true, uid: li.uid as i64, gid: li.gid as i64, is_dir: is_dir_mode(li.mode), is_link: is_link_mode(li.mode) }, "");
+      }
+      match (stat(path)) {
+        Ok(ti) => {
+          var dir: boolean = is_dir_mode(ti.mode) && descends_links(s, top);
+          var uid: i64 = ti.uid as i64;
+          var gid: i64 = ti.gid as i64;
+          if (!follows(s)) {
+            uid = li.uid as i64;
+            gid = li.gid as i64;
+          }
+          return (Seen { ok: true, uid: uid, gid: gid, is_dir: dir, is_link: true }, "");
+        },
+        Err(e) => {
+          return (Seen { ok: false, uid: 0 as i64, gid: 0 as i64, is_dir: false, is_link: true }, "cannot dereference " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+        }
+      }
+    },
+    Err(e) => {
+      return (Seen { ok: false, uid: 0 as i64, gid: 0 as i64, is_dir: false, is_link: false }, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+}
+
+// One entry, and everything under it. The children are visited BEFORE the
+// entry itself: fts hands chown its post-order visit.
+function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
+  var st: St = st0;
+  var r: (Seen, string) = look(s, path, top);
+  var seen: Seen = r.0;
+  if (!seen.ok) {
+    return unreachable(st, s, t, path, r.1);
+  }
+  if (top && s.recursive && s.preserve_root && seen.is_dir && is_root(path)) {
+    return refuse_root(st, path);
+  }
+  if (s.recursive && seen.is_dir) {
+    match (read_dir(path)) {
+      Ok(names) => {
+        var i: i32 = 0;
+        while (i < names.len()) {
+          st = process(st, s, t, child_path(path, names[i]), false);
+          i = i + 1;
+        }
+      },
+      Err(e) => {
+        // A directory whose children cannot be listed has its own wording,
+        // where an entry that could not be STATTED is `cannot access`. The
+        // directory itself is still chowned afterwards.
+        st = fail_quiet(st, s, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  return change_one(st, s, t, path, seen.uid, seen.gid);
+}
+
+function is_root(path: string): boolean {
+  match (stat(path)) {
+    Ok(info) => {
+      return is_root_dir(info);
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// ---- main ------------------------------------------------------------------
+pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
+  var p: Parsed = parse(argv, chgrp_mode, name);
+  var s: Settings = p.s;
+  var files: string[] = p.files;
+
+  // Following every link while descending none would visit a tree the
+  // operands do not describe, so the combination is refused rather than
+  // guessed at — ahead of the operand count, which is where GNU checks it.
+  if (s.recursive && s.deref == deref_yes() && s.traverse == trav_p()) {
+    gnu.error("-R --dereference requires either -H or -L");
+    exit(1);
+  }
+
+  var spec_text: string = "";
+  var has_spec: boolean = false;
+  if (!p.has_reference) {
+    if (files.len() == 0) {
+      gnu.die_usage("missing operand", 1);
+    }
+    spec_text = files[0];
+    if (files.len() == 1) {
+      gnu.die_usage("missing operand after " + gnu.quote(spec_text), 1);
+    }
+    files = array.slice(files, 1, files.len());
+    has_spec = true;
+  } else if (files.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+
+  var st: St = St { out: gnu.stdio_new(), status: 0 };
+  var db: owner.Db = owner.db_load();
+  var t: Target = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false, db: db };
+
+  if (p.has_from) {
+    var f: owner.Parsed = owner.parse(db, p.from);
+    if (f.warn_dot) {
+      gnu.error(owner.dot_warning(p.from));
+    }
+    if (!f.ok) {
+      gnu.error(f.message(p.from));
+      exit(1);
+    }
+    t = Target { ...t, from: f.spec, has_from: true };
+  }
+
+  if (p.has_reference) {
+    match (stat(p.reference)) {
+      Ok(info) => {
+        var sp: owner.Spec = owner.spec_none();
+        if (!chgrp_mode) {
+          sp = owner.Spec { ...sp, uid: info.uid as i64 };
+        }
+        sp = owner.Spec { ...sp, gid: info.gid as i64 };
+        t = Target { ...t, spec: sp };
+      },
+      Err(e) => {
+        gnu.error("failed to get attributes of " + gnu.quotea(p.reference) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  } else if (has_spec) {
+    var parsed: owner.Parsed = owner.parse_group_only(db, spec_text);
+    if (!chgrp_mode) {
+      parsed = owner.parse(db, spec_text);
+    }
+    if (parsed.warn_dot) {
+      gnu.error(owner.dot_warning(spec_text));
+    }
+    if (!parsed.ok) {
+      gnu.error(parsed.message(spec_text));
+      exit(1);
+    }
+    t = Target { ...t, spec: parsed.spec };
+  }
+
+  var i: i32 = 0;
+  while (i < files.len()) {
+    st = process(st, s, t, fts_trim(files[i]), true);
+    i = i + 1;
+  }
+  st.out.close_stdout();
+  return st.status;
+}
+
+function main(): i32 {
+  return run(args(), false, "chown");
+}

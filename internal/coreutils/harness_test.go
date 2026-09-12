@@ -152,6 +152,16 @@ type invocation struct {
 	// — it is the one under which `mkdir d` is 0777 — so the field is a
 	// pointer and `withMask` writes it.
 	umask *int
+	// ownership puts each entry's uid and gid into the tree comparison.
+	// Off by default, and deliberately: an id is one more thing that can
+	// differ between two machines for reasons that are not the utility's,
+	// and no other utility here sets one.
+	//
+	// `chown` and `chgrp` have nothing else to prove. Every other field of
+	// treeEntry is one that a run doing NOTHING AT ALL leaves untouched, so
+	// without this their whole corpus passes on a utility that parsed its
+	// operands, printed every line, and made no call. Needs seedTree.
+	ownership bool
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -172,12 +182,23 @@ type invocation struct {
 // sets), a symlink's target verbatim, and for a regular file its bytes and
 // which hard-link group it belongs to. Timestamps are deliberately absent:
 // the two sides run seconds apart and nothing in the corpus sets one.
+//
+// `owner` is the exception to "absent", and it is OPT-IN rather than always
+// read: only a case that sets `invocation.ownership` fills it. `chown` and
+// `chgrp` have nothing else to prove — a `chown` that parsed its operands,
+// printed every line and changed no id passes every other field here — and
+// for every other utility an id is one more thing that can differ between two
+// machines for reasons that are not the utility's.
 type treeEntry struct {
 	name    string
 	kind    string
 	mode    uint32
 	target  string
 	content string
+	// "uid:gid", or "" for a case that did not ask. Read with lstat, so a
+	// symlink reports its own rather than its target's — which is the whole
+	// difference between `chown -h` and `chown`.
+	owner string
 	// rdev is the device number a character or block node carries, raw:
 	// the two sides run on one kernel, so the dev_t compares directly and
 	// nothing here has to know how that kernel packs a major and a minor.
@@ -751,7 +772,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		if inv.mask != nil {
 			seeded = map[string]bool{}
-			for _, e := range readTree(t, workDir) {
+			for _, e := range readTree(t, workDir, inv.ownership) {
 				seeded[e.name] = true
 			}
 		}
@@ -863,7 +884,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	if workDir != "" {
 		groups := map[[2]uint64]int{}
-		res.tree = readTreeInto(t, workDir, "", groups)
+		res.tree = readTreeInto(t, workDir, "", groups, inv.ownership)
 		if crossRoot != "" {
 			// The link to the other filesystem is the harness's own
 			// scaffolding and its target is a fresh path per run, so it
@@ -874,7 +895,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 					kept = append(kept, e)
 				}
 			}
-			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups)...)
+			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, inv.ownership)...)
 			sort.Slice(res.tree, func(i, j int) bool { return res.tree[i].name < res.tree[j].name })
 		}
 	}
@@ -926,9 +947,20 @@ func regroup(es []treeEntry) {
 // regular file's bytes. A file too large to hold is summarised by its size
 // instead, which still differs when the two sides disagree. Symlinks are
 // recorded, not followed.
-func readTree(t *testing.T, root string) []treeEntry {
+// ownerOf is the entry's "uid:gid" as lstat reports it. Only a case that set
+// `ownership` calls it; nothing else here reads an id.
+func ownerOf(t *testing.T, path string, info os.FileInfo) string {
 	t.Helper()
-	return readTreeInto(t, root, "", map[[2]uint64]int{})
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("no stat for %s — the ownership comparison cannot run on this platform", path)
+	}
+	return fmt.Sprintf("%d:%d", st.Uid, st.Gid)
+}
+
+func readTree(t *testing.T, root string, ownership bool) []treeEntry {
+	t.Helper()
+	return readTreeInto(t, root, "", map[[2]uint64]int{}, ownership)
 }
 
 // readTreeInto is readTree with each name prefixed and the hard-link
@@ -1023,7 +1055,7 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	return opened
 }
 
-func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) []treeEntry {
+func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, ownership bool) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
 	var out []treeEntry
@@ -1040,6 +1072,9 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) [
 		}
 		mode := info.Mode()
 		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode)}
+		if ownership {
+			e.owner = ownerOf(t, path, info)
+		}
 		if was, ok := opened[path]; ok {
 			// Reopened below so the walk could enter it; the mode the
 			// utility actually left is the one recorded here.
@@ -1527,6 +1562,8 @@ func treeDiff(want, got []treeEntry, wantWho, gotWho string) string {
 			lines = append(lines, fmt.Sprintf("  %s: %s %s, %s %s", n, wantWho, quote([]byte(we.content)), gotWho, quote([]byte(ge.content))))
 		case we.group != ge.group:
 			lines = append(lines, fmt.Sprintf("  %s: %s hard-link group %d, %s hard-link group %d", n, wantWho, we.group, gotWho, ge.group))
+		case we.owner != ge.owner:
+			lines = append(lines, fmt.Sprintf("  %s: %s owner %s, %s owner %s", n, wantWho, we.owner, gotWho, ge.owner))
 		}
 		if len(lines) == 8 {
 			lines = append(lines, "  … more")
