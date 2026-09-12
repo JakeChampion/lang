@@ -590,6 +590,32 @@ function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: s
     return s;
 }
 
+// buf_block_free emits the inline release of one BARE byte block — the string
+// builder's buffer, or its control block — onto the size-class freelist
+// __fern_alloc pops from, `ptr` naming the block and `words` its class. The
+// same stores __fn___fern_str_free's data-buffer arm makes, with its large-tier
+// arm; neither block carries an rc word, so declining the push is the whole
+// quarantine treatment for both. `lbl` distinguishes one call site's labels
+// from another's.
+function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
+    s = s.write("    cmpq $65536, " + words + "\n");
+    s = s.write("    jae ." + lbl + "_large\n");
+    s = hev_free(s, ptr, words);
+    if (!rc_free_debug_on()) {
+        s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+        s = s.write("    movq (%r8," + words + ",8), %rsi\n");
+        s = s.write("    movq %rsi, (" + ptr + ")\n");
+        s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
+    }
+    s = s.write("    jmp ." + lbl + "_done\n");
+    s = s.write("." + lbl + "_large:\n");
+    s = s.write("    movq " + ptr + ", %r8\n");
+    s = s.write("    leaq 0(," + words + ",8), %rsi\n");
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("." + lbl + "_done:\n");
+    return s;
+}
+
 function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.EmitState {
     if (!hev_on()) { return s; }
     s = s.write("    pushq " + words + "\n");
@@ -1647,7 +1673,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "heap", "i32_to_string", "u32_to_string", "str_to_i32", "chr",
-        "read_int", "read_all_stdin", "str_read_line", "strbuf", "reader",
+        "read_int", "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
@@ -2821,6 +2847,296 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
+    // The capacity-carrying string builder (#8773) — the accumulator above with
+    // the handle made explicit, so any number of builders are live at once and
+    // they nest. A handle is the address of a 32-byte control block:
+    //   [H +  0] data     — the buffer, 0 when a take left the builder unarmed
+    //   [H +  8] len      — bytes accumulated so far
+    //   [H + 16] cap      — bytes the buffer holds before it has to grow
+    //   [H + 24] reserve  — the capacity a re-arm after a take starts from
+    // Register ABI, like the strbuf helpers above. The buffer is a bare byte
+    // block, which is what the self-host's SEPARATE-BUFFER string form wants:
+    // __fern_buf_take hands it straight to __fern_str_box, so the accumulated
+    // bytes are never copied and only the 24-byte box is allocated. That block
+    // was taken at the buffer's CAPACITY and __fn___fern_str_free returns it at
+    // its LENGTH's size class — bounded internal fragmentation, not
+    // unsoundness, since a block on a class's freelist is only ever reused as
+    // that class.
+    //
+    // Unlike the strbuf above, a grown-past buffer is RETURNED to the freelist
+    // rather than left to the arena: a builder that doubles its way up from the
+    // floor would otherwise strand every prefix it passed through.
+    if (s.has_need("buf")) {
+        // __fern_buf_new(%rdi = cap) -> %rax = handle. The floor gives the
+        // doubling something to double.
+        s = s.write("__fern_buf_new:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    cmpq $16, %rbx\n");
+        s = s.write("    jae .Lbufnew_cap\n");
+        s = s.write("    movq $16, %rbx\n");
+        s = s.write(".Lbufnew_cap:\n");
+        s = s.write("    movq $32, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r12\n");                  // control block
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, (%r12)\n");                // data
+        s = s.write("    movq $0, 8(%r12)\n");                 // len
+        s = s.write("    movq %rbx, 16(%r12)\n");              // cap
+        s = s.write("    movq %rbx, 24(%r12)\n");              // reserve
+        s = s.write("    movq %r12, %rax\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // __fern_buf_reserve(%rdi = H, %rsi = need): replace the buffer with
+        // one of at least `need` bytes, doubling from the current capacity (or
+        // from the reserve, when a take left the builder unarmed), and carry
+        // the live bytes across. Internal — no Fern builtin reaches it.
+        s = s.write("__fern_buf_reserve:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    movq %rdi, %rbx\n");                  // H
+        s = s.write("    movq %rsi, %r12\n");                  // need
+        s = s.write("    movq 16(%rbx), %r13\n");              // cap
+        s = s.write("    testq %r13, %r13\n");
+        s = s.write("    jnz .Lbufres_dbl\n");
+        s = s.write("    movq 24(%rbx), %r13\n");              // reserve
+        s = s.write("    testq %r13, %r13\n");
+        s = s.write("    jnz .Lbufres_dbl\n");
+        s = s.write("    movq $64, %r13\n");
+        s = s.write(".Lbufres_dbl:\n");
+        s = s.write("    cmpq %r12, %r13\n");
+        s = s.write("    jae .Lbufres_alloc\n");
+        s = s.write("    addq %r13, %r13\n");
+        s = s.write("    jmp .Lbufres_dbl\n");
+        s = s.write(".Lbufres_alloc:\n");
+        s = s.write("    movq %r13, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r14\n");                  // new buffer
+        s = s.write("    movq 8(%rbx), %rcx\n");               // live bytes
+        s = s.write("    testq %rcx, %rcx\n");
+        s = s.write("    jz .Lbufres_nocopy\n");
+        s = s.write("    movq (%rbx), %rsi\n");                // old buffer
+        s = s.write("    movq %r14, %rdx\n");
+        s = s.write(".Lbufres_copy:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdx)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lbufres_copy\n");
+        s = s.write(".Lbufres_nocopy:\n");
+        s = s.write("    movq (%rbx), %rcx\n");                // old buffer
+        s = s.write("    testq %rcx, %rcx\n");
+        s = s.write("    jz .Lbufres_store\n");
+        s = s.write("    movq 16(%rbx), %rdx\n");              // at the OLD capacity
+        s = s.write("    addq $7, %rdx\n");
+        s = s.write("    shrq $3, %rdx\n");
+        s = buf_block_free(s, "%rcx", "%rdx", "Lbufres_old");
+        s = s.write(".Lbufres_store:\n");
+        s = s.write("    movq %r14, (%rbx)\n");
+        s = s.write("    movq %r13, 16(%rbx)\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // __fern_buf_push(%rdi = H, %rsi = string box): append every byte of
+        // the box's data. Box form only, like __fern_strbuf_append's operand.
+        s = s.write("__fern_buf_push:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq %rsi, %r12\n");
+        s = s.write("    movq 8(%r12), %r13\n");               // src len
+        s = s.write("    testq %r13, %r13\n");
+        s = s.write("    jz .Lbufpush_done\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq %r13, %rax\n");                  // len after this push
+        s = s.write("    movq 16(%rbx), %rcx\n");
+        s = s.write("    cmpq %rcx, %rax\n");
+        s = s.write("    jbe .Lbufpush_fits\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write(".Lbufpush_fits:\n");
+        s = s.write("    movq (%r12), %rsi\n");                // src data
+        s = s.write("    movq (%rbx), %rdx\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq %rax, %rdx\n");                  // dst = data + len
+        s = s.write("    movq %r13, %rcx\n");
+        s = s.write(".Lbufpush_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdx)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lbufpush_loop\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq %r13, %rax\n");
+        s = s.write("    movq %rax, 8(%rbx)\n");
+        s = s.write(".Lbufpush_done:\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // __fern_buf_push_range(%rdi = H, %rsi = box, %rdx = lo, %rcx = hi):
+        // append s[lo:hi] with no intermediate string. An empty or inverted
+        // range is a no-op; the bounds are the caller's, as with
+        // slice_unchecked.
+        s = s.write("__fern_buf_push_range:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq %rsi, %r12\n");
+        s = s.write("    movq %rdx, %r13\n");                  // lo
+        s = s.write("    movq %rcx, %r14\n");
+        s = s.write("    subq %r13, %r14\n");                  // n = hi - lo
+        s = s.write("    cmpq $0, %r14\n");
+        s = s.write("    jle .Lbufrange_done\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq %r14, %rax\n");
+        s = s.write("    movq 16(%rbx), %rcx\n");
+        s = s.write("    cmpq %rcx, %rax\n");
+        s = s.write("    jbe .Lbufrange_fits\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write(".Lbufrange_fits:\n");
+        s = s.write("    movq (%r12), %rsi\n");
+        s = s.write("    addq %r13, %rsi\n");                  // src = data + lo
+        s = s.write("    movq (%rbx), %rdx\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq %rax, %rdx\n");
+        s = s.write("    movq %r14, %rcx\n");
+        s = s.write(".Lbufrange_loop:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdx)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lbufrange_loop\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq %r14, %rax\n");
+        s = s.write("    movq %rax, 8(%rbx)\n");
+        s = s.write(".Lbufrange_done:\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // __fern_buf_push_byte(%rdi = H, %rsi = x): append the low byte of x.
+        s = s.write("__fern_buf_push_byte:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq %rsi, %r12\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq $1, %rax\n");
+        s = s.write("    movq 16(%rbx), %rcx\n");
+        s = s.write("    cmpq %rcx, %rax\n");
+        s = s.write("    jbe .Lbufbyte_fits\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write(".Lbufbyte_fits:\n");
+        s = s.write("    movq (%rbx), %rdx\n");
+        s = s.write("    movq 8(%rbx), %rcx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    movq %r12, %rax\n");
+        s = s.write("    movb %al, (%rdx)\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq $1, %rax\n");
+        s = s.write("    movq %rax, 8(%rbx)\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // __fern_buf_len(%rdi = H) -> %rax = len.
+        s = s.write("__fern_buf_len:\n");
+        s = s.write("    movq 8(%rdi), %rax\n");
+        s = s.write("    ret\n");
+        // __fern_buf_take(%rdi = H) -> %rax = string box. The accumulated bytes
+        // move without being copied: the buffer BECOMES the box's data and the
+        // builder is left empty but still usable, its reserve intact, so the
+        // next push re-arms at full width. An empty build answers a box over a
+        // null buffer — __fn___fern_str_free's heap guard skips it — and keeps
+        // the buffer it has, so a flush that finds nothing costs one box.
+        s = s.write("__fern_buf_take:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq 8(%rbx), %r12\n");               // len
+        s = s.write("    testq %r12, %r12\n");
+        s = s.write("    jz .Lbuftake_empty\n");
+        s = s.write("    movq (%rbx), %rdi\n");                // data
+        s = s.write("    movq %r12, %rsi\n");
+        s = s.write("    call __fern_str_box\n");
+        s = s.write("    movq $0, (%rbx)\n");
+        s = s.write("    movq $0, 8(%rbx)\n");
+        s = s.write("    movq $0, 16(%rbx)\n");
+        s = s.write("    jmp .Lbuftake_ret\n");
+        s = s.write(".Lbuftake_empty:\n");
+        s = s.write("    movq $0, %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    call __fern_str_box\n");
+        s = s.write(".Lbuftake_ret:\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // __fern_buf_free(%rdi = H): release the buffer (when the builder still
+        // owns one) and the control block. A builder is not refcounted and has
+        // no drop, so a handle that is never freed leaks, exactly as an fd that
+        // is never closed does.
+        s = s.write("__fern_buf_free:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    testq %rbx, %rbx\n");
+        s = s.write("    jz .Lbuffree_ret\n");
+        s = s.write("    movq (%rbx), %rcx\n");
+        s = s.write("    testq %rcx, %rcx\n");
+        s = s.write("    jz .Lbuffree_ctl\n");
+        s = s.write("    movq 16(%rbx), %rdx\n");
+        s = s.write("    addq $7, %rdx\n");
+        s = s.write("    shrq $3, %rdx\n");
+        s = buf_block_free(s, "%rcx", "%rdx", "Lbuffree_data");
+        s = s.write(".Lbuffree_ctl:\n");
+        s = s.write("    movq %rbx, %rcx\n");
+        s = s.write("    movq $4, %rdx\n");                    // 32 bytes = 4 words
+        s = buf_block_free(s, "%rcx", "%rdx", "Lbuffree_ctlblk");
+        s = s.write(".Lbuffree_ret:\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
     }
@@ -5262,6 +5578,8 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // helper's return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_strbuf_append\n    pushq %rax\n");
             s = s.need("strbuf");
+        } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
+            s = emit_ir_op_buf(o, s);
         } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
             // (a value op, allocates). The string runtime + heap back the helper.
@@ -5527,6 +5845,33 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
     s = s.write("    ret\n");
     s = s.write("    .cfi_endproc\n");
     return s;
+}
+
+// emit_ir_op_buf emits the capacity-carrying string builder's seven ops
+// (#8773). All of them take the register ABI the __fern_buf_* bundle is written
+// in, so the operands pop straight into the argument registers with none of the
+// re-push a stack-ABI __fn___fern_* helper needs. Each arm pushes %rax: the
+// handle, the length or the string box for the value ops, and the helper's
+// return as the dummy a statement-level drop takes for the rest.
+function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind_tag == 291) {                                  // buf_new
+        s = s.write("    popq %rdi\n    call __fern_buf_new\n    pushq %rax\n");
+    } else if (o.kind_tag == 292) {                           // buf_push
+        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push\n    pushq %rax\n");
+    } else if (o.kind_tag == 293) {                           // buf_push_range
+        s = s.write("    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+        s = s.write("    call __fern_buf_push_range\n    pushq %rax\n");
+    } else if (o.kind_tag == 294) {                           // buf_push_byte
+        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push_byte\n    pushq %rax\n");
+    } else if (o.kind_tag == 295) {                           // buf_len
+        s = s.write("    popq %rdi\n    call __fern_buf_len\n    pushq %rax\n");
+    } else if (o.kind_tag == 296) {                           // buf_take
+        s = s.write("    popq %rdi\n    call __fern_buf_take\n    pushq %rax\n");
+    } else {                                                  // buf_free (297)
+        s = s.write("    popq %rdi\n    call __fern_buf_free\n    pushq %rax\n");
+    }
+    s = s.need("heap");
+    return s.need("buf");
 }
 
 function emit_ir_op_const_i32(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {

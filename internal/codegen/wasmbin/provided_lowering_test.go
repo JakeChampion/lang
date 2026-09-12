@@ -322,3 +322,44 @@ func TestStrbufOnlyProgramIsValidWasm(t *testing.T) {
 		t.Fatalf("a strbuf-only module must be valid wasm: %v\n%s", err, out)
 	}
 }
+
+// A builder-only program: the smallest one whose helper set is the
+// capacity-carrying builder plus what it calls, so a missing dependency edge
+// has nothing else to hide behind. Both string forms are pushed -- one past
+// the inline cap, one inside it -- because the two take different branches of
+// the copy, and the range push is included because it reaches __fern_str_byte
+// without going through __fern_str_len.
+func TestBufBuilderOnlyProgramIsValidWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `function main(): i32 {
+    var b: usize = buf_new(8);
+    buf_push(b, "a longer piece, past the inline form");
+    buf_push(b, "ab");
+    buf_push_byte(b, 33);
+    buf_push_range(b, "0123456789", 2, 5);
+    var n: i32 = buf_len(b) + buf_take(b).len();
+    buf_free(b);
+    return n;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	p := filepath.Join(t.TempDir(), "buf.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("a builder-only module must be valid wasm: %v\n%s", err, out)
+	}
+}

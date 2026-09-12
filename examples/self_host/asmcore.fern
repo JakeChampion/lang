@@ -4085,6 +4085,12 @@ function builtin_i32_names(): string[] {
         // answer is an offset into both ranges rather than into one.
         "__mismatch",
         "__load_i32",
+        // buf_new(cap) -> the builder's handle, which IS the address of its
+        // control block; buf_len(h) -> the bytes accumulated so far. Both live
+        // in an integer slot, the handle for the same reason a file descriptor
+        // does (#8773).
+        "buf_new",
+        "buf_len",
         "exit",
         "args_count",
     ];
@@ -4111,6 +4117,8 @@ function builtin_string_names(): string[] {
         "__raw_string",
         "arg_at",
         "string_from_bytes_unchecked",
+        // buf_take(h) hands the builder's accumulated bytes over as a string.
+        "buf_take",
     ];
 }
 
@@ -4686,7 +4694,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
         || name == "chr" || name == "args" || name == "read_file" || name == "read_file_bytes"
         || name == "random_bytes"
-        || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
+        || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
         || name == "arr_push" || name == "arr_slice"
         || name == "str_case" || name == "str_repeat"
         || name == "str_reverse" || name == "str_replace"
@@ -6122,6 +6130,11 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_hostname",
         "__fn___fern_signal_ignore", "__fn___fern_signal_default",
         "__fern_strbuf_reset", "__fern_strbuf_take",
+        // The capacity-carrying string builder (#8773). __fern_buf_reserve is
+        // internal to the bundle — no call crosses a unit boundary to it.
+        "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range",
+        "__fern_buf_push_byte", "__fern_buf_len", "__fern_buf_take",
+        "__fern_buf_free",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
         "__fn___fern_proc_exec_as",

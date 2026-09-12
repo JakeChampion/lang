@@ -1171,6 +1171,23 @@ pub function op_signal_default(): Op { return op0("signal_default"); }
 pub function op_strbuf_reset(): Op { return op0("strbuf_reset"); }
 pub function op_strbuf_append(): Op { return op0("strbuf_append"); }
 pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
+// The capacity-carrying string builder (#8773) — the same accumulator without
+// the singleton. A handle is the ADDRESS of a 32-byte control block (data ptr,
+// len, cap, reserve), so any number of builders are live at once and they nest.
+// The buffer is allocated as a heap string already is, which is what makes
+// `buf_take` zero-copy: it stamps the length and hands the same pointer back as
+// a string, leaving the builder empty but still armed at its reserve. `buf_new`
+// pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
+// `buf_push_byte` / `buf_free` are statement ops (pushing a dummy so a
+// statement-level drop balances); `buf_len` and `buf_take` are value ops. All
+// lower to each backend's __fern_buf_* helpers.
+pub function op_buf_new(): Op { return op0("buf_new"); }
+pub function op_buf_push(): Op { return op0("buf_push"); }
+pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
+pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
+pub function op_buf_len(): Op { return op0("buf_len"); }
+pub function op_buf_take(): Op { return op0("buf_take"); }
+pub function op_buf_free(): Op { return op0("buf_free"); }
 // `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
 // no-op), pushing a dummy result (the syscall return) so a statement-level drop
 // balances — the same void-with-drop shape as putchar. Lowers to the x86-64 /
@@ -1651,16 +1668,16 @@ pub function kind_count(): i32 { return 196; }
 // 1..kind_count() sweep requires the id space to stay dense, and moving the
 // last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272): not
+// Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 275, then 277..279 — 276 (window_size) and 280
-// (proc_exec_as) were taken out of order by branches in flight (re-grep rather
-// than trusting this line — it has been stale before, which is the drift the
-// paragraph below is about).
+// NEXT FREE EXTENSION ID: 275, then 277..279, then 298 — 276 (window_size),
+// 280 (proc_exec_as) and 291..297 (the buf_* builder) were taken out of order
+// by branches in flight (re-grep rather than trusting this line — it has been
+// stale before, which is the drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1854,6 +1871,8 @@ function kind_id_len7(name: string): i32 {
     if (c == b'g' && name == "geteuid") { return 238; }
     if (c == b'g' && name == "getegid") { return 239; }
     if (c == b'e' && name == "environ") { return 249; }
+    if (c == b'b' && name == "buf_new") { return 291; }
+    if (c == b'b' && name == "buf_len") { return 295; }
     if (c == b'm') { return kind_id_len7_m(name); }
     if (c == b'o' && name == "opt_tag") { return 122; }
     if (c == b'p' && name == "putchar") { return 165; }
@@ -1882,6 +1901,7 @@ function kind_id_len7_m(name: string): i32 {
 function kind_id_len8(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len8_a(name); }
+    if (c == b'b') { return kind_id_len8_b(name); }
     if (c == b'f' && name == "f32_bits") { return 14; }
     if (c == b'f' && name == "f64_bits") { return 16; }
     if (c == b'h' && name == "hostname") { return 240; }
@@ -1904,6 +1924,13 @@ function kind_id_len8_a(name: string): i32 {
     if (name == "alloc_u8") { return 77; }
     if (name == "arr_make") { return 87; }
     if (name == "arr_push") { return 92; }
+    return 0;
+}
+
+function kind_id_len8_b(name: string): i32 {
+    if (name == "buf_push") { return 292; }
+    if (name == "buf_take") { return 296; }
+    if (name == "buf_free") { return 297; }
     return 0;
 }
 
@@ -2139,6 +2166,7 @@ function kind_id_len13(name: string): i32 {
     if (c == b'm' && name == "mapiter_value") { return 136; }
     if (c == b'm' && name == "map_hash_seed") { return 222; }
     if (c == b'p' && name == "process_alive") { return 271; }
+    if (c == b'b' && name == "buf_push_byte") { return 294; }
     if (c == b'r' && name == "raw_store_ptr") { return 84; }
     if (c == b'r' && name == "rlimit_nofile") { return 272; }
     if (c == b's' && name == "str_ends_with") { return 115; }
@@ -2150,6 +2178,7 @@ function kind_id_len13(name: string): i32 {
 function kind_id_len14(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "arr_push_owned") { return 93; }
+    if (c == b'b' && name == "buf_push_range") { return 293; }
     if (c == b'c' && name == "const_i32_text") { return 2; }
     if (c == b'c' && name == "create_dir_all") { return 231; }
     if (c == b'c' && name == "create_symlink") { return 263; }
@@ -2479,13 +2508,27 @@ function kind_name_4(id: i32): string {
     if (id == 274) { return "mknod"; }
     if (id == 276) { return "window_size"; }
     if (id == 280) { return "proc_exec_as"; }
+    if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     return "invalid";
+}
+
+// buf_kind_name renders the capacity-carrying string builder's block of
+// extension ids (#8773). Its own function so the seven names cost kind_name_4
+// one range test rather than seven compares.
+function buf_kind_name(id: i32): string {
+    if (id == 291) { return "buf_new"; }
+    if (id == 292) { return "buf_push"; }
+    if (id == 293) { return "buf_push_range"; }
+    if (id == 294) { return "buf_push_byte"; }
+    if (id == 295) { return "buf_len"; }
+    if (id == 296) { return "buf_take"; }
+    return "buf_free";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … rlimit_nofile=272)
+// extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2641,8 +2684,22 @@ function pops3(t: i32): boolean {
 // native's arities: no self-host backend emits them and irlower never
 // constructs one, so an occurrence is already a bug, and bailing says so
 // where a guessed arity would quietly proceed.
+// pops_buf is the operand count of one of the capacity-carrying string
+// builder's ops (#8773), or -1 when the tag is not one of them. The family sits
+// in its own contiguous block of ids and spans three different arities, so it
+// answers in one place rather than scattering seven tags across the pops1_* /
+// pops2_* predicates.
+function pops_buf(t: i32): i32 {
+    if (t < 291 || t > 297) { return 0 - 1; }
+    if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
+    if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte
+    return 1;                                         // buf_new, buf_len, buf_take, buf_free
+}
+
 pub function op_pops(o: Op): i32 {
     var t: i32 = o.kind_tag;
+    var bufn: i32 = pops_buf(t);
+    if (bufn >= 0) { return bufn; }
     if (pops0(t)) { return 0; }
     if (pops1_conv(t) || pops1_mem(t) || pops1_io(t)) { return 1; }
     if (pops2_arith(t) || pops2_mem(t) || pops2_io(t)) { return 2; }
