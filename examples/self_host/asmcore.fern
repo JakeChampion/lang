@@ -469,6 +469,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "renameat") { return "264"; }
         if (name == "fchmodat") { return "268"; }
         if (name == "truncate") { return "76"; }
+        if (name == "ftruncate") { return "77"; }
         if (name == "mknodat") { return "259"; }
         if (name == "fchownat") { return "260"; }
         if (name == "utimensat") { return "280"; }
@@ -521,6 +522,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "faccessat") { return "466"; }
         if (name == "fchmodat") { return "467"; }
         if (name == "truncate") { return "200"; }
+        if (name == "ftruncate") { return "201"; }
         // XNU has no mknodat — this is mknod(2), which takes no directory
         // descriptor. The row keeps the Linux spelling so the two tables
         // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
@@ -602,6 +604,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "faccessat") { return "439"; }
     if (name == "fchmodat") { return "53"; }
     if (name == "truncate") { return "45"; }
+    if (name == "ftruncate") { return "46"; }
     if (name == "mknodat") { return "33"; }
     if (name == "fchownat") { return "54"; }
     if (name == "renameat") { return "38"; }
@@ -2166,6 +2169,14 @@ pub function rt_src_reader_seek(t: string): string {
     return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { var r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd, off, whence); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
 }
 
+// rt_src_writer_truncate backs `w.truncate(length)` -> Option[IoError]:
+// ftruncate(2) on the handle's fd. The length goes out as an i64 argument, the
+// way __fern_reader_seek passes lseek's offset, so a size past 2 GiB is not
+// folded by a sign-extended i32.
+pub function rt_src_writer_truncate(t: string): string {
+    return "function __fern_writer_truncate(fd: i32, length: i64): Option[IoError] { var rc: i32 = __syscall3(" + sysno(t, "ftruncate") + ", fd, length, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
 // stat_fields_src is the tail of the FileStat literal: everything past the
 // three fields the classification above already has in hand. One list for all
 // three targets — statoff / statkind carry the whole of the per-target
@@ -2854,8 +2865,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                     // `read_line` / `read_chunk` / `write` are ordinary method
                     // names a user struct may declare, and a name-keyed answer
                     // hands a user method the resource signature (#8462).
-                    // Writer.write is Option[IoError], a payload this Ty union
-                    // cannot name, so it falls through to unknown.
+                    // Writer.write and Writer.truncate are Option[IoError], a
+                    // payload this Ty union cannot name, so they fall through
+                    // to unknown.
                     if (ty_struct_name(rcv) == "Reader"
                             && (fa.field == "read_chunk" || fa.field == "read_line")) {
                         return ty_string();
@@ -3852,7 +3864,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
         return ty_result(ty_unknown());
     }
     if (ty_struct_name(rt) == "Reader" && fa.field == "seek") { return ty_result(ty_i32()); }
-    if (ty_struct_name(rt) == "Writer" && fa.field == "write") { return ty_option(ty_unknown()); }
+    if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {
         return ty_option(map_val(rt));

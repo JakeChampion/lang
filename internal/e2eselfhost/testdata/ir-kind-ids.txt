@@ -265,6 +265,7 @@ truncate=273
 mknod=274
 chown_at=275
 window_size=276
+writer_truncate=277
 proc_exec_as=280
 buf_new=291
 buf_push=292

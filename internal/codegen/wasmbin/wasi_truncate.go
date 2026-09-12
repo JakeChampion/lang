@@ -1,8 +1,7 @@
 // `truncate` for the wasmbin backend.
 //
-// The builtin is path-based (see the checker's doc comment: no Fern open
-// mode yields a writable descriptor to an existing file without O_TRUNC
-// having already emptied it, so an fd form could not express an extend).
+// The builtin is path-based, and `Writer.truncate` in
+// wasi_writer_truncate.go is the descriptor form beside it.
 // WASI has no path-based set-size on either preview — measured against
 // wasmtime 46, `wasi_snapshot_preview1::path_filestat_set_size` is not a
 // defined import, and `wasi:filesystem/types@0.2.0` has `set-size` only

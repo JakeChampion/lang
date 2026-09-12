@@ -5540,6 +5540,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
+        } else if (o.kind_tag == 277) {  // writer_truncate
+            // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
+            // pushes a fresh Option[IoError]. The length is on top but param[0]
+            // is fd, so swap before the call, as writer_write does.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_writer_truncate\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
         } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments (the
             // AST path's __fern_args, which allocates). The args need also makes the
@@ -8759,6 +8766,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
+        if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via

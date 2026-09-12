@@ -1645,6 +1645,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
             s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_seek\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 277) {  // writer_truncate
+            // [fd][length] -> Option[IoError]. The length is on top but
+            // param[0] is fd, so swap before the call, as writer_write does.
+            s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments
             // (asm_arm64.emit_runtime's __fern_args, emitted in its args block).
@@ -7018,6 +7024,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
+        if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // env is the odd one out: no syscall at all, so it needs none of `tgt` and

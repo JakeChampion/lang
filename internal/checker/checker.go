@@ -2796,6 +2796,34 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.NumberType{Width: 64, Signed: true}, ioErrType}})
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
+	// truncate(len) is ftruncate(2) on the handle: the file's length is set
+	// to `len`, growing with a hole that reads as zeros or discarding the
+	// bytes past it.
+	//
+	// The path-based `truncate` builtin is NOT the same operation, and
+	// which one a caller wants is a question about permission rather than
+	// about style. `truncate(2)` resolves the name again and checks write
+	// permission again; this one's check happened at the open. A file
+	// created under `umask 222` is mode 0444, so `truncate -s 5 new` is
+	// EACCES by name to an unprivileged caller and succeeds through the
+	// descriptor — which is what GNU `truncate` does, and it is why this
+	// exists. Resizing through the handle also closes the window between
+	// an `fstat` and a resize computed from it.
+	//
+	// On `Writer` and not on `Reader`: ftruncate(2) requires the
+	// descriptor to be open for writing, so a read handle answers EINVAL
+	// and there is nothing to offer there.
+	//
+	// A negative `len` is EINVAL from the kernel rather than being clamped
+	// here, and a length past the filesystem's maximum is EFBIG. A
+	// descriptor that is not a regular file — a pipe, a terminal — is
+	// EINVAL.
+	//
+	// WASI has this as `fd_filestat_set_size` on preview 1 and
+	// `descriptor.set-size` on preview 2, so it is provided on all four
+	// targets rather than refused.
+	registerStructMethod("Writer", "truncate",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, optionIoErr)
 
 	// Map[K, V] — generic IndexMap-shaped associative
 	// container per PR 4 of docs/LANGUAGE-DIRECTION.md. The

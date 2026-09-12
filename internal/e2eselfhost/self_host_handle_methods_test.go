@@ -10,13 +10,15 @@ import (
 	"testing"
 )
 
-// selfHostHandleStatSeekSource drives `Reader.stat()` / `Writer.stat()` and
-// `Reader.seek(offset, whence)` through the self-host's lowering: the
-// `fd_stat` and `reader_seek` ops, and the Fern runtime leaves behind them.
-// Every failure returns its own exit code; the reads after each seek are the
-// assertion that the position moved. `minus2` is bound first because the
-// self-host's lower_expr has no `as i64` arm for a mixed-width subtraction.
-func selfHostHandleStatSeekSource(path string) string {
+// selfHostHandleMethodSource drives `Reader.stat()` / `Writer.stat()`,
+// `Reader.seek(offset, whence)` and `Writer.truncate(length)` through the
+// self-host's lowering: the `fd_stat`, `reader_seek` and `writer_truncate`
+// ops, and the Fern runtime leaves behind them. Every failure returns its own
+// exit code; the reads after each seek are the assertion that the position
+// moved, and the stat after the resize is the assertion that the length did.
+// `minus2` is bound first because the self-host's lower_expr has no `as i64`
+// arm for a mixed-width subtraction.
+func selfHostHandleMethodSource(path string, out string) string {
 	return fmt.Sprintf(`function main(): i32 {
     var minus2: i64 = (0 as i64) - (2 as i64);
     match (open_reader(%[1]q)) {
@@ -65,9 +67,30 @@ func selfHostHandleStatSeekSource(path string) string {
         Err(_) => { return 18; },
         Ok(st) => { if (st.is_file) { return 19; } if (st.is_dir) { return 20; } }
     }
+    match (open_writer(%[2]q)) {
+        Err(_) => { return 31; },
+        Ok(w) => {
+            match (w.write("0123456789")) { Some(_) => { return 21; }, None => {} }
+            match (w.truncate(4 as i64)) { Some(_) => { return 22; }, None => {} }
+            match (w.truncate(6 as i64)) { Some(_) => { return 23; }, None => {} }
+            match (w.stat()) {
+                Err(_) => { return 24; },
+                Ok(st) => { if (st.size != 6 as i64) { return 25; } }
+            }
+            match (w.truncate((0 as i64) - (1 as i64))) {
+                Some(_) => { },
+                None => { return 26; }
+            }
+            w.close();
+        }
+    }
+    match (read_file(%[2]q)) {
+        Err(_) => { return 27; },
+        Ok(s) => { if (s.len() != 6) { return 28; } }
+    }
     return 0;
 }
-`, path)
+`, path, out)
 }
 
 func selfHostHandleProbeFile(t *testing.T, dir string) string {
@@ -93,10 +116,11 @@ func runPiped(t *testing.T, cmd *exec.Cmd) (string, int) {
 	return out.String(), cmd.ProcessState.ExitCode()
 }
 
-// TestSelfHostHandleStatSeekIR is the x86-64 IR leg: the two ops lower to
-// calls into the Fern-compiled __fern_fd_stat / __fern_reader_seek, which
-// share stat's record projection and lseek's 64-bit result.
-func TestSelfHostHandleStatSeekIR(t *testing.T) {
+// TestSelfHostHandleMethodsIR is the x86-64 IR leg: the three ops lower to
+// calls into the Fern-compiled __fern_fd_stat / __fern_reader_seek /
+// __fern_writer_truncate, which share stat's record projection, lseek's
+// 64-bit result and ftruncate's.
+func TestSelfHostHandleMethodsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("handle stat/seek test runs only natively (opens host paths)")
@@ -105,12 +129,12 @@ func TestSelfHostHandleStatSeekIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	src := selfHostHandleStatSeekSource(selfHostHandleProbeFile(t, dir))
+	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"))
 	asm := runCapture(t, gcc, runner, driverBin, []byte(src), "-ir")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
-	for _, sym := range []string{"call __fn___fern_fd_stat", "call __fn___fern_reader_seek"} {
+	for _, sym := range []string{"call __fn___fern_fd_stat", "call __fn___fern_reader_seek", "call __fn___fern_writer_truncate"} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Errorf("asm has no `%s`: the op did not reach the runtime leaf", sym)
 		}
@@ -118,13 +142,13 @@ func TestSelfHostHandleStatSeekIR(t *testing.T) {
 	progBin := buildBin(t, gcc, dir, "handle_prog", string(asm))
 	out, code := runPiped(t, exec.Command(progBin))
 	if code != 0 {
-		t.Errorf("program exited %d, want 0 — the code names the case (see selfHostHandleStatSeekSource)\n%s", code, out)
+		t.Errorf("program exited %d, want 0 — the code names the case (see selfHostHandleMethodSource)\n%s", code, out)
 	}
 }
 
-// TestSelfHostHandleStatSeekArm64IR is the arm64 leg of the same programme,
+// TestSelfHostHandleMethodsArm64IR is the arm64 leg of the same programme,
 // through asm_ir_run -target arm64-linux under qemu.
-func TestSelfHostHandleStatSeekArm64IR(t *testing.T) {
+func TestSelfHostHandleMethodsArm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	if len(x86runner) != 0 {
@@ -134,12 +158,12 @@ func TestSelfHostHandleStatSeekArm64IR(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
-	src := selfHostHandleStatSeekSource(selfHostHandleProbeFile(t, dir))
+	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"))
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux", "-ir")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
 	}
-	for _, sym := range []string{"bl __fn___fern_fd_stat", "bl __fn___fern_reader_seek"} {
+	for _, sym := range []string{"bl __fn___fern_fd_stat", "bl __fn___fern_reader_seek", "bl __fn___fern_writer_truncate"} {
 		if !bytes.Contains(asm, []byte(sym)) {
 			t.Errorf("asm has no `%s`: the op did not reach the runtime leaf", sym)
 		}
@@ -147,7 +171,7 @@ func TestSelfHostHandleStatSeekArm64IR(t *testing.T) {
 	bin := buildBinArm64(t, arm64gcc, dir, "handle_prog_arm64", string(asm))
 	out, code := runPiped(t, runArm64Bin(qemu, bin))
 	if code != 0 {
-		t.Errorf("program exited %d, want 0 — the code names the case (see selfHostHandleStatSeekSource)\n%s", code, out)
+		t.Errorf("program exited %d, want 0 — the code names the case (see selfHostHandleMethodSource)\n%s", code, out)
 	}
 }
 

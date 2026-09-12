@@ -25,6 +25,7 @@ var payloadlessArmBoxSize = map[string]int32{
 	"__fern_reader_read_line_fd": 16,
 	// Option[IoError]: tag@0, IoError ptr@4.
 	"__fern_writer_write":    8,
+	"__fern_writer_truncate": 8,
 	"__fern_writer_close":    8,
 	"__fern_reader_close_fd": 8,
 }

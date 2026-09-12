@@ -1314,6 +1314,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"wasm_block":                    emitWasmBlockHelper,
 	"open_writer":                   emitOpenWriterHelper,
 	"__method_Writer_write":         emitWriterWriteHelper,
+	"__method_Writer_truncate":      emitWriterTruncateHelper,
 	"__method_Writer_close":         emitWriterCloseHelper,
 	"open_reader":                   emitOpenReaderHelper,
 	"__method_Reader_read_chunk":    emitReaderReadChunkHelper,
@@ -2926,6 +2927,37 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitWriterTruncateHelper writes __method_Writer_truncate(writer, len) ->
+// Option[IoError]: ftruncate(2) the handle's fd (from [writer+8]) to len;
+// return None on success, or map -errno through __fern_io_error (with an empty
+// path, since a resize carries none) and return Some(IoError). The length is
+// passed through unmasked, so a negative one is the kernel's EINVAL. Non-leaf.
+// x19=errno scratch. x0=writer handle, x1=len.
+func emitWriterTruncateHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Writer_truncate"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tldr w0, [x0, #8]") // fd @ ptr+8; the length is already in x1
+	w("\tmov x8, #46")      // ftruncate
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wtr_err")
+	emitOptionBox(w, 1, "")
+	w("\tb .Lssa_wtr_ret")
+	w(".Lssa_wtr_err:")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19") // errno
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitOptionBox(w, 0, "x19")
+	w(".Lssa_wtr_ret:")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
 // emitWriterCloseHelper writes __method_Writer_close(writer) -> Option[IoError]:
 // close(2) the handle's fd (from [writer+8]); return None on success or
 // Some(IoError) on failure. Non-leaf. x0=writer handle.
@@ -3290,6 +3322,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_dir":                      {"__fern_io_error"},
 	"open_writer":                   {"__fern_io_error"},
 	"__method_Writer_write":         {"__fern_io_error"},
+	"__method_Writer_truncate":      {"__fern_io_error"},
 	"__method_Writer_close":         {"__fern_io_error"},
 	"open_reader":                   {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
@@ -3366,6 +3399,7 @@ var heapUsingHelpers = map[string]bool{
 	"poll":                          true,
 	"open_writer":                   true,
 	"__method_Writer_write":         true,
+	"__method_Writer_truncate":      true,
 	"__method_Writer_close":         true,
 	"open_reader":                   true,
 	"__method_Reader_read_chunk":    true,

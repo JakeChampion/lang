@@ -1144,6 +1144,12 @@ pub function op_fd_stat(): Op { return op0("fd_stat"); }
 // `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
 // lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
 pub function op_reader_seek(): Op { return op0("reader_seek"); }
+// `writer_truncate` pops [fd, length] and pushes Option[IoError]: ftruncate(2)
+// on the handle. Backs `w.truncate(length)`. Distinct from `truncate` (273),
+// which resolves a PATH and checks write permission again — the descriptor's
+// check happened at the open, so the two disagree on a file whose mode would
+// refuse a fresh one.
+pub function op_writer_truncate(): Op { return op0("writer_truncate"); }
 // `reader_close` pops an i32 Reader fd and closes it (`close(fd)`), pushing a
 // fresh Option[IoError] (None on success). A VALUE op — one arg consumed. Lowers
 // to each backend's __fern_reader_close helper. wasm-ineligible like read_chunk.
@@ -1684,11 +1690,11 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 277..279, then 298 — 275 (chown_at), 276
-// (window_size), 280 (proc_exec_as) and 291..297 (the buf_* builder) were
-// taken out of order by branches in flight (re-grep rather than trusting this
-// line — it has been stale before, which is the drift the paragraph below is
-// about).
+// NEXT FREE EXTENSION ID: 278..279, then 298 — 275 (chown_at), 276
+// (window_size), 277 (writer_truncate), 280 (proc_exec_as) and 291..297 (the
+// buf_* builder) were taken out of order by branches in flight (re-grep rather
+// than trusting this line — it has been stale before, which is the drift the
+// paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -2210,6 +2216,7 @@ function kind_id_len15(name: string): i32 {
     if (c == b'r' && name == "read_file_bytes") { return 233; }
     if (c == b's' && name == "str_starts_with") { return 114; }
     if (c == b'w' && name == "write_file_exec") { return 226; }
+    if (c == b'w' && name == "writer_truncate") { return 277; }
     return 0;
 }
 
@@ -2520,6 +2527,7 @@ function kind_name_4(id: i32): string {
     if (id == 274) { return "mknod"; }
     if (id == 275) { return "chown_at"; }
     if (id == 276) { return "window_size"; }
+    if (id == 277) { return "writer_truncate"; }
     if (id == 280) { return "proc_exec_as"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     return "invalid";
@@ -2675,6 +2683,7 @@ function pops2_io(t: i32): boolean {
         || t == 237                                                      // access (path, mode)
         || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
         || t == 273                                                      // truncate (path, length)
+        || t == 277                                                      // writer_truncate (fd, length)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213;                                         // writer_write, proc_exec
@@ -4349,8 +4358,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 270) { return true; }
     // window_size boxes a fresh WinSize struct + a Result wrapper.
     if (tag == 276) { return true; }
-    // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError].
-    if (tag == 241 || tag == 242) { return true; }
+    // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError];
+    // writer_truncate boxes its Option[IoError].
+    if (tag == 241 || tag == 242 || tag == 277) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
     if (tag == 177) { return true; }
