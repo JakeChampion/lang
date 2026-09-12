@@ -13530,6 +13530,29 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P4 — operand-stack round trip around an undisturbed value: a push, one
+	// instruction that cannot observe or disturb the slot, and the matching pop
+	// into a different register. Nothing else can reach the slot between the
+	// two, so the value can go straight to the pop's destination and the middle
+	// instruction keeps its place:
+	//   str x0, [sp, #-N]! / <op> / ldr xD, [sp], #N  =>  mov xD, x0 / <op>
+	//
+	// The `mov` has to precede <op> — <op> is there to overwrite x0, which is
+	// why the push exists — so <op> may not mention xD in either width, or it
+	// would read the moved value instead of what it held before. This is the
+	// arm64 twin of x86-64's P5.
+	if n >= 3 {
+		if k, ok := matchPushImm(w[n-3]); ok {
+			if dst, k2, ok2 := matchPopReg(w[n-1]); ok2 && k2 == k && dst != "x0" {
+				if roundTripSafeMid(w[n-2], dst) {
+					mid := w[n-2]
+					g.peepWin = append(w[:n-3], "\tmov "+dst+", x0", mid)
+					return
+				}
+			}
+		}
+	}
+
 	// P2 — dead branch: an unconditional `b L` immediately followed by the
 	// label `L:` is a no-op fall-through. Drop the branch; the label stays
 	// for other branches. Only the bare unconditional `b ` matches — `bl`
@@ -13544,6 +13567,65 @@ func (g *generator) peepholeTail() {
 			}
 		}
 	}
+}
+
+// roundTripMidOps are the mnemonics P4 will step a push/pop pair over. It is a
+// whitelist rather than a filter on the dangerous ones: each writes only the
+// register it names and reads only its operands, so a call, a branch, a store,
+// a label or anything with a memory or flag effect cannot qualify by omission.
+var roundTripMidOps = map[string]bool{
+	"mov": true, "movz": true, "movk": true, "mvn": true, "neg": true,
+	"adrp": true, "add": true, "sub": true, "and": true, "orr": true,
+	"eor": true, "lsl": true, "lsr": true, "asr": true, "ror": true,
+	"mul": true, "ldr": true, "ldur": true, "ldrb": true, "ldrh": true,
+	"ldrsw": true, "ldrsb": true, "ldrsh": true, "sxtw": true, "uxtw": true,
+}
+
+// roundTripSafeMid reports whether `line` may sit between a push and its pop
+// with the pushed value rerouted to `dst` ahead of it. The instruction must
+// write x0 (the reason the push is there), must leave sp alone, and must not
+// name `dst` in either width — P4 moves the value into `dst` BEFORE this line,
+// so a read of it here would see the moved value rather than the old one.
+func roundTripSafeMid(line, dst string) bool {
+	if !strings.HasPrefix(line, "\t") {
+		return false
+	}
+	body := line[1:]
+	sp := strings.IndexByte(body, ' ')
+	if sp <= 0 || !roundTripMidOps[body[:sp]] {
+		return false
+	}
+	args := body[sp+1:]
+	if !strings.HasPrefix(args, "x0, ") && !strings.HasPrefix(args, "w0, ") {
+		return false
+	}
+	rest := args[len("x0, "):]
+	return !mentionsReg(rest, "sp") &&
+		!mentionsReg(rest, dst) &&
+		!mentionsReg(rest, "w"+dst[1:])
+}
+
+// mentionsReg reports whether `s` names register `reg` as a whole token, so
+// "x1" does not match inside "x10" or "0x1f".
+func mentionsReg(s, reg string) bool {
+	for i := 0; ; {
+		j := strings.Index(s[i:], reg)
+		if j < 0 {
+			return false
+		}
+		j += i
+		beforeOK := j == 0 || !isRegTokenByte(s[j-1])
+		k := j + len(reg)
+		afterOK := k == len(s) || !isRegTokenByte(s[k])
+		if beforeOK && afterOK {
+			return true
+		}
+		i = j + 1
+	}
+}
+
+func isRegTokenByte(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b == '_'
 }
 
 // matchPushImm matches a `\tstr x0, [sp, #-N]!` push and returns the N token.
