@@ -160,7 +160,7 @@ function spell_table(f: Fmt): Fmt {
 // `num` is GNU's line_buf: the `%6d\t` field as bytes, incremented in
 // place, so a line number costs one byte store and a seven-byte copy
 // rather than a formatting of the count.
-struct State { w: io_buffered.BufWriter, out: string, num: u8[], at_start: boolean, prev_blank: boolean, ok: boolean }
+struct State { w: io_buffered.BufWriter, num: u8[], at_start: boolean, prev_blank: boolean, ok: boolean }
 
 // `read_size()` — bytes per read(2). GNU reads 128 KiB; measured
 // against `cat` of a 62 MiB file, that block is what the pipe and
@@ -169,19 +169,10 @@ function read_size(): i32 {
   return 131072;
 }
 
-// The output built by the line rewriter is handed to stdout's buffer
-// once it holds this much: GNU's stdio block. Kept small because an
-// append that cannot grow the accumulator in place copies it whole.
-// stdout's own buffer is a read wide, so a whole read goes to
-// write(2) directly rather than through a copy.
-function drain_bytes(): i32 {
-  return 8192;
-}
-
 function state_new(): State {
   var num: u8[] = [];
   num = num.append(32 as u8).append(32 as u8).append(32 as u8).append(32 as u8).append(32 as u8).append(48 as u8).append(9 as u8);
-  return State { w: gnu.out_with(read_size()), out: "", num: num, at_start: true, prev_blank: false, ok: true };
+  return State { w: gnu.out_with(read_size()), num: num, at_start: true, prev_blank: false, ok: true };
 }
 
 // `next_num(num)` — GNU's next_line_num: carry from the last digit
@@ -211,27 +202,27 @@ function next_num(num: u8[]): u8[] {
   return wider;
 }
 
-// `drain(s)` — hand what is built to stdout.
+// `drain(s)` — get what is buffered out to the fd, so a diagnostic on
+// stderr lands after the output it follows.
 function drain(s: State): State {
-  if (s.out.len() == 0) {
-    return s;
-  }
-  return State { ...s, w: gnu.put(s.w, s.out), out: "" };
+  return State { ...s, w: gnu.flush(s.w) };
 }
 
 // `format_chunk(st, chunk, f)` — one read of input through the line
-// rewriter. The output string is taken out of the state for the loop
-// — appended to as a local it grows in place, as a field it would be
-// copied — and put back at the end. The scan is one memchr per line;
-// a body is appended whole, with its newline, unless -v / -T has bytes
-// to spell out or -E puts a `$` before the newline.
+// rewriter. Pieces go straight into stdout's builder, which flushes
+// itself at its own threshold, so no byte is copied into an accumulator
+// on the way. The scan is one memchr per line; a body is appended whole,
+// with its newline, unless -v / -T has bytes to spell out or -E puts a
+// `$` before the newline.
 function format_chunk(st: State, chunk: string, f: Fmt): State {
   var s: State = st;
-  var out: string = s.out;
+  var w: io_buffered.BufWriter = s.w;
+  var h: usize = w.handle();
+  var cap: i32 = read_size();
   var num: u8[] = s.num;
   var at_start: boolean = s.at_start;
   var prev_blank: boolean = s.prev_blank;
-  s = State { ...s, out: "", num: [] };
+  s = State { ...s, num: [] };
   var pos: i32 = 0;
   var len: i32 = chunk.len();
   var spell: boolean = f.np || f.tabs;
@@ -249,7 +240,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
       }
       if (f.nonblank && !blank || !f.nonblank && f.number) {
         num = next_num(num);
-        out = out + string_from_bytes_unchecked(num);
+        buf_push(h, string_from_bytes_unchecked(num));
       }
       at_start = false;
       prev_blank = blank;
@@ -262,31 +253,30 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
           i = i + 1;
           continue;
         }
-        out = out + slice_unchecked(chunk, pos, i);
-        out = out + f.spell[b];
+        buf_push_range(h, chunk, pos, i);
+        buf_push(h, f.spell[b]);
         i = i + 1;
         pos = i;
       }
     }
     if (nl < 0) {
-      out = out + slice_unchecked(chunk, pos, len);
+      buf_push_range(h, chunk, pos, len);
       pos = len;
     } else {
       if (f.ends) {
-        out = out + slice_unchecked(chunk, pos, nl);
-        out = out + "$\n";
+        buf_push_range(h, chunk, pos, nl);
+        buf_push(h, "$\n");
       } else {
-        out = out + slice_unchecked(chunk, pos, nl + 1);
+        buf_push_range(h, chunk, pos, nl + 1);
       }
       at_start = true;
       pos = nl + 1;
     }
-    if (out.len() >= drain_bytes()) {
-      s = State { ...s, w: gnu.put(s.w, out) };
-      out = "";
+    if (buf_len(h) >= cap) {
+      w = gnu.flush(w);
     }
   }
-  return State { ...s, out: out, num: num, at_start: at_start, prev_blank: prev_blank };
+  return State { ...s, w: gnu.check(w), num: num, at_start: at_start, prev_blank: prev_blank };
 }
 
 // `squeeze_chunk(st, chunk)` — -s with nothing else: a run of
@@ -294,16 +284,17 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
 // one before it was blank too.
 function squeeze_chunk(st: State, chunk: string): State {
   var s: State = st;
-  var out: string = s.out;
+  var w: io_buffered.BufWriter = s.w;
+  var h: usize = w.handle();
+  var cap: i32 = read_size();
   var at_start: boolean = s.at_start;
   var prev_blank: boolean = s.prev_blank;
-  s = State { ...s, out: "" };
   var pos: i32 = 0;
   var len: i32 = chunk.len();
   while (pos < len) {
     if (at_start && chunk[pos] as i32 == 10) {
       if (!prev_blank) {
-        out = out + "\n";
+        buf_push_byte(h, 10);
         prev_blank = true;
       }
       pos = pos + 1;
@@ -320,15 +311,14 @@ function squeeze_chunk(st: State, chunk: string): State {
       end = q + 1;
       at_start = true;
     }
-    out = out + slice_unchecked(chunk, pos, end);
+    buf_push_range(h, chunk, pos, end);
     prev_blank = false;
     pos = end;
-    if (out.len() >= drain_bytes()) {
-      s = State { ...s, w: gnu.put(s.w, out) };
-      out = "";
+    if (buf_len(h) >= cap) {
+      w = gnu.flush(w);
     }
   }
-  return State { ...s, out: out, at_start: at_start, prev_blank: prev_blank };
+  return State { ...s, w: gnu.check(w), at_start: at_start, prev_blank: prev_blank };
 }
 
 // `fail(st, msg)` — one diagnostic with the output flushed ahead of
