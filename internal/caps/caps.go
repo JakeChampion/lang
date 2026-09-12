@@ -81,6 +81,12 @@ var BuiltinCaps = map[string]string{
 	// package question has none of the target question's subtlety here:
 	// it is filesystem reach.
 	"mknod": "fs",
+	// Flushing the machine's dirty buffers writes to every filesystem
+	// mounted on it. The package question is the same one the rest of
+	// this group asks — may this package reach the filesystem at all —
+	// so it needs no capability of its own here, unlike the TARGET
+	// question, where no wasm world can do it.
+	"sync": "fs",
 	// The process file-mode creation mask. Reading it is ambient
 	// information about the process, but SETTING it changes the mode of
 	// every file and directory anything creates afterwards — a

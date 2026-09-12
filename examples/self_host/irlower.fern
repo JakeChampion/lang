@@ -11524,6 +11524,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // isatty / access / geteuid / getegid — see lower_call_os_query, which is
     // split out so this dispatch does not grow four more arms.
     if (is_os_query_call(cid.name, c.args.len())) { return lower_call_os_query(c, cid, s); }
+    // sync() -> void: sync(2), write-back of every dirty buffer on the machine.
+    // No arguments and no result, so the op is the whole lowering.
+    if (cid.name == "sync" && c.args.len() == 0) { return s.emit(ir.op_sync()); }
     // signal_ignore / signal_default — see lower_call_signal, split out for the
     // same reason lower_call_os_query is.
     if (is_signal_call(cid.name, c.args.len())) { return lower_call_signal(c, cid, s); }
@@ -13940,6 +13943,23 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             var fst: LowerState = lower_expr(fa.obj, s);
             if (!fst.ok) { return fst; }
             return fst.emit(ir.op_fd_stat());
+        }
+        // r.fsync() / w.fsync() -> Option[IoError], and the fdatasync and
+        // syncfs twins: write-back asked of the bare fd, like stat and close.
+        if (fa.field == "fsync" && c.args.len() == 0) {
+            var fsy: LowerState = lower_expr(fa.obj, s);
+            if (!fsy.ok) { return fsy; }
+            return fsy.emit(ir.op_fd_fsync());
+        }
+        if (fa.field == "fdatasync" && c.args.len() == 0) {
+            var fds: LowerState = lower_expr(fa.obj, s);
+            if (!fds.ok) { return fds; }
+            return fds.emit(ir.op_fd_fdatasync());
+        }
+        if (fa.field == "syncfs" && c.args.len() == 0) {
+            var sfs: LowerState = lower_expr(fa.obj, s);
+            if (!sfs.ok) { return sfs; }
+            return sfs.emit(ir.op_fd_syncfs());
         }
         if (fa.field == "seek" && c.args.len() == 2) {
             var sks: LowerState = lower_expr(fa.obj, s);
@@ -70760,6 +70780,9 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.stat" || name == "Writer.stat") { return "Result[FileStat, IoError]"; }
     if (name == "Reader.seek") { return "Result[i64, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write") { return "Option[IoError]"; }
+    if (name == "Reader.fsync" || name == "Writer.fsync") { return "Option[IoError]"; }
+    if (name == "Reader.fdatasync" || name == "Writer.fdatasync") { return "Option[IoError]"; }
+    if (name == "Reader.syncfs" || name == "Writer.syncfs") { return "Option[IoError]"; }
     return "";
 }
 

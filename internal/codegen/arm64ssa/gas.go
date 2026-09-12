@@ -1316,6 +1316,13 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
 	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
 	"__method_Reader_seek":          emitReaderSeekHelper,
+	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
+	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
+	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
+	"__method_Writer_fdatasync":     emitFdSyncHelper("__method_Writer_fdatasync", "wfds", 83),
+	"__method_Reader_syncfs":        emitFdSyncHelper("__method_Reader_syncfs", "rsfs", 267),
+	"__method_Writer_syncfs":        emitFdSyncHelper("__method_Writer_syncfs", "wsfs", 267),
+	"sync":                          emitSyncHelper,
 	"open_appender":                 emitOpenAppenderHelper,
 	"open_exclusive":                emitOpenExclusiveHelper,
 	"stdin":                         emitStdHandleHelper("stdin", 0),
@@ -2883,6 +2890,48 @@ func emitWriterCloseHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitFdSyncHelper writes one of the write-back methods —
+// `fsync` / `fdatasync` / `syncfs` on either handle type — as
+// `(handle) -> Option[IoError]`: the syscall against the fd at
+// [handle+8], None on success and Some(IoError) on failure. Same shape
+// as Writer.close, which is the same contract with a different number.
+// Non-leaf. x0 = handle.
+func emitFdSyncHelper(name, lp string, sysno int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-16]!")
+		w("\tmov x29, sp")
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8
+		w("\tmov x8, #%d", sysno)
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", lp)
+		emitOptionBox(w, 1, "")
+		w("\tb .Lssa_%s_ret", lp)
+		w(".Lssa_%s_err:", lp)
+		w("\tneg x9, x0") // errno (x9 survives the inline empty-string alloc)
+		emitEmptyString(w, "x1")
+		w("\tmov x0, x9")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		w("\tmov x9, x0")
+		emitOptionBox(w, 0, "x9")
+		w(".Lssa_%s_ret:", lp)
+		w("\tldp x29, x30, [sp], #16")
+		w("\tret")
+	}
+}
+
+// emitSyncHelper writes `sync()` — sync(2) over every mounted
+// filesystem. No arguments, no result and no failure, so it is a leaf
+// with no frame at all.
+func emitSyncHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("sync"))
+	w("\tmov x8, #81") // sync
+	w("\tsvc #0")
+	w("\tret")
+}
+
 // emitOpenReaderHelper: open_reader(path) — O_RDONLY. The read-only sibling of
 // open_writer (identical handle shape: fd at [ptr+8], immortal rc).
 func emitOpenReaderHelper(w func(string, ...any)) {
@@ -3213,6 +3262,12 @@ var runtimeHelperDeps = map[string][]string{
 	"open_writer":                   {"__fern_io_error"},
 	"__method_Writer_write":         {"__fern_io_error"},
 	"__method_Writer_close":         {"__fern_io_error"},
+	"__method_Reader_fsync":         {"__fern_io_error"},
+	"__method_Writer_fsync":         {"__fern_io_error"},
+	"__method_Reader_fdatasync":     {"__fern_io_error"},
+	"__method_Writer_fdatasync":     {"__fern_io_error"},
+	"__method_Reader_syncfs":        {"__fern_io_error"},
+	"__method_Writer_syncfs":        {"__fern_io_error"},
 	"open_reader":                   {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
 	"__method_Reader_read_chunk":    {"__fern_io_error"},
@@ -3282,6 +3337,13 @@ var heapUsingHelpers = map[string]bool{
 	"open_writer":                   true,
 	"__method_Writer_write":         true,
 	"__method_Writer_close":         true,
+	"__method_Reader_fsync":         true,
+	"__method_Writer_fsync":         true,
+	"__method_Reader_fdatasync":     true,
+	"__method_Writer_fdatasync":     true,
+	"__method_Reader_syncfs":        true,
+	"__method_Writer_syncfs":        true,
+	"sync":                          true,
 	"open_reader":                   true,
 	"__method_Reader_read_chunk":    true,
 	"__method_Reader_read_line":     true,

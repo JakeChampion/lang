@@ -107,6 +107,10 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.File.SetTimes = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.set-size":
 			req.File.SetSize = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.sync":
+			req.File.Sync = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.sync-data":
+			req.File.SyncData = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat-at":
 			req.File.Stat = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat":

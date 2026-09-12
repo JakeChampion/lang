@@ -412,6 +412,8 @@ var rcInert = map[string]bool{
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,
 	"__fern_fd_stat": true, "__fern_reader_seek": true,
+	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true,
+	"__fern_fd_syncfs": true, "__fern_sync": true,
 	"__fern_reader_read_chunk": true, "__fern_reader_read_line": true,
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,

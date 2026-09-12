@@ -263,3 +263,7 @@ rlimit_nofile=272
 truncate=273
 mknod=274
 proc_exec_as=280
+sync=281
+fd_fsync=282
+fd_fdatasync=283
+fd_syncfs=284

@@ -406,6 +406,15 @@ func fsSetSize(b *instTypeBuilder, v fsVocab) {
 		"[method]descriptor.set-size")
 }
 
+// fsSyncSelf declares `sync` / `sync-data`: func(self:
+// borrow<descriptor>) -> result<_, error-code>. No path form exists for
+// either, which is why the write-back methods sit on a handle.
+func fsSyncSelf(b *instTypeBuilder, v fsVocab, method string) {
+	b.funcExport(tcpMethodFuncDecl(method,
+		[]string{"self"}, []byte{byte(v.bDesc)}, byte(v.rUnit)),
+		"[method]descriptor."+method)
+}
+
 // fsPathMutator emits one of the path-mutating methods —
 // `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
 // share a signature exactly: (borrow<descriptor>, string) ->

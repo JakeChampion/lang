@@ -1616,7 +1616,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // needs_fs_runtime is the gate on the filesystem runtime bundle: every
 // need whose generated Fern body is emitted from that block.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
-    return s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
+    return s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write") || s.has_need("reader");
 }
 
 // needs_io_error_shapes is __fern_io_error's own gate — needs_fs_runtime
@@ -1629,7 +1629,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
             || s.has_need("temp_dir") || s.has_need("create_dir_all")
             || s.has_need("create_dir") || s.has_need("remove_dir")
             || s.has_need("create_link") || s.has_need("create_symlink")
-            || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times")
+            || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync") || s.has_need("set_file_times")
             || s.has_need("read_link");
 }
 
@@ -1638,7 +1638,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
 // allocate, so a program that never allocates directly still pulls the
 // runtime in through one of them.
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
-    return s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("environ") || s.has_need("getgroups") || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("subprocess");
+    return s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("create_dir") || s.has_need("remove_dir") || s.has_need("create_link") || s.has_need("create_symlink") || s.has_need("rename") || s.has_need("chmod") || s.has_need("truncate") || s.has_need("mknod") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync") || s.has_need("set_file_times") || s.has_need("read_link") || s.has_need("umask") || s.has_need("env") || s.has_need("environ") || s.has_need("getgroups") || s.has_need("stat") || s.has_need("lstat") || s.has_need("statfs") || s.has_need("access") || s.has_need("subprocess");
 }
 
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
@@ -5184,6 +5184,21 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // success). Reuses the AST path's __fern_reader_close (which allocates).
             s = s.write("    call __fn___fern_reader_close\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("reader");
+        } else if (o.kind_tag == 282) {  // fd_fsync
+            // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
+            // Option[IoError], None once the write-back is scheduled.
+            s = s.write("    call __fn___fern_fd_fsync\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_fsync");
+        } else if (o.kind_tag == 283) {  // fd_fdatasync
+            s = s.write("    call __fn___fern_fd_fdatasync\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_fdatasync");
+        } else if (o.kind_tag == 284) {  // fd_syncfs
+            s = s.write("    call __fn___fern_fd_syncfs\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_syncfs");
+        } else if (o.kind_tag == 281) {  // sync
+            // No operands and no result: sync(2) and nothing on the stack.
+            s = s.write("    call __fn___fern_sync\n");
+            s = s.need("sync");
         } else if (o.kind_tag == 241) {  // fd_stat
             // [fd] IS param[0]; the Fern-compiled __fn___fern_fd_stat pushes a
             // fresh Result[FileStat, IoError], the FileStat shape pre-interned
@@ -8356,6 +8371,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64"); }
+        if (s.has_need("fd_fsync")) { fs_src = fs_src + " " + asmcore.rt_src_fd_sync("x86_64", "fsync", "fsync"); }
+        if (s.has_need("fd_fdatasync")) { fs_src = fs_src + " " + asmcore.rt_src_fd_sync("x86_64", "fdatasync", "fdatasync"); }
+        if (s.has_need("fd_syncfs")) { fs_src = fs_src + " " + asmcore.rt_src_fd_syncfs("x86_64"); }
+        if (s.has_need("sync")) { fs_src = fs_src + " " + asmcore.rt_src_sync("x86_64"); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod("x86_64"); }
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86_64"); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link("x86_64"); }

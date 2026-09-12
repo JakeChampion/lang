@@ -2774,6 +2774,12 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Writer_write":      "__fern_writer_write",
 	"__method_Writer_close":      "__fern_writer_close",
 	"__method_Writer_stat":       "__fern_fd_stat",
+	"__method_Reader_fsync":      "__fern_fd_fsync",
+	"__method_Writer_fsync":      "__fern_fd_fsync",
+	"__method_Reader_fdatasync":  "__fern_fd_fdatasync",
+	"__method_Writer_fdatasync":  "__fern_fd_fdatasync",
+	"__method_Reader_syncfs":     "__fern_fd_syncfs",
+	"__method_Writer_syncfs":     "__fern_fd_syncfs",
 
 	// String / bytes round-trip.
 	"string_from_bytes_unchecked": "__fern_string_from_bytes",

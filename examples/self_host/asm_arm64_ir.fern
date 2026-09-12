@@ -1623,6 +1623,21 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // (#2649), which pushes a fresh Option[IoError] (always None).
             s = s.need("heap"); s = s.need("reader");
             s = s.write("    bl __fn___fern_reader_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 282) {  // fd_fsync
+            // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
+            // Option[IoError], None once the write-back is scheduled.
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_fsync");
+            s = s.write("    bl __fn___fern_fd_fsync\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 283) {  // fd_fdatasync
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_fdatasync");
+            s = s.write("    bl __fn___fern_fd_fdatasync\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 284) {  // fd_syncfs
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_syncfs");
+            s = s.write("    bl __fn___fern_fd_syncfs\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 281) {  // sync
+            // No operands and no result: sync(2) and nothing on the stack.
+            s = s.need("sync");
+            s = s.write("    bl __fn___fern_sync\n");
         } else if (o.kind_tag == 241) {  // fd_stat
             // [fd] IS param[0]; the Fern-compiled __fn___fern_fd_stat pushes a
             // fresh Result[FileStat, IoError].
@@ -3536,7 +3551,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("set_file_times") || s.has_need("statfs") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("rlimit_nofile") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("sleep_ns") || s.has_need("set_file_times") || s.has_need("statfs") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send") || s.has_need("isatty") || s.has_need("rlimit_nofile") || s.has_need("signal_ignore") || s.has_need("signal_default") || s.has_need("access") || s.has_need("geteuid") || s.has_need("getegid") || s.has_need("getuid") || s.has_need("getgid") || s.has_need("getgroups") || s.has_need("environ") || s.has_need("fd_stat") || s.has_need("fd_fsync") || s.has_need("fd_fdatasync") || s.has_need("fd_syncfs") || s.has_need("sync")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -6658,6 +6673,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write(tgt); }
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
+        if (s.has_need("fd_fsync")) { fs_src = fs_src + " " + asmcore.rt_src_fd_sync(tgt, "fsync", "fsync"); }
+        if (s.has_need("fd_fdatasync")) { fs_src = fs_src + " " + asmcore.rt_src_fd_sync(tgt, "fdatasync", "fdatasync"); }
+        if (s.has_need("fd_syncfs")) { fs_src = fs_src + " " + asmcore.rt_src_fd_syncfs(tgt); }
+        if (s.has_need("sync")) { fs_src = fs_src + " " + asmcore.rt_src_sync(tgt); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }

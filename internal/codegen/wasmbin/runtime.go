@@ -1131,6 +1131,9 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_open_exclusive":    {"__wasi_errno_of_code"},
 	"__fern_reader_read_chunk": {"__wasi_errno_of_code"},
 	"__fern_fd_stat":           {"__wasi_errno_of_code"},
+	"__fern_fd_fsync":          {"__wasi_errno_of_code"},
+	"__fern_fd_fdatasync":      {"__wasi_errno_of_code"},
+	"__fern_fd_syncfs":         {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
@@ -1184,6 +1187,7 @@ var helperResultBoxCallers = []string{
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek",
+	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_remove_dir_all", "__fern_temp_dir",
 	"__fern_create_dir_all",
@@ -2598,6 +2602,26 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderReadChunkBody,
+	},
+	"__fern_fd_fsync": {
+		// (r) -> i32 - heap-form Option[IoError]: fd_sync of the
+		// handle's fd. Shared by Reader.fsync and Writer.fsync.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdSyncBodyP1("wasi_fd_sync"),
+	},
+	"__fern_fd_fdatasync": {
+		// (r) -> i32 - heap-form Option[IoError]: fd_datasync.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdSyncBodyP1("wasi_fd_datasync"),
+	},
+	"__fern_fd_syncfs": {
+		// (r) -> i32 - heap-form Option[IoError], always
+		// Some(Unsupported): neither preview has a per-filesystem flush.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdSyncfsBody,
 	},
 	"__fern_fd_stat": {
 		// (r) → i32 — heap-form Result[FileStat, IoError]: fstat of

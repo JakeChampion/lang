@@ -75,7 +75,8 @@ function main(): i32 {
         "read_link", "umask", "sleep_ns", "rename",
         "chmod", "set_file_times", "statfs",
         "process_alive", "rlimit_nofile", "truncate", "mknod",
-        "proc_exec_as"
+        "proc_exec_as",
+        "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -182,7 +183,8 @@ function main(): i32 {
         ir.op_rename(),
         ir.op_chmod(), ir.op_set_file_times(), ir.op_statfs(),
         ir.op_process_alive(), ir.op_rlimit_nofile(), ir.op_truncate(), ir.op_mknod(),
-        ir.op_proc_exec_as()
+        ir.op_proc_exec_as(),
+        ir.op_sync(), ir.op_fd_fsync(), ir.op_fd_fdatasync(), ir.op_fd_syncfs()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -203,7 +205,8 @@ function main(): i32 {
         "read_link", "umask", "sleep_ns", "rename",
         "chmod", "set_file_times", "statfs",
         "process_alive", "rlimit_nofile", "truncate", "mknod",
-        "proc_exec_as"
+        "proc_exec_as",
+        "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

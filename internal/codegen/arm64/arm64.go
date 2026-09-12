@@ -185,6 +185,16 @@ var linuxDarwinSysno = map[string][2]int{
 	// directory descriptor; the helper branches on g.darwin for that one
 	// difference, and the dev_t layouts differ too.
 	"mknodat": {33, 14},
+	// Write-back of one descriptor — fsync(2) Linux asm-generic 82 /
+	// Darwin BSD 95, fdatasync(2) Linux 83 / Darwin BSD 187. One
+	// argument, no error shape of its own. XNU does have fdatasync as a
+	// syscall even though Go's `syscall` package exposes no wrapper for
+	// it, so this is a real row rather than an alias of fsync.
+	"fsync":     {82, 95},
+	"fdatasync": {83, 187},
+	// sync(2) — Linux asm-generic 81, Darwin BSD 36. No arguments, no
+	// return, no failure on either.
+	"sync": {81, 36},
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
@@ -282,6 +292,10 @@ var linuxOnlySysno = map[string]int{
 	// is deferred, so `__fern_poll` branches to a -1 stub on Darwin
 	// rather than reaching this entry.
 	"ppoll": sysPpoll,
+	// syncfs: XNU has no per-filesystem flush at all, so
+	// __fern_fd_syncfs branches inline on Darwin rather than reaching
+	// this row.
+	"syncfs": 267,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -940,6 +954,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesFdStat {
 		g.emitFdStatRuntime()
+	}
+	if g.usesFdSync {
+		g.emitFdSyncRuntime("__fern_fd_fsync", "fsy", "fsync")
+	}
+	if g.usesFdDatasync {
+		g.emitFdSyncRuntime("__fern_fd_fdatasync", "fds", "fdatasync")
+	}
+	if g.usesFdSyncfs {
+		g.emitFdSyncRuntime("__fern_fd_syncfs", "sfs", "syncfs")
+	}
+	if g.usesSync {
+		g.emitSyncRuntime()
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
@@ -12552,6 +12578,80 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.line(".ltorg")
 }
 
+// emitFdSyncRuntime emits one of the three write-back helpers —
+// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` — taking
+// a Reader / Writer handle pointer and answering `Option[IoError]`. They
+// differ only in which syscall the fd goes to, so one body serves all
+// three, shaped like `__fern_close_fd_box`.
+//
+// `syncfs` on Darwin is the exception: XNU has no per-filesystem flush,
+// so the fd is checked with fcntl(F_GETFD) — which answers EBADF for a
+// descriptor that is not open, and needs no stat buffer — and the flush
+// is then the whole-machine sync(2). That covers the filesystem the
+// descriptor lives on, so the guarantee the caller asked for holds; it
+// simply flushes more than was asked.
+func (g *generator) emitFdSyncRuntime(sym, lp, call string) {
+	g.line("")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("ldr w0, [x0]") // fd, at offset 0 of the handle
+	if call == "syncfs" && g.darwin {
+		g.emit("mov x1, #1") // F_GETFD
+		g.emit("mov x2, #0")
+		g.syscall("fcntl")
+		g.emit("tbnz x0, #63, ." + lp + "_err")
+		g.syscall("sync")
+		g.emit("mov x0, #0")
+	} else {
+		g.syscall(call)
+	}
+	g.emit("tbnz x0, #63, ." + lp + "_err")
+	g.emitPayloadlessResultBox(16, 1) // None
+	g.emit("b ." + lp + "_ret")
+	g.label("." + lp + "_err")
+	g.emit("neg x19, x0") // errno
+	g.emit("mov x0, x19")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // Some
+	g.emit("str x19, [x0, #8]")
+	g.label("." + lp + "_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective(sym)
+	g.line(".ltorg")
+}
+
+// emitSyncRuntime emits `__fern_sync()` — sync(2) across every mounted
+// filesystem. No arguments, no return and no failure on either host, so
+// the body is the syscall and nothing else.
+func (g *generator) emitSyncRuntime() {
+	g.line("")
+	g.line(".global __fern_sync")
+	g.typeDirective("__fern_sync")
+	g.label("__fern_sync")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.syscall("sync")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_sync")
+	g.line(".ltorg")
+}
+
 // captureSlotSize mirrors closureconv.captureSlotSize for
 // ptrW=8 (arm64). Wide scalars (i64 / f64) take 8 bytes;
 // pointer-shaped captures take 8 bytes (the heap-pointer
@@ -13318,6 +13418,10 @@ type generator struct {
 	usesStat         bool
 	usesLstat        bool
 	usesFdStat       bool
+	usesFdSync       bool
+	usesFdDatasync   bool
+	usesFdSyncfs     bool
+	usesSync         bool
 	usesReaderSeek   bool
 	usesAccess       bool
 	usesEuid         bool
@@ -17548,6 +17652,24 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// helpers build.
 			target = "__fern_fd_stat"
 			g.usesFdStat = true
+		case "__method_Reader_fsync", "__method_Writer_fsync":
+			target = "__fern_fd_fsync"
+			g.usesFdSync = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_fdatasync", "__method_Writer_fdatasync":
+			target = "__fern_fd_fdatasync"
+			g.usesFdDatasync = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_syncfs", "__method_Writer_syncfs":
+			target = "__fern_fd_syncfs"
+			g.usesFdSyncfs = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "sync":
+			target = "__fern_sync"
+			g.usesSync = true
 		case "__method_Reader_seek":
 			// lseek(2) on the handle's fd → Result[i64, IoError].
 			target = "__fern_reader_seek"

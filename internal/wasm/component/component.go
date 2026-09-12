@@ -1854,6 +1854,12 @@ type FsFeatures struct {
 	// path form of it at all, so `truncate` opens a descriptor for the
 	// length of the call rather than naming the entry.
 	SetSize bool // set-size
+	// Sync / SyncData are `sync` and `sync-data` on the descriptor
+	// itself: write-back of the handle, with and without the
+	// metadata. Neither has a path form, and preview 2 has nothing
+	// per-FILESYSTEM at all, so `syncfs` reaches no import here.
+	Sync     bool // sync
+	SyncData bool // sync-data
 	Stat    bool // stat-at
 	// StatSelf is `stat` on the descriptor itself — the fstat behind a
 	// Reader / Writer's `.stat()`. It shares stat-at's result record, so
@@ -1872,7 +1878,7 @@ type FsFeatures struct {
 func (f FsFeatures) Any() bool {
 	return f.OpenAt || f.Read || f.Write || f.Append ||
 		f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Readlink ||
-		f.Rename || f.SetTimes || f.SetSize ||
+		f.Rename || f.SetTimes || f.SetSize || f.Sync || f.SyncData ||
 		f.Stat || f.StatSelf || f.ReadDir || f.DropDesc
 }
 
@@ -1893,7 +1899,7 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 		in: inT, out: outT,
 		needIn:       f.Read,
 		needOut:      f.Write || f.Append,
-		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Rename || f.SetTimes || f.SetSize,
+		needUnit:     f.Unlink || f.Mkdir || f.Rmdir || f.Link || f.Symlink || f.Rename || f.SetTimes || f.SetSize || f.Sync || f.SyncData,
 		needDescType: f.Stat || f.StatSelf || f.ReadDir,
 	})
 	if f.OpenAt {
@@ -1943,6 +1949,12 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 	}
 	if f.SetSize {
 		fsSetSize(b, v)
+	}
+	if f.Sync {
+		fsSyncSelf(b, v, "sync")
+	}
+	if f.SyncData {
+		fsSyncSelf(b, v, "sync-data")
 	}
 	return b.body()
 }

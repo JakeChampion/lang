@@ -160,6 +160,15 @@ var gatedBuiltins = map[string]string{
 	// presented as the right one.
 	"mknod": "fsnode",
 
+	// Write-back of every dirty buffer on the MACHINE, which is a
+	// different reach from the files on it: `fs` names one host's files,
+	// this names the whole host's write-back cache. Neither WASI preview
+	// has it — preview 1's `fd_sync` flushes one descriptor and a
+	// preopen is a capability handle rather than a mount, so there is no
+	// "every filesystem" for a component to name — and a no-op would be
+	// a flush the program asked for and never got.
+	"sync": "fssync",
+
 	// Permission bits on a filesystem entry, which is a separate
 	// capability from having a filesystem: a host can offer files and no
 	// mode word to set on them. `access` is the READ of the same

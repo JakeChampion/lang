@@ -190,6 +190,13 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     Neither preview has a call that creates one, and the nearest
 	//     stand-in — a regular file where a FIFO was asked for — reads
 	//     back as the wrong kind rather than as a missing one.
+	//   - `fssync` — write-back of every dirty buffer on the machine
+	//     (`sync(2)`), where `fs` is reaching the files themselves.
+	//     Neither preview has a whole-machine flush: preview 1's
+	//     `fd_sync` is one descriptor's, and a preopen is a capability
+	//     handle rather than a mount, so there is no set of filesystems
+	//     for a component to name. Doing nothing would be a flush the
+	//     caller asked for and did not get.
 	//   - `rlimit` — a kernel-enforced ceiling on a process resource.
 	//     Neither WASI preview has resource limits, and both constants
 	//     that could stand in — "unlimited", or a plausible 1024 — would
@@ -209,7 +216,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fssync"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
