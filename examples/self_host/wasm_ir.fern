@@ -356,6 +356,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_rmemchr(cache)) { out = out.append("@uses_rmemchr"); }
     if (module_uses_mismatch(cache)) { out = out.append("@uses_mismatch"); }
     if (module_uses_count_byte(cache)) { out = out.append("@uses_count_byte"); }
+    if (module_uses_sum_bytes(cache)) { out = out.append("@uses_sum_bytes"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
     if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
@@ -698,6 +699,13 @@ pub function module_uses_rmemchr(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
     function is_count_byte(o: ir.Op): boolean { return o.kind_tag == 235; }  // count_byte
     return any_op(cache, is_count_byte);
+}
+
+// module_uses_sum_bytes gates $__fern_sum_bytes, the byte-sum reduction of
+// ATLAS-PLATFORM-PLAN §3.3. Same shape as module_uses_memchr above.
+pub function module_uses_sum_bytes(cache: irlower.LowerResult[]): boolean {
+    function is_sum_bytes(o: ir.Op): boolean { return o.kind_tag == 253; }  // sum_bytes
+    return any_op(cache, is_sum_bytes);
 }
 
 // module_uses_ascii_run gates $__fern_ascii_run, the high-bit scan of
@@ -4463,6 +4471,11 @@ function emit_str_op_wat(o: ir.Op): string {
         // memchr's reason: the body loops over its own locals.
         return "    call $__fern_count_byte\n";
     }
+    if (o.kind_tag == 253) {  // sum_bytes
+        // stack: s -> the wrapped 32-bit sum of its bytes. A call for
+        // memchr's reason: the body loops over its own locals.
+        return "    call $__fern_sum_bytes\n";
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // stack: s, from -> the first high-bit index, or the length. A
         // call for memchr's reason: the body loops over its own locals.
@@ -6342,6 +6355,21 @@ pub function rmemchr_helper(): string {
 // an empty string counts 0 because it has no bytes.
 //
 // Reads only the source block — no allocation, no calls.
+pub function sum_bytes_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_sum_bytes (param $s i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $i i32) (local $sum i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $sum))\n";
+    return o;
+}
+
+// count_byte_helper emits $__fern_count_byte, below.
 pub function count_byte_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_count_byte (param $s i32) (param $byte i32) (result i32)\n";
@@ -9775,6 +9803,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "@uses_rmemchr")) { parts = parts.append(rmemchr_helper()); }
     if (need(needs, "@uses_mismatch")) { parts = parts.append(mismatch_helper()); }
     if (need(needs, "@uses_count_byte")) { parts = parts.append(count_byte_helper()); }
+    if (need(needs, "@uses_sum_bytes")) { parts = parts.append(sum_bytes_helper()); }
     if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
     if (need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(str_split_helper()); }

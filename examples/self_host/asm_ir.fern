@@ -4140,6 +4140,38 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    pushq %r10\n");
         return s;
     }
+    if (o.kind_tag == 253) {  // sum_bytes
+        // operand stack [box] -> every byte of the string added into a
+        // 32-bit accumulator that wraps.
+        //
+        // SCALAR (§3.4 step 1). The SSE2 sequence this wants is psadbw
+        // against a zeroed register plus paddq, both already inside the
+        // declared Haswell baseline; the ordering rule puts the scalar
+        // lowering in every backend before any of them is vectorised.
+        //
+        // movzbl is the whole of the sign question: a byte is unsigned, so
+        // 0xff contributes 255. The accumulate is `addl`, which writes the
+        // low 32 bits and zeroes the top, so the wrap is the register width
+        // and the pushed value is already the i32 the op promises.
+        //
+        // One operand, not two: the cursor is an INDEX in %rdx and the sum
+        // lives in %r10, so the body stays inside the registers this backend
+        // has free.
+        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var sb_loop: string = slo.name;
+        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
+        var sb_done: string = slo2.name;
+        s = slo2.state;
+        s = s.write("    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
+        s = s.write(sb_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + sb_done + "\n");
+        s = s.write("    movzbl (%rax,%rdx), %r9d\n    addl %r9d, %r10d\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + sb_loop + "\n");
+        s = s.write(sb_done + ":\n    pushq %r10\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.
