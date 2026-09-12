@@ -2822,11 +2822,10 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 		return 0, false, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
 	}
 	v := int64(n)
-	if v == int64(syscall.SIGKILL) || v == int64(syscall.SIGSTOP) {
+	if v == sigKill || v == sigStop {
 		// No kernel lets these two be caught, blocked or ignored: both
 		// answer EINVAL, and `env --ignore-signal=KILL` reports exactly
-		// that. Named through syscall so the SIGSTOP number is the host's
-		// (17 on Darwin, 19 on Linux) rather than one of them guessed.
+		// that.
 		return 0, false, nil
 	}
 	return syscall.Signal(int32(v)), v >= 1 && v <= maxSignal, nil
