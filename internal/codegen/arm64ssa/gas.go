@@ -2862,15 +2862,15 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tret")
 }
 
-// emitOpenWriterHelper: open_writer(path) — O_WRONLY|O_CREAT|O_TRUNC (577), 0644.
+// emitOpenWriterHelper: open_writer(path) — O_WRONLY|O_CREAT|O_TRUNC (577), 0666.
 func emitOpenWriterHelper(w func(string, ...any)) {
-	emitOpenHandleHelper(w, "open_writer", "ow", 577, 420)
+	emitOpenHandleHelper(w, "open_writer", "ow", 577, 438)
 }
 
 // emitOpenAppenderHelper: open_appender(path) — O_WRONLY|O_CREAT|O_APPEND (1089),
-// 0644. Opens (creating if needed) for appending rather than truncating.
+// 0666. Opens (creating if needed) for appending rather than truncating.
 func emitOpenAppenderHelper(w func(string, ...any)) {
-	emitOpenHandleHelper(w, "open_appender", "oa", 1089, 420)
+	emitOpenHandleHelper(w, "open_appender", "oa", 1089, 438)
 }
 
 // emitOpenExclusiveHelper: open_exclusive(path) — O_WRONLY|O_CREAT|O_EXCL
