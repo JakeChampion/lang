@@ -128,6 +128,27 @@ function vset(a: i32[], idx: i32, val: i32): i32[] {
     }
     return out;
 }
+// buf_lift_tag maps one of the string builder's IR op tags (#8773) to its SSA
+// kind, or 0 when the op is not one of them; buf_lift_pops is that op's operand
+// count. The two are kept side by side because the lift needs both for the same
+// op, and a tag whose arity went missing would silently leave the model stack
+// unbalanced.
+function buf_lift_tag(k: string): i32 {
+    if (k == "buf_new") { return 28; }
+    if (k == "buf_push") { return 29; }
+    if (k == "buf_push_range") { return 30; }
+    if (k == "buf_push_byte") { return 31; }
+    if (k == "buf_len") { return 32; }
+    if (k == "buf_take") { return 33; }
+    if (k == "buf_free") { return 34; }
+    return 0;
+}
+function buf_lift_pops(k: string): i32 {
+    if (k == "buf_push_range") { return 4; }
+    if (k == "buf_push" || k == "buf_push_byte") { return 2; }
+    return 1;
+}
+
 function drop_last(a: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
@@ -438,6 +459,23 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 var eqv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 18, result: eqv, args: [ea, eb], imm: 0, str: "" });
                 stack = stack.append(eqv);
+            }
+        } else if (buf_lift_tag(k) != 0) {
+            // The capacity-carrying string builder (#8773). Every op consumes
+            // its operands and pushes exactly one result — the handle, the
+            // length or the taken string for the value ops, a dummy the
+            // statement `drop` discards for the rest — so one arm covers all
+            // seven and only the operand count differs.
+            var bufn: i32 = buf_lift_pops(k);
+            if (stack.len() < bufn) { ok = false; }
+            else {
+                var bufa: i32[] = [];
+                var bufi: i32 = stack.len() - bufn;
+                while (bufi < stack.len()) { bufa = bufa.append(stack[bufi]); bufi = bufi + 1; }
+                stack = drop_n(stack, bufn);
+                var bufv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: buf_lift_tag(k), result: bufv, args: bufa, imm: 0, str: "" });
+                stack = stack.append(bufv);
             }
         } else if (k == "strbuf_reset") {
             // Reset the global amortised-O(1) string builder. The op PUSHES a

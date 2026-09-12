@@ -81,11 +81,21 @@ var providedRefusedByPlatform = map[string]bool{
 	// `chmod` is the WRITE of it on an entry that already exists, where
 	// write_file_exec only sets a bit on one it is creating.
 	"chmod": true,
+	// `tty` — the geometry of the terminal a descriptor is connected
+	// to. Neither preview has an ioctl, wasi:cli's terminal-output
+	// resource reports no size, and both constants that could stand in
+	// — 80x24, or 0x0 — are answers no component measured.
+	"window_size": true,
 	// `fsnode` — an entry that is neither a file nor a directory.
 	// Neither preview has a call that creates a FIFO or a device node,
 	// and a regular file standing in for one would read back as the
 	// wrong kind rather than as a missing one.
 	"mknod": true,
+	// `fsowner` — the user and the group an entry belongs to. Neither
+	// preview records one: preview 1's `filestat` has no uid or gid
+	// field and the component model's `descriptor-stat` none either, so
+	// there is nothing to set and no owner a success would describe.
+	"chown_at": true,
 	// `umask` is the process's own half of the same property: the mode
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.
@@ -131,6 +141,7 @@ var providedNeverReachesCodegen = map[string]bool{
 	// Byte search and counting — lowered to the `__fern_`-prefixed
 	// helpers, which this table does list and wasmbin does implement.
 	"__memchr": true, "__rmemchr": true, "__count_byte": true,
+	"__sum_bytes":     true,
 	"__mismatch":      true,
 	"__map_hash_seed": true, "__heap_bump_bytes": true,
 	"__arr_push_shared_bytes": true, "__arr_push_shared_count": true,
@@ -318,5 +329,46 @@ func TestStrbufOnlyProgramIsValidWasm(t *testing.T) {
 	}
 	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
 		t.Fatalf("a strbuf-only module must be valid wasm: %v\n%s", err, out)
+	}
+}
+
+// A builder-only program: the smallest one whose helper set is the
+// capacity-carrying builder plus what it calls, so a missing dependency edge
+// has nothing else to hide behind. Both string forms are pushed -- one past
+// the inline cap, one inside it -- because the two take different branches of
+// the copy, and the range push is included because it reaches __fern_str_byte
+// without going through __fern_str_len.
+func TestBufBuilderOnlyProgramIsValidWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	src := `function main(): i32 {
+    var b: usize = buf_new(8);
+    buf_push(b, "a longer piece, past the inline form");
+    buf_push(b, "ab");
+    buf_push_byte(b, 33);
+    buf_push_range(b, "0123456789", 2, 5);
+    var n: i32 = buf_len(b) + buf_take(b).len();
+    buf_free(b);
+    return n;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := Build(prog, info)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	p := filepath.Join(t.TempDir(), "buf.wasm")
+	if err := os.WriteFile(p, bin, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("a builder-only module must be valid wasm: %v\n%s", err, out)
 	}
 }

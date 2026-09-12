@@ -275,6 +275,9 @@ const (
 	// major / minor pair, derived by measurement — see
 	// emitMknodRuntime.
 	sysMknodat = 259
+	// fchownat(2) 260. The only one of chown / lchown / fchownat that
+	// expresses both follow modes, which is what `chown -h` needs.
+	sysFchownat = 260
 	// geteuid(2) / getegid(2): x86-64 syscalls 107 / 108.
 	sysGeteuid = 107
 	sysGetegid = 108
@@ -643,7 +646,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
-		g.usesMknod {
+		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
 	}
 	if g.usesRemoveDirAll {
@@ -765,6 +768,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesSumBytes {
+		g.emitSumBytesRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -806,6 +812,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
+	}
+	if g.usesStrBuilder {
+		g.emitStrBuilderRuntime()
 	}
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
@@ -875,6 +884,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
+	}
+	if g.usesWindowSize {
+		g.emitWindowSizeRuntime()
 	}
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
@@ -965,6 +977,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesMknod {
 		g.emitMknodRuntime()
+	}
+	if g.usesChownAt {
+		g.emitChownAtRuntime()
 	}
 	if g.usesSetFileTimes {
 		g.emitSetFileTimesRuntime()
@@ -1148,6 +1163,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
+	usesSumBytes bool
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1166,6 +1183,12 @@ type generator struct {
 	// that doubles on demand. Single-threaded; one builder
 	// at a time. See checker.go for the user-facing spec.
 	usesStrBuf bool
+	// usesStrBuilder — buf_new / buf_push / buf_push_range /
+	// buf_push_byte / buf_len / buf_take / buf_free (#8773) — the
+	// capacity-carrying builder. Unlike the strbuf above there may be
+	// any number of them at once; a builder is the address of its
+	// control block, handed to Fern as a number.
+	usesStrBuilder bool
 	// usesNowUnixMs pulls in `__fern_now_unix_ms()` — wall-
 	// clock-ms via the x86_64 `clock_gettime(CLOCK_REALTIME,
 	// &ts)` syscall (#228). Returns
@@ -1242,6 +1265,9 @@ type generator struct {
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
+	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
+	// ioctl projected onto WinSize, with the errno as an IoError.
+	usesWindowSize bool
 	// usesSignalDisposition pulls in both `__fern_signal_ignore` and
 	// `__fern_signal_default`; they differ by one immediate, so they
 	// share a body and one flag rather than splitting into two.
@@ -1513,6 +1539,8 @@ type generator struct {
 	usesTruncate bool
 	// mknodat(2) over a path, a mode and a major / minor pair.
 	usesMknod bool
+	// fchownat(2) over a path, a uid, a gid and a follow flag.
+	usesChownAt bool
 
 	// usesReaderWriter pulls in the full Reader / Writer
 	// runtime bundle (stdin/stdout/stderr + open_reader /
@@ -1680,6 +1708,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRmemchr = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
+	case "__fern_sum_bytes":
+		g.usesSumBytes = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -1770,6 +1800,15 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len", "buf_take", "buf_free":
+		g.usesStrBuilder = true
+		// Every entry point but buf_len can reach the allocator, the
+		// copier and the freelist through __fern_buf_reserve, so pull the
+		// three in for the whole family rather than per name.
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesFree = true
+		g.usesBoxFree = true
 	case "strbuf_reset", "strbuf_append", "strbuf_take":
 		g.usesStrBuf = true
 		if target == "strbuf_take" {
@@ -1858,6 +1897,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "isatty":
 		g.usesIsatty = true
+	case "window_size":
+		g.usesWindowSize = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "signal_ignore", "signal_default":
 		g.usesSignalDisposition = true
 	case "env":
@@ -1987,6 +2030,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "mknod":
 		g.usesMknod = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "chown_at":
+		g.usesChownAt = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "set_file_times":
@@ -3481,6 +3528,20 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_heap_mark"
 		case "__heap_release_to":
 			target = "__fern_heap_release_to"
+		case "buf_new":
+			target = "__fern_buf_new"
+		case "buf_push":
+			target = "__fern_buf_push"
+		case "buf_push_range":
+			target = "__fern_buf_push_range"
+		case "buf_push_byte":
+			target = "__fern_buf_push_byte"
+		case "buf_len":
+			target = "__fern_buf_len"
+		case "buf_take":
+			target = "__fern_buf_take"
+		case "buf_free":
+			target = "__fern_buf_free"
 		case "strbuf_reset":
 			target = "__fern_strbuf_reset"
 		case "strbuf_append":
@@ -3525,6 +3586,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_statfs"
 		case "isatty":
 			target = "__fern_isatty"
+		case "window_size":
+			target = "__fern_window_size"
 		case "signal_ignore":
 			target = "__fern_signal_ignore"
 		case "signal_default":
@@ -3583,6 +3646,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_truncate"
 		case "mknod":
 			target = "__fern_mknod"
+		case "chown_at":
+			target = "__fern_chown_at"
 		case "set_file_times":
 			target = "__fern_set_file_times"
 		case "temp_dir":
@@ -6157,7 +6222,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.quad 0")
 		}
 	}
-	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll || g.usesHostname || g.usesUnameField || g.usesGetcwd
+	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll || g.usesHostname || g.usesUnameField || g.usesGetcwd || g.usesStrBuilder
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
 	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled || ast.RcTrace || len(g.coverSites) > 0 {
 		g.line("")
@@ -10500,6 +10565,51 @@ func (g *generator) emitCountByteRuntime() {
 	g.line(".size __fern_count_byte, .-__fern_count_byte")
 }
 
+// emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
+// added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The SSE2 sequence this
+// wants is psadbw against a zero register plus paddq, both already inside the
+// declared baseline and both already encodable by internal/native/x86tbl, so
+// this body is the one in the family whose vectorisation costs no assembler
+// work — but §3.4's ordering puts the scalar lowering in all eight backends
+// first, and this is that step.
+//
+// `movzx` is the whole of the sign question: a byte is unsigned, so 0xff
+// contributes 255. The accumulate is a 32-bit `add`, so the wrap the builtin
+// promises is the register width rather than anything this body does.
+//
+// rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
+// may be an inline SSO string that has to be spilled to get an address.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func (g *generator) emitSumBytesRuntime() {
+	g.line("")
+	g.line(".globl __fern_sum_bytes")
+	g.line(".type __fern_sum_bytes, @function")
+	g.label("__fern_sum_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emit("xor eax, eax") // running sum
+	g.emit("xor edx, edx") // cursor, as an INDEX
+	g.label(".Lsum_bytes_scan")
+	g.emit("cmp edx, ecx")
+	g.emit("jge .Lsum_bytes_ret")
+	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("add eax, r8d")
+	g.emit("add edx, 1")
+	g.emit("jmp .Lsum_bytes_scan")
+	g.label(".Lsum_bytes_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sum_bytes, .-__fern_sum_bytes")
+}
+
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
 // if a and b have the same length AND the same bytes, else 1.
 // Pure equality comparator (no lex ordering), matching arm64.
@@ -10909,6 +11019,329 @@ func (g *generator) emitStrBufRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_strbuf_take, .-__fern_strbuf_take")
+}
+
+// emitStrBuilderRuntime emits the capacity-carrying string builder
+// (#8773) — the multi-instance successor to the single global strbuf.
+//
+// A builder is a NUMBER: the address of a 32-byte control block, the
+// same way an open file is a descriptor number. Four words:
+//
+//	[H +  0] data     — the buffer's string DATA pointer (base + 8), 0 when unarmed
+//	[H +  8] len      — bytes accumulated so far
+//	[H + 16] cap      — bytes the buffer can hold before it must grow
+//	[H + 24] reserve  — the capacity a re-arm after a take starts from
+//
+// The buffer is allocated through __fern_alloc_rc1(cap + 1), so it is
+// laid out exactly as a heap string already is — rc at [data-8], the
+// length slot at [data-4], data at `data`, room for the trailing NUL.
+// That is what makes __fern_buf_take ZERO-COPY: it stamps the length
+// and the NUL and hands the same pointer back as a string. The rc is
+// already 1 from the allocation and nothing in between disturbs it.
+//
+// The capacity is the point. An append is a compare against [H+16], a
+// memcpy and a length store: no refcount check (a builder's buffer is
+// uniquely owned by construction) and no size-class arithmetic, which
+// is what __fern_str_append re-derives from the class on every call.
+// Growth doubles, which also closes the prefix re-copy the allocator's
+// class step only softened.
+//
+// The block a take hands over is freed later at its LENGTH rather than
+// its capacity, so it returns to a smaller freelist class than it was
+// bumped at. That is bounded internal fragmentation, not unsoundness —
+// a block on a class's freelist is only ever reused as that class. The
+// leak census is corrected at the handoff, where both numbers are known.
+func (g *generator) emitStrBuilderRuntime() {
+	// __fern_buf_new(cap) -> handle
+	g.line("")
+	g.line(".globl __fern_buf_new")
+	g.line(".type __fern_buf_new, @function")
+	g.label("__fern_buf_new")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi")
+	g.emit("cmp rbx, 16") // a floor, so the doubling has something to double
+	g.emit("jae .Lbufnew_cap")
+	g.emit("mov rbx, 16")
+	g.label(".Lbufnew_cap")
+	g.emit("mov edi, 32")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r12, rax")
+	g.emit("lea rdi, [rbx + 1]") // data + NUL
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov qword ptr [r12], rax")
+	g.emit("mov qword ptr [r12 + 8], 0")
+	g.emit("mov qword ptr [r12 + 16], rbx")
+	g.emit("mov qword ptr [r12 + 24], rbx")
+	g.emit("mov rax, r12")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_new, .-__fern_buf_new")
+
+	// __fern_buf_reserve(H, need): replace the buffer with one of at
+	// least `need` bytes, doubling from the current capacity (or from
+	// the reserve, when a take left the builder unarmed), and carry the
+	// live bytes across. Internal — no Fern builtin reaches it directly.
+	g.line("")
+	g.line(".globl __fern_buf_reserve")
+	g.line(".type __fern_buf_reserve, @function")
+	g.label("__fern_buf_reserve")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov r13, qword ptr [rbx + 16]")
+	g.emit("test r13, r13")
+	g.emit("jnz .Lbufres_dbl")
+	g.emit("mov r13, qword ptr [rbx + 24]")
+	g.emit("test r13, r13")
+	g.emit("jnz .Lbufres_dbl")
+	g.emit("mov r13, 64")
+	g.label(".Lbufres_dbl")
+	g.emit("cmp r13, r12")
+	g.emit("jae .Lbufres_alloc")
+	g.emit("add r13, r13")
+	g.emit("jmp .Lbufres_dbl")
+	g.label(".Lbufres_alloc")
+	g.emit("lea rdi, [r13 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r14, rax")
+	g.emit("mov rdx, qword ptr [rbx + 8]")
+	g.emit("test rdx, rdx")
+	g.emit("jz .Lbufres_nocopy")
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, qword ptr [rbx]")
+	g.emit("call __fern_memcpy")
+	g.label(".Lbufres_nocopy")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lbufres_store")
+	g.emit("mov rsi, qword ptr [rbx + 16]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_box_free")
+	g.label(".Lbufres_store")
+	g.emit("mov qword ptr [rbx], r14")
+	g.emit("mov qword ptr [rbx + 16], r13")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_reserve, .-__fern_buf_reserve")
+
+	// __fern_buf_push(H, s): append every byte of `s`.
+	g.line("")
+	g.line(".globl __fern_buf_push")
+	g.line(".type __fern_buf_push, @function")
+	g.label("__fern_buf_push")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("sub rsp, 24") // [rbp-32]: emitStrDataPtr spill for an inline `s`
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emitStrLen("r13", "r12")
+	g.emit("test r13d, r13d")
+	g.emit("jz .Lbufpush_done")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, r13")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbufpush_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbufpush_fits")
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 32]")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov rdx, r13")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, r13")
+	g.emit("mov qword ptr [rbx + 8], rax")
+	g.label(".Lbufpush_done")
+	g.emit("add rsp, 24")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push, .-__fern_buf_push")
+
+	// __fern_buf_push_range(H, s, lo, hi): append `s[lo:hi]` with no
+	// intermediate string. An empty or inverted range is a no-op; the
+	// bounds themselves are the caller's, as with slice_unchecked.
+	g.line("")
+	g.line(".globl __fern_buf_push_range")
+	g.line(".type __fern_buf_push_range, @function")
+	g.label("__fern_buf_push_range")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("sub rsp, 16") // [rbp-48]: emitStrDataPtr spill for an inline `s`
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov r13, rdx") // lo
+	g.emit("mov r14, rcx")
+	g.emit("sub r14, r13") // n = hi - lo
+	g.emit("jle .Lbufrange_done")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, r14")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbufrange_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbufrange_fits")
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 48]")
+	g.emit("add rsi, r13")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov rdx, r14")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, r14")
+	g.emit("mov qword ptr [rbx + 8], rax")
+	g.label(".Lbufrange_done")
+	g.emit("add rsp, 16")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push_range, .-__fern_buf_push_range")
+
+	// __fern_buf_push_byte(H, x): append the low byte of `x`.
+	g.line("")
+	g.line(".globl __fern_buf_push_byte")
+	g.line(".type __fern_buf_push_byte, @function")
+	g.label("__fern_buf_push_byte")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, 1")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbufbyte_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbufbyte_fits")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov byte ptr [rdi], r12b")
+	g.emit("add qword ptr [rbx + 8], 1")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push_byte, .-__fern_buf_push_byte")
+
+	// __fern_buf_len(H) -> len
+	g.line("")
+	g.line(".globl __fern_buf_len")
+	g.line(".type __fern_buf_len, @function")
+	g.label("__fern_buf_len")
+	g.emit("mov rax, qword ptr [rdi + 8]")
+	g.emit("ret")
+	g.line(".size __fern_buf_len, .-__fern_buf_len")
+
+	// __fern_buf_take(H) -> string: hand the accumulated bytes over as a
+	// string without copying them, and leave the builder empty but still
+	// usable — the reserve survives, so the next push allocates once at
+	// full width rather than growing back up.
+	g.line("")
+	g.line(".globl __fern_buf_take")
+	g.line(".type __fern_buf_take, @function")
+	g.label("__fern_buf_take")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, qword ptr [rbx + 8]")
+	g.emit("test r12, r12")
+	g.emit("jz .Lbuftake_empty")
+	if ast.LeakCheckEnabled {
+		// The block was charged at the capacity's class and __fern_free
+		// will charge it back at the length's; settle the difference here,
+		// where both are still known.
+		g.emit("mov r9, qword ptr [rbx + 16]")
+		g.emit("add r9, 24")
+		g.emit("and r9, -16")
+		g.emitSizeClassCap("r9", "rax", "rdx")
+		g.emit("mov r10, r12")
+		g.emit("add r10, 24")
+		g.emit("and r10, -16")
+		g.emitSizeClassCap("r10", "rax", "rdx")
+		g.emit("sub r9, r10")
+		g.emit("sub qword ptr [rip + __fern_lc_alloc_bytes], r9")
+	}
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emitStrLenStore("r12d", "rdi")
+	g.emit("lea rax, [rdi + r12]")
+	g.emit("mov byte ptr [rax], 0")
+	g.emit("mov qword ptr [rbx], 0")
+	g.emit("mov qword ptr [rbx + 8], 0")
+	g.emit("mov qword ptr [rbx + 16], 0")
+	g.emit("mov rax, rdi")
+	g.emit("jmp .Lbuftake_ret")
+	g.label(".Lbuftake_empty")
+	g.emitStrEmpty("rax")
+	g.label(".Lbuftake_ret")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_take, .-__fern_buf_take")
+
+	// __fern_buf_free(H): release the buffer (when the builder still owns
+	// one) and the control block.
+	g.line("")
+	g.line(".globl __fern_buf_free")
+	g.line(".type __fern_buf_free, @function")
+	g.label("__fern_buf_free")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12") // alignment padding for the __fern_box_free calls
+	g.emit("mov rbx, rdi")
+	g.emit("test rbx, rbx")
+	g.emit("jz .Lbuffree_ret")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lbuffree_ctl")
+	g.emit("mov rsi, qword ptr [rbx + 16]")
+	g.emit("add rsi, 1")
+	g.emit("call __fern_box_free")
+	g.label(".Lbuffree_ctl")
+	g.emit("mov rdi, rbx")
+	g.emit("mov esi, 32")
+	g.emit("call __fern_box_free")
+	g.label(".Lbuffree_ret")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_free, .-__fern_buf_free")
 }
 
 // emitExitRuntime emits `__fern_exit(code)` — direct exit
@@ -12644,6 +13077,71 @@ func (g *generator) emitIsattyRuntime() {
 	g.emit("movzx eax, al")
 	g.emit("ret")
 	g.line(".size __fern_isatty, .-__fern_isatty")
+}
+
+// emitWindowSizeRuntime emits `__fern_window_size(fd) →
+// Result[WinSize, IoError]` — one TIOCGWINSZ ioctl into an 8-byte
+// `struct winsize`, whose two cell counts widen into the record. The
+// pixel pair the kernel fills beside them has no field to land in.
+//
+// A descriptor that is not a terminal answers ENOTTY, and that refusal
+// is the point: it is what a caller falls back to COLUMNS on. It is
+// classified against an empty path, as every descriptor-shaped failure
+// is — the fd is the subject and it has no name.
+//
+// System V: edi = fd.
+func (g *generator) emitWindowSizeRuntime() {
+	const tiocgwinsz = 0x5413
+	g.line("")
+	g.line(".globl __fern_window_size")
+	g.line(".type __fern_window_size, @function")
+	g.label("__fern_window_size")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	// 3 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and leaves the
+	// 8-byte winsize buffer at [rsp].
+	g.emit("sub rsp, 24")
+	// The fd is an i32 value, so the high half of rdi is whatever the
+	// producer left there; ioctl reads the whole register.
+	g.emit("mov edi, edi")
+	g.emit(fmt.Sprintf("mov esi, %d", tiocgwinsz))
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysIoctl)
+	g.emit("test rax, rax")
+	g.emit("js .Lwsz_err")
+	g.emit("movzx ebx, word ptr [rsp]")      // ws_row
+	g.emit("movzx r12d, word ptr [rsp + 2]") // ws_col
+	g.emit(fmt.Sprintf("mov edi, %d", ir.WinSize.Bytes))
+	g.emit("call __fern_alloc_box")
+	g.emit(fmt.Sprintf("mov [rax + %d], rbx", ir.WinSize.Rows))
+	g.emit(fmt.Sprintf("mov [rax + %d], r12", ir.WinSize.Cols))
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lwsz_return")
+
+	g.label(".Lwsz_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lwsz_return")
+	g.emit("add rsp, 24")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_window_size, .-__fern_window_size")
 }
 
 // emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
@@ -14444,6 +14942,29 @@ func (g *generator) emitMknodRuntime() {
 		g.emit("and eax, 1048320")
 		g.emit("shl eax, 12")
 		g.emit("or r10d, eax") // minor[19:8] << 20
+	})
+}
+
+// emitChownAtRuntime emits `__fern_chown_at(path, uid, gid, follow)` —
+// fchownat(AT_FDCWD, path, uid, gid, follow ? 0 : AT_SYMLINK_NOFOLLOW).
+//
+// The ids reach the kernel as 32-bit words, which is what makes the -1
+// sentinel work: uid_t is unsigned, the caller's -1 arrives as
+// 0xffffffff, and the kernel reads that as "leave this one alone". So
+// the moves are deliberately `edx` / `r10d` rather than the 64-bit
+// registers.
+func (g *generator) emitChownAtRuntime() {
+	g.emitPathOpRuntime("__fern_chown_at", "chwn", sysFchownat, 1, 3, func() {
+		g.emit("mov edi, -100") // AT_FDCWD
+		g.emit("mov rsi, rbx")
+		g.emit("mov edx, [rbp - 72]")  // uid
+		g.emit("mov r10d, [rbp - 96]") // gid
+		// AT_SYMLINK_NOFOLLOW unless the caller asked to follow.
+		g.emit("mov r8d, 256")
+		g.emit("cmp dword ptr [rbp - 104], 0")
+		g.emit("jz .Lchwn_flags")
+		g.emit("xor r8d, r8d")
+		g.label(".Lchwn_flags")
 	})
 }
 

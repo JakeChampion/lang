@@ -58,6 +58,7 @@
 // the two agree there; the gap is real all the same.
 import "std/array";
 import "./lib/gnu";
+import "./lib/fts";
 import "./lib/mode";
 
 // ---- options ---------------------------------------------------------------
@@ -212,26 +213,6 @@ function parse(argv: string[]): Parsed {
     }
   }
   return Parsed { s: s, mode: mode, has_mode: has_mode, reference: reference, has_reference: has_reference, files: g.operands() };
-}
-
-// ---- paths -----------------------------------------------------------------
-// fts trims a RUN of trailing slashes to one before the operand is printed,
-// and leaves `/` and `//` alone: `d///` is `d/`, `///` is `/`.
-function fts_trim(p: string): string {
-  var n: i32 = p.len();
-  if (n > 2 && p[n - 1] as i32 == 47) {
-    while (n > 1 && p[n - 2] as i32 == 47) {
-      n = n - 1;
-    }
-  }
-  return slice_unchecked(p, 0, n) + "";
-}
-
-function child_path(dir: string, name: string): string {
-  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
-    return dir + name;
-  }
-  return dir + "/" + name;
 }
 
 function s_ifmt(): u32 {
@@ -409,7 +390,7 @@ function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, to
     Ok(names) => {
       var i: i32 = 0;
       while (i < names.len()) {
-        st = process(st, s, t, child_path(path, names[i]), false);
+        st = process(st, s, t, fts.child_path(path, names[i]), false);
         i = i + 1;
       }
     },
@@ -477,7 +458,7 @@ function main(): i32 {
   }
   var i: i32 = 0;
   while (i < files.len()) {
-    st = process(st, s, t, fts_trim(files[i]), true);
+    st = process(st, s, t, fts.trim(files[i]), true);
     i = i + 1;
   }
   st.out.close_stdout();

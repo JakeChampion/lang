@@ -18,6 +18,8 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 		body string
 	}{
 		{"strbuf_append", `strbuf_append(p); return 0;`},
+		{"buf_push", `var b: usize = buf_new(16); buf_push(b, p); buf_free(b); return 0;`},
+		{"buf_push_range", `var b: usize = buf_new(16); buf_push_range(b, p, 0, 1); buf_free(b); return 0;`},
 		{"count_byte", `return __count_byte(p, 97);`},
 		{"memchr", `return __memchr(p, 97, 0);`},
 		{"print", `print(p); return 0;`},

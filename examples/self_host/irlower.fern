@@ -11945,20 +11945,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // the signature and every backend helper reads it as one, so it lowers
     // through lower_i64, which widens an i32 leaf rather than bailing the
     // module off the IR path.
-    // Built-in `mknod(path, mode, major, minor)` — mknodat(2). Four
-    // 32-bit operands in argv order; the backends pack the major / minor
-    // pair into their kernel's dev_t.
-    if (cid.name == "mknod" && c.args.len() == 4) {
-        var mk: LowerState = lower_expr(c.args[0], s);
-        if (!mk.ok) { return mk; }
-        var mi: i32 = 1;
-        while (mi < 4) {
-            mk = lower_expr(c.args[mi], mk);
-            if (!mk.ok) { return mk; }
-            mi = mi + 1;
-        }
-        return mk.emit(ir.op_mknod());
-    }
+    // The path-plus-three-scalars primitives — see lower_call_path4, split
+    // out for the reason lower_call_dirlink is.
+    if (is_path4_call(cid.name, c.args.len())) { return lower_call_path4(c, cid, s); }
     if (cid.name == "truncate" && c.args.len() == 2) {
         var tr: LowerState = lower_expr(c.args[0], s);
         if (!tr.ok) { return tr; }
@@ -12360,6 +12349,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
 // path exactly as it did before these four were split out.
 function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "isatty") { return argc == 1; }
+    if (name == "window_size") { return argc == 1; }
     if (name == "access") { return argc == 2; }
     if (name == "geteuid" || name == "getegid" || name == "hostname") { return argc == 0; }
     if (name == "getuid" || name == "getgid") { return argc == 0; }
@@ -12378,6 +12368,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 // added to it inline costs the whole function's readability.
 //
 //   isatty(fd)          → op_isatty, one terminal-attribute ioctl → 0/1.
+//   window_size(fd)     → op_window_size → Result[WinSize, IoError], one
+//                         TIOCGWINSZ. opt_ret_type's case resolves the
+//                         Result so both match arms bind.
 //   access(path, mode)  → op_access → Result[void, IoError], judged against
 //                         the EFFECTIVE ids. opt_ret_type's access case
 //                         resolves the Result, so both match arms bind.
@@ -12411,6 +12404,7 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
+    if (cid.name == "window_size") { return a0.emit(ir.op_window_size()); }
     if (cid.name == "process_alive") { return a0.emit(ir.op_process_alive()); }
     if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
@@ -12483,6 +12477,37 @@ function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState):
     if (cid.name == "create_link") { return a1.emit(ir.op_create_link()); }
     if (cid.name == "rename") { return a1.emit(ir.op_rename()); }
     return a1.emit(ir.op_create_symlink());
+}
+
+// is_path4_call selects the primitives shaped as a path plus three word-wide
+// scalars: `mknod(path, mode, major, minor)` — mknodat(2), where the backends
+// pack the major / minor pair into their kernel's dev_t — and
+// `chown_at(path, uid, gid, follow)` — fchownat(2), where they translate
+// `follow` into their kernel's AT_SYMLINK_NOFOLLOW. Both push
+// Result[void, IoError].
+//
+// The ARITY is part of the test, as in is_dirlink_call: a call with the wrong
+// number of arguments falls through to the ordinary named-call path.
+function is_path4_call(name: string, argc: i32): boolean {
+    if (name == "mknod" || name == "chown_at") { return argc == 4; }
+    return false;
+}
+
+// lower_call_path4 lowers what is_path4_call selects: the four operands in
+// argv order, then the op. `chown_at`'s last operand is a bool rather than a
+// number, which needs no separate treatment — a bool is a word like the ids
+// beside it, so one loop covers all three scalars either way.
+function lower_call_path4(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    var st: LowerState = lower_expr(c.args[0], s);
+    if (!st.ok) { return st; }
+    var i: i32 = 1;
+    while (i < 4) {
+        st = lower_expr(c.args[i], st);
+        if (!st.ok) { return st; }
+        i = i + 1;
+    }
+    if (cid.name == "mknod") { return st.emit(ir.op_mknod()); }
+    return st.emit(ir.op_chown_at());
 }
 
 // is_byte_kernel_call selects the five allocation-free byte-scan intrinsics
@@ -32738,11 +32763,12 @@ pub struct LowerResult {
 }
 
 // result_from_decl marks a body whose return type is read from its
-// parser.FuncDecl. result_i32 is the only produced shape today, because the
-// physical RC boundary admits no wider scalar; a backend refuses any other
-// value rather than assuming one, so a new shape cannot be forgotten.
+// parser.FuncDecl. The produced shapes are the two integer slot classes the
+// physical RC boundary admits; a backend refuses any other value rather than
+// assuming one, so a new shape cannot be forgotten.
 pub function result_from_decl(): i32 { return 0; }
 pub function result_i32(): i32 { return 1; }
+pub function result_i64(): i32 { return 2; }
 
 // lower_failed builds a signature-refusal LowerResult carrying `why`. The
 // signature gates run before any lowering, so the ops / slot lists are all empty
@@ -70730,6 +70756,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "chmod") { return "Result[void, IoError]"; }
     if (name == "truncate") { return "Result[void, IoError]"; }
     if (name == "mknod") { return "Result[void, IoError]"; }
+    if (name == "chown_at") { return "Result[void, IoError]"; }
     if (name == "set_file_times") { return "Result[void, IoError]"; }
     if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
@@ -70738,6 +70765,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "stat") { return "Result[FileStat, IoError]"; }
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
     if (name == "statfs") { return "Result[FsStat, IoError]"; }
+    if (name == "window_size") { return "Result[WinSize, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     if (name == "signal_send") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,

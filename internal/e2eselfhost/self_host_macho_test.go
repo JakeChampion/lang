@@ -3,11 +3,14 @@ package e2eselfhost
 import (
 	"bytes"
 	"debug/macho"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tty"
 )
 
 // TestSelfHostArm64DarwinBuilds exercises the self-hosted compiler's
@@ -325,6 +328,63 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
   }
 }`,
 		7)
+
+	// window_size — TIOCGWINSZ, whose request number is Darwin's own
+	// (0x40087468 vs Linux's 0x5413). A wrong number answers ENOTTY, which is
+	// indistinguishable from a correct one asked about a pipe, so this case
+	// runs against a REAL pty of a size no terminal defaults to. It builds its
+	// own binary rather than going through runCase, which redirects.
+	t.Run("window_size", func(t *testing.T) {
+		srcPath := filepath.Join(dir, "window_size.fern")
+		if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
+  match (window_size(1)) {
+    Ok(ws) => {
+      if (ws.rows != (13 as i64)) { return 21; }
+      if (ws.cols != (57 as i64)) { return 22; }
+      return 7;
+    },
+    Err(e) => { return 23; }
+  }
+}
+`), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		binPath := filepath.Join(dir, "window_size.bin")
+		if out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath).CombinedOutput(); err != nil {
+			t.Fatalf("self-host emit failed: %v\n%s", err, out)
+		}
+		if !native {
+			return // structural-only off Apple Silicon, as runCase is
+		}
+		if err := os.Chmod(binPath, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		master, slave, err := tty.OpenPTY()
+		if err != nil {
+			t.Fatalf("OpenPTY: %v", err)
+		}
+		defer master.Close()
+		if err := tty.SetWindowSize(int(slave.Fd()), 13, 57); err != nil {
+			t.Fatalf("set pty size: %v", err)
+		}
+		done := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, master)
+			close(done)
+		}()
+		cmd := exec.Command(binPath)
+		cmd.Stdout = slave
+		_ = cmd.Run()
+		slave.Close()
+		<-done
+		ps := cmd.ProcessState
+		if ps == nil || !ps.Exited() {
+			t.Fatalf("Mach-O did not run to a normal exit (state=%v)", ps)
+		}
+		if code := ps.ExitCode(); code != 7 {
+			t.Errorf("on a 13x57 pty: exit = %d, want 7 (21 = wrong rows, 22 = wrong cols, 23 = Err)", code)
+		}
+	})
 
 	// remove_file — unlinkat(35) -> Darwin 472, AT_FDCWD -2. Full file
 	// lifecycle: write a file, delete it, then stat must report it gone

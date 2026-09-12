@@ -4586,6 +4586,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): strin
 // which is a compile-time stop rather than a wrong module.
 function produced_result_wat(r: irlower.LowerResult): string {
     if (r.result_kind == irlower.result_i32()) { return " (result i32)\n"; }
+    if (r.result_kind == irlower.result_i64()) { return " (result i64)\n"; }
     eprint("error: produced body " + r.name + " carries no result kind\n");
     exit(3);
     return "";

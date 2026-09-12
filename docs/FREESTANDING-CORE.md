@@ -54,6 +54,7 @@ costs a silent failure on the first target that lacks it.
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
+| `tty` | `window_size` | a terminal with a size to report, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
@@ -111,6 +112,19 @@ that can only ever be answered "no" is not authority — it is a constant.
 
 Note this is why the `std/` partition table below is unchanged by it: `isatty`
 adds no reach, so `std/cli` stays on `env` alone.
+
+**`window_size` is NOT, and the pair is the clearest case in this document.**
+`isatty` asks whether there is a terminal; `window_size` asks a terminal about
+itself. The first has a truthful answer everywhere — "no" — and the second has
+none: 0x0 is not "there is no terminal", it is "the terminal is empty", and a
+caller laying out columns cannot tell those apart. 80x24 is worse still, a
+measurement of a terminal the component cannot see. Neither WASI preview has an
+ioctl and wasi:cli's `terminal-output` resource reports no size, so `tty` is
+granted by no wasm profile and E066 refuses the call.
+
+The asymmetry is the rule this document is about, stated twice over on one
+descriptor: gate the question that has no honest answer, leave core the one
+whose honest answer is a constant.
 
 **`access` is on `fsmode`, not `fs`.** `write_file_exec` SETS a permission bit
 and `access` READS one — "do the mode bits permit this, for my effective ids"
