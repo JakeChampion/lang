@@ -273,11 +273,13 @@ const (
 	sysRenameat  = 264
 	sysFchmodat  = 268
 	sysUtimensat = 280
-	// truncate(2) 76 — the PATH form, not ftruncate(2) 77. No Fern open
-	// mode yields a writable descriptor to an existing file without
-	// O_TRUNC having already emptied it, so the fd form could not
-	// express an extend.
+	// truncate(2) 76 — the PATH form. `open_appender` yields a writable
+	// descriptor to an existing file without emptying it, so the fd form
+	// is expressible too and is ftruncate(2) below; which one a caller
+	// wants is a question about WHEN the permission check happened.
 	sysTruncate = 76
+	// ftruncate(2) 77 — the descriptor form, `Writer.truncate`.
+	sysFtruncate = 77
 	// mknodat(2) 259. The dev_t it takes is Linux's own packing of a
 	// major / minor pair, derived by measurement — see
 	// emitMknodRuntime.
@@ -300,6 +302,8 @@ const (
 	// getcwd(2): x86-64 syscall 79. Backs `__fern_getcwd`; the kernel
 	// answers the length INCLUDING the NUL, or -errno.
 	sysGetcwd = 79
+	// chdir(2): x86-64 syscall 80, getcwd's counterpart.
+	sysChdir = 80
 	// sched_getaffinity(2): x86-64 syscall 204. Backs `__fern_cpu_count`,
 	// which population-counts the mask the kernel writes back.
 	sysSchedGetaffinity = 204
@@ -350,6 +354,8 @@ const (
 	// rt_sigaction(2): x86-64 syscall 13. Backs `__fern_signal_ignore`
 	// and `__fern_signal_default`.
 	sysRtSigaction = 13
+	// rt_sigprocmask(2): x86-64 syscall 14. Backs `__fern_signal_mask`.
+	sysRtSigprocmask = 14
 )
 
 // SIG_DFL / SIG_IGN, the two `sa_handler` values that are dispositions
@@ -648,7 +654,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	// The path-taking fs helpers free their NUL-terminated path copies and
 	// working buffers (#9001); remove_dir_all also releases its child paths.
-	if g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
+	if g.usesChdir || g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
@@ -894,6 +900,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
 	}
+	if g.usesSignalMask {
+		g.emitSignalMaskRuntime()
+	}
+	if g.usesSignalDispositionRead {
+		g.emitSignalDispositionReadRuntime()
+	}
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
@@ -953,6 +965,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesCreateDir {
 		g.emitCreateDirRuntime()
+	}
+	if g.usesChdir {
+		g.emitChdirRuntime()
 	}
 	if g.usesRemoveDir {
 		g.emitRemoveDirRuntime()
@@ -1016,6 +1031,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
+	}
+	if g.usesWriterTruncate {
+		g.emitWriterTruncateRuntime()
 	}
 	if g.usesAccess {
 		g.emitAccessRuntime()
@@ -1282,8 +1300,15 @@ type generator struct {
 	// `__fern_signal_default`; they differ by one immediate, so they
 	// share a body and one flag rather than splitting into two.
 	usesSignalDisposition bool
-	usesAsBytes           bool
-	usesReadLine          bool
+	// usesSignalMask pulls in `__fern_signal_mask(how, mask)` —
+	// rt_sigprocmask(2) — and usesSignalDispositionRead
+	// `__fern_signal_disposition(sig)`, the rt_sigaction READ that reports
+	// what a disposition currently is. Both are process state and neither
+	// allocates.
+	usesSignalMask            bool
+	usesSignalDispositionRead bool
+	usesAsBytes               bool
+	usesReadLine              bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -1506,29 +1531,30 @@ type generator struct {
 	// mkdirat / getdents64 / newfstatat runtimes returning the same
 	// Option[IoError] / Result[_, IoError] box shapes as the file-I/O
 	// helpers above.
-	usesRemoveFile bool
-	usesTempDir    bool
-	usesReadDir    bool
-	usesStat       bool
-	usesLstat      bool
-	usesFdStat     bool
-	usesFdSync     bool
-	usesFdDatasync bool
-	usesFdSyncfs   bool
-	usesSync       bool
-	usesReaderSeek bool
-	usesAccess     bool
-	usesEuid       bool
-	usesEgid       bool
-	usesRuid       bool
-	usesRgid       bool
-	usesGetgroups  bool
-	usesEnviron    bool
-	usesHostname   bool
-	usesUnameField bool
-	usesGetcwd     bool
-	usesCPUCount   bool
-	usesIoError    bool
+	usesRemoveFile     bool
+	usesTempDir        bool
+	usesReadDir        bool
+	usesStat           bool
+	usesLstat          bool
+	usesFdStat         bool
+	usesReaderSeek     bool
+	usesWriterTruncate bool
+	usesFdSync         bool
+	usesFdDatasync     bool
+	usesFdSyncfs       bool
+	usesSync           bool
+	usesAccess         bool
+	usesEuid           bool
+	usesEgid           bool
+	usesRuid           bool
+	usesRgid           bool
+	usesGetgroups      bool
+	usesEnviron        bool
+	usesHostname       bool
+	usesUnameField     bool
+	usesGetcwd         bool
+	usesCPUCount       bool
+	usesIoError        bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
 	// (`__fern_create_dir_all(path) → Result[void, IoError]`), the
 	// only builtin that can BUILD a directory tree (#6749).
@@ -1538,7 +1564,10 @@ type generator struct {
 	// EEXIST is an error, remove_dir is rmdir and ENOTEMPTY is an
 	// error, and the three link helpers are linkat / symlinkat /
 	// readlinkat. `usesUmask` is the process file-mode creation mask.
-	usesCreateDir     bool
+	usesCreateDir bool
+	// usesChdir pulls in `__fern_chdir(path)` — chdir(2), the move getcwd
+	// only reports. One path operand, Result[void, IoError].
+	usesChdir         bool
 	usesRemoveDir     bool
 	usesCreateLink    bool
 	usesCreateSymlink bool
@@ -1913,6 +1942,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "signal_ignore", "signal_default":
 		g.usesSignalDisposition = true
+	case "signal_mask":
+		g.usesSignalMask = true
+	case "signal_disposition":
+		g.usesSignalDispositionRead = true
 	case "env":
 		g.usesEnv = true
 		g.usesAlloc = true
@@ -1976,6 +2009,10 @@ func (g *generator) recordUse(target string) {
 		g.usesReaderSeek = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "__method_Writer_truncate":
+		g.usesWriterTruncate = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "__memset":
 		// Byte-grain fill used by the Map clear path.
 		g.usesMemset = true
@@ -2019,6 +2056,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "create_dir":
 		g.usesCreateDir = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "chdir":
+		g.usesChdir = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "remove_dir":
@@ -3608,6 +3649,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_statfs"
 		case "isatty":
 			target = "__fern_isatty"
+		case "signal_mask":
+			target = "__fern_signal_mask"
+		case "signal_disposition":
+			target = "__fern_signal_disposition"
 		case "window_size":
 			target = "__fern_window_size"
 		case "signal_ignore":
@@ -3650,6 +3695,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_create_dir_all"
 		case "create_dir":
 			target = "__fern_create_dir"
+		case "chdir":
+			target = "__fern_chdir"
 		case "remove_dir":
 			target = "__fern_remove_dir"
 		case "create_link":
@@ -3724,6 +3771,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_sync"
 		case "__method_Reader_seek":
 			target = "__fern_reader_seek"
+		case "__method_Writer_truncate":
+			target = "__fern_writer_truncate"
 		case "__method_Reader_close",
 			"__method_Writer_close":
 			target = "__fern_close_fd_box"
@@ -14713,6 +14762,107 @@ func (g *generator) emitCreateDirRuntime() {
 	})
 }
 
+// emitChdirRuntime emits `__fern_chdir(path)` — chdir(2), the move `getcwd`
+// only ever reported. One path operand and no scalars, so it is the plainest
+// user of the shared path-op factory; ENOENT, ENOTDIR and EACCES all reach the
+// caller in the IoError.
+func (g *generator) emitChdirRuntime() {
+	g.emitPathOpRuntime("__fern_chdir", "chdir", sysChdir, 1, 0, func() {
+		g.emit("mov rdi, rbx")
+	})
+}
+
+// emitSignalMaskRuntime emits `__fern_signal_mask(how, mask) -> i64` —
+// rt_sigprocmask(2), returning the mask that was blocked BEFORE the call so
+// one call both reads and writes.
+//
+// `how` arrives in Fern's numbering (0 block / 1 unblock / 2 replace), which is
+// Linux's, so it passes through untouched here; the arm64 emitter has to add
+// one for XNU. Both sigset slots live in the 128-byte red zone below rsp, the
+// same place the disposition helper puts its 32-byte act.
+//
+// The `old` slot is zeroed first: Linux writes all 8 bytes of it, but a kernel
+// that writes fewer would otherwise leave the high half holding whatever was on
+// the stack, and the result is read as a full i64.
+func (g *generator) emitSignalMaskRuntime() {
+	g.line("")
+	g.line(".globl __fern_signal_mask")
+	g.line(".type __fern_signal_mask, @function")
+	g.label("__fern_signal_mask")
+	if g.entry != platforms.EntryProcess {
+		// Nothing can deliver a signal off the process entry shape, so
+		// nothing is blocked and there is no mask to change
+		// (docs/FREESTANDING-CORE.md).
+		g.emit("xor eax, eax")
+		g.emit("ret")
+		g.line(".size __fern_signal_mask, .-__fern_signal_mask")
+		return
+	}
+	g.emit("mov [rsp - 16], rsi")        // set = mask
+	g.emit("mov qword ptr [rsp - 8], 0") // old = 0
+	// rt_sigprocmask(how, &set, &old, sizeof(sigset_t)). `how` is already
+	// in edi and stays there.
+	g.emit("lea rsi, [rsp - 16]")
+	g.emit("lea rdx, [rsp - 8]")
+	g.emit(fmt.Sprintf("mov r10d, %d", kernelSigsetN))
+	g.emitSyscall(sysRtSigprocmask)
+	g.emit("test rax, rax")
+	g.emit("js .Lsigmask_ret") // -errno passthrough
+	g.emit("mov rax, [rsp - 8]")
+	g.label(".Lsigmask_ret")
+	g.emit("ret")
+	g.line(".size __fern_signal_mask, .-__fern_signal_mask")
+}
+
+// emitSignalDispositionReadRuntime emits `__fern_signal_disposition(sig)` —
+// rt_sigaction with a NULL `act`, which reads without writing, then maps the
+// handler word onto 0 default / 1 ignore / 2 a handler is installed.
+//
+// The 32-byte oldact covers both kernels' layouts the same way the setter's act
+// does: `sa_handler` is at offset 0 in Linux's {handler, flags, restorer, mask}
+// and in XNU's {handler, mask, flags} alike, and nothing else is read.
+func (g *generator) emitSignalDispositionReadRuntime() {
+	g.line("")
+	g.line(".globl __fern_signal_disposition")
+	g.line(".type __fern_signal_disposition, @function")
+	g.label("__fern_signal_disposition")
+	if g.entry != platforms.EntryProcess {
+		// Nothing can deliver a signal, so every one of them is at the
+		// default it was born with.
+		g.emit("xor eax, eax")
+		g.emit("ret")
+		g.line(".size __fern_signal_disposition, .-__fern_signal_disposition")
+		return
+	}
+	g.emit("xor eax, eax")
+	g.emit("mov qword ptr [rsp - 32], rax")
+	g.emit("mov qword ptr [rsp - 24], rax")
+	g.emit("mov qword ptr [rsp - 16], rax")
+	g.emit("mov qword ptr [rsp - 8], rax")
+	// rt_sigaction(sig, NULL, &oldact, sizeof(sigset_t)); `sig` stays in edi.
+	g.emit("xor esi, esi")
+	g.emit("lea rdx, [rsp - 32]")
+	g.emit(fmt.Sprintf("mov r10d, %d", kernelSigsetN))
+	g.emitSyscall(sysRtSigaction)
+	g.emit("test rax, rax")
+	g.emit("js .Lsigdisp_ret") // -errno passthrough
+	g.emit("mov rax, [rsp - 32]")
+	g.emit(fmt.Sprintf("cmp rax, %d", sigDfl))
+	g.emit("je .Lsigdisp_dfl")
+	g.emit(fmt.Sprintf("cmp rax, %d", sigIgn))
+	g.emit("je .Lsigdisp_ign")
+	g.emit("mov eax, 2")
+	g.emit("ret")
+	g.label(".Lsigdisp_dfl")
+	g.emit("xor eax, eax")
+	g.emit("ret")
+	g.label(".Lsigdisp_ign")
+	g.emit("mov eax, 1")
+	g.label(".Lsigdisp_ret")
+	g.emit("ret")
+	g.line(".size __fern_signal_disposition, .-__fern_signal_disposition")
+}
+
 // emitRemoveDirRuntime emits `__fern_remove_dir(path)` —
 // unlinkat(AT_FDCWD, path, AT_REMOVEDIR), which is rmdir(2). A
 // non-empty directory is ENOTEMPTY and reaches the caller.
@@ -15809,6 +15959,45 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.line(".size __fern_reader_seek, .-__fern_reader_seek")
 }
 
+// emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
+// length) → Option[IoError]` — ftruncate(2) on the Writer's fd. The
+// length is a full 64-bit operand passed through unmasked, so a negative
+// one is the kernel's EINVAL rather than a clamp here.
+//
+// System V: rdi = handle ptr, rsi = length.
+func (g *generator) emitWriterTruncateRuntime() {
+	g.line("")
+	g.line(".globl __fern_writer_truncate")
+	g.line(".type __fern_writer_truncate, @function")
+	g.label("__fern_writer_truncate")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd; the length is already in rsi
+	g.emitSyscall(sysFtruncate)
+	g.emit("test rax, rax")
+	g.emit("js .Lwtr_err")
+	g.emitPayloadlessResultBox(1) // None
+	g.emit("jmp .Lwtr_ret")
+	g.label(".Lwtr_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Some
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lwtr_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_writer_truncate, .-__fern_writer_truncate")
+}
+
 // emitAccessRuntime emits `__fern_access(path, mode) →
 // Result[void, IoError]` — faccessat2(AT_FDCWD, path, mode, AT_EACCESS).
 //
@@ -16161,8 +16350,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		mode  int
 	}{
 		{"__fern_open_reader", 0, 0},
-		{"__fern_open_writer", oflagCreatTrunc, 0644},
-		{"__fern_open_appender", oflagCreatAppend, 0644},
+		{"__fern_open_writer", oflagCreatTrunc, 0666},
+		{"__fern_open_appender", oflagCreatAppend, 0666},
 		{"__fern_open_exclusive", oflagCreatExcl, 0600},
 	} {
 		g.line("")

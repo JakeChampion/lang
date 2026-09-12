@@ -310,3 +310,201 @@ func TestMentionsReg(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchCopyFromX0(t *testing.T) {
+	cases := []struct {
+		line, want string
+	}{
+		{"\tmov x1, x0", "x1"},
+		{"\tmov x27, x0", "x27"},
+		{"\tmov x0, x0", ""},
+		// x8 and x16 carry the Darwin syscall-rewrite marker.
+		{"\tmov x8, x0", ""},
+		{"\tmov x16, x0", ""},
+		{"\tmov x29, x0", ""},
+		{"\tmov w1, w0", ""},
+		{"\tmov x1, x2", ""},
+		{"\tadd x1, x0, x0", ""},
+		{"\tmov x, x0", ""},
+	}
+	for _, c := range cases {
+		got, ok := matchCopyFromX0(c.line)
+		if c.want == "" {
+			if ok {
+				t.Errorf("matchCopyFromX0(%q) = (%q, true), want no match", c.line, got)
+			}
+			continue
+		}
+		if !ok || got != c.want {
+			t.Errorf("matchCopyFromX0(%q) = (%q, %v), want (%q, true)", c.line, got, ok, c.want)
+		}
+	}
+}
+
+func TestRenameChainTo(t *testing.T) {
+	cases := []struct {
+		name  string
+		chain []string
+		want  []string
+	}{
+		{
+			"one line",
+			[]string{"\tldur x0, [x29, #-8]"},
+			[]string{"\tldur x1, [x29, #-8]"},
+		},
+		{
+			// The first line's x0 is the value the push saved, which after the
+			// rewrite is still in x0. Renaming it would read the wrong value.
+			"first-line read of x0 stays x0",
+			[]string{"\tldr x0, [x0, #8]"},
+			[]string{"\tldr x1, [x0, #8]"},
+		},
+		{
+			// A later line's x0 is the chain's own intermediate, now in x1.
+			"later read of x0 is renamed",
+			[]string{"\tldur x0, [x29, #-8]", "\tldr x0, [x0, #8]"},
+			[]string{"\tldur x1, [x29, #-8]", "\tldr x1, [x1, #8]"},
+		},
+		{
+			// x16 is the emitter's address scratch and keeps its name.
+			"x16 scratch is untouched",
+			[]string{"\tsub x16, x29, #384", "\tldr x0, [x16]"},
+			[]string{"\tsub x16, x29, #384", "\tldr x1, [x16]"},
+		},
+		{
+			"w-width destination",
+			[]string{"\tldur x0, [x29, #-8]", "\tmov w0, w0"},
+			[]string{"\tldur x1, [x29, #-8]", "\tmov w1, w1"},
+		},
+		// Rejections.
+		{"reads another register", []string{"\tadd x0, x2, x0"}, nil},
+		{"last line does not write x0", []string{"\tldur x0, [x29, #-8]", "\tsub x16, x29, #8"}, nil},
+		{"writes another register", []string{"\tldur x2, [x29, #-8]"}, nil},
+		{"not an instruction", []string{".L1:"}, nil},
+		{"call", []string{"\tbl __fern_alloc"}, nil},
+		{"touches sp", []string{"\tldr x0, [sp, #8]"}, nil},
+		{"empty", nil, nil},
+	}
+	for _, c := range cases {
+		got, ok := renameChainTo(c.chain, "x1")
+		if c.want == nil {
+			if ok {
+				t.Errorf("%s: renameChainTo(%q) = (%q, true), want no match", c.name, c.chain, got)
+			}
+			continue
+		}
+		if !ok {
+			t.Errorf("%s: renameChainTo(%q) refused, want %q", c.name, c.chain, c.want)
+			continue
+		}
+		if strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+			t.Errorf("%s: renameChainTo(%q) = %q, want %q", c.name, c.chain, got, c.want)
+		}
+	}
+	// A destination the chain itself uses cannot be the rename target.
+	for _, bad := range []string{"x16", "x29"} {
+		if _, ok := renameChainTo([]string{"\tldur x0, [x29, #-8]"}, bad); ok {
+			t.Errorf("renameChainTo accepted %s as the rename target", bad)
+		}
+	}
+}
+
+func TestRegTokens(t *testing.T) {
+	cases := []struct {
+		s    string
+		want string
+	}{
+		{"x0, [x29, #-8]", "x0 x29"},
+		{"x1, x10, x2", "x1 x10 x2"},
+		{"w0, w0", "w0 w0"},
+		// A hex literal is not a register, and neither is a label containing x.
+		{"x0, #0x1f", "x0"},
+		{"x0, :lo12:__fern_msg", "x0"},
+		{"sp, sp, #16", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := strings.Join(regTokens(c.s), " ")
+		if got != c.want {
+			t.Errorf("regTokens(%q) = %q, want %q", c.s, got, c.want)
+		}
+	}
+}
+
+// P5's input is produced BY the peephole, not by the emitter: the copy it
+// matches is what P1 leaves behind when it collapses the inner push/pop of a
+// binary operand. So there is no source program whose NoPeephole output
+// contains the shape, and the rule is driven through the window directly.
+func runPeep(lines []string) []string {
+	g := &generator{peepWin: lines}
+	g.peepholeTail()
+	return g.peepWin
+}
+
+func TestPeepholeP5FoldsCopyRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			"one-line chain",
+			[]string{"\tstr x0, [sp, #-16]!", "\tldur x0, [x29, #-8]", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+			[]string{"\tldur x1, [x29, #-8]"},
+		},
+		{
+			"two-line chain through x16",
+			[]string{"\tstr x0, [sp, #-16]!", "\tsub x16, x29, #384", "\tldr x0, [x16]", "\tmov x2, x0", "\tldr x0, [sp], #16"},
+			[]string{"\tsub x16, x29, #384", "\tldr x2, [x16]"},
+		},
+		{
+			// The chain's first line reads the pushed value, which stays in x0.
+			"chain reads the pushed value",
+			[]string{"\tstr x0, [sp, #-16]!", "\tldr x0, [x0, #8]", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+			[]string{"\tldr x1, [x0, #8]"},
+		},
+		{
+			// Leading context is untouched.
+			"keeps what came before",
+			[]string{"\tnop-ish", "\tstr x0, [sp, #-16]!", "\tmovz x0, #16", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+			[]string{"\tnop-ish", "\tmovz x1, #16"},
+		},
+		{
+			// The pop must go back to x0; a different register is P4's case,
+			// and P4 handles it rather than P5.
+			"pop into another register is not P5",
+			[]string{"\tstr x0, [sp, #-16]!", "\tldur x0, [x29, #-8]", "\tmov x1, x0", "\tldr x2, [sp], #16"},
+			[]string{"\tmov x2, x0", "\tldur x0, [x29, #-8]", "\tmov x1, x0"},
+		},
+		{
+			"chain touching sp is refused",
+			[]string{"\tstr x0, [sp, #-16]!", "\tldr x0, [sp, #8]", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+			[]string{"\tstr x0, [sp, #-16]!", "\tldr x0, [sp, #8]", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+		},
+		{
+			"chain with a call is refused",
+			[]string{"\tstr x0, [sp, #-16]!", "\tbl __fern_alloc", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+			[]string{"\tstr x0, [sp, #-16]!", "\tbl __fern_alloc", "\tmov x1, x0", "\tldr x0, [sp], #16"},
+		},
+	}
+	for _, c := range cases {
+		got := runPeep(append([]string(nil), c.in...))
+		if strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+			t.Errorf("%s:\n  in   %q\n  got  %q\n  want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// The residue P5 exists to remove must not reach the output of a real program.
+func TestNoCopyRoundTripSurvives(t *testing.T) {
+	asm := compile(t, roundTripProg, Options{})
+	lines := strings.Split(asm, "\n")
+	for i := 0; i+1 < len(lines); i++ {
+		cur := strings.TrimSpace(lines[i])
+		next := strings.TrimSpace(lines[i+1])
+		if strings.HasPrefix(cur, "mov x") && strings.HasSuffix(cur, ", x0") &&
+			next == "ldr x0, [sp], #16" {
+			t.Errorf("a copy-then-restore round trip survived at line %d: %q / %q", i, cur, next)
+		}
+	}
+}

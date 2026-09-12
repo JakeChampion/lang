@@ -597,6 +597,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_reader_seek")
+				case "__fern_writer_truncate":
+					// (w, length) → i32 — ftruncate of the
+					// handle; Option[IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add("__fern_writer_truncate")
 				case "__fern_writer_close":
 					// Same shape as reader_close — Writer struct
 					// has identical { fd: i32 } layout.
@@ -897,7 +904,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_wasm_poll")
 				case "isatty":
 					needs.add("isatty")
-				case "signal_ignore", "signal_default":
+				case "signal_ignore", "signal_default", "signal_mask", "signal_disposition":
 					needs.add(op.Str)
 				case "hostname":
 					needs.add("hostname")
@@ -1162,6 +1169,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_fd_fdatasync":      {"__wasi_errno_of_code"},
 	"__fern_fd_syncfs":         {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
+	"__fern_writer_truncate":   {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
 	"__fern_create_dir":        {"__wasi_errno_of_code"},
@@ -1214,6 +1222,7 @@ var helperResultBoxCallers = []string{
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek",
+	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_remove_dir_all", "__fern_temp_dir",
@@ -2004,19 +2013,39 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildIsattyBody,
 	},
 	"signal_ignore": {
-		// (sig: i32) → () — set one signal to SIG_IGN. Nothing can
+		// (sig: i32) → i32 — set one signal to SIG_IGN. Nothing can
 		// deliver a signal to a component, so there is nothing to
 		// ignore and doing nothing is the whole truth about it
-		// (compare hostname's ""). See buildSignalDispositionBody.
+		// (compare hostname's ""). The result is the errno the
+		// natives report; nothing here can fail, so it is 0. See
+		// buildSignalDispositionBody.
 		params:  []byte{encode.ValtypeI32},
-		results: nil,
+		results: []byte{encode.ValtypeI32},
 		body:    buildSignalDispositionBody,
 	},
 	"signal_default": {
-		// (sig: i32) → () — the same no-op in the other direction.
+		// (sig: i32) → i32 — the same no-op in the other direction.
 		params:  []byte{encode.ValtypeI32},
-		results: nil,
+		results: []byte{encode.ValtypeI32},
 		body:    buildSignalDispositionBody,
+	},
+	"signal_mask": {
+		// (how: i32, mask: i64) → i64, the mask that was blocked
+		// before the call. Nothing can deliver a signal, so nothing
+		// is ever blocked and the answer is 0 — not a stand-in, but
+		// what the blocked set of a component actually is, and
+		// consistent with signal_ignore doing nothing.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: []byte{encode.ValtypeI64},
+		body:    buildSignalMaskBody,
+	},
+	"signal_disposition": {
+		// (sig: i32) → i32. Every signal is at its default, which is
+		// the truth rather than a guess: the two setters are no-ops
+		// here, so nothing ever moved a disposition away from it.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSignalDispositionReadBody,
 	},
 	"hostname": {
 		// () → (data, len): the kernel's node name. Neither WASI
@@ -2720,6 +2749,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderSeekBody,
+	},
+	"__fern_writer_truncate": {
+		// (w, length: i64) → i32 — heap-form Option[IoError]:
+		// ftruncate of the handle's fd. See wasi_writer_truncate.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterTruncateBody,
 	},
 	"__str_idx": {
 		// (base_data, base_len, i) → i32 (byte address). For

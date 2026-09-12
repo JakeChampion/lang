@@ -1646,8 +1646,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "stat", "lstat", "statfs", "access", "read_file",
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
-        "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);
@@ -1663,8 +1663,8 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "remove_file", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
-        "fd_fsync", "fd_fdatasync", "fd_syncfs"
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ]);
 }
 
@@ -1679,7 +1679,8 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "truncate", "mknod", "chown_at", "window_size", "set_file_times",
+        "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess"
     ]);
@@ -4474,6 +4475,38 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    pushq %r10\n");
         return s;
     }
+    if (o.kind_tag == 253) {  // sum_bytes
+        // operand stack [box] -> every byte of the string added into a
+        // 32-bit accumulator that wraps.
+        //
+        // SCALAR (§3.4 step 1). The SSE2 sequence this wants is psadbw
+        // against a zeroed register plus paddq, both already inside the
+        // declared Haswell baseline; the ordering rule puts the scalar
+        // lowering in every backend before any of them is vectorised.
+        //
+        // movzbl is the whole of the sign question: a byte is unsigned, so
+        // 0xff contributes 255. The accumulate is `addl`, which writes the
+        // low 32 bits and zeroes the top, so the wrap is the register width
+        // and the pushed value is already the i32 the op promises.
+        //
+        // One operand, not two: the cursor is an INDEX in %rdx and the sum
+        // lives in %r10, so the body stays inside the registers this backend
+        // has free.
+        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var sb_loop: string = slo.name;
+        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
+        var sb_done: string = slo2.name;
+        s = slo2.state;
+        s = s.write("    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
+        s = s.write(sb_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + sb_done + "\n");
+        s = s.write("    movzbl (%rax,%rdx), %r9d\n    addl %r9d, %r10d\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + sb_loop + "\n");
+        s = s.write(sb_done + ":\n    pushq %r10\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.
@@ -5237,13 +5270,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // Allocates the NUL-term buffer + the Result box, so heap +
             // open_file needs.
             //
-            // 0600 for the EXCLUSIVE opener, 0644 for the rest: its callers are
+            // 0600 for the EXCLUSIVE opener, 0666 for the rest: its callers are
             // creating a file only they should hold (gnulib's create_temp_file
             // is 0600 for the same reason), and a spool of piped input must not
             // be world-readable while it exists. The imm is the canonical
             // x86-64 flag word — asmcore's helper translates it per target — so
             // 193 identifies the exclusive opener on every one.
-            var open_mode: i32 = 420;
+            var open_mode: i32 = 438;
             if (o.i32_imm == 193) { open_mode = 384; }
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $" + util.i32_to_string(open_mode) + ", %rdx\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_res\n    addq $24, %rsp\n    pushq %rax\n");
@@ -5416,6 +5449,20 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [pathbox] IS param[0] (+16) — one rmdir(2), ENOTEMPTY included.
             s = s.write("    call __fn___fern_remove_dir\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("remove_dir");
+        } else if (o.kind_tag == 277) {  // chdir
+            // [pathbox] IS param[0] (+16) — one chdir(2).
+            s = s.write("    call __fn___fern_chdir\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("chdir");
+        } else if (o.kind_tag == 278) {  // signal_mask
+            // [how][mask] with mask on top; the stack ABI wants param[0]
+            // (how) on top, so re-push the popped pair in reverse.
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_signal_mask\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("signal_mask");
+        } else if (o.kind_tag == 279) {  // signal_disposition
+            // [sig] IS param[0] already; the stack ABI needs no marshalling.
+            s = s.write("    call __fn___fern_signal_disposition\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("signal_disposition");
         } else if (o.kind_tag == 262) {  // create_link
             // [targetbox][pathbox] (path on top) -> Result[void, IoError].
             s = s.write("    popq %rsi\n    popq %rdi\n");
@@ -5557,6 +5604,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
+        } else if (o.kind_tag == 281) {  // writer_truncate
+            // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
+            // pushes a fresh Option[IoError]. The length is on top but param[0]
+            // is fd, so swap before the call, as writer_write does.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_writer_truncate\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
         } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments (the
             // AST path's __fern_args, which allocates). The args need also makes the
@@ -8678,7 +8732,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
         "eprint", "read_int", "udp_send", "isatty", "window_size",
-        "rlimit_nofile", "signal_ignore", "signal_default", "access",
+        "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
+        "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
         "fd_stat"
     ])) {
@@ -8756,6 +8811,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86_64"); }
         if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86_64"); }
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86_64"); }
+        if (s.has_need("chdir")) { fs_src = fs_src + " " + asmcore.rt_src_chdir("x86_64"); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link("x86_64"); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64"); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
@@ -8780,6 +8836,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
+        if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via
@@ -8808,6 +8865,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("rlimit_nofile")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), all_structs, s);
+    }
+    if (s.has_need("signal_mask")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86_64"), all_structs, s);
+    }
+    if (s.has_need("signal_disposition")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86_64"), all_structs, s);
     }
     if (s.has_need("signal_ignore")) {
         s = s.write("    .text\n");

@@ -199,6 +199,21 @@ function entry_at(bs: u8[], off: i32): Entry {
 // Every whole record in `path`, in file order. A missing or unreadable
 // file, and a trailing partial record, are both "no more entries".
 pub function read_all(path: string): Entry[] {
+  match (read_all_result(path)) {
+    Ok(entries) => {
+      return entries;
+    },
+    Err(_) => {
+      var none: Entry[] = [];
+      return none;
+    }
+  }
+}
+
+// The same read with the failure kept, for the one caller that reports
+// it: `uptime` has no boot time when the database cannot be read, and
+// names the errno of the failed open in that diagnostic.
+pub function read_all_result(path: string): Result[Entry[], IoError] {
   var out: Entry[] = [];
   match (read_file_bytes(path)) {
     Ok(bs) => {
@@ -207,10 +222,10 @@ pub function read_all(path: string): Entry[] {
         out = out.append(entry_at(bs, off));
         off = off + record_bytes();
       }
-      return out;
+      return Ok(out);
     },
-    Err(_) => {
-      return out;
+    Err(e) => {
+      return Err(e);
     }
   }
 }

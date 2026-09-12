@@ -208,6 +208,30 @@ pub function user_by_name_in(text: string, name: string): Option[User] {
   return None;
 }
 
+// The first /etc/group entry with this name. The inverse of group_name,
+// and the direction `chgrp GROUP` and `chown :GROUP` need: a name on the
+// command line has to become the gid the kernel is handed.
+pub function group_by_name(name: string): Option[Group] {
+  return group_by_name_in(slurp(group_path()), name);
+}
+
+pub function group_by_name_in(text: string, name: string): Option[Group] {
+  var lines: string[] = text.lines();
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    match (group_entry(lines[i])) {
+      Some(pair) => {
+        if (pair.0.name == name) {
+          return Some(pair.0);
+        }
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
 // The first /etc/passwd entry with this uid.
 pub function user_by_uid(uid: i64): Option[User] {
   return user_by_uid_in(slurp(passwd_path()), uid);
@@ -228,6 +252,24 @@ pub function user_by_uid_in(text: string, uid: i64): Option[User] {
     i = i + 1;
   }
   return None;
+}
+
+// The two databases as TEXT, for a caller that looks up more than once. Every
+// lookup below that takes a path re-reads the whole file, which is right for a
+// utility asking once and quadratic for one asking per entry — `chown -Rv`
+// over a tree names an owner and a group on every line.
+pub function passwd_text(): string {
+  return slurp(passwd_path());
+}
+
+pub function group_text(): string {
+  return slurp(group_path());
+}
+
+// The first /etc/group entry with this gid, as a name, over already-read text.
+pub function group_name_in(text: string, gid: i64): Option[string] {
+  var names: Option[string][] = group_names_in(text, [gid]);
+  return names[0];
 }
 
 // The first /etc/group entry with this gid, as a name.

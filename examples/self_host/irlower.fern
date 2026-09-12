@@ -12447,12 +12447,13 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
     return a2.emit(ir.op_proc_exec_as());
 }
 
-// is_dirlink_call recognises the eight single-step directory, link and
-// permission primitives. The ARITY is part of the test so a call with the
+// is_dirlink_call recognises the nine single-step directory, link, working-
+// directory and permission primitives. The ARITY is part of the test so a call with the
 // wrong number of arguments falls through to the ordinary named-call path.
 function is_dirlink_call(name: string, argc: i32): boolean {
     if (name == "create_dir" || name == "chmod") { return argc == 2; }
     if (name == "remove_dir" || name == "read_link" || name == "umask") { return argc == 1; }
+    if (name == "chdir") { return argc == 1; }
     if (name == "create_link" || name == "create_symlink" || name == "rename") { return argc == 2; }
     return false;
 }
@@ -12466,6 +12467,7 @@ function lower_call_dirlink(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState):
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "remove_dir") { return a0.emit(ir.op_remove_dir()); }
+    if (cid.name == "chdir") { return a0.emit(ir.op_chdir()); }
     if (cid.name == "read_link") { return a0.emit(ir.op_read_link()); }
     if (cid.name == "umask") { return a0.emit(ir.op_umask()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
@@ -12518,6 +12520,7 @@ function lower_call_path4(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): L
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
     if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
+    if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
     return false;
 }
@@ -12530,6 +12533,8 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //   __rmemchr(s, byte, from)    → the LAST at or before it; `from` clamps DOWN
 //                                 to len-1 where memchr's clamps UP to 0.
 //   __count_byte(s, byte)       → the tally; no cursor, so nothing to clamp.
+//   __sum_bytes(s)              → the wrapped 32-bit sum of every byte, and
+//                                 the only one taking a single operand.
 //   __ascii_run(s, from)        → the first high-bit byte, or the LENGTH, so a
 //                                 caller can skip a run branch-free.
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
@@ -12546,19 +12551,25 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__memchr") { return k.emit(ir.op_memchr()); }
     if (cid.name == "__rmemchr") { return k.emit(ir.op_rmemchr()); }
     if (cid.name == "__count_byte") { return k.emit(ir.op_count_byte()); }
+    if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
     return k.emit(ir.op_mismatch());
 }
 
-// is_signal_call recognises the two disposition builtins. The ARITY is part of
-// the test, as it is for is_os_query_call: a call with the wrong number of
-// arguments falls through to the ordinary named-call path.
+// is_signal_call recognises the four signal builtins: the two dispositions, the
+// blocked mask, and the disposition READ. The ARITY is part of the test, as it
+// is for is_os_query_call: a call with the wrong number of arguments falls
+// through to the ordinary named-call path.
 function is_signal_call(name: string, argc: i32): boolean {
+    if (name == "signal_mask") { return argc == 2; }
+    if (name == "signal_disposition") { return argc == 1; }
     return (name == "signal_ignore" || name == "signal_default") && argc == 1;
 }
 
-// lower_call_signal lowers signal_ignore(sig) / signal_default(sig) — set one
-// signal's disposition to SIG_IGN or SIG_DFL (#8792).
+// lower_call_signal lowers the four: signal_ignore(sig) / signal_default(sig)
+// set one disposition to SIG_IGN or SIG_DFL (#8792), signal_disposition(sig)
+// reads one back, and signal_mask(how, mask) moves the blocked set and answers
+// what it was (#9090).
 //
 // These are NOT os_queries: that arm asks the OS about the process, and these
 // change it, so widening its name to cover them would make it say less than it
@@ -12568,6 +12579,12 @@ function is_signal_call(name: string, argc: i32): boolean {
 function lower_call_signal(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
+    if (cid.name == "signal_disposition") { return a0.emit(ir.op_signal_disposition()); }
+    if (cid.name == "signal_mask") {
+        var a1: LowerState = lower_i64(c.args[1], a0);
+        if (!a1.ok) { return a1; }
+        return a1.emit(ir.op_signal_mask());
+    }
     if (cid.name == "signal_ignore") { return a0.emit(ir.op_signal_ignore()); }
     return a0.emit(ir.op_signal_default());
 }
@@ -13936,7 +13953,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // backend intercepts unconditionally; this is strictly safer). No
     // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
     if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
-            || fa.field == "stat" || fa.field == "seek"
+            || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
             || fa.field == "fsync" || fa.field == "fdatasync" || fa.field == "syncfs")
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
@@ -14004,6 +14021,23 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             sks = lower_expr(c.args[1], sks);
             if (!sks.ok) { return sks; }
             return sks.emit(ir.op_reader_seek());
+        }
+        // Writer.truncate(length) -> Option[IoError]: ftruncate of the
+        // handle's fd. The length is an i64 parameter and takes seek's
+        // widening, so a 32-bit expression still reaches the wasm call as
+        // the i64 its signature declares.
+        if (fa.field == "truncate" && c.args.len() == 1) {
+            var wts: LowerState = lower_expr(fa.obj, s);
+            if (!wts.ok) { return wts; }
+            if (infer_expr_width(c.args[0], wts) == 64) {
+                wts = lower_i64(c.args[0], wts);
+                if (!wts.ok) { return wts; }
+            } else {
+                wts = lower_expr(c.args[0], wts);
+                if (!wts.ok) { return wts; }
+                wts = wts.emit(ir.op_int_extend(false));
+            }
+            return wts.emit(ir.op_writer_truncate());
         }
         // Writer.write(s) (#4372): a Writer is a bare fd; lower the
         // receiver (fd) then the string arg (box), then write(2) the
@@ -17282,11 +17316,10 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
 }
 
 // resource_method_opt_ret_type returns the Option / Result type of a built-in
-// Reader / Writer resource method — read_line / read_chunk / write / close — or
-// "" when the receiver is not one. The five methods lower to ops that push a
-// fresh box (op_read_line / op_read_chunk / op_writer_write / op_reader_close),
-// so no module signature carries their return type and every scrutinee-type
-// resolver would otherwise bail the module.
+// Reader / Writer resource method — read_line / read_chunk / write / close /
+// stat / seek / truncate — or "" when the receiver is not one. Each lowers to an
+// op that pushes a fresh box, so no module signature carries its return type and
+// every scrutinee-type resolver would otherwise bail the module.
 //
 // The receiver gate is lower_call_method's, so the type reported here cannot
 // drift from the call that is actually emitted: a user `.close()` on a declared
@@ -17301,6 +17334,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
         return s.opt_ret_type("Reader." + field);
     }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
+    if (field == "truncate") { return s.opt_ret_type("Writer.truncate"); }
     return "";
 }
 
@@ -65191,7 +65225,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // The method key is seeded only while no user receiver method is named `write`:
 // the escape walks see no receiver type, so the name alone must settle it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__mismatch"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch"];
     for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
     return keys.append("Writer.write");
 }
@@ -70766,6 +70800,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "remove_file") { return "Result[void, IoError]"; }
     if (name == "create_dir_all") { return "Result[void, IoError]"; }
     if (name == "create_dir") { return "Result[void, IoError]"; }
+    if (name == "chdir") { return "Result[void, IoError]"; }
     if (name == "remove_dir") { return "Result[void, IoError]"; }
     if (name == "create_link") { return "Result[void, IoError]"; }
     if (name == "create_symlink") { return "Result[void, IoError]"; }
@@ -70809,7 +70844,8 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.read_chunk") { return "Result[string, IoError]"; }
     if (name == "Reader.stat" || name == "Writer.stat") { return "Result[FileStat, IoError]"; }
     if (name == "Reader.seek") { return "Result[i64, IoError]"; }
-    if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write") { return "Option[IoError]"; }
+    if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
+        || name == "Writer.truncate") { return "Option[IoError]"; }
     if (name == "Reader.fsync" || name == "Writer.fsync") { return "Option[IoError]"; }
     if (name == "Reader.fdatasync" || name == "Writer.fdatasync") { return "Option[IoError]"; }
     if (name == "Reader.syncfs" || name == "Writer.syncfs") { return "Option[IoError]"; }

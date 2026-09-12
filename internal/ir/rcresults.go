@@ -186,6 +186,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_reader_close_fd":     true,
 	"__fern_writer_close":        true,
 	"__fern_writer_write":        true,
+	"__fern_writer_truncate":     true,
 	"__fern_reader_read_line_fd": true,
 	"__fern_reader_read_chunk":   true,
 	"__fern_fd_stat":             true,
@@ -219,6 +220,7 @@ var rcResultOwned = map[string]bool{
 	"mknod":           true,
 	"chown_at":        true,
 	"statfs":          true,
+	"chdir":           true,
 	"window_size":     true,
 }
 
@@ -281,6 +283,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Reader_close":      true, // __fern_reader_close_fd
 	"__method_Writer_close":      true, // __fern_writer_close
 	"__method_Writer_write":      true, // __fern_writer_write
+	"__method_Writer_truncate":   true, // __fern_writer_truncate
 	"__method_Reader_seek":       true, // __fern_reader_seek
 	"__method_Reader_stat":       true, // __fern_fd_stat
 	"__method_Writer_stat":       true, // __fern_fd_stat
@@ -301,6 +304,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"remove_dir_all":             true,
 	"create_dir_all":             true,
 	"create_dir":                 true,
+	"chdir":                      true,
 	"remove_dir":                 true,
 	"create_link":                true,
 	"create_symlink":             true,
@@ -484,6 +488,9 @@ var rcResultNonPointer = map[string]bool{
 	"buf_new": true, "buf_len": true,
 	// The sigaction return, which the caller drops; nothing counted.
 	"signal_default": true, "signal_ignore": true,
+	// The blocked mask and one signal's disposition: an i64 bitmask and a
+	// small enumerated i32. Neither is an address.
+	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
 	// The rc probes and the uniqueness test — counters and a boolean.

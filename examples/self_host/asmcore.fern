@@ -463,12 +463,15 @@ pub function sysno(t: string, name: string): string {
         if (name == "getcwd") { return "79"; }
         if (name == "sched_getaffinity") { return "204"; }
         if (name == "sigaction") { return "13"; }
+        if (name == "sigprocmask") { return "14"; }
+        if (name == "chdir") { return "80"; }
         if (name == "linkat") { return "265"; }
         if (name == "symlinkat") { return "266"; }
         if (name == "readlinkat") { return "267"; }
         if (name == "renameat") { return "264"; }
         if (name == "fchmodat") { return "268"; }
         if (name == "truncate") { return "76"; }
+        if (name == "ftruncate") { return "77"; }
         if (name == "fsync") { return "74"; }
         if (name == "fdatasync") { return "75"; }
         if (name == "sync") { return "162"; }
@@ -525,6 +528,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "faccessat") { return "466"; }
         if (name == "fchmodat") { return "467"; }
         if (name == "truncate") { return "200"; }
+        if (name == "ftruncate") { return "201"; }
         if (name == "fsync") { return "95"; }
         if (name == "fdatasync") { return "187"; }
         if (name == "sync") { return "36"; }
@@ -556,6 +560,11 @@ pub function sysno(t: string, name: string): string {
         // extra `sigsetsize` is ignored here, so one body serves both (see
         // rt_src_signal_disposition).
         if (name == "sigaction") { return "46"; }
+        // XNU's sigprocmask is 3-argument like its sigaction, and its
+        // `how` values are 1/2/3 where Linux spells the same three 0/1/2 —
+        // normalised by rt_src_signal_mask, not here.
+        if (name == "sigprocmask") { return "48"; }
+        if (name == "chdir") { return "12"; }
         if (name == "linkat") { return "471"; }
         if (name == "symlinkat") { return "474"; }
         if (name == "readlinkat") { return "473"; }
@@ -611,6 +620,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "faccessat") { return "439"; }
     if (name == "fchmodat") { return "53"; }
     if (name == "truncate") { return "45"; }
+    if (name == "ftruncate") { return "46"; }
     if (name == "fsync") { return "82"; }
     if (name == "fdatasync") { return "83"; }
     if (name == "sync") { return "81"; }
@@ -643,6 +653,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "sched_getaffinity") { return "123"; }
     // rt_sigaction(2), matching the native arm64 syscall table.
     if (name == "sigaction") { return "134"; }
+    // rt_sigprocmask(2), matching the native arm64 syscall table.
+    if (name == "sigprocmask") { return "135"; }
+    if (name == "chdir") { return "49"; }
     return "-1";
 }
 
@@ -1712,6 +1725,60 @@ pub function rt_src_create_dir_all(t: string): string {
 // POSIX says; a caller that wants the mode verbatim clears the umask around
 // the call. Same body on every native target; only the mkdirat number and
 // AT_FDCWD come from `t`.
+// rt_src_chdir backs `chdir(path)` (#9090, syscall-leaf) → Result[void,
+// IoError]. chdir(2) — the move `getcwd` only ever reported. ENOENT, ENOTDIR
+// and EACCES all reach the caller rather than being folded away; `env -C` has
+// to name which one it was.
+// needs_any reports whether `s` carries ANY of `names` as a need.
+//
+// The runtime-bundle gates each ask that of two to four dozen names. Spelled
+// as one `||` chain per gate every name is a branch of its own, which is most
+// of what those functions score on the complexity ratchet; asked of a list it
+// is one loop.
+pub function needs_any(s: EmitState, names: string[]): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (s.has_need(names[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+pub function rt_src_chdir(t: string): string {
+    return "function __fern_chdir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz, 0, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+}
+
+// rt_src_signal_mask backs `signal_mask(how, mask)` (#9090, syscall-leaf) →
+// the mask that was blocked BEFORE the call, so one call both reads and writes.
+//
+// `how` arrives in Fern's numbering, which is Linux's (0 block / 1 unblock /
+// 2 replace). XNU spells the same three 1/2/3, so the Darwin body adds one:
+// getting that wrong does not fail, it silently performs a different
+// operation. Linux's fourth `sigsetsize` argument is ignored by XNU's
+// three-argument form, so one __syscall4 serves both.
+//
+// The `oset` half of the scratch is zeroed first — a kernel that writes fewer
+// than 8 bytes of it would otherwise leave the high half holding whatever the
+// scratch last held, and the result is read back as a full i64.
+//
+// Joins the scratch gate, as the disposition helpers do.
+pub function rt_src_signal_mask(t: string): string {
+    var bump: string = "how";
+    if (t == "arm64-darwin") { bump = "how + 1"; }
+    return "function __fern_signal_mask(how: i32, mask: i64): i64 { var buf: i32 = __raw_scratch(16); __store_i64(buf, mask); __store_i64(__raw_addr(buf, 8), 0 as i64); var rc: i32 = __syscall4(" + sysno(t, "sigprocmask") + ", " + bump + ", buf, __raw_addr(buf, 8), 8); if (rc < 0) { return rc as i64; } return __load_i64(__raw_addr(buf, 8)); }";
+}
+
+// rt_src_signal_disposition_read backs `signal_disposition(sig)` (#9090,
+// syscall-leaf) → 0 default / 1 ignore / 2 a handler is installed, or -errno
+// for a signal number the kernel rejects.
+//
+// sigaction with a NULL `act` READS without writing. The 32-byte zeroed oldact
+// covers both layouts for the same reason the setter does: `sa_handler` sits at
+// offset 0 on Linux and XNU alike, and nothing past it is read.
+pub function rt_src_signal_disposition_read(t: string): string {
+    return "function __fern_signal_disposition(sig: i32): i32 { var act: i32 = __raw_scratch(32); __store_i64(act, 0 as i64); __store_i64(__raw_addr(act, 8), 0 as i64); __store_i64(__raw_addr(act, 16), 0 as i64); __store_i64(__raw_addr(act, 24), 0 as i64); var rc: i32 = __syscall4(" + sysno(t, "sigaction") + ", sig, 0, act, 8); if (rc < 0) { return rc; } var h: i64 = __load_i64(act); if (h == (0 as i64)) { return 0; } if (h == (1 as i64)) { return 1; } return 2; }";
+}
+
 pub function rt_src_create_dir(t: string): string {
     return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz, mode); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
@@ -2206,6 +2273,14 @@ pub function rt_src_sync(t: string): string {
 // bits, which would fold an offset past 2 GiB.
 pub function rt_src_reader_seek(t: string): string {
     return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { var r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd, off, whence); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
+}
+
+// rt_src_writer_truncate backs `w.truncate(length)` -> Option[IoError]:
+// ftruncate(2) on the handle's fd. The length goes out as an i64 argument, the
+// way __fern_reader_seek passes lseek's offset, so a size past 2 GiB is not
+// folded by a sign-extended i32.
+pub function rt_src_writer_truncate(t: string): string {
+    return "function __fern_writer_truncate(fd: i32, length: i64): Option[IoError] { var rc: i32 = __syscall3(" + sysno(t, "ftruncate") + ", fd, length, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
 }
 
 // stat_fields_src is the tail of the FileStat literal: everything past the
@@ -2896,8 +2971,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                     // `read_line` / `read_chunk` / `write` are ordinary method
                     // names a user struct may declare, and a name-keyed answer
                     // hands a user method the resource signature (#8462).
-                    // Writer.write is Option[IoError], a payload this Ty union
-                    // cannot name, so it falls through to unknown.
+                    // Writer.write and Writer.truncate are Option[IoError], a
+                    // payload this Ty union cannot name, so they fall through
+                    // to unknown.
                     if (ty_struct_name(rcv) == "Reader"
                             && (fa.field == "read_chunk" || fa.field == "read_line")) {
                         return ty_string();
@@ -3894,7 +3970,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
         return ty_result(ty_unknown());
     }
     if (ty_struct_name(rt) == "Reader" && fa.field == "seek") { return ty_result(ty_i32()); }
-    if (ty_struct_name(rt) == "Writer" && fa.field == "write") { return ty_option(ty_unknown()); }
+    if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {
         return ty_option(map_val(rt));
@@ -4083,6 +4159,11 @@ function builtin_i32_names(): string[] {
         // balances — the same shape as sleep_ms above.
         "signal_ignore",
         "signal_default",
+        // signal_mask(how, mask) -> the previously-blocked mask as an i64,
+        // in an integer slot like the clocks'; signal_disposition(sig) ->
+        // a small enumerated i32.
+        "signal_mask",
+        "signal_disposition",
         // proc_fork() → 0 in the child / child pid in the parent /
         // -errno; proc_waitpid(pid) → the child's exit status
         // (shell convention: 128 + signal on a signal death).
@@ -4159,6 +4240,12 @@ function builtin_i32_names(): string[] {
         // are real counts rather than sentinels — an out-of-range
         // byte and an empty string both genuinely count 0.
         "__count_byte",
+        // __sum_bytes(s): every byte of `s` added into a 32-bit
+        // accumulator that wraps (ATLAS-PLATFORM-PLAN §3.3, sixth
+        // kernel). i32 like its four siblings, and the only one with
+        // a single operand — it has no byte to compare and no cursor,
+        // so an empty string is its one degenerate case and sums to 0.
+        "__sum_bytes",
         // __mismatch(a, ao, b, bo, n): the offset of the first byte where
         // a[ao..ao+n) and b[bo..bo+n) differ, or the CLAMPED n when the
         // two ranges are equal (#8791, fifth kernel). i32 like its four
@@ -6212,6 +6299,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_read_all_stdin",
         "__fn___fern_hostname",
         "__fn___fern_signal_ignore", "__fn___fern_signal_default",
+        "__fn___fern_signal_mask", "__fn___fern_signal_disposition",
+        "__fn___fern_chdir",
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // The capacity-carrying string builder (#8773). __fern_buf_reserve is
         // internal to the bundle — no call crosses a unit boundary to it.

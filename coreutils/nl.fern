@@ -417,7 +417,11 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
   var r: (boolean, i64) = numbered(line, st, sty, o);
   st = State { ...st, blanks: r.1 };
   if (!r.0) {
-    return Emit { st: st, w: gnu.put(w, o.blank + line + "\n") };
+    var hb: usize = w.handle();
+    buf_push(hb, o.blank);
+    buf_push(hb, line);
+    buf_push_byte(hb, 10);
+    return Emit { st: st, w: gnu.settle(w) };
   }
   // The overflow noticed while numbering the PREVIOUS line is reported
   // here, so that line still goes out in full and a file whose last
@@ -427,7 +431,12 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
     gnu.error("line number overflow");
     exit(1);
   }
-  w = gnu.put(w, format_lineno(st.line_no, o) + o.sep + line + "\n");
+  var h: usize = w.handle();
+  buf_push(h, format_lineno(st.line_no, o));
+  buf_push(h, o.sep);
+  buf_push(h, line);
+  buf_push_byte(h, 10);
+  w = gnu.settle(w);
   match (st.line_no.checked_add(o.incr)) {
     Some(v) => {
       st = State { ...st, line_no: v };

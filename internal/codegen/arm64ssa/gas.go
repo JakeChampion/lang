@@ -1279,6 +1279,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"remove_file":                   emitRemoveFileHelper,
 	"create_dir_all":                emitCreateDirAllHelper,
 	"create_dir":                    emitCreateDirHelper,
+	"chdir":                         emitChdirHelper,
 	"remove_dir":                    emitRemoveDirHelper,
 	"create_link":                   emitCreateLinkHelper,
 	"create_symlink":                emitCreateSymlinkHelper,
@@ -1308,12 +1309,15 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"window_size":                   emitWindowSizeHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
+	"signal_mask":                   emitSignalMaskHelper,
+	"signal_disposition":            emitSignalDispositionReadHelper,
 	"wasm_timer_pollable":           emitWasmTimerPollableHelper,
 	"wasm_poll":                     emitWasmPollHelper,
 	"wasm_pollable_drop":            emitWasmPollableDropHelper,
 	"wasm_block":                    emitWasmBlockHelper,
 	"open_writer":                   emitOpenWriterHelper,
 	"__method_Writer_write":         emitWriterWriteHelper,
+	"__method_Writer_truncate":      emitWriterTruncateHelper,
 	"__method_Writer_close":         emitWriterCloseHelper,
 	"open_reader":                   emitOpenReaderHelper,
 	"__method_Reader_read_chunk":    emitReaderReadChunkHelper,
@@ -2141,8 +2145,8 @@ func emitRlimitNofileHelper(w func(string, ...any)) {
 // correct rather than a shortcut. x3 carries the `sigsetsize` the call
 // wants: 8, the width of the kernel's sigset_t.
 //
-// A signal number the kernel rejects is the caller's error, the same as it
-// is through libc's signal(3); there is no return value to report it in.
+// x0 carries the sigaction return out: 0, or -errno for a signal number the
+// kernel rejects, which is how `env --ignore-signal=KILL` learns it was EINVAL.
 func emitSignalDispositionHelper(name string, handler int) func(func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
@@ -2160,6 +2164,72 @@ func emitSignalDispositionHelper(name string, handler int) func(func(string, ...
 		w("\tadd sp, sp, #32")
 		w("\tret")
 	}
+}
+
+// emitChdirHelper writes chdir(path) -> Result[void, IoError] — chdir(2)
+// (asm-generic 49), the move `getcwd` only ever reported.
+func emitChdirHelper(w func(string, ...any)) {
+	emitPathOpHelper("chdir", "chdir", 49, 1, 0, func(w func(string, ...any)) {
+		w("\tmov x0, x20")
+	})(w)
+}
+
+// emitSignalMaskHelper writes signal_mask(how, mask) -> i64 —
+// rt_sigprocmask(2) (asm-generic 135), answering the mask that was blocked
+// BEFORE the call so one call both reads and writes.
+//
+// `how` is Fern's numbering, which is Linux's (0 block / 1 unblock /
+// 2 replace), so it reaches the kernel untouched. The 16 bytes of stack hold
+// `set` and `oset`; `oset` is zeroed first so the full i64 read back is the
+// kernel's answer and not leftover stack.
+func emitSignalMaskHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("signal_mask"))
+	w("\tsub sp, sp, #16")
+	w("\tstr x1, [sp]")      // set = mask
+	w("\tstr xzr, [sp, #8]") // oset = 0
+	w("\tmov x1, sp")
+	w("\tadd x2, sp, #8")
+	w("\tmov x3, #8") // sizeof(kernel sigset_t)
+	w("\tmov x8, #135")
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.lt .Lssa_sigmask_ret") // -errno passthrough
+	w("\tldr x0, [sp, #8]")
+	w(".Lssa_sigmask_ret:")
+	w("\tadd sp, sp, #16")
+	w("\tret")
+}
+
+// emitSignalDispositionReadHelper writes signal_disposition(sig) -> i32 —
+// rt_sigaction with a NULL `act`, which reads without writing, then maps the
+// handler word onto 0 default / 1 ignore / 2 a handler is installed.
+func emitSignalDispositionReadHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("signal_disposition"))
+	w("\tsub sp, sp, #32")
+	w("\tstp xzr, xzr, [sp]")
+	w("\tstp xzr, xzr, [sp, #16]")
+	w("\tmov x1, #0") // act = NULL: read without writing
+	w("\tmov x2, sp") // oldact
+	w("\tmov x3, #8")
+	w("\tmov x8, #134") // rt_sigaction
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.lt .Lssa_sigdisp_ret") // -errno passthrough
+	w("\tldr x9, [sp]")           // sa_handler
+	w("\tmov x0, #2")             // a handler is installed
+	w("\tcmp x9, #1")             // SIG_IGN
+	w("\tb.ne .Lssa_sigdisp_notign")
+	w("\tmov x0, #1")
+	w("\tb .Lssa_sigdisp_ret")
+	w(".Lssa_sigdisp_notign:")
+	w("\tcmp x9, #0") // SIG_DFL
+	w("\tb.ne .Lssa_sigdisp_ret")
+	w("\tmov x0, #0")
+	w(".Lssa_sigdisp_ret:")
+	w("\tadd sp, sp, #32")
+	w("\tret")
 }
 
 // emitAccessHelper writes access(path, mode) -> Result[void, IoError]:
@@ -2869,15 +2939,15 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tret")
 }
 
-// emitOpenWriterHelper: open_writer(path) — O_WRONLY|O_CREAT|O_TRUNC (577), 0644.
+// emitOpenWriterHelper: open_writer(path) — O_WRONLY|O_CREAT|O_TRUNC (577), 0666.
 func emitOpenWriterHelper(w func(string, ...any)) {
-	emitOpenHandleHelper(w, "open_writer", "ow", 577, 420)
+	emitOpenHandleHelper(w, "open_writer", "ow", 577, 438)
 }
 
 // emitOpenAppenderHelper: open_appender(path) — O_WRONLY|O_CREAT|O_APPEND (1089),
-// 0644. Opens (creating if needed) for appending rather than truncating.
+// 0666. Opens (creating if needed) for appending rather than truncating.
 func emitOpenAppenderHelper(w func(string, ...any)) {
-	emitOpenHandleHelper(w, "open_appender", "oa", 1089, 420)
+	emitOpenHandleHelper(w, "open_appender", "oa", 1089, 438)
 }
 
 // emitOpenExclusiveHelper: open_exclusive(path) — O_WRONLY|O_CREAT|O_EXCL
@@ -2930,6 +3000,37 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitWriterTruncateHelper writes __method_Writer_truncate(writer, len) ->
+// Option[IoError]: ftruncate(2) the handle's fd (from [writer+8]) to len;
+// return None on success, or map -errno through __fern_io_error (with an empty
+// path, since a resize carries none) and return Some(IoError). The length is
+// passed through unmasked, so a negative one is the kernel's EINVAL. Non-leaf.
+// x19=errno scratch. x0=writer handle, x1=len.
+func emitWriterTruncateHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Writer_truncate"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tldr w0, [x0, #8]") // fd @ ptr+8; the length is already in x1
+	w("\tmov x8, #46")      // ftruncate
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wtr_err")
+	emitOptionBox(w, 1, "")
+	w("\tb .Lssa_wtr_ret")
+	w(".Lssa_wtr_err:")
+	w("\tneg x19, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19") // errno
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitOptionBox(w, 0, "x19")
+	w(".Lssa_wtr_ret:")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 
@@ -3324,6 +3425,7 @@ var runtimeHelperDeps = map[string][]string{
 	"remove_file":                   {"__fern_io_error"},
 	"create_dir_all":                {"__fern_io_error"},
 	"create_dir":                    {"__fern_io_error"},
+	"chdir":                         {"__fern_io_error"},
 	"remove_dir":                    {"__fern_io_error"},
 	"create_link":                   {"__fern_io_error"},
 	"create_symlink":                {"__fern_io_error"},
@@ -3339,6 +3441,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_dir":                      {"__fern_io_error"},
 	"open_writer":                   {"__fern_io_error"},
 	"__method_Writer_write":         {"__fern_io_error"},
+	"__method_Writer_truncate":      {"__fern_io_error"},
 	"__method_Writer_close":         {"__fern_io_error"},
 	"__method_Reader_fsync":         {"__fern_io_error"},
 	"__method_Writer_fsync":         {"__fern_io_error"},
@@ -3401,6 +3504,7 @@ var heapUsingHelpers = map[string]bool{
 	"remove_file":                   true,
 	"create_dir_all":                true,
 	"create_dir":                    true,
+	"chdir":                         true,
 	"remove_dir":                    true,
 	"create_link":                   true,
 	"create_symlink":                true,
@@ -3421,6 +3525,7 @@ var heapUsingHelpers = map[string]bool{
 	"poll":                          true,
 	"open_writer":                   true,
 	"__method_Writer_write":         true,
+	"__method_Writer_truncate":      true,
 	"__method_Writer_close":         true,
 	"__method_Reader_fsync":         true,
 	"__method_Writer_fsync":         true,

@@ -914,6 +914,7 @@ pub function all_runtime_need_roots(): string[] {
         "arr_str_join", "arr_inc_elems", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+        "chdir", "signal_mask", "signal_disposition",
         "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
         "read_file_bytes",
         "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
@@ -932,7 +933,7 @@ pub function all_runtime_need_roots(): string[] {
         "chmod", "set_file_times", "truncate", "mknod",
         "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs",
         "chmod", "set_file_times", "truncate", "mknod", "chown_at",
-        "temp_dir", "open_file", "reader", "fd_stat", "reader_seek", "writer_write", "subprocess",
+        "temp_dir", "open_file", "reader", "fd_stat", "reader_seek", "writer_write", "writer_truncate", "subprocess",
         // stdin / argv / the host's name / the process's own identity:
         "read_all_stdin", "hostname", "environ",
         "geteuid", "getegid", "getuid", "getgid", "getgroups",

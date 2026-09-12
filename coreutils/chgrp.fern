@@ -1,0 +1,22 @@
+// chgrp.fern — GNU-compatible `chgrp`.
+//
+//   chgrp [OPTION]... GROUP FILE...
+//   chgrp [OPTION]... --reference=RFILE FILE...
+//
+// `chown` with the user half taken away. The options, the walk, the symlink
+// rules and every message are the same code — `chown.fern`'s `run` — told to
+// read its operand as a group and to say "group of" where the other says
+// "ownership of".
+//
+// Two things are NOT symmetrical, and both are GNU's:
+//
+//   - the operand is ONE group token, colons and dots included, so
+//     `chgrp a:b f` is `invalid group: 'a:b'` rather than a split;
+//   - `--from=` is still the FULL `[USER][:[GROUP]]` spec, so
+//     `chgrp --from=staff` is `invalid user: 'staff'` and `--from=:staff` is
+//     what was meant.
+import "./chown";
+
+function main(): i32 {
+  return chown.run(args(), true, "chgrp");
+}

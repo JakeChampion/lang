@@ -219,6 +219,9 @@ var gatedBuiltins = map[string]string{
 	// (docs/FREESTANDING-CORE.md).
 	"signal_ignore":  "signal",
 	"signal_default": "signal",
+	// The mask and the read side of the same disposition surface.
+	"signal_mask":        "signal",
+	"signal_disposition": "signal",
 
 	// How large the terminal on the other end of a descriptor is. A
 	// target with no terminal cannot answer: 0x0 is not "there is no
@@ -250,6 +253,7 @@ var gatedBuiltins = map[string]string{
 	// preopened descriptor and has no current directory at all, so
 	// the question has no answer there rather than an empty one.
 	"getcwd": "cwd",
+	"chdir":  "cwd",
 
 	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
 	// prefix so this table stays the one place the classification lives —

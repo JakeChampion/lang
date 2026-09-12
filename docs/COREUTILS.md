@@ -156,6 +156,19 @@ harness runs GNU and Fern and diffs. A case costs one line, and a case cannot
 record a wrong expectation, which is what makes the corpus cheap to grow and
 hard to get wrong. See the package doc in `harness_test.go`.
 
+**The reference is a BINARY, not a directory.** The harness chooses one
+directory by probing `yes --version`, but it then verifies the utility's own
+binary inside it and looks in the remaining candidates when that one is not
+GNU coreutils. That is not caution for its own sake: `/usr/bin/uptime` on
+Debian and Ubuntu belongs to **procps**, because their coreutils package does
+not build coreutils' own — nor `kill`'s. Trusting the directory would have
+compared Fern against a different program and reported the difference as
+Fern's bug. `FERN_GNU_COREUTILS` therefore takes a PATH-style LIST, so a host
+supplies what its distribution leaves out beside `/usr/bin` rather than
+instead of it, and `scripts/devbox` and the `test-units` lane both build the
+one missing binary and point at it. A reference that cannot be found is a
+FAILURE naming the utility, never a skip.
+
 A case may also ask for a working directory of its own — a fresh one per
 SIDE, seeded by a function it names — and the TREE it leaves behind is then
 compared alongside the streams, name by name and byte by byte. `split` is
@@ -1234,6 +1247,19 @@ The other six shapes in #9092 are GNU behaving worse than Fern — a SIGSEGV on
 `expr bba : '\(b\|\|a\)\?*'`, and four no-matches where Fern finds one.
 Those are deliberately NOT reproduced.
 
+**`mknod`'s `invalid device MAJOR MINOR` is unreachable.** GNU composes the
+two numbers with `makedev` and refuses the pair when the result is `NODEV`.
+On Linux `dev_t` is 64 bits wide and no pair of 32-bit numbers can reach
+`(dev_t) -1`, so the message is dead code there — on Darwin, where `dev_t` is
+`int32_t` and the packing is `major << 24 | minor`, `mknod n c 255 16777215`
+does print it. Fern's `mknod` takes the major and the minor as a PAIR and each
+backend packs the word its kernel wants, precisely so that a program never
+composes a target-specific number; there is therefore nothing here that can
+answer `NODEV`, and reproducing the message would mean writing XNU's dev_t
+layout back into the utility. Every other refusal of a device number — the
+base-zero parse and the 32-bit range check — is byte-exact, and the corpus
+compares them.
+
 **`mkdir -Z` and `mkdir --context[=CTX]` on a kernel that HAS SELinux.** GNU
 sets a security context and no primitive here can, so the option is refused —
 `setting a security context is not supported on this system`, exit 1 — rather
@@ -1244,7 +1270,7 @@ the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 
 **`chcon` refuses the context change itself, and there is no answer that
 would not.** A security context is an extended attribute; there is no
-`getxattr` or `setxattr` (#9098), so the one step the utility exists for
+`getxattr` (#9098) or `setxattr` (#9154), so the one step it exists for
 cannot happen. What makes this a divergence rather than a gap is that GNU
 does not refuse either: on a machine with no SELinux it calls
 `setfilecon(3)` and reports whatever the call failed with, and WHICH errno
@@ -1291,6 +1317,25 @@ between the GNU leg and the Fern leg are the ones reporting no blocks at all,
 and flushing changes nothing there. #9089 carries the four sync calls and the
 classifications they need; #9102 was filed separately for this caller and is the
 same builtin.
+
+**`uptime` is Linux-only, and says so.** The three load averages are
+`/proc/loadavg`, which is what glibc's `getloadavg(3)` reads; Darwin answers
+the same question through `sysctl(KERN_BOOTTIME)` and `getloadavg(3)` with no
+file behind either and no primitive for it. A build for another target
+therefore REFUSES after the option scan — `the load averages are read from
+/proc/loadavg, which darwin does not have`, exit 1 — rather than printing the
+line without its load clause. That shape is one GNU also produces, when
+`getloadavg` fails, so printing it would look like an answer instead of a gap.
+`--help` and `--version` still answer everywhere, because the refusal comes
+after the scan.
+
+Two things about the reference are worth writing down, because both cost a
+round of wrong work. GNU coreutils' `uptime` has **no `-p` and no `-s`** —
+those are procps', as is the `/usr/bin/uptime` on most Linux distributions —
+and **where it takes its boot time changed in 9.4**: 9.1 reads `/proc/uptime`
+and lets it OVERRIDE the utmp `BOOT_TIME` record, so a fixture database proves
+nothing against it, while 9.4 and 9.10 take the record. The oracle is pinned
+to 9.4 for that reason.
 
 **`df` is Linux-only.** `statfs` answers the counts on every native target, but
 not the device, the mount point or the type NAME, and those come from
@@ -1582,6 +1627,34 @@ and the mode of every entry; what is missing is a safety property no case
 asserts, which is why it is recorded here rather than left to the depth
 sentence above.
 
+`chown -R` and `chgrp -R` are the third and fourth, with the same shape: they
+rebuild the path per entry where GNU holds a descriptor, so a rename of an
+interior directory under a running walk can redirect a call outside the tree.
+Nothing in the corpus renames anything under a running chown.
+
+**`chown -v` on a dangling symlink it was told to FOLLOW is the one place the
+corpus deliberately does not compare stdout, and the reason is that GNU has no
+answer to compare against.** The `-v` line carries a "from" clause built out of
+a `stat` buffer the failed `stat` never filled: on one machine the same broken
+link reported `from wheel`, `from 2` and `from _uucp:wheel` across runs of
+different binaries, against a link that was really `jakechampion:admin`. There
+is no value a second implementation could print that would match, so no case
+pairs `-v` with that combination. The stderr line (`cannot dereference 'X': No
+such file or directory`) and the exit status ARE deterministic, and cases
+compare both; `-h`, which succeeds on a broken link, is compared with `-v` in
+full. `chown.fern` fills the clause from the `lstat` it already did, which is
+the link's real ownership.
+
+**`chgrp --from=` and `chgrp`'s refusal of `(gid_t) -1` are 9.10 behaviour that
+9.1 does not have, and neither is in the corpus.** Measured on both: 9.1's
+chgrp answers `unrecognized option '--from='` and accepts `4294967295` as a
+gid, where 9.10 takes the option and answers `invalid group: '4294967295'`.
+chgrp reached GNU's shared `parse_user_spec` somewhere between the two. The
+corpus is held to "9.4 or newer" and a case may only assert what every version
+in that range does, so these two are implemented to 9.10 and left uncompared
+rather than pinned to a version the runner may not have. `chown` is unaffected
+— it has had both since long before 9.1, and its cases cover them.
+
 **Three rm paths are outside the corpus.** `--one-file-system` and
 `--preserve-root=all` only act across a mount point and the harness cannot
 mount one, so they stand in the corpus as the inert invocations that prove
@@ -1759,7 +1832,8 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
-  `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
+  `install` `touch` `truncate` (#9142) `mkfifo` (done) `mknod` (done)
+  `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
   with #9059; `rename`, `chmod` and `set_file_times` have since reached
@@ -1772,7 +1846,10 @@ groups are the order of work. Each sub-issue names its group.
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` `stty` `uptime`, `pathchk` (done — it needed no new primitive:
+  `shred` `stty`, `uptime` (done — no new primitive: the boot time and the
+  session count are the utmp database `read_file_bytes` already reads, the
+  clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
+  `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
   `lstat` is the whole of the default mode and `statfs` from #9062 carries
   the per-directory `name_max` its component walk holds a name to, which is
   exactly the caller that builtin's own doc comment predicted; `pathconf` /
@@ -1805,13 +1882,18 @@ groups are the order of work. Each sub-issue names its group.
   `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
   (271), `rlimit_nofile` (272), `truncate` (273), `mknod` (274).
 
-  `truncate` is path-based rather than fd-based, and the reason is
-  measured: `open_writer` is `O_WRONLY|O_CREAT|O_TRUNC`, `open_appender`
-  creates too, and `open_exclusive` fails on a file that exists — so no
-  Fern open yields a writable descriptor to an EXISTING file without
-  first emptying it, and an `ftruncate` form could not express
-  `truncate -s +10 file`. It does not create: that is `open_exclusive`
-  followed by this. Neither WASI preview has a path-based set-size —
+  `truncate` is path-based rather than fd-based because no Fern open
+  yields a writable descriptor to an EXISTING file without first
+  emptying it: `open_writer` is `O_WRONLY|O_CREAT|O_TRUNC`,
+  `open_appender` creates too, and `open_exclusive` fails on a file that
+  exists. It does not create: that is `open_exclusive` followed by this.
+  The shape costs a divergence GNU does not have (#9142): GNU opens once
+  and calls `ftruncate(2)`, so it resizes a file whose MODE would refuse
+  a fresh open, and `umask 222; truncate -s 5 new` succeeds there and
+  fails here with `Permission denied`. `truncate(1)` therefore waits on
+  the descriptor form, which is the same surface `dd` and `shred` want.
+
+  Neither WASI preview has a path-based set-size —
   `path_filestat_set_size` is not a preview-1 import, measured against
   wasmtime rather than read from a header — so both wasm bodies open
   without CREATE or TRUNCATE, set the size through the descriptor and
