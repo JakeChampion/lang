@@ -834,13 +834,18 @@ pub function oflag(t: string, name: string): string {
 }
 
 // atflag is the *at() family's flag word. AT_REMOVEDIR — "unlink this as a
-// directory, not a file" — is 0x200 on Linux and 0x80 on XNU.
+// directory, not a file" — is 0x200 on Linux and 0x80 on XNU;
+// AT_SYMLINK_NOFOLLOW is 0x100 and 0x20. XNU rejects an unknown flag bit
+// with EINVAL rather than ignoring it, so a Linux constant here does not
+// degrade into a follow — it fails the call outright.
 pub function atflag(t: string, name: string): string {
     if (t == "arm64-darwin") {
         if (name == "removedir") { return "128"; }
+        if (name == "symlink_nofollow") { return "32"; }
         return "0";
     }
     if (name == "removedir") { return "512"; }
+    if (name == "symlink_nofollow") { return "256"; }
     return "0";
 }
 
@@ -2091,14 +2096,14 @@ pub function rt_src_stat(t: string): string {
 }
 
 // rt_src_lstat backs `lstat(path)` — the same body with fstatat's flags word set
-// to AT_SYMLINK_NOFOLLOW (0x100), so the final component is described rather
-// than resolved. A symlink's S_IFMT is then S_IFLNK, which is neither S_IFREG
-// nor S_IFDIR, so both flags come back false. That three-way answer is what a
+// to AT_SYMLINK_NOFOLLOW, so the final component is described rather than
+// resolved. A symlink's S_IFMT is then S_IFLNK, which is neither S_IFREG nor
+// S_IFDIR, so both flags come back false. That three-way answer is what a
 // directory walk needs to choose between recursing, reading and skipping
 // (#7982); the flags word is the only difference, which is why the two share
 // one body rather than drifting as near-copies.
 pub function rt_src_lstat(t: string): string {
-    return rt_src_stat_like(t, "__fern_lstat", "256");
+    return rt_src_stat_like(t, "__fern_lstat", atflag(t, "symlink_nofollow"));
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {

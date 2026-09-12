@@ -1242,6 +1242,32 @@ in a context. No machine the corpus runs on has SELinux, so the compared path is
 the one where GNU warns (`--context=CTX`, once per occurrence) or says nothing
 (`-Z`, a bare `--context`) and carries on.
 
+**`chcon` refuses the context change itself, and there is no answer that
+would not.** A security context is an extended attribute; there is no
+`getxattr` or `setxattr` (#9098), so the one step the utility exists for
+cannot happen. What makes this a divergence rather than a gap is that GNU
+does not refuse either: on a machine with no SELinux it calls
+`setfilecon(3)` and reports whatever the call failed with, and WHICH errno
+that is belongs to the build and to the caller rather than to chcon —
+`Operation not supported` from gnulib's stub where coreutils was configured
+without libselinux, `Operation not permitted` from the kernel where it was
+configured with it and the caller may not write `security.*`. No Fern binary
+can predict that byte. So GNU's frame is kept and our own sentence sits in
+the errno slot: `failed to change context of 'f' to 'ctx': setting a
+security context is not supported on this system`, exit 1, nothing changed
+— which is the same outcome in kind, since on such a machine GNU changes
+nothing either. `--reference` and the `-u -r -t -l` component form need the
+READ side of the same attribute and are refused the same way.
+
+The corpus is therefore the 96 invocations that never reach the call: the
+whole option grammar, the two `-R` traversal combinations GNU rejects
+outright, the operand counts, `cannot access`, `cannot read directory` —
+reachable with a real directory, because fts reports it INSTEAD of yielding
+the visit the change hangs off — and every spelling of the root failsafe.
+`conflicting security context specifiers given` is unreachable on such a
+machine: GNU checks it AFTER reading the reference file, which has already
+failed. `chcon.fern` keeps that order rather than tidying it.
+
 **`mkdir`'s post-creation chmod failing is the one wording in the utility the
 reference binary has never been made to print.** A directory this process just
 created is one it owns and may chmod — a setgid one in a group it does not
@@ -1740,7 +1766,9 @@ groups are the order of work. Each sub-issue names its group.
   the self-hosted COMPILER too — see the paragraph below, and #9085), `mktemp` (done — it needed none of them: `open_exclusive`,
   `create_dir`, `remove_dir`, `remove_file`, `lstat`, `random_bytes` and
   `env` were all already here, so its banner was stale), `chmod` (done),
-  `chown` `chgrp` `chcon` `runcon`, `stat` `ls` `dir` `vdir` `du` `df`
+  `chown` `chgrp` `runcon`, `chcon` (done — the option grammar, the walk and
+  every diagnostic before the context change; the change itself has no
+  primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`

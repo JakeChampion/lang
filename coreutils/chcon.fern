@@ -1,0 +1,430 @@
+// chcon.fern — GNU-compatible `chcon`.
+//
+//   chcon [OPTION]... CONTEXT FILE...
+//   chcon [OPTION]... [-u USER] [-r ROLE] [-l RANGE] [-t TYPE] FILE...
+//   chcon [OPTION]... --reference=RFILE FILE...
+//
+// The SELinux security context of a file is an extended attribute, and
+// Fern has no primitive that reads or writes one — no `getxattr`, no
+// `setxattr`, no `getfilecon`. So the step this utility exists for is
+// REFUSED, and everything up to it is exact. What "up to it" covers is
+// most of chcon: the option grammar, the three mutually exclusive ways
+// of naming a context, the operand-count rules, the `-R` traversal with
+// its `-H` / `-L` / `-P` modes, the root failsafe, and every diagnostic
+// the walk itself raises.
+//
+// ---- the refusal, and why it is not a divergence that can be avoided ---
+//
+// GNU on a kernel WITHOUT SELinux does not refuse: it calls
+// `setfilecon(3)` and reports whatever the call failed with. Which errno
+// that is belongs to the machine, not to chcon — `Operation not
+// supported` where coreutils was built without libselinux, `Operation
+// not permitted` where it was built with it and the caller may not write
+// `security.*`. A build cannot predict it, so the errno slot carries our
+// own sentence instead:
+//
+//   chcon: failed to change context of 'f' to 'ctx': setting a security
+//   context is not supported on this system
+//
+// The frame around it is GNU's, so the day a primitive lands only that
+// clause changes. The cases the corpus can hold are exactly those that
+// never reach it; docs/COREUTILS.md records the rest.
+//
+// ---- the argument shape ------------------------------------------------
+//
+// How many operands are required depends on how the context was named:
+// two (CONTEXT and one FILE) when it is a bare operand, one when
+// `--reference` or any of `-u -r -t -l` named it. The count is checked
+// BEFORE the reference file is read, so `chcon --reference=RFILE` with no
+// FILE is `missing operand` rather than anything about RFILE.
+//
+// `missing operand after %s` names the LAST OPERAND, not the last argv
+// element: glibc permutes the options to the front, so `chcon f
+// --verbose` reports `f`.
+//
+// `conflicting security context specifiers given` — `--reference`
+// together with one of the four component options — is checked AFTER the
+// reference file has been read, so on a machine with no SELinux the read
+// fails first and the message is unreachable. The order is kept as GNU
+// has it rather than tidied, because tidying it would change which
+// diagnostic a machine that HAS SELinux prints.
+//
+// ---- the walk ----------------------------------------------------------
+//
+// Without `-R` a directory operand is changed and not descended into.
+// With `-R` a directory is changed AFTER its children, because GNU does
+// nothing on fts's pre-order visit and acts on the post-order one; a
+// directory whose children cannot be listed is reported and never
+// changed, because fts reports it instead of yielding that second visit.
+//
+// `-H`, `-L` and `-P` are last-one-wins and only `-R` consults them. `-h`
+// / `--dereference` are separately tracked, and the two combinations GNU
+// rejects outright — `-R --dereference` with neither `-H` nor `-L`, and
+// `-R -h` with one of them — exit 1 with no usage line.
+//
+// The name a diagnostic shows is fts's, and fts holds a descriptor on the
+// directory it is inside: `cannot access`, `cannot read directory` and
+// the `-v` line name the whole path, while the change itself names the
+// path RELATIVE to that directory — a bare `g` for `d/sub/g`. Under `-L`
+// fts does not chdir and the two are the same. `shown` below is that
+// name.
+import "std/string";
+import "std/array";
+import "./lib/fts";
+import "./lib/gnu";
+
+function opt_recursive(): i32 {
+  return 1;
+}
+
+function opt_dereference(): i32 {
+  return 2;
+}
+
+function opt_no_dereference(): i32 {
+  return 3;
+}
+
+function opt_no_preserve_root(): i32 {
+  return 4;
+}
+
+function opt_preserve_root(): i32 {
+  return 5;
+}
+
+function opt_reference(): i32 {
+  return 6;
+}
+
+function opt_user(): i32 {
+  return 7;
+}
+
+function opt_role(): i32 {
+  return 8;
+}
+
+function opt_type(): i32 {
+  return 9;
+}
+
+function opt_range(): i32 {
+  return 10;
+}
+
+function opt_verbose(): i32 {
+  return 11;
+}
+
+function opt_comfollow(): i32 {
+  return 12;
+}
+
+function opt_logical(): i32 {
+  return 13;
+}
+
+function opt_physical(): i32 {
+  return 14;
+}
+
+// The three traversal modes `-H`, `-L` and `-P` select.
+function walk_physical(): i32 {
+  return 0;
+}
+
+function walk_comfollow(): i32 {
+  return 1;
+}
+
+function walk_logical(): i32 {
+  return 2;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... CONTEXT FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... [-u USER] [-r ROLE] [-l RANGE] [-t TYPE] FILE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
+  out = out + "Change the SELinux security context of each FILE to CONTEXT.\n";
+  out = out + "With --reference, change the security context of each FILE to that of RFILE.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "      --dereference\n";
+  out = out + "         affect the referent of each symbolic link (this is\n";
+  out = out + "         the default), rather than the symbolic link itself\n";
+  out = out + "  -h, --no-dereference\n";
+  out = out + "         affect symbolic links instead of any referenced file\n";
+  out = out + "  -u, --user=USER\n";
+  out = out + "         set user USER in the target security context\n";
+  out = out + "  -r, --role=ROLE\n";
+  out = out + "         set role ROLE in the target security context\n";
+  out = out + "  -t, --type=TYPE\n";
+  out = out + "         set type TYPE in the target security context\n";
+  out = out + "  -l, --range=RANGE\n";
+  out = out + "         set range RANGE in the target security context\n";
+  out = out + "      --no-preserve-root\n";
+  out = out + "         do not treat '/' specially (the default)\n";
+  out = out + "      --preserve-root\n";
+  out = out + "         fail to operate recursively on '/'\n";
+  out = out + "      --reference=RFILE\n";
+  out = out + "         use RFILE's security context rather than specifying a CONTEXT value\n";
+  out = out + "  -R, --recursive\n";
+  out = out + "         operate on files and directories recursively\n";
+  out = out + "  -v, --verbose\n";
+  out = out + "         output a diagnostic for every file processed\n";
+  out = out + "\n";
+  out = out + "The following options modify how a hierarchy is traversed when the -R\n";
+  out = out + "option is also specified.  If more than one is specified, only the final\n";
+  out = out + "one takes effect. -P is the default.\n";
+  out = out + "\n";
+  out = out + "  -H\n";
+  out = out + "         if a command line argument is a symlink to a directory, traverse it\n";
+  out = out + "  -L\n";
+  out = out + "         traverse every symbolic link to a directory encountered\n";
+  out = out + "  -P\n";
+  out = out + "         do not traverse any symbolic links\n";
+  out = out + "\n";
+  out = out + "      --help\n";
+  out = out + "         display this help and exit\n";
+  out = out + "      --version\n";
+  out = out + "         output version information and exit\n";
+  return out;
+}
+
+// What a diagnostic says where GNU prints the errno of the libselinux
+// call it could make and this build cannot.
+function no_set(): string {
+  return "setting a security context is not supported on this system";
+}
+
+function no_get(): string {
+  return "reading a security context is not supported on this system";
+}
+
+struct Settings { recursive: boolean, preserve_root: boolean, verbose: boolean, walk: i32, deref: i32, referent: boolean, context: string, component: boolean }
+
+struct St { out: gnu.Stdio, status: i32 }
+
+function fail(st: St, msg: string): St {
+  return St { out: st.out.report(msg), status: 1 };
+}
+
+// The option scan. `-H` / `-L` / `-P` and `-h` / `--dereference` are both
+// last-one-wins, and the two are independent: which one a `-R` run needs
+// is decided after the scan, not during it.
+function scan_options(): (Settings, string[], boolean, string) {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
+  opts = opts.append(gnu.flag("", "dereference", opt_dereference()));
+  opts = opts.append(gnu.flag("h", "no-dereference", opt_no_dereference()));
+  opts = opts.append(gnu.flag("", "no-preserve-root", opt_no_preserve_root()));
+  opts = opts.append(gnu.flag("", "preserve-root", opt_preserve_root()));
+  opts = opts.append(gnu.valued("", "reference", opt_reference()));
+  opts = opts.append(gnu.valued("u", "user", opt_user()));
+  opts = opts.append(gnu.valued("r", "role", opt_role()));
+  opts = opts.append(gnu.valued("t", "type", opt_type()));
+  opts = opts.append(gnu.valued("l", "range", opt_range()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  opts = opts.append(gnu.flag("H", "", opt_comfollow()));
+  opts = opts.append(gnu.flag("L", "", opt_logical()));
+  opts = opts.append(gnu.flag("P", "", opt_physical()));
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "chcon", help_text(), 1);
+  var s: Settings = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false };
+  var has_reference: boolean = false;
+  var reference: string = "";
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == opt_recursive()) {
+          s = Settings { ...s, recursive: true };
+        } else if (m.id == opt_dereference()) {
+          s = Settings { ...s, deref: 1 };
+        } else if (m.id == opt_no_dereference()) {
+          s = Settings { ...s, deref: 0 };
+        } else if (m.id == opt_no_preserve_root()) {
+          s = Settings { ...s, preserve_root: false };
+        } else if (m.id == opt_preserve_root()) {
+          s = Settings { ...s, preserve_root: true };
+        } else if (m.id == opt_verbose()) {
+          s = Settings { ...s, verbose: true };
+        } else if (m.id == opt_comfollow()) {
+          s = Settings { ...s, walk: walk_comfollow() };
+        } else if (m.id == opt_logical()) {
+          s = Settings { ...s, walk: walk_logical() };
+        } else if (m.id == opt_physical()) {
+          s = Settings { ...s, walk: walk_physical() };
+        } else if (m.id == opt_reference()) {
+          has_reference = true;
+          reference = m.value;
+        } else if (m.id == opt_user() || m.id == opt_role() || m.id == opt_type() || m.id == opt_range()) {
+          s = Settings { ...s, component: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands(), has_reference, reference);
+}
+
+// Which of `-H` / `-L` / `-P` a `-R` run was given, against which of
+// `-h` / `--dereference`, decides whether the symlinks met are followed
+// — and two of the combinations are refused rather than resolved.
+function resolve_traversal(s0: Settings): Settings {
+  var s: Settings = s0;
+  if (s.recursive) {
+    if (s.walk == walk_physical()) {
+      if (s.deref == 1) {
+        gnu.error("-R --dereference requires either -H or -L");
+        exit(1);
+      }
+      return Settings { ...s, referent: false };
+    }
+    if (s.deref == 0) {
+      gnu.error("-R -h requires -P");
+      exit(1);
+    }
+    return Settings { ...s, referent: true };
+  }
+  return Settings { ...s, walk: walk_physical(), referent: s.deref != 0 };
+}
+
+// ---- the root failsafe -----------------------------------------------------
+// Compared by device and inode, so every spelling of `/` is caught — `//`,
+// `/.`, `/tmp/..` — and each one that is not literally `/` says so.
+function is_root_dir(info: FileStat): boolean {
+  match (stat("/")) {
+    Ok(root) => {
+      return info.dev == root.dev && info.ino == root.ino;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+function refuse_root(st0: St, path: string): St {
+  var same: string = "";
+  if (path != "/") {
+    same = " (same as '/')";
+  }
+  var st: St = fail(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  return fail(st, "use --no-preserve-root to override this failsafe");
+}
+
+function is_dir_mode(m: u32): boolean {
+  return (m & 61440 as u32) == 16384 as u32;
+}
+
+// ---- one entry -------------------------------------------------------------
+// The one step with no primitive behind it. `shown` is the name fts would
+// hand libselinux, which is the path relative to the directory fts is
+// sitting in; `path` is the whole one, which is what this process needs.
+function change_one(st0: St, s: Settings, path: string, shown: string): St {
+  var st: St = st0;
+  if (s.verbose) {
+    st = St { ...st, out: st.out.fwrite("changing security context of " + gnu.quotea(path) + "\n") };
+  }
+  if (s.component) {
+    return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + no_get());
+  }
+  return fail(st, "failed to change context of " + gnu.quotea(shown) + " to " + gnu.quote(s.context) + ": " + no_set());
+}
+
+// ---- the walk --------------------------------------------------------------
+// `top` marks a command-line operand: only there does `-H` follow a
+// symlink. `shown` is what a change names, which is the basename below
+// the top except under `-L`, where fts holds no directory descriptor.
+function process(st0: St, s: Settings, path: string, shown: string, top: boolean): St {
+  var st: St = st0;
+  var follow: boolean = s.walk == walk_logical() || top && s.walk == walk_comfollow();
+  var looked: Result[FileStat, IoError] = lstat(path);
+  if (follow) {
+    looked = stat(path);
+  }
+  match (looked) {
+    Ok(info) => {
+      if (!is_dir_mode(info.mode)) {
+        return change_one(st, s, path, shown);
+      }
+      if (s.recursive && s.preserve_root && is_root_dir(info)) {
+        return refuse_root(st, path);
+      }
+      if (!s.recursive) {
+        return change_one(st, s, path, shown);
+      }
+      match (read_dir(path)) {
+        Ok(names) => {
+          var i: i32 = 0;
+          while (i < names.len()) {
+            var child: string = fts.child_path(path, names[i]);
+            var child_shown: string = names[i];
+            if (s.walk == walk_logical()) {
+              child_shown = child;
+            }
+            st = process(st, s, child, child_shown, false);
+            i = i + 1;
+          }
+        },
+        Err(e) => {
+          // A directory fts could not read never yields the second visit
+          // the change hangs off, so it is reported and left alone.
+          return fail(st, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+        }
+      }
+      return change_one(st, s, path, shown);
+    },
+    Err(e) => {
+      return fail(st, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+    }
+  }
+}
+
+function main(): i32 {
+  var scanned: (Settings, string[], boolean, string) = scan_options();
+  var s: Settings = resolve_traversal(scanned.0);
+  var operands: string[] = scanned.1;
+  var has_reference: boolean = scanned.2;
+  var reference: string = scanned.3;
+
+  var need: i32 = 2;
+  if (has_reference || s.component) {
+    need = 1;
+  }
+  if (operands.len() < need) {
+    if (operands.len() == 0) {
+      gnu.die_usage("missing operand", 1);
+    }
+    gnu.die_usage("missing operand after " + gnu.quote(operands[operands.len() - 1]), 1);
+  }
+
+  if (has_reference) {
+    // getfilecon(3) of RFILE. There is no primitive for it, and GNU exits
+    // here on failure, so the conflicting-specifiers check below is
+    // unreachable on a machine with no SELinux.
+    gnu.error("failed to get security context of " + gnu.quotea(reference) + ": " + no_get());
+    return 1;
+  }
+  if (!s.component) {
+    s = Settings { ...s, context: operands[0] };
+    operands = array.slice(operands, 1, operands.len());
+  }
+  if (has_reference && s.component) {
+    gnu.die_usage("conflicting security context specifiers given", 1);
+  }
+
+  var st: St = St { out: gnu.stdio_new(), status: 0 };
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    var name: string = fts.trim(operands[i]);
+    st = process(st, s, name, name, true);
+    i = i + 1;
+  }
+  st.out.close_stdout();
+  return st.status;
+}
