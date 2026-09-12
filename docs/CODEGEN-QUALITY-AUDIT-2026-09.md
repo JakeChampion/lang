@@ -444,6 +444,31 @@ already complete and already fuzzed.
 > with the number in x8 at 117 sites, so this is a syscall-ABI port, not a CLI
 > gate), and the `internal/e2e` arm64-SSA tests all SKIP without qemu-aarch64.
 > Every figure above is a static instruction count.
+>
+> **What the allocator does and does not reach, 2026-09-12.** Two kernels whose
+> algorithm now matches GNU's, so the remaining difference is codegen:
+>
+> | | instructions | operand stack | frame | the rest |
+> |---|---:|---:|---:|---:|
+> | `__blake2b_blocks` default | 8,046 | 231 | 2,896 | 4,919 |
+> | `__blake2b_blocks` SSA | **5,900** | 0 | 1,504 | 4,396 |
+> | `__cksum_absorb` default | 542 | 62 | 115 | 365 |
+> | `__cksum_absorb` SSA | **373** | 0 | 45 | 328 |
+>
+> The allocator takes the operand stack to zero and about two thirds of the
+> frame traffic. It does **not** touch the last column, and on `__cksum_absorb`
+> that column is most of the kernel: 365 to 328, -10%, where the total is -31%.
+> That residue is the bounds-checked indexed load — `crc = (crc << 8) ^ t[...]`
+> lowers through `__arr_idx_1` and both backends inline the check — and no
+> amount of register allocation removes it, because it is work the program
+> genuinely performs.
+>
+> So the two levers are independent and neither subsumes the other: the SSA
+> cutover addresses the stack-machine overhead (§2), and bounds-check
+> elimination addresses what is left. A utility whose kernel is dominated by
+> indexed loads, like `cksum`, gains less from the cutover than one dominated
+> by live locals, like `b2sum` — which is the shape of the 0.36x-to-0.92x
+> spread in the table above.
 
 `internal/ssa` + `internal/codegen/arm64ssa` is a real register-allocating
 backend, reachable as `-backend ssa -target arm64-linux`. Its status is better
