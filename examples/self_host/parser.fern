@@ -325,6 +325,13 @@ pub function discard_name(name: string, line: i32, col: i32, nth: i32): string {
 pub function is_unit_literal(n: ast.ExprNumber): boolean {
     return n.raw == "()";
 }
+// is_cast_op reads back what the `as` postfix wrote: a unary operator whose
+// name is "as_" followed by the target type's spelling. The `as?` downcast
+// writes "as?_" and is deliberately NOT one of these — it tests a runtime
+// variant rather than naming a destination type.
+pub function is_cast_op(op: string): boolean {
+    return op.len() > 3 && slice_unchecked(op, 0, 3) == "as_";
+}
 // is_unit_expr asks the same of any expression.
 pub function is_unit_expr(e: ast.Expr): boolean {
     match (e) {
@@ -1629,7 +1636,7 @@ function map_key_kind_of_expr(e: ast.Expr): i32 {
             // what left a generated map keyed entirely on casts and
             // if-expressions still falling back to the string constructor after
             // the first #6207 fix.
-            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+            if (is_cast_op(u.op)) {
                 if (slice_unchecked(u.op, 3, u.op.len()) == "string") { return 0; }
                 return 1;
             }
@@ -8033,6 +8040,10 @@ pub function builtin_function_names(): string[] {
         // tcp_serve_supervised is the stdlib caller of the first and last;
         // asm_modload_run's batched per-module orchestrator uses all three.
         "proc_fork", "proc_waitpid", "proc_exec",
+        // exec with BOTH vectors given verbatim: argv[0] as typed rather
+        // than the resolved path, and an environment the caller built
+        // rather than its own (#9090).
+        "proc_exec_as",
         // Liveness of one pid — kill(pid, 0), the zero signal that runs
         // every check kill(2) makes and delivers nothing (#8767).
         "process_alive",
@@ -9471,7 +9482,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
             // operand's "i32", so a bounded-generic `assert_eq((x).min(y), 3 as
             // i64)` bound `T = i32` and the i64-valued clone failed to lower
             // (#3457: i64/u64 `.min`/`.max`/`.abs`/`.clamp` + i64 array reductions).
-            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") { return slice_unchecked(u.op, 3, u.op.len()) + ""; }
+            if (is_cast_op(u.op)) { return slice_unchecked(u.op, 3, u.op.len()) + ""; }
             return mono_infer(u.operand, env, funcs);
         },
         ast.ExprStructLit(sl) => { return sl.type_name; },
@@ -15111,7 +15122,7 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
         ast.ExprBool(b) => { return ("", false); },
         ast.ExprIdent(id) => { return ("reads \"" + id.name + "\"", true); },
         ast.ExprUnary(u) => {
-            if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") { return ("is a cast", true); }
+            if (is_cast_op(u.op)) { return ("is a cast", true); }
             return default_nonconst_reason(u.operand);
         },
         ast.ExprBinary(b) => {

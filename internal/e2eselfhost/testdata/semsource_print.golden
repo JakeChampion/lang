@@ -505,3 +505,59 @@ func scalar_match {
     ret v4
 }
 
+modes 2 1 result i32
+v0:string v1:i32 v2:u8 v3:u8 v4:u8 v5:u8 v6:boolean v7:u8 v8:boolean v9:boolean v10:boolean v11:i32 v12:i32
+func byte_ops {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = str_index v0 v1
+    v3 = const_int 1
+    v4 = binary + v2 v3
+    v5 = const_int 97
+    v6 = binary == v2 v5
+    brif v6 b2 b1
+  b1:
+    v7 = const_int 122
+    v8 = binary > v7 v4
+    br b3
+  b2:
+    v9 = const_bool 1
+    br b3
+  b3:
+    v10 = phi v8 v9
+    brif v10 b4 b5
+  b4:
+    v11 = cast v4
+    ret v11
+  b5:
+    br b6
+  b6:
+    v12 = cast v2
+    ret v12
+}
+
+modes 1 result u8
+v0:i32 v1:u8
+func narrowed {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result i32
+v0:i32 v1:i32 v2:i32 v3:i32 v4:i32
+func hex_mask {
+  b0:
+    v0 = param 0
+    v1 = const_int 16711935
+    v2 = binary & v0 v1
+    v3 = const_int 42
+    v4 = binary | v2 v3
+    ret v4
+}
+
+refused cast contract
+refused cast contract
+refused operator contract

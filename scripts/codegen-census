@@ -64,14 +64,16 @@ emit() {
   fi
 }
 
-# count PATTERN — instructions matching a PCRE, over $TMP/asm.
-count() { grep -cP "$1" "$TMP/asm" || true; }
+# count PATTERN — instructions matching a POSIX ERE, over $TMP/asm. TAB is the
+# instruction indent; BSD grep has no \t or \S, so both are spelled out.
+TAB=$(printf '\t')
+count() { grep -cE "$1" "$TMP/asm" || true; }
 
 report() {
   local label=$1 isa=$2
   local total stack pad shuffle reload useful
 
-  total=$(count '^\t\S')
+  total=$(count "^${TAB}[^[:space:]]" )
   if [ "$total" -eq 0 ]; then
     printf '%-28s no instructions emitted\n' "$label"
     return
@@ -80,19 +82,19 @@ report() {
   case $isa in
     x86)
       # operand stack: push/pop that are not the frame pointer save.
-      stack=$(( $(count '^\t(push|pop) ') - $(count '^\t(push|pop) rbp$') ))
+      stack=$(( $(count "^${TAB}(push|pop) ") - $(count "^${TAB}(push|pop) rbp$") ))
       # System V wants rsp 16-aligned at a call; an odd operand-stack depth
       # makes the emitter pad around the call rather than on every push.
-      pad=$(( $(count '^\t(sub|add) rsp, 8$') ))
+      pad=$(( $(count "^${TAB}(sub|add) rsp, 8$") ))
       # rax<->rcx handoffs between the operand stack and the ALU.
-      shuffle=$(count '^\tmov r[a-z0-9]+, r[a-z0-9]+$')
-      reload=$(count '^\tmov r[a-z0-9]+, \[rbp')
+      shuffle=$(count "^${TAB}mov r[a-z0-9]+, r[a-z0-9]+$")
+      reload=$(count "^${TAB}mov r[a-z0-9]+, \[rbp")
       ;;
     arm64)
-      stack=$(( $(count '^\tstr x[0-9]+, \[sp, #-16\]!$') + $(count '^\tldr x[0-9]+, \[sp\], #16$') ))
+      stack=$(( $(count "^${TAB}str x[0-9]+, \[sp, #-16\]!$") + $(count "^${TAB}ldr x[0-9]+, \[sp\], #16$") ))
       pad=0
-      shuffle=$(count '^\tmov x[0-9]+, x[0-9]+$')
-      reload=$(count '^\t(ldur|stur) ')
+      shuffle=$(count "^${TAB}mov x[0-9]+, x[0-9]+$")
+      reload=$(count "^${TAB}(ldur|stur) ")
       ;;
     *) echo "codegen-census: unknown isa $isa" >&2; return 1 ;;
   esac

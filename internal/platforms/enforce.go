@@ -41,6 +41,7 @@ var gatedBuiltins = map[string]string{
 	"proc_fork":    "proc",
 	"proc_waitpid": "proc",
 	"proc_exec":    "proc",
+	"proc_exec_as": "proc",
 	// A process table with pids in it to ask about, which is the same
 	// host property fork / exec / waitpid need.
 	"process_alive": "proc",

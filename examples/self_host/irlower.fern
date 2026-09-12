@@ -11759,30 +11759,8 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!sns.ok) { return sns; }
         return sns.emit(ir.op_sleep_ns());
     }
-    // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2',
-    // #5686): `proc_fork()` forks and pushes the kernel's return
-    // verbatim (0 child / pid parent / -errno), `proc_waitpid(pid)`
-    // reaps and pushes the decoded exit status. Both reserved
-    // builtins, so neither shadows a user function; std/tcp's
-    // tcp_serve_supervised is the stdlib caller.
-    if (cid.name == "proc_fork" && c.args.len() == 0) {
-        return s.emit(ir.op_proc_fork());
-    }
-    if (cid.name == "proc_waitpid" && c.args.len() == 1) {
-        var pws: LowerState = lower_expr(c.args[0], s);
-        if (!pws.ok) { return pws; }
-        return pws.emit(ir.op_proc_waitpid());
-    }
-    // `proc_exec(path, args)` execve's, so it only returns on
-    // FAILURE (-errno). The third leg of the trio: it is what
-    // lets a forked child become another program, which the
-    // batched per-module orchestrator in asm_modload_run needs.
-    if (cid.name == "proc_exec" && c.args.len() == 2) {
-        var pe0: LowerState = lower_expr(c.args[0], s);
-        if (!pe0.ok) { return pe0; }
-        var pe1: LowerState = lower_expr(c.args[1], pe0);
-        if (!pe1.ok) { return pe1; }
-        return pe1.emit(ir.op_proc_exec());
+    if (is_proc_call(cid.name, c.args.len())) {
+        return lower_call_proc(c, cid, s);
     }
     // Built-in `write(s)` / `print(s)` — write a string's bytes to
     // stdout. `print` appends a newline (Fern's print == println), and
@@ -12488,6 +12466,42 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     return a1.emit(ir.op_access());
+}
+
+// is_proc_call recognises the process-control family: crash-only supervision
+// (docs/CRASH-ONLY-SERVE.md D2', #5686) plus the two execs. The ARITY is part
+// of the test so a call with the wrong number of arguments falls through to the
+// ordinary named-call path. All are reserved builtins, so none shadows a user
+// function.
+function is_proc_call(name: string, argc: i32): boolean {
+    if (name == "proc_fork") { return argc == 0; }
+    if (name == "proc_waitpid") { return argc == 1; }
+    if (name == "proc_exec") { return argc == 2; }
+    if (name == "proc_exec_as") { return argc == 3; }
+    return false;
+}
+
+// lower_call_proc lowers what is_proc_call selects: the operands in argv order,
+// then the op.
+//
+// `proc_fork()` pushes the kernel's return verbatim (0 in the child, the pid in
+// the parent, -errno on failure) and `proc_waitpid(pid)` the decoded exit
+// status. `proc_exec(path, args)` and `proc_exec_as(path, argv, envp)` both
+// execve, so both only return on FAILURE (-errno); they differ in where argv
+// and envp come from — proc_exec prepends `path` as argv[0] and inherits the
+// environment, proc_exec_as takes both vectors as given, which is what `env`
+// needs.
+function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    if (cid.name == "proc_fork") { return s.emit(ir.op_proc_fork()); }
+    var a0: LowerState = lower_expr(c.args[0], s);
+    if (!a0.ok) { return a0; }
+    if (cid.name == "proc_waitpid") { return a0.emit(ir.op_proc_waitpid()); }
+    var a1: LowerState = lower_expr(c.args[1], a0);
+    if (!a1.ok) { return a1; }
+    if (cid.name == "proc_exec") { return a1.emit(ir.op_proc_exec()); }
+    var a2: LowerState = lower_expr(c.args[2], a1);
+    if (!a2.ok) { return a2; }
+    return a2.emit(ir.op_proc_exec_as());
 }
 
 // is_dirlink_call recognises the eight single-step directory, link and
