@@ -254,13 +254,38 @@ func TestRoundTripSafeMid(t *testing.T) {
 		{"store", "\tstr x0, [x1]", "x1", false},
 		{"branch", "\tb .L1", "x1", false},
 		{"label", ".L1:", "x1", false},
-		// The push is there to free x0; an instruction writing something else
-		// leaves the pushed value live in x0 and is not this pattern.
-		{"writes another register", "\tldur x2, [x29, #-16]", "x1", false},
+		// Writing some other register is fine on its own line — the run as a
+		// whole is what has to free x0, which roundTripSafeMids checks.
+		{"writes another register", "\tldur x2, [x29, #-16]", "x1", true},
+		// Writing the pop destination is not: the moved value has to survive
+		// to where the pop used to be.
+		{"writes the pop destination", "\tldur x1, [x29, #-16]", "x1", false},
 	}
 	for _, c := range cases {
 		if got := roundTripSafeMid(c.line, c.dst); got != c.want {
 			t.Errorf("%s: roundTripSafeMid(%q, %q) = %v, want %v", c.name, c.line, c.dst, got, c.want)
+		}
+	}
+}
+
+func TestRoundTripSafeMids(t *testing.T) {
+	cases := []struct {
+		name string
+		mids []string
+		want bool
+	}{
+		{"single x0 write", []string{"\tldur x0, [x29, #-16]"}, true},
+		{"x0 written later in the run", []string{"\tldur x2, [x29, #-8]", "\tmov x0, x2"}, true},
+		// Nothing in the run frees x0, so the push was not this pattern.
+		{"never writes x0", []string{"\tldur x2, [x29, #-8]", "\tadd x2, x2, #1"}, false},
+		{"empty run", nil, false},
+		// One unsafe line disqualifies the whole run.
+		{"call in the run", []string{"\tldur x0, [x29, #-8]", "\tbl f"}, false},
+		{"names the destination", []string{"\tldur x0, [x29, #-8]", "\tadd x2, x1, x2"}, false},
+	}
+	for _, c := range cases {
+		if got := roundTripSafeMids(c.mids, "x1"); got != c.want {
+			t.Errorf("%s: roundTripSafeMids(%q) = %v, want %v", c.name, c.mids, got, c.want)
 		}
 	}
 }
