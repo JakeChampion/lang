@@ -233,7 +233,7 @@ function digit_value(c: i32): i32 {
 // a major of 0x80000000 is one GNU accepts.
 function to_i32(v: u64): i32 {
   if (v >= 2147483648 as u64) {
-    return ((v as i64) - (4294967296 as i64)) as i32;
+    return (v as i64 - 4294967296 as i64) as i32;
   }
   return v as i32;
 }
