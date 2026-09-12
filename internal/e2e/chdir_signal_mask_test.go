@@ -183,20 +183,15 @@ func TestArm64DarwinChdirSignalMask(t *testing.T) {
 	})
 }
 
-// The interpreter shares its process with the Go runtime, so the two setters
-// really do move `fern`'s own dispositions and report the same errno the
-// natives do.
-func TestInterpSignalDispositionErrno(t *testing.T) {
-	src := `
-function main(): i32 {
-    if (signal_ignore(2) != 0) { return 61; }
-    if (signal_default(2) != 0) { return 62; }
-    if (signal_ignore(9) >= 0) { return 63; }
-    return 0;
-}`
-	if got := runInterpExit(t, src); got != 0 {
-		t.Errorf("interp signal errno = exit %d, want 0", got)
-	}
+// The interpreter shares its process with the Go runtime, so chdir really
+// moves `fern`, and signal_mask and the dispositions really read and write
+// the interpreter's own process state — the same scope a compiled program
+// has. The three sources above are transitions, so inheriting the harness's
+// mask and dispositions is not a problem here either.
+func TestInterpChdirSignalMask(t *testing.T) {
+	runChdirSignalChecks(t, func(t *testing.T, src string) int {
+		return runInterpExit(t, src)
+	})
 }
 
 // chdir is refused on both wasm worlds, and the refusal has to arrive from the
