@@ -1234,6 +1234,19 @@ The other six shapes in #9092 are GNU behaving worse than Fern — a SIGSEGV on
 `expr bba : '\(b\|\|a\)\?*'`, and four no-matches where Fern finds one.
 Those are deliberately NOT reproduced.
 
+**`mknod`'s `invalid device MAJOR MINOR` is unreachable.** GNU composes the
+two numbers with `makedev` and refuses the pair when the result is `NODEV`.
+On Linux `dev_t` is 64 bits wide and no pair of 32-bit numbers can reach
+`(dev_t) -1`, so the message is dead code there — on Darwin, where `dev_t` is
+`int32_t` and the packing is `major << 24 | minor`, `mknod n c 255 16777215`
+does print it. Fern's `mknod` takes the major and the minor as a PAIR and each
+backend packs the word its kernel wants, precisely so that a program never
+composes a target-specific number; there is therefore nothing here that can
+answer `NODEV`, and reproducing the message would mean writing XNU's dev_t
+layout back into the utility. Every other refusal of a device number — the
+base-zero parse and the 32-bit range check — is byte-exact, and the corpus
+compares them.
+
 **`mkdir -Z` and `mkdir --context[=CTX]` on a kernel that HAS SELinux.** GNU
 sets a security context and no primitive here can, so the option is refused —
 `setting a security context is not supported on this system`, exit 1 — rather
@@ -1759,7 +1772,8 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
-  `install` `touch` `truncate` `mkfifo` `mknod` `sync` (rename,
+  `install` `touch` `truncate` (done) `mkfifo` (done) `mknod` (done)
+  `sync` (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
   with #9059; `rename`, `chmod` and `set_file_times` have since reached
