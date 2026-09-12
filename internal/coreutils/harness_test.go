@@ -152,6 +152,16 @@ type invocation struct {
 	// — it is the one under which `mkdir d` is 0777 — so the field is a
 	// pointer and `withMask` writes it.
 	umask *int
+	// ownership puts each entry's uid and gid into the tree comparison.
+	// Off by default, and deliberately: an id is one more thing that can
+	// differ between two machines for reasons that are not the utility's,
+	// and no other utility here sets one.
+	//
+	// `chown` and `chgrp` have nothing else to prove. Every other field of
+	// treeEntry is one that a run doing NOTHING AT ALL leaves untouched, so
+	// without this their whole corpus passes on a utility that parsed its
+	// operands, printed every line, and made no call. Needs seedTree.
+	ownership bool
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -172,12 +182,23 @@ type invocation struct {
 // sets), a symlink's target verbatim, and for a regular file its bytes and
 // which hard-link group it belongs to. Timestamps are deliberately absent:
 // the two sides run seconds apart and nothing in the corpus sets one.
+//
+// `owner` is the exception to "absent", and it is OPT-IN rather than always
+// read: only a case that sets `invocation.ownership` fills it. `chown` and
+// `chgrp` have nothing else to prove — a `chown` that parsed its operands,
+// printed every line and changed no id passes every other field here — and
+// for every other utility an id is one more thing that can differ between two
+// machines for reasons that are not the utility's.
 type treeEntry struct {
 	name    string
 	kind    string
 	mode    uint32
 	target  string
 	content string
+	// "uid:gid", or "" for a case that did not ask. Read with lstat, so a
+	// symlink reports its own rather than its target's — which is the whole
+	// difference between `chown -h` and `chown`.
+	owner string
 	// rdev is the device number a character or block node carries, raw:
 	// the two sides run on one kernel, so the dev_t compares directly and
 	// nothing here has to know how that kernel packs a major and a minor.
@@ -402,8 +423,12 @@ Searched: %s`, gnuDirErr, strings.Join(gnuCandidates(), ", "))
 // gnuCandidates lists the directories to probe, most explicit first.
 func gnuCandidates() []string {
 	var dirs []string
+	// A LIST, separated the way PATH is, because no single directory need
+	// hold every utility: Debian and its derivatives do not build `uptime`
+	// or `kill` into their coreutils package, so a host supplies those
+	// beside /usr/bin rather than instead of it.
 	if d := os.Getenv("FERN_GNU_COREUTILS"); d != "" {
-		dirs = append(dirs, d)
+		dirs = append(dirs, filepath.SplitList(d)...)
 	}
 	if p, err := exec.LookPath("yes"); err == nil {
 		dirs = append(dirs, filepath.Dir(p))
@@ -437,7 +462,12 @@ const (
 // an exit. A candidate that writes nothing before the deadline is not
 // the reference either, so the timeout is an answer and not a hang.
 func gnuVersion(dir string) (string, error) {
-	bin := filepath.Join(dir, "yes")
+	return gnuVersionOf(filepath.Join(dir, "yes"))
+}
+
+// gnuVersionOf is the same probe against a NAMED binary, for the
+// per-utility check in referenceBin.
+func gnuVersionOf(bin string) (string, error) {
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
@@ -465,16 +495,56 @@ func gnuVersion(dir string) (string, error) {
 	return strings.TrimSpace(first), nil
 }
 
-// referenceBin is the GNU binary for `util`.
+// referenceBin is the GNU coreutils binary for `util`.
+//
+// The DIRECTORY is chosen by probing `yes`, and the name `util` inside it
+// is then verified rather than assumed. That is not defensive tidiness:
+// `/usr/bin/uptime` on Debian and its derivatives belongs to procps, a
+// different program with different options and different output, because
+// their coreutils package does not build coreutils' own. Trusting the
+// directory would have compared Fern against procps and reported the
+// difference as Fern's bug.
+//
+// A name the chosen directory does not answer for is looked up in the
+// remaining candidates, so a host can supply what its distribution
+// leaves out by adding a directory to FERN_GNU_COREUTILS.
 func referenceBin(t *testing.T, util string) string {
 	t.Helper()
 	dir, ver := gnuDir(t)
-	bin := filepath.Join(dir, util)
-	if _, err := os.Stat(bin); err != nil {
-		t.Fatalf("reference %s: %v (from %s, %s)", util, err, dir, ver)
+	refBinsMu.Lock()
+	defer refBinsMu.Unlock()
+	if bin, ok := refBins[util]; ok {
+		return bin
 	}
-	return bin
+	var tried []string
+	for _, cand := range append([]string{dir}, gnuCandidates()...) {
+		bin := filepath.Join(cand, util)
+		if _, err := os.Stat(bin); err != nil {
+			continue
+		}
+		if _, err := gnuVersionOf(bin); err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", bin, err))
+			continue
+		}
+		refBins[util] = bin
+		return bin
+	}
+	t.Fatalf(`no GNU coreutils %[1]s on this host (the corpus reference is %[2]s from %[3]s).
+
+Rejected: %[4]s
+
+A utility whose oracle is missing cannot be gated, and a SKIP here would
+report a green suite that compared nothing. Debian and Ubuntu do not build
+%[1]s into their coreutils package; add a directory holding one to
+FERN_GNU_COREUTILS, which takes a PATH-style list.`,
+		util, ver, dir, strings.Join(tried, ", "))
+	return ""
 }
+
+var (
+	refBinsMu sync.Mutex
+	refBins   = map[string]string{}
+)
 
 // fernTarget is the -target the utilities are compiled for: the host's,
 // unless FERN_COREUTILS_TARGET names another one to cross-run under
@@ -702,7 +772,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		if inv.mask != nil {
 			seeded = map[string]bool{}
-			for _, e := range readTree(t, workDir) {
+			for _, e := range readTree(t, workDir, inv.ownership) {
 				seeded[e.name] = true
 			}
 		}
@@ -814,7 +884,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	if workDir != "" {
 		groups := map[[2]uint64]int{}
-		res.tree = readTreeInto(t, workDir, "", groups)
+		res.tree = readTreeInto(t, workDir, "", groups, inv.ownership)
 		if crossRoot != "" {
 			// The link to the other filesystem is the harness's own
 			// scaffolding and its target is a fresh path per run, so it
@@ -825,7 +895,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 					kept = append(kept, e)
 				}
 			}
-			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups)...)
+			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, inv.ownership)...)
 			sort.Slice(res.tree, func(i, j int) bool { return res.tree[i].name < res.tree[j].name })
 		}
 	}
@@ -877,9 +947,20 @@ func regroup(es []treeEntry) {
 // regular file's bytes. A file too large to hold is summarised by its size
 // instead, which still differs when the two sides disagree. Symlinks are
 // recorded, not followed.
-func readTree(t *testing.T, root string) []treeEntry {
+// ownerOf is the entry's "uid:gid" as lstat reports it. Only a case that set
+// `ownership` calls it; nothing else here reads an id.
+func ownerOf(t *testing.T, path string, info os.FileInfo) string {
 	t.Helper()
-	return readTreeInto(t, root, "", map[[2]uint64]int{})
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("no stat for %s — the ownership comparison cannot run on this platform", path)
+	}
+	return fmt.Sprintf("%d:%d", st.Uid, st.Gid)
+}
+
+func readTree(t *testing.T, root string, ownership bool) []treeEntry {
+	t.Helper()
+	return readTreeInto(t, root, "", map[[2]uint64]int{}, ownership)
 }
 
 // readTreeInto is readTree with each name prefixed and the hard-link
@@ -974,7 +1055,7 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	return opened
 }
 
-func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) []treeEntry {
+func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, ownership bool) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
 	var out []treeEntry
@@ -991,6 +1072,9 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) [
 		}
 		mode := info.Mode()
 		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode)}
+		if ownership {
+			e.owner = ownerOf(t, path, info)
+		}
 		if was, ok := opened[path]; ok {
 			// Reopened below so the walk could enter it; the mode the
 			// utility actually left is the one recorded here.
@@ -1478,6 +1562,8 @@ func treeDiff(want, got []treeEntry, wantWho, gotWho string) string {
 			lines = append(lines, fmt.Sprintf("  %s: %s %s, %s %s", n, wantWho, quote([]byte(we.content)), gotWho, quote([]byte(ge.content))))
 		case we.group != ge.group:
 			lines = append(lines, fmt.Sprintf("  %s: %s hard-link group %d, %s hard-link group %d", n, wantWho, we.group, gotWho, ge.group))
+		case we.owner != ge.owner:
+			lines = append(lines, fmt.Sprintf("  %s: %s owner %s, %s owner %s", n, wantWho, we.owner, gotWho, ge.owner))
 		}
 		if len(lines) == 8 {
 			lines = append(lines, "  … more")

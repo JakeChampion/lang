@@ -42,6 +42,8 @@ jobs:
           - { runner: ubuntu-24.04-arm, host: aarch64 }
     name: test-units-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
+    env:
+      GNU_UPTIME_VERSION: "9.4"
     steps:
       - uses: actions/checkout@v7
       # THE REPO'S ONE Go-BUILD-CACHE PRODUCER. Every other job in every
@@ -145,6 +147,63 @@ jobs:
           if command -v llvm-mc >/dev/null 2>&1; then
             llvm-mc --version | head -2
           fi
+      # GNU coreutils' own `uptime`, which the runner image does not have.
+      # Debian and Ubuntu do not build it into their coreutils package, and
+      # /usr/bin/uptime belongs to PROCPS -- a different program, with
+      # different options and different output. internal/coreutils compares
+      # each utility against the GNU binary of the same name, so without this
+      # the uptime corpus has no oracle, and a gate with no oracle is the
+      # shape that reports `ok` having compared nothing.
+      #
+      # The version is PINNED, and 9.4 rather than "whatever the image has",
+      # because where uptime reads its boot time changed: 9.1 reads
+      # /proc/uptime and lets it OVERRIDE the utmp BOOT_TIME record, so a
+      # corpus handing it a fixture database would measure the runner's real
+      # uptime instead. 9.4 and the 9.10 this project is held to both take
+      # the record, and 9.4 is what the ubuntu-24.04 image's own coreutils is,
+      # so every utility here answers to one version.
+      #
+      # Cached, because the build is the only slow part of this step: about
+      # three minutes cold on four cores, seconds warm. Only `uptime` is
+      # installed; the other seventy come from /usr/bin.
+      - name: Cache the GNU uptime oracle
+        id: gnu-uptime
+        uses: actions/cache@v6
+        with:
+          path: ~/gnu-coreutils
+          key: gnu-coreutils-uptime-${{ env.GNU_UPTIME_VERSION }}-${{ matrix.host }}
+      # `make` in full rather than `make src/uptime`: a named target skips the
+      # gnulib header generation the build depends on and dies on a missing
+      # stdckdint.h. FORCE_UNSAFE_CONFIGURE because coreutils' configure
+      # refuses to run as a user it thinks might be root.
+      - name: Build the GNU uptime oracle
+        if: steps.gnu-uptime.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          ver="$GNU_UPTIME_VERSION"
+          work="$(mktemp -d)"
+          cd "$work"
+          curl -fsSLO "https://ftp.gnu.org/gnu/coreutils/coreutils-$ver.tar.xz"
+          tar xf "coreutils-$ver.tar.xz"
+          cd "coreutils-$ver"
+          FORCE_UNSAFE_CONFIGURE=1 ./configure --quiet --disable-nls --without-selinux
+          make -j"$(nproc)"
+          install -D src/uptime "$HOME/gnu-coreutils/bin/uptime"
+          cd /
+          rm -rf "$work"
+      # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. Without this a cache that
+      # restored an empty directory would leave the corpus with no reference
+      # and the failure would name uptime rather than this step.
+      - name: Assert the oracle is GNU coreutils, and point the corpus at it
+        run: |
+          set -euo pipefail
+          bin="$HOME/gnu-coreutils/bin/uptime"
+          if ! "$bin" --version | head -1 | grep -q '(GNU coreutils)'; then
+            echo "::error::$bin is not GNU coreutils; internal/coreutils would have no oracle for uptime(1)"
+            exit 1
+          fi
+          "$bin" --version | head -1
+          echo "FERN_GNU_COREUTILS=/usr/bin:$HOME/gnu-coreutils/bin" >> "$GITHUB_ENV"
       - name: go test (units)
         # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.

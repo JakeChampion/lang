@@ -1,0 +1,230 @@
+// uptime.fern — GNU-compatible `uptime`.
+//
+//   uptime [OPTION]... [FILE]
+//
+// One line: the local clock, how long the machine has been up, how many
+// sessions are open, and the three load averages.
+//
+//	 19:49:16  up  1:02,  3 users,  load average: 0.56, 0.81, 0.67
+//
+// The spacing is load-bearing and none of it is regular. A leading
+// space, two spaces after the clock, `up` followed by TWO spaces when
+// there are no whole days and one when there are, `%2d` hours so a
+// single-digit hour keeps a column, `%02d` minutes, a comma and two
+// spaces between every field, and two spaces again before `load
+// average:`.
+//
+// ---- what this is NOT -------------------------------------------------
+//
+// procps-ng ships a different `uptime` with `-p` and `-s`, and on Debian
+// and its derivatives that is the one on PATH: their coreutils package
+// does not build this program at all. GNU's has no options but `--help`
+// and `--version`, so `uptime -p` here is `invalid option -- 'p'`.
+//
+// ---- where the numbers come from --------------------------------------
+//
+// Both counts come from the login-accounting database — the FILE
+// operand, or /var/run/utmp — rather than from the kernel: a
+// BOOT_TIME record carries the boot instant and a USER_PROCESS record
+// with a non-empty name is one session. The LAST boot record wins,
+// which is what GNU's loop leaves behind. A database that cannot be read
+// is an empty one with no diagnostic, which is what glibc's utmp reader
+// gives GNU for an unopenable FILE.
+//
+// Only the load averages come from the kernel, as /proc/loadavg, which
+// is what glibc's getloadavg(3) reads. The kernel writes those three as
+// `%lu.%02lu`, so `%.2f` of the double glibc parses out of them is the
+// same two digits back again, and this reformats the digits rather than
+// going through a float.
+//
+// ---- Linux only, and loudly ------------------------------------------
+//
+// /proc/loadavg is the only source there is: Darwin answers the same
+// question through `sysctl(KERN_BOOTTIME)` and `getloadavg(3)`, and
+// there is no primitive for either. So a build for another target
+// REFUSES rather than printing the line without its load averages --
+// which is a shape GNU also produces, when getloadavg(3) fails, and
+// would therefore look like an answer instead of a gap. `df` is
+// Linux-only for the same kind of reason and fails the same way.
+//
+// ---- what cannot go wrong quietly -------------------------------------
+//
+// A boot time in the future, or none at all, is `up ???? days ??:??,`
+// and exit 1 rather than a negative duration. GNU reports `couldn't get
+// boot time` for the second before it prints anything.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/timefmt";
+import "./lib/tz";
+import "./lib/utmp";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
+  out = out + "Print the current time, the length of time the system has been up,\n";
+  out = out + "the number of users on the system, and the average number of jobs\n";
+  out = out + "in the run queue over the last 1, 5 and 15 minutes.  Processes in\n";
+  out = out + "an uninterruptible sleep state also contribute to the load average.\n";
+  out = out + "If FILE is not specified, use " + utmp.default_path() + ".  /var/log/wtmp as FILE is common.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function two(v: i32): string {
+  if (v < 10) {
+    return "0" + v.to_string();
+  }
+  return v.to_string();
+}
+
+// `%2d`: a space-padded field, not a zero-padded one.
+function pad2(v: i32): string {
+  if (v < 10) {
+    return " " + v.to_string();
+  }
+  return v.to_string();
+}
+
+// The three load averages as GNU prints them, or None when there is no
+// /proc/loadavg to read — the state getloadavg(3) reports as -1, where
+// uptime ends the line after the session count. On Linux that is a
+// container without /proc and GNU answers the same way; a target that
+// has no /proc at all never reaches here, because main refuses first.
+function load_averages(): Option[string] {
+  match (read_file("/proc/loadavg")) {
+    Ok(text) => {
+      var f: string[] = text.fields();
+      if (f.len() < 3) {
+        return None;
+      }
+      var out: string = ",  load average: " + two_places(f[0]);
+      out = out + ", " + two_places(f[1]);
+      out = out + ", " + two_places(f[2]);
+      return Some(out);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// One `%.2f` field. The kernel writes exactly two decimals, so this is
+// the identity on every value it produces; a shorter fraction is padded
+// and a longer one truncated rather than rounded, which no kernel emits.
+function two_places(s: string): string {
+  var whole: string = "";
+  var frac: string = "";
+  var seen_dot: boolean = false;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c == 46 && !seen_dot) {
+      seen_dot = true;
+    } else if (seen_dot) {
+      frac = frac + slice_unchecked(s, i, i + 1);
+    } else {
+      whole = whole + slice_unchecked(s, i, i + 1);
+    }
+    i = i + 1;
+  }
+  if (whole.len() == 0) {
+    whole = "0";
+  }
+  while (frac.len() < 2) {
+    frac = frac + "0";
+  }
+  return whole + "." + slice_unchecked(frac, 0, 2);
+}
+
+// The clock, the elapsed time and the session count, in that order.
+// Returns the line and the exit status, which is 1 when a field had to
+// be filled in with question marks.
+function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
+  var entries: utmp.Entry[] = [];
+  var why: string = "";
+  match (read) {
+    Ok(v) => {
+      entries = v;
+    },
+    Err(e) => {
+      // GNU's `error (0, errno, ...)` picks up the errno the failed
+      // open left behind, so the database that could not be read names
+      // itself in the boot-time diagnostic.
+      why = ": " + gnu.io_error_text(e);
+    }
+  }
+  var status: i32 = 0;
+  var boot: i64 = 0 as i64;
+  var sessions: i32 = 0;
+  var i: i32 = 0;
+  while (i < entries.len()) {
+    if (entries[i].is_login()) {
+      sessions = sessions + 1;
+    }
+    if (entries[i].kind == utmp.boot_time()) {
+      boot = entries[i].sec;
+    }
+    i = i + 1;
+  }
+  var out: string = "";
+  if (boot == 0 as i64) {
+    gnu.error("couldn't get boot time" + why);
+    status = 1;
+  }
+  out = out + timefmt.strftime(" %H:%M:%S  ", tz.local_zone(), now, 0 as i64);
+  var elapsed: i64 = now - boot;
+  if (boot == 0 as i64 || elapsed < 0 as i64) {
+    out = out + "up ???? days ??:??,  ";
+    status = 1;
+  } else {
+    var days: i64 = elapsed / (86400 as i64);
+    var hours: i32 = (elapsed % (86400 as i64) / (3600 as i64)) as i32;
+    var mins: i32 = (elapsed % (3600 as i64) / (60 as i64)) as i32;
+    if (days > 0 as i64) {
+      var unit: string = " days ";
+      if (days == 1 as i64) {
+        unit = " day ";
+      }
+      out = out + "up " + days.to_string() + unit + pad2(hours) + ":" + two(mins) + ",  ";
+    } else {
+      out = out + "up  " + pad2(hours) + ":" + two(mins) + ",  ";
+    }
+  }
+  out = out + sessions.to_string() + " user";
+  if (sessions != 1) {
+    out = out + "s";
+  }
+  match (load_averages()) {
+    Some(l) => {
+      out = out + l;
+    },
+    None => {}
+  }
+  return (out + "\n", status);
+}
+
+function main(): i32 {
+  var operands: string[] = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
+  // After the option scan, so `--help` and `--version` answer on every
+  // target and only a run that would have to produce the load averages
+  // is refused.
+  if (target_os() != "linux") {
+    gnu.error("the load averages are read from /proc/loadavg, which " + target_os() + " does not have");
+    return 1;
+  }
+  if (operands.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
+  }
+  var path: string = utmp.default_path();
+  if (operands.len() == 1) {
+    path = operands[0];
+  }
+  var r: (string, i32) = report(utmp.read_all_result(path), now_unix_ms() / (1000 as i64));
+  var o: io_buffered.BufWriter = gnu.put(gnu.out_new(), r.0);
+  gnu.finish(o);
+  return r.1;
+}

@@ -4478,6 +4478,38 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(c_done + ":\n    pushq %r10\n");
         return s;
     }
+    if (o.kind_tag == 253) {  // sum_bytes
+        // operand stack [box] -> every byte of the string added into a
+        // 32-bit accumulator that wraps.
+        //
+        // SCALAR (§3.4 step 1). The SSE2 sequence this wants is psadbw
+        // against a zeroed register plus paddq, both already inside the
+        // declared Haswell baseline; the ordering rule puts the scalar
+        // lowering in every backend before any of them is vectorised.
+        //
+        // movzbl is the whole of the sign question: a byte is unsigned, so
+        // 0xff contributes 255. The accumulate is `addl`, which writes the
+        // low 32 bits and zeroes the top, so the wrap is the register width
+        // and the pushed value is already the i32 the op promises.
+        //
+        // One operand, not two: the cursor is an INDEX in %rdx and the sum
+        // lives in %r10, so the body stays inside the registers this backend
+        // has free.
+        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var sb_loop: string = slo.name;
+        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
+        var sb_done: string = slo2.name;
+        s = slo2.state;
+        s = s.write("    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
+        s = s.write(sb_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + sb_done + "\n");
+        s = s.write("    movzbl (%rax,%rdx), %r9d\n    addl %r9d, %r10d\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + sb_loop + "\n");
+        s = s.write(sb_done + ":\n    pushq %r10\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.
@@ -5567,6 +5599,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_seek\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("reader"); s = s.need("reader_seek");
+        } else if (o.kind_tag == 281) {  // writer_truncate
+            // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
+            // pushes a fresh Option[IoError]. The length is on top but param[0]
+            // is fd, so swap before the call, as writer_write does.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_writer_truncate\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
         } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments (the
             // AST path's __fern_args, which allocates). The args need also makes the
@@ -8789,6 +8828,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
+        if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via

@@ -56,7 +56,19 @@ command -v python3 >/dev/null || { echo "coreutils-bench: python3 not found (ren
 
 is_gnu() { [ -x "$1/yes" ] && "$1/yes" --version 2>/dev/null | head -1 | grep -q '(GNU coreutils)'; }
 
-gnu="${FERN_GNU_COREUTILS:-}"
+# FERN_GNU_COREUTILS is a PATH-style LIST, because no one directory need hold
+# every utility: Debian and its derivatives do not build `uptime` or `kill`
+# into their coreutils package, and the /usr/bin/uptime that exists on most
+# Linux distributions belongs to procps. $gnu is the directory holding the
+# bulk; gnu_bin looks the rest up across the whole list.
+gnu_dirs="${FERN_GNU_COREUTILS:-}"
+gnu=""
+if [ -n "$gnu_dirs" ]; then
+  IFS=: read -r -a _gnu_list <<< "$gnu_dirs"
+  for d in "${_gnu_list[@]}"; do
+    if is_gnu "$d"; then gnu="$d"; break; fi
+  done
+fi
 if [ -z "$gnu" ]; then
   if p=$(command -v yes) && is_gnu "$(dirname "$p")"; then
     gnu=$(dirname "$p")
@@ -65,9 +77,29 @@ if [ -z "$gnu" ]; then
       if is_gnu "$d"; then gnu="$d"; break; fi
     done
   fi
+  gnu_dirs="${gnu_dirs:+$gnu_dirs:}$gnu"
 fi
 [ -n "$gnu" ] && is_gnu "$gnu" || {
-  echo "coreutils-bench: no GNU coreutils; set FERN_GNU_COREUTILS=/path/to/bin" >&2; exit 1; }
+  echo "coreutils-bench: no GNU coreutils; set FERN_GNU_COREUTILS=/path/to/bin (a PATH-style list)" >&2; exit 1; }
+
+# gnu_bin UTIL — the GNU coreutils binary for UTIL. The name is VERIFIED
+# rather than assumed present in $gnu: /usr/bin/uptime is procps on Debian
+# and Ubuntu, and benchmarking against it would compare two different
+# programs.
+gnu_bin() {
+  local u=$1 d
+  IFS=: read -r -a _dirs <<< "$gnu_dirs"
+  for d in "${_dirs[@]}" "$gnu"; do
+    if [ -x "$d/$u" ] && "$d/$u" --version 2>/dev/null | head -1 | grep -q '(GNU coreutils)'; then
+      # The header names the version of the directory holding the bulk, so
+      # a utility answered from elsewhere says which version it really was.
+      [ "$d" = "$gnu" ] || echo "coreutils-bench: $u oracle: $("$d/$u" --version | head -1) ($d)" >&2
+      printf '%s' "$d/$u"; return 0
+    fi
+  done
+  echo "coreutils-bench: no GNU coreutils $u in $gnu_dirs" >&2
+  return 1
+}
 
 # is_uutils_multicall BIN — Debian's rust-coreutils: one binary dispatching
 # on argv[0]. Invoked bare it names itself "(multi-call binary)" and exits
@@ -172,7 +204,7 @@ for u in "$@"; do
     for impl in fern gnu uutils; do
       case "$impl" in
         fern)   bin="$out/fern/$u" ;;
-        gnu)    bin="$gnu/$u" ;;
+        gnu)    bin=$(gnu_bin "$u") || exit 1 ;;
         uutils) bin="$uub"; [ -n "$bin" ] || continue ;;
       esac
       cmd=${template//\{gnu\}/$gnu}
