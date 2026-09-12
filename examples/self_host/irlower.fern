@@ -32753,11 +32753,12 @@ pub struct LowerResult {
 }
 
 // result_from_decl marks a body whose return type is read from its
-// parser.FuncDecl. result_i32 is the only produced shape today, because the
-// physical RC boundary admits no wider scalar; a backend refuses any other
-// value rather than assuming one, so a new shape cannot be forgotten.
+// parser.FuncDecl. The produced shapes are the two integer slot classes the
+// physical RC boundary admits; a backend refuses any other value rather than
+// assuming one, so a new shape cannot be forgotten.
 pub function result_from_decl(): i32 { return 0; }
 pub function result_i32(): i32 { return 1; }
+pub function result_i64(): i32 { return 2; }
 
 // lower_failed builds a signature-refusal LowerResult carrying `why`. The
 // signature gates run before any lowering, so the ops / slot lists are all empty

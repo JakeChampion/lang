@@ -190,6 +190,13 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     Neither preview has a call that creates one, and the nearest
 	//     stand-in — a regular file where a FIFO was asked for — reads
 	//     back as the wrong kind rather than as a missing one.
+	//   - `tty` — the geometry of the terminal a descriptor is connected
+	//     to. Neither preview has an ioctl, wasi:cli's terminal-output
+	//     resource reports no size, and the two constants that could
+	//     stand in — 80x24, or 0x0 — are respectively a guess about a
+	//     terminal the component cannot see and a size no terminal has.
+	//     `isatty` is NOT this capability: it is answerable anywhere,
+	//     and the answer off a terminal is "no".
 	//   - `fsowner` — the user and the group a filesystem entry belongs
 	//     to. Distinct from `userid`, which is the PROCESS's own ids:
 	//     neither WASI preview records an owner on an entry at all
@@ -216,7 +223,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner"},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

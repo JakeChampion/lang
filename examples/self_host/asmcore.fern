@@ -849,13 +849,18 @@ pub function oflag(t: string, name: string): string {
 }
 
 // atflag is the *at() family's flag word. AT_REMOVEDIR — "unlink this as a
-// directory, not a file" — is 0x200 on Linux and 0x80 on XNU.
+// directory, not a file" — is 0x200 on Linux and 0x80 on XNU;
+// AT_SYMLINK_NOFOLLOW is 0x100 and 0x20. XNU rejects an unknown flag bit
+// with EINVAL rather than ignoring it, so a Linux constant here does not
+// degrade into a follow — it fails the call outright.
 pub function atflag(t: string, name: string): string {
     if (t == "arm64-darwin") {
         if (name == "removedir") { return "128"; }
+        if (name == "symlink_nofollow") { return "32"; }
         return "0";
     }
     if (name == "removedir") { return "512"; }
+    if (name == "symlink_nofollow") { return "256"; }
     return "0";
 }
 
@@ -1213,6 +1218,24 @@ pub function rt_src_isatty(t: string): string {
     var req: string = "21505";
     if (t == "arm64-darwin") { req = "1078490131"; }
     return "function __fern_isatty(fd: i32): i32 { var buf: i32 = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf) == 0) { return 1; } return 0; }";
+}
+
+// rt_src_window_size backs `window_size(fd)` (syscall-leaf) ->
+// Result[WinSize, IoError]: one TIOCGWINSZ ioctl into the kernel's 8-byte
+// `struct winsize`, whose first two u16s are the row and column counts. Its
+// REQUEST number is the platform difference, the way isatty's is: Linux
+// spells TIOCGWINSZ 0x5413 (21523), XNU 0x40087468 (1074295912).
+//
+// The two counts are read a byte at a time and recombined little-endian,
+// because `__raw_load8` is the only width this runtime dialect loads below a
+// pointer. The pixel pair beside them in the record has no field to land in.
+//
+// A descriptor that is not a terminal answers ENOTTY, classified against an
+// empty path the way `fd_stat`'s is: the fd is the subject and has no name.
+pub function rt_src_window_size(t: string): string {
+    var req: string = "21523";
+    if (t == "arm64-darwin") { req = "1074295912"; }
+    return "function __fern_window_size(fd: i32): Result[WinSize, IoError] { var buf: i32 = __raw_scratch(16); var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } var r: i32 = __raw_load8(buf, 0) + __raw_load8(buf, 1) * 256; var c: i32 = __raw_load8(buf, 2) + __raw_load8(buf, 3) * 256; return Ok(WinSize { rows: (r as i64), cols: (c as i64) }); }";
 }
 
 // rt_src_process_alive backs `process_alive(pid)` (syscall-leaf) -> 1 when a
@@ -2114,7 +2137,7 @@ pub function rt_src_stat(t: string): string {
 // The flag is per-kernel, and XNU rejects Linux's number outright — so a
 // hardcoded 0x100 makes every `lstat` on Darwin EINVAL, symlink or not.
 pub function rt_src_lstat(t: string): string {
-    return rt_src_stat_like(t, "__fern_lstat", at_symlink_nofollow(t));
+    return rt_src_stat_like(t, "__fern_lstat", atflag(t, "symlink_nofollow"));
 }
 
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
@@ -4101,6 +4124,12 @@ function builtin_i32_names(): string[] {
         // answer is an offset into both ranges rather than into one.
         "__mismatch",
         "__load_i32",
+        // buf_new(cap) -> the builder's handle, which IS the address of its
+        // control block; buf_len(h) -> the bytes accumulated so far. Both live
+        // in an integer slot, the handle for the same reason a file descriptor
+        // does (#8773).
+        "buf_new",
+        "buf_len",
         "exit",
         "args_count",
     ];
@@ -4127,6 +4156,8 @@ function builtin_string_names(): string[] {
         "__raw_string",
         "arg_at",
         "string_from_bytes_unchecked",
+        // buf_take(h) hands the builder's accumulated bytes over as a string.
+        "buf_take",
     ];
 }
 
@@ -4159,6 +4190,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "chown_at") { return ty_option(ty_unknown()); }
     if (id.name == "set_file_times") { return ty_option(ty_unknown()); }
     if (id.name == "read_link") { return ty_result(ty_string()); }
+    // window_size(fd) -> Result[WinSize, IoError]. "unknown" for the same
+    // reason subprocess below is: the struct's fields resolve through the
+    // shape-pointer dispatch path.
+    if (id.name == "window_size") { return ty_unknown(); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
     // See asm.fern: returns "unknown" because the struct's
     // fields resolve through the shape-pointer dispatch path
@@ -4699,7 +4734,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
         || name == "chr" || name == "args" || name == "read_file" || name == "read_file_bytes"
         || name == "random_bytes"
-        || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
+        || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
         || name == "arr_push" || name == "arr_slice"
         || name == "str_case" || name == "str_repeat"
         || name == "str_reverse" || name == "str_replace"
@@ -4855,11 +4890,10 @@ pub function (s: EmitState) has_need(name: string): boolean {
     return false;
 }
 
-// has_any_need is has_need over a set. The runtime-bundle gates each ask
-// whether ANY of two or three dozen needs is marked, and written as a chain
-// of `||` that is one boolean run per name — unreadable, and a branch each
-// for the complexity ratchet, for a question that is really list membership.
-pub function (s: EmitState) has_any_need(names: string[]): boolean {
+// any_need is has_need over a list: the shape every runtime-bundle gate in the
+// two native emitters wants. Each of those used to be a `||` chain thirty-odd
+// calls long, where a need added to one and not its sibling is invisible.
+pub function (s: EmitState) any_need(names: string[]): boolean {
     var i: i32 = 0;
     while (i < names.len()) {
         if (s.has_need(names[i])) { return true; }
@@ -6127,6 +6161,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_read_link", "__fn___fern_umask",
         "__fn___fern_chmod", "__fn___fern_set_file_times", "__fn___fern_truncate",
         "__fn___fern_mknod", "__fn___fern_chown_at",
+        "__fn___fern_window_size",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
@@ -6135,6 +6170,11 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_hostname",
         "__fn___fern_signal_ignore", "__fn___fern_signal_default",
         "__fern_strbuf_reset", "__fern_strbuf_take",
+        // The capacity-carrying string builder (#8773). __fern_buf_reserve is
+        // internal to the bundle — no call crosses a unit boundary to it.
+        "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range",
+        "__fern_buf_push_byte", "__fern_buf_len", "__fern_buf_take",
+        "__fern_buf_free",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
         "__fn___fern_proc_exec_as",

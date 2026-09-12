@@ -1387,6 +1387,9 @@ func pureReadReceiverBuiltin(name string) bool {
 //
 //   - strbuf_append memcpys the string's bytes past the buffer tail
 //     and returns void (its runtime doc, all three implementations);
+//   - buf_push / buf_push_range do the same into a capacity-carrying
+//     builder, and the piece is the argument at position 1 — position 0
+//     is the builder's handle;
 //   - print / write / eprint write the bytes to an fd, void result;
 //   - `w.write(s)` (__fern_writer_write) writes the bytes to the
 //     Writer's fd and returns a fresh Option[IoError] box holding an
@@ -1394,7 +1397,7 @@ func pureReadReceiverBuiltin(name string) bool {
 //   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
-//   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
+//   - __memchr / __rmemchr / __ascii_run / __count_byte / __sum_bytes scan the
 //     bytes and return a scalar, and __mismatch does the same for its
 //     TWO strings — both are read to the first difference and neither
 //     is retained;
@@ -1412,6 +1415,8 @@ func pureReadReceiverBuiltin(name string) bool {
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string][]int{
 	"strbuf_append":               {0},
+	"buf_push":                    {1},
+	"buf_push_range":              {1},
 	"print":                       {0},
 	"write":                       {0},
 	"eprint":                      {0},
@@ -1421,6 +1426,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"__rmemchr":                   {0},
 	"__ascii_run":                 {0},
 	"__count_byte":                {0},
+	"__sum_bytes":                 {0},
 	"__mismatch":                  {0, 2},
 	"__method_Map_get":            {1},
 	"__method_Map_get_or":         {1},

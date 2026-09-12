@@ -1520,6 +1520,34 @@ function main(): i32 {
 			// sub.len()=2, sub[0]=3  ->  233
 			want: 233,
 		},
+		{
+			// The capacity-carrying builder: every one of its builtins,
+			// including the growth past the reserved capacity and the
+			// re-arm a take leaves behind. This backend allocates through
+			// __alloc / __free rather than the strbuf helpers' fixed .bss,
+			// so the reserve's free of the outgrown block is exercised too.
+			name: "buf_builder",
+			src: `function main(): i32 {
+  var b: usize = buf_new(8);
+  buf_push(b, "hello");
+  buf_push_byte(b, 44);
+  buf_push(b, "abcdefghijklmnopqrstuvwxyz");
+  buf_push_range(b, "0123456789", 2, 5);
+  var s: string = buf_take(b);
+  if (s.len() != 35) { return 1; }
+  if (s[0] != 104) { return 2; }
+  if (s[5] != 44) { return 3; }
+  if (s[34] != 52) { return 4; }
+  var i: i32 = 0;
+  while (i < 500) { buf_push(b, "0123456789"); i = i + 1; }
+  var big: string = buf_take(b);
+  if (big.len() != 5000) { return 5; }
+  if (big[4999] != 57) { return 6; }
+  buf_free(b);
+  return 42;
+}`,
+			want: 42,
+		},
 	}
 
 	for _, c := range cases {
