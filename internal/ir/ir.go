@@ -14949,6 +14949,20 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __sum_bytes(s) — the same runtime-helper-call shape, with one argument
+	// and therefore the family's smallest ArgTypes, which is still
+	// load-bearing: a `string` is TWO operand slots on arm64 and wasm and one
+	// on x86-64, so a backend popping I32=1 reads the length as the result.
+	if id.Name == "__sum_bytes" && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_sum_bytes", Width: ResNarrow, I32: 1,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}}}})
+			return nil
+		}
+	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
 	// above, and ArgTypes is load-bearing here for the same reason: `string`
 	// is two operand slots on arm64 and wasm, one on x86-64.

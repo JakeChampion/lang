@@ -727,6 +727,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesSumBytes {
+		g.emitSumBytesRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -4803,6 +4806,52 @@ func (g *generator) emitCountByteRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_count_byte")
+}
+
+// emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
+// added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The NEON sequence this
+// wants is uaddlp/uadalp, neither of which internal/native/arm64 can encode
+// yet, and §3.3a's rule is to land the encodings before the vector body
+// rather than after.
+//
+// `ldrb` zero-extends, which is the whole of the sign question: a byte is
+// unsigned and 0xff contributes 255. The accumulate is `add w0, w0, w10`, a
+// 32-bit add, so the wrap the builtin promises is the register width rather
+// than anything this body does.
+//
+// Two-word string ABI as __count_byte's — x0 = data word, x1 = length word —
+// and the same 48-byte frame, because emitStrDataPtr2W needs 16 bytes of
+// scratch to spill an inline SSO string.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func (g *generator) emitSumBytesRuntime() {
+	g.line("")
+	g.line(".global __fern_sum_bytes")
+	g.typeDirective("__fern_sum_bytes")
+	g.label("__fern_sum_bytes")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("mov w0, #0")                     // running sum
+	g.emit("mov x8, x7")                     // cursor
+	g.emit("add x9, x7, w6, uxtw")           // end = data + len
+	g.label(".Lsum_bytes_loop")
+	g.emit("cmp x8, x9")
+	g.emit("b.ge .Lsum_bytes_ret")
+	g.emit("ldrb w10, [x8]")
+	g.emit("add w0, w0, w10")
+	g.emit("add x8, x8, #1")
+	g.emit("b .Lsum_bytes_loop")
+	g.label(".Lsum_bytes_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_sum_bytes")
 }
 
 // emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
@@ -12933,6 +12982,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
+	usesSumBytes bool
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesTcp pulls in the full TCP socket runtime
@@ -17143,6 +17194,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRmemchr = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
+		case "__fern_sum_bytes":
+			g.usesSumBytes = true
 		case "__fern_ascii_run":
 			g.usesAsciiRun = true
 		case "__fern_heap_bump_bytes":

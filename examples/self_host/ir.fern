@@ -510,6 +510,21 @@ pub function op_rmemchr(): Op { return op0("rmemchr"); }
 // nothing can equal it, and an empty string counts 0 because it has no bytes.
 pub function op_count_byte(): Op { return op0("count_byte"); }
 
+// sum_bytes (docs/ATLAS-PLATFORM-PLAN.md §3.3, sixth kernel): pops [str] →
+// the i32 sum of every byte, wrapped to 32 bits. Allocates nothing and reads
+// only the source bytes.
+//
+// The family's first true REDUCTION: count_byte reduces over a predicate,
+// where this one carries the bytes themselves into the accumulator. It is
+// also the only member with a single operand, so it is the one whose stack
+// effect a port is most likely to copy wrong from its neighbour.
+//
+// The result WRAPS rather than saturating, because System V `sum` is defined
+// that way (std/hash's SysvSum) and because that is what a 32-bit accumulator
+// produces on every target. No cursor and no byte operand, so there is
+// nothing to clamp and no range guard: an empty string sums to 0.
+pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
+
 // ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
 // → the i32 index of the first byte at or after `from` whose high bit is set,
 // or the string's length if the rest is ASCII. Allocates nothing and reads only
@@ -1970,6 +1985,7 @@ function kind_id_len9_r(name: string): i32 {
 }
 
 function kind_id_len9_s(name: string): i32 {
+    if (name == "sum_bytes") { return 253; }
     if (name == "store_i32") { return 72; }
     if (name == "store_ptr") { return 73; }
     if (name == "store_i64") { return 199; }
@@ -2416,6 +2432,7 @@ function kind_name_4(id: i32): string {
     if (id == 227) { return "ascii_run"; }
     if (id == 234) { return "rmemchr"; }
     if (id == 235) { return "count_byte"; }
+    if (id == 253) { return "sum_bytes"; }
     if (id == 228) { return "syscall5"; }
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
@@ -2535,6 +2552,7 @@ function pops1_mem(t: i32): boolean {
         || t == 81 || t == 205 || t == 224                               // raw_alloc, raw_scratch, raw_arr_box
         || t == 90 || t == 91                                            // arr_len, arr_rc
         || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
+        || t == 253                                                      // sum_bytes
         || t == 106 || t == 107 || t == 109 || t == 110                  // str_to_upper/lower, str_trim, str_reverse
         || t == 113                                                      // str_lines
         || t == 118                                                      // strbuf_append
@@ -4299,6 +4317,11 @@ pub function op_allocates(tag: i32): boolean {
 // oversized-function miscompile threshold, #2720). The membership is a property
 // of the IR op set — not of any one target — so it lives here and both backends
 // share it; a new string op is taught to every backend's dispatch at once.
+//
+// fern-lint: allow cyclomatic-complexity
+// A flat membership test over opcode tags, so its complexity counts OPS rather
+// than logic: every `||` is one row of a table, there is no path through it to
+// get wrong, and the only way to lower the number is to carry fewer string ops.
 pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106
@@ -4307,7 +4330,7 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
-        || tag == 234 || tag == 235 || tag == 245;
+        || tag == 234 || tag == 235 || tag == 245 || tag == 253;
 }
 
 // --- Structured-scope navigation over an op stream ---

@@ -336,6 +336,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_count_byte")
+				case "__fern_sum_bytes":
+					// The byte-sum reduction. Scalar, and it reads
+					// every byte through str_byte for the same reason
+					// the backward search does.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_sum_bytes")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1485,6 +1492,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildCountByteBody,
+	},
+	"__fern_sum_bytes": {
+		// (data, len) → i32 wrapped sum of every byte.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildSumBytesBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -4678,6 +4691,72 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstI32Const(body, -1)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $m
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildSumBytesBody assembles wasm bytes for __fern_sum_bytes: every byte of
+// the string added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). internal/wasm/simd carries
+// loads, stores, splats, compares, bitwise and bitmask and NO ARITHMETIC at
+// all, so the extadd_pairwise/i32x4.add sequence this wants has no encoder yet
+// — and §3.3a's rule, learnt on this very target, is to land the encodings
+// against wasm-tools first rather than assume a sub-opcode.
+//
+// One loop, not two: `i32.load8_u` cannot read a SHORT string, which lives in
+// its two words with no address, so this reads every byte through
+// __fern_str_byte — the one reader correct for both string forms. Its sibling
+// splits into an SSO arm and a vector arm only because it HAS a vector arm.
+//
+// `load8_u` / str_byte are unsigned, which is the whole of the sign question:
+// 0xff contributes 255. `i32.add` wraps at 32 bits by definition, so the wrap
+// the builtin promises is free here.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string leaves the loop guard true on entry and returns the 0 already
+// in $sum.
+//
+// Locals after the two params: $n (2), $i (3), $sum (4).
+func buildSumBytesBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		lN    = 2
+		lI    = 3
+		lSum  = 4
+	)
+	var body []byte
+
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, lSum)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lSum)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, lSum)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $sum
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

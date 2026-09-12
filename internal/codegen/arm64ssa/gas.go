@@ -1226,6 +1226,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
+	"__fern_sum_bytes":          emitSumBytesHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -4449,6 +4450,44 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_rmemchr_found:")
 	w("\tmov x0, x2")
+	w("\tret")
+}
+
+// emitSumBytesHelper writes __fern_sum_bytes(s) -> every byte of `s` added
+// into a 32-bit accumulator that wraps (docs/ATLAS-PLATFORM-PLAN.md §3.3,
+// sixth kernel).
+//
+// SCALAR (§3.4 step 1). The NEON sequence this wants is uaddlp/uadalp, neither
+// of which internal/native/arm64 can encode yet, and §3.3a's rule is to land
+// the encodings before the vector body rather than after.
+//
+// `ldrb` zero-extends, which is the whole of the sign question: a byte is
+// unsigned and 0xff contributes 255. The accumulate is `add w4, w4, w6`, a
+// 32-bit add, so the wrap is the register width.
+//
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], so the single argument lands in x0 with no slot arithmetic — where
+// the native arm64 twin spends a frame unboxing a two-word SSO string first.
+// Leaf: no frame, and every register it touches is caller-saved.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func emitSumBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_sum_bytes"))
+	w("\tldur w2, [x0, #-4]")   // len
+	w("\tmov w4, #0")           // running sum
+	w("\tmov x8, x0")           // cursor
+	w("\tadd x9, x0, w2, uxtw") // end = data + len
+	w(".Lssa_sum_bytes_loop:")
+	w("\tcmp x8, x9")
+	w("\tb.ge .Lssa_sum_bytes_ret")
+	w("\tldrb w6, [x8]")
+	w("\tadd w4, w4, w6")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_sum_bytes_loop")
+	w(".Lssa_sum_bytes_ret:")
+	w("\tmov w0, w4")
 	w("\tret")
 }
 

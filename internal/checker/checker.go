@@ -1404,6 +1404,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __sum_bytes(s) → i32: the sum of every byte of `s`, wrapped to 32 bits.
+	// The sixth fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3) and the
+	// family's first true reduction — __count_byte reduces over a predicate,
+	// where this one carries the bytes themselves into the accumulator.
+	//
+	// The result WRAPS. That is not a concession: System V `sum` is defined
+	// as a wrapping 32-bit accumulator (std/hash's SysvSum), and it is also
+	// what every target's vector sequence produces without an extra widening
+	// step. A string longer than 16 MiB overflows i32 by design and the value
+	// stays exact modulo 2^32.
+	//
+	// No `from`, for __count_byte's reason: a partial sum is a slice-then-sum
+	// and a cursor would add a clamp with no caller. An empty string sums to 0.
+	c.info.FuncSigs["__sum_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __mismatch(a, ao, b, bo, n) → i32: the offset of the first byte where
 	// a[ao..ao+n) and b[bo..bo+n) differ, or n when they are equal. The fifth
 	// fused SIMD kernel, and the comparison one the other four left out

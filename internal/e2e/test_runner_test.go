@@ -1016,7 +1016,7 @@ func TestRunnerDigestSm3ExamplePasses(t *testing.T) {
 }
 
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 6)
+	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 7)
 }
 
 // `examples/tests/cli_test.fern` covers std/cli's spec-driven argument

@@ -764,6 +764,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesCountByte {
 		g.emitCountByteRuntime()
 	}
+	if g.usesSumBytes {
+		g.emitSumBytesRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -1144,6 +1147,8 @@ type generator struct {
 	usesRmemchr bool
 	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
 	usesCountByte bool
+	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
+	usesSumBytes bool
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1671,6 +1676,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRmemchr = true
 	case "__fern_count_byte":
 		g.usesCountByte = true
+	case "__fern_sum_bytes":
+		g.usesSumBytes = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -10483,6 +10490,51 @@ func (g *generator) emitCountByteRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_count_byte, .-__fern_count_byte")
+}
+
+// emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
+// added into a 32-bit accumulator that wraps.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The SSE2 sequence this
+// wants is psadbw against a zero register plus paddq, both already inside the
+// declared baseline and both already encodable by internal/native/x86tbl, so
+// this body is the one in the family whose vectorisation costs no assembler
+// work — but §3.4's ordering puts the scalar lowering in all eight backends
+// first, and this is that step.
+//
+// `movzx` is the whole of the sign question: a byte is unsigned, so 0xff
+// contributes 255. The accumulate is a 32-bit `add`, so the wrap the builtin
+// promises is the register width rather than anything this body does.
+//
+// rdi = string. Frame: 16 bytes of emitStrDataPtr scratch, since the operand
+// may be an inline SSO string that has to be spilled to get an address.
+//
+// No cursor and no byte operand, so there is no clamp and no range guard: an
+// empty string sums to 0 because it has no bytes.
+func (g *generator) emitSumBytesRuntime() {
+	g.line("")
+	g.line(".globl __fern_sum_bytes")
+	g.line(".type __fern_sum_bytes, @function")
+	g.label("__fern_sum_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emit("xor eax, eax") // running sum
+	g.emit("xor edx, edx") // cursor, as an INDEX
+	g.label(".Lsum_bytes_scan")
+	g.emit("cmp edx, ecx")
+	g.emit("jge .Lsum_bytes_ret")
+	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("add eax, r8d")
+	g.emit("add edx, 1")
+	g.emit("jmp .Lsum_bytes_scan")
+	g.label(".Lsum_bytes_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sum_bytes, .-__fern_sum_bytes")
 }
 
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0

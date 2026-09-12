@@ -973,6 +973,26 @@ func New() *Interp {
 		}
 		return Number(n), nil
 	}}
+	// __sum_bytes(s): the wrapped 32-bit sum of every byte of `s`. The oracle
+	// for the sixth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
+	//
+	// The accumulator is uint32 so the wrap is the language's, not Go's int:
+	// every backend's vector sequence wraps at 32 bits, and the interpreter
+	// has to agree with them on a string long enough to reach it.
+	i.Builtins["__sum_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("__sum_bytes: expected 1 arg, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__sum_bytes: expected a string, got %T", args[0])
+		}
+		var sum uint32
+		for _, c := range []byte(string(s)) {
+			sum += uint32(c)
+		}
+		return Number(int32(sum)), nil
+	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts
