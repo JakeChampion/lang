@@ -1,0 +1,241 @@
+// signals.fern — the signal name/number table, for the utilities that take a
+// signal as an argument: `env --block-signal` / `--default-signal` /
+// `--ignore-signal` / `--list-signal-handling`, and `kill -s` / `-l` / `-L`.
+//
+// The numbers are the HOST KERNEL'S, and the two kernels disagree on most of
+// them. SIGUSR1 is 30 on Darwin and 10 on Linux; SIGSTOP 17 and 19; SIGCHLD 20
+// and 17. A table that picked one would name the wrong signal on the other, and
+// do it silently — `kill -USR1` would deliver something else rather than fail —
+// so the table is chosen by `target_os()`, each half taken from that kernel's
+// own header: Darwin's `sys/signal.h`, Linux's `asm-generic/signal.h`.
+//
+// Linux additionally has the realtime range RTMIN(32)..RTMAX(64), which Darwin
+// has not got at all. GNU spells those `RTMIN`, `RTMIN+3`, `RTMAX-1` and prints
+// them from `kill -l`, so they belong in the table rather than in a footnote.
+import "std/string";
+import "std/array";
+import "std/i32";
+
+// `names()` — every signal this kernel has, in NUMBER order, without the `SIG`
+// prefix. Index i holds signal i+1's name.
+//
+// Where one number has two names the PRIMARY one is here — the one `kill -l`
+// prints — and the alternates are accepted on input by `number()`.
+pub function names(): string[] {
+  if (target_os() == "darwin") {
+    return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "EMT", "FPE", "KILL", "BUS", "SEGV", "SYS", "PIPE", "ALRM", "TERM", "URG", "STOP", "TSTP", "CONT", "CHLD", "TTIN", "TTOU", "IO", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "INFO", "USR1", "USR2"];
+  }
+  return ["HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS"];
+}
+
+// `rt_min()` / `rt_max()` — the realtime range, or 0 when the kernel has none.
+//
+// 34, not the kernel's 32: glibc reserves 32 and 33 for NPTL and starts its own
+// SIGRTMIN above them, and GNU coreutils is linked against glibc, so 34 is what
+// the oracle calls RTMIN. Measured rather than assumed — `env --block-signal=32`
+// answers `'32': invalid signal` on a glibc host, while `RTMIN` traces as 34 and
+// `RTMIN+3` as 37. Fern emits static binaries with no libc, so this is a value
+// we choose; matching GNU is the whole point of choosing it.
+pub function rt_min(): i32 {
+  if (target_os() == "darwin") {
+    return 0;
+  }
+  return 34;
+}
+
+pub function rt_max(): i32 {
+  if (target_os() == "darwin") {
+    return 0;
+  }
+  return 64;
+}
+
+// `highest()` — the largest number this kernel defines, which bounds every
+// sweep over the table.
+pub function highest(): i32 {
+  if (rt_max() != 0) {
+    return rt_max();
+  }
+  return names().len();
+}
+
+// `name(n)` — signal `n`'s name without the `SIG` prefix, or "" for a number
+// this kernel does not use. Realtime signals are named by their offset from
+// whichever end is nearer, the way `kill -l` prints them.
+pub function name(n: i32): string {
+  var ns: string[] = names();
+  if (n >= 1 && n <= ns.len()) {
+    return ns[n - 1];
+  }
+  var lo: i32 = rt_min();
+  var hi: i32 = rt_max();
+  if (lo == 0 || n < lo || n > hi) {
+    return "";
+  }
+  if (n == lo) {
+    return "RTMIN";
+  }
+  if (n == hi) {
+    return "RTMAX";
+  }
+  // The nearer end wins, so the two halves meet without overlapping.
+  if (n - lo <= hi - n) {
+    return "RTMIN+" + (n - lo).to_string();
+  }
+  return "RTMAX-" + (hi - n).to_string();
+}
+
+// `alternates()` — names that share a number with one in `names()`. Accepted on
+// input, never printed. Each entry is the name, and `alternate_values()` the
+// number at the same index.
+function alternates(): string[] {
+  if (target_os() == "darwin") {
+    return ["POLL", "IOT"];
+  }
+  return ["IOT", "LOST", "UNUSED", "POLL", "CLD"];
+}
+
+function alternate_values(): i32[] {
+  if (target_os() == "darwin") {
+    // Darwin's 7 is EMT and POLL both; IOT is the historical ABRT.
+    return [7, 6];
+  }
+  return [6, 29, 31, 29, 17];
+}
+
+// `number(s)` — the number `s` names, or 0 when it names nothing.
+//
+// Accepts what GNU's `operand2sig` accepts: a bare name (`INT`), the same with
+// the `SIG` prefix (`SIGINT`), a decimal number, and on Linux a realtime name
+// with an offset (`RTMIN+3`, `RTMAX-1`). Case-SENSITIVE, as GNU's is: `int` is
+// not a signal.
+pub function number(s: string): i32 {
+  if (s.len() == 0) {
+    return 0;
+  }
+  if (all_digits(s)) {
+    var v: i32 = parse_dec(s);
+    // A number names a signal only where this kernel has one, which is why
+    // this asks `name` rather than testing a range: 32 and 33 sit between the
+    // named signals and glibc's RTMIN and belong to neither.
+    if (v >= 1 && name(v) != "") {
+      return v;
+    }
+    return 0;
+  }
+  // Case-insensitive, as GNU is: `int`, `Int` and `sigint` all name signal 2.
+  // Only the INPUT is; every name this module PRINTS is upper case.
+  var bare: string = upper(s);
+  if (bare.starts_with("SIG")) {
+    bare = slice_unchecked(bare, 3, bare.len()) + "";
+  }
+  var ns: string[] = names();
+  var i: i32 = 0;
+  while (i < ns.len()) {
+    if (ns[i] == bare) {
+      return i + 1;
+    }
+    i = i + 1;
+  }
+  var alt: string[] = alternates();
+  var av: i32[] = alternate_values();
+  var j: i32 = 0;
+  while (j < alt.len()) {
+    if (alt[j] == bare) {
+      return av[j];
+    }
+    j = j + 1;
+  }
+  return realtime_number(bare);
+}
+
+// The realtime spellings: RTMIN, RTMAX, and either with a signed offset. Linux
+// only; on Darwin `rt_min()` is 0 and every one of these answers 0.
+function realtime_number(bare: string): i32 {
+  var lo: i32 = rt_min();
+  var hi: i32 = rt_max();
+  if (lo == 0) {
+    return 0;
+  }
+  if (bare == "RTMIN") {
+    return lo;
+  }
+  if (bare == "RTMAX") {
+    return hi;
+  }
+  var base: i32 = 0;
+  if (bare.starts_with("RTMIN")) {
+    base = lo;
+  } else if (bare.starts_with("RTMAX")) {
+    base = hi;
+  } else {
+    return 0;
+  }
+  var rest: string = slice_unchecked(bare, 5, bare.len()) + "";
+  if (rest.len() < 2) {
+    return 0;
+  }
+  var sign: string = slice_unchecked(rest, 0, 1) + "";
+  var digits: string = slice_unchecked(rest, 1, rest.len()) + "";
+  if (!all_digits(digits)) {
+    return 0;
+  }
+  var off: i32 = parse_dec(digits);
+  var n: i32 = 0;
+  if (sign == "+") {
+    n = base + off;
+  } else if (sign == "-") {
+    n = base - off;
+  } else {
+    return 0;
+  }
+  if (n < lo || n > hi) {
+    return 0;
+  }
+  return n;
+}
+
+// ASCII upper-casing, which is all a signal name can contain.
+function upper(s: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c >= 97 && c <= 122) {
+      c = c - 32;
+    }
+    out = out + (c as u8).to_ascii_string();
+    i = i + 1;
+  }
+  return out;
+}
+
+function all_digits(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    if (c < 48 || c > 57) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// A plain decimal parse, bounded so a long run of digits saturates rather than
+// wrapping into a number that happens to be a valid signal.
+function parse_dec(s: string): i32 {
+  var v: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (v > 100000) {
+      return 1000000;
+    }
+    v = v * 10 + (s[i] as i32 - 48);
+    i = i + 1;
+  }
+  return v;
+}
