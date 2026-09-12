@@ -50,6 +50,10 @@ var providedRefusedByPlatform = map[string]bool{
 	"proc_waitpid": true,
 	"proc_exec":    true,
 	"proc_exec_as": true,
+	// `cwd` — a process working directory to move. WASI resolves every
+	// path against a preopened descriptor, so there is none, which is the
+	// same reason getcwd is withheld.
+	"chdir": true,
 	// Liveness of an arbitrary pid, which needs the same process table.
 	"process_alive": true,
 	// Delivering a signal to one, which needs it as well and has no

@@ -334,6 +334,11 @@ var rcInertBuiltins = map[string]bool{
 	// Native-only for the same reason — no wasm world has a volume to
 	// measure — so it too is classified under the builtin name.
 	"statfs": true,
+	// (path) -> Result. The path is read and NUL-copied and the working
+	// directory it moves to is process state, not a counted reference.
+	// Native-only -- WASI has no process cwd -- so it is named here the
+	// way `chmod` is.
+	"chdir": true,
 	// (fd) → Result[WinSize, IoError]. A scalar in, and the two counts
 	// in the record it fills are scalars too. Native-only — no wasm
 	// world has a terminal to measure — so it is named here the way
@@ -359,6 +364,7 @@ var rcInertBuiltins = map[string]bool{
 	// One i32 in, nothing out — the disposition lives in the kernel,
 	// not in anything counted.
 	"signal_ignore": true, "signal_default": true,
+	"signal_mask": true, "signal_disposition": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one
@@ -401,6 +407,7 @@ var rcInert = map[string]bool{
 	"__fern_irem_u32": true, "__fern_irem_u64": true,
 	"cabi_realloc": true, "isatty": true, "poll": true,
 	"signal_default": true, "signal_ignore": true,
+	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
 	"__alloc": true, "__alloc_u8": true, "__arr_idx": true,

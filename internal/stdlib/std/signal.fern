@@ -37,17 +37,69 @@ pub const SIGTERM: i32 = 15;
 //     import "std/signal";
 //     signal.ignore(signal.SIGPIPE);
 //
-// A signal number the kernel rejects is silently no-op: sigaction reports it
-// through a return value there is nothing here to hand back, which matches
-// libc's `signal(3)` being routinely called for effect. The five constants
+// 0 on success, a negative errno on failure — sigaction's own return. SIGKILL
+// and SIGSTOP are the failure worth knowing about: the kernel answers EINVAL
+// rather than silently declining. A caller that does not care drops it, the
+// way libc's `signal(3)` is routinely called for effect. The five constants
 // above are the numbers this is meant for.
-pub function ignore(sig: i32): void {
-    signal_ignore(sig);
+pub function ignore(sig: i32): i32 {
+    return signal_ignore(sig);
 }
 
 // `default(sig)` — put `sig` back to SIG_DFL, undoing an earlier `ignore`.
 // A utility that suppresses a signal for one stretch of work restores it
-// with this rather than leaving the whole process changed.
-pub function default(sig: i32): void {
-    signal_default(sig);
+// with this rather than leaving the whole process changed. Same return.
+pub function default(sig: i32): i32 {
+    return signal_default(sig);
 }
+
+// `blocked()` — the set of signals currently blocked from delivery, a bit per
+// signal at bit (sig-1). `block(mask)` adds to that set and `unblock(mask)`
+// removes from it; each answers the set as it was BEFORE the call, so a
+// utility can put back exactly what it found.
+//
+// Blocking DEFERS delivery where `ignore` discards it: a signal blocked and
+// then unblocked is delivered on the unblock, which is the difference
+// `env --block-signal` trades on.
+pub function blocked(): i64 {
+    return signal_mask(HOW_BLOCK, 0 as i64);
+}
+
+pub function block(mask: i64): i64 {
+    return signal_mask(HOW_BLOCK, mask);
+}
+
+pub function unblock(mask: i64): i64 {
+    return signal_mask(HOW_UNBLOCK, mask);
+}
+
+// `set_blocked(mask)` — replace the blocked set outright rather than adding to
+// or removing from it.
+pub function set_blocked(mask: i64): i64 {
+    return signal_mask(HOW_SETMASK, mask);
+}
+
+// `bit(sig)` — `sig`'s place in a mask. Signal numbers start at 1, so this is
+// not `1 << sig`; getting that wrong shifts every signal by one.
+pub function bit(sig: i32): i64 {
+    return (1 as i64) << ((sig - 1) as i64);
+}
+
+// What `sig` currently does when delivered: DFL, IGN, or HANDLER for one
+// installed before this process started, since a disposition survives exec.
+// A negative errno for a signal number the kernel rejects.
+pub const DFL: i32 = 0;
+pub const IGN: i32 = 1;
+pub const HANDLER: i32 = 2;
+
+pub function disposition(sig: i32): i32 {
+    return signal_disposition(sig);
+}
+
+// The three `how` values `signal_mask` takes. Fern's own numbering, which the
+// backends map onto each kernel's: Linux spells these 0/1/2 and XNU 1/2/3, so
+// a program that passed a kernel constant straight through would silently
+// perform a different operation on one of them.
+const HOW_BLOCK: i32 = 0;
+const HOW_UNBLOCK: i32 = 1;
+const HOW_SETMASK: i32 = 2;

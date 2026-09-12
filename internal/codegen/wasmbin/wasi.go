@@ -2537,16 +2537,44 @@ func buildIsattyBodyP2(map[string]uint32) []byte {
 }
 
 // buildSignalDispositionBody assembles signal_ignore(sig) and
-// signal_default(sig) on both previews: an empty body, leaving the
-// argument unread.
+// signal_default(sig) on both previews: the argument goes unread and the
+// result is 0, the errno for "this worked".
 //
 // Neither WASI preview has signals — nothing in either world can deliver
 // one — so there is no disposition to change and doing nothing is the
 // whole behaviour, not a stub standing in for a missing import. The same
 // reasoning that makes hostname() answer "" rather than fail
-// (docs/FREESTANDING-CORE.md).
+// (docs/FREESTANDING-CORE.md). Nothing here can fail the way the natives'
+// sigaction can, so the errno is always 0.
 func buildSignalDispositionBody(map[string]uint32) []byte {
-	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), nil)
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildSignalMaskBody assembles signal_mask(how, mask) on both previews:
+// both arguments go unread and the previously-blocked mask is 0.
+//
+// That 0 is a measurement rather than a stand-in. A component is never sent
+// a signal, so its blocked set is empty; and since signal_ignore is itself a
+// no-op here, nothing can have changed it. Blocking a signal that cannot
+// arrive is the same no-op the two setters already are.
+func buildSignalMaskBody(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI64Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildSignalDispositionReadBody assembles signal_disposition(sig) on both
+// previews: 0, every signal at its default.
+//
+// Consistent with the setters beside it rather than independently invented:
+// they do nothing, so no disposition ever moved off the default, and 0 is
+// what reading one back has to say.
+func buildSignalDispositionReadBody(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 // buildHostnameBody assembles hostname() on both previews: the empty

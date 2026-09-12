@@ -247,7 +247,14 @@ var linuxDarwinSysno = map[string][2]int{
 	// mask, flags}. Only `sa_handler`, at offset 0 on both, is non-zero
 	// for a plain SIG_IGN / SIG_DFL, so one zeroed 32-byte buffer serves
 	// either and the numbers can share a row.
-	"sigaction":  {134, 46},
+	"sigaction": {134, 46},
+	// rt_sigprocmask(2) — Linux asm-generic 135, Darwin's sigprocmask BSD
+	// 48. Same (how, set, oset) shape; Linux's fourth `sigsetsize` is
+	// ignored by Darwin, as with sigaction. The `how` VALUES differ (Linux
+	// 0/1/2, XNU 1/2/3), which the helper normalises rather than the table.
+	"sigprocmask": {135, 48},
+	// chdir(2) — Linux asm-generic 49, Darwin BSD 12. getcwd's counterpart.
+	"chdir":      {49, 12},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -565,7 +572,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
 		g.usesFdStat || g.usesReaderSeek ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
-		g.usesCreateDir || g.usesRemoveDir || g.usesCreateLink ||
+		g.usesCreateDir || g.usesChdir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
@@ -594,7 +601,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// The path-taking fs helpers free their NUL-terminated path copies and
 	// working buffers (#9001); remove_dir_all also releases its child paths.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
-		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesRemoveDir ||
+		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesChdir || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
 		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
@@ -798,6 +805,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
 	}
+	if g.usesSignalMask {
+		g.emitSignalMaskRuntime()
+	}
+	if g.usesSignalDispositionRead {
+		g.emitSignalDispositionReadRuntime()
+	}
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
 	}
@@ -912,6 +925,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesCreateDir {
 		g.emitCreateDirRuntime()
+	}
+	if g.usesChdir {
+		g.emitChdirRuntime()
 	}
 	if g.usesRemoveDir {
 		g.emitRemoveDirRuntime()
@@ -10744,6 +10760,107 @@ func (g *generator) emitPathOpRuntime(name, tag, sysname string, paths, scalars 
 // mkdirat(AT_FDCWD, path, mode). One directory, no parents, and EEXIST
 // reaches the caller: that is the whole difference from
 // __fern_create_dir_all.
+// emitChdirRuntime emits `__fern_chdir(path)` — chdir(2), the move `getcwd`
+// only ever reported. One path operand, no scalars, so it is the plainest user
+// of the shared path-op factory.
+func (g *generator) emitChdirRuntime() {
+	g.emitPathOpRuntime("__fern_chdir", "chdir", "chdir", 1, 0, func() {
+		g.emit("mov x0, x21")
+	})
+}
+
+// emitSignalMaskRuntime emits `__fern_signal_mask(how, mask) -> i64` —
+// sigprocmask(2), answering the mask that was blocked BEFORE the call so one
+// call both reads and writes.
+//
+// `how` arrives in Fern's numbering, which is Linux's (0 block / 1 unblock /
+// 2 replace); XNU spells the same three 1/2/3, so the Darwin path adds one.
+// Getting that wrong does not fail, it silently performs a DIFFERENT
+// operation, which is why the builtin does not pass the caller's value
+// straight through.
+//
+// The 16 bytes of stack hold `set` and `oset`. `oset` is zeroed first: a kernel
+// that writes fewer than 8 bytes of it would otherwise leave the high half
+// holding whatever was on the stack, and the result is read as a full i64.
+func (g *generator) emitSignalMaskRuntime() {
+	g.line("")
+	g.line(".global __fern_signal_mask")
+	g.typeDirective("__fern_signal_mask")
+	g.label("__fern_signal_mask")
+	if g.entry != platforms.EntryProcess {
+		// Nothing can deliver a signal off the process entry shape, so
+		// nothing is blocked (docs/FREESTANDING-CORE.md).
+		g.emit("mov x0, #0")
+		g.emit("ret")
+		g.sizeDirective("__fern_signal_mask")
+		return
+	}
+	g.emit("sub sp, sp, #16")
+	g.emit("str x1, [sp]")      // set = mask
+	g.emit("str xzr, [sp, #8]") // oset = 0
+	if g.darwin {
+		g.emit("add x0, x0, #1") // Fern 0/1/2 -> XNU 1/2/3
+	}
+	g.emit("mov x1, sp")
+	g.emit("add x2, sp, #8")
+	g.emit("mov x3, #8") // Linux's sigsetsize; Darwin ignores it
+	g.syscall("sigprocmask")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lsigmask_ret") // -errno passthrough
+	g.emit("ldr x0, [sp, #8]")
+	g.label(".Lsigmask_ret")
+	g.emit("add sp, sp, #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_signal_mask")
+}
+
+// emitSignalDispositionReadRuntime emits `__fern_signal_disposition(sig)` —
+// sigaction with a NULL `act`, which reads without writing, then maps the
+// handler word onto 0 default / 1 ignore / 2 a handler is installed.
+//
+// The 32-byte zeroed oldact covers both layouts for the same reason the setter
+// beside it does: `sa_handler` sits at offset 0 on Linux and XNU alike, and
+// nothing past it is read.
+func (g *generator) emitSignalDispositionReadRuntime() {
+	const sigDfl = 0
+	const sigIgn = 1
+	g.line("")
+	g.line(".global __fern_signal_disposition")
+	g.typeDirective("__fern_signal_disposition")
+	g.label("__fern_signal_disposition")
+	if g.entry != platforms.EntryProcess {
+		// Nothing can deliver a signal, so every one of them is still at
+		// the default it was born with.
+		g.emit("mov x0, #0")
+		g.emit("ret")
+		g.sizeDirective("__fern_signal_disposition")
+		return
+	}
+	g.emit("sub sp, sp, #32")
+	g.emit("stp xzr, xzr, [sp]")
+	g.emit("stp xzr, xzr, [sp, #16]")
+	g.emit("mov x1, #0") // act = NULL: read without writing
+	g.emit("mov x2, sp") // oldact
+	g.emit("mov x3, #8") // Linux's sigsetsize; Darwin ignores it
+	g.syscall("sigaction")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lsigdisp_ret") // -errno passthrough
+	g.emit("ldr x9, [sp]")       // sa_handler
+	g.emit("mov x0, #2")         // a handler is installed
+	g.emit("cmp x9, #%d", sigIgn)
+	g.emit("b.ne .Lsigdisp_notign")
+	g.emit("mov x0, #1")
+	g.emit("b .Lsigdisp_ret")
+	g.label(".Lsigdisp_notign")
+	g.emit("cmp x9, #%d", sigDfl)
+	g.emit("b.ne .Lsigdisp_ret")
+	g.emit("mov x0, #0")
+	g.label(".Lsigdisp_ret")
+	g.emit("add sp, sp, #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_signal_disposition")
+}
+
 func (g *generator) emitCreateDirRuntime() {
 	g.emitPathOpRuntime("__fern_create_dir", "cdir", "mkdirat", 1, 1, func() {
 		g.atFdcwd("x0")
@@ -12678,8 +12795,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		mode      int
 	}{
 		{"__fern_open_reader", "open_reader", 0, 0},
-		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0644},
-		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0644},
+		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0666},
+		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0666},
 		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600},
 	} {
 		_ = e.name
@@ -13514,6 +13631,11 @@ type generator struct {
 	// `__fern_signal_default`; they differ by one immediate, so they
 	// share a body and one flag rather than splitting into two.
 	usesSignalDisposition bool
+	// usesSignalMask pulls in `__fern_signal_mask(how, mask)` —
+	// sigprocmask(2) — and usesSignalDispositionRead
+	// `__fern_signal_disposition(sig)`, the sigaction READ.
+	usesSignalMask            bool
+	usesSignalDispositionRead bool
 	// usesStrSlice pulls in `__str_slice(base, low, high)` —
 	// a length-prefix-aware substring extractor that
 	// allocates a fresh string. The IR's `s[a:b]` slice
@@ -13874,7 +13996,9 @@ type generator struct {
 	// syscall with nothing folded away: mkdirat where EEXIST is an
 	// error, unlinkat with AT_REMOVEDIR, and linkat / symlinkat /
 	// readlinkat. usesUmask is the process file-mode creation mask.
-	usesCreateDir     bool
+	usesCreateDir bool
+	// usesChdir pulls in `__fern_chdir(path)` — chdir(2).
+	usesChdir         bool
 	usesRemoveDir     bool
 	usesCreateLink    bool
 	usesCreateSymlink bool
@@ -14100,6 +14224,37 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P5 — the operand stack round trip around a materialisation whose result
+	// is copied out. The push protects x0 across a chain that builds a value in
+	// it, the copy takes that value somewhere else, and the pop puts the old x0
+	// straight back:
+	//
+	//   str x0, [sp, #-16]! / ldur x0, [x29, #-8] / mov x1, x0 / ldr x0, [sp], #16
+	//     =>  ldur x1, [x29, #-8]
+	//
+	// Writing the chain's result where it was going to be copied leaves x0
+	// untouched, so the save and restore have nothing to protect. Three
+	// instructions go per site. This is the twin of the self-host emitter's P5
+	// (examples/self_host/asm_arm64_ir.fern); P4 above handles the disjoint
+	// case where the pop goes somewhere other than x0 and there is no copy.
+	if popped, k, isPop := matchPopReg(w[n-1]); isPop && popped == "x0" {
+		if dst, ok := matchCopyFromX0(w[n-2]); ok {
+			for clen := 1; clen <= peepWindow-3; clen++ {
+				pi := n - 3 - clen
+				if pi < 0 {
+					break
+				}
+				if k2, isPush := matchPushImm(w[pi]); !isPush || k2 != k {
+					continue
+				}
+				if renamed, ok := renameChainTo(w[pi+1:n-2], dst); ok {
+					g.peepWin = append(w[:pi], renamed...)
+					return
+				}
+			}
+		}
+	}
+
 	// P2 — dead branch: an unconditional `b L` immediately followed by the
 	// label `L:` is a no-op fall-through. Drop the branch; the label stays
 	// for other branches. Only the bare unconditional `b ` matches — `bl`
@@ -14126,6 +14281,119 @@ var roundTripMidOps = map[string]bool{
 	"eor": true, "lsl": true, "lsr": true, "asr": true, "ror": true,
 	"mul": true, "ldr": true, "ldur": true, "ldrb": true, "ldrh": true,
 	"ldrsw": true, "ldrsb": true, "ldrsh": true, "sxtw": true, "uxtw": true,
+}
+
+// matchCopyFromX0 matches `\tmov xD, x0` and returns xD. x0 itself is not a
+// copy, and x16 is excluded because the Darwin syscall rewrite keys off
+// literal x16 / x8 lines.
+func matchCopyFromX0(line string) (string, bool) {
+	const pfx = "\tmov x"
+	const sfx = ", x0"
+	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
+		return "", false
+	}
+	num := line[len(pfx) : len(line)-len(sfx)]
+	if num == "" || num == "0" || num == "8" || num == "16" || num == "29" {
+		return "", false
+	}
+	for i := 0; i < len(num); i++ {
+		if num[i] < '0' || num[i] > '9' {
+			return "", false
+		}
+	}
+	return "x" + num, true
+}
+
+// renameChainTo rewrites a materialisation chain to build its value in `dst`
+// instead of x0, so the push/copy/pop around it can go. It returns false
+// unless every line is one it can account for.
+//
+// A chain line writes x0 or x16 and reads nothing but x0, x16, x29 and
+// immediates. x16 is the emitter's own address scratch and keeps its name; the
+// x0 the chain threads becomes `dst`. The exception is a read of x0 on the
+// FIRST line: that reads the value the push saved, which after the rewrite is
+// still sitting in x0, so it must NOT be renamed. The last line has to write
+// x0, since that is what the copy took.
+func renameChainTo(chain []string, dst string) ([]string, bool) {
+	if len(chain) == 0 || dst == "x16" || dst == "x29" {
+		return nil, false
+	}
+	wdst := "w" + dst[1:]
+	out := make([]string, 0, len(chain))
+	lastWritesX0 := false
+	for i, line := range chain {
+		if !strings.HasPrefix(line, "\t") {
+			return nil, false
+		}
+		body := line[1:]
+		sp := strings.IndexByte(body, ' ')
+		if sp <= 0 || !roundTripMidOps[body[:sp]] {
+			return nil, false
+		}
+		mnemonic, args := body[:sp], body[sp+1:]
+		comma := strings.IndexByte(args, ',')
+		if comma < 0 {
+			return nil, false
+		}
+		destReg, rest := args[:comma], args[comma+1:]
+		// Every register the line mentions has to be one this rule accounts
+		// for, or renaming it would change what some other line reads. sp is
+		// checked by name because it is not an x/w register: the push this
+		// rule deletes is what put it where the line sees it.
+		if mentionsReg(args, "sp") {
+			return nil, false
+		}
+		for _, m := range regTokens(args) {
+			if m != "x0" && m != "w0" && m != "x16" && m != "x29" {
+				return nil, false
+			}
+		}
+		writesX0 := destReg == "x0" || destReg == "w0"
+		if !writesX0 && destReg != "x16" {
+			return nil, false
+		}
+		lastWritesX0 = writesX0
+		if writesX0 {
+			if destReg == "x0" {
+				destReg = dst
+			} else {
+				destReg = wdst
+			}
+		}
+		if i > 0 {
+			rest = strings.ReplaceAll(rest, "x0", dst)
+			rest = strings.ReplaceAll(rest, "w0", wdst)
+		}
+		out = append(out, "\t"+mnemonic+" "+destReg+","+rest)
+	}
+	if !lastWritesX0 {
+		return nil, false
+	}
+	return out, true
+}
+
+// regTokens returns every `x`/`w` register name in `s`, as whole tokens, so
+// "x10" is not read as "x1" and a hex literal is not read as a register.
+func regTokens(s string) []string {
+	var out []string
+	for i := 0; i < len(s); i++ {
+		if s[i] != 'x' && s[i] != 'w' {
+			continue
+		}
+		if i > 0 && isRegTokenByte(s[i-1]) {
+			continue
+		}
+		j := i + 1
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if j == i+1 || (j < len(s) && isRegTokenByte(s[j])) {
+			continue
+		}
+		out = append(out, s[i:j])
+		i = j - 1
+	}
+	return out
 }
 
 // roundTripSafeMids reports whether the run `mids` may sit between a push and
@@ -18010,6 +18278,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "signal_ignore":
 			target = "__fern_signal_ignore"
 			g.usesSignalDisposition = true
+		case "signal_mask":
+			target = "__fern_signal_mask"
+			g.usesSignalMask = true
+		case "signal_disposition":
+			target = "__fern_signal_disposition"
+			g.usesSignalDispositionRead = true
 		case "signal_default":
 			target = "__fern_signal_default"
 			g.usesSignalDisposition = true
@@ -18321,6 +18595,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// mkdirat per missing component.
 			target = "__fern_create_dir_all"
 			g.usesCreateDirAll = true
+		case "chdir":
+			// chdir(path): Result[void, IoError] — the move
+			// getcwd only ever reported.
+			target = "__fern_chdir"
+			g.usesChdir = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "create_dir":
 			// create_dir(path, mode): Result[void, IoError] —
 			// one mkdirat, EEXIST included.

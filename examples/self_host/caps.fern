@@ -118,6 +118,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
         BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
         BuiltinCap { builtin: "proc_exec_as", capability: "subprocess" },
+        BuiltinCap { builtin: "chdir", capability: "fs" },
         BuiltinCap { builtin: "process_alive", capability: "subprocess" },
         BuiltinCap { builtin: "signal_send", capability: "subprocess" },
 
@@ -153,6 +154,10 @@ pub function ungated(): string[] {
     return ["putchar", "print", "write", "eprint", "read_line",
             "stdin", "stdout", "stderr", "isatty", "window_size", "target_os", "target_arch", "args", "exit",
             "signal_ignore", "signal_default",
+            // Reading a disposition or the blocked mask reaches even less far
+            // than setting one does; signal_mask writes to the same
+            // process-wide state the two setters already reach.
+            "signal_mask", "signal_disposition",
             "geteuid", "getegid", "getuid", "getgid", "getgroups",
             "rlimit_nofile",
             "strbuf_reset", "strbuf_append", "strbuf_take",

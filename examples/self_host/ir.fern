@@ -1173,6 +1173,18 @@ pub function op_putchar(): Op { return op0("putchar"); }
 // dummy so a statement-level drop balances — the same shape as putchar. Lower
 // to each backend's __fern_signal_ignore / __fern_signal_default helper; on
 // wasm both are a no-op, since nothing there can deliver a signal (#8792).
+// `chdir` pops a path and moves the process's working directory, pushing
+// Result[void, IoError] — getcwd's counterpart, and what `env -C` needs.
+// No wasm: WASI resolves every path against a preopen, so there is no cwd
+// to move and E066 withholds it on the `cwd` capability, as for getcwd.
+pub function op_chdir(): Op { return op0("chdir"); }
+// `signal_mask` pops [how, mask] and pushes the mask that was blocked
+// BEFORE the call, so one op both reads and writes; `signal_disposition`
+// pops a signal number and pushes 0 default / 1 ignore / 2 a handler is
+// installed. The READ side the two setters below have always lacked, which
+// `env --list-signal-handling` reports and `env --block-signal` moves.
+pub function op_signal_mask(): Op { return op0("signal_mask"); }
+pub function op_signal_disposition(): Op { return op0("signal_disposition"); }
 pub function op_signal_ignore(): Op { return op0("signal_ignore"); }
 pub function op_signal_default(): Op { return op0("signal_default"); }
 // The global string-builder primitives — the amortised-O(1) output accumulator
@@ -1692,11 +1704,10 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 277..279, then 286..290, then 298 — 275 (chown_at),
-// 276 (window_size), 280 (proc_exec_as), 285 (signal_send) and 291..297 (the
-// buf_* builder) were taken out of order by branches in flight (re-grep rather
-// than trusting this line — it has been stale before, which is the drift the
-// paragraph below is about).
+// NEXT FREE EXTENSION ID: 286..290, then 298 — 285 (signal_send) was taken
+// out of order by a branch in flight, as 275..280 and 291..297 were (re-grep
+// rather than trusting this line — it has been stale before, which is the
+// drift the paragraph below is about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1829,6 +1840,7 @@ function kind_id_len5(name: string): i32 {
     if (c == b'a' && name == "alloc") { return 76; }
     if (c == b'b' && name == "block") { return 152; }
     if (c == b'c' && name == "chmod") { return 268; }
+    if (c == b'c' && name == "chdir") { return 277; }
     if (c == b'm' && name == "mknod") { return 274; }
     if (c == b'd' && name == "div_s") { return 24; }
     if (c == b'd' && name == "div_u") { return 25; }
@@ -2144,6 +2156,7 @@ function kind_id_len11_s(name: string): i32 {
     if (name == "strbuf_take") { return 119; }
     if (name == "struct_make") { return 138; }
     if (name == "struct_copy") { return 198; }
+    if (name == "signal_mask") { return 278; }
     return 0;
 }
 
@@ -2232,6 +2245,7 @@ function kind_id_len16(name: string): i32 {
 function kind_id_len18(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'w' && name == "wasm_pollable_drop") { return 190; }
+    if (c == b's' && name == "signal_disposition") { return 279; }
     return 0;
 }
 
@@ -2529,6 +2543,9 @@ function kind_name_4(id: i32): string {
     if (id == 274) { return "mknod"; }
     if (id == 275) { return "chown_at"; }
     if (id == 276) { return "window_size"; }
+    if (id == 277) { return "chdir"; }
+    if (id == 278) { return "signal_mask"; }
+    if (id == 279) { return "signal_disposition"; }
     if (id == 280) { return "proc_exec_as"; }
     if (id == 285) { return "signal_send"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
@@ -2651,6 +2668,7 @@ function pops1_io(t: i32): boolean {
         || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 243 || t == 244                                          // signal_ignore, signal_default
+        || t == 277 || t == 279                                          // chdir, signal_disposition
         || t == 241 || t == 250                                          // fd_stat, uname_field
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
@@ -2688,7 +2706,8 @@ function pops2_io(t: i32): boolean {
         || t == 285                                                      // signal_send (pid, sig)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
-        || t == 202 || t == 213;                                         // writer_write, proc_exec
+        || t == 202 || t == 213                                          // writer_write, proc_exec
+        || t == 278;                                                     // signal_mask (how, mask)
 }
 
 function pops3(t: i32): boolean {
