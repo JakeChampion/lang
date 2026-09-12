@@ -90,7 +90,7 @@ function i64_max(): i64 {
 }
 
 function i64_min(): i64 {
-  return (0 as i64 - 9223372036854775807 as i64) - (1 as i64);
+  return 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
 }
 
 function help_text(): string {
@@ -373,9 +373,9 @@ function scale_blocks(cfg: Cfg, info: Info, name: string): (i64, boolean) {
 function round_up(fsize: i64, ssize: i64): i64 {
   var q: i64 = fsize / ssize;
   if (fsize % ssize != 0 as i64) {
-    q = q + (1 as i64);
+    q = q + 1 as i64;
   }
-  return ((q as u64) * (ssize as u64)) as i64;
+  return (q as u64 * (ssize as u64)) as i64;
 }
 
 // The length the file is to end up with, once a modifier has been
