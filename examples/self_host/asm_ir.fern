@@ -5238,13 +5238,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // Allocates the NUL-term buffer + the Result box, so heap +
             // open_file needs.
             //
-            // 0600 for the EXCLUSIVE opener, 0644 for the rest: its callers are
+            // 0600 for the EXCLUSIVE opener, 0666 for the rest: its callers are
             // creating a file only they should hold (gnulib's create_temp_file
             // is 0600 for the same reason), and a spool of piped input must not
             // be world-readable while it exists. The imm is the canonical
             // x86-64 flag word — asmcore's helper translates it per target — so
             // 193 identifies the exclusive opener on every one.
-            var open_mode: i32 = 420;
+            var open_mode: i32 = 438;
             if (o.i32_imm == 193) { open_mode = 384; }
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $" + util.i32_to_string(open_mode) + ", %rdx\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_res\n    addq $24, %rsp\n    pushq %rax\n");

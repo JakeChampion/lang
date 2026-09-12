@@ -3481,11 +3481,11 @@ func builtinOpenReader(i *Interp, args []Value) (Value, error) {
 }
 
 func builtinOpenWriter(i *Interp, args []Value) (Value, error) {
-	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 }
 
 func builtinOpenAppender(i *Interp, args []Value) (Value, error) {
-	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
 }
 
 // builtinOpenExclusive is the O_EXCL create: EEXIST comes back as
