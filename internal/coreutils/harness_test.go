@@ -178,6 +178,13 @@ type treeEntry struct {
 	mode    uint32
 	target  string
 	content string
+	// rdev is the device number a character or block node carries, raw:
+	// the two sides run on one kernel, so the dev_t compares directly and
+	// nothing here has to know how that kernel packs a major and a minor.
+	// Zero for everything that is not a device, which is what `mknod`
+	// needs compared — the kind alone cannot tell `mknod n c 1 3` from
+	// `mknod n c 1 4`.
+	rdev uint64
 	// group numbers the (dev, ino) equivalence classes in walk order, so
 	// two names sharing an inode share a number on both sides while the
 	// inodes themselves — which differ between the runs — never reach the
@@ -1045,6 +1052,10 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int) [
 				return err
 			}
 			e.target = target
+		case mode&os.ModeDevice != 0:
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				e.rdev = uint64(st.Rdev)
+			}
 		case mode.IsRegular():
 			e.group = linkGroup(info, groups)
 			if info.Size() > 1<<22 {
@@ -1341,8 +1352,10 @@ func treeKind(mode os.FileMode) string {
 		return "fifo"
 	case mode&os.ModeSocket != 0:
 		return "socket"
+	case mode&os.ModeCharDevice != 0:
+		return "chardev"
 	case mode&os.ModeDevice != 0:
-		return "device"
+		return "blockdev"
 	}
 	return "other"
 }
@@ -1506,6 +1519,8 @@ func treeDiff(want, got []treeEntry, wantWho, gotWho string) string {
 			lines = append(lines, fmt.Sprintf("  %s: %s %s, %s %s", n, wantWho, we.kind, gotWho, ge.kind))
 		case we.mode != ge.mode:
 			lines = append(lines, fmt.Sprintf("  %s: %s mode %04o, %s mode %04o", n, wantWho, we.mode, gotWho, ge.mode))
+		case we.rdev != ge.rdev:
+			lines = append(lines, fmt.Sprintf("  %s: %s device %#x, %s device %#x", n, wantWho, we.rdev, gotWho, ge.rdev))
 		case we.target != ge.target:
 			lines = append(lines, fmt.Sprintf("  %s: %s -> %s, %s -> %s", n, wantWho, quote([]byte(we.target)), gotWho, quote([]byte(ge.target))))
 		case we.content != ge.content:

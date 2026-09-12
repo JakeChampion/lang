@@ -1,0 +1,182 @@
+// mkfifo.fern — GNU-compatible `mkfifo`.
+//
+//   mkfifo [-m MODE] [-Z] [--context[=CTX]] NAME...
+//
+// `mknod(path, mode, major, minor)` with `S_IFIFO` and a zero device
+// pair: there is no second primitive for this, because `mkfifo(3)` is
+// not a second system call.
+//
+// The MODE is `lib/mode.fern`'s, from a base of 0666 rather than
+// mkdir's 0777 — a pipe is not a thing to execute, so `-m u+X` leaves
+// 0666 where the same option on a directory would add the x bits. A
+// MODE that names any bit outside the nine permission bits is refused
+// outright (`+t` and `1777` alike), which is the one rule mkdir does not
+// share.
+//
+// The umask reaches this twice over, and both are needed. `mknod(2)`
+// applies it to whatever mode it is given, which is the whole of the
+// default case: `mkfifo p` asks for 0666 and gets `0666 & ~umask`. With
+// `-m` the mask ALSO reaches the clauses of the MODE that name no who —
+// and then a chmod puts the computed mode on unmasked, so `-m 777` is
+// 0777 whatever the mask is while `-m +w` is not.
+//
+// `-Z` and `--context` are `lib/selinux.fern`'s refusal, the same shape
+// `mkdir` uses.
+import "std/array";
+import "./lib/gnu";
+import "./lib/mode";
+import "./lib/selinux";
+
+function opt_context(): i32 {
+  return 1;
+}
+
+function opt_mode(): i32 {
+  return 2;
+}
+
+function opt_z(): i32 {
+  return 3;
+}
+
+// The S_IFMT bits of a FIFO, the type half of the word `mknod` is given.
+function s_ififo(): i32 {
+  return 4096;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME...\n";
+  out = out + "Create named pipes (FIFOs) with the given NAMEs.\n";
+  out = out + "\n";
+  out = out + "  -m, --mode=MODE    set file permission bits to MODE, not a=rw - umask\n";
+  out = out + "  -Z                 set the SELinux security context to default type\n";
+  out = out + "      --context[=CTX]  like -Z, or if CTX is specified then set the\n";
+  out = out + "                         SELinux or SMACK security context to CTX\n";
+  out = out + "      --help         display this help and exit\n";
+  out = out + "      --version      output version information and exit\n";
+  return out;
+}
+
+// `-Z` and `--context` ask for a security context on each pipe. On a
+// kernel with no SELinux there is none to set: GNU says nothing for `-Z`
+// or a bare `--context`, and warns once per occurrence when a CTX was
+// named. On a kernel that HAS one there is no primitive here that can
+// set it, so the option is refused rather than quietly ignored.
+function security_context(named: boolean): void {
+  if (selinux.enabled()) {
+    gnu.error("setting a security context is not supported on this system");
+    exit(1);
+  }
+  if (named) {
+    gnu.error("warning: ignoring --context; it requires an SELinux/SMACK-enabled kernel");
+  }
+}
+
+struct Scan { mode_text: string, mode_given: boolean }
+
+function scan_options(): (Scan, string[]) {
+  var opts: gnu.Opt[] = [];
+  // Declaration order is visible: `mkfifo --=x` lists the long options
+  // in it, and `--context` stands first.
+  opts = opts.append(gnu.optional("", "context", opt_context()));
+  opts = opts.append(gnu.valued("m", "mode", opt_mode()));
+  opts = opts.append(gnu.flag("Z", "", opt_z()));
+
+  var s: Scan = Scan { mode_text: "", mode_given: false };
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkfifo", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_mode()) {
+          s = Scan { mode_text: m.value, mode_given: true };
+        } else {
+          security_context(m.has_value);
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// The permission bits `-m` asks for. The mask is read the only way POSIX
+// offers — set zero and take the answer — and put straight back, because
+// the creation below still has to be filtered through it.
+function compile_mode(text: string): i32 {
+  match (mode.compile(text)) {
+    Some(c) => {
+      var mask: i32 = umask(0);
+      umask(mask);
+      var a: mode.Adjusted = c.adjust(438, false, mask);
+      if ((a.mode & mode.complement(mode.s_irwxugo())) != 0) {
+        gnu.error("mode must specify only file permission bits");
+        exit(1);
+      }
+      return a.mode;
+    },
+    None => {
+      // Unlike mkdir's, this one does not name the mode it refused.
+      gnu.error("invalid mode");
+      exit(1);
+    }
+  }
+  return 0;
+}
+
+function make(name: string, perm: i32, mode_given: boolean): boolean {
+  match (mknod(name, perm | s_ififo(), 0, 0)) {
+    Ok(_) => {},
+    Err(e) => {
+      gnu.error("cannot create fifo " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      return false;
+    }
+  }
+  if (!mode_given) {
+    return true;
+  }
+  // The mknod above was filtered through the umask; this is what puts
+  // the mode the MODE actually named on.
+  match (chmod(name, perm)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(e) => {
+      gnu.error("cannot set permissions of " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      return false;
+    }
+  }
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options();
+  var s: Scan = scanned.0;
+  var operands: string[] = scanned.1;
+  // The operand count is read before the MODE, so `mkfifo -m bogus` is
+  // the missing operand rather than the bad mode.
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+
+  var perm: i32 = 438;
+  if (s.mode_given) {
+    perm = compile_mode(s.mode_text);
+  }
+
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    if (!make(operands[i], perm, s.mode_given)) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}

@@ -83,7 +83,7 @@ func uptimeDB(t *testing.T, dir, name string, ago time.Duration, sessions int, e
 			typ: utUserProcess, pid: int32(1000 + i),
 			line: "pts/" + string(rune('0'+i%10)), id: "ts/0",
 			user: "user" + string(rune('a'+i%26)), host: "10.0.0.5",
-			sec:  int32(now - 60),
+			sec: int32(now - 60),
 		})
 	}
 	return utmpFile(t, dir, name, append(recs, extra...)...)

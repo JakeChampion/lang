@@ -1116,9 +1116,12 @@ func New() *Interp {
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
 	i.Builtins["uname_field"] = &Builtin{Fn: builtinUnameField}
 	i.Builtins["getcwd"] = &Builtin{Fn: builtinGetcwd}
+	i.Builtins["chdir"] = &Builtin{Fn: builtinChdir}
 	i.Builtins["cpu_count"] = &Builtin{Fn: builtinCPUCount}
 	i.Builtins["signal_ignore"] = &Builtin{Fn: builtinSignalIgnore}
 	i.Builtins["signal_default"] = &Builtin{Fn: builtinSignalDefault}
+	i.Builtins["signal_mask"] = &Builtin{Fn: builtinSignalMask}
+	i.Builtins["signal_disposition"] = &Builtin{Fn: builtinSignalDisposition}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir"] = &Builtin{Fn: builtinCreateDir}
 	i.Builtins["remove_dir"] = &Builtin{Fn: builtinRemoveDir}
@@ -2784,6 +2787,17 @@ func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
 	return String(wd), nil
 }
 
+// builtinChdir moves the process's working directory — the move getcwd only
+// ever reports. The same syscall the compiled backends make, with the errno
+// classified through the same IoError variants.
+func builtinChdir(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("chdir", args, 1)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[0], syscall.Chdir(p[0])), nil
+}
+
 // builtinCPUCount reports how many processing units the process may run
 // on. runtime.NumCPU is that same number on Linux — the Go runtime sets
 // it from sched_getaffinity(2) at startup, which is what the compiled
@@ -2808,6 +2822,12 @@ func signalArg(name string, args []Value) (syscall.Signal, bool, error) {
 		return 0, false, fmt.Errorf("%s: expected number arg, got %T", name, args[0])
 	}
 	v := int64(n)
+	if v == sigKill || v == sigStop {
+		// No kernel lets these two be caught, blocked or ignored: both
+		// answer EINVAL, and `env --ignore-signal=KILL` reports exactly
+		// that.
+		return 0, false, nil
+	}
 	return syscall.Signal(int32(v)), v >= 1 && v <= maxSignal, nil
 }
 
@@ -2912,10 +2932,10 @@ func builtinSignalIgnore(_ *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	if !ok {
-		return Void{}, nil
+		return Number(-22), nil // -EINVAL, as the kernel answers
 	}
 	signal.Ignore(sig)
-	return Void{}, nil
+	return Number(0), nil
 }
 
 // builtinSignalDefault restores one signal's default disposition, so a
@@ -2933,13 +2953,57 @@ func builtinSignalDefault(_ *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	if !ok {
-		return Void{}, nil
+		return Number(-22), nil // -EINVAL, as the kernel answers
 	}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, sig)
 	signal.Stop(ch)
 	signal.Reset(sig)
-	return Void{}, nil
+	return Number(0), nil
+}
+
+// builtinSignalMask mirrors the native `signal_mask(how, mask)` — the set of
+// signals that was blocked BEFORE the call, in `mask`'s bit convention, so
+// one call both reads and writes. `how` is Fern's numbering; the platform
+// helper maps it onto each kernel's (Linux's is the same, XNU's is +1). A
+// `how` the kernel rejects answers its errno negated, like a failing read.
+func builtinSignalMask(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("signal_mask: expected 2 args, got %d", len(args))
+	}
+	how, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("signal_mask: expected number how, got %T", args[0])
+	}
+	mask, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("signal_mask: expected number mask, got %T", args[1])
+	}
+	prev, errno := sigprocmaskSwap(uintptr(uint64(how)), int64(mask))
+	if errno != 0 {
+		return Number(-int64(errno)), nil
+	}
+	return Number(prev), nil
+}
+
+// builtinSignalDisposition reads one signal's disposition: 0 default /
+// 1 ignored / 2 a handler is installed. `signal.Ignored` is the record of
+// what the two setters did — the only way a Fern program can move a
+// disposition — so a handler the Go runtime keeps for itself reads as 0 here
+// where a native sigaction would say 2. A signal number the kernel rejects
+// answers the same EINVAL the setters do.
+func builtinSignalDisposition(_ *Interp, args []Value) (Value, error) {
+	sig, ok, err := signalArg("signal_disposition", args)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return Number(-22), nil // -EINVAL, as the kernel answers
+	}
+	if signal.Ignored(sig) {
+		return Number(1), nil
+	}
+	return Number(0), nil
 }
 
 // builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors
@@ -3417,11 +3481,11 @@ func builtinOpenReader(i *Interp, args []Value) (Value, error) {
 }
 
 func builtinOpenWriter(i *Interp, args []Value) (Value, error) {
-	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 }
 
 func builtinOpenAppender(i *Interp, args []Value) (Value, error) {
-	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o666)
 }
 
 // builtinOpenExclusive is the O_EXCL create: EEXIST comes back as
