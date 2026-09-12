@@ -62,6 +62,7 @@ var BuiltinCaps = map[string]string{
 	"open_exclusive":  "fs",
 	"stat":            "fs",
 	"getcwd":          "fs",
+	"chdir":           "fs",
 	"lstat":           "fs",
 	"access":          "fs",
 	"read_dir":        "fs",
@@ -178,8 +179,14 @@ var Ungated = map[string]bool{
 	// also process-wide and also irreversible from a caller's view.
 	// `internal/platforms` DOES gate these, because there the
 	// question is whether the target has signals at all.
-	"signal_ignore":               true,
-	"signal_default":              true,
+	"signal_ignore":  true,
+	"signal_default": true,
+	// Reading a disposition or the blocked mask reaches even less far
+	// than setting one does: it reports this process's own state and
+	// changes nothing. signal_mask writes as well, and to the same
+	// process-wide state the two setters already reach.
+	"signal_mask":                 true,
+	"signal_disposition":          true,
 	"strbuf_reset":                true,
 	"strbuf_append":               true,
 	"strbuf_take":                 true,

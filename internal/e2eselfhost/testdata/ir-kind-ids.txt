@@ -262,4 +262,7 @@ process_alive=271
 rlimit_nofile=272
 truncate=273
 mknod=274
+chdir=277
+signal_mask=278
+signal_disposition=279
 proc_exec_as=280

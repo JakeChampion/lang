@@ -202,6 +202,9 @@ var gatedBuiltins = map[string]string{
 	// (docs/FREESTANDING-CORE.md).
 	"signal_ignore":  "signal",
 	"signal_default": "signal",
+	// The mask and the read side of the same disposition surface.
+	"signal_mask":        "signal",
+	"signal_disposition": "signal",
 
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and
@@ -225,6 +228,7 @@ var gatedBuiltins = map[string]string{
 	// preopened descriptor and has no current directory at all, so
 	// the question has no answer there rather than an empty one.
 	"getcwd": "cwd",
+	"chdir":  "cwd",
 
 	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
 	// prefix so this table stays the one place the classification lives —

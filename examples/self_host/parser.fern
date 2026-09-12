@@ -8044,6 +8044,9 @@ pub function builtin_function_names(): string[] {
         // than the resolved path, and an environment the caller built
         // rather than its own (#9090).
         "proc_exec_as",
+        // chdir(2), the move getcwd only ever reported, and the mask and
+        // read side of the signal dispositions (#9090).
+        "chdir", "signal_mask", "signal_disposition",
         // Liveness of one pid — kill(pid, 0), the zero signal that runs
         // every check kill(2) makes and delivers nothing (#8767).
         "process_alive",

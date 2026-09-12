@@ -210,6 +210,7 @@ var rcResultOwned = map[string]bool{
 	"chmod":           true,
 	"mknod":           true,
 	"statfs":          true,
+	"chdir":           true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -285,6 +286,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"remove_dir_all":             true,
 	"create_dir_all":             true,
 	"create_dir":                 true,
+	"chdir":                      true,
 	"remove_dir":                 true,
 	"create_link":                true,
 	"create_symlink":             true,
@@ -460,6 +462,9 @@ var rcResultNonPointer = map[string]bool{
 	"geteuid":       true, "getegid": true, "getuid": true, "getgid": true,
 	// The sigaction return, which the caller drops; nothing counted.
 	"signal_default": true, "signal_ignore": true,
+	// The blocked mask and one signal's disposition: an i64 bitmask and a
+	// small enumerated i32. Neither is an address.
+	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
 	// The rc probes and the uniqueness test — counters and a boolean.

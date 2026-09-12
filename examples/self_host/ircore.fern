@@ -914,6 +914,7 @@ pub function all_runtime_need_roots(): string[] {
         "arr_str_join", "arr_inc_elems", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+        "chdir", "signal_mask", "signal_disposition",
         "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
         "read_file_bytes",
         "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
