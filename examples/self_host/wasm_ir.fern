@@ -360,6 +360,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
     if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
     if (module_uses_strbuf(cache)) { out = out.append("@uses_strbuf"); }
+    if (module_uses_buf(cache)) { out = out.append("@uses_buf"); }
     if (module_uses_strings(cache)) { out = out.append("@uses_strings"); }
     return out;
 }
@@ -1431,6 +1432,18 @@ pub function module_uses_str_to_i32(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_strbuf(cache: irlower.LowerResult[]): boolean {
     return module_emits_op_cached(cache, "strbuf_reset") || module_emits_op_cached(cache, "strbuf_append")
         || module_emits_op_cached(cache, "strbuf_take");
+}
+
+// module_uses_buf reports whether any function emits one of the capacity-
+// carrying string builder's ops (#8773) — so wasm.buf_helpers + the heap
+// allocator are emitted. Every one of them reaches $__fern_str_box or
+// $__fern_arr_dec, so the buf gate folds into the heap gate the way the strbuf
+// one does.
+pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
+    return module_emits_op_cached(cache, "buf_new") || module_emits_op_cached(cache, "buf_push")
+        || module_emits_op_cached(cache, "buf_push_range") || module_emits_op_cached(cache, "buf_push_byte")
+        || module_emits_op_cached(cache, "buf_len") || module_emits_op_cached(cache, "buf_take")
+        || module_emits_op_cached(cache, "buf_free");
 }
 
 // module_uses_chr reports whether any function emits the chr(n) runtime call —
@@ -4333,6 +4346,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // stack: strblock ptr -> copy its bytes onto the builder. Void helper
         // (consumes the arg); push a dummy i32 for the statement-level drop.
         parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
+    } else if (o.kind_tag >= 281 && o.kind_tag <= 287) {  // the buf_* builder
+        parts = emit_wasm_buf_op(o, parts);
     } else if (o.kind_tag == 119) {  // strbuf_take
         // no args -> snapshot the builder into a fresh string box and reset it
         // (a value op, allocates). Pushes the box ptr.
@@ -6941,6 +6956,20 @@ pub function arr_slice_helper(): string {
 }
 
 // str_to_i32_helper emits $__fern_str_to_i32: parse a `[len@0][bytes@4]` string
+// emit_wasm_buf_op emits the capacity-carrying string builder's seven ops
+// (#8773). WAT's operand order already matches the helpers' parameter order, so
+// each arm is the bare call; the four void helpers push a dummy i32 for the
+// statement-level drop, the way strbuf_append does.
+function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
+    if (o.kind_tag == 281) { return parts.append("    call $__fern_buf_new\n"); }
+    if (o.kind_tag == 282) { return parts.append("    call $__fern_buf_push\n    i32.const 0\n"); }
+    if (o.kind_tag == 283) { return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n"); }
+    if (o.kind_tag == 284) { return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n"); }
+    if (o.kind_tag == 285) { return parts.append("    call $__fern_buf_len\n"); }
+    if (o.kind_tag == 286) { return parts.append("    call $__fern_buf_take\n"); }
+    return parts.append("    call $__fern_buf_free\n    i32.const 0\n");  // buf_free
+}
+
 // strbuf_helpers emits the wasm global string-builder runtime (strbuf_reset /
 // strbuf_append / strbuf_take) — the wasm sibling of asm_ir's __fern_strbuf_*
 // (asm_ir.fern, a .bss buffer). The wasm AST backend never had strbuf, so this
@@ -6997,6 +7026,127 @@ pub function strbuf_helpers(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $tl)))\n";
     o = o + "    (global.set $__fern_strbuf_len (i32.const 0))\n";
     o = o + "    (local.get $box))\n";
+    return o;
+}
+
+// buf_helpers emits the wasm capacity-carrying string builder (#8773) — the
+// multi-instance successor to the single global strbuf above, and the wasm
+// sibling of asm_ir's __fern_buf_* bundle.
+//
+// A builder handle is the address of a control block. wasm32 words are FOUR
+// bytes, not eight, so the block is four i32s rather than the natives' four
+// quadwords:
+//
+//	[H +  0] data     — the buffer, 0 when a take left the builder unarmed
+//	[H +  4] len      — bytes accumulated so far
+//	[H +  8] cap      — bytes the buffer holds before it has to grow
+//	[H + 12] reserve  — the capacity a re-arm after a take starts from
+//
+// Both the block and the buffer come from $__fern_str_box, which rc-headers
+// them and records the block size at [ptr-4], so $__fern_arr_dec releases
+// either without being told its size. The buffer is allocated as
+// $__fern_str_box(4 + cap): that IS a wasm string block already — [len@0],
+// [bytes@4] — which is what makes $__fern_buf_take zero-copy. It stamps the
+// length into the block's first word and hands the same pointer back as the
+// string, leaving the builder empty and still armed at its reserve.
+pub function buf_helpers(): string {
+    var o: string = "";
+    // new(cap) -> H. The floor gives the doubling something to double.
+    o = o + "  (func $__fern_buf_new (param $cap i32) (result i32)\n";
+    o = o + "    (local $h i32)\n";
+    o = o + "    (if (i32.lt_u (local.get $cap) (i32.const 16)) (then (local.set $cap (i32.const 16))))\n";
+    o = o + "    (local.set $h (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (i32.store (local.get $h) (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (local.get $cap))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 12)) (local.get $cap))\n";
+    o = o + "    (local.get $h))\n";
+    // reserve(H, need): replace the buffer with one of at least `need` bytes,
+    // doubling from the current capacity (or from the reserve, when a take left
+    // the builder unarmed), and carry the live bytes across. Internal — no Fern
+    // builtin reaches it.
+    o = o + "  (func $__fern_buf_reserve (param $h i32) (param $need i32)\n";
+    o = o + "    (local $ncap i32) (local $np i32) (local $i i32) (local $len i32) (local $old i32)\n";
+    o = o + "    (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 12))))))\n";
+    o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.const 64))))\n";
+    o = o + "    (block $gd (loop $gl (br_if $gd (i32.ge_u (local.get $ncap) (local.get $need))) (local.set $ncap (i32.mul (local.get $ncap) (i32.const 2))) (br $gl)))\n";
+    o = o + "    (local.set $np (call $__fern_str_box (i32.add (i32.const 4) (local.get $ncap))))\n";
+    o = o + "    (local.set $old (i32.load (local.get $h)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $old) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
+    o = o + "    (if (local.get $old) (then (drop (call $__fern_arr_dec (local.get $old)))))\n";
+    o = o + "    (i32.store (local.get $h) (local.get $np))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (local.get $ncap)))\n";
+    // push(H, s): append every byte of the wasm string block s ([s]=len,
+    // bytes@[s+4]).
+    o = o + "  (func $__fern_buf_push (param $h i32) (param $s i32)\n";
+    o = o + "    (local $sl i32) (local $i i32) (local $d i32) (local $len i32)\n";
+    o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
+    o = o + "    (if (i32.eqz (local.get $sl)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $sl)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $sl)))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $ad (loop $al (br_if $ad (i32.ge_u (local.get $i) (local.get $sl)))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $sl))))\n";
+    // push_range(H, s, lo, hi): append s[lo:hi] with no intermediate string. An
+    // empty or inverted range is a no-op; the bounds are the caller's, as with
+    // slice_unchecked.
+    o = o + "  (func $__fern_buf_push_range (param $h i32) (param $s i32) (param $lo i32) (param $hi i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32)\n";
+    o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
+    o = o + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $rd (loop $rl (br_if $rd (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $rl)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
+    // push_byte(H, x): append the low byte of x.
+    o = o + "  (func $__fern_buf_push_byte (param $h i32) (param $x i32)\n";
+    o = o + "    (local $len i32)\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.const 1)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 1)))))\n";
+    o = o + "    (i32.store8 (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $x))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 1))))\n";
+    // len(H) -> the bytes accumulated so far.
+    o = o + "  (func $__fern_buf_len (param $h i32) (result i32)\n";
+    o = o + "    (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    // take(H) -> string: stamp the length into the buffer's own first word and
+    // hand the block over as the string, with no copy. An empty build answers a
+    // fresh empty string and KEEPS its buffer, so a flush that finds nothing
+    // costs one small box.
+    o = o + "  (func $__fern_buf_take (param $h i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $d i32)\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.eqz (local.get $len)) (then\n";
+    o = o + "      (local.set $d (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $d) (i32.const 0))\n";
+    o = o + "      (return (local.get $d))))\n";
+    o = o + "    (local.set $d (i32.load (local.get $h)))\n";
+    o = o + "    (i32.store (local.get $d) (local.get $len))\n";
+    o = o + "    (i32.store (local.get $h) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (i32.const 0))\n";
+    o = o + "    (local.get $d))\n";
+    // free(H): release the buffer (when the builder still owns one) and the
+    // control block. A builder is not refcounted and has no drop, so a handle
+    // that is never freed leaks, exactly as an fd that is never closed does.
+    o = o + "  (func $__fern_buf_free (param $h i32)\n";
+    o = o + "    (if (i32.eqz (local.get $h)) (then (return)))\n";
+    o = o + "    (if (i32.load (local.get $h)) (then (drop (call $__fern_arr_dec (i32.load (local.get $h))))))\n";
+    o = o + "    (drop (call $__fern_arr_dec (local.get $h))))\n";
     return o;
 }
 // chr_helper emits $__fern_chr: an i32 byte value to a fresh 1-char
@@ -9558,7 +9708,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -9575,6 +9725,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
     if (need(needs, "@uses_strbuf")) { parts = parts.append(strbuf_helpers()); }
+    if (need(needs, "@uses_buf")) { parts = parts.append(buf_helpers()); }
     // Per-type $__field_reclaim_<T> + $__struct_drop_<T> RC helper bodies
     // (#3457, Perceus slices 1c/1d + slice-3 nested deep-drop). emit_module's
     // own IR orchestration emits these; this differential driver assembles the
