@@ -218,7 +218,6 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   var s: State = st;
   var w: io_buffered.BufWriter = s.w;
   var h: usize = w.handle();
-  var cap: i32 = read_size();
   var num: u8[] = s.num;
   var at_start: boolean = s.at_start;
   var prev_blank: boolean = s.prev_blank;
@@ -272,9 +271,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
       at_start = true;
       pos = nl + 1;
     }
-    if (buf_len(h) >= cap) {
-      w = gnu.flush(w);
-    }
+    w = gnu.settle(w);
   }
   return State { ...s, w: gnu.check(w), num: num, at_start: at_start, prev_blank: prev_blank };
 }
@@ -286,7 +283,6 @@ function squeeze_chunk(st: State, chunk: string): State {
   var s: State = st;
   var w: io_buffered.BufWriter = s.w;
   var h: usize = w.handle();
-  var cap: i32 = read_size();
   var at_start: boolean = s.at_start;
   var prev_blank: boolean = s.prev_blank;
   var pos: i32 = 0;
@@ -314,9 +310,7 @@ function squeeze_chunk(st: State, chunk: string): State {
     buf_push_range(h, chunk, pos, end);
     prev_blank = false;
     pos = end;
-    if (buf_len(h) >= cap) {
-      w = gnu.flush(w);
-    }
+    w = gnu.settle(w);
   }
   return State { ...s, w: gnu.check(w), at_start: at_start, prev_blank: prev_blank };
 }

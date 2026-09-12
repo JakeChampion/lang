@@ -812,6 +812,14 @@ pub function check(o: io_buffered.BufWriter): io_buffered.BufWriter {
   return o;
 }
 
+// `settle(o)` — the flush-if-full and the error check a loop that pushed
+// straight into `o.handle()` owes at the end of a line.
+pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o.settle();
+  die_on_write_error(w, 1);
+  return w;
+}
+
 // `flush(o)` — write what is buffered now; dies like `put` when that
 // fails. Rebind: `o = gnu.flush(o);`.
 pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
