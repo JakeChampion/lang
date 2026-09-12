@@ -2259,6 +2259,22 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: nil,
 		Result: ast.StringType{},
 	}
+	// chdir(path): Result[void, IoError] — change the process's
+	// working directory, the counterpart getcwd has always lacked.
+	//
+	// Process state rather than filesystem content, so it shares
+	// getcwd's `cwd` target capability rather than `fs`: WASI
+	// resolves every path against a preopened descriptor and has no
+	// process cwd to move, so E066 refuses it there. Err carries the
+	// errno the move failed with — ENOENT, ENOTDIR, EACCES for a
+	// directory with no search permission.
+	c.info.FuncSigs["chdir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.StructType{Name: "IoError"},
+		}},
+	}
 	// cpu_count(): how many processing units this process may run
 	// on — the affinity mask's population count on Linux
 	// (sched_getaffinity(2)), `hw.activecpu` on Darwin. That is
@@ -2270,7 +2286,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: nil,
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
-	// signal_ignore(sig) / signal_default(sig): void — set one
+	// signal_ignore(sig) / signal_default(sig): i32 — set one
 	// signal's disposition to SIG_IGN or back to SIG_DFL. No
 	// handler-installing form: a handler runs as a second context
 	// against non-atomic refcounts (docs/BARE-METAL-PLAN.md), and
@@ -2280,13 +2296,52 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// turns a death into an EPIPE the write can report (#8792).
 	// The signal number is the caller's: `std/signal` names the
 	// two that are portable rather than putting a number here.
+	//
+	// 0 on success, a negative errno on failure — the sigaction
+	// return shape, the same "the syscall's return IS the contract"
+	// convention proc_fork uses. A caller that does not care drops
+	// it. SIGKILL and SIGSTOP are the failure that matters: the
+	// kernel answers EINVAL rather than silently declining, and
+	// `env --ignore-signal=KILL` has to report exactly that errno.
 	c.info.FuncSigs["signal_ignore"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
-		Result: ast.VoidType{},
+		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["signal_default"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
-		Result: ast.VoidType{},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// signal_mask(how, mask): i64 — sigprocmask(2). `mask` is a bit
+	// per signal, bit (sig-1), and `how` says what to do with it:
+	// 0 block, 1 unblock, 2 replace. The result is the mask that was
+	// blocked BEFORE the call, so `signal_mask(0, 0)` reads without
+	// changing anything.
+	//
+	// Fern's own `how` numbering rather than either kernel's: Linux
+	// spells the three 0/1/2 and XNU 1/2/3, so passing the caller's
+	// value straight through would silently mean something else on
+	// one of them.
+	//
+	// A bitmask rather than one call per signal because `env`'s
+	// three signal options each build a whole set and apply it once,
+	// and because that is the shape sigprocmask already has.
+	c.info.FuncSigs["signal_mask"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// signal_disposition(sig): i32 — the READ side of the two
+	// setters above: 0 if `sig` is at its default, 1 if it is
+	// ignored, 2 if a handler is installed. A negative errno for a
+	// signal number the kernel rejects.
+	//
+	// 2 is reachable even though Fern cannot install a handler: the
+	// disposition is INHERITED across exec, so a Fern program can be
+	// started by something that installed one. Reporting what is
+	// there is the whole point — `env --list-signal-handling` prints
+	// the dispositions the child will inherit.
+	c.info.FuncSigs["signal_disposition"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors

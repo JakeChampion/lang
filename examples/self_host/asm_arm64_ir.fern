@@ -1519,6 +1519,18 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // [pathbox] IS param[0] — one rmdir(2), ENOTEMPTY included.
             s = s.need("heap"); s = s.need("remove_dir");
             s = s.write("    bl __fn___fern_remove_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 277) {  // chdir
+            // [pathbox] IS param[0] — one chdir(2).
+            s = s.need("heap"); s = s.need("chdir");
+            s = s.write("    bl __fn___fern_chdir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 278) {  // signal_mask
+            // [how][mask] with mask on top; param[0] is how, so swap.
+            s = s.need("signal_mask");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_signal_mask\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 279) {  // signal_disposition
+            // [sig] IS param[0]; the stack ABI needs no marshalling.
+            s = s.need("signal_disposition");
+            s = s.write("    bl __fn___fern_signal_disposition\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 262) {  // create_link
             // [targetbox][pathbox] -> Result[void, IoError].
             s = s.need("heap"); s = s.need("create_link");
@@ -3584,7 +3596,8 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
         "eprint", "read_int", "udp_send", "isatty", "window_size",
-        "rlimit_nofile", "signal_ignore", "signal_default", "access",
+        "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
+        "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
         "fd_stat"
     ])) {
@@ -6999,6 +7012,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all(tgt); }
         if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir(tgt); }
         if (s.has_need("remove_dir")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir(tgt); }
+        if (s.has_need("chdir")) { fs_src = fs_src + " " + asmcore.rt_src_chdir(tgt); }
         if (s.has_need("create_link")) { fs_src = fs_src + " " + asmcore.rt_src_create_link(tgt); }
         if (s.has_need("create_symlink")) { fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt); }
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename(tgt); }
@@ -7131,6 +7145,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("rlimit_nofile")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("signal_mask")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("signal_disposition")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read(tgt), s.struct_decls, s);
     }
     if (s.has_need("signal_ignore")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition(tgt, "signal_ignore", "1"), s.struct_decls, s);
@@ -7898,7 +7918,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
         "remove_file", "create_dir_all", "create_dir", "remove_dir",
         "create_link", "create_symlink", "rename", "chmod", "truncate",
-        "mknod", "chown_at", "window_size", "set_file_times", "read_link", "umask",
+        "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "chdir", "umask",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader"
     ]);
