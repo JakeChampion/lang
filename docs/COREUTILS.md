@@ -205,7 +205,14 @@ failure, not a skip.** On the Ubuntu CI runners it is the system coreutils;
 on macOS the system tools are BSD, so a nix or Homebrew GNU coreutils is
 needed and the failure message says so.
 
-Versions: the corpus is held to GNU coreutils **9.4 or newer**. Benchmarks
+Versions: the corpus is held to GNU coreutils **9.4 or newer**, and the
+floor is enforced by supplying the reference rather than hoping for it.
+`scripts/devbox`'s base is `debian:bookworm`, whose coreutils is **9.1** —
+below the floor, and the container spent its life comparing against it, which
+is not a gate (#9162). The image now builds 9.4 and puts it ahead of
+`/usr/bin`, so a green run in the container means what a green lane means.
+That also supplies the two binaries Debian does not build at all, `uptime`
+and `kill`. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
