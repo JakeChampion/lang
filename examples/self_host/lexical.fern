@@ -198,7 +198,7 @@ function reserve(name: string, acc: string[]): string[] {
     return acc;
 }
 
-function reserve_expr(e: ast.Expr, acc: string[]): string[] {
+function reserve_expr(e: ast.Expr, own acc: string[]): string[] {
     if let ast.ExprIdent(i) = e { return reserve(i.name, acc); }
     if let ast.ExprLambda(lm) = e {
         for p in lm.params { for n in astwalk.append_bound_name([], p.name) { acc = reserve(n, acc); } }

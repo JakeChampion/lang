@@ -8,7 +8,7 @@ import "./typeinfo";
 
 pub function value_mode(): i32 { return 1; }
 pub function borrow_mode(): i32 { return 2; }
-pub function counted_mode(): i32 { return 3; }
+pub function counted_mode(): i32 { return ssasem.counted_mode(); }
 pub function retain_unit(): i32 { return 1; }
 pub function move_unit(): i32 { return 2; }
 pub function entry_point(): i32 { return 0 - 1; }
@@ -122,19 +122,19 @@ function schema_fields_error(f: ssasem.Func): string {
     }
     return "";
 }
-// A closure is dispatched through with no declaration in hand, so the units
-// its arguments carry cannot be read from one: an indirect call lends every
-// reference it is handed. A contract with a counted parameter promises the
-// opposite, and a body declaring one is therefore not one this pass will box.
-// An ERASED parameter is the one exception: that slot IS consuming, and a
-// function type says so by spelling the variable there.
+// A closure is dispatched through with no declaration in hand, so the units its
+// arguments carry are read off the function TYPE the box hands out. A counted
+// parameter is a CONSUMING slot and the type spells one with `own`: what
+// ssasem.closure_type builds from these same modes is what every call through
+// the box is checked against, so the two sides cannot disagree. An ERASED slot
+// is consuming too and says so through the variable itself.
+//
+// The environment parameter is the box, which is lent like any other receiver
+// and never appears in the type the box hands out, so a counted one there would
+// be a promise nothing can state.
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
     var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
-    var i: i32 = 0;
-    while (i < c.modes.len()) {
-        if (c.modes[i] == counted_mode() && !semtypes.erased(c.params[i])) { return "function value consumes an argument"; }
-        i = i + 1;
-    }
+    if (c.modes.len() > 0 && c.modes[0] == counted_mode()) { return "function value consumes its environment"; }
     return "";
 }
 
@@ -225,16 +225,18 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     }
     return out;
 }
-// An indirect call LENDS every reference it is handed — the convention a
-// function type carries, since it spells no `own` — except at a slot the type
-// spells with an erased variable, which is CONSUMING. The callee box itself
-// (operand 0) is lent like any other.
+// An indirect call LENDS every reference it is handed except at a slot the
+// function type spells CONSUMING — `own T`, or an erased variable, which is
+// consuming on its own account (docs/ERASED-GENERICS-RC.md). The callee box
+// itself (operand 0) is lent like any other.
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
     var out: boolean[] = [false];
-    var params: typeinfo.Type[] = ssasem.func_params(f.values[ins.args[0]]);
+    var callee: typeinfo.Type = f.values[ins.args[0]];
+    var params: typeinfo.Type[] = ssasem.func_params(callee);
     var i: i32 = 0;
     while (i < params.len()) {
-        out = out.append(semtypes.erased(params[i]) && reference(f.values[ins.args[i + 1]]));
+        var consuming: boolean = semtypes.erased(params[i]) || ssasem.func_param_own(callee, i);
+        out = out.append(consuming && reference(f.values[ins.args[i + 1]]));
         i = i + 1;
     }
     return out;

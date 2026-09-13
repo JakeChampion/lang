@@ -178,6 +178,14 @@ pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
     return [];
 }
 
+// The CONSUMING slots a function type spells. A caller hands its unit over at
+// one of them and takes back nothing to release; every other reference
+// argument of a function value is lent.
+pub function func_param_own(t: typeinfo.Type, i: i32): boolean {
+    if let typeinfo.TypeFunc(fn) = t { return typeinfo.fn_own_at(fn, i); }
+    return false;
+}
+
 pub function func_result(t: typeinfo.Type): typeinfo.Type {
     if let typeinfo.TypeFunc(fn) = t { return fn.ret_type; }
     return typeinfo.unchecked();
@@ -197,9 +205,29 @@ function env_word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsign
 // environment parameter, which the box supplies rather than the caller.
 pub function closure_type(c: Contract): typeinfo.Type {
     var params: typeinfo.Type[] = [];
+    var owns: boolean[] = [];
     var i: i32 = 1;
-    while (i < c.params.len()) { params = params.append(c.params[i]); i = i + 1; }
-    return typeinfo.TypeFunc { param_types: params, ret_type: c.result, params_known: true };
+    while (i < c.params.len()) {
+        params = params.append(c.params[i]);
+        owns = owns.append(consuming_mode(c.modes, i, c.params[i]));
+        i = i + 1;
+    }
+    return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_type: c.result, params_known: true };
+}
+
+// The unit planner's counted mode. ssaunits reads this module, so the constant
+// is spelled here and that pass's own accessor returns it.
+pub function counted_mode(): i32 { return 3; }
+
+// A body's declared mode says what the box it is wrapped in promises: a counted
+// parameter is a CONSUMING slot, and the function type the box hands out has to
+// spell it or the two sides disagree about who releases the argument. An erased
+// slot is consuming on its own account (docs/ERASED-GENERICS-RC.md) and spells
+// it the same way, so one rule covers both. A scalar carries no unit, so
+// `typeinfo.own_flags` drops the flag there whichever side built it.
+function consuming_mode(modes: i32[], i: i32, t: typeinfo.Type): boolean {
+    if (i >= modes.len()) { return false; }
+    return modes[i] == counted_mode() && typeinfo.ownable(t);
 }
 
 function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -598,6 +626,12 @@ function bind_within(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Bindi
             if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) { return unbindable("call argument type"); }
             var i: i32 = 0;
             while (i < x.param_types.len()) {
+                // The consuming flags must agree, read against the slot the
+                // ARGUMENT actually carries: `own T` at a variable this call
+                // binds to a scalar is vacuous, and the scalar body spells no
+                // `own` there. At a reference the two must still agree.
+                if (typeinfo.fn_own_at(x, i) && typeinfo.ownable(y.param_types[i]) != typeinfo.fn_own_at(y, i)) { return unbindable("call argument type"); }
+                if (!typeinfo.fn_own_at(x, i) && typeinfo.fn_own_at(y, i)) { return unbindable("call argument type"); }
                 b = bind_type(b, x.param_types[i], y.param_types[i]);
                 if (!b.ok) { return b; }
                 i = i + 1;
@@ -619,26 +653,67 @@ pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
     if let typeinfo.TypeFunc(fn) = t {
         var params: typeinfo.Type[] = [];
         for p in fn.param_types { params = params.append(substitute(p, b)); }
-        return typeinfo.TypeFunc { ...fn, param_types: params, ret_type: substitute(fn.ret_type, b) };
+        // The mask is renormalised against the SUBSTITUTED types: a variable
+        // bound to a scalar carries no unit there, so the slot stops being a
+        // consuming one and the instantiated type matches the callable a
+        // scalar body hands out.
+        return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: substitute(fn.ret_type, b) };
     }
     return t;
 }
 
 // An erased position is CONSUMING: the caller hands over a unit and takes back
-// the one the call returns. What it is handed to must release what it consumed
-// — and at a REFERENCE instantiation that is a real release, which a function
-// value does not perform: every other reference argument of one is LENT, and a
-// body declaring otherwise is refused where it is boxed. So a reference
-// instantiation is refused here rather than admitted under a rule that leaks
-// one unit per step; a SCALAR one is the case where consuming and producing
-// are both no-ops, and an ERASED one is a generic passing its own word on.
-pub function instantiation_error(b: Binding): string {
+// the one the call returns, so whatever it is handed to must release what it
+// consumed. A SCALAR instantiation is the case where consuming and producing
+// are both no-ops, and an ERASED one is a generic passing its own word on; both
+// are sound wherever the variable appears.
+//
+// A REFERENCE instantiation is a real release, and only a function value that
+// SPELLS the slot `own` performs one — every other reference argument of one is
+// lent, and nothing would release the unit the fold handed over. So the
+// variable's own positions decide: a variable reaching only consuming positions
+// may bind a reference, and one reaching a lending function-value slot may not.
+pub function instantiation_error(c: Contract, b: Binding): string {
     var i: i32 = 0;
     while (i < b.types.len()) {
-        if (semtypes.needs_anchor(b.types[i]) && !semtypes.erased(b.types[i])) { return "erased instantiation carries a unit"; }
+        if (semtypes.needs_anchor(b.types[i]) && !semtypes.erased(b.types[i])) {
+            if (!variable_wholly_consumed(c, b.names[i])) { return "erased instantiation carries a unit"; }
+        }
         i = i + 1;
     }
     return "";
+}
+
+// Every position the variable `name` occupies in `c` hands its argument to
+// something that releases it: the contract's own counted parameter at that slot
+// (which this call site supplies as a move), or a function-typed parameter's
+// slot the type spells `own`. One lending occurrence refuses the whole
+// instantiation — the unit would reach it and nothing would release it.
+function variable_wholly_consumed(c: Contract, name: string): boolean {
+    var i: i32 = 0;
+    while (i < c.params.len()) {
+        if (!positions_consumed(c.params[i], name, c.modes[i] == counted_mode())) { return false; }
+        i = i + 1;
+    }
+    return positions_consumed(c.result, name, true);
+}
+
+// Whether every occurrence of `name` inside `t` sits at a consuming position.
+// `consumed` is what the ENCLOSING position promises: the variable spelled bare
+// there is consumed exactly when that position is. Inside a function type each
+// slot answers for itself, and the RESULT is a unit of the caller's own, so a
+// variable there is produced rather than consumed.
+function positions_consumed(t: typeinfo.Type, name: string, consumed: boolean): boolean {
+    if (semtypes.erased(t)) { return erased_name(t) != name || consumed; }
+    if let typeinfo.TypeFunc(fn) = t {
+        var i: i32 = 0;
+        while (i < fn.param_types.len()) {
+            if (!positions_consumed(fn.param_types[i], name, typeinfo.fn_own_at(fn, i))) { return false; }
+            i = i + 1;
+        }
+        return positions_consumed(fn.ret_type, name, true);
+    }
+    return true;
 }
 
 function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
@@ -649,7 +724,7 @@ function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
         if (!b.ok) { return b; }
         i = i + 1;
     }
-    var why: string = instantiation_error(b);
+    var why: string = instantiation_error(c, b);
     if (why != "") { return unbindable(why); }
     return b;
 }

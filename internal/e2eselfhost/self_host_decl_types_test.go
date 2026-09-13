@@ -34,7 +34,7 @@ func TestSelfHostDeclTypesX86_64(t *testing.T) {
 		{"unknown parameter", `tp([typeinfo.unchecked()], view())`, "|||"},
 		{"unknown result", `tp([], typeinfo.unchecked())`, "|||"},
 		{"unknown nested parameter", `tp([callback([typeinfo.unchecked()], view())], view())`, "|||"},
-		{"opaque typed function", `decltypes.fn_param_from_type("capture", typeinfo.TypeFunc { param_types: [], ret_type: view(), params_known: false })`, "|||"},
+		{"opaque typed function", `decltypes.fn_param_from_type("capture", typeinfo.TypeFunc { param_types: [], param_own: [], ret_type: view(), params_known: false })`, "|||"},
 		{"nonfunction typed binder", `decltypes.fn_param_from_type("capture", view())`, "|||"},
 	}
 	var src strings.Builder
@@ -44,7 +44,7 @@ import "./typeinfo";
 function view(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
 function fraction(): typeinfo.Type { return typeinfo.TypeFloat { width: 32, polymorphic: false }; }
 function box(): typeinfo.Type { return typeinfo.TypeStruct { name: "Box", args: [view()] }; }
-function callback(params: typeinfo.Type[], ret: typeinfo.Type): typeinfo.Type { return typeinfo.TypeFunc { param_types: params, ret_type: ret, params_known: true }; }
+function callback(params: typeinfo.Type[], ret: typeinfo.Type): typeinfo.Type { return typeinfo.TypeFunc { param_types: params, param_own: [], ret_type: ret, params_known: true }; }
 function tp(params: typeinfo.Type[], ret: typeinfo.Type): ast.ParamDecl { return decltypes.fn_param_from_type("capture", callback(params, ret)); }
 function sp(s: string): ast.ParamDecl { return decltypes.fn_param_from_spelling("capture", s); }
 function main(): i32 {
