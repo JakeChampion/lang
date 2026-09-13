@@ -32,10 +32,10 @@ name: Auto-rebase open PRs
 # merge into main. That is the price of testing against the base you will
 # actually merge into, and it is why the label exists.
 
-# on:
-#  push:
-#    branches: [main]
-#  workflow_dispatch:
+# Manual only: the push trigger is off, so a merge into main no longer rewrites
+# every open PR's head. Dispatch it by hand when a replay is wanted.
+on:
+  workflow_dispatch:
 
 permissions:
   contents: write
