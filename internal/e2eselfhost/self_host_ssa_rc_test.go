@@ -395,9 +395,11 @@ function main(): i32 {
     if (ssaunits.plan(badRecv, [2]).why != "length container type") { return 38; }
     var badResult = ssasem.Func { graph: lenGraph, values: [f.result, f.result], params: [f.result], result: f.result, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badResult, [2]).why != "length result type") { return 39; }
-    // An append takes the receiver's unit and hands one back, so it is admitted
-    // only where that unit is MOVED. A counted receiver dead after the push is;
-    // a borrowed one is not, and is refused rather than lowered.
+    // An append takes the receiver's unit and hands one back. The runtime's push
+    // gives the unit back only when the receiver's box is the only one its count
+    // names, so the count test that chooses between the in-place grow and the
+    // copy is emitted here rather than left to the shared helper. A counted
+    // receiver dead after the push moves its unit into it.
     var appendGraph = ssa.SFunc { name: "append", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
@@ -408,11 +410,27 @@ function main(): i32 {
     var appendLowered = ssarc.lower(appendFunc, [3, 1], appendPlan, irlower.struct_tab_empty());
     if (!appendLowered.ok) { eprint(appendLowered.why); return 41; }
     var sawPush: boolean = false;
-    for o in appendLowered.ops { if (ir.render_op(o) == "arr_push_owned") { sawPush = true; } }
-    if (!sawPush) { return 42; }
-    // The same graph with a BORROWED receiver: its unit is not this function's
-    // to hand over, so the plan refuses instead of aliasing the result onto it.
-    if (ssaunits.plan(appendFunc, [2, 1]).why != "append receiver is not consumed") { return 43; }
+    var sawPushUnique: boolean = false;
+    for o in appendLowered.ops {
+        if (ir.render_op(o) == "arr_push_owned") { sawPush = true; }
+        if (o.str == "__fern_rc_is_unique") { sawPushUnique = true; }
+    }
+    if (!sawPush || !sawPushUnique) { return 42; }
+    // The same graph with a BORROWED receiver: no unit of this function's to
+    // move, so the plan RETAINS one at the push. The count then names two boxes,
+    // the copy runs, and the result is a box nobody else holds rather than an
+    // alias of the caller's.
+    var borrowAppendPlan = ssaunits.plan(appendFunc, [2, 1]);
+    if (!borrowAppendPlan.ok) { eprint(borrowAppendPlan.why); return 43; }
+    var borrowAppendLowered = ssarc.lower(appendFunc, [2, 1], borrowAppendPlan, irlower.struct_tab_empty());
+    if (!borrowAppendLowered.ok) { eprint(borrowAppendLowered.why); return 104; }
+    var sawRetain: boolean = false;
+    var sawBorrowUnique: boolean = false;
+    for o in borrowAppendLowered.ops {
+        if (o.str == "__fern_rc_inc") { sawRetain = true; }
+        if (o.str == "__fern_rc_is_unique") { sawBorrowUnique = true; }
+    }
+    if (!sawRetain || !sawBorrowUnique) { return 105; }
     // One element replaced hands the receiver's unit over the same way, and
     // lowers to the count test that chooses the in-place store or the copy;
     // a scalar element retains nothing, a counted one retains the copy's
@@ -435,7 +453,13 @@ function main(): i32 {
         if (o.str == "__fern_arr_inc_elems") { sawIncElems = true; }
     }
     if (!sawUnique || !sawSet || sawIncElems) { return 123; }
-    if (ssaunits.plan(withFunc, [2, 1, 1]).why != "with receiver is not consumed") { return 124; }
+    var borrowWithPlan = ssaunits.plan(withFunc, [2, 1, 1]);
+    if (!borrowWithPlan.ok) { eprint(borrowWithPlan.why); return 124; }
+    var borrowWithLowered = ssarc.lower(withFunc, [2, 1, 1], borrowWithPlan, irlower.struct_tab_empty());
+    if (!borrowWithLowered.ok) { eprint(borrowWithLowered.why); return 106; }
+    sawRetain = false;
+    for o in borrowWithLowered.ops { if (o.str == "__fern_rc_inc") { sawRetain = true; } }
+    if (!sawRetain) { return 107; }
     var badIndex = ssasem.Func { ...withFunc, values: [f.result, strTy, i32ty, f.result], params: [f.result, strTy, i32ty] };
     if (ssaunits.plan(badIndex, [3, 2, 1]).why != "with index type") { return 125; }
     var badWithElem = ssasem.Func { ...withFunc, values: [f.result, i32ty, strTy, f.result], params: [f.result, i32ty, strTy] };

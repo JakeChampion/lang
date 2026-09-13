@@ -305,7 +305,6 @@ func array_length {
 
 modes 2 result i32[]
 v0:i32[] v1:i32 v2:i32[]
-plan append receiver is not consumed
 func borrowed_append {
   b0:
     v0 = param 0

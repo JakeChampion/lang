@@ -193,14 +193,19 @@ Unsupported constructs refuse the whole function with a reason.
   own stack IR op rather than a call, `print` the payload then the newline
   as the AST lowering writes it.
 - The array and string builtins `.len()`, `.append()` and `.with()`, and
-  `slice_unchecked` on a string. `.with` hands the receiver's unit over as
-  `.append` does, so its receiver must be moved too; physically it is the
-  count test that chooses between the in-place store and the copy, the AST
-  lowering's two forms chosen at run time rather than by the receiver's
-  syntax, and a counted element type retains the copy's elements and
-  releases the one the store replaces. A slice owns its box and borrows the
-  source's bytes, so it is a projection anchored to its source and is
-  released by the view helper rather than the ordinary string free.
+  `slice_unchecked` on a string. Both array builtins take ONE unit of the
+  receiver and hand one back, and both reach the same count test: the
+  receiver's own box when its unit is the only one that box's count names,
+  and a fresh copy of it otherwise — the AST lowering's two forms, chosen at
+  run time rather than by the receiver's syntax. The test belongs to this
+  lowering rather than to the shared runtime push, which gives the unit back
+  only on the sole-owner side. So the receiver need not be one the planner
+  MOVES: a receiver this function does not own is retained at the call, the
+  count then names two boxes, and the copy runs. A counted element type
+  retains the copy's elements, and `.with` releases the element its store
+  replaces. A slice owns its box and borrows the source's bytes, so it is a
+  projection anchored to its source and is released by the view helper
+  rather than the ordinary string free.
 - Indexing a string, as one byte handed back in a u8 — the type the checker
   gives the expression, so a binding or an operator over it needs no
   reconciliation. The receiver is read the way a length's is and the result
@@ -329,7 +334,12 @@ one by hand.
   result, a returned parameter, recursion, a call result carried into a
   loop header, the AST-lowered `main` binding, discarding and projecting
   tuple and array results under `ssarc.caller_sigs`, the byte and cast shapes
-  below, the enum shapes above, and the view shapes: a scanning loop binding
+  below, the enum shapes above, every receiver the planner does not move
+  (a borrowed parameter's box, a record field's, an element of a borrowed
+  array of arrays, an `own` parameter's read again after the push, the field
+  receiver appended to in a loop, and a `string[]` through both builtins, each
+  asserting the source keeps its length and its elements), the loop header
+  whose first step pushes on the caller's own box, and the view shapes: a scanning loop binding
   a slice per iteration and comparing, measuring, indexing and lending it to
   a `str` and to a borrowed `string` parameter; an owned string lent to `str`
   bindings and re-lent; a view of a view; a view whose source is a temporary
@@ -422,15 +432,20 @@ parameter, a record with an enum field, and a struct-union widened from both
 members, matched, and carried across a loop as a phi; balanced on every
 target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
-results, still rely on the AST caller's own syntactic rows.
+results, still rely on the AST caller's own syntactic rows. So does a borrowed
+record PARAMETER, and that one is measured: when a produced callee RETAINS a
+counted-element array field of one, the AST-lowered caller's release of the
+record frees its box and leaves the field's buffer — 40 bytes for a
+two-element `string[]`, 56 for a four-element one. Retaining the field into a
+tuple is enough; no array builtin is involved, and the same program lowered
+entirely by the AST pipeline balances.
 
 Constructions over a loop element cross too (`bump_each`, `line_each`,
 `word_recs`): a functional update and a variant literal built from the
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 5,990 of its 7,735
-Measured against the whole loaded self-hosted compiler, 5,900 of its 7,735
+Measured against the whole loaded self-hosted compiler, 6,299 of its 7,738
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -450,42 +465,40 @@ The leaves are now led by callees with no semantic contract (1,016), a variant
 field whose type is unresolved (98), a binding whose type is not its value's
 (75) and record literals (74). The string view was worth +355 once the sites
 that stored one were made to copy, and the f64 +273 — each measured, against a
-leaf histogram that had ranked them differently. The declared field width
-was worth the 81 it was measured at — every construction with a wide field,
-`ir.Op`'s f64 and i64 among them, resolved its declaration — and `.with`
-+233: the builtin-call leaf was 453 functions of which 439 were a `.with`,
-which a probe keyed by callee showed and the bare leaf histogram could not.
-The callee leaf is the same shape: keyed by name it is a handful of runtime
-builtins (`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the
-`astwalk` folds that take a function value, each with its closures behind
-it. A further 259 functions produce and plan but are refused by the unit
-planner for an `.append` whose receiver is not moved, 44 for a `.with` under
-the same rule, and 7 by physical RC lowering for an unsupported value type.
-The flat tuple destructure was worth +19 lowered against a leaf of 321: a
-probe keyed by pattern shape showed the leaf was entirely the flat tuple
-form, and nearly every function holding one refuses again one leaf further
-in, which is what moved the callee, name and record-literal leaves up. The
-module-level constant closed the name leaf outright, +78 lowered of 393: a
-`const` is a zero-parameter function to the parser, the AST lowering calls
-one on a bare reference, and so does this boundary, when the name has a
-zero-parameter contract whose result is the checked type — a reference to a
-function VALUE is typed as a function, never as the result, so it takes the
-address form above instead. Nearly every constant's reader refuses again at
-the callee leaf.
-The void call and the six builtin contracts were worth +201 together; keyed
-by callee, the leaf that remains is the function value — the `astwalk`
-folds and the closures behind them — and the builtins whose result is an
-enum (`env`, `read_file`) or whose vocabulary is not here yet. The
-record-literal leaf is the same leaf in disguise: a probe keyed by the
-checker's reason showed every one a field whose value is such a call.
-The literal tree, the destination-typed literal and the string loop were
-worth +62 together: the iterable leaf (67) closed outright and the two
-literal mismatches with it. What remains of the binding-mismatch leaf is the
-lifted lambda body reading its captures out of the untyped `__env` word
-array — a closure shape, not a literal one. A shift whose count is another
-integer width — `n << k` with `n: i64` and `k: i32` — was the operator leaf
-(52); the count now reaches the operator through a `cast` to the value's
-width, which is the masking the runtime does anyway, worth +41.
+leaf histogram that had ranked them differently. The declared field width was
+worth the 81 it was measured at — every construction with a wide field,
+`ir.Op`'s f64 and i64 among them, resolved its declaration — and `.with` +233:
+the builtin-call leaf was 453 functions of which 439 were a `.with`, which a
+probe keyed by callee showed and the bare leaf histogram could not. The callee
+leaf is the same shape: keyed by name it is a handful of runtime builtins
+(`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the `astwalk`
+folds that take a function value, each with its closures behind it. The unit
+planner refuses nothing now; what produces and plans but does not lower is 14
+functions with a value type physical RC does not carry. The flat tuple
+destructure was worth +19 lowered against a leaf of 321: a probe keyed by
+pattern shape showed the leaf was entirely the flat tuple form, and nearly
+every function holding one refuses again one leaf further in, which is what
+moved the callee, name and record-literal leaves up. The module-level constant
+closed the name leaf outright, +78 lowered of 393: a `const` is a
+zero-parameter function to the parser, the AST lowering calls one on a bare
+reference, and so does this boundary, when the name has a zero-parameter
+contract whose result is the checked type — a reference to a function VALUE is
+typed as a function, never as the result, so it takes the address form above
+instead. Nearly every constant's reader refuses again at the callee leaf. The
+void call and the six builtin contracts were worth +201 together; keyed by
+callee, the leaf that remains is the function value — the `astwalk` folds and
+the closures behind them — and the builtins whose result is an enum (`env`,
+`read_file`) or whose vocabulary is not here yet. The record-literal leaf is
+the same leaf in disguise: a probe keyed by the checker's reason showed every
+one a field whose value is such a call. The literal tree, the
+destination-typed literal and the string loop were worth +62 together: the
+iterable leaf (67) closed outright and the two literal mismatches with it.
+What remains of the binding-mismatch leaf is the lifted lambda body reading
+its captures out of the untyped `__env` word array — a closure shape, not a
+literal one. A shift whose count is another integer width — `n << k` with `n:
+i64` and `k: i32` — was the operator leaf (52); the count now reaches the
+operator through a `cast` to the value's width, which is the masking the
+runtime does anyway, worth +41.
 
 The no-contract refusal names its callee now, so the census splits that
 leaf by builtin on its own: the `astwalk` folds that take a function value
@@ -511,20 +524,44 @@ builtin signature table for `check_expr` would move the first two, but it
 retypes every builtin call in the twelve diagnostic walkers with it, so it is
 its own change rather than a record one.
 
+The `.append` receiver gate is gone, +295 planned and +288 lowered. A probe
+keyed by the receiver's mode and defining instruction ranked the 295 refusals
+and disagreed with the note this gate was deferred on: not one receiver was
+owned-but-live, and not one was a borrowed-parameter accumulator in a loop.
+They were 151 appends and 5 withs on a borrowed PARAMETER, 99 appends and 39
+withs on a record FIELD read — the immutable-update threading shape, where the
+AST lowering already clones (`irlower.lower_arr_append_value`) — and one on an
+array element. The loop accumulator plans either way,
+because what its body appends to is the header PHI, and a phi is a unit of
+this function's own however its sources reached it.
+
+What the gate was guarding was real but was not the receiver's mode: the
+runtime's push gives the receiver's unit back only at rc == 1, so a receiver
+shared at the push kept a count nobody released, and the borrowed-parameter
+accumulator that planned leaked one buffer per call. Emitting the count test
+in this lowering rather than leaning on the shared helper closed that and made
+the mode irrelevant in the same move.
+
+The copy the not-moved receiver takes is one whole array per push, which is
+O(n^2) bytes when the shape is a loop: a field-receiver accumulator over n
+steps allocates 3n + 2 blocks and copies 4n(n-1) bytes, measured at 770
+allocations for n = 256 against 8 for the sole-owner local form, and 2.3 s
+against 0.001 s at n = 16,384. That is the cost the AST lowering pays too
+until its escape analysis (`irlower.field_append_inplace_sites_of`, native's
+`fieldPlaceAppendCopies` inverted) exempts a site; the analogue here is the
+next optimisation this boundary wants, not a correctness gap.
+
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,
-and the function value, which is a shape this boundary has no form for yet;
-the unresolved variant field type is the next measured leaf. The `.append`
-receiver gate stays deferred: it needs a clone form for a receiver
-The function value and the indirect call above closed the shape half of that
-leaf and were worth +3 lowered (5,897 to 5,900), which is the measurement and
-not the histogram: the fn-value leaf is almost entirely the `astwalk` folds,
-and those are refused for a reason a form for the ADDRESS does not touch.
+and the function value, whose shape half the indirect call form below closed.
+That was worth +3 lowered, which is the measurement and not the histogram:
+the fn-value leaf is almost entirely the `astwalk` folds, and those are
+refused for a reason a form for the ADDRESS does not touch.
 
 **The `astwalk` fold family stays refused, and the reason is not
-vocabulary.** It is the largest single leaf — 538 functions between
-`fold_stmt_nodes` (221), `fold_stmt_spine` (142), `fold_expr_pruned` (118),
-`fold_stmt` (37), `fold_stmt_pruned` (10), `fold_expr_nodes` (7) and two more
+vocabulary.** It is the largest single leaf — 547 functions between
+`fold_stmt_nodes` (224), `fold_stmt_spine` (142), `fold_expr_pruned` (119),
+`fold_stmt` (40), `fold_stmt_pruned` (12), `fold_expr_nodes` (7) and two more
 — and every one of them threads an accumulator typed by an ERASED type
 variable, for which this boundary has no sound unit rule:
 
@@ -558,13 +595,9 @@ function-value ABI settled first — whether an indirect callee may consume a
 reference, and what a generic's erased result owns — which is a language
 decision, not a vocabulary one.
 
-Next, by measured leaf: the record literal (228) and the builtins whose
-result is an instantiated builtin union, `env` (145) and `read_file` (26);
-both are shapes rather than vocabulary. The `.append` receiver gate
-stays deferred: it needs a clone form for a receiver
-the planner does not move (the `op_arr_slice` shape
-`irlower.lower_arr_append_value` already uses) and carries a real cost — the
-dominant refused shape is a borrowed-parameter accumulator in a loop, where a
-clone is O(n^2) bytes and native escapes it with an exemption this vocabulary
-has no analogue for. Then a production consumer that lowers produced functions
-through this pipeline and feeds `caller_sigs` to the remaining AST callers.
+Next, by measured leaf: the unresolved variant field type (98), the binding
+whose declared type is not its value's (75), the record literal (74) and the
+builtins whose result is an instantiated builtin union, `env` (158) and
+`read_file` (26); all shapes rather than vocabulary. Then a production
+consumer that lowers produced functions through this pipeline and feeds
+`caller_sigs` to the remaining AST callers.

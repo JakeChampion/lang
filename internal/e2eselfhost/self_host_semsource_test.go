@@ -76,9 +76,9 @@ function built(s: string): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_app
 function find_byte(s: string, b: i32): i32 { return __memchr(s, b, 1); }
 function refused_void_value(): i32 { var n: i32 = noop(); return n; }
 function array_length(xs: i32[]): i32 { return xs.len(); }
-// Produced, then refused by the PLAN: a borrowed receiver's unit is not this
-// function's to hand over, so the golden records the move gate rather than a
-// call-site refusal.
+// A borrowed receiver's box is not this function's to grow: the push takes a
+// unit the plan retains at the call and hands back a copy, where the counted
+// receiver below moves its own.
 function borrowed_append(xs: i32[]): i32[] { return xs.append(1); }
 // The produced for-loop's shape, pinned: the index is a const -1 carried by the
 // header phi, the advance is the FIRST thing in the header, and the test comes
@@ -618,6 +618,66 @@ enum Chain { End, Link(i32, Chain) }
     return xs;
 }
 @noinline function push_temp(n: i32): i32 { return fill(n).append(99).len(); }
+// The receiver the loop header carries is the caller's box on the first step:
+// the header retained it, so the push has a unit but not the only one. The
+// runtime's push leaves a shared receiver's count alone and hands back an
+// un-share copy, so the release that makes the push take exactly one unit is
+// the lowering's. grow_to(9) leaves spare capacity, which is where an in-place
+// grow would also show up in the caller's own length.
+@noinline function borrow_acc(xs: i32[], n: i32): i32 {
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(100 + i); i = i + 1; }
+    return xs.len();
+}
+// A receiver the plan does not MOVE: its unit is retained at the push, so the
+// count test takes the copy and the box handed back is one nobody else names
+// -- the source keeps its length and its elements. A borrowed parameter's box,
+// a field's, an element of a borrowed array of arrays, an own parameter's read
+// again after the push, and the field receiver in a loop, which is the
+// immutable-update threading shape and copies once per step.
+@noinline function push_borrowed(xs: i32[], v: i32): i32[] { return xs.append(v); }
+@noinline function set_borrowed(xs: i32[], i: i32, v: i32): i32[] { return xs.with(i, v); }
+@noinline function push_field_len(p: P, v: i32): i32 {
+    var q: P = P { ...p, xs: p.xs.append(v) };
+    return q.xs.len() * 10 + p.xs.len();
+}
+@noinline function set_field_at(p: P, i: i32, v: i32): i32 {
+    var q: P = P { ...p, xs: p.xs.with(i, v) };
+    return q.xs[i] * 10 + p.xs[i];
+}
+@noinline function push_elem_len(rs: i32[][], v: i32): i32 {
+    var ys: i32[] = rs[0].append(v);
+    return ys.len() * 10 + rs[0].len();
+}
+@noinline function elem_push(v: i32): i32 {
+    var rs: i32[][] = [[1, 2], [3, 4]];
+    return push_elem_len(rs, v);
+}
+@noinline function push_kept(own xs: i32[], v: i32): i32 {
+    var ys: i32[] = xs.append(v);
+    return ys.len() * 10 + xs.len();
+}
+@noinline function build_rows(n: i32): i32 {
+    var p: P = P { n: 0, xs: [] };
+    var i: i32 = 0;
+    while (i < n) { p = P { ...p, xs: p.xs.append(i) }; i = i + 1; }
+    return p.xs.len() * 10 + p.xs[n - 1];
+}
+// A counted element type through the same copy: it duplicates every element
+// pointer, so both buffers hold a count of each, and the element the store
+// replaces gives back the one it held.
+@noinline function push_word(ws: string[], w: string): string[] { return ws.append(w + ""); }
+@noinline function word_lens(n: i32): i32 {
+    var ws: string[] = ["ab", "cd"];
+    var vs: string[] = push_word(ws, "xyz");
+    return vs.len() * 100 + vs[2].len() * 10 + ws.len() + n;
+}
+@noinline function set_word_borrowed(ws: string[], w: string): string[] { return ws.with(0, w + ""); }
+@noinline function word_set(n: i32): i32 {
+    var ws: string[] = ["ab", "cd"];
+    var vs: string[] = set_word_borrowed(ws, "wxyz");
+    return vs[0].len() * 10 + ws[0].len() + n;
+}
 // A reference element: the array takes the value's unit, string or array.
 @noinline function words(n: i32): string[] {
     var out: string[] = [];
@@ -1221,6 +1281,7 @@ function main(): i32 {
     print_int(grown_size(0)); print(""); print_int(inner_size(lp)); print("");
     var g: i32[] = grow_to(9);
     print_int(g.len()); print(""); print_int(sum_all(g)); print("");
+    print_int(borrow_acc(g, 3)); print(""); print_int(g.len()); print("");
     print_int(sum_all(grow_to(0))); print(""); print_int(push_temp(1)); print("");
     print_int(row_total(4)); print(""); print_int(word_bytes(3)); print("");
     print_int(sum_for(lens)); print(""); print_int(skip_two(lens)); print("");
@@ -1285,6 +1346,13 @@ function main(): i32 {
     print_int(call_twice(3)); print(""); print_int(lend_array(2)); print("");
     print_int(lend_text(1)); print(""); print_int(box_via(4)); print("");
     print_int(pick_fn(3)); print(""); print_int(pick_fn(1)); print("");
+    var bxs: i32[] = fill(2);
+    var bp: P = P { n: 1, xs: [1, 2] };
+    print_int(sum_all(push_borrowed(bxs, 9))); print(""); print_int(bxs.len()); print("");
+    print_int(sum_all(set_borrowed(bxs, 0, 9))); print(""); print_int(bxs[0]); print("");
+    print_int(push_field_len(bp, 5)); print(""); print_int(set_field_at(bp, 0, 7)); print("");
+    print_int(elem_push(9)); print(""); print_int(push_kept(fill(1), 9)); print("");
+    print_int(build_rows(4)); print(""); print_int(word_lens(0)); print(""); print_int(word_set(0)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1314,6 +1382,12 @@ function main(): i32 {
 // main owns rather than a make() result, which an AST caller still leaks by
 // the documented floor in ssarc.box_only_result.
 // grow_to(9) is [0..8]: 9 long, summing to 36; grow_to(0) is empty.
+// borrow_acc(g, 3) is 12 and g is still 9 long afterwards.
+// The not-moved receivers all copy: push_borrowed over fill(2) sums 18 and
+// leaves bxs 3 long, set_borrowed sums 16 and leaves bxs[0] at 2,
+// push_field_len is 3 and 2, set_field_at 7 and 1, elem_push 3 and 2,
+// push_kept 4 and 3, build_rows [0..3] and word_lens 3 words of which the
+// pushed one is 3 bytes, word_set a 4-byte replacement over a 2-byte element.
 // push_temp(1) pushes onto [1, 2, 3] for 4. row_total(4) reads element 0 of
 // fill(0..3) = 0+1+2+3 = 6; word_bytes(3) is three "wx" at 2 bytes = 6.
 // The for-loop tail runs over lens = fill(2) = [2, 3, 4]: sum 9; skip_two drops
@@ -1322,7 +1396,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1407,7 +1481,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

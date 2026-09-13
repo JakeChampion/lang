@@ -181,7 +181,9 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
     return live;
 }
 // A construction takes one unit per reference operand. A call takes one per
-// counted parameter; a borrowed parameter only reads the caller's unit.
+// counted parameter; a borrowed parameter only reads the caller's unit. An
+// append or a with takes one for its receiver, which a receiver this function
+// does not own reaches by retaining.
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
     var counted: boolean[] = [];
@@ -409,20 +411,6 @@ function replay(state: boolean[], s: Step, wanted: Supply[], result: i32, owned:
 struct ReplayProgress { why: string, state: boolean[], count: i32 }
 function progress_error(why: string): ReplayProgress { return ReplayProgress { why: why, state: [], count: 0 }; }
 
-// The runtime's push hands back the receiver's OWN box when the push fit and a
-// fresh one when it grew, so the result is the receiver's unit rather than a
-// second one. Only a receiver whose unit is moved here can be that: a retained
-// receiver forces the un-share copy and leaves the retained count unreleased,
-// and a borrowed one would have the result aliasing a box someone else owns.
-// A receiver still live after the push needs a clone form this vocabulary does
-// not have yet, so it is refused rather than lowered.
-function receiver_move_error(s: Step, op: string): string {
-    for got in s.supplies {
-        if (got.slot == 0 && got.mode != move_unit()) { return op + " receiver is not consumed"; }
-    }
-    return "";
-}
-
 function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
     var next: boolean[] = state;
     var count: i32 = 0;
@@ -437,10 +425,6 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolea
             if (at < 0) { return progress_error("missing or duplicate operation step"); }
             var done: Ledger = replay(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
             if (!done.ok) { return progress_error(done.why); }
-            if (ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with()) {
-                var why: string = receiver_move_error(p.steps[at], ssa.kind_name(ins.kind_tag));
-                if (why != "") { return progress_error(why); }
-            }
             next = done.bits;
             count = count + 1;
         }
