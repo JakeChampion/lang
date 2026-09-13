@@ -820,6 +820,49 @@ pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
   return w;
 }
 
+// `push_u64(h, n)` — `n` in decimal, pushed into a builder two digits
+// per range push out of a static table, so a counting utility's number
+// costs no allocation and one division per pair rather than per digit.
+pub function push_u64(h: usize, n: u64): void {
+  if (n >= 100 as u64) {
+    push_u64(h, n / (100 as u64));
+    var k: i32 = (n % (100 as u64)) as i32 * 2;
+    buf_push_range(h, digit_pairs(), k, k + 2);
+    return;
+  }
+  if (n >= 10 as u64) {
+    var k2: i32 = n as i32 * 2;
+    buf_push_range(h, digit_pairs(), k2, k2 + 2);
+    return;
+  }
+  buf_push_byte(h, 48 + n as i32);
+}
+
+// `push_i64(h, n)` — `push_u64` with a sign.
+pub function push_i64(h: usize, n: i64): void {
+  if (n < 0 as i64) {
+    buf_push_byte(h, 45);
+    push_u64(h, (0 as u64) - (n as u64));
+    return;
+  }
+  push_u64(h, n as u64);
+}
+
+// `decimal_len(n)` — how many bytes `push_u64` writes for `n`.
+pub function decimal_len(n: u64): i32 {
+  var d: i32 = 1;
+  var x: u64 = n;
+  while (x >= 10 as u64) {
+    d = d + 1;
+    x = x / (10 as u64);
+  }
+  return d;
+}
+
+function digit_pairs(): string {
+  return "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
+}
+
 // `flush(o)` — write what is buffered now; dies like `put` when that
 // fails. Rebind: `o = gnu.flush(o);`.
 pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
