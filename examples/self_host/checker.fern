@@ -2901,6 +2901,53 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
   return (rt, bound);
 }
 
+// A call of a name with no declaration of its own. `__mkclo$<body>(captures)`
+// is the lambda lift's closure constructor: the environment box holds <body>'s
+// address and the captures that body reads back out of its first parameter, so
+// the box's type is what <body> promises MINUS that parameter. No source
+// identifier may hold a `$`, so only a lifted tree reaches this — and without
+// it the box types to unknown and collapses whatever expression holds it.
+function undeclared_call_type(name: string, s: Scope): typeinfo.Type {
+  var body: string = parser.mkclo_body(name);
+  if (body.len() == 0 || !s.has_sig(body)) {
+    return t_unknown("undefined function: " + name);
+  }
+  var sig: FuncSig = s.lookup_sig(body);
+  if (!closure_env_param(sig)) {
+    return t_unknown("undefined function: " + name);
+  }
+  return t_func_after_env(sig);
+}
+
+// A hoisted closure body reads its captures through a leading `__env` array of
+// machine words; a declaration without one is not a body a box was built for.
+function closure_env_param(sig: FuncSig): boolean {
+  if (sig.param_types.len() == 0) {
+    return false;
+  }
+  match (sig.param_types[0]) {
+    typeinfo.TypeArray(a) => {
+      match (a.elem) {
+        typeinfo.TypeI32(_) => { return true; },
+        _ => { return false; }
+      }
+    },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// The type the box hands out: the body's signature without its environment.
+function t_func_after_env(sig: FuncSig): typeinfo.Type {
+  var params: typeinfo.Type[] = [];
+  var i: i32 = 1;
+  while (i < sig.param_types.len()) {
+    params = params.append(sig.param_types[i]);
+    i = i + 1;
+  }
+  return typeinfo.TypeFunc { param_types: params, ret_type: sig.ret_type, params_known: true };
+}
+
 // check_call_expr types an ExprCall (plain / closure / method call).
 // Extracted verbatim from check_expr's ExprCall arm to keep check_expr
 // under the self-host oversized-function compile threshold (#2720); the
@@ -3334,7 +3381,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_union(ctor_enum);
   }
   if (!s.has_sig(name)) {
-    return t_unknown("undefined function: " + name);
+    return undeclared_call_type(name, s);
   }
   var sig: FuncSig = s.lookup_sig(name);
   if (c.args.len() != sig.param_types.len()) {
