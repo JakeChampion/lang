@@ -522,8 +522,15 @@ func referenceBin(t *testing.T, util string) string {
 		if _, err := os.Stat(bin); err != nil {
 			continue
 		}
-		if _, err := gnuVersionOf(bin); err != nil {
-			tried = append(tried, fmt.Sprintf("%s (%v)", bin, err))
+		// test(1) answers no --version: POSIX reserves every argument for
+		// the expression, so only `[` (built from the same source, one
+		// directory over) can vouch for it.
+		probe := bin
+		if util == "test" {
+			probe = filepath.Join(cand, "[")
+		}
+		if _, err := gnuVersionOf(probe); err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", probe, err))
 			continue
 		}
 		refBins[util] = bin

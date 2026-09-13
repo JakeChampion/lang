@@ -6354,6 +6354,11 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
             var fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
             s = fvPre.state;
         }
+        // WinSize for __fern_window_size's shape label, gated the way FsStat is.
+        if (s.has_need("window_size")) {
+            var wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
+            s = wsPre.state;
+        }
         // IoError variant shapes for __fern_io_error (#4624, the arm64 leg
         // of #4370) — interned early for the same reason as FileStat above.
         var ioe1: asmcore.ShapeRefOut = asmcore.shape_ref(s, "NotFound");

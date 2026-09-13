@@ -86,6 +86,35 @@ function main(): i32 {
     if (bigger(array.reverse(xs)[0], 1)) { return 7; }
     return 3;
 }`},
+
+	// A RECEIVER METHOD's result as the argument: `assert_eq(s.finish(),
+	// b.finish())`. `mono_infer` typed a method call only for `.to_string()`,
+	// the array-method and generic-struct folds, and an associated
+	// `Type.m()`; a plain user method on a struct value inferred "unknown",
+	// the call stayed generic, and the self-host refused
+	// examples/tests/hash_checksums_test.fern with E001 on `test__assert_eq`.
+	// The receiver's declared method answers now, keyed the way an associated
+	// call is; the same-module and the module-qualified receiver both.
+	{"method-result-args", `import "core/cmp";
+struct S { n: u32 }
+function (s: S) finish(): u32 { return s.n * 2u32; }
+function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
+function main(): i32 {
+    var a: S = S { n: 4u32 };
+    var b: S = S { n: 3u32 };
+    if (bigger(a.finish(), b.finish())) { return 7; }
+    return 3;
+}`},
+
+	{"method-result-args-imported", `import "core/cmp";
+import "std/hash" as hash;
+function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
+function main(): i32 {
+    var s: hash.SysvSum = hash.sysv_sum_new().update("abc");
+    var e: hash.SysvSum = hash.sysv_sum_new();
+    if (bigger(s.finish(), e.finish())) { return 7; }
+    return 3;
+}`},
 }
 
 func TestSelfHostMonoIndexArgIR(t *testing.T) {

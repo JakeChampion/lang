@@ -9466,6 +9466,26 @@ pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return e;
 }
 
+// recv_method_ret_of is the declared return type of a receiver method call
+// `recv.m(args)` whose receiver type the walk knows. A generic receiver's
+// method returns its type variable, which names nothing concrete.
+function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string {
+    var rvt: string = mono_infer(cfa.obj, env, funcs);
+    if (rvt.len() == 0) { return ""; }
+    var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
+    if (looks_type_var(mrt)) { return ""; }
+    return mrt;
+}
+
+// stamped_scalar reads the checker's tag off a call the walk could not type
+// (docs/TYPED-IR-REWRITE.md), admitted only at a scalar or string, where the
+// tag and the declared spelling coincide. Empty in an unannotated driver.
+function stamped_scalar(tag: string): string {
+    if (tag == "i32" || tag == "i64" || tag == "u8" || tag == "u32" || tag == "u64" || tag == "usize"
+        || tag == "f32" || tag == "f64" || tag == "string" || tag == "boolean") { return tag; }
+    return "";
+}
+
 // mono_infer computes a coarse type-name for an expression, enough to pick
 // the right clone. Unknown shapes return "", leaving the call generic.
 function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
@@ -9543,7 +9563,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                     // bare type variable is never a usable concrete type, so
                     // report "unknown" (the other, concrete-literal arg still
                     // binds the call at `i32`).
-                    if (looks_type_var(crt)) { return ""; }
+                    if (looks_type_var(crt) || crt.len() == 0) { return stamped_scalar(c.ty); }
                     return crt;
                 },
                 ast.ExprFieldAccess(cfa) => {
@@ -9588,6 +9608,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                             }
                         }
                     }
+                    var mrt: string = recv_method_ret_of(cfa, env, funcs);
+                    if (mrt.len() > 0) { return mrt; }
                     // Associated call `Type.method()` (e.g. `Inner.default()`):
                     // the object is a bare type name, so infer the method's
                     // return type — lets a generic constructor body infer its
@@ -9596,13 +9618,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                         ast.ExprIdent(oid) => {
                             var qrt: string = call_ret_type(funcs, oid.name + "." + cfa.field, c.args, env);
                             if (qrt.len() > 0) { return qrt; }
-                            return assoc_ret_of(funcs.decls, oid.name, cfa.field);
+                            var art: string = assoc_ret_of(funcs.decls, oid.name, cfa.field);
+                            if (art.len() > 0) { return art; }
                         },
-                        _ => { return ""; }
+                        _ => {}
                     }
-                    return "";
+                    return stamped_scalar(c.ty);
                 },
-                _ => { return ""; }
+                _ => { return stamped_scalar(c.ty); }
             }
             return "";
         },

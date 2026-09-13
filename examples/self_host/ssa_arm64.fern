@@ -254,8 +254,10 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
             out = out + "    ldr x9, " + slot(ins.args[0]) + "\n";
             return out + "    str x9, " + slot(ins.result) + "\n";
         }
-        // i32 -> i64 widen: sxtw sign-extends the 32-bit source into x9, uxtw
-        // zero-extends. The i32 operand loads at its width (w9); result 64-bit.
+        // i32 -> i64 widen: sxtw sign-extends the 32-bit source into x9; a
+        // 32-bit mov zero-extends it (the encoding GNU as gives `uxtw x9, w9`,
+        // an alias the in-process assembler does not spell). The i32 operand
+        // loads at its width (w9); result 64-bit.
         if (ins.str == "sext_i64") {
             out = load_op(reg_of, widths, ins.args[0], "a", out);
             out = out + "    sxtw x9, w9\n";
@@ -263,7 +265,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         }
         if (ins.str == "zext_i64") {
             out = load_op(reg_of, widths, ins.args[0], "a", out);
-            out = out + "    uxtw x9, w9\n";
+            out = out + "    mov w9, w9\n";
             return store_res(reg_of, widths, ins.result, "a", out);
         }
         // i64 -> i32 truncate: load the 64-bit operand (x9), store the low word
@@ -801,7 +803,7 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     parts = parts.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
     parts = parts.append("    stp x19, x20, [sp, #-16]!\n    stp x21, x22, [sp, #-16]!\n");
     parts = parts.append("    mov x19, x0\n    mov x20, x1\n");
-    parts = parts.append("    ldr w21, [x20]\n    uxtw x21, w21\n");
+    parts = parts.append("    ldr w21, [x20]\n");
     parts = parts.append("    cbz x21, .Lsbufpush_done\n");
     parts = parts.append("    ldr x0, [x19, #8]\n    add x0, x0, x21\n");
     parts = parts.append("    ldr x1, [x19, #16]\n    cmp x0, x1\n    b.ls .Lsbufpush_fits\n");

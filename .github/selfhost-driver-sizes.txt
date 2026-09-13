@@ -318,7 +318,7 @@
 fern.fern 11540956
 asm_load_run.fern 8325836
 asm_modload_run.fern 7940084
-asm_ir_run.fern 7705020
+asm_ir_run.fern 8091548
 asm_run.fern 7298796
 wasm_ir_run.fern 7377260
 wasm_run.fern 7352348

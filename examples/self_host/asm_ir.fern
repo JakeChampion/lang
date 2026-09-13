@@ -5115,9 +5115,9 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    call __fn___fern_timer_fd\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("timer_fd");
         } else if (o.kind_tag == 276) {  // window_size
-            // [fd]; __fern_window_size(%rdi=fd) -> Result[WinSize, IoError].
-            s = s.write("    popq %rdi\n");
-            s = s.write("    call __fn___fern_window_size\n    pushq %rax\n");
+            // [fd]; __fern_window_size(fd) -> Result[WinSize, IoError].
+            // [fd] IS param[0] already; the stack ABI needs no marshalling.
+            s = s.write("    call __fn___fern_window_size\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("window_size");
         } else if (o.kind_tag == 232) {  // isatty
             // [fd]; __fern_isatty(%rdi=fd) -> 1 when fd is a terminal, else 0.
