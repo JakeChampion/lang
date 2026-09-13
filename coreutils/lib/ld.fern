@@ -23,13 +23,14 @@
 // the checker runs, so the other machines' arms are pruned and a build
 // carries exactly one model.
 //
-// A value is `m × 2^e` with `m` a bigint, because 113 bits do not fit a
-// u64 and the round-to-nearest-even-plus-sticky logic is the same shape
-// at any width. Canonical form: a normal has `m` exactly `mant` bits
-// wide; a subnormal, and zero, has `e` pinned at the format's least
-// exponent.
+// A value is `m × 2^e` with `m` a 128-bit significand in two machine
+// words, because 113 bits do not fit one and the round-to-nearest-even-
+// plus-sticky logic is the same shape at any width. Canonical form: a
+// normal has `m` exactly `mant` bits wide; a subnormal, and zero, has
+// `e` pinned at the format's least exponent.
 import "std/string";
 import "std/array";
+import "std/u64";
 import "core/bigint";
 
 // ---- the format ------------------------------------------------------------
@@ -111,20 +112,21 @@ function hex_shift(f: Format): i32 {
 }
 
 // ---- values ----------------------------------------------------------------
-// `LD` — a long double as `m × 2^e`, with `e` the exponent of `m`'s
-// lowest bit. `kind` is 0 for finite, 1 for infinity, 2 for NaN.
-pub struct LD { neg: boolean, kind: i32, m: bigint.BigInt, e: i32 }
+// `LD` — a long double as `m × 2^e`, with `m` the 128-bit significand
+// `hi:lo` and `e` the exponent of its lowest bit. `kind` is 0 for
+// finite, 1 for infinity, 2 for NaN.
+pub struct LD { neg: boolean, kind: i32, hi: u64, lo: u64, e: i32 }
 
 pub function (f: Format) zero(neg: boolean): LD {
-  return LD { neg: neg, kind: 0, m: bigint.zero(), e: f.min_exp() };
+  return LD { neg: neg, kind: 0, hi: 0 as u64, lo: 0 as u64, e: 2 - f.emax - f.mant };
 }
 
 pub function inf(neg: boolean): LD {
-  return LD { neg: neg, kind: 1, m: bigint.zero(), e: 0 };
+  return LD { neg: neg, kind: 1, hi: 0 as u64, lo: 0 as u64, e: 0 };
 }
 
 pub function nan(neg: boolean): LD {
-  return LD { neg: neg, kind: 2, m: bigint.zero(), e: 0 };
+  return LD { neg: neg, kind: 2, hi: 0 as u64, lo: 0 as u64, e: 0 };
 }
 
 pub function (v: LD) is_finite(): boolean {
@@ -140,7 +142,7 @@ pub function (v: LD) is_nan(): boolean {
 }
 
 pub function (v: LD) is_zero(): boolean {
-  return v.kind == 0 && v.m.is_zero();
+  return v.kind == 0 && v.hi == 0 as u64 && v.lo == 0 as u64;
 }
 
 pub function (v: LD) negate(): LD {
@@ -151,83 +153,286 @@ pub function (v: LD) abs(): LD {
   return LD { ...v, neg: false };
 }
 
-// ---- rounding --------------------------------------------------------------
-// `Rounded` — a significand cut to the format's width: `lsb` the
-// exponent of its lowest bit (one higher than asked when rounding
-// carried out of the top), and whether anything was lost.
-struct Rounded { m: bigint.BigInt, lsb: i32, inexact: boolean }
-
-// `round_bits(f, q, e, lsb, sticky)` — q × 2^e (plus a little when
-// `sticky`) rounded to a multiple of 2^lsb, half to even. A carry that
-// widens the result past the format renormalises by one bit; a carry
-// that only lifts a subnormal to the least normal does not, because
-// that value already has the least normal's exponent.
-function round_bits(f: Format, q: bigint.BigInt, e: i32, lsb: i32, sticky: boolean): Rounded {
-  var shift: i32 = lsb - e;
-  if (shift <= 0) {
-    return Rounded { m: q.shl(0 - shift), lsb: lsb, inexact: sticky };
-  }
-  var kept: bigint.BigInt = q.shr(shift);
-  var dropped: bigint.BigInt = q.sub(kept.shl(shift));
-  var half: bigint.BigInt = bigint.from_i64(1 as i64).shl(shift - 1);
-  var m: bigint.BigInt = kept;
-  var c: i32 = dropped.cmp(half);
-  var inexact: boolean = sticky || !dropped.is_zero();
-  var up: boolean = c > 0 || c == 0 && (sticky || m.bit(0));
-  var out_lsb: i32 = lsb;
-  if (up) {
-    m = m.add(bigint.from_i64(1 as i64));
-    if (m.bit_length() > f.mant) {
-      m = m.shr(1);
-      out_lsb = lsb + 1;
-    }
-  }
-  return Rounded { m: m, lsb: out_lsb, inexact: inexact };
+// The exponent of the value's leading bit; meaningless for zero.
+function top_of(v: LD): i32 {
+  return v.e + bit_length128(v.hi, v.lo) - 1;
 }
 
-// `round(f, q, e, sticky, neg)` — the long double nearest q × 2^e, and
-// whether strtold would set ERANGE for it: overflow to infinity, or a
-// result that is tiny AND inexact. Tininess is judged after rounding to
-// the normal precision, so a value just under the least normal that
-// rounds up to it is not tiny.
+// Whether a finite value is zero or below the format's least normal.
+pub function (f: Format) is_subnormal(v: LD): boolean {
+  if (v.is_zero()) {
+    return true;
+  }
+  return top_of(v) < f.emin();
+}
+
+// ---- 128-bit words -----------------------------------------------------------
+// A significand is two u64 words, `hi:lo`. Every helper takes a shift
+// count in [0, 128] and answers one word, because a pair would be a
+// tuple and a tuple return allocates. A u64 shift count is masked to
+// six bits by the machine, so 64 and up are answered here explicitly.
+function bit_length128(hi: u64, lo: u64): i32 {
+  if (hi != 0 as u64) {
+    return 128 - __clz64(hi);
+  }
+  return 64 - __clz64(lo);
+}
+
+function trailing_zeros128(hi: u64, lo: u64): i32 {
+  if (lo != 0 as u64) {
+    return __ctz64(lo);
+  }
+  return 64 + __ctz64(hi);
+}
+
+function shl_hi(hi: u64, lo: u64, k: i32): u64 {
+  if (k == 0) {
+    return hi;
+  }
+  if (k >= 128) {
+    return 0 as u64;
+  }
+  if (k >= 64) {
+    return lo << (k - 64) as u64;
+  }
+  return hi << k as u64 | lo >> (64 - k) as u64;
+}
+
+function shl_lo(lo: u64, k: i32): u64 {
+  if (k >= 64) {
+    return 0 as u64;
+  }
+  return lo << k as u64;
+}
+
+function shr_hi(hi: u64, k: i32): u64 {
+  if (k >= 64) {
+    return 0 as u64;
+  }
+  return hi >> k as u64;
+}
+
+function shr_lo(hi: u64, lo: u64, k: i32): u64 {
+  if (k == 0) {
+    return lo;
+  }
+  if (k >= 128) {
+    return 0 as u64;
+  }
+  if (k >= 64) {
+    return hi >> (k - 64) as u64;
+  }
+  return lo >> k as u64 | hi << (64 - k) as u64;
+}
+
+// The low `k` bits set, for k in [0, 64).
+function low_mask(k: i32): u64 {
+  return (1 as u64 << k as u64) - 1 as u64;
+}
+
+// Whether any of the low `k` bits is set.
+function low_bits_set(hi: u64, lo: u64, k: i32): boolean {
+  if (k <= 0) {
+    return false;
+  }
+  if (k >= 128) {
+    return hi != 0 as u64 || lo != 0 as u64;
+  }
+  if (k >= 64) {
+    return lo != 0 as u64 || (hi & low_mask(k - 64)) != 0 as u64;
+  }
+  return (lo & low_mask(k)) != 0 as u64;
+}
+
+function cmp128(ah: u64, al: u64, bh: u64, bl: u64): i32 {
+  if (ah != bh) {
+    if (ah < bh) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  if (al != bl) {
+    if (al < bl) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+// The high word of the 128-bit product x × y; the low word is the
+// machine's wrapping product. Four 32×32 partials, each of which fits.
+function mul_hi64(x: u64, y: u64): u64 {
+  var m: u64 = 4294967295 as u64;
+  var sh: u64 = 32 as u64;
+  var a: u64 = x >> sh;
+  var b: u64 = x & m;
+  var c: u64 = y >> sh;
+  var d: u64 = y & m;
+  var bd: u64 = b * d;
+  var ad: u64 = a * d;
+  var bc: u64 = b * c;
+  var mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
+  return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
+}
+
+// The high word of (ah:al) − (bh:bl), which requires the first to be
+// the larger; the low word is the machine's wrapping difference.
+function sub_hi(ah: u64, al: u64, bh: u64, bl: u64): u64 {
+  var hi: u64 = ah - bh;
+  if (al < bl) {
+    hi = hi - 1 as u64;
+  }
+  return hi;
+}
+
+// The significand as a bigint, for the operations whose exact
+// intermediate does not fit two words.
+function to_big(hi: u64, lo: u64): bigint.BigInt {
+  if (hi == 0 as u64) {
+    return bigint.from_u64(lo);
+  }
+  return bigint.from_u64(hi).shl(64).add(bigint.from_u64(lo));
+}
+
+// ---- rounding --------------------------------------------------------------
+// `round128(f, hi, lo, e, sticky, neg)` — the long double nearest
+// (hi:lo) × 2^e, plus a little when `sticky`, half to even. Overflow is
+// infinity; a value below half the least subnormal is zero. A value
+// under the least normal is rounded at the subnormal grid, and when
+// that carries it up to the least normal the two representations are
+// the same record, so one rounding covers both.
+//
+// The word shifts are written out rather than taken from the helpers
+// above: this is the one function every operation ends in, and on the
+// x86-64 backend a helper call costs more than the shift it wraps.
+function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boolean): LD {
+  var bl: i32 = 64 - __clz64(lo);
+  if (hi != 0 as u64) {
+    bl = 128 - __clz64(hi);
+  }
+  if (bl == 0) {
+    return f.zero(neg);
+  }
+  var top: i32 = e + bl - 1;
+  if (top > f.emax) {
+    return inf(neg);
+  }
+  // `emin` and `min_exp` spelled out: the accessors are calls, and
+  // this is where every operation ends.
+  var min_exp: i32 = 2 - f.emax - f.mant;
+  if (top < min_exp - 1) {
+    return f.zero(neg);
+  }
+  var at: i32 = top - (f.mant - 1);
+  if (top < 1 - f.emax) {
+    at = min_exp;
+  }
+  var shift: i32 = at - e;
+  if (shift <= 0) {
+    // Exact: the value has no more bits than the format keeps, so it
+    // is only moved up to its canonical width. The shift is under 128.
+    var k: i32 = 0 - shift;
+    if (k == 0) {
+      return LD { neg: neg, kind: 0, hi: hi, lo: lo, e: at };
+    }
+    if (k >= 64) {
+      return LD { neg: neg, kind: 0, hi: lo << (k - 64) as u64, lo: 0 as u64, e: at };
+    }
+    return LD { neg: neg, kind: 0, hi: hi << k as u64 | lo >> (64 - k) as u64, lo: lo << k as u64, e: at };
+  }
+  // Rounding: `shift` is in [1, bl], so at most 128. `mh:ml` is the
+  // kept part, `round` the first bit below it and `below` whether any
+  // bit under that one is set.
+  var mh: u64 = 0 as u64;
+  var ml: u64 = 0 as u64;
+  var round: boolean = false;
+  var below: boolean = sticky;
+  if (shift < 64) {
+    mh = hi >> shift as u64;
+    ml = lo >> shift as u64 | hi << (64 - shift) as u64;
+    round = (lo >> (shift - 1) as u64 & 1 as u64) == 1 as u64;
+    below = below || (lo & (1 as u64 << (shift - 1) as u64) - 1 as u64) != 0 as u64;
+  } else if (shift == 64) {
+    ml = hi;
+    round = lo >> 63 as u64 == 1 as u64;
+    below = below || lo << 1 as u64 != 0 as u64;
+  } else if (shift < 128) {
+    var t: i32 = shift - 64;
+    ml = hi >> t as u64;
+    round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
+    below = below || lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
+  } else {
+    round = hi >> 63 as u64 == 1 as u64;
+    below = below || lo != 0 as u64 || hi << 1 as u64 != 0 as u64;
+  }
+  if (round && (below || (ml & 1 as u64) == 1 as u64)) {
+    ml = ml + 1 as u64;
+    if (ml == 0 as u64) {
+      mh = mh + 1 as u64;
+    }
+    // A carry out of the top bit leaves a power of two one bit wider
+    // than the format, which drops back exactly.
+    var wide: boolean = false;
+    if (mh != 0 as u64) {
+      wide = 128 - __clz64(mh) > f.mant;
+    } else {
+      wide = 64 - __clz64(ml) > f.mant;
+    }
+    if (wide) {
+      ml = ml >> 1 as u64 | mh << 63 as u64;
+      mh = mh >> 1 as u64;
+      at = at + 1;
+    }
+  }
+  if (at + (f.mant - 1) > f.emax) {
+    return inf(neg);
+  }
+  return LD { neg: neg, kind: 0, hi: mh, lo: ml, e: at };
+}
+
+// `round(f, q, e, sticky, neg)` — `round128` for a bigint `q` of any
+// width, and whether strtold would set ERANGE for it: overflow to
+// infinity, or a result that is tiny AND inexact, tininess judged after
+// rounding. Only the top 128 bits of `q` reach the rounding; everything
+// below them is sticky, which decides the same tie the exact tail would.
 pub function (f: Format) round(q: bigint.BigInt, e: i32, sticky: boolean, neg: boolean): (LD, boolean) {
-  if (q.is_zero()) {
+  var bl: i32 = q.bit_length();
+  if (bl == 0) {
     return (f.zero(neg), false);
   }
-  var top: i32 = e + q.bit_length() - 1;
-  if (top > f.emax) {
-    return (inf(neg), true);
+  var k: i32 = bl - 128;
+  if (k < 0) {
+    k = 0;
   }
-  if (top < f.min_exp() - 1) {
-    return (f.zero(neg), true);
+  var t: bigint.BigInt = q.shr(k);
+  var hi: u64 = t.word64(1);
+  var lo: u64 = t.word64(0);
+  var st: boolean = sticky || q.has_low_bits(k);
+  var r: LD = round128(f, hi, lo, e + k, st, neg);
+  if (r.kind == 1) {
+    return (r, true);
   }
-  var r: Rounded = round_bits(f, q, e, top - (f.mant - 1), sticky);
-  if (top < f.emin()) {
-    if (r.lsb + (f.mant - 1) < f.emin()) {
-      r = round_bits(f, q, e, f.min_exp(), sticky);
-      return (LD { neg: neg, kind: 0, m: r.m, e: f.min_exp() }, r.inexact);
-    }
-    return (LD { neg: neg, kind: 0, m: r.m, e: r.lsb }, false);
+  if (e + bl - 1 >= f.emin()) {
+    return (r, false);
   }
-  if (r.lsb + (f.mant - 1) > f.emax) {
-    return (inf(neg), true);
+  if (r.is_zero() || bit_length128(r.hi, r.lo) < f.mant) {
+    return (r, st || low_bits_set(hi, lo, f.min_exp() - (e + k)));
   }
-  return (LD { neg: neg, kind: 0, m: r.m, e: r.lsb }, false);
+  return (r, false);
 }
 
 pub function (f: Format) from_i64(v: i64): LD {
   var neg: boolean = v < 0 as i64;
-  var mag: i64 = v;
+  var mag: u64 = v as u64;
   if (neg) {
-    mag = 0 as i64 - v;
+    mag = 0 as u64 - mag;
   }
-  var r: (LD, boolean) = f.round(bigint.from_i64(mag), 0, false, neg);
-  return r.0;
+  return round128(f, 0 as u64, mag, 0, false, neg);
 }
 
 pub function (f: Format) from_u64(v: u64): LD {
-  var r: (LD, boolean) = f.round(bigint.from_u64(v), 0, false, false);
-  return r.0;
+  return round128(f, 0 as u64, v, 0, false, false);
 }
 
 // `(v).as_i64()` — the value when it is a whole number an i64 holds.
@@ -235,23 +440,22 @@ pub function (v: LD) as_i64(): Option[i64] {
   if (v.kind != 0) {
     return None;
   }
-  if (v.m.is_zero()) {
+  if (v.is_zero()) {
     return Some(0 as i64);
   }
-  if (v.m.bit_length() + v.e > 64) {
+  if (top_of(v) >= 64) {
     return None;
   }
-  var mag: bigint.BigInt = v.m;
+  var u: u64 = v.lo;
   if (v.e >= 0) {
-    mag = v.m.shl(v.e);
+    u = shl_lo(v.lo, v.e);
   } else {
     var drop: i32 = 0 - v.e;
-    mag = v.m.shr(drop);
-    if (!mag.shl(drop).eq(v.m)) {
+    if (low_bits_set(v.hi, v.lo, drop)) {
       return None;
     }
+    u = shr_lo(v.hi, v.lo, drop);
   }
-  var u: u64 = mag.low_u64();
   if (v.neg) {
     if (u > 9223372036854775808 as u64) {
       return None;
@@ -291,10 +495,6 @@ pub function (f: Format) pow10(k: i32): LD {
     i = i + 1;
   }
   return v;
-}
-
-function pow5(k: i32): bigint.BigInt {
-  return bigint.from_i64(5 as i64).pow(k);
 }
 
 // A decimal magnitude past which the answer is settled by the digit
@@ -597,6 +797,13 @@ function decimal_float(f: Format, s: string, start: i32, neg: boolean): Parse {
 // what an IEEE operation gives. The specials follow 754: a NaN operand
 // is returned as it stands, ∞ − ∞ and 0 × ∞ are NaN, and a sum that
 // cancels exactly is +0 under round-to-nearest.
+//
+// Each operation first strips its operands' trailing zero bits, so an
+// integer's significand is the integer rather than the integer padded
+// to the format's width, and runs on machine words when the exact
+// result fits two of them; otherwise it runs the same computation on
+// bigints. Both are exact, so they round to the same value, and the ld
+// suite holds them to that on every format.
 pub function (f: Format) add(a: LD, b: LD): LD {
   if (a.kind == 2) {
     return a;
@@ -613,15 +820,83 @@ pub function (f: Format) add(a: LD, b: LD): LD {
   if (b.kind == 1) {
     return b;
   }
+  if (a.is_zero()) {
+    if (b.is_zero()) {
+      return f.zero(false);
+    }
+    return b;
+  }
+  if (b.is_zero()) {
+    return a;
+  }
+  var e: i32 = a.e + trailing_zeros128(a.hi, a.lo);
+  var eb: i32 = b.e + trailing_zeros128(b.hi, b.lo);
+  if (eb < e) {
+    e = eb;
+  }
+  if (top_of(a) - e < 127 && top_of(b) - e < 127) {
+    return add128(f, a, b, e);
+  }
+  return f.add_exact(a, b);
+}
+
+// The sum on words: both significands aligned to 2^e fit 127 bits, so
+// the sum fits 128 and the difference needs no borrow past the top.
+function add128(f: Format, a: LD, b: LD, e: i32): LD {
+  var ah: u64 = aligned_hi(a, e);
+  var al: u64 = aligned_lo(a, e);
+  var bh: u64 = aligned_hi(b, e);
+  var bl: u64 = aligned_lo(b, e);
+  if (a.neg == b.neg) {
+    var lo: u64 = al + bl;
+    var hi: u64 = ah + bh;
+    if (lo < al) {
+      hi = hi + 1 as u64;
+    }
+    return round128(f, hi, lo, e, false, a.neg);
+  }
+  var c: i32 = cmp128(ah, al, bh, bl);
+  if (c == 0) {
+    return f.zero(false);
+  }
+  if (c < 0) {
+    return round128(f, sub_hi(bh, bl, ah, al), bl - al, e, false, b.neg);
+  }
+  return round128(f, sub_hi(ah, al, bh, bl), al - bl, e, false, a.neg);
+}
+
+// The significand of `v` as a multiple of 2^e, for an `e` at or below
+// `v.e` plus its trailing zeros.
+function aligned_hi(v: LD, e: i32): u64 {
+  if (v.e >= e) {
+    return shl_hi(v.hi, v.lo, v.e - e);
+  }
+  return shr_hi(v.hi, e - v.e);
+}
+
+function aligned_lo(v: LD, e: i32): u64 {
+  if (v.e >= e) {
+    return shl_lo(v.lo, v.e - e);
+  }
+  return shr_lo(v.hi, v.lo, e - v.e);
+}
+
+// ---- the exact path ----------------------------------------------------------
+// `add_exact`, `mul_exact` and `div_exact` are the operations on
+// bigints: the exact intermediate, then one rounding. Each operation
+// above reaches for its own when the words do not hold the exact
+// result, and the ld suite compares the two paths on random values,
+// which is what these are public for.
+pub function (f: Format) add_exact(a: LD, b: LD): LD {
   var e: i32 = a.e;
   if (b.e < e) {
     e = b.e;
   }
-  var av: bigint.BigInt = a.m.shl(a.e - e);
+  var av: bigint.BigInt = to_big(a.hi, a.lo).shl(a.e - e);
   if (a.neg) {
     av = av.negate();
   }
-  var bv: bigint.BigInt = b.m.shl(b.e - e);
+  var bv: bigint.BigInt = to_big(b.hi, b.lo).shl(b.e - e);
   if (b.neg) {
     bv = bv.negate();
   }
@@ -630,6 +905,24 @@ pub function (f: Format) add(a: LD, b: LD): LD {
     return f.zero(false);
   }
   var r: (LD, boolean) = f.round(s.abs(), e, false, s.is_negative());
+  return r.0;
+}
+
+pub function (f: Format) mul_exact(a: LD, b: LD): LD {
+  var r: (LD, boolean) = f.round(to_big(a.hi, a.lo).mul(to_big(b.hi, b.lo)), a.e + b.e, false, a.neg != b.neg);
+  return r.0;
+}
+
+// The dividend is shifted by enough that the integer quotient carries
+// the whole significand plus the round bit; a non-zero remainder is
+// the sticky bit.
+pub function (f: Format) div_exact(a: LD, b: LD): LD {
+  var s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
+  if (s < 0) {
+    s = 0;
+  }
+  var qr: (bigint.BigInt, bigint.BigInt) = to_big(a.hi, a.lo).shl(s).divmod(to_big(b.hi, b.lo));
+  var r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), a.neg != b.neg);
   return r.0;
 }
 
@@ -651,8 +944,48 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
     }
     return inf(neg);
   }
-  var r: (LD, boolean) = f.round(a.m.mul(b.m), a.e + b.e, false, neg);
-  return r.0;
+  if ((a.hi | a.lo) == 0 as u64 || (b.hi | b.lo) == 0 as u64) {
+    return f.zero(neg);
+  }
+  if (a.hi == 0 as u64 && b.hi == 0 as u64) {
+    var ta: i32 = __ctz64(a.lo);
+    var tb: i32 = __ctz64(b.lo);
+    var xa: u64 = a.lo >> ta as u64;
+    var yb: u64 = b.lo >> tb as u64;
+    return round128(f, mul_hi64(xa, yb), xa * yb, a.e + ta + b.e + tb, false, neg);
+  }
+  if (fits_word(a) && fits_word(b)) {
+    var x: u64 = reduced(a);
+    var y: u64 = reduced(b);
+    return round128(f, mul_hi64(x, y), x * y, a.e + trailing_zeros128(a.hi, a.lo) + b.e + trailing_zeros128(b.hi, b.lo), false, neg);
+  }
+  return f.mul_exact(a, b);
+}
+
+// Whether a non-zero significand fits one word once its trailing zero
+// bits are dropped: `hi` is zero, or `lo` is and `hi` alone is the
+// significand, or the two together are no wider than 64 bits once
+// `lo`'s trailing zeros are counted off.
+function fits_word(v: LD): boolean {
+  if (v.hi == 0 as u64) {
+    return true;
+  }
+  if (v.lo == 0 as u64) {
+    return true;
+  }
+  return 128 - __clz64(v.hi) - __ctz64(v.lo) <= 64;
+}
+
+// The significand of a value `fits_word` accepted, as that word.
+function reduced(v: LD): u64 {
+  if (v.hi == 0 as u64) {
+    return v.lo >> __ctz64(v.lo) as u64;
+  }
+  if (v.lo == 0 as u64) {
+    return v.hi >> __ctz64(v.hi) as u64;
+  }
+  var t: i32 = __ctz64(v.lo);
+  return v.lo >> t as u64 | v.hi << (64 - t) as u64;
 }
 
 // `div(f, a, b)` — a / b rounded once to the format. The quotient is
@@ -677,22 +1010,71 @@ pub function (f: Format) div(a: LD, b: LD): LD {
   if (b.kind == 1) {
     return f.zero(neg);
   }
-  if (b.m.is_zero()) {
-    if (a.m.is_zero()) {
+  if ((b.hi | b.lo) == 0 as u64) {
+    if ((a.hi | a.lo) == 0 as u64) {
       return nan(false);
     }
     return inf(neg);
   }
-  if (a.m.is_zero()) {
+  if ((a.hi | a.lo) == 0 as u64) {
     return f.zero(neg);
   }
-  var s: i32 = f.mant + 3 + b.m.bit_length() - a.m.bit_length();
+  if (a.hi == 0 as u64 && b.hi == 0 as u64) {
+    var tb: i32 = __ctz64(b.lo);
+    var d1: u64 = b.lo >> tb as u64;
+    if (d1 <= 4294967295 as u64) {
+      var ta: i32 = __ctz64(a.lo);
+      return div_small(f, a.lo >> ta as u64, a.e + ta, d1, b.e + tb, neg);
+    }
+  } else if (fits_word(a) && fits_word(b)) {
+    var d: u64 = reduced(b);
+    if (d <= 4294967295 as u64) {
+      return div_small(f, reduced(a), a.e + trailing_zeros128(a.hi, a.lo), d, b.e + trailing_zeros128(b.hi, b.lo), neg);
+    }
+  }
+  return f.div_exact(a, b);
+}
+
+// The quotient on words: `x × 2^s / d` by long division in 32-bit
+// chunks, for a divisor under 2^32 so each step's `rem:chunk` fits a
+// u64. `s` gives the quotient `mant + 3` bits; the chunks are read
+// straight out of `x` at their offset below `s`, so the shifted
+// dividend, which can run to 148 bits, is never built. The first
+// chunk is whatever is left over above a multiple of 32, so the
+// quotient, which is under `mant + 4` bits, never outgrows two words.
+function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): LD {
+  var s: i32 = f.mant + 3 + (64 - __clz64(d)) - (64 - __clz64(x));
   if (s < 0) {
     s = 0;
   }
-  var qr: (bigint.BigInt, bigint.BigInt) = a.m.shl(s).divmod(b.m);
-  var r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), neg);
-  return r.0;
+  var pos: i32 = 64 - __clz64(x) + s;
+  var width: i32 = pos % 32;
+  if (width == 0) {
+    width = 32;
+  }
+  var qh: u64 = 0 as u64;
+  var ql: u64 = 0 as u64;
+  var rem: u64 = 0 as u64;
+  while (pos > 0) {
+    // Bits [from, from + width) of the dividend are the same bits of
+    // `x` when `from` is at or above 0, the low bits of `x` moved up
+    // when it is within `width` below, and zero further down.
+    var from: i32 = pos - width - s;
+    var chunk: u64 = 0 as u64;
+    if (from >= 0) {
+      chunk = x >> from as u64 & (1 as u64 << width as u64) - 1 as u64;
+    } else if (from + width > 0) {
+      chunk = x << (0 - from) as u64 & (1 as u64 << width as u64) - 1 as u64;
+    }
+    var cur: u64 = rem << 32 as u64 | chunk;
+    var q: u64 = cur / d;
+    rem = cur % d;
+    qh = qh << width as u64 | ql >> (64 - width) as u64;
+    ql = ql << width as u64 | q;
+    pos = pos - width;
+    width = 32;
+  }
+  return round128(f, qh, ql, ex - ed - s, rem != 0 as u64, neg);
 }
 
 // `cmp(a, b)` — -1, 0 or 1, and 2 when the two are UNORDERED because
@@ -711,7 +1093,7 @@ pub function (a: LD) cmp(b: LD): i32 {
     }
     return 1;
   }
-  var c: i32 = mag_cmp(a, b);
+  var c: i32 = a.cmp_abs(b);
   if (an) {
     return 0 - c;
   }
@@ -732,48 +1114,55 @@ function mag_class(v: LD): i32 {
   if (v.kind == 1) {
     return 1;
   }
-  if (v.m.is_zero()) {
+  if ((v.hi | v.lo) == 0 as u64) {
     return 0 - 1;
   }
   return 0;
 }
 
 // `cmp_abs(a, b)` — |a| against |b|, without building either. The
-// leading bits' exponents settle almost every pair, so the two
-// significands are aligned only when they share a binade, where the
-// shift is at most `mant` bits. A NaN operand is unordered here too.
+// leading bits' exponents settle almost every pair, and two canonical
+// values that share a binade share an exponent too, so their words
+// compare directly; only a non-canonical pair is aligned to the lower
+// of its exponents, where the wider significand's width bounds the
+// shifted one. A NaN operand is unordered here too.
 pub function (a: LD) cmp_abs(b: LD): i32 {
   if (a.kind == 2 || b.kind == 2) {
     return 2;
   }
-  return mag_cmp(a, b);
-}
-
-function mag_cmp(a: LD, b: LD): i32 {
-  var ca: i32 = mag_class(a);
-  var cb: i32 = mag_class(b);
-  if (ca != cb) {
+  if (a.kind == 1 || b.kind == 1 || (a.hi | a.lo) == 0 as u64 || (b.hi | b.lo) == 0 as u64) {
+    var ca: i32 = mag_class(a);
+    var cb: i32 = mag_class(b);
     if (ca < cb) {
       return 0 - 1;
     }
-    return 1;
-  }
-  if (ca != 0) {
+    if (ca > cb) {
+      return 1;
+    }
     return 0;
   }
-  var ta: i32 = a.e + a.m.bit_length();
-  var tb: i32 = b.e + b.m.bit_length();
+  var ta: i32 = a.e + 63 - __clz64(a.lo);
+  if (a.hi != 0 as u64) {
+    ta = a.e + 127 - __clz64(a.hi);
+  }
+  var tb: i32 = b.e + 63 - __clz64(b.lo);
+  if (b.hi != 0 as u64) {
+    tb = b.e + 127 - __clz64(b.hi);
+  }
   if (ta != tb) {
     if (ta < tb) {
       return 0 - 1;
     }
     return 1;
   }
+  if (a.e == b.e) {
+    return cmp128(a.hi, a.lo, b.hi, b.lo);
+  }
   var e: i32 = a.e;
   if (b.e < e) {
     e = b.e;
   }
-  return a.m.shl(a.e - e).cmp(b.m.shl(b.e - e));
+  return cmp128(aligned_hi(a, e), aligned_lo(a, e), aligned_hi(b, e), aligned_lo(b, e));
 }
 
 // ---- rounding a value to a whole number ------------------------------------
@@ -809,32 +1198,63 @@ pub function round_nearest(): i32 {
 // `numfmt --round=nearest --format=%.3f 0.0005` is 0.001 — so the
 // addition has to happen at the target's precision, not exactly.
 pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
-  if (v.kind != 0 || v.m.is_zero() || v.e >= 0) {
+  if (v.kind != 0 || (v.hi | v.lo) == 0 as u64 || v.e >= 0) {
     return v;
   }
   if (mode == round_nearest()) {
-    return signed(trunc_mag(f, f.add(v.abs(), f.half())), v.neg);
+    return trunc_mag(f, plus_half(f, v), v.neg);
   }
-  if (!has_fraction(v)) {
-    return v;
+  // The whole part, as an integer in two words, plus one when the
+  // mode moves away from zero; both fit, since the value did.
+  var drop: i32 = 0 - v.e;
+  var wh: u64 = 0 as u64;
+  var wl: u64 = 0 as u64;
+  if (drop < 64) {
+    if ((v.lo & (1 as u64 << drop as u64) - 1 as u64) == 0 as u64) {
+      return v;
+    }
+    wh = v.hi >> drop as u64;
+    wl = v.lo >> drop as u64 | v.hi << (64 - drop) as u64;
+  } else {
+    if (!low_bits_set(v.hi, v.lo, drop)) {
+      return v;
+    }
+    wh = shr_hi(v.hi, drop);
+    wl = shr_lo(v.hi, v.lo, drop);
   }
-  var whole: LD = trunc_mag(f, v.abs());
   if (away_from_zero(mode, v.neg)) {
-    whole = f.add(whole, f.from_i64(1 as i64));
+    wl = wl + 1 as u64;
+    if (wl == 0 as u64) {
+      wh = wh + 1 as u64;
+    }
   }
-  return signed(whole, v.neg);
+  return round128(f, wh, wl, 0, false, v.neg);
+}
+
+// |v| + 1/2 rounded to the format, for a `v` below one in magnitude
+// or with a fraction. The half is added on the value's own grid when
+// it lands within two words of it; a value too small for that is
+// added the general way.
+function plus_half(f: Format, v: LD): LD {
+  var k: i32 = 0 - 1 - v.e;
+  if (k < 127 && top_of(v) - v.e < 127) {
+    var sh: u64 = v.hi;
+    var sl: u64 = v.lo;
+    if (k >= 64) {
+      sh = sh + (1 as u64 << (k - 64) as u64);
+    } else {
+      sl = sl + (1 as u64 << k as u64);
+      if (sl < v.lo) {
+        sh = sh + 1 as u64;
+      }
+    }
+    return round128(f, sh, sl, v.e, false, false);
+  }
+  return f.add(v.abs(), f.half());
 }
 
 pub function (f: Format) half(): LD {
-  var r: (LD, boolean) = f.round(bigint.from_i64(1 as i64), 0 - 1, false, false);
-  return r.0;
-}
-
-function signed(v: LD, neg: boolean): LD {
-  if (neg) {
-    return v.negate();
-  }
-  return v;
+  return round128(f, 0 as u64, 1 as u64, 0 - 1, false, false);
 }
 
 // Whether a value with a fraction moves one step away from zero. The
@@ -852,23 +1272,14 @@ function away_from_zero(mode: i32, neg: boolean): boolean {
   return neg;
 }
 
-// Whether anything is lost by dropping the fraction.
-function has_fraction(v: LD): boolean {
-  if (v.kind != 0 || v.e >= 0 || v.m.is_zero()) {
-    return false;
+// The whole part of a finite value's magnitude with the sign `neg`,
+// which is exact in the format: it has no more significant bits than
+// the value it came from.
+function trunc_mag(f: Format, v: LD, neg: boolean): LD {
+  if (v.e >= 0) {
+    return LD { ...v, neg: neg };
   }
-  var drop: i32 = 0 - v.e;
-  return !v.m.shr(drop).shl(drop).eq(v.m);
-}
-
-// The whole part of a non-negative value, which is exact in the format:
-// it has no more significant bits than the value it came from.
-function trunc_mag(f: Format, v: LD): LD {
-  if (v.kind != 0 || v.e >= 0) {
-    return v;
-  }
-  var r: (LD, boolean) = f.round(v.m.shr(0 - v.e), 0, false, false);
-  return r.0;
+  return round128(f, shr_hi(v.hi, 0 - v.e), shr_lo(v.hi, v.lo, 0 - v.e), 0, false, neg);
 }
 
 // ---- exact decimal digits ---------------------------------------------------
@@ -879,21 +1290,44 @@ function trunc_mag(f: Format, v: LD): LD {
 pub struct Dec { digits: string, dp: i32 }
 
 pub function (v: LD) dec(): Dec {
-  var m: bigint.BigInt = v.m;
-  var e: i32 = v.e;
-  if (m.is_zero()) {
+  if (v.is_zero()) {
     return Dec { digits: "", dp: 0 };
   }
-  while (!m.bit(0)) {
-    m = m.shr(1);
-    e = e + 1;
-  }
+  var tz: i32 = trailing_zeros128(v.hi, v.lo);
+  var hi: u64 = shr_hi(v.hi, tz);
+  var lo: u64 = shr_lo(v.hi, v.lo, tz);
+  var e: i32 = v.e + tz;
   if (e >= 0) {
-    var s: string = m.shl(e).to_string();
+    if (hi == 0 as u64 && 64 - __clz64(lo) + e <= 64) {
+      var w: string = (lo << e as u64).to_string();
+      return Dec { digits: w, dp: w.len() };
+    }
+    var s: string = to_big(hi, lo).shl(e).to_string();
     return Dec { digits: s, dp: s.len() };
   }
-  var t: string = m.mul(pow5(0 - e)).to_string();
+  // m × 5^-e, which a word holds while 5^k has room beside m: 5^27 is
+  // the largest power under 2^63.
+  if (hi == 0 as u64 && 0 - e <= 27 && 64 - __clz64(lo) + pow5_bits(0 - e) <= 64) {
+    var u: string = (lo * pow5_u64(0 - e)).to_string();
+    return Dec { digits: u, dp: u.len() + e };
+  }
+  var t: string = to_big(hi, lo).mul_pow5(0 - e).to_string();
   return Dec { digits: t, dp: t.len() + e };
+}
+
+// 5^k for k up to 27, and its width in bits.
+function pow5_u64(k: i32): u64 {
+  var p: u64 = 1 as u64;
+  var i: i32 = 0;
+  while (i < k) {
+    p = p * (5 as u64);
+    i = i + 1;
+  }
+  return p;
+}
+
+function pow5_bits(k: i32): i32 {
+  return 64 - __clz64(pow5_u64(k));
 }
 
 // `round_digits(d, n)` — the first `n` digits of `d`, rounded half to
@@ -1166,8 +1600,136 @@ function strip_zeros(s: string): string {
 // the flags. A caller that just wants what C would print reaches for
 // these.
 // `to_fixed(f, v, prec)` — `printf("%.*Lf", prec, v)`.
+//
+// `%f` rounds the exact decimal expansion half to even at `prec`
+// places, which is the integer nearest |v| × 10^prec with ties to even,
+// written with the point `prec` digits from its end. When |v|'s
+// significand and 10^prec both fit a word that integer is a 128-bit
+// product shifted by the exponent — no expansion built and no digit
+// string rounded. The rest go through `dec` and `fixed`.
 pub function (f: Format) to_fixed(v: LD, prec: i32): string {
+  if (v.kind == 0 && prec >= 0 && prec <= 19) {
+    if ((v.hi | v.lo) == 0 as u64) {
+      return fixed_u64(0 as u64, prec, v.neg);
+    }
+    if (v.hi == 0 as u64) {
+      var tz: i32 = __ctz64(v.lo);
+      var q1: u64 = scaled_u64(v.lo >> tz as u64, v.e + tz, prec);
+      if (q1 != 18446744073709551615 as u64) {
+        return fixed_u64(q1, prec, v.neg);
+      }
+    } else if (fits_word(v)) {
+      var q: u64 = scaled_u64(reduced(v), v.e + trailing_zeros128(v.hi, v.lo), prec);
+      if (q != 18446744073709551615 as u64) {
+        return fixed_u64(q, prec, v.neg);
+      }
+    }
+  }
   return sign_of(v) + fixed(v.dec(), prec as i64, false, 0 as i64).s;
+}
+
+// `m × 2^e × 10^prec` as the nearest whole number, ties to even, or u64
+// MAX when it does not fit a word — a value that large is the 20-digit
+// case `fixed` handles, so the sentinel costs nothing.
+function scaled_u64(m: u64, e: i32, prec: i32): u64 {
+  var p: u64 = pow10_u64(prec);
+  var hi: u64 = mul_hi64(m, p);
+  var lo: u64 = m * p;
+  var none: u64 = 18446744073709551615 as u64;
+  if (e >= 0) {
+    if (hi != 0 as u64 || e >= 64 || e > 0 && lo >> (64 - e) as u64 != 0 as u64) {
+      return none;
+    }
+    return lo << e as u64;
+  }
+  var shift: i32 = 0 - e;
+  var q: u64 = 0 as u64;
+  var round: boolean = false;
+  var below: boolean = false;
+  if (shift < 64) {
+    if (hi >> shift as u64 != 0 as u64) {
+      return none;
+    }
+    q = lo >> shift as u64 | hi << (64 - shift) as u64;
+    round = (lo >> (shift - 1) as u64 & 1 as u64) == 1 as u64;
+    below = (lo & (1 as u64 << (shift - 1) as u64) - 1 as u64) != 0 as u64;
+  } else if (shift == 64) {
+    q = hi;
+    round = lo >> 63 as u64 == 1 as u64;
+    below = lo << 1 as u64 != 0 as u64;
+  } else if (shift < 128) {
+    var t: i32 = shift - 64;
+    q = hi >> t as u64;
+    round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
+    below = lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
+  } else if (shift == 128) {
+    round = hi >> 63 as u64 == 1 as u64;
+    below = lo != 0 as u64 || hi << 1 as u64 != 0 as u64;
+  }
+  if (round && (below || (q & 1 as u64) == 1 as u64)) {
+    if (q == none) {
+      return none;
+    }
+    q = q + 1 as u64;
+  }
+  return q;
+}
+
+// 10^k for k up to 19.
+function pow10_u64(k: i32): u64 {
+  var p: u64 = 1 as u64;
+  var i: i32 = 0;
+  while (i < k) {
+    p = p * (10 as u64);
+    i = i + 1;
+  }
+  return p;
+}
+
+// `q` written with its last `prec` digits after the point, zero-padded
+// to at least one digit before it, and a sign in front.
+function fixed_u64(q: u64, prec: i32, neg: boolean): string {
+  var digits: i32 = 1;
+  var t: u64 = q / (10 as u64);
+  while (t > 0 as u64) {
+    digits = digits + 1;
+    t = t / (10 as u64);
+  }
+  var whole: i32 = digits - prec;
+  if (whole < 1) {
+    whole = 1;
+  }
+  var n: i32 = whole;
+  if (prec > 0) {
+    n = n + 1 + prec;
+  }
+  var start: i32 = 0;
+  if (neg) {
+    start = 1;
+  }
+  var out: u8[] = __alloc_u8(start + n);
+  if (neg) {
+    out = out.with(0, 45 as u8);
+  }
+  var i: i32 = start + n - 1;
+  var rest: u64 = q;
+  var k: i32 = 0;
+  while (k < prec) {
+    out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
+    rest = rest / (10 as u64);
+    i = i - 1;
+    k = k + 1;
+  }
+  if (prec > 0) {
+    out = out.with(i, 46 as u8);
+    i = i - 1;
+  }
+  while (i >= start) {
+    out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
+    rest = rest / (10 as u64);
+    i = i - 1;
+  }
+  return string_from_bytes_unchecked(out);
 }
 
 // `to_g(f, v)` — `printf("%Lg", v)`: six significant digits, exponent
@@ -1209,11 +1771,11 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
   var lead: i32 = 0;
   var frac: u8[] = __alloc_u8(nd);
   var pe: i32 = 0;
-  if (!v.m.is_zero()) {
-    lead = nibble_at(v.m, shift);
+  if (!v.is_zero()) {
+    lead = nibble_at(v, shift);
     var i: i32 = 0;
     while (i < nd) {
-      frac = frac.with(i, hex_char(nibble_at(v.m, shift - 4 * (i + 1))) as u8);
+      frac = frac.with(i, hex_char(nibble_at(v, shift - 4 * (i + 1))) as u8);
       i = i + 1;
     }
     pe = v.e + shift;
@@ -1283,16 +1845,7 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
   return body + ps;
 }
 
-// The four bits of `m` starting at bit `at`.
-function nibble_at(m: bigint.BigInt, at: i32): i32 {
-  var v: i32 = 0;
-  var k: i32 = 3;
-  while (k >= 0) {
-    v = v * 2;
-    if (m.bit(at + k)) {
-      v = v + 1;
-    }
-    k = k - 1;
-  }
-  return v;
+// The four bits of the significand starting at bit `at`.
+function nibble_at(v: LD, at: i32): i32 {
+  return (shr_lo(v.hi, v.lo, at) & 15 as u64) as i32;
 }

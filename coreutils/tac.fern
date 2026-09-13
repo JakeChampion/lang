@@ -64,11 +64,11 @@ function help_text(): string {
 struct Settings { sep: string, before: boolean, regex: boolean, re: bre.Bre }
 
 // ---- output ----------------------------------------------------------------
-// `Out` — glibc's stdio, GNU's own 8 KiB buffer in front of it, and
-// whether any operand failed. The buffer reaches stdio as one fwrite
-// per full block, which is the call sequence the write-error wording
-// is decided by; `tac_backward` says why it is appended to as a local.
-struct Out { st: gnu.Stdio, buf: string, ok: boolean }
+// `Out` — glibc's stdio, GNU's own 8 KiB buffer in front of it (a
+// builder handle), and whether any operand failed. The buffer reaches
+// stdio as one fwrite per full block, which is the call sequence the
+// write-error wording is decided by.
+struct Out { st: gnu.Stdio, buf: usize, ok: boolean }
 
 // GNU's WRITESIZE: the bytes it accumulates before each fwrite.
 function write_size(): i32 {
@@ -82,12 +82,12 @@ function fail(o: Out, msg: string): Out {
 }
 
 // ---- the separator search --------------------------------------------------
-// `find_sep(s, w, bound)` — the separator occurrence nearest the end of
-// `w` that ends at or before `bound`, as (start, end), or (-1, -1).
-function find_sep(s: Settings, w: string, bound: i32): (i32, i32) {
-  if (s.regex) {
-    return s.re.search_back(w, bound);
-  }
+// `find_plain(s, w, bound)` — the start of the plain separator's
+// occurrence nearest the end of `w` that ends at or before `bound`, or
+// -1. Its end is `start + s.sep.len()`; a regular expression's match
+// has no fixed length, so that path answers (start, end) through
+// `search_back` instead.
+function find_plain(s: Settings, w: string, bound: i32): i32 {
   var n: i32 = s.sep.len();
   var first: i32 = s.sep[0] as i32;
   var k: i32 = bound - n;
@@ -97,11 +97,11 @@ function find_sep(s: Settings, w: string, bound: i32): (i32, i32) {
       break;
     }
     if (n == 1 || slice_unchecked(w, j, j + n) == s.sep) {
-      return (j, j + n);
+      return j;
     }
     k = j - 1;
   }
-  return (0 - 1, 0 - 1);
+  return 0 - 1;
 }
 
 // ---- reading backwards -----------------------------------------------------
@@ -167,17 +167,14 @@ function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, stri
 // window is exhausted the block before it is read and `w` is rebuilt
 // with the pending bytes behind it.
 //
-// The 8 KiB output buffer is a LOCAL here, taken out of `Out` for the
-// duration and put back at the end, and each record is appended to it
-// inline rather than through a helper. That is the only shape the IR
-// grows a string in place: the same append behind a function call, or
-// held in a struct field, copies the whole buffer every time and makes
-// the loop quadratic in the buffer (#8785).
+// Each record is one range push into the 8 KiB builder, which copies
+// the bytes straight out of the window; a full block is taken out of
+// it and handed to stdio without another copy.
 function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): Out {
-  var out: Out = Out { ...o, buf: "" };
-  var buf: string = o.buf;
+  var out: Out = o;
+  var h: usize = o.buf;
   if (size < 1 as i64) {
-    return Out { ...out, buf: buf };
+    return out;
   }
   var block: i64 = initial_read_size();
   var saved: i64 = size % block;
@@ -188,23 +185,32 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
   var rb: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
   out = rb.0;
   if (!rb.2) {
-    return Out { ...out, buf: buf };
+    return out;
   }
   var w: string = rb.1;
   var past_end: i32 = w.len();
   var bound: i32 = past_end;
   var first_time: boolean = true;
   while (true) {
-    var m: (i32, i32) = find_sep(s, w, bound);
+    var m0: i32 = 0;
+    var m1: i32 = 0;
+    if (s.regex) {
+      var m: (i32, i32) = s.re.search_back(w, bound);
+      m0 = m.0;
+      m1 = m.1;
+    } else {
+      m0 = find_plain(s, w, bound);
+      m1 = m0 + s.sep.len();
+    }
     var lo: i32 = 0;
     var last: boolean = true;
     var emit: boolean = true;
-    if (m.0 >= 0) {
+    if (m0 >= 0) {
       last = false;
-      lo = m.1;
+      lo = m1;
       if (s.before) {
-        lo = m.0;
-      } else if (first_time && m.1 == past_end) {
+        lo = m0;
+      } else if (first_time && m1 == past_end) {
         emit = false;
       }
     } else if (file_pos > 0 as i64) {
@@ -220,7 +226,7 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       var next: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
       out = next.0;
       if (!next.2) {
-        return Out { ...out, buf: buf };
+        return out;
       }
       var n: i32 = next.1.len();
       w = next.1 + slice_unchecked(w, 0, past_end);
@@ -239,31 +245,30 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       continue;
     }
     if (emit && lo < past_end) {
-      var avail: i32 = write_size() - buf.len();
+      var avail: i32 = write_size() - buf_len(h);
       if (past_end - lo < avail) {
-        buf = buf + slice_unchecked(w, lo, past_end);
+        buf_push_range(h, w, lo, past_end);
       } else {
-        buf = buf + slice_unchecked(w, lo, lo + avail);
-        out = Out { ...out, st: out.st.fwrite(buf) };
-        buf = "";
+        buf_push_range(h, w, lo, lo + avail);
+        out = Out { ...out, st: out.st.fwrite(buf_take(h)) };
         var from: i32 = lo + avail;
         while (past_end - from >= write_size()) {
           out = Out { ...out, st: out.st.fwrite(slice_unchecked(w, from, from + write_size()) + "") };
           from = from + write_size();
         }
         if (from < past_end) {
-          buf = slice_unchecked(w, from, past_end) + "";
+          buf_push_range(h, w, from, past_end);
         }
       }
     }
     if (last) {
-      return Out { ...out, buf: buf };
+      return out;
     }
     past_end = lo;
-    bound = m.0;
+    bound = m0;
     first_time = false;
   }
-  return Out { ...out, buf: buf };
+  return out;
 }
 
 // ---- input that cannot seek ------------------------------------------------
@@ -400,7 +405,7 @@ function main(): i32 {
   if (files.len() == 0) {
     files = files.append("-");
   }
-  var out: Out = Out { st: gnu.stdio_new(), buf: "", ok: true };
+  var out: Out = Out { st: gnu.stdio_new(), buf: buf_new(write_size()), ok: true };
   var read_stdin: boolean = false;
   var i: i32 = 0;
   while (i < files.len()) {
@@ -410,9 +415,10 @@ function main(): i32 {
     out = tac_file(files[i], out, s);
     i = i + 1;
   }
-  if (out.buf.len() > 0) {
-    out = Out { ...out, st: out.st.fwrite(out.buf), buf: "" };
+  if (buf_len(out.buf) > 0) {
+    out = Out { ...out, st: out.st.fwrite(buf_take(out.buf)) };
   }
+  buf_free(out.buf);
   if (read_stdin) {
     match (stdin().close()) {
       Some(e) => {

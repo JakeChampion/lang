@@ -1,4 +1,5 @@
 import "std/test";
+import "std/u64";
 import "../../coreutils/lib/ld" as ld;
 
 // examples/tests/coreutils_ld_test.fern — coreutils/lib/ld against the
@@ -312,6 +313,216 @@ function test_as_i64(): test.TestOutcome {
     return test.assert_eq(whole(d, "9007199254740993"), "9007199254740992");
 }
 
+// ---- the word path against the exact path ------------------------------------
+// Each operation runs on machine words when the exact result fits two of
+// them and on bigints otherwise; `add_exact`, `mul_exact` and `div_exact`
+// are the bigint path made callable. The values below are drawn from a
+// fixed LCG — the same sequence every run, so a failure names a value
+// that can be reproduced — as integers up to 64 bits and as decimals
+// with up to 64 bits of digits scaled by 10^-25 .. 10^25, which reach
+// integers, dyadic fractions, and fractions that fill every format's
+// significand.
+function next(state: u64): u64 {
+    return state * 6364136223846793005 as u64 + 1442695040888963407 as u64;
+}
+
+function draw(f: ld.Format, seed: u64): ld.LD {
+    var a: u64 = next(seed);
+    var b: u64 = next(a);
+    var c: u64 = next(b);
+    var m: u64 = a >> (b & 63 as u64);
+    var k: i32 = ((c >> 8 as u64) % 51 as u64) as i32 - 25;
+    var neg: boolean = (c & 1 as u64) == 1 as u64;
+    if ((c & 2 as u64) == 2 as u64) {
+        var v: ld.LD = f.from_u64(m);
+        if (neg) {
+            return v.negate();
+        }
+        return v;
+    }
+    var r: (ld.LD, boolean) = f.from_decimal(m.to_string(), k, neg);
+    return r.0;
+}
+
+function ok(r: test.TestOutcome): boolean {
+    match (r) {
+        Pass => {
+            return true;
+        },
+        Fail(m) => {
+            return false;
+        }
+    }
+}
+
+function same(x: ld.LD, y: ld.LD): boolean {
+    return x.kind == y.kind && x.neg == y.neg && x.hi == y.hi && x.lo == y.lo && x.e == y.e;
+}
+
+function shown_ld(f: ld.Format, v: ld.LD): string {
+    var s: string = f.hex(v, none(), false);
+    if (v.neg) {
+        return "-" + s;
+    }
+    return s;
+}
+
+function paths_agree_in(f: ld.Format, name: string): test.TestOutcome {
+    var seed: u64 = 20260913 as u64;
+    var i: i32 = 0;
+    while (i < 400) {
+        var a: ld.LD = draw(f, seed);
+        seed = next(next(next(seed)));
+        var b: ld.LD = draw(f, seed);
+        seed = next(next(next(seed)));
+        i = i + 1;
+        if (a.is_zero() || b.is_zero()) {
+            continue;
+        }
+        var pair: string = name + " " + shown_ld(f, a) + " " + shown_ld(f, b);
+        if (!same(f.mul(a, b), f.mul_exact(a, b))) { return test.fail("mul " + pair); }
+        if (!same(f.add(a, b), f.add_exact(a, b))) { return test.fail("add " + pair); }
+        if (!same(f.sub(a, b), f.add_exact(a, b.negate()))) { return test.fail("sub " + pair); }
+        if (!same(f.div(a, b), f.div_exact(a, b))) { return test.fail("div " + pair); }
+        if (!same(f.div(b, a), f.div_exact(b, a))) { return test.fail("div " + pair); }
+    }
+    return test.assert_eq(i, 400);
+}
+
+function test_word_and_exact_paths_agree(): test.TestOutcome {
+    var r: test.TestOutcome = paths_agree_in(ld.x87(), "x87");
+    if (!ok(r)) { return r; }
+    r = paths_agree_in(ld.binary64(), "binary64");
+    if (!ok(r)) { return r; }
+    return paths_agree_in(ld.binary128(), "binary128");
+}
+
+// The word path of `to_fixed` — the integer nearest |v| × 10^prec, from
+// a 128-bit product and a shift — against `fixed` on the exact decimal
+// expansion, which is what `%f` is defined as. The random values cover
+// every prec a word can hold; the named ones sit on the ties and the
+// edges: a half at zero places, a value the word cannot hold, a value
+// under half a unit at the last place, and the two zeros.
+function fixed_via_expansion(f: ld.Format, v: ld.LD, prec: i32): string {
+    var sign: string = "";
+    if (v.neg) {
+        sign = "-";
+    }
+    return sign + ld.fixed(v.dec(), prec as i64, false, 0 as i64).s;
+}
+
+function to_fixed_agrees_in(f: ld.Format, name: string): test.TestOutcome {
+    var seed: u64 = 777 as u64;
+    var i: i32 = 0;
+    while (i < 300) {
+        var v: ld.LD = draw(f, seed);
+        seed = next(next(next(seed)));
+        var prec: i32 = i % 20;
+        i = i + 1;
+        if (f.to_fixed(v, prec) != fixed_via_expansion(f, v, prec)) {
+            return test.fail(name + " " + shown_ld(f, v) + " at " + prec.to_string());
+        }
+    }
+    return test.assert_eq(i, 300);
+}
+
+function test_to_fixed_matches_the_expansion(): test.TestOutcome {
+    var r: test.TestOutcome = to_fixed_agrees_in(ld.x87(), "x87");
+    if (!ok(r)) { return r; }
+    r = to_fixed_agrees_in(ld.binary64(), "binary64");
+    if (!ok(r)) { return r; }
+    r = to_fixed_agrees_in(ld.binary128(), "binary128");
+    if (!ok(r)) { return r; }
+    var x: ld.Format = ld.x87();
+    if (x.to_fixed(x.strtold("0.5").v, 0) != "0") { return test.fail("half to even"); }
+    if (x.to_fixed(x.strtold("1.5").v, 0) != "2") { return test.fail("one and a half"); }
+    if (x.to_fixed(x.strtold("2.5").v, 0) != "2") { return test.fail("two and a half"); }
+    if (x.to_fixed(x.strtold("0.125").v, 2) != "0.12") { return test.fail("an eighth at two places"); }
+    if (x.to_fixed(x.strtold("0.375").v, 2) != "0.38") { return test.fail("three eighths at two places"); }
+    if (x.to_fixed(x.strtold("1e-30").v, 5) != "0.00000") { return test.fail("under half a unit"); }
+    if (x.to_fixed(x.strtold("18446744073709551615").v, 0) != "18446744073709551615") { return test.fail("u64 max"); }
+    if (x.to_fixed(x.strtold("18446744073709551616").v, 1) != "18446744073709551616.0") { return test.fail("past the word"); }
+    if (x.to_fixed(x.strtold("1844674407370955161.5").v, 1) != "1844674407370955161.5") { return test.fail("a word of digits"); }
+    if (x.to_fixed(x.zero(true), 2) != "-0.00") { return test.fail("negative zero"); }
+    if (x.to_fixed(x.strtold("-0.001").v, 2) != "-0.00") { return test.fail("negative below the place"); }
+    var q: ld.Format = ld.binary128();
+    if (q.to_fixed(q.strtold("0.1").v, 40) != "0.1000000000000000000000000000000000048148") { return test.fail("quad tenth"); }
+    return test.assert_eq(q.to_fixed(q.strtold("123456789012345678901234567890").v, 0), "123456789012345678901234567890");
+}
+
+// `round_to_int` rounds the whole part on words; the modes on every
+// format, a value too small for its half to be added on words, and a
+// half at the top of a word.
+function rounded(f: ld.Format, s: string, mode: i32): string {
+    return f.to_fixed(f.round_to_int(f.strtold(s).v, mode), 0);
+}
+
+function round_modes_in(f: ld.Format, name: string, big: string): test.TestOutcome {
+    if (rounded(f, "2.5", ld.round_nearest()) != "3") { return test.fail(name + " nearest"); }
+    if (rounded(f, "2.5", ld.round_up()) != "3") { return test.fail(name + " up"); }
+    if (rounded(f, "2.5", ld.round_down()) != "2") { return test.fail(name + " down"); }
+    if (rounded(f, "2.5", ld.round_from_zero()) != "3") { return test.fail(name + " from zero"); }
+    if (rounded(f, "2.5", ld.round_toward_zero()) != "2") { return test.fail(name + " toward zero"); }
+    if (rounded(f, "-2.5", ld.round_nearest()) != "-3") { return test.fail(name + " nearest negative"); }
+    if (rounded(f, "-2.5", ld.round_up()) != "-2") { return test.fail(name + " up negative"); }
+    if (rounded(f, "-2.5", ld.round_down()) != "-3") { return test.fail(name + " down negative"); }
+    if (rounded(f, "-2.5", ld.round_toward_zero()) != "-2") { return test.fail(name + " toward zero negative"); }
+    if (rounded(f, "0.5", ld.round_nearest()) != "1") { return test.fail(name + " half"); }
+    if (rounded(f, "-0.5", ld.round_nearest()) != "-1") { return test.fail(name + " negative half"); }
+    if (rounded(f, "0.4999", ld.round_nearest()) != "0") { return test.fail(name + " under a half"); }
+    if (rounded(f, "1e-30", ld.round_nearest()) != "0") { return test.fail(name + " tiny nearest"); }
+    if (rounded(f, "1e-30", ld.round_up()) != "1") { return test.fail(name + " tiny up"); }
+    if (rounded(f, "-1e-30", ld.round_up()) != "-0") { return test.fail(name + " tiny negative up"); }
+    if (rounded(f, "-1e-30", ld.round_down()) != "-1") { return test.fail(name + " tiny negative down"); }
+    if (rounded(f, "7", ld.round_nearest()) != "7") { return test.fail(name + " whole"); }
+    if (rounded(f, "12345678.5", ld.round_nearest()) != "12345679") { return test.fail(name + " nearest carries"); }
+    return test.assert_eq(rounded(f, "4611686018427387904.5", ld.round_nearest()), big);
+}
+
+function test_round_modes_on_every_format(): test.TestOutcome {
+    var r: test.TestOutcome = round_modes_in(ld.x87(), "x87", "4611686018427387905");
+    if (!ok(r)) { return r; }
+    r = round_modes_in(ld.binary128(), "binary128", "4611686018427387905");
+    if (!ok(r)) { return r; }
+    // 2^62 + 1/2 does not fit 53 bits: it reads as 2^62, a whole number.
+    return round_modes_in(ld.binary64(), "binary64", "4611686018427387904");
+}
+
+// `cmp_abs` settles a pair by the leading bits' exponents and then, in
+// one binade, by the words themselves; the cases sit on each of those.
+function test_cmp_abs_on_words(): test.TestOutcome {
+    var q: ld.Format = ld.binary128();
+    var x: ld.Format = ld.x87();
+    if (x.from_u64(1000 as u64).cmp_abs(x.strtold("999.9999").v) != 1) { return test.fail("across a binade"); }
+    if (x.strtold("1023.5").v.cmp_abs(x.from_u64(1024 as u64)) != 0 - 1) { return test.fail("within a binade"); }
+    if (x.from_u64(1024 as u64).cmp_abs(x.from_u64(1024 as u64)) != 0) { return test.fail("equal"); }
+    if (x.strtold("-1e30").v.cmp_abs(x.strtold("1e30").v) != 0) { return test.fail("sign ignored"); }
+    if (q.strtold("1e30").v.cmp_abs(q.strtold("1000000000000000000000000000001").v) != 0 - 1) { return test.fail("quad last bit"); }
+    if (q.from_u64(1 as u64).cmp_abs(q.strtold("0.99999999999999999999999999999999").v) != 1) { return test.fail("quad below one"); }
+    if (x.strtold("1e-4940").v.cmp_abs(x.strtold("1e-4930").v) != 0 - 1) { return test.fail("subnormal against normal"); }
+    if (x.zero(true).cmp_abs(x.strtold("1e-4940").v) != 0 - 1) { return test.fail("zero against subnormal"); }
+    return test.assert_eq(ld.inf(true).cmp_abs(x.strtold("1e4000").v), 1);
+}
+
+// `dec` answers from a word while the digits fit one — an integer under
+// 2^64, or m × 5^k with room for both — and from a bigint past that.
+function test_dec_word_paths(): test.TestOutcome {
+    var x: ld.Format = ld.x87();
+    if (dec(x, "0.5") != "5e0") { return test.fail("a half"); }
+    if (dec(x, "0.125") != "125e0") { return test.fail("an eighth"); }
+    if (dec(x, "3") != "3e1") { return test.fail("three"); }
+    if (dec(x, "1000") != "1000e4") { return test.fail("a thousand"); }
+    if (dec(x, "18446744073709551615") != "18446744073709551615e20") { return test.fail("u64 max"); }
+    if (dec(x, "1180591620717411303424") != "1180591620717411303424e22") { return test.fail("two to the seventy"); }
+    if (dec(x, "0.000000007450580596923828125") != "7450580596923828125e-8") { return test.fail("two to the minus twenty-seven"); }
+    if (dec(x, "1e-30") != "1000000000000000000031690123432431452023095418691267303452453424434704697332538552963918294415324172774717226275242865085601806640625e-29") {
+        return test.fail("a bigint expansion");
+    }
+    var q: ld.Format = ld.binary128();
+    if (dec(q, "0.75") != "75e0") { return test.fail("quad three quarters"); }
+    return test.assert_eq(dec(q, "36893488147419103232"), "36893488147419103232e20");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("coreutils/lib/ld");
     r = r.it("x87 stores its integer bit",        test_x87_stores_its_integer_bit);
@@ -331,6 +542,11 @@ function main(): i32 {
     r = r.it("to_fixed and to_g",                 test_whole_conversions);
     r = r.it("pow10 is reached by multiplying",   test_pow10);
     r = r.it("as_i64 is from_i64 inverted",       test_as_i64);
+    r = r.it("word and exact paths agree",        test_word_and_exact_paths_agree);
+    r = r.it("to_fixed matches the expansion",    test_to_fixed_matches_the_expansion);
+    r = r.it("round modes on every format",       test_round_modes_on_every_format);
+    r = r.it("cmp_abs on words",                  test_cmp_abs_on_words);
+    r = r.it("dec word paths",                    test_dec_word_paths);
     r.finish();
     return 0;
 }

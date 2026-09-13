@@ -249,11 +249,10 @@ pub function __method_Array_join(arr: string[], sep: string): string {
     var n: i32 = arr.len();
     if (n == 0) { return ""; }
     if (n == 1) { return arr[0]; }
-    // Size the result once, then fill a single preallocated buffer —
-    // O(total) — instead of the `out = out + …` chain, which recopies
-    // the whole prefix on every step (O(total²), the #4379 hot path).
-    // Byte-for-byte identical output; this is the same preallocated-u8[]
-    // shape hex_encode / base64_encode already use.
+    // Size the result once and fill a builder, which is a memcpy per
+    // element and hands its bytes over as the string without copying them
+    // — O(total), where the `out = out + …` chain recopies the whole
+    // prefix on every step (O(total²), the #4379 hot path).
     var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -261,30 +260,18 @@ pub function __method_Array_join(arr: string[], sep: string): string {
         i = i + 1;
     }
     total = total + sep.len() * (n - 1);
-    var buf: u8[] = __alloc_u8(total);
-    var pos: i32 = 0;
-    var sl: i32 = sep.len();
+    var b: usize = buf_new(total);
     i = 0;
     while (i < n) {
         if (i > 0) {
-            var j: i32 = 0;
-            while (j < sl) {
-                buf = buf.with(pos, sep[j] as u8);
-                pos = pos + 1;
-                j = j + 1;
-            }
+            buf_push(b, sep);
         }
-        var e: string = arr[i];
-        var el: i32 = e.len();
-        var k: i32 = 0;
-        while (k < el) {
-            buf = buf.with(pos, e[k] as u8);
-            pos = pos + 1;
-            k = k + 1;
-        }
+        buf_push(b, arr[i]);
         i = i + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    var out: string = buf_take(b);
+    buf_free(b);
+    return out;
 }
 
 // `(arr: string[]) filter_non_empty()` — fresh string[] with

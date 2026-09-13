@@ -103,10 +103,7 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the size of the block the accumulated output
-// is handed to the buffered writer in. The writer's threshold is the
-// same number, so a full block goes straight to the fd instead of being
-// copied into its buffer first.
+// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -443,15 +440,13 @@ function main(): i32 {
   return run(files, Settings { r: r, fields: mode == 2, delim: delim, term: term, suppress: suppress, out_delim: out_delim, out_delim_set: out_delim_set });
 }
 
-// `run(files, s)` — the whole selection. One function because `out` is
-// the output accumulator: a bare local appended to inline grows in
-// place, and the same appends through a helper copy it every time
-// (#8785).
+// `run(files, s)` — the whole selection. Every selected piece is pushed
+// straight into stdout's builder, which is flushed once it holds a
+// block, so no byte is copied into an accumulator on the way.
 function run(files: string[], s: Settings): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var out: string = "";
+  var h: usize = o.handle();
   var ok: boolean = true;
-  var term: string = byte_str(s.term);
   // A field delimiter equal to the line delimiter makes the whole FILE
   // one record whose fields are its lines.
   var one_record: boolean = s.fields && s.delim == s.term;
@@ -495,7 +490,7 @@ function run(files: string[], s: Settings): i32 {
           // closed before the next one starts: cut does not join files.
           if (rec_open) {
             if (!(s.suppress && rec_k == 1 && !first_sel)) {
-              out = out + term;
+              buf_push_byte(h, s.term);
             }
             rec_open = false;
           }
@@ -521,8 +516,6 @@ function run(files: string[], s: Settings): i32 {
                   opened = true;
                 },
                 Err(e) => {
-                  o = o.write_string(out);
-                  out = "";
                   o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
                   ok = false;
                 }
@@ -538,8 +531,6 @@ function run(files: string[], s: Settings): i32 {
               piece = c;
             },
             Err(e) => {
-              o = o.write_string(out);
-              out = "";
               o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
               ok = false;
               read_ok = false;
@@ -614,21 +605,21 @@ function run(files: string[], s: Settings): i32 {
         }
         if (a <= b) {
           if (s.out_delim_set && printed) {
-            out = out + s.out_delim;
+            buf_push(h, s.out_delim);
           }
-          out = out + slice_unchecked(buf, lo + a as i32 - 1, lo + b as i32);
+          buf_push_range(h, buf, lo + a as i32 - 1, lo + b as i32);
           printed = true;
         }
         k = k + 1;
       }
-      out = out + term;
+      buf_push_byte(h, s.term);
     } else if (one_record) {
       // This line is one FIELD of the file-long record. An unterminated
       // FIRST line is the whole record and holds no delimiter at all.
       if (rec_k == 0 && !terminated) {
         if (!s.suppress) {
-          out = out + slice_unchecked(buf, lo, body);
-          out = out + term;
+          buf_push_range(h, buf, lo, body);
+          buf_push_byte(h, s.term);
         }
       } else {
         while (rec_ri < s.r.los.len() && s.r.his[rec_ri] < rec_idx) {
@@ -636,9 +627,9 @@ function run(files: string[], s: Settings): i32 {
         }
         if (rec_ri < s.r.los.len() && s.r.los[rec_ri] <= rec_idx) {
           if (rec_printed) {
-            out = out + s.out_delim;
+            buf_push(h, s.out_delim);
           }
-          out = out + slice_unchecked(buf, lo, body);
+          buf_push_range(h, buf, lo, body);
           rec_printed = true;
         }
         rec_idx = rec_idx + 1 as u64;
@@ -658,8 +649,8 @@ function run(files: string[], s: Settings): i32 {
       if (nd < 0 || nd >= body) {
         // No delimiter on this line: it goes out whole, or not at all.
         if (!s.suppress) {
-          out = out + slice_unchecked(buf, lo, body);
-          out = out + term;
+          buf_push_range(h, buf, lo, body);
+          buf_push_byte(h, s.term);
         }
       } else {
         var p: i32 = lo;
@@ -684,17 +675,17 @@ function run(files: string[], s: Settings): i32 {
           if (ri < s.r.los.len() && s.r.los[ri] <= idx) {
             if (run < 0) {
               if (printed) {
-                out = out + s.out_delim;
+                buf_push(h, s.out_delim);
               }
               run = p;
             }
             if (!join_runs) {
-              out = out + slice_unchecked(buf, run, e);
+              buf_push_range(h, buf, run, e);
               run = 0 - 1;
             }
             printed = true;
           } else if (run >= 0) {
-            out = out + slice_unchecked(buf, run, p - 1);
+            buf_push_range(h, buf, run, p - 1);
             run = 0 - 1;
           }
           if (last || ri >= s.r.los.len()) {
@@ -705,7 +696,7 @@ function run(files: string[], s: Settings): i32 {
           nd = __memchr(buf, s.delim, p);
         }
         if (run >= 0) {
-          out = out + slice_unchecked(buf, run, body);
+          buf_push_range(h, buf, run, body);
           run = 0 - 1;
         }
         // The line delimiter always follows a delimited line — except
@@ -714,7 +705,7 @@ function run(files: string[], s: Settings): i32 {
         // ends at EOF with an empty second field, and NUL is the line
         // delimiter, so what gnulib carries into the test reads as one.
         if (terminated || !(buffered && s.term == 0 && first_nd == body - 1)) {
-          out = out + term;
+          buf_push_byte(h, s.term);
         }
       }
       if (carried) {
@@ -724,13 +715,11 @@ function run(files: string[], s: Settings): i32 {
       }
     }
 
-    if (out.len() >= block_size()) {
-      o = o.write_string(out);
-      out = "";
+    if (buf_len(h) >= block_size()) {
+      o = o.flush();
     }
   }
 
-  o = o.write_string(out);
   gnu.finish(o);
   if (!ok) {
     return 1;

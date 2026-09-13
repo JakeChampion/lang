@@ -306,22 +306,38 @@ function with_pads(o: Opts): Opts {
 
 // The three FORMATs. A number wider than the field overflows it rather
 // than being truncated, and `rz` puts its zeros after the sign.
-function format_lineno(n: i64, o: Opts): string {
-  var digits: string = n.to_string();
-  if (digits.len() >= o.width) {
-    return digits;
+function push_lineno(h: usize, n: i64, o: Opts): void {
+  var mag: u64 = n as u64;
+  if (n < 0 as i64) {
+    mag = 0 as u64 - mag;
   }
-  var need: i32 = o.width - digits.len();
+  var len: i32 = io_buffered.buf_u64_len(mag);
+  if (n < 0 as i64) {
+    len = len + 1;
+  }
+  if (len >= o.width) {
+    io_buffered.buf_push_i64(h, n);
+    return;
+  }
+  var need: i32 = o.width - len;
   if (o.fmt == fmt_ln()) {
-    return digits + slice_unchecked(o.pad, 0, need);
+    io_buffered.buf_push_i64(h, n);
+    buf_push_range(h, o.pad, 0, need);
+    return;
   }
   if (o.fmt == fmt_rn()) {
-    return slice_unchecked(o.pad, 0, need) + digits;
+    buf_push_range(h, o.pad, 0, need);
+    io_buffered.buf_push_i64(h, n);
+    return;
   }
-  if (digits.len() > 0 && digits[0] as i32 == 45) {
-    return "-" + slice_unchecked(o.zeros, 0, need) + slice_unchecked(digits, 1, digits.len());
+  if (n < 0 as i64) {
+    buf_push_byte(h, 45);
+    buf_push_range(h, o.zeros, 0, need);
+    io_buffered.buf_push_u64(h, mag);
+    return;
   }
-  return slice_unchecked(o.zeros, 0, need) + digits;
+  buf_push_range(h, o.zeros, 0, need);
+  io_buffered.buf_push_u64(h, mag);
 }
 
 // ---- the running state ------------------------------------------------------
@@ -357,7 +373,9 @@ function style_of(s: State, o: Opts): Style {
 // for an ordinary line, else the section it starts. The match is on the
 // WHOLE line, so `\:\:\:x` is text.
 function check_section(line: string, o: Opts): i32 {
-  if (o.del1.len() == 0) {
+  // Every delimiter starts with the same byte, so an ordinary line is
+  // told apart by its first byte before any whole-line comparison.
+  if (o.del1.len() == 0 || line.len() == 0 || line[0] as i32 != o.del1[0] as i32) {
     return 0 - 1;
   }
   if (line == o.del3) {
@@ -432,7 +450,7 @@ function proc_line(line: string, st0: State, o: Opts, w0: io_buffered.BufWriter)
     exit(1);
   }
   var h: usize = w.handle();
-  buf_push(h, format_lineno(st.line_no, o));
+  push_lineno(h, st.line_no, o);
   buf_push(h, o.sep);
   buf_push(h, line);
   buf_push_byte(h, 10);

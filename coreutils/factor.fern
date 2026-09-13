@@ -22,20 +22,22 @@
 //
 // There is no bound on the size of a NUMBER, so there are two engines:
 //
-//   - up to 2^64, Montgomery arithmetic (`Mont`): every product is a
-//     64x64 multiply and a shift, never a division, which is what makes
-//     Pollard rho affordable. Primality is Miller-Rabin over the twelve
-//     bases that decide it for every 64-bit number.
+//   - up to 2^64, Montgomery arithmetic: every product is a 64x64
+//     multiply and a shift, never a division, which is what makes Pollard
+//     rho affordable. Primality is Miller-Rabin over the twelve bases that
+//     decide it for every 64-bit number.
 //   - beyond it, the same algorithms over `core/bigint`, where a modular
 //     multiply costs a divmod. Slower by orders of magnitude, and only
 //     reached by numbers a 64-bit word cannot hold.
 //
 // Both start by dividing out the small primes, which is what finishes
 // most numbers, and only then look for a large factor.
-import "std/string";
-import "std/array";
-import "std/io";
-import "std/io_buffered";
+//
+// A line is written as it is found: the number's digits are a range of
+// the input, and each factor goes into the output buffer the moment
+// trial division yields it, which hands them over in ascending order. Only
+// a remainder that Pollard rho splits is collected and sorted first. A
+// number in bulk therefore costs no allocation of its own.
 import "core/bigint";
 import "./lib/gnu";
 
@@ -45,29 +47,38 @@ function trial_limit(): u64 {
   return 1000 as u64;
 }
 
-// One small prime, with what turns dividing by it into multiplying:
-// `inv` is p^-1 mod 2^64 and `lim` is (2^64-1)/p, so `n * inv <= lim`
-// holds exactly when p divides n, and that product IS the quotient.
-// Trial division by 168 primes then costs a multiply each rather than a
-// divide, which is most of what factoring a prime near 200000 spends.
-struct SmallPrime { p: u64, inv: u64, lim: u64 }
+// The primes below `trial_limit()` — two first, then the odd ones — with
+// what turns dividing by an odd prime into multiplying: `inv[i]` is p^-1
+// mod 2^64 and `lim[i]` is (2^64-1)/p, so `n * inv <= lim` holds exactly
+// when p divides n, and that product IS the quotient. (Two has no inverse
+// and is divided off by shifting; its slots are placeholders.) `text[i]`
+// is ` p` and `textnl[i]` is ` p` with the line's newline after it, the
+// two spellings the output carries. `lead` and `grp` spell any other
+// number, three digits a push: `lead` holds ` n` for n below a thousand,
+// five bytes each and padded with newlines so a range one byte longer
+// ends the line, and `grp` holds the same thousand as zero-padded
+// three-digit groups, four bytes each with a newline fourth. `spf` is the
+// factor table below, empty until it is built.
+struct Primes { p: u64[], inv: u64[], lim: u64[], text: string[], textnl: string[], lead: string, grp: string, spf: u8[] }
 
-// The odd primes below `trial_limit()`, sieved once per run. Two is left
-// out: it is divided off by shifting.
-function small_primes(): SmallPrime[] {
+function small_primes(): Primes {
   var limit: i32 = trial_limit() as i32;
   var composite: u8[] = __alloc_u8(limit + 1);
-  var i: i32 = 0;
-  while (i <= limit) {
-    composite = composite.with(i, 0 as u8);
-    i = i + 1;
-  }
-  var out: SmallPrime[] = [];
+  var p: u64[] = [2 as u64];
+  var inv: u64[] = [0 as u64];
+  var lim: u64[] = [0 as u64];
+  var text: string[] = [" 2"];
+  var textnl: string[] = [" 2\n"];
   var n: i32 = 3;
   while (n <= limit) {
     if (composite[n] as i32 == 0) {
-      var p: u64 = n as u64;
-      out = out.append(SmallPrime { p: p, inv: inverse_mod_2_64(p), lim: (0 as u64 - 1 as u64) / p });
+      var v: u64 = n as u64;
+      p = p.append(v);
+      inv = inv.append(inverse_mod_2_64(v));
+      lim = lim.append((0 as u64 - 1 as u64) / v);
+      var spelled: string = " " + (n as i64).to_string();
+      text = text.append(spelled);
+      textnl = textnl.append(spelled + "\n");
       var m: i32 = n * n;
       while (m <= limit) {
         composite = composite.with(m, 1 as u8);
@@ -76,7 +87,78 @@ function small_primes(): SmallPrime[] {
     }
     n = n + 2;
   }
-  return out;
+  var lead: usize = buf_new(5000);
+  var grp: usize = buf_new(4000);
+  var k: i32 = 0;
+  while (k < 1000) {
+    var s: string = (k as i64).to_string();
+    buf_push_byte(lead, 32);
+    buf_push(lead, s);
+    var pad: i32 = s.len();
+    while (pad < 4) {
+      buf_push_byte(lead, 10);
+      pad = pad + 1;
+    }
+    pad = s.len();
+    while (pad < 3) {
+      buf_push_byte(grp, 48);
+      pad = pad + 1;
+    }
+    buf_push(grp, s);
+    buf_push_byte(grp, 10);
+    k = k + 1;
+  }
+  var lead_s: string = buf_take(lead);
+  var grp_s: string = buf_take(grp);
+  buf_free(lead);
+  buf_free(grp);
+  var spf: u8[] = [];
+  return Primes { p: p, inv: inv, lim: lim, text: text, textnl: textnl, lead: lead_s, grp: grp_s, spf: spf };
+}
+
+// ---- the factor table ------------------------------------------------------
+//
+// Below `table_bound()` a number is factored by lookup instead of trial
+// division: for odd n, `spf[n >> 1]` is the index in `Primes` of n's
+// smallest prime factor, or 0 when n is prime. Only a prime below the
+// bound's square root can be a smallest factor there, so the entry fits a
+// byte. The sieve costs as much as factoring a thousand numbers the slow
+// way, so it is built once `table_after()` numbers below the bound have
+// been seen — an input of a few numbers never pays for it.
+function table_bound(): u64 {
+  return 262144 as u64;
+}
+
+function table_after(): i32 {
+  return 1024;
+}
+
+function factor_table(pr: Primes): u8[] {
+  var bound: i32 = table_bound() as i32;
+  var t: u8[] = __alloc_u8(bound >> 1);
+  var k: i32 = 1;
+  while (k < pr.p.len()) {
+    var p: i32 = pr.p[k] as i32;
+    var m: i32 = p * p;
+    if (m >= bound) {
+      break;
+    }
+    var step: i32 = p + p;
+    var mark: u8 = k as u8;
+    while (m < bound) {
+      if (t[m >> 1] as i32 == 0) {
+        t = t.with(m >> 1, mark);
+      }
+      m = m + step;
+    }
+    k = k + 1;
+  }
+  return t;
+}
+
+// `with_table(pr)` — the tables with the factor table added.
+function with_table(pr: Primes): Primes {
+  return Primes { ...pr, spf: factor_table(pr) };
 }
 
 // p^-1 mod 2^64 for odd p, by Newton's iteration: each step doubles the
@@ -103,117 +185,104 @@ function help_text(): string {
   return out;
 }
 
-// ---- 64-bit helpers --------------------------------------------------------
-// `mul_hi(x, y)` — the high word of the 128-bit product; the low word is
-// the wrapping `x * y`. Fern has no 128-bit integer, and a (hi, lo) tuple
-// would be a heap box per modular multiply, so the two halves are asked
-// for separately.
-function mul_hi(x: u64, y: u64): u64 {
-  var mask: u64 = 4294967295 as u64;
-  var sh: u64 = 32 as u64;
-  var a: u64 = x >> sh;
-  var b: u64 = x & mask;
-  var c: u64 = y >> sh;
-  var d: u64 = y & mask;
-  var bd: u64 = b * d;
-  var ad: u64 = a * d;
-  var bc: u64 = b * c;
-  var mid: u64 = (bd >> sh) + (ad & mask) + (bc & mask);
-  return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
-}
-
 // ---- Montgomery arithmetic -------------------------------------------------
 //
 // Residues are held as `a * 2^64 mod n`, so a modular multiply is two
-// 64x64 products and no division. `n` is odd, which is what lets
-// `n_prime` exist.
-struct Mont { n: u64, n_prime: u64, r1: u64, r2: u64 }
+// 64x64 products and no division. Fern has no 128-bit integer, and a
+// (hi, lo) tuple would be a heap box per multiply, so the high word of a
+// product is computed on its own from 32-bit halves, and the low word is
+// the wrapping product.
+//
+// `n` is odd, which is what lets `ninv` (n^-1 mod 2^64) exist. Every
+// routine takes `n` and `ninv` as plain arguments: the modulus lives in
+// locals of the loops that are the cost of a 64-bit semiprime, and a
+// field load per multiply would be in every one of them.
+// `mul_hi(x, y)` — the high word of the 128-bit product. The two middle
+// sums cannot overflow: a 32x32 product leaves room for a 32-bit carry.
+function mul_hi(x: u64, y: u64): u64 {
+  var m: u64 = 4294967295 as u64;
+  var a0: u64 = x & m;
+  var a1: u64 = x >> 32 as u64;
+  var b0: u64 = y & m;
+  var b1: u64 = y >> 32 as u64;
+  var mid: u64 = a0 * b1 + (a0 * b0 >> 32 as u64);
+  var mid2: u64 = a1 * b0 + (mid & m);
+  return a1 * b1 + (mid >> 32 as u64) + (mid2 >> 32 as u64);
+}
 
-// `mont_new(n)` — the parameters for an odd modulus: -n^-1 mod 2^64 by
-// Newton's iteration (each step doubles the correct bits, so five reach
-// 64), then 2^64 and 2^128 reduced.
-function mont_new(n: u64): Mont {
-  var n_prime: u64 = 0 as u64 - inverse_mod_2_64(n);
-  var r1: u64 = 0 as u64 - n;
-  if (n == 1 as u64) {
-    r1 = 0 as u64;
-  } else {
-    r1 = r1 % n;
+// `sq_hi(x)` — the high word of x * x, a multiply fewer than `mul_hi`.
+function sq_hi(x: u64): u64 {
+  var m: u64 = 4294967295 as u64;
+  var a0: u64 = x & m;
+  var a1: u64 = x >> 32 as u64;
+  var p01: u64 = a0 * a1;
+  var mid: u64 = p01 + (a0 * a0 >> 32 as u64);
+  var mid2: u64 = p01 + (mid & m);
+  return a1 * a1 + (mid >> 32 as u64) + (mid2 >> 32 as u64);
+}
+
+// `redc(hi, lo, n, ninv)` — hi:lo * 2^-64 mod n, for hi:lo below n * 2^64.
+// With q = lo * n^-1, the low words of hi:lo and q * n agree, so their
+// difference is (hi - t) * 2^64 exactly and lies in (-n, n): one
+// conditional add finishes it.
+function redc(hi: u64, lo: u64, n: u64, ninv: u64): u64 {
+  var t: u64 = mul_hi(lo * ninv, n);
+  if (hi >= t) {
+    return hi - t;
   }
-  var r2: u64 = r1;
-  var k: i32 = 0;
-  while (k < 64) {
-    var prev: u64 = r2;
-    r2 = r2 + r2;
-    if (r2 < prev || r2 >= n) {
-      r2 = r2 - n;
-    }
-    k = k + 1;
-  }
-  return Mont { n: n, n_prime: n_prime, r1: r1, r2: r2 };
+  return hi - t + n;
 }
 
-// REDC of a 128-bit product.
-function mont_redc(m: Mont, hi: u64, lo: u64): u64 {
-  var q: u64 = lo * m.n_prime;
-  var p_hi: u64 = mul_hi(q, m.n);
-  var p_lo: u64 = q * m.n;
-  var t: u64 = hi + p_hi;
-  var carry: boolean = t < hi;
-  if (lo != 0 as u64 && p_lo != 0 as u64) {
-    // lo + p_lo is exactly 2^64 whenever the low words are non-zero, so
-    // the carry out of the low half is the only part that matters.
-    if (lo + p_lo < lo) {
-      t = t + 1 as u64;
-      if (t == 0 as u64) {
-        carry = true;
-      }
-    }
-  }
-  if (carry || t >= m.n) {
-    t = t - m.n;
-  }
-  return t;
+function mont_mul(a: u64, b: u64, n: u64, ninv: u64): u64 {
+  return redc(mul_hi(a, b), a * b, n, ninv);
 }
 
-function mont_mul(m: Mont, a: u64, b: u64): u64 {
-  return mont_redc(m, mul_hi(a, b), a * b);
+function mont_sq(a: u64, n: u64, ninv: u64): u64 {
+  return redc(sq_hi(a), a * a, n, ninv);
 }
 
-// Into and out of Montgomery form.
-function mont_in(m: Mont, a: u64): u64 {
-  return mont_mul(m, a % m.n, m.r2);
-}
-
-function mont_out(m: Mont, a: u64): u64 {
-  return mont_redc(m, 0 as u64, a);
-}
-
-function mont_add(m: Mont, a: u64, b: u64): u64 {
+function addmod(a: u64, b: u64, n: u64): u64 {
   var s: u64 = a + b;
-  if (s < a || s >= m.n) {
-    s = s - m.n;
+  if (s < a || s >= n) {
+    s = s - n;
   }
   return s;
 }
 
-function mont_sub(m: Mont, a: u64, b: u64): u64 {
+function submod(a: u64, b: u64, n: u64): u64 {
   if (a >= b) {
     return a - b;
   }
-  return m.n - (b - a);
+  return a - b + n;
 }
 
-// `mont_pow(m, base, e)` — base^e in Montgomery form.
-function mont_pow(m: Mont, base: u64, e: u64): u64 {
-  var result: u64 = m.r1;
+// `mont_one(n)` — 1 in Montgomery form, 2^64 mod n.
+function mont_one(n: u64): u64 {
+  return (0 as u64 - n) % n;
+}
+
+// `mont_r2(n)` — 2^128 mod n, what takes a value into Montgomery form,
+// by doubling 2^64 mod n sixty-four times.
+function mont_r2(n: u64): u64 {
+  var r: u64 = mont_one(n);
+  var k: i32 = 0;
+  while (k < 64) {
+    r = addmod(r, r, n);
+    k = k + 1;
+  }
+  return r;
+}
+
+// `mont_pow(base, e, n, ninv, one)` — base^e in Montgomery form.
+function mont_pow(base: u64, e: u64, n: u64, ninv: u64, one: u64): u64 {
+  var result: u64 = one;
   var b: u64 = base;
   var k: u64 = e;
   while (k > 0 as u64) {
     if ((k & 1 as u64) == 1 as u64) {
-      result = mont_mul(m, result, b);
+      result = mont_mul(result, b, n, ninv);
     }
-    b = mont_mul(m, b, b);
+    b = mont_sq(b, n, ninv);
     k = k >> 1 as u64;
   }
   return result;
@@ -223,21 +292,21 @@ function mont_pow(m: Mont, base: u64, e: u64): u64 {
 //
 // Miller-Rabin over the twelve smallest primes, which is a proof for
 // every value a u64 can hold.
-function miller_rabin_bases(): u64[] {
-  return [2 as u64, 3 as u64, 5 as u64, 7 as u64, 11 as u64, 13 as u64, 17 as u64, 19 as u64, 23 as u64, 29 as u64, 31 as u64, 37 as u64];
+function mr_base(i: i32): u64 {
+  return "\x02\x03\x05\x07\x0b\r\x11\x13\x17\x1d\x1f%"[i] as u64;
 }
 
 function is_prime_u64(n: u64): boolean {
   if (n < 2 as u64) {
     return false;
   }
-  var small: u64[] = miller_rabin_bases();
   var i: i32 = 0;
-  while (i < small.len()) {
-    if (n == small[i]) {
+  while (i < 12) {
+    var b: u64 = mr_base(i);
+    if (n == b) {
       return true;
     }
-    if (n % small[i] == 0 as u64) {
+    if (n % b == 0 as u64) {
       return false;
     }
     i = i + 1;
@@ -248,11 +317,14 @@ function is_prime_u64(n: u64): boolean {
     d = d >> 1 as u64;
     s = s + 1;
   }
-  var m: Mont = mont_new(n);
-  var n_minus_1: u64 = mont_sub(m, 0 as u64, m.r1);
+  var ninv: u64 = inverse_mod_2_64(n);
+  var one: u64 = mont_one(n);
+  var r2: u64 = mont_r2(n);
+  var n_minus_1: u64 = n - one;
   i = 0;
-  while (i < small.len()) {
-    if (!mr_witness(m, small[i], d, s, n_minus_1)) {
+  while (i < 12) {
+    var base: u64 = mont_mul(mr_base(i), r2, n, ninv);
+    if (!mr_witness(base, d, s, n, ninv, one, n_minus_1)) {
       return false;
     }
     i = i + 1;
@@ -261,14 +333,14 @@ function is_prime_u64(n: u64): boolean {
 }
 
 // Whether `base` fails to witness compositeness.
-function mr_witness(m: Mont, base: u64, d: u64, s: i32, n_minus_1: u64): boolean {
-  var x: u64 = mont_pow(m, mont_in(m, base), d);
-  if (x == m.r1 || x == n_minus_1) {
+function mr_witness(base: u64, d: u64, s: i32, n: u64, ninv: u64, one: u64, n_minus_1: u64): boolean {
+  var x: u64 = mont_pow(base, d, n, ninv, one);
+  if (x == one || x == n_minus_1) {
     return true;
   }
   var r: i32 = 1;
   while (r < s) {
-    x = mont_mul(m, x, x);
+    x = mont_sq(x, n, ninv);
     if (x == n_minus_1) {
       return true;
     }
@@ -279,8 +351,15 @@ function mr_witness(m: Mont, base: u64, d: u64, s: i32, n_minus_1: u64): boolean
 
 // ---- Pollard rho -----------------------------------------------------------
 //
-// Brent's variant: x <- x^2 + c, with the gcd taken over a batch of
-// differences so one inversion-free multiply per step is the whole cost.
+// Brent's variant, in the shape GNU's factor.c gives it: x <- x^2 + a over
+// Montgomery residues with `a` added raw — an integer rather than a
+// residue, which makes the polynomial x^2 + a * 2^-64, and any constant
+// serves — the differences z - x multiplied into a running product, and
+// one gcd per `rho_batch()` steps. The gcd is taken on the product's
+// Montgomery form directly: 2^64 is coprime to n, so it has the same
+// common factors. When a batch swallows both factors at once the walk
+// resumes from the last checkpoint a step at a time; when even that gives
+// n, the sequence is restarted with the next `a`.
 function gcd_u64(a: u64, b: u64): u64 {
   var x: u64 = a;
   var y: u64 = b;
@@ -292,121 +371,192 @@ function gcd_u64(a: u64, b: u64): u64 {
   return x;
 }
 
+function rho_batch(): i32 {
+  return 128;
+}
+
 // A factor of the odd composite `n`, never 1 or n.
 function rho_u64(n: u64): u64 {
-  var c: u64 = 1 as u64;
+  var ninv: u64 = inverse_mod_2_64(n);
+  var one: u64 = mont_one(n);
+  var a: u64 = 1 as u64;
   while (true) {
-    var f: u64 = rho_try(n, c);
-    if (f != 0 as u64 && f != n) {
-      return f;
+    var g: u64 = rho_try(n, ninv, one, a);
+    if (g != n) {
+      return g;
     }
-    c = c + 1 as u64;
+    a = a + 1 as u64;
   }
   return n;
 }
 
-function rho_try(n: u64, c: u64): u64 {
-  var m: Mont = mont_new(n);
-  var cm: u64 = mont_in(m, c);
-  var x: u64 = mont_in(m, 2 as u64);
+function rho_try(n: u64, ninv: u64, one: u64, a: u64): u64 {
+  var mask: i32 = rho_batch() - 1;
+  var p: u64 = one;
+  var x: u64 = addmod(one, one, n);
   var y: u64 = x;
-  var q: u64 = m.r1;
+  var z: u64 = x;
+  var k: i32 = 1;
+  var l: i32 = 1;
   var g: u64 = 1 as u64;
-  var r: i32 = 1;
-  var saved_y: u64 = y;
   while (g == 1 as u64) {
-    x = y;
+    while (true) {
+      x = addmod(mont_sq(x, n, ninv), a, n);
+      p = mont_mul(p, submod(z, x, n), n, ninv);
+      if ((k & mask) == 1) {
+        g = gcd_u64(p, n);
+        if (g != 1 as u64) {
+          break;
+        }
+        y = x;
+      }
+      k = k - 1;
+      if (k == 0) {
+        break;
+      }
+    }
+    if (g != 1 as u64) {
+      break;
+    }
+    z = x;
+    k = l;
+    l = l + l;
     var i: i32 = 0;
-    while (i < r) {
-      y = mont_add(m, mont_mul(m, y, y), cm);
+    while (i < k) {
+      x = addmod(mont_sq(x, n, ninv), a, n);
       i = i + 1;
     }
-    var k: i32 = 0;
-    while (k < r && g == 1 as u64) {
-      saved_y = y;
-      var j: i32 = 0;
-      var batch: i32 = r - k;
-      if (batch > 128) {
-        batch = 128;
-      }
-      while (j < batch) {
-        y = mont_add(m, mont_mul(m, y, y), cm);
-        q = mont_mul(m, q, mont_sub(m, x, y));
-        j = j + 1;
-      }
-      g = gcd_u64(mont_out(m, q), n);
-      k = k + batch;
-    }
-    r = r * 2;
+    y = x;
   }
-  if (g == n) {
-    // The batch hid the factor: walk the last stretch one step at a time.
-    var z: u64 = saved_y;
-    g = 1 as u64;
-    while (g == 1 as u64) {
-      z = mont_add(m, mont_mul(m, z, z), cm);
-      g = gcd_u64(mont_out(m, mont_sub(m, x, z)), n);
-    }
+  g = 1 as u64;
+  while (g == 1 as u64) {
+    y = addmod(mont_sq(y, n, ninv), a, n);
+    g = gcd_u64(submod(z, y, n), n);
   }
   return g;
 }
 
 // ---- factoring a 64-bit number ---------------------------------------------
-// `Factors` — the primes found so far, ascending, with multiplicity.
-struct Factors { primes: u64[], big: bigint.BigInt[] }
-
-function factors_new(): Factors {
-  var p: u64[] = [];
-  var b: bigint.BigInt[] = [];
-  return Factors { primes: p, big: b };
-}
-
-function factor_u64(f: Factors, n0: u64, primes: SmallPrime[]): Factors {
-  var out: Factors = f;
+//
+// `push_line_u64(h, n, pr, exponents)` — the rest of a line for a 64-bit
+// `n`: ` p` per factor (` p^e` under -h), then the newline. The small
+// primes are divided out and pushed as they are found, which is in
+// ascending order; the factor table finishes a remainder below its bound,
+// and only a remainder that rho splits is collected and sorted first.
+function push_line_u64(h: usize, n0: u64, pr: Primes, exponents: boolean): void {
+  if (n0 <= 1 as u64) {
+    buf_push_byte(h, 10);
+    return;
+  }
   var n: u64 = n0;
-  if (n <= 1 as u64) {
-    return out;
-  }
-  while ((n & 1 as u64) == 0 as u64) {
-    out = Factors { ...out, primes: out.primes.append(2 as u64) };
-    n = n >> 1 as u64;
-  }
-  var i: i32 = 0;
-  while (i < primes.len()) {
-    var d: u64 = primes[i].p;
-    if (d * d > n) {
-      break;
+  if ((n & 1 as u64) == 0 as u64) {
+    var twos: i32 = 0;
+    while ((n & 1 as u64) == 0 as u64) {
+      n = n >> 1 as u64;
+      twos = twos + 1;
     }
-    var q: u64 = n * primes[i].inv;
-    while (q <= primes[i].lim) {
-      out = Factors { ...out, primes: out.primes.append(d) };
-      n = q;
-      q = n * primes[i].inv;
+    push_run(h, pr, 0, twos, exponents, n == 1 as u64);
+    if (n == 1 as u64) {
+      return;
     }
-    i = i + 1;
   }
+  n = push_small(h, n, pr, exponents);
   if (n == 1 as u64) {
-    return out;
+    return;
   }
   // Every prime below the trial limit has been divided out, so a
   // remainder under the limit's square has no divisor left to find.
-  if (n < trial_limit() * trial_limit()) {
-    return Factors { ...out, primes: out.primes.append(n) };
+  if (n < trial_limit() * trial_limit() || is_prime_u64(n)) {
+    push_num(h, n, pr, true, true);
+    return;
   }
-  return split_u64(out, n);
+  push_sorted_u64(h, split_u64([], n), pr, exponents, true);
+}
+
+// `push_small(h, n, pr, exponents)` — divides the odd small primes out of
+// the odd `n`, pushing each run, and returns what is left: 1 when the
+// line is finished — which the factor table does for a remainder below
+// its bound — else a remainder with no factor below the trial limit.
+function push_small(h: usize, n0: u64, pr: Primes, exponents: boolean): u64 {
+  var n: u64 = n0;
+  var bound: u64 = 0 as u64;
+  if (pr.spf.len() > 0) {
+    bound = table_bound();
+  }
+  if (n < bound) {
+    push_table(h, n, pr, exponents);
+    return 1 as u64;
+  }
+  var i: i32 = 1;
+  var np: i32 = pr.p.len();
+  while (i < np) {
+    var d: u64 = pr.p[i];
+    if (d * d > n) {
+      break;
+    }
+    var iv: u64 = pr.inv[i];
+    var q: u64 = n * iv;
+    var lm: u64 = pr.lim[i];
+    if (q <= lm) {
+      var count: i32 = 0;
+      while (q <= lm) {
+        n = q;
+        q = n * iv;
+        count = count + 1;
+      }
+      push_run(h, pr, i, count, exponents, n == 1 as u64);
+      if (n == 1 as u64) {
+        return n;
+      }
+      if (n < bound) {
+        push_table(h, n, pr, exponents);
+        return 1 as u64;
+      }
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+// The rest of the line for an odd `n` in 3 .. `table_bound()`, by lookup.
+function push_table(h: usize, n0: u64, pr: Primes, exponents: boolean): void {
+  var n: u64 = n0;
+  while (true) {
+    var k: i32 = pr.spf[(n >> 1 as u64) as i32] as i32;
+    if (k == 0) {
+      push_num(h, n, pr, true, true);
+      return;
+    }
+    var iv: u64 = pr.inv[k];
+    var lm: u64 = pr.lim[k];
+    var q: u64 = n * iv;
+    var count: i32 = 0;
+    while (q <= lm) {
+      n = q;
+      q = n * iv;
+      count = count + 1;
+    }
+    push_run(h, pr, k, count, exponents, n == 1 as u64);
+    if (n == 1 as u64) {
+      return;
+    }
+  }
 }
 
 // `n` has no factor below the trial limit: prime, or split by rho.
-function split_u64(f: Factors, n: u64): Factors {
+function split_u64(own f: u64[], n: u64): u64[] {
+  var out: u64[] = f;
   if (n == 1 as u64) {
-    return f;
+    return out;
   }
   if (is_prime_u64(n)) {
-    return Factors { ...f, primes: f.primes.append(n) };
+    out = out.append(n);
+    return out;
   }
   var d: u64 = rho_u64(n);
-  var out: Factors = split_u64(f, d);
-  return split_u64(out, n / d);
+  out = split_u64(out, d);
+  out = split_u64(out, n / d);
+  return out;
 }
 
 // ---- factoring beyond 64 bits ----------------------------------------------
@@ -452,10 +602,9 @@ function is_prime_big(n: bigint.BigInt): boolean {
   if (n.cmp(one) <= 0) {
     return false;
   }
-  var bases: u64[] = miller_rabin_bases();
   var i: i32 = 0;
-  while (i < bases.len()) {
-    var b: bigint.BigInt = bigint.from_u64(bases[i]);
+  while (i < 12) {
+    var b: bigint.BigInt = bigint.from_u64(mr_base(i));
     if (n.cmp(b) == 0) {
       return true;
     }
@@ -472,8 +621,8 @@ function is_prime_big(n: bigint.BigInt): boolean {
     s = s + 1;
   }
   i = 0;
-  while (i < bases.len()) {
-    if (!mr_witness_big(n, n1, d, s, bigint.from_u64(bases[i]))) {
+  while (i < 12) {
+    if (!mr_witness_big(n, n1, d, s, bigint.from_u64(mr_base(i)))) {
       return false;
     }
     i = i + 1;
@@ -532,92 +681,203 @@ function rho_try_big(n: bigint.BigInt, c: bigint.BigInt): bigint.BigInt {
   return g;
 }
 
-function factor_big(f: Factors, n0: bigint.BigInt, primes: SmallPrime[]): Factors {
-  var out: Factors = f;
+// The factors a wide remainder splits into: those that fit a word and
+// those that do not. Every word-sized one is below every wide one, so the
+// two lists sorted are the whole set in order.
+struct Wide { small: u64[], big: bigint.BigInt[] }
+
+// The rest of the line for a number past 64 bits.
+function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boolean): void {
   var n: bigint.BigInt = n0;
+  var twos: i32 = 0;
   while (!n.bit(0)) {
-    out = Factors { ...out, primes: out.primes.append(2 as u64) };
     n = n.shr(1);
+    twos = twos + 1;
   }
-  var i: i32 = 0;
-  while (i < primes.len()) {
-    var bd: bigint.BigInt = bigint.from_u64(primes[i].p);
+  if (twos > 0) {
+    push_run(h, pr, 0, twos, exponents, false);
+  }
+  var i: i32 = 1;
+  while (i < pr.p.len()) {
+    var bd: bigint.BigInt = bigint.from_u64(pr.p[i]);
+    var count: i32 = 0;
     while (bi_mod(n, bd).is_zero()) {
-      out = Factors { ...out, primes: out.primes.append(primes[i].p) };
       n = n.divmod(bd).0;
+      count = count + 1;
+    }
+    if (count > 0) {
+      push_run(h, pr, i, count, exponents, false);
     }
     i = i + 1;
   }
-  return split_big(out, n, primes);
+  var empty_small: u64[] = [];
+  var empty_big: bigint.BigInt[] = [];
+  var w: Wide = split_big(Wide { small: empty_small, big: empty_big }, n);
+  var big: bigint.BigInt[] = sort_big(w.big);
+  if (big.len() == 0) {
+    if (w.small.len() == 0) {
+      buf_push_byte(h, 10);
+    } else {
+      push_sorted_u64(h, w.small, pr, exponents, true);
+    }
+    return;
+  }
+  push_sorted_u64(h, w.small, pr, exponents, false);
+  var j: i32 = 0;
+  while (j < big.len()) {
+    var count: i32 = 1;
+    while (j + count < big.len() && big[j + count].cmp(big[j]) == 0) {
+      count = count + 1;
+    }
+    var spelled: string = " " + big[j].to_string();
+    if (exponents) {
+      buf_push(h, spelled);
+      if (count > 1) {
+        buf_push_byte(h, 94);
+        push_num(h, count as u64, pr, false, false);
+      }
+    } else {
+      var k: i32 = 0;
+      while (k < count) {
+        buf_push(h, spelled);
+        k = k + 1;
+      }
+    }
+    j = j + count;
+  }
+  buf_push_byte(h, 10);
 }
 
-function split_big(f: Factors, n: bigint.BigInt, primes: SmallPrime[]): Factors {
+function split_big(f: Wide, n: bigint.BigInt): Wide {
   var one: bigint.BigInt = bigint.from_i64(1 as i64);
   if (n.cmp(one) <= 0) {
     return f;
   }
-  match (fits_u64(n)) {
-    Some(v) => {
-      return split_u64(f, v);
-    },
-    None => {}
+  if (n.bit_length() <= 64) {
+    var small: u64[] = f.small;
+    small = split_u64(small, n.low_u64());
+    return Wide { ...f, small: small };
   }
   if (is_prime_big(n)) {
-    return Factors { ...f, big: f.big.append(n) };
+    return Wide { ...f, big: f.big.append(n) };
   }
   var d: bigint.BigInt = rho_big(n);
-  var out: Factors = split_big(f, d, primes);
-  return split_big(out, n.divmod(d).0, primes);
-}
-
-// The value when 64 bits hold it.
-function fits_u64(n: bigint.BigInt): Option[u64] {
-  if (n.bit_length() > 64) {
-    return None;
-  }
-  return Some(n.low_u64());
+  var out: Wide = split_big(f, d);
+  return split_big(out, n.divmod(d).0);
 }
 
 // ---- printing --------------------------------------------------------------
 //
-// The factors ascend, so the two lists — those that fit a word and those
-// that do not — are already in order end to end.
-struct Term { text: string, count: i32 }
-
-function terms_of(f: Factors): Term[] {
-  var small: u64[] = sort_u64(f.primes);
-  var wide: bigint.BigInt[] = sort_big(f.big);
-  var out: Term[] = [];
-  var i: i32 = 0;
-  while (i < small.len()) {
-    out = push_term(out, small[i].to_string());
-    i = i + 1;
+// Everything below pushes into a builder handle: the buffered stdout's,
+// or a scratch one for the line that bypasses it. Every function takes
+// `nl`, whether it is pushing the last factor of the line and so owes the
+// newline — folded into the last push rather than pushed on its own.
+// `push_run(h, pr, k, count, exponents, nl)` — the k'th small prime
+// occurring `count` times: ` p^count` under -h, else ` p` repeated.
+function push_run(h: usize, pr: Primes, k: i32, count: i32, exponents: boolean, nl: boolean): void {
+  if (exponents) {
+    if (count == 1) {
+      push_text(h, pr, k, nl);
+      return;
+    }
+    buf_push(h, pr.text[k]);
+    buf_push_byte(h, 94);
+    push_num(h, count as u64, pr, false, nl);
+    return;
   }
-  i = 0;
-  while (i < wide.len()) {
-    out = push_term(out, wide[i].to_string());
-    i = i + 1;
+  var j: i32 = 1;
+  while (j < count) {
+    buf_push(h, pr.text[k]);
+    j = j + 1;
   }
-  return out;
+  push_text(h, pr, k, nl);
 }
 
-// Trial division hands the small factors over in order, but rho splits a
-// composite either way round, so both lists are sorted before printing.
-// Insertion sort: a number has at most a few hundred factors.
-function sort_u64(xs: u64[]): u64[] {
-  var out: u64[] = xs;
+function push_text(h: usize, pr: Primes, k: i32, nl: boolean): void {
+  if (nl) {
+    buf_push(h, pr.textnl[k]);
+  } else {
+    buf_push(h, pr.text[k]);
+  }
+}
+
+// `push_num(h, n, pr, space, nl)` — `n` in decimal, three digits a push:
+// the leading group from `lead`, with the space before it when `space`,
+// the rest from `grp`, and the newline after the last when `nl`.
+function push_num(h: usize, n: u64, pr: Primes, space: boolean, nl: boolean): void {
+  var tail: i32 = 0;
+  if (nl) {
+    tail = 1;
+  }
+  if (n < 1000 as u64) {
+    var v: i32 = n as i32;
+    var digits: i32 = 1;
+    if (v >= 10) {
+      digits = 2;
+    }
+    if (v >= 100) {
+      digits = 3;
+    }
+    var at: i32 = v * 5;
+    if (!space) {
+      at = at + 1;
+    }
+    buf_push_range(h, pr.lead, at, v * 5 + 1 + digits + tail);
+    return;
+  }
+  var q: u64 = n / (1000 as u64);
+  push_num(h, q, pr, space, false);
+  var r: i32 = (n - q * (1000 as u64)) as i32;
+  buf_push_range(h, pr.grp, r * 4, r * 4 + 3 + tail);
+}
+
+// `push_prime_run(h, p, count, pr, exponents, nl)` — `push_run` for a
+// prime with no precomputed spelling.
+function push_prime_run(h: usize, p: u64, count: i32, pr: Primes, exponents: boolean, nl: boolean): void {
+  if (exponents) {
+    if (count == 1) {
+      push_num(h, p, pr, true, nl);
+      return;
+    }
+    push_num(h, p, pr, true, false);
+    buf_push_byte(h, 94);
+    push_num(h, count as u64, pr, false, nl);
+    return;
+  }
+  var j: i32 = 1;
+  while (j < count) {
+    push_num(h, p, pr, true, false);
+    j = j + 1;
+  }
+  push_num(h, p, pr, true, nl);
+}
+
+// Rho splits a composite either way round, so its factors are sorted
+// before they are pushed, the last one ending the line when `nl`.
+// Insertion sort: there are at most a few.
+function push_sorted_u64(h: usize, xs: u64[], pr: Primes, exponents: boolean, nl: boolean): void {
+  var fs: u64[] = xs;
   var i: i32 = 1;
-  while (i < out.len()) {
-    var v: u64 = out[i];
+  while (i < fs.len()) {
+    var v: u64 = fs[i];
     var j: i32 = i - 1;
-    while (j >= 0 && out[j] > v) {
-      out = out.with(j + 1, out[j]);
+    while (j >= 0 && fs[j] > v) {
+      fs = fs.with(j + 1, fs[j]);
       j = j - 1;
     }
-    out = out.with(j + 1, v);
+    fs = fs.with(j + 1, v);
     i = i + 1;
   }
-  return out;
+  var k: i32 = 0;
+  while (k < fs.len()) {
+    var p: u64 = fs[k];
+    var count: i32 = 1;
+    while (k + count < fs.len() && fs[k + count] == p) {
+      count = count + 1;
+    }
+    k = k + count;
+    push_prime_run(h, p, count, pr, exponents, nl && k == fs.len());
+  }
 }
 
 function sort_big(xs: bigint.BigInt[]): bigint.BigInt[] {
@@ -636,234 +896,398 @@ function sort_big(xs: bigint.BigInt[]): bigint.BigInt[] {
   return out;
 }
 
-function push_term(out: Term[], text: string): Term[] {
-  if (out.len() > 0 && out[out.len() - 1].text == text) {
-    var last: Term = out[out.len() - 1];
-    return out.with(out.len() - 1, Term { ...last, count: last.count + 1 });
-  }
-  return out.append(Term { text: text, count: 1 });
-}
-
-// `report(o, n, f, exponents)` — one line: the number, a colon, then the
-// factors. Nothing follows the colon for 0 and 1.
-// `unbuffered` is for a number at or above 2^127, which GNU hands to a
-// different arithmetic and a different stream: that line goes straight
-// to the descriptor while the buffered ones wait for exit, so
-// `printf '15\n<2^128-1>\n21\n' | factor` prints the big one first. The
-// boundary is the value, not the engine used to factor it.
-// `State` — the buffered stdout and whether any number was rejected. It is
-// threaded whole through `report` (rebind: `st = report(st, …)`): handing
-// `st.o` over on its own left the writer shared between the field and the
-// callee's result, and every append after the first copied the buffer
-// (#8755).
-struct State { o: io_buffered.BufWriter, status: i32, failed: boolean }
-
-function report(st: State, n: string, f: Factors, exponents: boolean, unbuffered: boolean): State {
-  if (unbuffered) {
-    // The failure is remembered rather than reported: it is the stream's
-    // error flag, which close_stdout reports at exit as a bare
-    // `write error`, with no strerror text after it.
-    var line: string = n + ":";
-    var terms: Term[] = terms_of(f);
-    var i: i32 = 0;
-    while (i < terms.len()) {
-      line = line + term_text(terms[i], exponents);
-      i = i + 1;
-    }
-    var w: Writer = stdout();
-    match (w.write(line + "\n")) {
-      Some(_) => {
-        return State { ...st, failed: true };
-      },
-      None => {
-        return st;
-      }
-    }
-  }
-  // The buffered line is written piecewise — a factor is a run of digits
-  // appended in place, never a string — which is what keeps a bulk run
-  // off the allocator. One call per statement: a writer returned by a
-  // call and used as a receiver in the same expression copies its
-  // buffer and leaks the old one (#8755).
-  var out: io_buffered.BufWriter = st.o;
-  out = out.write_string(n);
-  out = out.write_string(":");
-  var small: u64[] = sort_u64(f.primes);
-  var k: i32 = 0;
-  while (k < small.len()) {
-    var p: u64 = small[k];
-    var count: i32 = 1;
-    while (k + count < small.len() && small[k + count] == p) {
-      count = count + 1;
-    }
-    out = write_run_u64(out, p, count, exponents);
-    k = k + count;
-  }
-  if (f.big.len() > 0) {
-    var wide: Term[] = [];
-    var wsorted: bigint.BigInt[] = sort_big(f.big);
-    var j: i32 = 0;
-    while (j < wsorted.len()) {
-      wide = push_term(wide, wsorted[j].to_string());
-      j = j + 1;
-    }
-    j = 0;
-    while (j < wide.len()) {
-      out = out.write_string(term_text(wide[j], exponents));
-      j = j + 1;
-    }
-  }
-  out = out.write_string("\n");
-  return State { ...st, o: out };
-}
-
-// One prime `p` occurring `count` times: ` p^count` under -h, else ` p`
-// repeated.
-function write_run_u64(o: io_buffered.BufWriter, p: u64, count: i32, exponents: boolean): io_buffered.BufWriter {
-  var out: io_buffered.BufWriter = o;
-  if (exponents) {
-    out = out.write_string(" ");
-    out = out.write_u64(p);
-    if (count > 1) {
-      out = out.write_string("^");
-      out = out.write_u64(count as u64);
-    }
-    return out;
-  }
-  var k: i32 = 0;
-  while (k < count) {
-    out = out.write_string(" ");
-    out = out.write_u64(p);
-    k = k + 1;
-  }
-  return out;
-}
-
-// A term's text as the line carries it: ` p^count` under -h, else ` p`
-// repeated.
-function term_text(t: Term, exponents: boolean): string {
-  if (exponents) {
-    if (t.count > 1) {
-      return " " + t.text + "^" + (t.count as i64).to_string();
-    }
-    return " " + t.text;
-  }
-  var s: string = "";
-  var k: i32 = 0;
-  while (k < t.count) {
-    s = s + " " + t.text;
-    k = k + 1;
-  }
-  return s;
-}
-
 // ---- reading a number ------------------------------------------------------
 //
-// `[ ]*[+]?[0-9]+` and nothing else. The digits themselves are kept for
-// the report, without their leading zeros, because that is what GNU
-// echoes back.
-struct Number { digits: string, small: u64, wide: boolean }
-
-function parse_number(s: string): Option[Number] {
-  var i: i32 = 0;
-  while (i < s.len() && s[i] as i32 == 32) {
+// `handle(h, text, lo, hi, split, exponents, pr)` — one token,
+// `text[lo:hi]`: the number it spells is factored and its line pushed
+// into the builder `h`, or it is rejected on stderr. With `split` the
+// token ends at the first blank as well as at `hi`, which is how stdin is
+// cut up; without it, an operand, a blank is just another byte that is
+// not a digit. The result packs where the token ended (bits 3 and up)
+// with what happened: bit 0 rejected, bit 1 the line went straight to the
+// descriptor and that write failed, bit 2 the number was below the factor
+// table's bound.
+//
+// `[ ]*[+]?[0-9]+` and nothing else, with a NUL ending the token as it
+// ends any C string. The digits are echoed without their leading zeros,
+// which is what GNU prints.
+function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, exponents: boolean, pr: Primes): i64 {
+  var i: i32 = lo;
+  // `c` is the byte at `i`, or -1 at `hi`, read once per position.
+  var c: i32 = -1;
+  if (i < hi) {
+    c = text[i] as i32;
+  }
+  while (c == 32) {
     i = i + 1;
-  }
-  if (i < s.len() && s[i] as i32 == 43) {
-    i = i + 1;
-  }
-  var start: i32 = i;
-  while (i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 57) {
-    i = i + 1;
-  }
-  if (i == start || i != s.len()) {
-    return None;
-  }
-  var digits: string = slice_unchecked(s, start, i) + "";
-  var lead: i32 = 0;
-  while (lead + 1 < digits.len() && digits[lead] as i32 == 48) {
-    lead = lead + 1;
-  }
-  digits = slice_unchecked(digits, lead, digits.len()) + "";
-  if (digits.len() <= 19) {
-    var v: u64 = 0 as u64;
-    var k: i32 = 0;
-    while (k < digits.len()) {
-      v = v * (10 as u64) + (digits[k] as i32 - 48) as u64;
-      k = k + 1;
+    c = -1;
+    if (i < hi) {
+      c = text[i] as i32;
     }
-    return Some(Number { digits: digits, small: v, wide: false });
   }
-  return Some(Number { digits: digits, small: 0 as u64, wide: true });
+  if (c == 43) {
+    i = i + 1;
+    c = -1;
+    if (i < hi) {
+      c = text[i] as i32;
+    }
+  }
+  var ds: i32 = i;
+  while (c == 48) {
+    i = i + 1;
+    c = -1;
+    if (i < hi) {
+      c = text[i] as i32;
+    }
+  }
+  var sig: i32 = i;
+  // The accumulation wraps past nineteen digits; it is only read below
+  // that, and a longer number is parsed again as a bigint.
+  var v: u64 = 0 as u64;
+  var d: u32 = (c - 48) as u32;
+  while (d <= 9 as u32) {
+    v = v * (10 as u64) + d as u64;
+    i = i + 1;
+    c = -1;
+    if (i < hi) {
+      c = text[i] as i32;
+    }
+    d = (c - 48) as u32;
+  }
+  var end: i32 = i;
+  var valid: boolean = i > ds;
+  if (i < hi) {
+    if (c == 0) {
+      end = token_end(text, i, hi, split);
+    } else if (split && is_blank(c)) {
+      end = i;
+    } else {
+      valid = false;
+      end = token_end(text, i, hi, split);
+    }
+  }
+  if (!valid) {
+    // Not flushed first: GNU's stdout stays block-buffered across the
+    // diagnostic, so the two streams interleave as they interleave.
+    gnu.error(gnu.quote(cut_at_nul(text, lo, end)) + " is not a valid positive integer");
+    return end as i64 << 3 as i64 | 1 as i64;
+  }
+  if (sig == i) {
+    sig = i - 1;
+  }
+  var code: i64 = 0 as i64;
+  if (i - sig <= 19) {
+    if (v < table_bound()) {
+      code = 4 as i64;
+    }
+    buf_push_range(h, text, sig, i);
+    buf_push_byte(h, 58);
+    push_line_u64(h, v, pr, exponents);
+  } else {
+    match (bigint.parse(slice_unchecked(text, sig, i) + "")) {
+      Some(b) => {
+        code = handle_wide(h, text, sig, i, b, exponents, pr);
+      },
+      None => {}
+    }
+  }
+  return end as i64 << 3 as i64 | code;
 }
 
-// ---- the program -----------------------------------------------------------
-function handle(st: State, token: string, exponents: boolean, primes: SmallPrime[]): State {
-  var s: string = cut_at_nul(token);
-  match (parse_number(s)) {
-    Some(num) => {
-      var f: Factors = factors_new();
-      var unbuffered: boolean = false;
-      if (num.wide) {
-        match (bigint.parse(num.digits)) {
-          Some(b) => {
-            unbuffered = b.bit_length() >= 128;
-            if (b.bit_length() <= 64) {
-              f = factor_u64(f, b.low_u64(), primes);
-            } else {
-              f = factor_big(f, b, primes);
-            }
-          },
-          None => {}
-        }
-      } else {
-        f = factor_u64(f, num.small, primes);
-      }
-      return report(st, num.digits, f, exponents, unbuffered);
+// A number of twenty digits or more. One at or above 2^127 goes to GNU's
+// other arithmetic and a different stream: that line goes straight to the
+// descriptor while the buffered ones wait for exit, so
+// `printf '15\n<2^128-1>\n21\n' | factor` prints the big one first. The
+// boundary is the value, not the engine used to factor it. Such a write
+// failing is remembered rather than reported: it is the stream's error
+// flag, which close_stdout reports at exit as a bare `write error`, with
+// no strerror text after it.
+function handle_wide(out: usize, text: string, sig: i32, end: i32, b: bigint.BigInt, exponents: boolean, pr: Primes): i64 {
+  var bits: i32 = b.bit_length();
+  var h: usize = out;
+  if (bits >= 128) {
+    h = buf_new(256);
+  }
+  buf_push_range(h, text, sig, end);
+  buf_push_byte(h, 58);
+  if (bits <= 64) {
+    push_line_u64(h, b.low_u64(), pr, exponents);
+  } else {
+    push_line_big(h, b, pr, exponents);
+  }
+  if (bits < 128) {
+    return 0 as i64;
+  }
+  var line: string = buf_take(h);
+  buf_free(h);
+  var w: Writer = stdout();
+  match (w.write(line)) {
+    Some(_) => {
+      return 2 as i64;
     },
     None => {
-      // Not flushed first: GNU's stdout stays block-buffered across the
-      // diagnostic, so the two streams interleave as they interleave.
-      gnu.error(gnu.quote(s) + " is not a valid positive integer");
-      return State { ...st, status: 1 };
+      return 0 as i64;
     }
   }
 }
 
-// A NUL ends the token, as it ends any C string.
-function cut_at_nul(s: string): string {
-  var i: i32 = 0;
-  while (i < s.len()) {
-    if (s[i] as i32 == 0) {
-      return slice_unchecked(s, 0, i) + "";
-    }
+// Where the token that `text[i:hi]` continues ends: at the next blank
+// when `split`, else at `hi`.
+function token_end(text: string, i: i32, hi: i32, split: boolean): i32 {
+  if (!split) {
+    return hi;
+  }
+  var k: i32 = i;
+  while (k < hi && !is_blank(text[k] as i32)) {
+    k = k + 1;
+  }
+  return k;
+}
+
+// `text[lo:hi]` up to its first NUL, for the diagnostic.
+function cut_at_nul(text: string, lo: i32, hi: i32): string {
+  var i: i32 = lo;
+  while (i < hi && text[i] as i32 != 0) {
     i = i + 1;
   }
-  return s;
-}
-
-// Tokens from stdin: runs of anything that is not a space, tab or
-// newline.
-function handle_stdin(st: State, exponents: boolean, primes: SmallPrime[]): State {
-  var text: string = io.read_all_stdin();
-  var out: State = st;
-  var i: i32 = 0;
-  while (i < text.len()) {
-    if (is_blank(text[i] as i32)) {
-      i = i + 1;
-      continue;
-    }
-    var start: i32 = i;
-    while (i < text.len() && !is_blank(text[i] as i32)) {
-      i = i + 1;
-    }
-    out = handle(out, slice_unchecked(text, start, i) + "", exponents, primes);
-  }
-  return out;
+  return slice_unchecked(text, lo, i) + "";
 }
 
 function is_blank(b: i32): boolean {
   return b == 32 || b == 9 || b == 10;
+}
+
+// ---- the output line buffer ------------------------------------------------
+//
+// GNU factor does not print through stdio. It keeps a line buffer of its
+// own and, once a finished line brings it to `pipe_buf()` bytes, writes
+// the whole lines within the first `pipe_buf()` bytes — so a pipe reader
+// sees whole lines and no write is split — and keeps the rest. That
+// policy is visible, so it is reproduced: a line at or above 2^127
+// reaches the descriptor at once, and where it lands among the buffered
+// lines depends on exactly which of them have been written; a write that
+// fails mid-run is reported at once (`write error: <strerror>`), stops the
+// reading, and is reported again by the flush at exit, which finds the
+// same bytes still pending. On a terminal every line goes out as it is
+// finished.
+struct Out { w: Writer, h: usize, tty: boolean }
+
+function pipe_buf(): i32 {
+  return 512;
+}
+
+function out_new(): Out {
+  return Out { w: stdout(), h: buf_new(pipe_buf() * 2), tty: isatty(1) };
+}
+
+// `line_done(o, start, failed)` — after a line that began `start` bytes
+// into the buffer: write what GNU would write now. Exits on a failure.
+function line_done(o: Out, start: i32, failed: boolean): void {
+  var len: i32 = buf_len(o.h);
+  if (o.tty) {
+    var line: string = buf_take(o.h);
+    out_write(o, line, line, failed);
+    return;
+  }
+  if (len < pipe_buf()) {
+    return;
+  }
+  var s: string = buf_take(o.h);
+  if (len == pipe_buf() || start == 0) {
+    out_write(o, s, s, failed);
+    return;
+  }
+  var head: string = slice_unchecked(s, 0, start) + "";
+  out_write(o, head, s, failed);
+  buf_push_range(o.h, s, start, len);
+}
+
+// One write of `piece`. When it fails: the diagnostic, then what the
+// flush at exit does — a write of `pending`, everything still held,
+// reported the same way when it fails too — then close_stdout's report
+// of the other stream, and exit 1.
+function out_write(o: Out, piece: string, pending: string, failed: boolean): void {
+  match (o.w.write(piece)) {
+    Some(e) => {
+      gnu.error("write error: " + gnu.io_error_text(e));
+      match (o.w.write(pending)) {
+        Some(e2) => {
+          gnu.error("write error: " + gnu.io_error_text(e2));
+        },
+        None => {}
+      }
+      close_stream(o, failed);
+      exit(1);
+    },
+    None => {}
+  }
+}
+
+// `out_finish(o, failed, status)` — the end of the program: the flush at
+// exit, then close_stdout's report of the unbuffered stream. Returns the
+// exit status.
+function out_finish(o: Out, failed: boolean, status: i32): i32 {
+  var s: string = buf_take(o.h);
+  buf_free(o.h);
+  var st: i32 = status;
+  if (s.len() > 0) {
+    match (o.w.write(s)) {
+      Some(e) => {
+        gnu.error("write error: " + gnu.io_error_text(e));
+        st = 1;
+      },
+      None => {}
+    }
+  }
+  if (close_stream(o, failed)) {
+    return 1;
+  }
+  return st;
+}
+
+// gnulib's close_stdout on the stream the unbuffered lines went to: a
+// failure there was remembered rather than reported when it happened,
+// and comes out now as `write error` — bare, unless closing the
+// descriptor fails as well, when its strerror is named. Whether it
+// reported anything.
+function close_stream(o: Out, failed: boolean): boolean {
+  if (!failed) {
+    return false;
+  }
+  match (o.w.close()) {
+    Some(e) => {
+      gnu.error("write error: " + gnu.io_error_text(e));
+    },
+    None => {
+      gnu.error("write error");
+    }
+  }
+  return true;
+}
+
+// ---- the program -----------------------------------------------------------
+//
+// `State` — the output, the exit status, whether the unbuffered stream
+// failed, the tables, and how many numbers below the factor table's
+// bound have been seen.
+struct State { o: Out, status: i32, failed: boolean, pr: Primes, seen: i32 }
+
+// Folds `handle`'s result into the state and finishes the line it may
+// have pushed, which began `start` bytes into the buffer.
+function after(st: State, code: i64, start: i32): State {
+  var what: i32 = (code & 7 as i64) as i32;
+  var seen: i32 = st.seen;
+  var pr: Primes = st.pr;
+  if ((what & 4) != 0) {
+    seen = seen + 1;
+    if (seen == table_after()) {
+      pr = with_table(pr);
+    }
+  }
+  var failed: boolean = st.failed || (what & 2) != 0;
+  line_done(st.o, start, failed);
+  return State { ...st, status: st.status | what & 1, failed: failed, pr: pr, seen: seen };
+}
+
+// Bytes of stdin read at a time.
+function chunk_bytes(): i32 {
+  return 65536;
+}
+
+// Tokens from stdin: runs of anything that is not a space, tab or
+// newline, read a chunk at a time. A token cut by a chunk boundary is
+// carried into the next chunk, so nothing holds more than one chunk of
+// the input. The state is held in locals across the loop: rebuilding it
+// per token would be an allocation per number.
+function handle_stdin(st: State, exponents: boolean): State {
+  var r: Reader = stdin();
+  var o: Out = st.o;
+  var status: i32 = st.status;
+  var failed: boolean = st.failed;
+  var pr: Primes = st.pr;
+  var seen: i32 = st.seen;
+  var h: usize = o.h;
+  var carry: string = "";
+  while (true) {
+    var chunk: string = "";
+    match (r.read_chunk(chunk_bytes())) {
+      Ok(c) => {
+        chunk = c;
+      },
+      Err(e) => {
+        break;
+      }
+    }
+    var n: i32 = chunk.len();
+    if (n == 0) {
+      break;
+    }
+    // Tokens before the chunk's last blank are complete; what follows it
+    // may continue in the next chunk.
+    var lim: i32 = n;
+    while (lim > 0 && !is_blank(chunk[lim - 1] as i32)) {
+      lim = lim - 1;
+    }
+    var i: i32 = 0;
+    if (carry.len() > 0) {
+      var f: i32 = 0;
+      while (f < n && !is_blank(chunk[f] as i32)) {
+        f = f + 1;
+      }
+      carry = carry + slice_unchecked(chunk, 0, f);
+      if (lim == 0) {
+        continue;
+      }
+      var start: i32 = buf_len(h);
+      var rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
+      carry = "";
+      var what: i32 = (rc & 7 as i64) as i32;
+      status = status | what & 1;
+      failed = failed || (what & 2) != 0;
+      if ((what & 4) != 0) {
+        seen = seen + 1;
+        if (seen == table_after()) {
+          pr = with_table(pr);
+        }
+      }
+      line_done(o, start, failed);
+      i = f;
+    }
+    while (i < lim) {
+      if (is_blank(chunk[i] as i32)) {
+        i = i + 1;
+        continue;
+      }
+      var at: i32 = buf_len(h);
+      var rt: i64 = handle(h, chunk, i, lim, true, exponents, pr);
+      i = (rt >> 3 as i64) as i32;
+      var what: i32 = (rt & 7 as i64) as i32;
+      if (what != 0) {
+        status = status | what & 1;
+        failed = failed || (what & 2) != 0;
+        if ((what & 4) != 0) {
+          seen = seen + 1;
+          if (seen == table_after()) {
+            pr = with_table(pr);
+          }
+        }
+      }
+      line_done(o, at, failed);
+    }
+    if (lim < n) {
+      carry = slice_unchecked(chunk, lim, n) + "";
+    }
+  }
+  r.close();
+  if (carry.len() > 0) {
+    var start: i32 = buf_len(h);
+    var rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
+    var what: i32 = (rc & 7 as i64) as i32;
+    status = status | what & 1;
+    failed = failed || (what & 2) != 0;
+    line_done(o, start, failed);
+  }
+  return State { o: o, status: status, failed: failed, pr: pr, seen: seen };
 }
 
 function main(): i32 {
@@ -886,17 +1310,17 @@ function main(): i32 {
     }
   }
   var operands: string[] = g.operands();
-  var st: State = State { o: gnu.out_new(), status: 0, failed: false };
-  var primes: SmallPrime[] = small_primes();
+  var st: State = State { o: out_new(), status: 0, failed: false, pr: small_primes(), seen: 0 };
   if (operands.len() == 0) {
-    st = handle_stdin(st, exponents, primes);
+    st = handle_stdin(st, exponents);
   } else {
     var i: i32 = 0;
     while (i < operands.len()) {
-      st = handle(st, operands[i], exponents, primes);
+      var s: string = operands[i];
+      var start: i32 = buf_len(st.o.h);
+      st = after(st, handle(st.o.h, s, 0, s.len(), false, exponents, st.pr), start);
       i = i + 1;
     }
   }
-  gnu.close_stdout(st.o, st.failed);
-  return st.status;
+  return out_finish(st.o, st.failed, st.status);
 }

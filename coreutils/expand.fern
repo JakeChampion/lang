@@ -60,43 +60,13 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the size of the block the accumulated output
-// is handed to the buffered writer in. The writer's threshold is the
-// same number, so a full block goes straight to the fd instead of being
-// copied into its buffer first.
+// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
 
 function block_size(): i32 {
   return 16384;
-}
-
-// One to eight spaces as a literal each: a tab that reaches a stop
-// within a tab's usual width costs one append of a static string.
-function spaces(n: i32): string {
-  if (n == 1) {
-    return " ";
-  }
-  if (n == 2) {
-    return "  ";
-  }
-  if (n == 3) {
-    return "   ";
-  }
-  if (n == 4) {
-    return "    ";
-  }
-  if (n == 5) {
-    return "     ";
-  }
-  if (n == 6) {
-    return "      ";
-  }
-  if (n == 7) {
-    return "       ";
-  }
-  return "        ";
 }
 
 // `digit_of(m)` — the digit an `opt_digit` match stood for.
@@ -147,13 +117,12 @@ function main(): i32 {
   return run(files, stops, initial);
 }
 
-// `run(files, stops, initial)` — the whole conversion, in one function
-// because `out` is the output accumulator: a bare local appended to
-// inline grows in place, and the same appends made through a helper copy
-// the whole buffer every time (#8785).
+// `run(files, stops, initial)` — the whole conversion. Every piece of a
+// line is pushed straight into stdout's builder, which is flushed once it
+// holds a block, so no byte is copied into an accumulator on the way.
 function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var out: string = "";
+  var h: usize = o.handle();
   var pad: string = "        ";
   var ok: boolean = true;
   // Non-zero when every stop is the same distance apart, which is the
@@ -202,8 +171,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
                   opened = true;
                 },
                 Err(e) => {
-                  o = o.write_string(out);
-                  out = "";
                   o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
                   ok = false;
                 }
@@ -219,8 +186,6 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
               piece = c;
             },
             Err(e) => {
-              o = o.write_string(out);
-              out = "";
               o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
               ok = false;
               read_ok = false;
@@ -286,7 +251,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     if (ta < 0 || ta >= hi) {
       // No tab on this line, so nothing on it converts and a backspace
       // has nothing to move the column of.
-      out = out + slice_unchecked(buf, lo, hi);
+      buf_push_range(h, buf, lo, hi);
     } else {
       var end: i32 = hi;
       if (initial) {
@@ -309,7 +274,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           k = ba;
         }
         if (k > p) {
-          out = out + slice_unchecked(buf, p, k);
+          buf_push_range(h, buf, p, k);
           column = column + (k - p) as u64;
           p = k;
         }
@@ -325,7 +290,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           if (idx > 0) {
             idx = idx - 1;
           }
-          out = out + slice_unchecked(buf, p - 1, p);
+          buf_push_byte(h, c);
           ba = __memchr(buf, 8, p);
         } else {
           // The uniform case is most of them, and it is arithmetic:
@@ -345,9 +310,9 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           var need: u64 = target - column;
           column = target;
           if (need <= 8 as u64) {
-            // The usual widths are static strings, so the common tab
-            // costs one append of a literal and no slice at all.
-            out = out + spaces(need as i32);
+            // The pad always holds a tab's usual width, so the common
+            // tab is one range push out of it.
+            buf_push_range(h, pad, 0, need as i32);
           } else {
             while (need > 0 as u64) {
               var take: i32 = 4096;
@@ -357,11 +322,10 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
               while (pad.len() < take) {
                 pad = pad + "                                ";
               }
-              out = out + slice_unchecked(pad, 0, take);
+              buf_push_range(h, pad, 0, take);
               need = need - take as u64;
-              if (out.len() >= block_size()) {
-                o = o.write_string(out);
-                out = "";
+              if (buf_len(h) >= block_size()) {
+                o = o.flush();
               }
             }
           }
@@ -369,7 +333,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         }
       }
       if (p < hi) {
-        out = out + slice_unchecked(buf, p, hi);
+        buf_push_range(h, buf, p, hi);
       }
     }
     // Back to chunk indices, and past anything this line left behind:
@@ -383,13 +347,11 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     if (carried || bsat >= 0 && bsat < pos) {
       bsat = __memchr(chunk, 8, pos);
     }
-    if (out.len() >= block_size()) {
-      o = o.write_string(out);
-      out = "";
+    if (buf_len(h) >= block_size()) {
+      o = o.flush();
     }
   }
 
-  o = o.write_string(out);
   gnu.finish(o);
   if (!ok) {
     return 1;

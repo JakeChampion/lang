@@ -1012,7 +1012,7 @@ function render_dumb(f: Fields, ref: string, g: Geom, opts: Opts): string {
   return out;
 }
 
-function put_at(line: u8[], at: i32, s: string): u8[] {
+function put_at(own line: u8[], at: i32, s: string): u8[] {
   var p: i32 = at;
   if (p < 0) {
     p = 0;

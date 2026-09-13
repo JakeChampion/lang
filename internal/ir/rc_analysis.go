@@ -4223,8 +4223,12 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		// Live after the call iff this occurrence is NOT the receiver
 		// name's last use — or the receiver survives a loop's back edge and
-		// "last" re-executes (liveAcrossBackEdge above).
-		incs[c] = !order.isLast(rid) || liveAcrossBackEdge[c]
+		// "last" re-executes (liveAcrossBackEdge above). A later occurrence
+		// that is only an element or length read inside this call's own
+		// index / value arguments does not keep it live: emitArraySet
+		// lowers both arguments before the receiver, so those reads have
+		// completed by the time the store runs (`a.with(i, a[i] + 1)`).
+		incs[c] = !(order.isLast(rid) || receiverDeadAfterArgs(c, rid, order)) || liveAcrossBackEdge[c]
 		// No inc means cow_inplace consumes this receiver's reference (see
 		// arraySetConsumed) — record the site so emitArraySet zeroes the
 		// slot. Every role the sweep releases qualifies: a declared owned
@@ -4241,6 +4245,44 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		return true
 	})
 	return incs
+}
+
+// receiverDeadAfterArgs reports whether every occurrence of the `.with`
+// receiver's name after the receiver ident itself is a plain read of that
+// array — `name[k]` or `name.len()` — inside the call's index or value
+// argument. emitArraySet evaluates both arguments before it loads the
+// receiver, so such reads are complete before the store and cannot observe
+// it; anything else after the receiver (a read in a later statement, a
+// capture, a use as a call argument) keeps the receiver live.
+func receiverDeadAfterArgs(c *ast.Call, rid *ast.Ident, order identOrder) bool {
+	if len(c.Args) < 3 {
+		return false
+	}
+	readOK := map[*ast.Ident]bool{}
+	for _, a := range c.Args[1:] {
+		ast.Walk(a, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Index:
+				if id, ok := x.Array.(*ast.Ident); ok && id.Name == rid.Name {
+					readOK[id] = true
+				}
+			case *ast.Call:
+				if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "__method_Array_len" && len(x.Args) == 1 {
+					if id, ok := x.Args[0].(*ast.Ident); ok && id.Name == rid.Name {
+						readOK[id] = true
+					}
+				}
+			}
+			return true
+		})
+	}
+	at := order.idx[rid]
+	for id, i := range order.idx {
+		if i > at && id.Name == rid.Name && !readOK[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // fieldSetInPlaceOK reports whether `c` — a `<root>.<field>.with(i, v)` — may

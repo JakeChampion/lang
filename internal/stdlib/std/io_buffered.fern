@@ -166,45 +166,70 @@ pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
   return b.flush();
 }
 
-// `(b).write_u64(n)` — append `n` in decimal. The digits are static
-// one-byte literals, so a digit costs one write_string append and no
-// allocation of its own. `n.to_string()` makes a whole string per
-// call, which is most of what a counting utility's output loop spends.
+// `(b).write_u64(n)` — append `n` in decimal.
 pub function (b: BufWriter) write_u64(n: u64): BufWriter {
-  var p: u64 = 1 as u64;
-  while (n / p >= 10 as u64) {
-    p = p * (10 as u64);
+  buf_push_u64(b.buf, n);
+  if (buf_len(b.buf) < b.cap) {
+    return b;
   }
-  var out: BufWriter = b;
-  var rest: u64 = n;
-  while (p > 0 as u64) {
-    out = out.write_string(__digit_literal((rest / p) as i32));
-    rest = rest % p;
-    p = p / (10 as u64);
-  }
-  return out;
+  return b.flush();
 }
 
 // `(b).write_i64(n)` — `write_u64` with a sign.
 pub function (b: BufWriter) write_i64(n: i64): BufWriter {
   if (n < 0 as i64) {
-    return b.write_string("-").write_u64((0 as u64) - (n as u64));
+    return b.write_string("-").write_u64(0 as u64 - n as u64);
   }
   return b.write_u64(n as u64);
 }
 
-// The ten digits as literals: a static string each, never allocated.
-function __digit_literal(d: i32): string {
-  if (d == 0) { return "0"; }
-  if (d == 1) { return "1"; }
-  if (d == 2) { return "2"; }
-  if (d == 3) { return "3"; }
-  if (d == 4) { return "4"; }
-  if (d == 5) { return "5"; }
-  if (d == 6) { return "6"; }
-  if (d == 7) { return "7"; }
-  if (d == 8) { return "8"; }
-  return "9";
+// `buf_push_u64(h, n)` — `n` in decimal, pushed straight into a builder:
+// `write_u64` for a loop that holds the `.handle()`. Two digits go in per
+// push from a table of the hundred pairs, so one division buys two digits
+// and a number under a hundred costs no division at all. The pushes go
+// out most significant pair first, through the recursion.
+pub function buf_push_u64(h: usize, n: u64): void {
+  if (n < 100 as u64) {
+    if (n < 10 as u64) {
+      buf_push_byte(h, 48 + n as i32);
+      return;
+    }
+    var k: i32 = n as i32 * 2;
+    buf_push_range(h, __digit_pairs(), k, k + 2);
+    return;
+  }
+  var q: u64 = n / (100 as u64);
+  buf_push_u64(h, q);
+  var r: i32 = (n - q * (100 as u64)) as i32 * 2;
+  buf_push_range(h, __digit_pairs(), r, r + 2);
+}
+
+// `buf_push_i64(h, n)` — `buf_push_u64` with a sign.
+pub function buf_push_i64(h: usize, n: i64): void {
+  if (n < 0 as i64) {
+    buf_push_byte(h, 45);
+    buf_push_u64(h, 0 as u64 - n as u64);
+    return;
+  }
+  buf_push_u64(h, n as u64);
+}
+
+// `buf_u64_len(n)` — how many bytes `buf_push_u64` writes for `n`, for a
+// caller that pads the number to a field.
+pub function buf_u64_len(n: u64): i32 {
+  var d: i32 = 1;
+  var x: u64 = n;
+  while (x >= 10 as u64) {
+    d = d + 1;
+    x = x / (10 as u64);
+  }
+  return d;
+}
+
+// "00" through "99", each at twice its value: a static literal, never
+// allocated.
+function __digit_pairs(): string {
+  return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
 }
 
 // `(b).flush()` — write whatever is buffered. Rebind the result.

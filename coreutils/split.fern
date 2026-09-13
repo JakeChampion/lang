@@ -1153,12 +1153,13 @@ function src_pushback(s: Src, rest: string): Src {
 // streams a pipe without spooling it.
 //
 // A block at a time, not a record at a time. The record ends in the block
-// are found once, and then each output file takes its share in ONE write
-// built through the shared string buffer. Dealing record by record into
-// per-file buffers is the obvious shape and is 200x slower: a BufWriter
-// read out of an array is aliased by the array, so appending to it copies
-// the whole buffer instead of growing it in place (#8770 is the same cost
-// one level down).
+// are found once, and then each output file takes its share in ONE write:
+// every record of the share is one range push into a builder, copied
+// straight out of the block, and the share is taken out of it without
+// another copy. Dealing record by record into per-file buffers is the
+// obvious shape and is 200x slower: a BufWriter read out of an array is
+// aliased by the array, so appending to it copies the whole buffer
+// instead of growing it in place.
 function split_round(s: Settings, o: Out, src: Src): Out {
   var out: Out = o;
   var input: Src = src;
@@ -1189,6 +1190,7 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   var n: i32 = names.len();
   var slot: i32 = 0;
   var buf: string = "";
+  var share_buf: usize = buf_new(round_block());
   var eof: boolean = false;
   while (true) {
     if (!eof) {
@@ -1226,17 +1228,16 @@ function split_round(s: Settings, o: Out, src: Src): Out {
     }
     var k: i32 = 0;
     while (k < n && k < ends.len()) {
-      strbuf_reset();
       var e: i32 = k;
       while (e < ends.len()) {
         var from: i32 = 0;
         if (e > 0) {
           from = ends[e - 1];
         }
-        strbuf_append(slice_unchecked(buf, from, ends[e]) + "");
+        buf_push_range(share_buf, buf, from, ends[e]);
         e = e + n;
       }
-      var share: string = strbuf_take();
+      var share: string = buf_take(share_buf);
       var target: i32 = (slot + k) % n;
       if (!live[target]) {
         out = out_verbose(out, names[target]);
@@ -1256,6 +1257,7 @@ function split_round(s: Settings, o: Out, src: Src): Out {
       break;
     }
   }
+  buf_free(share_buf);
   var c: i32 = 0;
   while (c < n) {
     if (live[c]) {

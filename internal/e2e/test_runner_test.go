@@ -4596,7 +4596,7 @@ func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..17", "# pass 17", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..22", "# pass 22", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

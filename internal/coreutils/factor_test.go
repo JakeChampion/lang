@@ -1,6 +1,10 @@
 package coreutils
 
-import "testing"
+import (
+	"strconv"
+	"strings"
+	"testing"
+)
 
 func init() {
 	registerCorpus("factor", factorCases)
@@ -175,7 +179,89 @@ func factorCases(t *testing.T) []invocation {
 		{name: "stdout closed on an unbuffered line", args: []string{"340282366920938463463374607431768211455"}, stdout: stdoutClosed},
 		{name: "stdout full on an unbuffered line", args: []string{"340282366920938463463374607431768211455"}, stdout: stdoutFull},
 		{name: "stdout full over many lines", stdin: "2 3 4 5 6 7 8 9 10 11 12 13 14 15\n", stdout: stdoutFull},
+		{name: "stdout full past a flush", stdin: numberLines(1, 2000), stdout: stdoutFull},
+		{name: "stdout closed past a flush", stdin: numberLines(1, 2000), stdout: stdoutClosed},
+
+		// Repeated small primes, with and without -h.
+		{name: "repeated small primes", args: []string{"12192768"}},
+		{name: "exponents on repeated small primes", args: []string{"-h", "12192768"}},
+		{name: "power of three", args: []string{"3486784401"}},
+		{name: "exponents on a power of three", args: []string{"-h", "3486784401"}},
+		{name: "square of the largest trial prime", args: []string{"994009"}},
+		{name: "exponents on that square", args: []string{"-h", "994009"}},
+		{name: "cube of the largest trial prime", args: []string{"991026973"}},
+		{name: "twice the largest trial prime", args: []string{"1994"}},
+		{name: "twice the first prime past the trial limit", args: []string{"2018"}},
+
+		// Around the trial limit's square, where a remainder stops being
+		// known prime and rho starts.
+		{name: "prime below the limit squared", args: []string{"999983"}},
+		{name: "composite below the limit squared", args: []string{"999999"}},
+		{name: "the limit squared", args: []string{"1000000"}},
+		{name: "composite above the limit squared", args: []string{"1000001"}},
+		{name: "square just past the trial limit", args: []string{"1018081"}},
+		{name: "exponents on a square rho splits", args: []string{"-h", "1018081"}},
+		{name: "product of two primes past the trial limit", args: []string{"1022117"}},
+		{name: "cube past the trial limit", args: []string{"1027243729"}},
+		{name: "exponents on a cube rho splits", args: []string{"-h", "1027243729"}},
+		{name: "three primes past the trial limit", args: []string{"1040510891"}},
+		{name: "small prime times a remainder above the table", args: []string{"900021"}},
+
+		// Twenty digits: the bigint parse whose value still fits a word.
+		{name: "twenty digits with leading zeros", args: []string{"018446744073709551615"}},
+		{name: "twenty digits just over ten to the nineteen", args: []string{"10000000000000000019"}},
+		{name: "stdin twenty digit prime", stdin: "18446744073709551557\n"},
+
+		// Tokens between tokens: blanks, signs, NULs and junk on one line.
+		{name: "stdin signs blanks and junk on one line", stdin: "5 +7 \x00 8 x 9 +  -3 ++4 0x5 +0 007\n"},
+		{name: "stdin NUL cuts then more tokens", stdin: "12\x00x 13\n14\x00\n"},
+		{name: "stdin plus then NUL", stdin: "+\x005\n"},
+		{name: "stdin zero then NUL then digit", stdin: "0\x005\n"},
+		{name: "stdin tab separated", stdin: "12\t15\t7"},
+		{name: "stdin two hundred tokens on one line", stdin: numberRow(1, 200)},
+		{name: "stdin exponents on one line", stdin: numberRow(1, 60), args: []string{"-h"}},
+
+		// Enough small numbers for the factor table to be built, and the
+		// boundary it hands back to trial division at.
+		{name: "stdin first twelve hundred numbers", stdin: numberLines(1, 1200)},
+		{name: "stdin first twelve hundred with exponents", stdin: numberLines(1, 1200), args: []string{"-h"}},
+		{name: "stdin across the table bound", stdin: numberLines(261000, 262300)},
+		{name: "stdin above the table bound", stdin: numberLines(1, 1100) + numberLines(999000, 1000100)},
+		{name: "stdin table then wide", stdin: numberLines(1, 1100) + "18446744073709551615\n340282366920938463463374607431768211455\n"},
+		{name: "stdin table then invalid", stdin: numberLines(1, 1100) + "x\n12\n"},
+
+		// Input longer than one read: a token cut by the chunk boundary, and
+		// an invalid token longer than a chunk.
+		{name: "stdin tokens across a chunk boundary", stdin: strings.Repeat("12345 ", 12000)},
+		{name: "stdin token longer than a chunk", stdin: strings.Repeat("x", 70000) + "\n5\n"},
+		// A token that spans more than two reads: every middle chunk is
+		// carried whole, blank or not.
+		{name: "stdin token spanning four chunks", stdin: strings.Repeat("a", 200000) + "\n"},
+		{name: "stdin tokens around a three-chunk token", stdin: strings.Repeat("b", 140000) + " 15 " + strings.Repeat("c", 70000) + "\n77\n"},
 	}
+}
+
+// numberLines is the numbers lo..hi, one per line.
+func numberLines(lo, hi int) string {
+	var b strings.Builder
+	for n := lo; n <= hi; n++ {
+		b.WriteString(strconv.Itoa(n))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// numberRow is the numbers lo..hi on one line.
+func numberRow(lo, hi int) string {
+	var b strings.Builder
+	for n := lo; n <= hi; n++ {
+		if n > lo {
+			b.WriteByte(' ')
+		}
+		b.WriteString(strconv.Itoa(n))
+	}
+	b.WriteByte('\n')
+	return b.String()
 }
 
 func TestFactorParity(t *testing.T) {

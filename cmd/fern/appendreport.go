@@ -6,6 +6,8 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/treeshake"
 )
 
 // runAppendReport implements `fern -append-report FILE.fern`: load and
@@ -30,6 +32,13 @@ func runAppendReport(srcPath string, w io.Writer) error {
 	if err != nil {
 		return e.format(err)
 	}
+	// The same two passes a build runs before lowering: a method call on a
+	// generic receiver is an indirect call until monomorph resolves it, and
+	// the shake keeps the report to the functions a binary would carry.
+	if err := monomorph.Run(prog, info); err != nil {
+		return e.format(err)
+	}
+	treeshake.Run(prog, info, treeshake.DropImplMethods(info)...)
 	irProg, err := ir.LowerWith(prog, info, 8)
 	if err != nil {
 		return e.format(err)

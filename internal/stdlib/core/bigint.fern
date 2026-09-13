@@ -191,20 +191,22 @@ function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
 }
 
 // __bi_mul_small requires k < 2^32 so that a[i]*k + carry stays inside the
-// slot. Callers pass powers of ten at or below 10^9.
+// slot. Callers pass powers of ten at or below 10^9, and of five at or below
+// 5^13. The product overwrites a copy of `a` limb by limb — one allocation
+// of the right size — and only a final carry appends.
 function __bi_mul_small(a: u64[], k: u64): u64[] {
     var mask: u64 = __bi_mask();
     var sh: u64 = __bi_sh32();
-    var out: u64[] = [];
+    var out: u64[] = a;
     var carry: u64 = 0 as u64;
     var i: i32 = 0;
     while (i < a.len()) {
         var prod: u64 = a[i] * k + carry;
-        out = out.append(prod & mask);
+        out = out.with(i, prod & mask);
         carry = prod >> sh;
         i = i + 1;
     }
-    while (carry > (0 as u64)) { out = out.append(carry & mask); carry = carry >> sh; }
+    if (carry > (0 as u64)) { out = out.append(carry); }
     return __bi_trim(out);
 }
 
@@ -392,6 +394,26 @@ pub function (a: BigInt) mul_pow10(k: i32): BigInt {
     return __bi_make(a.neg, mag);
 }
 
+// mul_pow5 multiplies by 5^k, chunked by 5^13 — the largest power of five
+// below 2^32 — the way `mul_pow10` chunks by 10^9. It is what an exact
+// decimal expansion of a binary fraction needs: m × 2^-k is m × 5^k with
+// the point moved k places.
+pub function (a: BigInt) mul_pow5(k: i32): BigInt {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    var left: i32 = k;
+    while (left > 0) {
+        var step: i32 = left;
+        if (step > 13) { step = 13; }
+        var scale: u64 = 1 as u64;
+        var i: i32 = 0;
+        while (i < step) { scale = scale * (5 as u64); i = i + 1; }
+        mag = __bi_mul_small(mag, scale);
+        left = left - step;
+    }
+    return __bi_make(a.neg, mag);
+}
+
 // shl multiplies by 2^k.
 pub function (a: BigInt) shl(k: i32): BigInt {
     if (k <= 0 || __bi_is_zero_mag(a.mag)) { return a; }
@@ -426,9 +448,31 @@ pub function from_u64(v: u64): BigInt {
 // low_u64 is the low 64 bits of the magnitude — the whole value when
 // `bit_length()` is at most 64.
 pub function (a: BigInt) low_u64(): u64 {
-    var v: u64 = a.mag[0];
-    if (a.mag.len() > 1) { v = v | (a.mag[1] << __bi_sh32()); }
+    return a.word64(0);
+}
+
+// word64 is 64-bit word `i` of the magnitude, counting from the low end;
+// words past the top are zero.
+pub function (a: BigInt) word64(i: i32): u64 {
+    var lo: i32 = 2 * i;
+    var v: u64 = 0 as u64;
+    if (lo < a.mag.len()) { v = a.mag[lo]; }
+    if (lo + 1 < a.mag.len()) { v = v | (a.mag[lo + 1] << __bi_sh32()); }
     return v;
+}
+
+// has_low_bits reports whether any of the low `k` bits of the magnitude
+// is set — whether `shr(k)` would drop anything.
+pub function (a: BigInt) has_low_bits(k: i32): boolean {
+    var limbs: i32 = k / 32;
+    var i: i32 = 0;
+    while (i < limbs && i < a.mag.len()) {
+        if (a.mag[i] != (0 as u64)) { return true; }
+        i = i + 1;
+    }
+    if (limbs >= a.mag.len() || k % 32 == 0) { return false; }
+    var mask: u64 = ((1 as u64) << ((k % 32) as u64)) - (1 as u64);
+    return (a.mag[limbs] & mask) != (0 as u64);
 }
 
 // bit reads bit `i` of the magnitude; bits past the top are zero.
@@ -601,46 +645,54 @@ function __bi_shr_limbs(a: u64[], s: i32): u64[] {
 // --- rendering ---
 
 // to_string emits base-10 by repeatedly dividing by 10^9 and emitting nine
-// digits per step, ~9x fewer division passes than one digit at a time. Every
-// chunk but the most significant is zero-padded to nine.
+// digits per step, ~9x fewer division passes than one digit at a time. The
+// division runs in place on one copy of the limbs, the base-10^9 chunks are
+// kept least significant first, and the digits are written once, from the
+// end of a buffer sized to the exact count: nine per chunk, the leading one
+// as wide as it is.
 pub function (a: BigInt) to_string(): string {
     if (__bi_is_zero_mag(a.mag)) { return "0"; }
-    var chunks: u64[] = [];
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var ten9: u64 = 1000000000 as u64;
     var cur: u64[] = a.mag;
-    while (!__bi_is_zero_mag(cur)) {
-        var dm: (u64[], u64) = __bi_divmod_small(cur, 1000000000 as u64);
-        cur = dm.0;
-        chunks = chunks.append(dm.1);
+    var n: i32 = cur.len();
+    var chunks: u64[] = [];
+    while (n > 0) {
+        var rem: u64 = 0 as u64;
+        var i: i32 = n - 1;
+        while (i >= 0) {
+            var c: u64 = (rem << sh) | (cur[i] & mask);
+            cur = cur.with(i, c / ten9);
+            rem = c % ten9;
+            i = i - 1;
+        }
+        chunks = chunks.append(rem);
+        while (n > 0 && cur[n - 1] == (0 as u64)) { n = n - 1; }
     }
-    var out: string = "";
-    if (a.neg) { out = "-"; }
-    var i: i32 = chunks.len() - 1;
-    out = out + __bi_chunk_str(chunks[i], false);
-    i = i - 1;
-    while (i >= 0) {
-        out = out + __bi_chunk_str(chunks[i], true);
-        i = i - 1;
+    var top: u64 = chunks[chunks.len() - 1];
+    var lead: i32 = 1;
+    var t: u64 = top / (10 as u64);
+    while (t > (0 as u64)) { lead = lead + 1; t = t / (10 as u64); }
+    var start: i32 = 0;
+    if (a.neg) { start = 1; }
+    var total: i32 = start + lead + 9 * (chunks.len() - 1);
+    var out: u8[] = __alloc_u8(total);
+    if (a.neg) { out = out.with(0, 45 as u8); }
+    var pos: i32 = total - 1;
+    var k: i32 = 0;
+    while (k < chunks.len()) {
+        var v: u64 = chunks[k];
+        var width: i32 = 9;
+        if (k == chunks.len() - 1) { width = lead; }
+        var d: i32 = 0;
+        while (d < width) {
+            out = out.with(pos, ((v % (10 as u64)) + (48 as u64)) as u8);
+            v = v / (10 as u64);
+            pos = pos - 1;
+            d = d + 1;
+        }
+        k = k + 1;
     }
-    return out;
-}
-
-// __bi_chunk_str renders one base-10^9 chunk, zero-padded to nine digits when
-// it is not the leading one.
-function __bi_chunk_str(v: u64, pad: boolean): string {
-    var digits: u8[] = [];
-    var x: u64 = v;
-    if (x == (0 as u64)) { digits = digits.append(48); }
-    while (x > (0 as u64)) {
-        digits = digits.append(((x % (10 as u64)) + (48 as u64)) as u8);
-        x = x / (10 as u64);
-    }
-    var out: u8[] = [];
-    if (pad) {
-        var need: i32 = 9 - digits.len();
-        var p: i32 = 0;
-        while (p < need) { out = out.append(48); p = p + 1; }
-    }
-    var i: i32 = digits.len() - 1;
-    while (i >= 0) { out = out.append(digits[i]); i = i - 1; }
     return string_from_bytes_unchecked(out);
 }
