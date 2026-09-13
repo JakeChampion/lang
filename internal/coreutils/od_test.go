@@ -442,9 +442,11 @@ func odCases(t *testing.T) []invocation {
 		{name: "characters at width sixty-four", args: []string{"-w64", "-t", "c", allBytes}},
 
 		// The pad a narrower spec gets from a wider one, per kind.
+		{name: "hex padded by octal", args: []string{"-t", "x1", "-t", "o2", random}},
 		{name: "octal padded by decimal", args: []string{"-t", "o8", "-t", "d1", random}},
 		{name: "hex padded by characters", args: []string{"-t", "x8", "-t", "c", random}},
 		{name: "decimal padded by named characters", args: []string{"-t", "d2", "-t", "a", random}},
+		{name: "unsigned padded by a float", args: []string{"-t", "u4", "-t", "f8", random}},
 		{name: "one type string of two hex sizes", args: []string{"-t", "x1x8", random}},
 		{name: "one type string of two octal sizes", args: []string{"-t", "o1o8", random}},
 		{name: "padding on a short last block", args: []string{"-t", "x1", "-t", "o8", "-t", "c", short}},

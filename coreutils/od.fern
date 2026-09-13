@@ -1151,8 +1151,8 @@ function hex_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, field
   var i: i32 = fields;
   var at: i32 = base;
   while (i > blank) {
-    if (pad > 0) {
-      var next_pad: i32 = pad * (i - 1) / i;
+    if (sp.pad > 0) {
+      var next_pad: i32 = sp.pad * (i - 1) / fields;
       w = pad - next_pad + fw + 1;
       pad = next_pad;
     }
@@ -1198,8 +1198,8 @@ function oct_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, field
   var at: i32 = base;
   var head: i32 = oct_head(size);
   while (i > blank) {
-    if (pad > 0) {
-      var next_pad: i32 = pad * (i - 1) / i;
+    if (sp.pad > 0) {
+      var next_pad: i32 = sp.pad * (i - 1) / fields;
       w = pad - next_pad + fw + 1;
       pad = next_pad;
     }
@@ -1218,8 +1218,8 @@ function other_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fie
   var i: i32 = fields;
   var at: i32 = base;
   while (i > blank) {
-    if (pad > 0) {
-      var next_pad: i32 = pad * (i - 1) / i;
+    if (sp.pad > 0) {
+      var next_pad: i32 = sp.pad * (i - 1) / fields;
       w = pad - next_pad + sp.fw + 1;
       pad = next_pad;
     }
