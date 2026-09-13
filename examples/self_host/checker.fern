@@ -14314,6 +14314,19 @@ pub function union_sig(s: Scope, name: string): UnionSig {
   return s.lookup_union(name);
 }
 
+// owned_variant_names lists the variants `owner` owns, in declaration order,
+// read off the struct table rather than off an enum declaration. The front end
+// INJECTS IoError and JsonValue as variant structs with no enum declaration to
+// list them (parser.inject_builtin_enums), so there is no UnionSig to ask.
+pub function owned_variant_names(s: Scope, owner: string): string[] {
+  var out: string[] = [];
+  if (owner.len() == 0) { return out; }
+  for sig in s.structs.structs {
+    if (sig.enum_owner == owner) { out = out.append(sig.name); }
+  }
+  return out;
+}
+
 // variant_shape_sig is the declared field shape of `name` as a member of union
 // `owner`: an enum's own variant declaration, or — for a struct-union
 // (`type Shape = Circle | Square`) — the separately declared struct the union

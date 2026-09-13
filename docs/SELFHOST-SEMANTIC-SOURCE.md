@@ -192,6 +192,38 @@ Unsupported constructs refuse the whole function with a reason.
   argument, and the byte search reads its string. Physically each is its
   own stack IR op rather than a call, `print` the payload then the newline
   as the AST lowering writes it.
+- The builtins whose RESULT is one of the front end's own generic unions:
+  `env` and `read_line` hand back an `Option[string]`, `read_file` a
+  `Result[string, IoError]` and `read_dir` a `Result[string[], IoError]`.
+  Each contract names the INSTANTIATION, because that is what says what the
+  caller owns — the box owns its payload, and the payload owns whatever it
+  owns in turn. Fern erases generics, so a union with an erased argument
+  could carry no unit rule at all; these four carry one because each has
+  exactly ONE instantiation, fixed by the builtin rather than by a call site.
+  A declared generic enum is still refused.
+
+  The box is a tag word and one payload word (`semrecords.layout_option`),
+  not the shape pointer a declared enum's variant box carries, so its
+  variants come from the type arguments rather than from a declaration: Some
+  and Ok at position 0, None and Err at position 1, the position being the
+  tag the box stores. `variant_new` is `opt_make` / `opt_none`, `variant_is`
+  the tag compared against that position, `variant_get` the payload read
+  without a field index, and the release walks the payload the tag selects
+  before `__fern_rc_dec` frees the box. The one payload word is i32-shaped,
+  so an i64 or f64 payload is refused ("wide builtin union payload") for the
+  reason an array or tuple element is.
+
+  A literal of one — `Some(x)`, `None`, `Ok(x)`, `Err(e)` — takes its type
+  arguments from the DESTINATION, since the checker types a builtin variant
+  by its enum alone and never by an instantiation.
+
+  An enum the front end INJECTS rather than the source writing it
+  (`IoError`, `JsonValue`) has variant declarations and no enum declaration,
+  so its variant list is read off the struct table's enum owner
+  (`checker.owned_variant_names`). That is what gives a failed read's Err
+  arm a schema.
+- The builtins whose result owns nothing: `args` (a fresh `string[]` of the
+  caller's own), `putchar`, `f32_from_bits` and `__rc_underflow_count`.
 - The array and string builtins `.len()`, `.append()` and `.with()`, and
   `slice_unchecked` on a string. Both array builtins take ONE unit of the
   receiver and hand one back, and both reach the same count test: the
@@ -273,6 +305,16 @@ Unsupported constructs refuse the whole function with a reason.
   result is refused ("function signature slot"), because the untagged
   `call_indirect` this boundary emits describes each slot as one, and a
   funcref type is structural on wasm.
+
+A match whose unguarded arms name distinct variants, as many as the union
+declares, is TOTAL: its last arm gets no test, because every other variant
+has already branched away. That is what leaves the match with no
+fall-through edge, and so makes a body whose every arm returns a body that
+does not fall through — the shape every `match (env(..)) { Some => return,
+None => return }` has. `ssasem.analyze` verifies the last arm's payload
+projections against the same exhaustion: a projection is guarded by the true
+successor of a test for its own variant, or by the false successors of tests
+for every OTHER variant the union declares.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, the 32-bit float, the unsigned and
@@ -445,7 +487,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,299 of its 7,738
+Measured against the whole loaded self-hosted compiler, 6,391 of its 7,740
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -595,9 +637,27 @@ function-value ABI settled first — whether an indirect callee may consume a
 reference, and what a generic's erased result owns — which is a language
 decision, not a vocabulary one.
 
-Next, by measured leaf: the unresolved variant field type (98), the binding
-whose declared type is not its value's (75), the record literal (74) and the
-builtins whose result is an instantiated builtin union, `env` (158) and
-`read_file` (26); all shapes rather than vocabulary. Then a production
-consumer that lowers produced functions through this pipeline and feeds
-`caller_sigs` to the remaining AST callers.
+The builtins whose result is an instantiated builtin union were worth +92
+lowered, against a leaf of 215 that ranked them at twice that. A probe —
+close_module told to ignore the cascade rooted at those callees — measured
+the ceiling BEFORE the work: 37 transitive callers, plus the 37 direct ones,
+because 124 of the leaf's 158 `env` functions refuse again one leaf further
+in at the `astwalk` fold family. The rest of the delta came from the two
+shapes the admission exposed rather than from the contracts: the exhausted
+match (12 fall-through refusals, and the 134 the contracts would have
+added), and the injected enum's variant list (8 match scrutinees). `env`,
+`read_line`, `read_file`, `read_dir`, `args`, `putchar`, `f32_from_bits`,
+`__rc_underflow_count` and `Some` all closed outright.
+
+Next, by measured leaf: the `astwalk` fold family above (627 across its
+members, and a language decision rather than a vocabulary one), the
+unresolved variant field type (98), the binding whose declared type is not
+its value's (75) and the record literal (78) — all shapes. The named callees
+that remain are small and each its own vocabulary: `util__append_all` (6, an
+erased type variable, refused for the fold family's reason), `map_new` (5)
+and `cell_new` (1), which need the Map and Cell representations;
+`create_dir_all` (5), whose `Result[(), IoError]` has a payload with no type
+here; `arm64_native__arm64_gas_bcond_suffix` (4), a `str` result that
+escapes its source; and `stat` / `lstat` (3), whose FileStat carries u32
+fields. Then a production consumer that lowers produced functions through
+this pipeline and feeds `caller_sigs` to the remaining AST callers.

@@ -800,25 +800,58 @@ function sole_true_successor(f: Func, b: ssa.SBlock): i32 {
     return ti;
 }
 
-function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[]): boolean {
+// The block a test's false edge enters, when that edge is its only way in.
+function sole_false_successor(f: Func, b: ssa.SBlock): i32 {
+    if (b.term.kind_tag != 3 || b.term.t == b.term.f) { return 0 - 1; }
+    var fi: i32 = 0;
+    while (fi < f.graph.blocks.len() && f.graph.blocks[fi].id != b.term.f) { fi = fi + 1; }
+    if (fi == f.graph.blocks.len()) { return 0 - 1; }
+    var succ: ssa.SBlock = f.graph.blocks[fi];
+    if (succ.preds.len() != 1 || succ.preds[0] != b.id) { return 0 - 1; }
+    return fi;
+}
+
+// A test of `value` for `name` whose chosen edge alone enters a block that
+// dominates `bi`: on every path to `bi` that test took that edge.
+function tested(f: Func, value: i32, name: string, bi: i32, dom: boolean[], want: boolean): boolean {
     var n: i32 = f.graph.blocks.len();
     var pi: i32 = 0;
     while (pi < n) {
         var b: ssa.SBlock = f.graph.blocks[pi];
-        var ti: i32 = sole_true_successor(f, b);
-        if (ti >= 0 && dom[bi * n + ti]) {
+        var si: i32 = sole_false_successor(f, b);
+        if (want) { si = sole_true_successor(f, b); }
+        if (si >= 0 && dom[bi * n + si]) {
             var test: ssa.SInst = defining(f, b.term.cond);
-            if (test.kind_tag == variant_is() && test.args[0] == ins.args[0] && test.str == ins.str) { return true; }
+            if (test.kind_tag == variant_is() && test.args[0] == value && test.str == name) { return true; }
         }
         pi = pi + 1;
     }
     return false;
 }
 
+// Every OTHER variant of the value's union was tested and branched away, so
+// the value is this one: the exhaustion a total match's last arm rests on,
+// where the arms before it have taken every other variant's edge and the
+// last needs no test of its own.
+function excluded_others(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[]): boolean {
+    var at: i32 = semrecords.find_enum(f.enums, f.values[ins.args[0]]);
+    if (at < 0) { return false; }
+    for v in f.enums[at].variants {
+        if (v.name != ins.str && !tested(f, ins.args[0], v.name, bi, dom, false)) { return false; }
+    }
+    return true;
+}
+
+function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[]): boolean {
+    if (tested(f, ins.args[0], ins.str, bi, dom, true)) { return true; }
+    return excluded_others(f, ins, bi, dom);
+}
+
 // A variant's field exists only while the value is that variant, so a
-// projection must sit where a test of the same value for the same variant has
-// held: in a block dominated by the test's true successor, which the true
-// edge alone enters. A value never changes variant, so the test holds for
+// projection must sit where the value is known to be that variant: in a block
+// dominated by the true successor of a test for it, which the true edge alone
+// enters, or by the false successors of tests for every OTHER variant the
+// union declares. A value never changes variant, so either fact holds for
 // every later use of the value.
 function guard_error(f: Func): string {
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);

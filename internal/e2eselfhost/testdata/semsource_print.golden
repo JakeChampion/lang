@@ -438,6 +438,41 @@ func string_length {
 }
 
 refused call target has no semantic contract: string.trim
+modes 2 result i32
+v0:string v1:i32 v2:Option[string] v3:boolean v4:string v5:i32 v6:i32 v7:i32
+func opt_len {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = call env v0
+    v3 = variant_is Some v2
+    brif v3 b2 b3
+  b2:
+    v4 = variant_get 0 Some v2
+    v5 = length v4
+    br b1
+  b3:
+    br b4
+  b4:
+    v6 = const_int 0
+    br b1
+  b1:
+    v7 = phi v5 v6
+    ret v7
+}
+
+modes 2 result Option[string]
+v0:string v1:string v2:string v3:Option[string]
+func wrap_opt {
+  b0:
+    v0 = param 0
+    v1 = const_str
+    v2 = binary + v0 v1
+    v3 = variant_new Some v2
+    ret v3
+}
+
+refused wide builtin union payload
 modes 1 result Shape
 v0:i32 v1:i32 v2:boolean v3:Shape v4:i32 v5:boolean v6:Shape v7:i32 v8:boolean v9:i32 v10:i32 v11:i32[] v12:Shape v13:i32[] v14:Shape
 func shape {
@@ -552,7 +587,7 @@ func mk_node {
 }
 
 modes 2 result i32
-v0:Node v1:boolean v2:Leaf v3:i32 v4:boolean v5:Twig v6:i32[] v7:i32 v8:i32 v9:i32 v10:i32 v11:i32
+v0:Node v1:boolean v2:Leaf v3:i32 v4:Twig v5:i32[] v6:i32 v7:i32
 func node_size {
   b0:
     v0 = param 0
@@ -563,25 +598,17 @@ func node_size {
     v3 = record_get 0 v2
     ret v3
   b3:
-    v4 = variant_is Twig v0
-    brif v4 b4 b5
+    br b4
   b4:
-    v5 = variant_as Twig v0
-    v6 = record_get 0 v5
-    v7 = const_int 1
-    v8 = array_get v6 v7
-    ret v8
-  b5:
-    br b1
-  b1:
-    v9 = const_int 0
-    v10 = const_int 1
-    v11 = binary - v9 v10
-    ret v11
+    v4 = variant_as Twig v0
+    v5 = record_get 0 v4
+    v6 = const_int 1
+    v7 = array_get v5 v6
+    ret v7
 }
 
 modes 2 result i32
-v0:Tree v1:boolean v2:Tip v3:i32 v4:boolean v5:Nest v6:i32 v7:i32
+v0:Tree v1:boolean v2:Tip v3:i32 v4:Nest v5:i32
 func recursive_union {
   b0:
     v0 = param 0
@@ -592,17 +619,11 @@ func recursive_union {
     v3 = record_get 0 v2
     ret v3
   b3:
-    v4 = variant_is Nest v0
-    brif v4 b4 b5
+    br b4
   b4:
-    v5 = variant_as Nest v0
-    v6 = record_get 1 v5
-    ret v6
-  b5:
-    br b1
-  b1:
-    v7 = const_int 0
-    ret v7
+    v4 = variant_as Nest v0
+    v5 = record_get 1 v4
+    ret v5
 }
 
 modes 1 result i32
