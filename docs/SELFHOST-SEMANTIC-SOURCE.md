@@ -166,6 +166,17 @@ Unsupported constructs refuse the whole function with a reason.
   `continue` branches to the header and a bottom advance would be skipped
   (#2788). The element is an `array_get`, so it is already a borrow anchored
   to its container and needs no new ownership rule.
+- A call in statement position may return nothing: its value is void, no
+  name binds it, and the physical call stores the dummy every void callee
+  pushes for a statement-level drop. In expression position a void result
+  is refused, since the checker types nothing by it.
+- The runtime builtins `print`, `eprint`, `strbuf_append`, `strbuf_reset`,
+  `strbuf_take` and `__memchr`, each with a contract of its own in the table
+  a module's declarations fill: the writers and the builder's append read
+  the string they are lent and copy its bytes, reset and take own no
+  argument, and the byte search reads its string. Physically each is its
+  own stack IR op rather than a call, `print` the payload then the newline
+  as the AST lowering writes it.
 - The array and string builtins `.len()`, `.append()` and `.with()`, and
   `slice_unchecked` on a string. `.with` hands the receiver's unit over as
   `.append` does, so its receiver must be moved too; physically it is the
@@ -364,7 +375,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,493 of its 7,713
+Measured against the whole loaded self-hosted compiler, 5,694 of its 7,713
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -380,8 +391,8 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (1,262), record
-literals (157), a binding whose type is not its value's (109) and a variant
+The leaves are now led by callees with no semantic contract (1,037), record
+literals (159), a binding whose type is not its value's (113) and a variant
 field whose type is unresolved (97). The string view was worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, as usual, against a
 leaf histogram that had ranked them differently. The declared field width
@@ -405,6 +416,12 @@ one on a bare reference, and so does this boundary, when the name has a
 zero-parameter contract whose result is the checked type — a reference to a
 function VALUE is typed as a function, never as the result, so it stays
 refused. Nearly every constant's reader refuses again at the callee leaf.
+The void call and the six builtin contracts were worth +201 together; keyed
+by callee, the leaf that remains is the function value — the `astwalk`
+folds and the closures behind them — and the builtins whose result is an
+enum (`env`, `read_file`) or whose vocabulary is not here yet. The
+record-literal leaf is the same leaf in disguise: a probe keyed by the
+checker's reason showed every one a field whose value is such a call.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,

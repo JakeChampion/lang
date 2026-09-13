@@ -241,7 +241,58 @@ func caller {
     ret v5
 }
 
-refused unsupported expression
+modes result void
+
+func noop {
+  b0:
+    ret
+}
+
+modes result i32
+v0:void v1:i32
+func void_call {
+  b0:
+    v0 = call noop
+    v1 = const_int 1
+    ret v1
+}
+
+modes 2 result i32
+v0:string v1:void v2:void v3:i32
+func shout {
+  b0:
+    v0 = param 0
+    v1 = call print v0
+    v2 = call eprint v0
+    v3 = length v0
+    ret v3
+}
+
+modes 2 result i32
+v0:string v1:void v2:string v3:void v4:void v5:string v6:i32
+func built {
+  b0:
+    v0 = param 0
+    v1 = call strbuf_reset
+    v2 = const_str
+    v3 = call strbuf_append v2
+    v4 = call strbuf_append v0
+    v5 = call strbuf_take
+    v6 = length v5
+    ret v6
+}
+
+modes 2 1 result i32
+v0:string v1:i32 v2:i32 v3:i32
+func find_byte {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = const_int 1
+    v3 = call __memchr v0 v1 v2
+    ret v3
+}
+
 refused unsupported void call
 modes 2 result i32
 v0:i32[] v1:i32

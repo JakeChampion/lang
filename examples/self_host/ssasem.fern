@@ -578,7 +578,10 @@ function schema_error(f: Func): string {
     var why: string = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
     if (why != "") { return why; }
     if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
-    for t in f.values { if (!semtypes.concrete(t, false)) { return "unresolved value type"; } }
+    // A void value is what a call to a void contract defines, and nothing
+    // reads it: every operator and container contract asks for a concrete
+    // operand, so a read refuses there.
+    for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
     for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }

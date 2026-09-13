@@ -3011,7 +3011,8 @@ pub function print_func(f: SFunc): string {
             out = out + "\n";
             k = k + 1;
         }
-        if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
+        if (blk.term.kind_tag == 1 && blk.term.value < 0) { out = out + "    ret\n"; }
+        else if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
         else if (blk.term.kind_tag == 2) { out = out + "    br b" + util.i32_to_string(blk.term.target) + "\n"; }
         else if (blk.term.kind_tag == 3) { out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n"; }
         bi = bi + 1;

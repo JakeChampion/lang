@@ -737,7 +737,10 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
     return define(s, ssasem.str_as(), [v.id], 0, "", param);
 }
 
-function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
+// A call in statement position may return nothing: its value is void and
+// no name binds it. In expression position a void result is refused, since
+// the checker types nothing by it.
+function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value {
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
@@ -751,7 +754,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
-    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < c.args.len()) {
@@ -802,7 +805,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
         ast.ExprBinary(b) => { return binary(e, b, s); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
-        ast.ExprCall(c) => { return call(e, c, s); },
+        ast.ExprCall(c) => { return call(e, c, s, false); },
         _ => { return refused(s, "unsupported expression"); }
     }
 }
@@ -901,8 +904,15 @@ function assign(a: ast.StmtAssign, s: State): State {
     return replace(s, a.target, value.id);
 }
 
+// A bare `return;` carries the parser's `punct:;` sentinel in place of a
+// value, as the checker reads it; the unit literal is the other spelling.
+function bare_return(e: ast.Expr): boolean {
+    if let ast.ExprUnknown(u) = e { return u.kind == "punct:;"; }
+    return parser.is_unit_expr(e);
+}
+
 function ret(r: ast.StmtReturn, s: State): State {
-    if (parser.is_unit_expr(r.value)) {
+    if (bare_return(r.value)) {
         if (!is_void(s.result)) { return fail(s, "missing return value"); }
         return terminate(s, t_ret(0 - 1));
     }
@@ -1248,7 +1258,7 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 // releases it at the call.
 function discard(e: ast.Expr, s: State): State {
     match (e) {
-        ast.ExprCall(c) => { return call(e, c, s).s; },
+        ast.ExprCall(c) => { return call(e, c, s, true).s; },
         _ => { return fail(s, "unsupported statement"); }
     }
     return s;
@@ -1618,7 +1628,25 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
         if (c.name != "" && ssasem.find_contract(out, c.name) < 0) { out = out.append(c); }
         i = i + 1;
     }
+    for b in builtin_contracts() { if (ssasem.find_contract(out, b.name) < 0) { out = out.append(b); } }
     return out;
+}
+
+// The runtime builtins with a contract here, each a stack IR op of its own
+// rather than a call: the two writers and the string builder's append copy
+// the bytes of a string they only read, the builder's reset and take own no
+// argument, and the byte search reads its string. What each hands back is
+// the op's own value; a void one pushes the dummy every statement op pushes.
+function builtin_contracts(): ssasem.Contract[] {
+    var writer: i32[] = [ssaunits.borrow_mode()];
+    return [
+        ssasem.Contract { name: "print", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "eprint", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "strbuf_append", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "strbuf_reset", params: [], modes: [], result: t_void() },
+        ssasem.Contract { name: "strbuf_take", params: [], modes: [], result: t_string() },
+        ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_i32() }
+    ];
 }
 
 // A produced function's callees must be produced too: a contract is only

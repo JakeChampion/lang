@@ -686,8 +686,10 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
     if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
     // A call's counted parameters were supplied before its operands were
-    // loaded; its result is the unit the callee returns.
-    if (ins.kind_tag == ssasem.call()) { r = emit(r, ir.op_call_direct(ins.str, ins.args.len())); }
+    // loaded; its result is the unit the callee returns. A runtime builtin
+    // is its own op, pushing the value its contract names or the dummy a
+    // statement op pushes, so the store below takes either.
+    if (ins.kind_tag == ssasem.call()) { r = call_site(r, ins); }
     // A verified copy already has its single operand on the stack.
     return emit(r, ir.op_store_local(ins.result));
 }
@@ -731,6 +733,22 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     r = emit(r, ir.op_load_local(ins.args[2]));
     r = emit(r, ir.op_arr_set(32));
     return emit(r, ir.op_load_local(base));
+}
+
+function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.str == "print") {
+        // The payload, then the newline, as the AST lowering writes it.
+        r = emit(r, ir.op_print_str());
+        r = emit(r, ir.op_drop());
+        r = emit(r, ir.op_const_str("\n"));
+        return emit(r, ir.op_print_str());
+    }
+    if (ins.str == "eprint") { return emit(r, ir.op_eprint_str()); }
+    if (ins.str == "strbuf_append") { return emit(r, ir.op_strbuf_append()); }
+    if (ins.str == "strbuf_reset") { return emit(r, ir.op_strbuf_reset()); }
+    if (ins.str == "strbuf_take") { return emit(r, ir.op_strbuf_take()); }
+    if (ins.str == "__memchr") { return emit(r, ir.op_memchr()); }
+    return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
 function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab): irlower.LowerResult {
