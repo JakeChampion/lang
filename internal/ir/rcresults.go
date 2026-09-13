@@ -323,6 +323,11 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"lstat":                      true,
 	"statfs":                     true,
 	"access":                     true,
+	// The builder's take hands over its own string-shaped buffer, the
+	// only reference to it (rcResultOwned, #8773); in argument position
+	// nothing else released it, so every BufWriter flush leaked a block
+	// (#9180).
+	"buf_take": true,
 }
 
 // ownedPayloadType reports whether a binding of type `t` extracted from an

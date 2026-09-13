@@ -200,6 +200,46 @@ function main(): i32 {
 }
 `
 
+// A builder take passed straight as an argument (`put(buf_take(h))`, the
+// BufWriter flush shape) is a fresh string nothing else names; the caller
+// owes its release after the call. 5000 takes must not move the bump.
+const builtinResultArgLeakBoundProgram = `function take(s: string): i32 { return s.len(); }
+
+function main(): i32 {
+    var h: usize = buf_new(64);
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { buf_push(h, "twelve bytes"); acc = acc + take(buf_take(h)); w = w + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    while (i < 5000) { buf_push(h, "twelve bytes"); acc = acc + take(buf_take(h)); i = i + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    buf_free(h);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc != 5200 * 12) { return 96; }
+    return 0;
+}
+`
+
+func TestX86_64BuiltinResultArgLeakBound(t *testing.T) {
+	if _, code := compileAndRunX86_64(t, builtinResultArgLeakBoundProgram); code != 0 {
+		t.Errorf("x86-64 builtin-result argument leak bound: exit = %d, want 0 (98 = take leaked; 99 = over-release)", code)
+	}
+}
+
+func TestArm64BuiltinResultArgLeakBound(t *testing.T) {
+	if _, code := compileAndRunArm64(t, builtinResultArgLeakBoundProgram); code != 0 {
+		t.Errorf("arm64 builtin-result argument leak bound: exit = %d, want 0 (98 = take leaked; 99 = over-release)", code)
+	}
+}
+
+func TestWASMBuiltinResultArgLeakBound(t *testing.T) {
+	if got := runWasm(t, builtinResultArgLeakBoundProgram); got != 0 {
+		t.Errorf("wasm builtin-result argument leak bound: exit = %d, want 0 (98 = take leaked; 99 = over-release)", got)
+	}
+}
+
 func TestX86_64AppendCopyLeakBound(t *testing.T) {
 	if _, code := compileAndRunX86_64(t, appendCopyLeakBoundProgram); code != 0 {
 		t.Errorf("x86-64 append-copy leak bound: exit = %d, want 0 (98 = copy leaked; 99 = over-release; 97 = operand mutated)", code)
