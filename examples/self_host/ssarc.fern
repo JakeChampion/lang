@@ -922,20 +922,44 @@ function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult 
     return builtin_site(r, ins);
 }
 
-// The builtins whose result is an instantiated builtin union, and the three
-// whose result owns nothing: each is the stack IR op the AST lowering emits
-// for the same call. `read_line` reads a FD operand and the bare builtin
-// names none, so its lowering pushes the zero the AST path pushes; the
-// over-release counter is a runtime call rather than an op.
+// One half of the builtin dispatch below: the result with that builtin's op
+// emitted, or the result untouched when the name is not one of this half's.
+struct Lowered { found: boolean, r: irlower.LowerResult }
+
+// The builtins whose result is an instantiated builtin union: each is the
+// stack IR op the AST lowering emits for the same call. `read_line` reads a FD
+// operand and the bare builtin names none, so its lowering pushes the zero the
+// AST path pushes.
+function union_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "env") { return Lowered { found: true, r: emit(r, ir.op_env()) }; }
+    if (ins.str == "read_file") { return Lowered { found: true, r: emit(r, ir.op_read_file()) }; }
+    if (ins.str == "read_file_bytes") { return Lowered { found: true, r: emit(r, ir.op_read_file_bytes()) }; }
+    if (ins.str == "read_dir") { return Lowered { found: true, r: emit(r, ir.op_read_dir()) }; }
+    if (ins.str == "stat") { return Lowered { found: true, r: emit(r, ir.op_stat()) }; }
+    if (ins.str == "lstat") { return Lowered { found: true, r: emit(r, ir.op_lstat()) }; }
+    if (ins.str == "read_line") { return Lowered { found: true, r: emit(emit(r, ir.op_const_i32(0)), ir.op_read_line()) }; }
+    return Lowered { found: false, r: r };
+}
+
+// The builtins whose result owns nothing. The over-release counter and the two
+// shared-append totals read a runtime word; the first of them is a runtime
+// call rather than an op.
+function value_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "args") { return Lowered { found: true, r: emit(r, ir.op_args()) }; }
+    if (ins.str == "putchar") { return Lowered { found: true, r: emit(r, ir.op_putchar()) }; }
+    if (ins.str == "f32_from_bits") { return Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) }; }
+    if (ins.str == "__rc_underflow_count") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) }; }
+    if (ins.str == "__arr_push_shared_count") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) }; }
+    if (ins.str == "__arr_push_shared_bytes") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_bytes()) }; }
+    return Lowered { found: false, r: r };
+}
+
+// A name neither half owns is a runtime helper with a symbol of its own, which
+// a direct call reaches.
 function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
-    if (ins.str == "env") { return emit(r, ir.op_env()); }
-    if (ins.str == "read_file") { return emit(r, ir.op_read_file()); }
-    if (ins.str == "read_dir") { return emit(r, ir.op_read_dir()); }
-    if (ins.str == "read_line") { return emit(emit(r, ir.op_const_i32(0)), ir.op_read_line()); }
-    if (ins.str == "args") { return emit(r, ir.op_args()); }
-    if (ins.str == "putchar") { return emit(r, ir.op_putchar()); }
-    if (ins.str == "f32_from_bits") { return emit(r, ir.op_f32_from_bits()); }
-    if (ins.str == "__rc_underflow_count") { return emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)); }
+    var done: Lowered = union_builtin_site(r, ins);
+    if (!done.found) { done = value_builtin_site(r, ins); }
+    if (done.found) { return done.r; }
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 

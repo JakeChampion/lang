@@ -1927,6 +1927,12 @@ function t_io_result(ok: typeinfo.Type): typeinfo.Type {
     return typeinfo.TypeUnion { name: "Result", args: [ok, typeinfo.TypeUnion { name: "IoError", args: [] }] };
 }
 
+// The record `stat` fills in. It is declared in the injected builtin module,
+// so its schema is read from the checker's scope the way any record's is.
+function t_file_stat(): typeinfo.Type {
+    return typeinfo.TypeStruct { name: "FileStat", args: [] };
+}
+
 // The runtime builtins with a contract here, each a stack IR op of its own
 // rather than a call. What each hands back is the op's own value; a void one
 // pushes the dummy every statement op pushes.
@@ -1941,30 +1947,36 @@ function builtin_contracts(): ssasem.Contract[] {
 // contract names the INSTANTIATION, because that is what says what the caller
 // owns: each reads the string it is lent and copies whatever it keeps, so the
 // box owns every part of itself — `env`'s value, `read_line`'s line,
-// `read_file`'s contents, `read_dir`'s names, and the IoError an error arm
-// carries. Nothing here is generic: each builtin has exactly one
-// instantiation, so the erased type variable a declared generic would carry
-// never arises.
+// `read_file`'s contents, `read_file_bytes`'s buffer, `read_dir`'s names,
+// `stat`'s record, and the IoError an error arm carries. Nothing here is
+// generic: each builtin has exactly one instantiation, so the erased type
+// variable a declared generic would carry never arises.
 function union_result_contracts(): ssasem.Contract[] {
     var path: i32[] = [ssaunits.borrow_mode()];
     return [
         ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
         ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
         ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
-        ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string() }) }
+        ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8() }) },
+        ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string() }) },
+        ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
+        ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) }
     ];
 }
 
 // The builtins whose result owns nothing: the process arguments are a fresh
 // array of this function's own, the byte write and the bit reinterpret are
-// values, and the over-release counter is a read.
+// values, and the over-release counter and the two shared-append totals are
+// reads of a runtime word.
 function value_contracts(): ssasem.Contract[] {
     var value: i32[] = [ssaunits.value_mode()];
     return [
         ssasem.Contract { name: "args", params: [], modes: [], result: typeinfo.TypeArray { elem: t_string() } },
         ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
         ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f64() },
-        ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() }
+        ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: t_i64() }
     ];
 }
 

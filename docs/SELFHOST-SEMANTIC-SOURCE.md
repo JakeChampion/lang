@@ -211,13 +211,21 @@ Unsupported constructs refuse the whole function with a reason.
   as the AST lowering writes it.
 - The builtins whose RESULT is one of the front end's own generic unions:
   `env` and `read_line` hand back an `Option[string]`, `read_file` a
-  `Result[string, IoError]` and `read_dir` a `Result[string[], IoError]`.
+  `Result[string, IoError]`, `read_file_bytes` a `Result[u8[], IoError]`,
+  `read_dir` a `Result[string[], IoError]`, and `stat` / `lstat` a
+  `Result[FileStat, IoError]`.
   Each contract names the INSTANTIATION, because that is what says what the
   caller owns — the box owns its payload, and the payload owns whatever it
   owns in turn. Fern erases generics, so a union with an erased argument
-  could carry no unit rule at all; these four carry one because each has
+  could carry no unit rule at all; these carry one because each has
   exactly ONE instantiation, fixed by the builtin rather than by a call site.
-  A declared generic enum is still refused.
+  A declared generic enum is still refused. `map_new` and `cell_new` are the
+  builtins that cannot join them: the destination type drives `Map`'s and
+  `Cell`'s arguments, so one contract could not name the instantiation.
+  A builtin whose result is `Result[void, IoError]` — `write_file`,
+  `create_dir_all`, `remove_dir_all` — cannot either: `void` is a result
+  type here, not a value type, so the unit payload has no slot in the box
+  and no rule for what a `Ok(u)` arm binds.
 
   The box is a tag word and one payload word (`semrecords.layout_option`),
   not the shape pointer a declared enum's variant box carries, so its
@@ -559,7 +567,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,531 of its 7,759
+Measured against the whole loaded self-hosted compiler, 6,534 of its 7,759
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -861,7 +869,7 @@ so did the match-scrutinee refusal.
 Next, by measured leaf: a closure capturing a reference (246), which is
 the hoisted body's untyped `__env` read and not a closure form, and the
 `astwalk` fold family (685 across its members) — one question, not two.
-The binding mismatch (75), the destructuring declaration (61) and the call
+The binding mismatch (75), the destructuring declaration (62) and the call
 target (49) are NOT next: all three are the closure env box, so they land
 behind the same function-value ABI decision and none is worth building against
 until it is taken. Then a production consumer that lowers produced functions
