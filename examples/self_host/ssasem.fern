@@ -472,16 +472,22 @@ function float_op(op: string): boolean {
 // conversion is a cast the source has to write. String ordering and operator
 // overloads have none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
-    if (is_integer(left) && semtypes.equal(left, right)) {
-        if (integer_op(op)) { return left; }
-        if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
-    }
-    if (is_f64(left) && is_f64(right)) {
-        if (float_op(op)) { return left; }
-        if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
-    }
+    if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
+    if (is_f64(left) && is_f64(right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
+    return typeinfo.unchecked();
+}
+
+function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {
+    if (integer_op(op)) { return t; }
+    if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
+    return typeinfo.unchecked();
+}
+
+function float_result(op: string, t: typeinfo.Type): typeinfo.Type {
+    if (float_op(op)) { return t; }
+    if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
 
