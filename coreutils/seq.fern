@@ -591,7 +591,6 @@ function block_finish(o: io_buffered.BufWriter, b: Block): void {
 // A magnitude as ASCII digits, most significant first, no leading zeros;
 // zero is the one digit `0`. Stepping it is a carry from the low end,
 // in place, which touches 1.1 digits per unit step on average.
-
 // `digits_of(v)` — `v` as digits.
 function digits_of(v: u64): u8[] {
   var n: i32 = 1;
@@ -784,7 +783,6 @@ function digits_to_u64(d: u8[]): Option[u64] {
 // the point `prec` places from the right, zero-extended leftwards to
 // reach the point and then to `width`, after the sign. The digit engine
 // is the case `prec` 0, `width` 0.
-
 // How many digits the term prints, padding included, for a non-negative
 // magnitude of `mag_len` digits.
 function fixed_digits(mag_len: i32, prec: i32, width: i32): i32 {
@@ -871,7 +869,6 @@ function zeros(): string {
 // first block, after the last, and at any other step go one at a time.
 // `bound` empty means no upper bound at all, which is what an infinite
 // LAST asks for. `lead` says a separator precedes the first term.
-
 // The low digits a block holds fixed, and the terms they span.
 function block_digits(): i32 {
   return 3;
@@ -884,7 +881,7 @@ function block_span(): i32 {
 // Whether the block writer takes `step`: it must divide the span, and
 // leave a block at least 100 terms so a write carries its cost.
 function block_step(step: u64): boolean {
-  return step <= 10 as u64 && (block_span() as u64) % step == 0 as u64;
+  return step <= 10 as u64 && block_span() as u64 % step == 0 as u64;
 }
 
 function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], prec: i32, width: i32, sep: string, lead: boolean): io_buffered.BufWriter {
