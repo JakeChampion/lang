@@ -45,12 +45,16 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
 function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t) && !ssasem.is_f64(t); }
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return narrow_slot(t) && !ssasem.is_view(t) && supported(t, f);
+    return narrow_slot(t) && !ssasem.is_view(t) && !semtypes.erased(t) && supported(t, f);
 }
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void ride one word, a string is its own box, and a function
 // value is the env box its captures ride in.
+// An erased type variable is one i32-shaped word, and every unit of one is
+// moved rather than retained or released (ssaunits.erased_move_error), so it
+// needs no representation beyond that word: no slot class, no release helper.
 function supported_leaf(t: typeinfo.Type): boolean {
+    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }

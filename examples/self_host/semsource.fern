@@ -36,7 +36,11 @@ struct State {
     loops: Loop[],
     // Every module function's declared contract, and the ones this body calls.
     contracts: ssasem.Contract[],
-    calls: ssasem.Contract[]
+    calls: ssasem.Contract[],
+    // This declaration spells type VARIABLES, so a bare type-variable name in
+    // a type the checker could not resolve is the erased word rather than an
+    // unresolved spelling.
+    generic: boolean
 }
 
 struct Value { s: State, id: i32 }
@@ -160,9 +164,89 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
     return State { ...s, vals: vals };
 }
 
+// ---- erasure ----------------------------------------------------------------
+
+// A declaration that spells type variables. The parser keeps only the BOUNDED
+// names in `type_params` and counts the rest, so either field marks one — and
+// a HOISTED closure body marks neither: the lift copies the type-variable
+// spellings of the generic it came out of and declares no type parameter of
+// its own, because the arity-keyed indirect-call table fixes that body's ABI
+// and a widened one is an `indirect call type mismatch`. The spelling is a
+// type variable either way, so the slot is one erased word either way.
+function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
+    if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return true; }
+    if (bare_typevar(fd.ret_type, scope)) { return true; }
+    for p in fd.params { if (bare_typevar(p.type_name, scope)) { return true; } }
+    return false;
+}
+
+// A type variable reaches the checker as an UNKNOWN naming it: a promoted
+// parameter as "type parameter T", an unpromoted one as the unresolved
+// spelling itself, since parse_func_decl drops an unbounded parameter's name
+// from the declaration. This reads the name back out of either reason.
+function typevar_reason_name(reason: string): string {
+    var promoted: string = "type parameter ";
+    if (reason.len() > promoted.len() && slice_unchecked(reason, 0, promoted.len()) == promoted) {
+        return slice_unchecked(reason, promoted.len(), reason.len()) + "";
+    }
+    var unresolved: string = "unrecognised type name: ";
+    if (reason.len() > unresolved.len() && slice_unchecked(reason, 0, unresolved.len()) == unresolved) {
+        return slice_unchecked(reason, unresolved.len(), reason.len()) + "";
+    }
+    return "";
+}
+
+// Inside a generic declaration a bare type-variable letter no struct or enum
+// declares IS that variable — the rule irlower's own erasure keys on
+// (`is_erased_typevar`), and the one `type_from_name_erasing_tparams` applies
+// when the parser kept the name.
+function bare_typevar(name: string, scope: checker.Scope): boolean {
+    if (name.len() != 1 || name[0] < b'A' || name[0] > b'Z') { return false; }
+    if (checker.struct_sig(scope, name).name.len() > 0) { return false; }
+    return checker.union_sig(scope, name).name.len() == 0;
+}
+
+// erase resolves the checker's unresolved type variables to the erased word,
+// structurally, so a function-typed parameter's own erased slots resolve with
+// it. Every other unknown is left alone and refuses where it stands: this
+// makes the erased word a type of its own rather than a relaxed check.
+function erase(t: typeinfo.Type, generic: boolean, scope: checker.Scope): typeinfo.Type {
+    if (!generic) { return t; }
+    if let typeinfo.TypeUnknown(u) = t {
+        var name: string = typevar_reason_name(u.reason);
+        if (bare_typevar(name, scope)) { return typeinfo.TypeErased { name: name }; }
+        return t;
+    }
+    return erase_within(t, scope);
+}
+
+function erase_within(t: typeinfo.Type, scope: checker.Scope): typeinfo.Type {
+    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: erase(a.elem, true, scope) }; }
+    if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: erase_list(tup.elements, scope) }; }
+    if let typeinfo.TypeFunc(fn) = t {
+        return typeinfo.TypeFunc { ...fn, param_types: erase_list(fn.param_types, scope), ret_type: erase(fn.ret_type, true, scope) };
+    }
+    if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: erase(m.key, true, scope), value: erase(m.value, true, scope) }; }
+    if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: erase_list(r.args, scope) }; }
+    if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { ...u, args: erase_list(u.args, scope) }; }
+    return t;
+}
+
+function erase_list(ts: typeinfo.Type[], scope: checker.Scope): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for t in ts { out = out.append(erase(t, true, scope)); }
+    return out;
+}
+
+function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type {
+    return erase(checker.scope_type(scope, name), s.generic, scope);
+}
+
 // ---- expressions ------------------------------------------------------------
 
-function checked(e: ast.Expr, s: State): typeinfo.Type { return checker.expr_type(e, s.scope); }
+function checked(e: ast.Expr, s: State): typeinfo.Type {
+    return erase(checker.expr_type(e, s.scope), s.generic, s.scope);
+}
 
 function decimal(text: string): boolean {
     if (text.len() == 0) { return false; }
@@ -911,7 +995,14 @@ function closure(body: string, c: ast.ExprCall, s: State): Value {
     if (at < 0) { return refused(s, "call target has no semantic contract: " + body); }
     var contract: ssasem.Contract = s.contracts[at];
     if (!ssasem.closure_env(contract)) { return refused(s, "closure environment parameter"); }
-    for m in contract.modes { if (m == ssaunits.counted_mode()) { return refused(s, "function value consumes an argument"); } }
+    var mi: i32 = 0;
+    while (mi < contract.modes.len()) {
+        // An ERASED slot is the one a function type CAN spell as consuming.
+        if (contract.modes[mi] == ssaunits.counted_mode() && !semtypes.erased(contract.params[mi])) {
+            return refused(s, "function value consumes an argument");
+        }
+        mi = mi + 1;
+    }
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < c.args.len()) {
@@ -961,19 +1052,31 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
 // Each argument is produced at the parameter's type and lent by the
 // parameter's mode; the callee's contract joins the function's call table
 // the first time it is called.
+//
+// A contract carrying an ERASED position is a template, and this call site is
+// what instantiates it: each argument binds the variables its parameter
+// spells, left to right, so a later parameter — a function value's own erased
+// slots among them — is produced and compared at the type already bound. The
+// same binding names the result.
 function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
     var ids: i32[] = [];
+    var bound: ssasem.Binding = ssasem.unbound();
     var i: i32 = 0;
     while (i < args.len()) {
-        var v: Value = lend(expr(args[i], s, contract.params[i]), contract.params[i], contract.modes[i]);
+        var want: typeinfo.Type = ssasem.substitute(contract.params[i], bound);
+        var v: Value = lend(expr(args[i], s, want), want, contract.modes[i]);
         s = v.s;
         if (!s.ok) { return v; }
-        if (!semtypes.equal(s.values[v.id], contract.params[i])) { return refused(s, "call argument type"); }
+        bound = ssasem.bind_type(bound, contract.params[i], s.values[v.id]);
+        if (!bound.ok) { return refused(s, bound.why); }
+        if (!semtypes.equal(ssasem.substitute(contract.params[i], bound), s.values[v.id])) { return refused(s, "call argument type"); }
         ids = ids.append(v.id);
         i = i + 1;
     }
+    var why: string = ssasem.instantiation_error(bound);
+    if (why != "") { return refused(s, why); }
     if (ssasem.find_contract(s.calls, contract.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.call(), ids, 0, contract.name, contract.result);
+    return define(s, ssasem.call(), ids, 0, contract.name, ssasem.substitute(contract.result, bound));
 }
 
 // A union-typed destination accepts any of its members, and a view-typed one
@@ -1044,7 +1147,7 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, "binding type does not match its semantic value"); }
     var i: i32 = 0;
     while (i < names.len()) {
-        var elem: typeinfo.Type = checker.scope_type(after, names[i]);
+        var elem: typeinfo.Type = bound_type(s, names[i], after);
         if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved binding type"); }
         if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, "binding type does not match its semantic value"); }
         var part: Value = define(s, ssasem.tuple_get(), [whole.id], i, "", elem);
@@ -1092,8 +1195,8 @@ function pattern_names(encoded: string): string[] {
 function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
-    var ty: typeinfo.Type = checker.scope_type(after, v.name);
-    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved binding type"); }
+    var ty: typeinfo.Type = bound_type(s, v.name, after);
+    if (!semtypes.word(ty, false)) { return fail(s, "unresolved binding type"); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
@@ -1637,8 +1740,15 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 
 // ---- functions --------------------------------------------------------------
 
-function unsupported_declaration(fd: parser.FuncDecl): string {
-    if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return "unsupported generic function"; }
+// A generic declaration is admitted through ERASURE: each of its type
+// variables is one machine word wherever the signature and the body name it,
+// and every position that needs more than a word — an array element, a field,
+// an operand — refuses on its own account, because the erased word is not a
+// concrete type. A generic METHOD is refused outright: its receiver spelling
+// is what the monomorphiser resolves, and the erasure rules here are written
+// for a free function, as irlower's own are.
+function unsupported_declaration(fd: parser.FuncDecl, scope: checker.Scope): string {
+    if (generic_decl(fd, scope) && fd.receiver_type.len() > 0) { return "unsupported generic method"; }
     if (fd.import_iface.len() > 0 || fd.async) { return "unsupported external or async function"; }
     for p in fd.params { if (p.has_default) { return "unsupported default argument"; } }
     return "";
@@ -1646,7 +1756,13 @@ function unsupported_declaration(fd: parser.FuncDecl): string {
 
 function reference(t: typeinfo.Type): boolean { return semtypes.needs_anchor(t); }
 
+// An ERASED position is CONSUMING: the caller hands over its unit at the call
+// and takes back the one the call returns, which is what lets a body that
+// cannot tell a pointer instantiation from a scalar one release nothing
+// (docs/ERASED-GENERICS-RC.md, option 1). Consuming and producing are both
+// no-ops at a scalar instantiation, so the one mode serves every one.
 function mode(p: ast.ParamDecl, t: typeinfo.Type): i32 {
+    if (semtypes.erased(t)) { return ssaunits.counted_mode(); }
     if (!reference(t)) { return ssaunits.value_mode(); }
     if (p.own) { return ssaunits.counted_mode(); }
     return ssaunits.borrow_mode();
@@ -1669,6 +1785,7 @@ function decl_param_names(fd: parser.FuncDecl): string[] {
 function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
     if (fd.receiver_name.len() == 0) { return mode(fd.params[at], t); }
     if (at > 0) { return mode(fd.params[at - 1], t); }
+    if (semtypes.erased(t)) { return ssaunits.counted_mode(); }
     if (!reference(t)) { return ssaunits.value_mode(); }
     return ssaunits.borrow_mode();
 }
@@ -1683,15 +1800,15 @@ function decl_key(fd: parser.FuncDecl): string {
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope): typeinfo.Type {
     if (fd.ret_type.len() == 0) { return t_void(); }
-    return scope.ret_type;
+    return erase(scope.ret_type, generic_decl(fd, scope), scope);
 }
 
 function parameters(fd: parser.FuncDecl, s: State): State {
     var names: string[] = decl_param_names(fd);
     var at: i32 = 0;
     while (at < names.len()) {
-        var ty: typeinfo.Type = checker.scope_type(s.scope, names[at]);
-        if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved parameter type"); }
+        var ty: typeinfo.Type = bound_type(s, names[at], s.scope);
+        if (!semtypes.word(ty, false)) { return fail(s, "unresolved parameter type"); }
         var p: Value = define(s, 6, [], at, "", ty);
         s = bind(p.s, names[at], p.id);
         at = at + 1;
@@ -1707,7 +1824,8 @@ function refuse(why: string): Produced {
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
-        names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [], contracts: contracts, calls: [] };
+        names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [], contracts: contracts, calls: [],
+        generic: generic_decl(fd, scope) };
 }
 
 // ---- record schemas ---------------------------------------------------------
@@ -1871,10 +1989,10 @@ function complete(fd: parser.FuncDecl, s: State): Produced {
 // declaration, the checker's function scope and the module's call contracts.
 // Unsupported constructs are explicit refusals, never a partial graph.
 pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): Produced {
-    var why: string = unsupported_declaration(fd);
+    var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
     var s: State = initial(fd, scope, contracts);
-    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
+    if (!semtypes.word(s.result, true)) { return refuse("unresolved result type"); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     if (ssasem.is_func(s.result)) { return refuse("function value result"); }
     s = parameters(fd, s);
@@ -1887,19 +2005,20 @@ pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.
 // this boundary cannot produce has no contract, so no call may target it.
 function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     var none: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
-    if (unsupported_declaration(fd) != "") { return none; }
+    if (unsupported_declaration(fd, scope) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope);
-    if (!semtypes.concrete(result, true) || ssasem.is_view(result)) { return none; }
+    if (!semtypes.word(result, true) || ssasem.is_view(result)) { return none; }
     // A caller of a fn-returning declaration reads an env box out of it, which
     // is not the bare address this vocabulary has; so it has no contract here.
     if (ssasem.is_func(result)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);
+    var generic: boolean = generic_decl(fd, scope);
     var at: i32 = 0;
     while (at < names.len()) {
-        var ty: typeinfo.Type = checker.scope_type(scope, names[at]);
-        if (!semtypes.concrete(ty, false)) { return none; }
+        var ty: typeinfo.Type = erase(checker.scope_type(scope, names[at]), generic, scope);
+        if (!semtypes.word(ty, false)) { return none; }
         params = params.append(ty);
         modes = modes.append(decl_param_mode(fd, at, ty));
         at = at + 1;

@@ -72394,6 +72394,14 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
                 // Function-value calls borrow their arguments. The trampoline
                 // acquires the counted scalar-array argument at its direct call
                 // to the consuming target, using the ordinary call protocol.
+                //
+                // An ERASED position is the one slot a function type spells as
+                // CONSUMING (docs/ERASED-GENERICS-RC.md, option 1), so the unit
+                // must pass straight through to the target rather than being
+                // re-acquired here. It already does: the strip is keyed on a
+                // leak-safe ARRAY spelling, which a bare type variable is not,
+                // so an erased parameter reaches the trampoline with whatever
+                // mode the target declared. Keep the key that way.
                 var p: ast.ParamDecl = tgt.params[pj];
                 if (p.own && is_leaksafe_array_field(p.type_name)) { p = ast.ParamDecl { ...p, own: false }; }
                 ps = ps.append(p);

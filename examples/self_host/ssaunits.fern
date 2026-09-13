@@ -46,7 +46,12 @@ function successors(b: ssa.SBlock): i32[] {
     return [];
 }
 // Admit only representations whose counted layout is defined by this pass.
+// An erased type variable is one of them: it carries an ABSTRACT unit that
+// every step of this pass balances, and no physical operation at all — every
+// supply of one is a move, which emits nothing, so the plan is the same
+// whether the instantiation is a pointer or a scalar.
 function reference(t: typeinfo.Type): boolean {
+    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
@@ -69,6 +74,7 @@ function unit_free(t: typeinfo.Type): boolean {
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }
+    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
@@ -82,7 +88,13 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
     var i: i32 = 0;
     while (i < modes.len()) {
-        if (reference(params[i])) {
+        if (semtypes.erased(params[i])) {
+            // An erased position is consuming: the caller hands over a unit
+            // and takes back the one the call returns. Borrowing one would
+            // leave the abandoned intermediates to a body that cannot release
+            // them (docs/ERASED-GENERICS-RC.md, option 1).
+            if (modes[i] != counted_mode()) { return "erased parameter mode"; }
+        } else if (reference(params[i])) {
             if (modes[i] != borrow_mode() && modes[i] != counted_mode()) { return "reference parameter mode"; }
         } else if (modes[i] != value_mode()) { return "scalar parameter mode"; }
         i = i + 1;
@@ -114,9 +126,15 @@ function schema_fields_error(f: ssasem.Func): string {
 // its arguments carry cannot be read from one: an indirect call lends every
 // reference it is handed. A contract with a counted parameter promises the
 // opposite, and a body declaring one is therefore not one this pass will box.
+// An ERASED parameter is the one exception: that slot IS consuming, and a
+// function type says so by spelling the variable there.
 function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
     var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
-    for m in c.modes { if (m == counted_mode()) { return "function value consumes an argument"; } }
+    var i: i32 = 0;
+    while (i < c.modes.len()) {
+        if (c.modes[i] == counted_mode() && !semtypes.erased(c.params[i])) { return "function value consumes an argument"; }
+        i = i + 1;
+    }
     return "";
 }
 
@@ -191,6 +209,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var counted: boolean[] = [];
     if (ins.kind_tag == ssasem.call()) {
         counted = call_supplied(f, ins);
+    } else if (ins.kind_tag == ssasem.call_value()) {
+        counted = call_value_supplied(f, ins);
     } else if (ins.kind_tag == ssasem.append()) {
         counted = [true, reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.with()) {
@@ -205,6 +225,21 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     }
     return out;
 }
+// An indirect call LENDS every reference it is handed — the convention a
+// function type carries, since it spells no `own` — except at a slot the type
+// spells with an erased variable, which is CONSUMING. The callee box itself
+// (operand 0) is lent like any other.
+function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
+    var out: boolean[] = [false];
+    var params: typeinfo.Type[] = ssasem.func_params(f.values[ins.args[0]]);
+    var i: i32 = 0;
+    while (i < params.len()) {
+        out = out.append(semtypes.erased(params[i]) && reference(f.values[ins.args[i + 1]]));
+        i = i + 1;
+    }
+    return out;
+}
+
 function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
     var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
     var out: boolean[] = [];
@@ -254,6 +289,33 @@ function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]):
         i = i + 1;
     }
     return Step { ...s, supplies: selected, drops: drops };
+}
+
+// An erased word is ONE MACHINE WORD whose instantiation the body holding it
+// cannot see, so it may emit neither retain nor release on one: `__fern_rc_inc`
+// and `__fern_rc_dec` would touch a refcount at one instantiation and an
+// integer at another. Every erased unit is therefore a MOVE — supplied exactly
+// once at a consuming position and never read after. A RETAIN is what the
+// planner chooses for a value still live at its own consumption (read after
+// being passed, or passed to two calls), and a DROP what it chooses for one
+// abandoned unconsumed; neither has an emission here, so either refuses the
+// whole function rather than being miscompiled at some instantiation.
+function erased_step_error(f: ssasem.Func, s: Step): string {
+    for supply in s.supplies {
+        if (semtypes.erased(f.values[supply.value]) && supply.mode != move_unit()) { return "erased value is live across its consumption"; }
+    }
+    for value in s.drops {
+        if (semtypes.erased(f.values[value])) { return "erased value is abandoned unconsumed"; }
+    }
+    return "";
+}
+
+function erased_move_error(f: ssasem.Func, p: Plan): string {
+    for s in p.steps {
+        var why: string = erased_step_error(f, s);
+        if (why != "") { return why; }
+    }
+    return "";
 }
 
 pub function plan(f: ssasem.Func, modes: i32[]): Plan {
@@ -516,5 +578,5 @@ pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
         bi = bi + 1;
     }
     if (count != p.steps.len()) { return "extra unit plan steps"; }
-    return "";
+    return erased_move_error(f, p);
 }
