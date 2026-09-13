@@ -10119,6 +10119,8 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
                     // clocks are: RLIM_INFINITY normalises to i64 max, which a
                     // 32-bit binding would read back as -1.
                     if (cid.name == "rlimit_nofile") { return 64; }
+                    // The blocked-signal set is a 64-bit mask, read back whole.
+                    if (cid.name == "signal_mask") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
                     // The bump high-water mark is i64 (the arena is 16 GiB, so
                     // it passes 2^31 on a long run). Width-tracking it matters
@@ -10510,6 +10512,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     // call path is the lowering; the sign-extend below would
                     // widen an already-wide operand.
                     if (cid.name == "rlimit_nofile") { return lower_expr(e, s); }
+                    if (cid.name == "signal_mask") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
                     // The bump high-water mark is an i64 value: the normal call
                     // path emits op_heap_bump_bytes and pushes the full-width
