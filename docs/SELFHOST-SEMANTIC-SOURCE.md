@@ -186,14 +186,19 @@ Unsupported constructs refuse the whole function with a reason.
   own stack IR op rather than a call, `print` the payload then the newline
   as the AST lowering writes it.
 - The array and string builtins `.len()`, `.append()` and `.with()`, and
-  `slice_unchecked` on a string. `.with` hands the receiver's unit over as
-  `.append` does, so its receiver must be moved too; physically it is the
-  count test that chooses between the in-place store and the copy, the AST
-  lowering's two forms chosen at run time rather than by the receiver's
-  syntax, and a counted element type retains the copy's elements and
-  releases the one the store replaces. A slice owns its box and borrows the
-  source's bytes, so it is a projection anchored to its source and is
-  released by the view helper rather than the ordinary string free.
+  `slice_unchecked` on a string. Both array builtins take ONE unit of the
+  receiver and hand one back, and both reach the same count test: the
+  receiver's own box when its unit is the only one that box's count names,
+  and a fresh copy of it otherwise — the AST lowering's two forms, chosen at
+  run time rather than by the receiver's syntax. The test belongs to this
+  lowering rather than to the shared runtime push, which gives the unit back
+  only on the sole-owner side. So the receiver need not be one the planner
+  MOVES: a receiver this function does not own is retained at the call, the
+  count then names two boxes, and the copy runs. A counted element type
+  retains the copy's elements, and `.with` releases the element its store
+  replaces. A slice owns its box and borrows the source's bytes, so it is a
+  projection anchored to its source and is released by the view helper
+  rather than the ordinary string free.
 - Indexing a string, as one byte handed back in a u8 — the type the checker
   gives the expression, so a binding or an operator over it needs no
   reconciliation. The receiver is read the way a length's is and the result
@@ -295,7 +300,12 @@ one by hand.
   result, a returned parameter, recursion, a call result carried into a
   loop header, the AST-lowered `main` binding, discarding and projecting
   tuple and array results under `ssarc.caller_sigs`, the byte and cast shapes
-  below, the enum shapes above, and the view shapes: a scanning loop binding
+  below, the enum shapes above, every receiver the planner does not move
+  (a borrowed parameter's box, a record field's, an element of a borrowed
+  array of arrays, an `own` parameter's read again after the push, the field
+  receiver appended to in a loop, and a `string[]` through both builtins, each
+  asserting the source keeps its length and its elements), the loop header
+  whose first step pushes on the caller's own box, and the view shapes: a scanning loop binding
   a slice per iteration and comparing, measuring, indexing and lending it to
   a `str` and to a borrowed `string` parameter; an owned string lent to `str`
   bindings and re-lent; a view of a view; a view whose source is a temporary
@@ -383,7 +393,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,875 of its 7,713
+Measured against the whole loaded self-hosted compiler, 6,185 of its 7,735
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -411,9 +421,8 @@ which a probe keyed by callee showed and the bare leaf histogram could not.
 The callee leaf is the same shape: keyed by name it is a handful of runtime
 builtins (`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the
 `astwalk` folds that take a function value, each with its closures behind
-it. A further 226 functions produce and plan but are refused by the unit
-planner for an `.append` whose receiver is not moved, 44 for a `.with` under
-the same rule, and 5 by physical RC lowering for an unsupported value type.
+it. The unit planner refuses nothing now; what produces and plans but does
+not lower is 14 functions with a value type physical RC does not carry.
 The flat tuple destructure was worth +19 lowered against a leaf of 321: a
 probe keyed by pattern shape showed the leaf was entirely the flat tuple
 form, and nearly every function holding one refuses again one leaf further
@@ -449,15 +458,36 @@ lowered to the stack IR op the AST lowering already emits for it. What
 the folds and `env` need is a form for a function value and for the
 builtin `Option`, which are shapes, not vocabulary.
 
+The `.append` receiver gate is gone, +295 planned and +288 lowered. A probe
+keyed by the receiver's mode and defining instruction ranked the 295 refusals
+and disagreed with the note this gate was deferred on: not one receiver was
+owned-but-live, and not one was a borrowed-parameter accumulator in a loop.
+They were 151 appends and 5 withs on a borrowed PARAMETER, 99 appends and 39
+withs on a record FIELD read, and one on an array element — the
+immutable-update threading shape, where the AST lowering already clones
+(`irlower.lower_arr_append_value`). The loop accumulator plans either way,
+because what its body appends to is the header PHI, and a phi is a unit of
+this function's own however its sources reached it.
+
+What the gate was guarding was real but was not the receiver's mode: the
+runtime's push gives the receiver's unit back only at rc == 1, so a receiver
+shared at the push kept a count nobody released, and the borrowed-parameter
+accumulator that planned leaked one buffer per call. Emitting the count test
+in this lowering rather than leaning on the shared helper closed that and made
+the mode irrelevant in the same move.
+
+The copy the not-moved receiver takes is one whole array per push, which is
+O(n^2) bytes when the shape is a loop: a field-receiver accumulator over n
+steps allocates 3n + 2 blocks and copies 4n(n-1) bytes, measured at 770
+allocations for n = 256 against 8 for the sole-owner local form, and 2.3 s
+against 0.001 s at n = 16,384. That is the cost the AST lowering pays too
+until its escape analysis (`irlower.field_append_inplace_sites_of`, native's
+`fieldPlaceAppendCopies` inverted) exempts a site; the analogue here is the
+next optimisation this boundary wants, not a correctness gap.
+
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,
 and the function value, which is a shape this boundary has no form for yet;
 the record literal is the next measured leaf and is a shape rather than
-vocabulary. The `.append` receiver gate
-stays deferred: it needs a clone form for a receiver
-the planner does not move (the `op_arr_slice` shape
-`irlower.lower_arr_append_value` already uses) and carries a real cost — the
-dominant refused shape is a borrowed-parameter accumulator in a loop, where a
-clone is O(n^2) bytes and native escapes it with an exemption this vocabulary
-has no analogue for. Then a production consumer that lowers produced functions
+vocabulary. Then a production consumer that lowers produced functions
 through this pipeline and feeds `caller_sigs` to the remaining AST callers.

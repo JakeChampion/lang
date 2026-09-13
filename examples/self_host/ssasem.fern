@@ -233,9 +233,8 @@ function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Typ
 }
 
 // One element pushed onto a counted array. The array the caller gets back is
-// the receiver's box when the push fit and a fresh one when it grew, so the
-// receiver's unit is handed over rather than read — the unit planner is what
-// holds that to a move.
+// the receiver's box when its unit was the only one and a fresh copy
+// otherwise, so the receiver's unit is handed over rather than read.
 function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "append arity"; }
     var recv: typeinfo.Type = f.values[ins.args[0]];
