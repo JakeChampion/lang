@@ -129,6 +129,17 @@ function measure(s: Shape): i32 {
     if let Full(xs) = s { total = total + xs[0]; }
     return total;
 }
+// A body that ends in a total match needs no return of its own, and the arm
+// that closes the chain needs no test: nothing else is left for the value to
+// be.
+function shape_tag(s: Shape): i32 {
+    match (s) {
+        Dot => { return 0; },
+        Line(n) => { return n; },
+        Full(xs) => { return xs[0]; },
+        Pair(a, ys) => { return a + ys[0]; }
+    }
+}
 function refused_guard(s: Shape): i32 {
     match (s) {
         Line(n) when n > 0 => { return n; },
@@ -594,6 +605,40 @@ enum Chain { End, Link(i32, Chain) }
 @noinline function hold(n: i32): i32 {
     var h: Holder = Holder { s: shape(n), n: n };
     return measure(h.s) + h.n;
+}
+@noinline function shape_code(s: Shape): i32 {
+    match (s) {
+        Dot => { return 0; },
+        Line(n) => { return n; },
+        Full(xs) => { return xs.len(); },
+        Pair(a, ys) => { return a + ys.len(); }
+    }
+}
+@noinline function eat_shape(own s: Shape): i32 {
+    match (s) {
+        Dot => { return 1; },
+        Line(n) => { return n + 1; },
+        Full(xs) => { return xs[0] + 2; },
+        Pair(a, ys) => { return a + ys[0] + 3; }
+    }
+}
+@noinline function node_tag(nd: Node): i32 {
+    match (nd) {
+        Leaf(l) => { return l.n; },
+        Twig(t) => { return t.xs[0]; }
+    }
+}
+@noinline function tag_probe(n: i32): i32 {
+    return shape_code(shape(3)) + eat_shape(shape(2)) + node_tag(mk_node(n));
+}
+@noinline function shape_codes(limit: i32): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < limit) {
+        total = total + shape_code(shape(i)) + eat_shape(shape(i));
+        i = i + 1;
+    }
+    return total + node_tag(mk_node(limit));
 }
 // .len() on a BORROWED receiver reads without consuming; on a counted one the
 // read is the last use, so the unit is still this function's to release.
@@ -1353,6 +1398,7 @@ function main(): i32 {
     print_int(push_field_len(bp, 5)); print(""); print_int(set_field_at(bp, 0, 7)); print("");
     print_int(elem_push(9)); print(""); print_int(push_kept(fill(1), 9)); print("");
     print_int(build_rows(4)); print(""); print_int(word_lens(0)); print(""); print_int(word_set(0)); print("");
+    print_int(tag_probe(0)); print(""); print_int(shape_codes(4)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1361,6 +1407,15 @@ function main(): i32 {
 // tally(1): unwrap(q) = xs[0] = 1; keep = q → 1; unwrap(r) = n + xs[1] = 2 + 3 = 5 → 7.
 // tally(5): 5 + unwrap(r) (6 + 7 = 13) + 13 → 31.
 // sum_shapes(4): Dot 0, Line(1) 10, Full([2, 3]) 3, Pair(3, [3]) 6, plus the kept Full: 22.
+// A total match closes a value-returning body with no trailing return, and its
+// last arm carries no test: shape_code(Pair(3, [3])) = 3 + 1 = 4,
+// eat_shape(Full([2, 3])) consumes its own parameter for 2 + 2 = 4, and
+// node_tag over the struct-union narrows a Leaf for 7 — tag_probe(0) is their
+// 15. shape_codes(4) runs the first two over a fresh Shape per step —
+// 1 + 3 + 6 + 13 = 23 — and closes with node_tag(Twig([4, 5])) = 4, for 27.
+// Both callers are produced: an AST-lowered main handing a produced callee's
+// ENUM result to another produced callee leaks it (80 bytes for a
+// Pair(3, [3]) measured), which is the open union-result position below.
 // boxed_shape(3): Pair takes the wildcard 7, Full([3]) 3: 10; boxed_shape(0): 7 + 0.
 // node_sum(3): Leaf 7, Twig([1,2]) 2, Twig([2,3]) 3, plus the kept Twig 2 = 14.
 // node_sum(1): the Leaf 7 only, plus the kept Leaf { n: 0 } = 7.
@@ -1396,7 +1451,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1481,7 +1536,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
