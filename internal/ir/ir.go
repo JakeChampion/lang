@@ -15798,12 +15798,14 @@ func (b *builder) callBody(n *ast.Call) error {
 	// consuming positions from; the function TYPE carries them instead
 	// (`(own i32[]) => i32`). Without this the caller reclaimed a fresh temp
 	// the callee had already freed — a double free on every such call.
+	// A call through a function-typed LOCAL has no declaration to read the
+	// consuming positions from; the function TYPE carries them
+	// (`(own i32[]) => i32`). Without this the caller reclaimed a fresh temp
+	// the callee had already freed — a double free on every such call.
 	if len(ownArgFlags) == 0 {
-		if _, isLocal := b.locals[id.Name]; isLocal {
-			if lt, err := b.localFuncType(id.Name); err == nil && lt.AnyOwn() {
-				ownArgFlags = lt.ParamOwn
-				calleeSig = lt
-			}
+		if lt := b.indirectCalleeType(id.Name); lt != nil {
+			ownArgFlags = lt.ParamOwn
+			calleeSig = lt
 		}
 	}
 	// ownedByCallee: the callee reclaims this argument — either an explicit `own`
@@ -16214,6 +16216,42 @@ func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guard
 // localFuncType returns the static FuncType of the named local. Calls
 // through a non-function-typed local are a checker bug, but we surface
 // them as IR errors rather than panicking.
+// indirectCalleeType is the FUNCTION TYPE of a callee that is a local — a
+// parameter, a var, or a pattern binding holding a function value — when that
+// type spells a CONSUMING slot. Such a call has no declaration to read the
+// consuming positions from; the type carries them, and caller and callee would
+// otherwise disagree about who releases the argument. Nil when the name is not
+// a function-typed local or its type consumes nothing.
+func (b *builder) indirectCalleeType(name string) *ast.FuncType {
+	ft, err := b.localFuncType(name)
+	if err != nil || ft == nil || !ft.AnyOwn() {
+		return nil
+	}
+	return ft
+}
+
+// calleeOwnFlags is the consuming mask of whatever `name` names at this call.
+// A function-typed LOCAL shadows a declaration of the same name and carries
+// its own mask in its TYPE; anything else is the declared function's `own`
+// flags. Empty when nothing at that name consumes.
+//
+// Every rule that decides who releases an argument reads the mask here, so a
+// call through a function value and a direct call to the same signature get
+// the identical protocol: the caller's overwrite-dec is suppressed, the
+// transfer is claimed, and no compensating retain is bought.
+func (b *builder) calleeOwnFlags(name string) []bool {
+	if ft := b.indirectCalleeType(name); ft != nil {
+		return ft.ParamOwn
+	}
+	if _, isLocal := b.locals[name]; isLocal {
+		return nil // shadowed by a local — not a direct call
+	}
+	if b.paramNamed(name) != nil {
+		return nil // shadowed by a parameter — not a direct call
+	}
+	return b.info.OwnFuncs[name]
+}
+
 func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 	for _, p := range b.fn.Params {
 		if p.Name == name {
@@ -18557,8 +18595,8 @@ func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
 	if !ok {
 		return false
 	}
-	flags, isOwn := b.info.OwnFuncs[id.Name]
-	if !isOwn {
+	flags := b.calleeOwnFlags(id.Name)
+	if len(flags) == 0 {
 		return false
 	}
 	for i, a := range call.Args {

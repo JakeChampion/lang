@@ -8611,6 +8611,12 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			return false
 		}
 		for i := range e.Params {
+			// A consuming slot and a lending one promise opposite things of
+			// the same call, so neither stands in for the other — inference
+			// binds the type variable but never relaxes this.
+			if e.OwnAt(i) != a.OwnAt(i) {
+				return false
+			}
 			if !c.unifyType(e.Params[i], a.Params[i], sub) {
 				return false
 			}
@@ -11479,7 +11485,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// moved out of one would be read back by the caller.
 	borrowedParam := map[string]bool{}
 	for _, p := range fn.Params {
-		if p.Own {
+		// A scalar carries no reference, so `own` on one transfers nothing and
+		// there is no affine discipline to police. A generic `own acc: T`
+		// reaches every instantiation, and its scalar clones would otherwise
+		// report a second mention of the accumulator as a use-after-move.
+		if p.Own && !definitelyScalar(p.Type) {
 			owned[p.Name] = true
 		} else {
 			borrowedParam[p.Name] = true
@@ -11631,7 +11641,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			b := binding{wasOwned: owned[p.Name], wasBorrowed: borrowedParam[p.Name]}
 			b.wasMoved, b.hadMoved = moved[p.Name]
 			shadowed[p.Name] = b
-			if p.Own {
+			if p.Own && !definitelyScalar(p.Type) {
 				owned[p.Name] = true
 				delete(borrowedParam, p.Name)
 			} else {
