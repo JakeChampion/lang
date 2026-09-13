@@ -21,7 +21,6 @@
 //     once per file, keeps going, and fails at the end.
 import "std/string";
 import "std/array";
-import "std/u64";
 import "std/io_buffered";
 import "./lib/gnu";
 
@@ -317,14 +316,13 @@ function main(): i32 {
   return merge(r1, r2, name1, name2, cfg);
 }
 
-// `merge(r1, r2, name1, name2, cfg)` — the whole comparison.
-//
-// Output accumulates in a bare local appended inline, which is the one
-// shape a `string` grows in place (#8785); each full block is handed to
-// the writer whole so the writer never copies a buffer of its own.
+// `merge(r1, r2, name1, name2, cfg)` — the whole comparison. Each
+// column prefix and line is pushed straight into stdout's builder, which
+// is flushed once it holds a block, so no byte is copied into an
+// accumulator on the way.
 function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
   var out: io_buffered.BufWriter = gnu.out_with(write_block());
-  var buf: string = "";
+  var h: usize = out.handle();
   var block: i32 = write_block();
   var term: i32 = cfg.term;
   // Both operands `-` is ONE stream in GNU, read alternately by the two
@@ -406,7 +404,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         eof1 = u.3;
         st = u.4;
         if (st == status_error()) {
-          out = gnu.put(out, buf);
           gnu.die(out, gnu.quotef(name1) + ": " + u.5, 1);
         }
       }
@@ -428,8 +425,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
           newer = back1b;
         }
         if (cmp_lines(older, newer) > 0) {
-          out = gnu.put(out, buf);
-          buf = "";
           out = disorder(out, cfg, 1);
           issued1 = true;
         }
@@ -456,7 +451,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         eof2 = u.3;
         st = u.4;
         if (st == status_error()) {
-          out = gnu.put(out, buf);
           gnu.die(out, gnu.quotef(name2) + ": " + u.5, 1);
         }
       }
@@ -478,8 +472,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
           newer = back2b;
         }
         if (cmp_lines(older, newer) > 0) {
-          out = gnu.put(out, buf);
-          buf = "";
           out = disorder(out, cfg, 2);
           issued2 = true;
         }
@@ -520,20 +512,19 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     }
     if (class == 1) {
       if (show1) {
-        buf = buf + cur1;
+        buf_push(h, cur1);
       }
     } else if (class == 2) {
       if (show2) {
-        buf = buf + pre2;
-        buf = buf + cur2;
+        buf_push(h, pre2);
+        buf_push(h, cur2);
       }
     } else if (show3) {
-      buf = buf + pre3;
-      buf = buf + cur2;
+      buf_push(h, pre3);
+      buf_push(h, cur2);
     }
-    if (buf.len() >= block) {
-      out = gnu.put(out, buf);
-      buf = "";
+    if (buf_len(h) >= block) {
+      out = gnu.settle(out);
     }
     if (order <= 0) {
       need1 = true;
@@ -546,8 +537,6 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   // GNU closes both inputs before the summary, and both closes are
   // reported: with `comm - -` the second one meets a descriptor the
   // first already closed.
-  out = gnu.put(out, buf);
-  buf = "";
   match (r1.close()) {
     Some(e) => {
       gnu.die(out, gnu.quotef(name1) + ": " + gnu.io_error_text(e), 1);
@@ -561,23 +550,28 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     None => {}
   }
   if (cfg.total) {
-    buf = buf + t0.to_string();
-    buf = buf + cfg.sep;
-    buf = buf + t1.to_string();
-    buf = buf + cfg.sep;
-    buf = buf + t2.to_string();
-    buf = buf + cfg.sep;
-    buf = buf + "total";
-    buf = buf + string_from_bytes_unchecked([term as u8]);
-    out = gnu.put(out, buf);
+    gnu.push_u64(h, t0);
+    buf_push(h, cfg.sep);
+    gnu.push_u64(h, t1);
+    buf_push(h, cfg.sep);
+    gnu.push_u64(h, t2);
+    buf_push(h, cfg.sep);
+    buf_push(h, "total");
+    buf_push_byte(h, term);
   }
-  // The output is closed BEFORE the disorder status is reported, so a
-  // run whose stdout failed says so and says nothing about the order.
-  gnu.close_stdout(out, false);
+  // What is still pending is written BEFORE the disorder status is
+  // reported, so a write failing here replaces the status; a failure
+  // met earlier, with nothing left pending, is reported after it by the
+  // close, as a bare `write error`.
+  if (out.buffered() > 0) {
+    out = gnu.check(out.flush());
+  }
   if (issued1 || issued2) {
     gnu.error("input is not in sorted order");
+    gnu.close_stdout(out, false);
     exit(1);
   }
+  gnu.close_stdout(out, false);
   return 0;
 }
 

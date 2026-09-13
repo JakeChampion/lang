@@ -35,6 +35,9 @@ func commCases(t *testing.T) []invocation {
 	// order, and the line that makes them worth checking is the last
 	// one read.
 	tailBad := writeFile(t, dir, "tailbad", "b\na\n")
+	// a c b against a: the pair is written, the disorder is found on the
+	// last line read, and under -12 nothing follows it.
+	lateBad := writeFile(t, dir, "latebad", "a\nc\nb\n")
 	tailOne := writeFile(t, dir, "tailone", "b\n")
 	tailTwo := writeFile(t, dir, "tailtwo", "b\nz\n")
 	empty := writeFile(t, dir, "empty", "")
@@ -203,8 +206,10 @@ func commCases(t *testing.T) []invocation {
 		{name: "posix option after the operands", args: []string{c1, c2, "-1"}, env: []string{"POSIXLY_CORRECT=1"}},
 		{name: "option after the operands", args: []string{c1, c2, "-1"}},
 
-		// Write failures. The output is closed before the disorder
-		// status is reported, so a failing stdout replaces it.
+		// Write failures. What is pending is written before the disorder
+		// status is reported, so a write failing there replaces it; a
+		// failure met earlier with nothing left pending is reported after
+		// it, as a bare `write error`.
 		{name: "stdout closed", args: []string{c1, c2}, stdout: stdoutClosed},
 		{name: "stdout full", args: []string{c1, c2}, stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{big1, big2}, stdout: stdoutClosed},
@@ -216,6 +221,9 @@ func commCases(t *testing.T) []invocation {
 		{name: "stdout closed with a disorder warning and no output", args: []string{"-123", unsorted, sorted}, stdout: stdoutClosed},
 		{name: "stdout full with a disorder warning and no output", args: []string{"-123", unsorted, sorted}, stdout: stdoutFull},
 		{name: "stdout full under check-order", args: []string{"--check-order", unsorted, sorted}, stdout: stdoutFull},
+		{name: "stdout full with a disorder warning and nothing after it", args: []string{"-12", lateBad, bare}, stdout: stdoutFull},
+		{name: "stdout closed with a disorder warning and nothing after it", args: []string{"-12", lateBad, bare}, stdout: stdoutClosed},
+		{name: "disorder warning with nothing after it", args: []string{"-12", lateBad, bare}},
 		{name: "stdout closed with a missing file", args: []string{missing, c2}, stdout: stdoutClosed},
 	}
 }
