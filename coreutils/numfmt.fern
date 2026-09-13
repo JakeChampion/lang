@@ -693,12 +693,13 @@ function read_precision(s: string, from: i32): (i64, i32) {
 // ---- parsing a number ------------------------------------------------------
 //
 // The result of reading one field: the value, the number of fraction
-// digits it was written with, and the error to report when it is not a
-// number at all.
-struct Num { val: ld.LD, prec: i32, err: string, ok: boolean }
+// digits it was written with, whether it had more digits than the
+// long double keeps (what --debug warns about), and the error to
+// report when it is not a number at all.
+struct Num { val: ld.LD, prec: i32, loss: boolean, err: string, ok: boolean }
 
 function bad(f: ld.Format, msg: string): Num {
-  return Num { val: f.zero(false), prec: 0, err: msg, ok: false };
+  return Num { val: f.zero(false), prec: 0, loss: false, err: msg, ok: false };
 }
 
 // The text a diagnostic quotes: the field from its first non-blank on.
@@ -725,8 +726,17 @@ function parse_number(s: string, start: i32, n: i32, o: Opts): Num {
     neg = true;
     i = i + 1;
   }
+  // GNU counts the whole part's digits and the fraction's separately,
+  // each from its first non-zero digit: either side past LDBL_DIG is
+  // the precision loss --debug reports, and either side past 33 is
+  // refused — the whole part before the fraction is even read.
   var end: i32 = digit_end(s, i, n);
-  var digits: i32 = end - i;
+  var found: boolean = end > i;
+  var counted: i32 = end - first_nonzero(s, i, end);
+  if (counted > max_acceptable_digits()) {
+    return bad(f, "value too large to be converted: " + quoted_from(s, from, n));
+  }
+  var loss: boolean = counted > max_unscaled_digits(f);
   var val: ld.LD = fold_digits(o, s, i, end);
   i = end;
   var prec: i32 = 0;
@@ -742,17 +752,19 @@ function parse_number(s: string, start: i32, n: i32, o: Opts): Num {
     if (fd == 0) {
       i = i + 1;
     } else {
+      var fcounted: i32 = fend - first_nonzero(s, i + 1, fend);
+      if (fcounted > max_acceptable_digits()) {
+        return bad(f, "value too large to be converted: " + quoted_from(s, from, n));
+      }
+      loss = loss || fcounted > max_unscaled_digits(f);
+      found = true;
       prec = fd;
-      digits = digits + fd;
       val = f.add(val, f.div(fold_digits(o, s, i + 1, fend), pow10_of(o, prec)));
       i = fend;
     }
   }
-  if (digits == 0) {
+  if (!found) {
     return bad(f, "invalid number: " + quoted_from(s, from, n));
-  }
-  if (digits > max_acceptable_digits()) {
-    return bad(f, "value too large to be converted: " + quoted_from(s, from, n));
   }
   // numfmt reads no signed zero: `-0` and `-0.0` are 0. A value that is
   // merely SMALL keeps its sign all the way down, so `--to=si -- -0.5`
@@ -760,7 +772,16 @@ function parse_number(s: string, start: i32, n: i32, o: Opts): Num {
   if (neg && !val.is_zero()) {
     val = val.negate();
   }
-  return apply_suffix(s, from, i, n, val, prec, o);
+  return apply_suffix(s, from, i, n, val, prec, loss, o);
+}
+
+// Where the digits in `s[from..to)` stop being zeros.
+function first_nonzero(s: string, from: i32, to: i32): i32 {
+  var i: i32 = from;
+  while (i < to && s[i] as i32 == 48) {
+    i = i + 1;
+  }
+  return i;
 }
 
 // Where the run of digits starting at `from` ends, within `s[..n)`.
@@ -830,7 +851,7 @@ function fold_wide(f: ld.Format, s: string, from: i32, to: i32, v0: ld.LD): ld.L
 
 // What follows the digits: the unit letter `--from` allows, then the
 // `--suffix` string, and nothing else.
-function apply_suffix(s: string, from: i32, at: i32, n: i32, val0: ld.LD, prec: i32, o: Opts): Num {
+function apply_suffix(s: string, from: i32, at: i32, n: i32, val0: ld.LD, prec: i32, loss: boolean, o: Opts): Num {
   var val: ld.LD = val0;
   var i: i32 = at;
   // Blanks between the number and its unit belong to neither: `1000 K`
@@ -844,7 +865,7 @@ function apply_suffix(s: string, from: i32, at: i32, n: i32, val0: ld.LD, prec: 
     if (spaced && o.from == scale_none()) {
       return bad(o.ldbl, "rejecting suffix in input: " + quoted_from(s, from, n) + " (consider using --from)");
     }
-    return Num { val: val, prec: prec, err: "", ok: true };
+    return Num { val: val, prec: prec, loss: loss, err: "", ok: true };
   }
   var power: i32 = unit_power(s[i] as i32);
   // Without a --from, anything after the number is refused; a unit
@@ -882,7 +903,7 @@ function apply_suffix(s: string, from: i32, at: i32, n: i32, val0: ld.LD, prec: 
   }
   // A scaled value loses the precision it was written with: `1.5K` is
   // 1500, not 1500.0.
-  return Num { val: val, prec: 0, err: "", ok: true };
+  return Num { val: val, prec: 0, loss: loss, err: "", ok: true };
 }
 
 // ---- formatting ------------------------------------------------------------
@@ -1179,7 +1200,7 @@ function convert(line: string, from: i32, to: i32, o: Opts, auto: i32): Human {
     body_end = to - o.suffix.len();
   }
   var n: Num = parse_number(line, from, body_end, o);
-  if (o.debug && n.ok && digits_of(line, from, body_end) > max_unscaled_digits(o.ldbl)) {
+  if (o.debug && n.ok && n.loss) {
     gnu.error("large input value " + gnu.quote(slice_unchecked(line, from, to)) + ": possible precision loss");
   }
   if (!n.ok) {
@@ -1257,18 +1278,6 @@ function ends_with_at(s: string, to: i32, suffix: string): boolean {
     i = i + 1;
   }
   return true;
-}
-
-function digits_of(s: string, from: i32, end: i32): i32 {
-  var n: i32 = 0;
-  var i: i32 = from;
-  while (i < end) {
-    if (is_digit(s[i] as i32)) {
-      n = n + 1;
-    }
-    i = i + 1;
-  }
-  return n;
 }
 
 // The --invalid modes: abort stops at the first bad field, fail and warn

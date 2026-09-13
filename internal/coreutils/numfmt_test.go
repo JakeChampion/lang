@@ -1,6 +1,11 @@
 package coreutils
 
-import "testing"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"testing"
+)
 
 func init() {
 	registerCorpus("numfmt", numfmtCases)
@@ -819,6 +824,69 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "stdin a NUL in a line", args: []string{"--to=si"}, stdin: "1200\x0034\n"},
 		{name: "stdin a NUL then more lines", args: []string{"--to=si"}, stdin: "12\x0034\n5000\n"},
 		{name: "stdin last line unterminated", args: []string{"--to=si"}, stdin: "1000\n2000"},
+		// More than one read block, so lines straddle a block boundary and
+		// the partial one is carried over; with and without a final
+		// newline, under -z, with a header, in a field, and with a NUL
+		// inside a line that a block boundary splits.
+		{name: "stdin many lines", args: []string{"--to=si"}, stdin: manyLines(20000, "\n", true)},
+		{name: "stdin many lines unterminated", args: []string{"--to=si"}, stdin: manyLines(20000, "\n", false)},
+		{name: "stdin many lines zero terminated", args: []string{"-z", "--to=iec"}, stdin: manyLines(20000, "\x00", true)},
+		{name: "stdin many lines with a header", args: []string{"--header=3", "--to=si"}, stdin: manyLines(20000, "\n", true)},
+		{name: "stdin many lines in a field", args: []string{"--field=2", "--padding=12", "--to=iec"}, stdin: manyFields(20000)},
+		{name: "stdin many lines with NULs", args: []string{"--to=si"}, stdin: manyLines(9000, "\x0099\n", true)},
+
+		// Boundaries of the word path: values on either side of a power
+		// of the base, halves in every mode, --format precisions, the
+		// edges of a 64-bit significand and past it, fractions in and
+		// out, and the digit count --debug warns at.
+		{name: "to si around a thousand", args: []string{"--to=si", "999", "999.4", "999.5", "999.95", "999.96", "1000", "1000.4", "1000.5", "1000.6"}},
+		{name: "to si around a million", args: []string{"--to=si", "999499", "999500", "999501", "999949", "999950", "999951", "999999", "1000000", "1000499", "1000500"}},
+		{name: "to si around a billion", args: []string{"--to=si", "999499999", "999500000", "999999999", "1000000000", "1000499999", "1000500000", "1049999999", "1050000000"}},
+		{name: "to iec around a kibi", args: []string{"--to=iec", "1023", "1023.4", "1023.5", "1023.9", "1024", "1075", "1076", "1126", "1127"}},
+		{name: "to iec around a mebi", args: []string{"--to=iec", "1048575", "1048576", "1101004", "1101005", "1153433", "1153434", "1073741823", "1073741824"}},
+		{name: "to iec-i ladder", args: []string{"--to=iec-i", "1024", "1048576", "1073741824", "1099511627776", "1125899906842624", "1152921504606846976", "1180591620717411303424", "1208925819614629174706176"}},
+		{name: "to iec-i halves", args: []string{"--to=iec-i", "1536", "1587", "1588", "2560", "3584", "1572864", "1625292", "1625293"}},
+		{name: "to si near the word", args: []string{"--to=si", "9223372036854775807", "9223372036854775808", "18446744073709551615", "18446744073709551616", "18446744073709551617", "18446744073709551999"}},
+		{name: "to iec near the word", args: []string{"--to=iec", "9223372036854775807", "9223372036854775808", "18446744073709551615", "18446744073709551616", "18446744073709551617"}},
+		{name: "to si past the word", args: []string{"--to=si", "36893488147419103232", "100000000000000000000", "123456789012345678901234567", "999999999999999999999999999999999"}},
+		{name: "unscaled near the word", args: []string{"18446744073709551615", "18446744073709551616", "9223372036854775808"}},
+		{name: "unscaled near the word with places", args: []string{"--format=%.2f", "184467440737095516.15", "1844674407370955161.5"}},
+		{name: "halves up", args: []string{"--round=up", "--to=si", "1050", "1150", "2500", "999500", "1000500", "10500", "--", "-1050", "-1150", "-999500"}},
+		{name: "halves down", args: []string{"--round=down", "--to=si", "1050", "1150", "2500", "999500", "1000500", "10500", "--", "-1050", "-1150", "-999500"}},
+		{name: "halves from zero", args: []string{"--round=from-zero", "--to=si", "1050", "1150", "2500", "999500", "1000500", "10500", "--", "-1050", "-1150", "-999500"}},
+		{name: "halves towards zero", args: []string{"--round=towards-zero", "--to=si", "1050", "1150", "2500", "999500", "1000500", "10500", "--", "-1050", "-1150", "-999500"}},
+		{name: "halves nearest", args: []string{"--round=nearest", "--to=si", "1050", "1150", "2500", "999500", "1000500", "10500", "--", "-1050", "-1150", "-999500"}},
+		{name: "halves iec every mode", args: []string{"--round=nearest", "--to=iec", "1536", "1535", "1537", "2560", "3584", "--", "-1536", "-2560"}},
+		{name: "halves iec down", args: []string{"--round=down", "--to=iec", "1536", "1535", "1537", "2560", "3584", "--", "-1536", "-2560"}},
+		{name: "halves iec up", args: []string{"--round=up", "--to=iec", "1536", "1535", "1537", "2560", "3584", "--", "-1536", "-2560"}},
+		{name: "format three places si", args: []string{"--to=si", "--format=%.3f", "1", "999", "1234", "1234567", "1234567890", "999999", "999999999", "999999500", "1000"}},
+		{name: "format three places iec", args: []string{"--to=iec", "--format=%.3f", "1023", "1536", "1048576", "1073741824", "1099511627776", "1125899906842624"}},
+		{name: "format one place si", args: []string{"--to=si", "--format=%.1f", "1234567", "1250000", "1350000", "999950", "999949"}},
+		{name: "format many places si", args: []string{"--to=si", "--format=%.12f", "1234567890123", "1234567", "1000"}},
+		{name: "format three places rounding modes", args: []string{"--round=down", "--to=si", "--format=%.3f", "1234567", "1234999", "--", "-1234567"}},
+		{name: "format width si", args: []string{"--to=si", "--format=%8.2f", "1234", "--", "-1234"}},
+		{name: "format zero width si", args: []string{"--to=si", "--format=%08.2f", "1234", "--", "-1234"}},
+		{name: "format left width si", args: []string{"--to=si", "--format=%-8.2f", "1234", "--", "-1234"}},
+		{name: "padding negatives si", args: []string{"--padding=8", "--to=si", "--", "-1234", "-1000000", "1234", "-1"}},
+		{name: "padding left negatives iec", args: []string{"--padding=-8", "--to=iec", "--", "-1536", "-1048576", "1536"}},
+		{name: "fractions to si", args: []string{"--to=si", "0.001", "0.5", "1.25", "999.999", "1000.001", "1234.5678", "12345.678", "123456.78", "1234567.8"}},
+		{name: "fractions to iec", args: []string{"--to=iec", "1023.9", "1024.5", "1536.5", "0.5", "2047.5", "2048.5"}},
+		{name: "negative fractions to si", args: []string{"--to=si", "--", "-0.001", "-0.5", "-1.25", "-999.999", "-1000.001", "-1234.5678"}},
+		{name: "from si fractions", args: []string{"--from=si", "1.5K", "1.55M", "1.555G", "0.5K", "0.001K", "1.0005K", "0.0000001M"}},
+		{name: "from iec-i fractions", args: []string{"--from=iec-i", "1.5Ki", "1.25Mi", "0.5Gi", "1.0005Ki"}},
+		{name: "from si to si", args: []string{"--from=si", "--to=si", "1.5K", "999.9K", "1.0005M", "999.5", "1.5", "1500K"}},
+		{name: "from si to iec", args: []string{"--from=si", "--to=iec", "1K", "1.5K", "1M", "1G"}},
+		{name: "from-unit and to-unit on fractions", args: []string{"--from-unit=3", "--to-unit=7", "1", "10", "100.5", "1000"}},
+		{name: "debug precision loss threshold", args: []string{"--debug", "--to=si", "999999999999999999", "1000000000000000000", "9999999999999999999", "12345678901234567890"}},
+		{name: "debug precision loss with a fraction", args: []string{"--debug", "--to=si", "1234567890.12345678", "1234567890.123456789", "0.123456789012345678", "0.1234567890123456789"}},
+		{name: "debug precision loss unscaled", args: []string{"--debug", "123456789012345678", "1234567890123456789"}},
+		// Digits are counted per part, from the first non-zero one.
+		{name: "digit counts are per part", args: []string{"--debug", "--to=si", "12345678901234567.12345678901234567", "1234567890123456789.5", "123456789012345678.123456789012345678", "1234567890123456789.1234567890123456789"}},
+		{name: "leading zeros are not counted", args: []string{"--debug", "--to=si", "0000000000000000001", "0.0000000000000000001", "0000000000000000001.0000000000000000001", "00000000000000000000000000000000000001"}},
+		{name: "too many digits in one part", args: []string{"--invalid=warn", "--to=si", "1234567890123456789012345678901234.5", "1.1234567890123456789012345678901234", "12345678901234567.12345678901234567"}},
+		{name: "nearest at one decimal", args: []string{"--round=nearest", "--to=si", "1050", "1051", "1049", "10500", "1005", "1015", "1025", "1035", "1045"}},
+		{name: "nearest unscaled halves", args: []string{"--round=nearest", "0.05", "0.15", "0.25", "1.5", "2.5", "99.5", "99.95", "--", "-0.5", "-1.5", "-2.5"}},
+		{name: "down unscaled fractions", args: []string{"--round=down", "0.05", "0.15", "1.5", "99.95", "--", "-0.05", "-1.5"}},
 
 		// The write-failure paths.
 		{name: "closed stdout", args: []string{"1"}, stdout: stdoutClosed},
@@ -837,6 +905,31 @@ func numfmtCases(t *testing.T) []invocation {
 		{name: "full stdout failing", args: []string{"--invalid=fail", "x", "1"}, stdout: stdoutFull},
 		{name: "full stdout with nothing to write", args: []string{}, stdout: stdoutFull},
 	}
+}
+
+// manyLines is n numbers, one per `term`, long enough to span several
+// 64 KiB read blocks; the values step so that every scale letter and
+// a spread of last digits occur.
+func manyLines(n int, term string, terminated bool) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		v := uint64(i)*1234567 + uint64(i%7)*100000000000 + 999
+		b.WriteString(strconv.FormatUint(v, 10))
+		if terminated || i+1 < n {
+			b.WriteString(term)
+		}
+	}
+	return b.String()
+}
+
+// manyFields is n lines of `name value` with a blank run before the
+// value, for the --field path.
+func manyFields(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "row%d   %d\n", i, uint64(i)*98765+1)
+	}
+	return b.String()
 }
 
 func TestNumfmtParity(t *testing.T) {

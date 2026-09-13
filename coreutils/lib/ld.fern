@@ -837,7 +837,7 @@ pub function (f: Format) add(a: LD, b: LD): LD {
   if (top_of(a) - e < 127 && top_of(b) - e < 127) {
     return add128(f, a, b, e);
   }
-  return add_big(f, a, b);
+  return f.add_exact(a, b);
 }
 
 // The sum on words: both significands aligned to 2^e fit 127 bits, so
@@ -881,7 +881,13 @@ function aligned_lo(v: LD, e: i32): u64 {
   return shr_lo(v.hi, v.lo, e - v.e);
 }
 
-function add_big(f: Format, a: LD, b: LD): LD {
+// ---- the exact path ----------------------------------------------------------
+// `add_exact`, `mul_exact` and `div_exact` are the operations on
+// bigints: the exact intermediate, then one rounding. Each operation
+// above reaches for its own when the words do not hold the exact
+// result, and the ld suite compares the two paths on random values,
+// which is what these are public for.
+pub function (f: Format) add_exact(a: LD, b: LD): LD {
   var e: i32 = a.e;
   if (b.e < e) {
     e = b.e;
@@ -899,6 +905,24 @@ function add_big(f: Format, a: LD, b: LD): LD {
     return f.zero(false);
   }
   var r: (LD, boolean) = f.round(s.abs(), e, false, s.is_negative());
+  return r.0;
+}
+
+pub function (f: Format) mul_exact(a: LD, b: LD): LD {
+  var r: (LD, boolean) = f.round(to_big(a.hi, a.lo).mul(to_big(b.hi, b.lo)), a.e + b.e, false, a.neg != b.neg);
+  return r.0;
+}
+
+// The dividend is shifted by enough that the integer quotient carries
+// the whole significand plus the round bit; a non-zero remainder is
+// the sticky bit.
+pub function (f: Format) div_exact(a: LD, b: LD): LD {
+  var s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
+  if (s < 0) {
+    s = 0;
+  }
+  var qr: (bigint.BigInt, bigint.BigInt) = to_big(a.hi, a.lo).shl(s).divmod(to_big(b.hi, b.lo));
+  var r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), a.neg != b.neg);
   return r.0;
 }
 
@@ -935,8 +959,7 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
     var y: u64 = reduced(b);
     return round128(f, mul_hi64(x, y), x * y, a.e + trailing_zeros128(a.hi, a.lo) + b.e + trailing_zeros128(b.hi, b.lo), false, neg);
   }
-  var r: (LD, boolean) = f.round(to_big(a.hi, a.lo).mul(to_big(b.hi, b.lo)), a.e + b.e, false, neg);
-  return r.0;
+  return f.mul_exact(a, b);
 }
 
 // Whether a non-zero significand fits one word once its trailing zero
@@ -1009,13 +1032,7 @@ pub function (f: Format) div(a: LD, b: LD): LD {
       return div_small(f, reduced(a), a.e + trailing_zeros128(a.hi, a.lo), d, b.e + trailing_zeros128(b.hi, b.lo), neg);
     }
   }
-  var s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
-  if (s < 0) {
-    s = 0;
-  }
-  var qr: (bigint.BigInt, bigint.BigInt) = to_big(a.hi, a.lo).shl(s).divmod(to_big(b.hi, b.lo));
-  var r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), neg);
-  return r.0;
+  return f.div_exact(a, b);
 }
 
 // The quotient on words: `x × 2^s / d` by long division in 32-bit
