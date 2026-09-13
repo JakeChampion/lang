@@ -1623,6 +1623,14 @@ per-entry hook, so it cannot carry `-v`, `-i`, or the per-entry diagnostics
 that decide the exit status. `du`, `ls -R`, `cp -r`, `chmod -R` and `find`
 want the same primitive.
 
+It is also why `du` loses every bench row it has (0.29x to 0.73x). `du.fern`
+makes FEWER syscalls than GNU on the same tree (1505 against 2064 on a
+20-file directory 60 levels down: no fcntl, fstat or fdopendir), but each of
+its 1260 `newfstatat` calls carries the whole path, so the kernel walks every
+component again — 9 µs a call against GNU's 4 with a directory descriptor
+and a bare name. A `chdir` walk would recover the time and is not taken: it
+is the fts mode GNU abandoned, and it changes which path an error names.
+
 `chmod -R` is the second utility standing on it, and there the gap costs more
 than depth. strace shows GNU descends fd-relative below the top level —
 `fchmodat(4, "sub", …)` against a held descriptor, then `openat(4, "sub",
@@ -1718,20 +1726,20 @@ Two rewrites of `cat -n` measured as a wash and were reverted rather than
 kept, which is what located the cost. Neighbours: #8530 (`array.with`, struct updates) and
 #8532 (small value structs boxed).
 
-**A line RECORD costs ~365 ns to build and thread (#8815).** `join` is the
-first utility here that holds TWO input cursors at once and carries a parsed
-line — text, field bounds, join-field range — from one loop iteration to the
-next, and it is 0.10x GNU on every workload. Of 1.05 s on the input side of a
-2M-line run, ~0.32 s is reading and splitting and ~0.73 s is the record and
-the cursor crossing three call boundaries per line, because a threaded cursor
-has to come back through a tuple where C would mutate in place. Three rounds
-of shaving (the join field held as a range rather than a sliced string, the
-matched group off its arrays in the one-line case, the cursor rebuilt once
-instead of three times) were worth 3-8% each and located the floor rather
-than removing it: `array.append` at ~19 ns and a tuple return at ~20 ns
-against a struct return's ~3 ns. It is a different shape from #8425
-(per-byte) and #8770 (per-append), and every remaining group-B utility with
-two cursors will meet it.
+**A line RECORD no longer costs a copy per line (#8815).** `join` holds TWO
+input cursors at once and carries a parsed line from one loop iteration to
+the next, and it was 0.10x GNU on every workload while the line was cut out
+of the read block as a string, split into a field array, and threaded through
+a five-tuple with the writer and the run state. It is 0.33x now (408 ms
+against GNU's 133 on two 1M-line files, 1.98G instructions against 5.0G on a
+300k-line slice): the line is a byte range of the block it was read from,
+with the join field, the field count and the first four fields' bounds in
+the record; the cursor carries the current line and comes back alone; the
+key comparison is one `__mismatch`; and output is pushed straight into the
+writer's builder. The floor that is left is the backend's, not the shape's:
+an indexed byte loop is ~40 retired instructions a byte (a tagged-pointer
+check, a bounds check and a push/pop boolean chain per compare), and a line
+still costs two allocations (its record and the cursor rebuild).
 
 **Signal disposition control (#8792).** `tee` is blocked on it and is not
 written yet. `-i` is `signal (SIGINT, SIG_IGN)`, and the whole `-p` /
@@ -1742,15 +1750,13 @@ four behaviours. Four of those five rows are unreachable without the
 primitive, and a `tee` that accepted the options and did nothing would be
 exactly the carve-out this document forbids.
 
-**A byte-range comparison costs a copy (#8791).** This one is performance,
-not parity. `slice_unchecked` lowers to `__str_slice`, which COPIES —
-`docs/STR-VIEW-CONTRACT.md` §1 records that native is safe from the
-dangling-view class precisely by not implementing the view — and an indexed
-byte loop runs at ~2.8 ns a byte against memcmp's ~0.35. There is no third
-option: the builtin surface carries every SIMD kernel except the comparison
-one. It is the whole of `uniq`'s remaining distance from GNU and most of
-`comm`'s (with the order check off, `comm` is within noise of it), and it
-will be `sort`'s and `join`'s too.
+**A byte-range comparison no longer costs a copy (#8791).** `__mismatch(a,
+ao, b, bo, n)` is the comparison kernel: it answers the first differing
+offset of two ranges without slicing either, at memcmp speed. `uniq`, `comm`,
+`join` and `sort` compare through it; `comm` went from 0.26x to 0.77x GNU on
+it and `uniq` to parity in retired instructions, and what separates those
+two from GNU now is the per-line bookkeeping around the compare, not the
+compare.
 
 Gaps that are closed, each now exercised by the corpus rather than carved
 out of it: `IoError.Other` carrying no strerror text (#8265), in the
