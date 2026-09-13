@@ -512,9 +512,27 @@ func odCases(t *testing.T) []invocation {
 		{name: "strings across a read with no address", args: []string{"-A", "n", "-S", "3", strsBig}},
 		{name: "strings as long as the run across a read", args: []string{"-S", "66000", strsBig}},
 		{name: "strings longer than the run across a read", args: []string{"-S", "66001", strsBig}},
+		{name: "strings bounded at the seam", args: []string{"-S", "3", "-N", "65536", strsBig}},
 		{name: "strings bounded just past the run", args: []string{"-S", "3", "-N", "66001", strsBig}},
 		{name: "strings skipping to the seam", args: []string{"-S", "3", "-j", "65536", strsBig}},
 		{name: "strings skipping into the run", args: []string{"-S", "3", "-j", "65990", strsBig}},
+		// A run the limit cuts is printed, addressed one before its
+		// start; one EOF cuts is not, and one exactly N long is not
+		// started at all.
+		{name: "strings cut by the limit", args: []string{"-S", "3", "-N", "4", runLim}},
+		{name: "strings cut by the limit at N", args: []string{"-S", "3", "-N", "3", runLim}},
+		{name: "strings cut by the limit at N plus one", args: []string{"-S", "3", "-N", "4", "-j", "0", runLim}},
+		{name: "strings cut by a limit past the terminator", args: []string{"-S", "3", "-N", "9", runLim}},
+		{name: "strings cut by the limit after a skip", args: []string{"-S", "3", "-j", "2", "-N", "4", runLim}},
+		{name: "strings cut by the limit in decimal", args: []string{"-A", "d", "-S", "3", "-N", "4", runLim}},
+		{name: "strings cut by the limit in hex", args: []string{"-A", "x", "-S", "3", "-N", "4", runLim}},
+		{name: "strings cut by the limit with no address", args: []string{"-A", "n", "-S", "3", "-N", "4", runLim}},
+		{name: "strings cut by the limit shorter than N", args: []string{"-S", "5", "-N", "4", runLim}},
+		{name: "strings cut by the limit at end of file", args: []string{"-S", "3", "-N", "4", noTerm}},
+		{name: "strings cut by end of file", args: []string{"-S", "3", noTerm}},
+		{name: "strings cut by end of file under a limit", args: []string{"-S", "3", "-N", "5", noTerm}},
+		{name: "strings cut by the limit across files", args: []string{"-S", "3", "-N", "6", noTerm, noTerm}},
+		{name: "strings cut by the limit across a read", args: []string{"-S", "3", "-N", "65540", strsBig}},
 
 		// The traditional operand forms.
 		{name: "offset operand", args: []string{short, "4"}},

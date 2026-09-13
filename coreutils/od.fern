@@ -1534,6 +1534,12 @@ function pad_block(chunk: string, at: i32, n: i32): string {
 // that is neither printable nor NUL is not a string at all. The run in
 // progress is a range of the current read, from `from`; only the part a
 // read boundary cuts off is copied, into `held`.
+//
+// A run that `-N` cuts is not abandoned the way one that EOF cuts is:
+// GNU stops reading at the limit and prints what it has, addressed as
+// though the terminator were the byte BEFORE the run — one less than
+// where it starts — and it only starts a run when more than N bytes are
+// left, so a cut run is printed when it is longer than N.
 function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
   var w: io_buffered.BufWriter = w0;
   var h: usize = w.handle();
@@ -1584,6 +1590,9 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
       buf_push_range(held, block, from, block.len());
     }
     off = off + block.len() as u64;
+  }
+  if (s.limited && left == 0 as u64 && buf_len(held) as u64 > s.min_string) {
+    push_run(h, t, s, start - 1 as u64, held);
   }
   buf_free(held);
   return (gnu.check(w), src);
