@@ -178,7 +178,9 @@ function cost_infinity(): i64 {
 // that was followed by a newline or two blanks, which is what "ends a
 // sentence" means here; `punct` is any other trailing punctuation;
 // `paren` is an opening bracket or quote at the front.
-struct Word { text: string, length: i32, space: i32, gap: i32, period: boolean, sentence: boolean, punct: boolean, paren: boolean }
+// A word is the range `[lo, hi)` of the line it was read from; the line
+// stays alive for as long as a word of it is in the paragraph.
+struct Word { line: string, lo: i32, hi: i32, length: i32, space: i32, gap: i32, period: boolean, sentence: boolean, punct: boolean, paren: boolean }
 
 function is_blank_byte(c: i32): boolean {
   return c == 32 || c == 9;
@@ -214,15 +216,14 @@ function is_punct(c: i32): boolean {
   return true;
 }
 
-function classify(text: string, gap: i32, at_eol: boolean): Word {
-  var n: i32 = text.len();
-  var e: i32 = n;
-  while (e > 0 && is_closer(text[e - 1] as i32)) {
+function classify(line: string, lo: i32, hi: i32, space: i32, gap: i32, at_eol: boolean): Word {
+  var e: i32 = hi;
+  while (e > lo && is_closer(line[e - 1] as i32)) {
     e = e - 1;
   }
-  var period: boolean = e > 0 && is_end_punct(text[e - 1] as i32);
-  var last: i32 = text[n - 1] as i32;
-  return Word { text: text, length: n, space: 0, gap: gap, period: period, sentence: period && (at_eol || gap >= 2), punct: is_punct(last) && !is_end_punct(last), paren: is_paren(text[0] as i32) };
+  var period: boolean = e > lo && is_end_punct(line[e - 1] as i32);
+  var last: i32 = line[hi - 1] as i32;
+  return Word { line: line, lo: lo, hi: hi, length: hi - lo, space: space, gap: gap, period: period, sentence: period && (at_eol || gap >= 2), punct: is_punct(last) && !is_end_punct(last), paren: is_paren(line[lo] as i32) };
 }
 
 // ---- settings ---------------------------------------------------------------
@@ -234,36 +235,36 @@ struct Settings { max_width: i32, goal: i32, crown: boolean, tagged: boolean, sp
 // at a time; `col` is the column the next byte lands on, which the tab
 // rendering needs, and `tabs` is the sticky flag a tab anywhere in the
 // input sets.
-struct Out { w: io_buffered.BufWriter, buf: string, col: i32, tabs: boolean }
+// Every piece of output is pushed into `w`'s builder as it is decided;
+// `settle` at each line end flushes a full block and checks for a failure.
+struct Out { w: io_buffered.BufWriter, col: i32, tabs: boolean }
 
-// `spacing(col, n, tabs)` — `n` columns of white space written from
+// `push_spacing(h, col, n, tabs)` — `n` columns of white space written from
 // column `col`. With the tabs flag set the run reaches for tab stops the
 // way unexpand does: tabs are used only when the LAST stop the run
 // covers is at least two columns past where it starts, so a single blank
 // landing on a stop stays a blank. A run of nothing — which a tagged
 // paragraph's continuation column can ask for, since it may sit left of
 // the prefix — writes nothing.
-function spacing(col: i32, n: i32, tabs: boolean): string {
+function push_spacing(h: usize, col: i32, n: i32, tabs: boolean): void {
   if (n <= 0) {
-    return "";
+    return;
   }
   var target: i32 = col + n;
-  var out: string = "";
   var c: i32 = col;
   if (tabs) {
     var last: i32 = target / tab_width() * tab_width();
     if (last - c >= 2) {
       while (c / tab_width() * tab_width() + tab_width() <= last) {
-        out = out + "\t";
+        buf_push_byte(h, 9);
         c = c / tab_width() * tab_width() + tab_width();
       }
     }
   }
   while (c < target) {
-    out = out + " ";
+    buf_push_byte(h, 32);
     c = c + 1;
   }
-  return out;
 }
 
 // ---- the paragraph ----------------------------------------------------------
@@ -319,6 +320,15 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
   var n: i32 = ws.len();
   var maxw: i32 = st.max_width - lead;
   var goal: i32 = st.goal - lead;
+  // What word `w` adds to a line it continues: its space and its length,
+  // read once here rather than from the record on every inner turn.
+  var adv: i32[] = [];
+  var k: i32 = 0;
+  while (k < n) {
+    var wk: Word = ws[k];
+    adv = adv.append(wk.space + wk.length);
+    k = k + 1;
+  }
   var rbest: i64[] = [];
   var rnxt: i32[] = [];
   var rllen: i32[] = [];
@@ -351,7 +361,7 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
       if (w == n) {
         break;
       }
-      ln = ln + ws[w].space + ws[w].length;
+      ln = ln + adv[w];
       if (ln >= maxw) {
         break;
       }
@@ -374,16 +384,12 @@ function choose(ws: Word[], p: Para, st: Settings, lead: i32): i32[] {
 
 // `emit(o, ws, p, st)` — the paragraph, one line per chosen break.
 function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
-  var o: Out = o0;
   var lead: i32 = p.p_indent + st.prefix_out.len();
   var breaks: i32[] = choose(ws, p, st, lead);
-  // The paragraph is assembled in a LOCAL string, which grows in place;
-  // the same appends through the struct field would copy the whole
-  // buffer once per line (#8785).
-  var buf: string = "";
-  var col: i32 = o.col;
-  var tabs: boolean = o.tabs;
-  var w: io_buffered.BufWriter = gnu.put(o.w, o.buf);
+  var col: i32 = o0.col;
+  var tabs: boolean = o0.tabs;
+  var w: io_buffered.BufWriter = o0.w;
+  var h: usize = w.handle();
   var i: i32 = 0;
   var b: i32 = 0;
   var first: boolean = true;
@@ -391,9 +397,9 @@ function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
     var j: i32 = breaks[b];
     b = b + 1;
     if (st.prefix.len() > 0 || st.prefix_lead > 0) {
-      buf = buf + spacing(col, p.p_indent, tabs);
+      push_spacing(h, col, p.p_indent, tabs);
       col = col + p.p_indent;
-      buf = buf + st.prefix_out;
+      buf_push(h, st.prefix_out);
       col = col + st.prefix_out.len();
     }
     var ind: i32 = p.other_indent;
@@ -401,29 +407,27 @@ function emit(o0: Out, ws: Word[], p: Para, st: Settings): Out {
       ind = p.first_indent;
     }
     if (ind > 0) {
-      buf = buf + spacing(col, ind, tabs);
+      push_spacing(h, col, ind, tabs);
       col = col + ind;
     }
     var k: i32 = i;
     while (k < j) {
+      var wd: Word = ws[k];
       if (k > i) {
-        buf = buf + spacing(col, ws[k].space, tabs);
-        col = col + ws[k].space;
+        push_spacing(h, col, wd.space, tabs);
+        col = col + wd.space;
       }
-      buf = buf + ws[k].text;
-      col = col + ws[k].length;
+      buf_push_range(h, wd.line, wd.lo, wd.hi);
+      col = col + wd.length;
       k = k + 1;
     }
-    buf = buf + "\n";
+    buf_push_byte(h, 10);
     col = 0;
-    if (buf.len() >= block_size()) {
-      w = gnu.put(w, buf);
-      buf = "";
-    }
+    w = gnu.settle(w);
     first = false;
     i = j;
   }
-  return Out { w: gnu.put(w, buf), buf: "", col: col, tabs: tabs };
+  return Out { w: w, col: col, tabs: tabs };
 }
 
 function flush_para(o0: Out, p0: Para, st: Settings): (Out, Para) {
@@ -582,23 +586,31 @@ function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) 
 // `scan_body(line, at, col, tabs)` — the words of a line and the columns
 // between them, which is where a tab's width is decided: it reaches the
 // next stop from the column it stands in, in the INPUT.
-function scan_body(line: string, at: i32, col0: i32, tabs0: boolean): (Word[], boolean) {
-  var ws: Word[] = [];
-  var tabs: boolean = tabs0;
+// `scan_body(out, line, at, col0, uniform)` — the line's words appended
+// to the paragraph's. The blanks between two words are the input's,
+// unless -u replaces them with one — two after a sentence; a line
+// boundary is always one blank, or two after a sentence. Whether the
+// line carried a tab is the caller's one `__memchr`.
+function scan_body(own out: Word[], line: string, at: i32, col0: i32, uniform: boolean): Word[] {
   var i: i32 = at;
   var col: i32 = col0;
-  while (i < line.len()) {
+  var n: i32 = line.len();
+  var prev_sentence: boolean = false;
+  var first: boolean = true;
+  if (out.len() > 0) {
+    prev_sentence = out[out.len() - 1].sentence;
+  }
+  while (i < n) {
     var j: i32 = i;
-    while (j < line.len() && !is_blank_byte(line[j] as i32)) {
+    while (j < n && !is_blank_byte(line[j] as i32)) {
       j = j + 1;
     }
-    var text: string = slice_unchecked(line, i, j) + "";
     col = col + (j - i);
+    var lo: i32 = i;
     i = j;
     var sp: i32 = 0;
-    while (i < line.len() && is_blank_byte(line[i] as i32)) {
+    while (i < n && is_blank_byte(line[i] as i32)) {
       if (line[i] as i32 == 9) {
-        tabs = true;
         sp = sp + ((col + sp) / tab_width() * tab_width() + tab_width() - (col + sp));
       } else {
         sp = sp + 1;
@@ -606,40 +618,26 @@ function scan_body(line: string, at: i32, col0: i32, tabs0: boolean): (Word[], b
       i = i + 1;
     }
     col = col + sp;
-    ws = ws.append(classify(text, sp, i >= line.len()));
-  }
-  return (ws, tabs);
-}
-
-// `add_line(p, ws, uniform)` — the line's words joined to the paragraph.
-// The blanks between two words are the input's, unless -u replaces them
-// with one — two after a sentence; a line boundary is always one blank,
-// or two after a sentence.
-function add_line(p: Para, ws: Word[], uniform: boolean): Para {
-  var out: Word[] = p.words;
-  var k: i32 = 0;
-  while (k < ws.len()) {
-    var sp: i32 = 1;
-    if (k == 0) {
+    var space: i32 = 1;
+    if (first) {
       if (out.len() == 0) {
-        sp = 0;
-      } else if (out[out.len() - 1].sentence) {
-        sp = 2;
+        space = 0;
+      } else if (prev_sentence) {
+        space = 2;
+      }
+    } else if (uniform) {
+      if (prev_sentence) {
+        space = 2;
       }
     } else {
-      var prev: Word = ws[k - 1];
-      if (uniform) {
-        if (prev.sentence) {
-          sp = 2;
-        }
-      } else {
-        sp = prev.gap;
-      }
+      space = out[out.len() - 1].gap;
     }
-    out = out.append(Word { ...ws[k], space: sp });
-    k = k + 1;
+    var wd: Word = classify(line, lo, j, space, sp, i >= n);
+    prev_sentence = wd.sentence;
+    first = false;
+    out = out.append(wd);
   }
-  return Para { ...p, words: out };
+  return out;
 }
 
 // ---- the driver -------------------------------------------------------------
@@ -653,19 +651,21 @@ function feed(s0: State, line: string, term: boolean): State {
   if (h.kind == 0) {
     var f0: (Out, Para) = flush_para(s.o, s.p, s.st);
     var o0: Out = f0.0;
-    o0 = Out { ...o0, buf: o0.buf + spacing(o0.col, h.p_indent, o0.tabs), col: o0.col + h.p_indent };
+    var h0: usize = o0.w.handle();
+    var col: i32 = o0.col;
+    push_spacing(h0, col, h.p_indent, o0.tabs);
+    col = col + h.p_indent;
     if (h.pfx) {
-      o0 = Out { ...o0, buf: o0.buf + s.st.prefix_out, col: o0.col + s.st.prefix_out.len() };
-      o0 = Out { ...o0, buf: o0.buf + spacing(o0.col, h.indent, o0.tabs), col: o0.col + h.indent };
+      buf_push(h0, s.st.prefix_out);
+      col = col + s.st.prefix_out.len();
+      push_spacing(h0, col, h.indent, o0.tabs);
+      col = col + h.indent;
     }
-    var rest: string = slice_unchecked(line, h.at, line.len()) + "";
-    o0 = Out { ...o0, buf: o0.buf + rest, col: o0.col + rest.len() };
+    buf_push_range(h0, line, h.at, line.len());
     if (term) {
-      o0 = Out { ...o0, buf: o0.buf + "\n", col: 0 };
-    } else {
-      o0 = Out { ...o0, col: 0 };
+      buf_push_byte(h0, 10);
     }
-    return State { ...s, o: drain(o0), p: f0.1 };
+    return State { ...s, o: Out { ...o0, w: gnu.settle(o0.w), col: 0 }, p: f0.1 };
   }
   if (h.kind == 1) {
     var f1: (Out, Para) = flush_para(s.o, s.p, s.st);
@@ -674,14 +674,15 @@ function feed(s0: State, line: string, term: boolean): State {
     // unmatched line, so an unterminated one ends the output without a
     // newline of its own.
     if (!term && (s.st.prefix.len() > 0 || s.st.prefix_lead > 0) && !h.pfx) {
-      return State { ...s, o: drain(Out { ...o1, col: 0 }), p: f1.1 };
+      return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1 };
     }
+    var h1: usize = o1.w.handle();
     if (h.pfx) {
-      o1 = Out { ...o1, buf: o1.buf + spacing(o1.col, h.p_indent, o1.tabs), col: o1.col + h.p_indent };
-      o1 = Out { ...o1, buf: o1.buf + s.st.prefix_out, col: o1.col + s.st.prefix_out.len() };
+      push_spacing(h1, o1.col, h.p_indent, o1.tabs);
+      buf_push(h1, s.st.prefix_out);
     }
-    o1 = Out { ...o1, buf: o1.buf + "\n", col: 0 };
-    return State { ...s, o: drain(o1), p: f1.1 };
+    buf_push_byte(h1, 10);
+    return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, p: f1.1 };
   }
   var p: Para = s.p;
   var o: Out = s.o;
@@ -712,17 +713,13 @@ function feed(s0: State, line: string, term: boolean): State {
   if (!p.open) {
     p = Para { ...p, first_indent: h.indent, other_indent: h.indent, p_indent: h.p_indent, pending: s.st.crown || s.st.tagged, open: true };
   }
-  var b: (Word[], boolean) = scan_body(line, h.at, h.col, o.tabs);
-  o = Out { ...o, tabs: b.1 };
-  p = add_line(p, b.0, s.st.uniform);
-  return State { ...s, o: o, p: p };
-}
-
-function drain(o: Out): Out {
-  if (o.buf.len() >= block_size()) {
-    return Out { ...o, w: gnu.put(o.w, o.buf), buf: "" };
+  if (!o.tabs && __memchr(line, 9, h.at) >= 0) {
+    o = Out { ...o, tabs: true };
   }
-  return o;
+  var words: Word[] = p.words;
+  p = Para { ...p, words: [] };
+  words = scan_body(words, line, h.at, h.col, s.st.uniform);
+  return State { ...s, o: o, p: Para { ...p, words: words } };
 }
 
 // ---- options ----------------------------------------------------------------
@@ -897,7 +894,7 @@ function main(): i32 {
 // boundary, so one is flushed at the end of each; a line may span two
 // read blocks, so `carry` holds the part that has no terminator yet.
 function run(files: string[], st: Settings): i32 {
-  var s: State = State { o: Out { w: gnu.out_with(block_size()), buf: "", col: 0, tabs: false }, p: para_new(), st: st, ok: true };
+  var s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), st: st, ok: true };
 
   var used_stdin: boolean = false;
   var fi: i32 = 0;
@@ -977,9 +974,7 @@ function run(files: string[], st: Settings): i32 {
     }
   }
 
-  var o: Out = s.o;
-  o = Out { ...o, w: gnu.put(o.w, o.buf), buf: "" };
-  gnu.finish(o.w);
+  gnu.finish(s.o.w);
   if (!s.ok) {
     return 1;
   }
@@ -989,6 +984,5 @@ function run(files: string[], st: Settings): i32 {
 // A diagnostic with the buffered output flushed ahead of it, so the two
 // streams stay in the order gnulib's error() puts them in.
 function report(o: Out, msg: string): Out {
-  var w: io_buffered.BufWriter = gnu.put(o.w, o.buf);
-  return Out { ...o, w: gnu.error_out(w, msg), buf: "" };
+  return Out { ...o, w: gnu.error_out(o.w, msg) };
 }

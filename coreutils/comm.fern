@@ -98,31 +98,25 @@ function order_disabled(): i32 {
 // GNU's line order: memcmp over the shorter line's content, then the
 // lengths. Both lines carry the delimiter, so a whole-string equality
 // answers the equal case without walking anything.
-function cmp_lines(a: string, b: string): i32 {
-  if (a == b) {
-    return 0;
-  }
-  var n: i32 = a.len();
-  if (b.len() < n) {
-    n = b.len();
+function cmp_lines(a: string, alo: i32, ahi: i32, b: string, blo: i32, bhi: i32): i32 {
+  var la: i32 = ahi - alo;
+  var lb: i32 = bhi - blo;
+  var n: i32 = la;
+  if (lb < n) {
+    n = lb;
   }
   n = n - 1;
-  var i: i32 = 0;
-  while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
-    if (x != y) {
-      if (x < y) {
-        return 0 - 1;
-      }
-      return 1;
+  var i: i32 = __mismatch(a, alo, b, blo, n);
+  if (i < n) {
+    if (a[alo + i] as i32 < b[blo + i] as i32) {
+      return 0 - 1;
     }
-    i = i + 1;
-  }
-  if (a.len() > b.len()) {
     return 1;
   }
-  if (a.len() < b.len()) {
+  if (la > lb) {
+    return 1;
+  }
+  if (la < lb) {
     return 0 - 1;
   }
   return 0;
@@ -337,17 +331,31 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   var pos2: i32 = 0;
   var eof2: boolean = false;
 
+  // A line is the range `[lo, hi)` of `cur`: the block it was found in,
+  // or a string of its own when it straddled two blocks.
   var cur1: string = "";
+  var lo1: i32 = 0;
+  var hi1: i32 = 0;
   var cur2: string = "";
+  var lo2: i32 = 0;
+  var hi2: i32 = 0;
   var have1: boolean = false;
   var have2: boolean = false;
   // The two lines before the current one, for the order check GNU makes
   // at end of input: an unpairable line seen late turns the check on
   // after the last pair was already read, so that pair is re-examined.
   var back1a: string = "";
+  var alo1: i32 = 0;
+  var ahi1: i32 = 0;
   var back1b: string = "";
+  var blo1: i32 = 0;
+  var bhi1: i32 = 0;
   var back2a: string = "";
+  var alo2: i32 = 0;
+  var ahi2: i32 = 0;
   var back2b: string = "";
+  var blo2: i32 = 0;
+  var bhi2: i32 = 0;
   var read1: i32 = 0;
   var read2: i32 = 0;
 
@@ -391,14 +399,19 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     if (need1) {
       need1 = false;
       var line: string = "";
+      var llo: i32 = 0;
+      var lhi: i32 = 0;
       var st: i32 = status_line();
       var j: i32 = __memchr(chunk1, term, pos1);
       if (j >= 0) {
-        line = slice_unchecked(chunk1, pos1, j + 1).to_string();
+        line = chunk1;
+        llo = pos1;
+        lhi = j + 1;
         pos1 = j + 1;
       } else {
         var u: (string, string, i32, boolean, i32, string) = next_line_slow(r1, chunk1, pos1, eof1, term);
         line = u.0;
+        lhi = line.len();
         chunk1 = u.1;
         pos1 = u.2;
         eof1 = u.3;
@@ -408,23 +421,29 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         }
       }
       back1a = back1b;
+      alo1 = blo1;
+      ahi1 = bhi1;
       back1b = cur1;
+      blo1 = lo1;
+      bhi1 = hi1;
       if (st == status_line()) {
         cur1 = line;
+        lo1 = llo;
+        hi1 = lhi;
         have1 = true;
         read1 = read1 + 1;
       } else {
         cur1 = "";
+        lo1 = 0;
+        hi1 = 0;
         have1 = false;
       }
       if (read1 >= 2 && should_check(cfg, seen_unpairable, issued1)) {
-        var older: string = back1b;
-        var newer: string = cur1;
+        var order: i32 = cmp_lines(back1b, blo1, bhi1, cur1, lo1, hi1);
         if (!have1) {
-          older = back1a;
-          newer = back1b;
+          order = cmp_lines(back1a, alo1, ahi1, back1b, blo1, bhi1);
         }
-        if (cmp_lines(older, newer) > 0) {
+        if (order > 0) {
           out = disorder(out, cfg, 1);
           issued1 = true;
         }
@@ -438,14 +457,19 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     if (need2) {
       need2 = false;
       var line: string = "";
+      var llo: i32 = 0;
+      var lhi: i32 = 0;
       var st: i32 = status_line();
       var j: i32 = __memchr(chunk2, term, pos2);
       if (j >= 0) {
-        line = slice_unchecked(chunk2, pos2, j + 1).to_string();
+        line = chunk2;
+        llo = pos2;
+        lhi = j + 1;
         pos2 = j + 1;
       } else {
         var u: (string, string, i32, boolean, i32, string) = next_line_slow(r2, chunk2, pos2, eof2, term);
         line = u.0;
+        lhi = line.len();
         chunk2 = u.1;
         pos2 = u.2;
         eof2 = u.3;
@@ -455,23 +479,29 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         }
       }
       back2a = back2b;
+      alo2 = blo2;
+      ahi2 = bhi2;
       back2b = cur2;
+      blo2 = lo2;
+      bhi2 = hi2;
       if (st == status_line()) {
         cur2 = line;
+        lo2 = llo;
+        hi2 = lhi;
         have2 = true;
         read2 = read2 + 1;
       } else {
         cur2 = "";
+        lo2 = 0;
+        hi2 = 0;
         have2 = false;
       }
       if (read2 >= 2 && should_check(cfg, seen_unpairable, issued2)) {
-        var older: string = back2b;
-        var newer: string = cur2;
+        var order: i32 = cmp_lines(back2b, blo2, bhi2, cur2, lo2, hi2);
         if (!have2) {
-          older = back2a;
-          newer = back2b;
+          order = cmp_lines(back2a, alo2, ahi2, back2b, blo2, bhi2);
         }
-        if (cmp_lines(older, newer) > 0) {
+        if (order > 0) {
           out = disorder(out, cfg, 2);
           issued2 = true;
         }
@@ -492,7 +522,7 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     } else if (!have2) {
       order = 0 - 1;
     } else {
-      order = cmp_lines(cur1, cur2);
+      order = cmp_lines(cur1, lo1, hi1, cur2, lo2, hi2);
     }
     var class: i32 = 3;
     if (order < 0) {
@@ -512,16 +542,16 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     }
     if (class == 1) {
       if (show1) {
-        buf_push(h, cur1);
+        buf_push_range(h, cur1, lo1, hi1);
       }
     } else if (class == 2) {
       if (show2) {
         buf_push(h, pre2);
-        buf_push(h, cur2);
+        buf_push_range(h, cur2, lo2, hi2);
       }
     } else if (show3) {
       buf_push(h, pre3);
-      buf_push(h, cur2);
+      buf_push_range(h, cur2, lo2, hi2);
     }
     if (buf_len(h) >= block) {
       out = gnu.settle(out);

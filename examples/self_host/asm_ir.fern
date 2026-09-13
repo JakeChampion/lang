@@ -2865,13 +2865,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     //   [H + 16] cap      — bytes the buffer holds before it has to grow
     //   [H + 24] reserve  — the capacity a re-arm after a take starts from
     // Register ABI, like the strbuf helpers above. The buffer is a bare byte
-    // block, which is what the self-host's SEPARATE-BUFFER string form wants:
-    // __fern_buf_take hands it straight to __fern_str_box, so the accumulated
-    // bytes are never copied and only the 24-byte box is allocated. That block
-    // was taken at the buffer's CAPACITY and __fn___fern_str_free returns it at
-    // its LENGTH's size class — bounded internal fragmentation, not
-    // unsoundness, since a block on a class's freelist is only ever reused as
-    // that class.
+    // block; a take copies the accumulated bytes into a block of their own
+    // length and boxes that, so every block frees at the class it was bumped
+    // at (#9179) and the builder keeps its buffer.
     //
     // Unlike the strbuf above, a grown-past buffer is RETURNED to the freelist
     // rather than left to the arena: a builder that doubles its way up from the
@@ -3087,33 +3083,47 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("__fern_buf_len:\n");
         s = s.write("    movq 8(%rdi), %rax\n");
         s = s.write("    ret\n");
-        // __fern_buf_take(%rdi = H) -> %rax = string box. The accumulated bytes
-        // move without being copied: the buffer BECOMES the box's data and the
-        // builder is left empty but still usable, its reserve intact, so the
-        // next push re-arms at full width. An empty build answers a box over a
-        // null buffer — __fn___fern_str_free's heap guard skips it — and keeps
-        // the buffer it has, so a flush that finds nothing costs one box.
+        // __fern_buf_take(%rdi = H) -> %rax = string box over a COPY of the
+        // accumulated bytes, sized to them, so the block frees at the class
+        // it was bumped at (#9179); the builder keeps its buffer at full
+        // width with nothing in it. An empty build answers a box over a null
+        // buffer — __fn___fern_str_free's heap guard skips it.
         s = s.write("__fern_buf_take:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    pushq %rbx\n");
         s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
         s = s.write("    movq %rdi, %rbx\n");
         s = s.write("    movq 8(%rbx), %r12\n");               // len
         s = s.write("    testq %r12, %r12\n");
         s = s.write("    jz .Lbuftake_empty\n");
-        s = s.write("    movq (%rbx), %rdi\n");                // data
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");                  // the copy
+        s = s.write("    movq (%rbx), %rsi\n");                // data
+        s = s.write("    movq %r13, %rdx\n");
+        s = s.write("    movq %r12, %rcx\n");
+        s = s.write(".Lbuftake_copy:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdx)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lbuftake_copy\n");
+        s = s.write("    movq $0, 8(%rbx)\n");
+        s = s.write("    movq %r13, %rdi\n");
         s = s.write("    movq %r12, %rsi\n");
         s = s.write("    call __fern_str_box\n");
-        s = s.write("    movq $0, (%rbx)\n");
-        s = s.write("    movq $0, 8(%rbx)\n");
-        s = s.write("    movq $0, 16(%rbx)\n");
         s = s.write("    jmp .Lbuftake_ret\n");
         s = s.write(".Lbuftake_empty:\n");
         s = s.write("    movq $0, %rdi\n");
         s = s.write("    movq $0, %rsi\n");
         s = s.write("    call __fern_str_box\n");
         s = s.write(".Lbuftake_ret:\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
         s = s.write("    popq %r12\n");
         s = s.write("    popq %rbx\n");
         s = s.write("    popq %rbp\n");

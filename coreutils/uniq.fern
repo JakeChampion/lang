@@ -398,9 +398,9 @@ function eq_fold(a: string, ao: i32, b: string, bo: i32, n: i32): boolean {
 // The compared field of a held line, cut out once when the line is
 // held. Incoming lines are compared in their read buffer, without
 // materialising another key for each line.
-function key_of(line: string, field: i32, cfg: Cfg): string {
-  var n: i32 = cap(cfg.check_chars, line.len() - 1 - field);
-  return slice_unchecked(line, field, field + n).to_string();
+function key_of(line: string, at: i32, len: i32, field: i32, cfg: Cfg): string {
+  var n: i32 = cap(cfg.check_chars, len - 1 - field);
+  return slice_unchecked(line, at + field, at + field + n).to_string();
 }
 
 // GNU's `!different()` between a line still sitting in the read buffer
@@ -435,97 +435,16 @@ function write_block(): i32 {
   return 65536;
 }
 
-// `-c` prints `%7ju `, and all three of its pieces are STATIC strings so
-// the column costs no allocation: `n.to_string()` made one per line, and
-// that was most of what `uniq -c` spent. `digit_count` sizes the pad,
-// `pad` is the pad, and `digit` is one decimal digit.
-function digit_count(n: u64): i32 {
-  var d: i32 = 1;
-  var v: u64 = n;
-  while (v >= 10 as u64) {
-    d = d + 1;
-    v = v / (10 as u64);
-  }
-  return d;
-}
-
-function pow10(e: i32): u64 {
-  var p: u64 = 1 as u64;
-  var i: i32 = 0;
-  while (i < e) {
-    p = p * (10 as u64);
-    i = i + 1;
-  }
-  return p;
-}
-
-function pad(n: i32): string {
-  if (n <= 0) {
-    return "";
-  }
-  if (n == 1) {
-    return " ";
-  }
-  if (n == 2) {
-    return "  ";
-  }
-  if (n == 3) {
-    return "   ";
-  }
-  if (n == 4) {
-    return "    ";
-  }
-  if (n == 5) {
-    return "     ";
-  }
-  return "      ";
-}
-
-function digit(d: i32): string {
-  if (d == 0) {
-    return "0";
-  }
-  if (d == 1) {
-    return "1";
-  }
-  if (d == 2) {
-    return "2";
-  }
-  if (d == 3) {
-    return "3";
-  }
-  if (d == 4) {
-    return "4";
-  }
-  if (d == 5) {
-    return "5";
-  }
-  if (d == 6) {
-    return "6";
-  }
-  if (d == 7) {
-    return "7";
-  }
-  if (d == 8) {
-    return "8";
-  }
-  return "9";
-}
-
 // ---- the line loop ----------------------------------------------------------
 //
-// One read block at a time, scanned with __memchr, with the current line
-// left as a VIEW into the block: the only copy taken is the line held
-// for comparison against the next one, which in the default mode is one
-// per group rather than one per line. A line that spans two blocks is
-// joined into `carry` and read from there instead.
-//
-// Output accumulates in a bare local appended inline, which is the one
-// shape a `string` grows in place (#8785), and each full block is handed
-// to the writer whole, so the writer never copies a buffer of its own.
+// One read block at a time, scanned with __memchr, with every line left
+// as a RANGE of its block: the line held for comparison against the
+// next one is a reference to the block it came from, never a copy. A
+// line that spans two blocks is joined into `carry` and read from there
+// instead. Output is pushed range by range into the writer's builder.
 function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
   var out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
-  var buf: string = "";
+  var h: usize = out.handle();
   var delim: string = string_from_bytes_unchecked([cfg.term as u8]);
   var block: i32 = write_block();
   // The three fields the per-line path reads every time, in locals: the
@@ -539,7 +458,11 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
   var eof: boolean = false;
   var carry: string = "";
 
+  // The held line is the range `[pat, pat + plen)` of `prev`: the block
+  // it was read from, or the carry it was joined in, never a copy.
   var prev: string = "";
+  var pat: i32 = 0;
+  var plen: i32 = 0;
   // The held line's compared field, kept alongside it for every mode
   // but the plain one, where the field IS the line.
   var prev_key: string = "";
@@ -593,7 +516,6 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         Err(e) => {
           // The line in hand is dropped, as GNU drops it: a read error
           // skips the final writeline and reports.
-          out = gnu.put(out, buf);
           gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
         }
       }
@@ -601,7 +523,10 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
     if (!got) {
       break;
     }
+    // The line is `src[at, at + len)`.
+    var src: string = chunk;
     if (spanned) {
+      src = carry;
       at = 0;
       len = carry.len();
     }
@@ -609,11 +534,7 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
     // ---- compare it with the line held --------------------------------
     var field: i32 = 0;
     if (cfg.skip_fields > 0 as u64 || cfg.skip_chars > 0 as u64) {
-      if (spanned) {
-        field = field_offset(carry, at, len, cfg);
-      } else {
-        field = field_offset(chunk, at, len, cfg);
-      }
+      field = field_offset(src, at, len, cfg);
     }
     var matched: boolean = false;
     if (have_prev) {
@@ -626,31 +547,21 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         // at the end rather than at the start: consecutive numbers in
         // their last digit, sorted paths
         // in their last component.
-        if (len == prev.len() && (len < 2 || last_byte(chunk, carry, spanned, at, len) == prev[len - 2] as i32)) {
-          if (spanned) {
-            matched = carry == prev;
-          } else {
-            matched = __mismatch(chunk, at, prev, 0, len) == len;
-          }
+        if (len == plen && (len < 2 || src[at + len - 2] as i32 == prev[pat + len - 2] as i32)) {
+          matched = __mismatch(src, at, prev, pat, len) == len;
         }
-      } else if (spanned) {
-        matched = same_key(carry, at, len, field, prev_key, cfg);
       } else {
-        matched = same_key(chunk, at, len, field, prev_key, cfg);
+        matched = same_key(src, at, len, field, prev_key, cfg);
       }
     }
 
     if (grouped) {
       if (!have_prev || !matched) {
         if (cfg.grouping == gm_prepend() || cfg.grouping == gm_both() || first_group_printed && (cfg.grouping == gm_append() || cfg.grouping == gm_separate())) {
-          buf = buf + delim;
+          buf_push_byte(h, term);
         }
       }
-      if (spanned) {
-        buf = buf + carry;
-      } else {
-        buf = buf + slice_unchecked(chunk, at, at + len);
-      }
+      buf_push_range(h, src, at, at + len);
       first_group_printed = true;
     } else if (have_prev) {
       if (matched) {
@@ -658,7 +569,6 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
         // reachable, but wrapping it would miscount rather than say so.
         if (match_count == size_max()) {
           if (cfg.count) {
-            out = gnu.put(out, buf);
             gnu.die(out, "too many repeated lines", 1);
           }
         } else {
@@ -672,32 +582,23 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
           }
         } else if (match_count == 1 as u64) {
           if (cfg.delimit == dm_prepend() || cfg.delimit == dm_separate() && !first_delimiter) {
-            buf = buf + delim;
+            buf_push_byte(h, term);
           }
         }
       }
       if (matched && !cfg.later_repeated) {
         // The group carries on: the line held stays the FIRST of it, and
         // nothing is copied.
-        if (buf.len() >= block) {
-          out = gnu.put(out, buf);
-          buf = "";
+        if (buf_len(h) >= block) {
+          out = gnu.settle(out);
         }
         continue;
       }
       if (show(cfg, matched, match_count)) {
         if (cfg.count) {
-          var v: u64 = match_count + 1 as u64;
-          var nd: i32 = digit_count(v);
-          buf = buf + pad(7 - nd);
-          var p: u64 = pow10(nd - 1);
-          while (p > 0 as u64) {
-            buf = buf + digit((v / p % (10 as u64)) as i32);
-            p = p / (10 as u64);
-          }
-          buf = buf + " ";
+          push_count(h, match_count + 1 as u64);
         }
-        buf = buf + prev;
+        buf_push_range(h, prev, pat, pat + plen);
       }
       if (!matched) {
         match_count = 0 as u64;
@@ -705,42 +606,30 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
     }
 
     // ---- hold this line -----------------------------------------------
-    if (spanned) {
-      prev = carry;
-    } else {
-      prev = slice_unchecked(chunk, at, at + len).to_string();
-    }
+    prev = src;
+    pat = at;
+    plen = len;
     if (!plain) {
-      prev_key = key_of(prev, field, cfg);
+      prev_key = key_of(prev, pat, plen, field, cfg);
     }
     have_prev = true;
-    if (buf.len() >= block) {
-      out = gnu.put(out, buf);
-      buf = "";
+    if (buf_len(h) >= block) {
+      out = gnu.settle(out);
     }
   }
 
   if (cfg.grouping != gm_none()) {
     if (first_group_printed && (cfg.grouping == gm_append() || cfg.grouping == gm_both())) {
-      buf = buf + delim;
+      buf_push_byte(h, term);
     }
   } else if (have_prev) {
     if (show(cfg, false, match_count)) {
       if (cfg.count) {
-        var v: u64 = match_count + 1 as u64;
-        var nd: i32 = digit_count(v);
-        buf = buf + pad(7 - nd);
-        var p: u64 = pow10(nd - 1);
-        while (p > 0 as u64) {
-          buf = buf + digit((v / p % (10 as u64)) as i32);
-          p = p / (10 as u64);
-        }
-        buf = buf + " ";
+        push_count(h, match_count + 1 as u64);
       }
-      buf = buf + prev;
+      buf_push_range(h, prev, pat, pat + plen);
     }
   }
-  out = gnu.put(out, buf);
   match (r.close()) {
     Some(e) => {
       gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
@@ -751,18 +640,17 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
   return 0;
 }
 
-// The line's last byte before its delimiter, from whichever of the two
-// buffers holds it.
-function last_byte(chunk: string, carry: string, spanned: boolean, at: i32, len: i32): i32 {
-  if (spanned) {
-    return carry[len - 2] as i32;
+// `-c`'s count: GNU's `%7` PRIuMAX and a blank.
+function push_count(h: usize, v: u64): void {
+  var nd: i32 = io_buffered.buf_u64_len(v);
+  while (nd < 7) {
+    buf_push_byte(h, 32);
+    nd = nd + 1;
   }
-  return chunk[at + len - 2] as i32;
+  io_buffered.buf_push_u64(h, v);
+  buf_push_byte(h, 32);
 }
 
-// GNU's writeline test: the first line of a group is printed when it is
-// unique or when the first of a repeated group is wanted, and the rest
-// of a group only under `-D`.
 function show(cfg: Cfg, matched: boolean, linecount: u64): boolean {
   if (linecount == 0 as u64) {
     return cfg.unique;
