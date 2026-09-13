@@ -231,8 +231,15 @@ const (
 	sysClose = 3
 	// fstat(2) / lseek(2): x86-64 syscalls 5 / 8, backing the Reader /
 	// Writer `stat` and `seek` methods.
-	sysFstat     = 5
-	sysLseek     = 8
+	sysFstat = 5
+	sysLseek = 8
+	// Write-back: fsync(2) / fdatasync(2) on one descriptor, syncfs(2)
+	// on the filesystem holding it, and sync(2) on every filesystem.
+	// Numbers from arch/x86/entry/syscalls/syscall_64.tbl.
+	sysFsync     = 74
+	sysFdatasync = 75
+	sysSync      = 162
+	sysSyncfs    = 306
 	sysMmap      = 9
 	sysSocket    = 41
 	sysConnect   = 42
@@ -1014,6 +1021,18 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesFdStat {
 		g.emitFdStatRuntime()
 	}
+	if g.usesFdSync {
+		g.emitFdSyncRuntime("__fern_fd_fsync", "fsy", sysFsync)
+	}
+	if g.usesFdDatasync {
+		g.emitFdSyncRuntime("__fern_fd_fdatasync", "fds", sysFdatasync)
+	}
+	if g.usesFdSyncfs {
+		g.emitFdSyncRuntime("__fern_fd_syncfs", "sfs", sysSyncfs)
+	}
+	if g.usesSync {
+		g.emitSyncRuntime()
+	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
 	}
@@ -1529,6 +1548,10 @@ type generator struct {
 	usesFdStat         bool
 	usesReaderSeek     bool
 	usesWriterTruncate bool
+	usesFdSync         bool
+	usesFdDatasync     bool
+	usesFdSyncfs       bool
+	usesSync           bool
 	usesAccess         bool
 	usesEuid           bool
 	usesEgid           bool
@@ -1981,6 +2004,20 @@ func (g *generator) recordUse(target string) {
 		g.usesFdStat = true
 		g.usesAlloc = true
 		g.usesIoError = true
+	case "__method_Reader_fsync", "__method_Writer_fsync":
+		g.usesFdSync = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_fdatasync", "__method_Writer_fdatasync":
+		g.usesFdDatasync = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_syncfs", "__method_Writer_syncfs":
+		g.usesFdSyncfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "sync":
+		g.usesSync = true
 	case "__method_Reader_seek":
 		g.usesReaderSeek = true
 		g.usesAlloc = true
@@ -3739,6 +3776,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_reader_read_chunk"
 		case "__method_Reader_stat", "__method_Writer_stat":
 			target = "__fern_fd_stat"
+		case "__method_Reader_fsync", "__method_Writer_fsync":
+			target = "__fern_fd_fsync"
+		case "__method_Reader_fdatasync", "__method_Writer_fdatasync":
+			target = "__fern_fd_fdatasync"
+		case "__method_Reader_syncfs", "__method_Writer_syncfs":
+			target = "__fern_fd_syncfs"
+		case "sync":
+			target = "__fern_sync"
 		case "__method_Reader_seek":
 			target = "__fern_reader_seek"
 		case "__method_Writer_truncate":
@@ -15744,6 +15789,67 @@ func (g *generator) emitStatRuntime() {
 // failed read or write is.
 func (g *generator) emitFdStatRuntime() {
 	g.emitStatLikeRuntime("__fern_fd_stat", 0, "fst", true)
+}
+
+// emitFdSyncRuntime emits one of the three write-back helpers —
+// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` — each
+// taking a Reader / Writer handle pointer and answering
+// `Option[IoError]`. One body serves all three: they differ only in the
+// syscall number, and each takes the descriptor as its single argument.
+//
+// The shape is `__fern_close_fd_box`'s, because the contract is the
+// same: a one-argument call on the handle's fd whose errno becomes
+// `Some(IoError)` and whose success is `None`. The errno is classified
+// against an EMPTY path — the handle has no name here, and `sync(1)`
+// supplies the operand's own spelling when it words the diagnostic.
+func (g *generator) emitFdSyncRuntime(sym, lp string, sysno int) {
+	g.line("")
+	g.line(".globl " + sym)
+	g.line(".type " + sym + ", @function")
+	g.label(sym)
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd, at offset 0 of the handle
+	g.emitSyscall(sysno)
+	g.emit("test rax, rax")
+	g.emit("js ." + lp + "_err")
+	g.emitPayloadlessResultBox(1) // None
+	g.emit("jmp ." + lp + "_ret")
+	g.label("." + lp + "_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Some
+	g.emit("mov [rax + 8], rbx")
+	g.label("." + lp + "_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size " + sym + ", .-" + sym)
+}
+
+// emitSyncRuntime emits `__fern_sync()` — sync(2), write-back of every
+// dirty buffer on the machine. It takes nothing, returns nothing and
+// cannot fail, so there is no box to allocate and no errno to classify:
+// the whole body is the syscall.
+func (g *generator) emitSyncRuntime() {
+	g.line("")
+	g.line(".globl __fern_sync")
+	g.line(".type __fern_sync, @function")
+	g.label("__fern_sync")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emitSyscall(sysSync)
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sync, .-__fern_sync")
 }
 
 // emitLstatRuntime emits `__fern_lstat(path)`, which is the same helper with

@@ -278,3 +278,7 @@ buf_push_byte=294
 buf_len=295
 buf_take=296
 buf_free=297
+sync=298
+fd_fsync=299
+fd_fdatasync=300
+fd_syncfs=301

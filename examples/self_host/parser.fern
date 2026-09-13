@@ -8072,6 +8072,9 @@ pub function builtin_function_names(): string[] {
         // and its LENGTH — truncate(2), which shrinks a file or extends it
         // with a hole
         "truncate",
+        // sync(2): write-back of every dirty buffer on the machine. The
+        // per-handle forms are methods on Reader / Writer, not free builtins.
+        "sync",
         // the entries that are neither a file nor a directory: a FIFO, and a
         // character or block device node
         "mknod",

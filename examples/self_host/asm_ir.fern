@@ -1649,7 +1649,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
-        "read_link", "chdir",
+        "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
         "remove_dir_all", "open_file", "writer_write", "reader",
         "signal_send"
@@ -1667,7 +1667,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
-        "read_link", "chdir"
+        "read_link", "chdir", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ]);
 }
 
@@ -1685,7 +1685,8 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
-        "access", "subprocess", "signal_send"
+        "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
+        "signal_send"
     ]);
 }
 
@@ -5586,6 +5587,22 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // success). Reuses the AST path's __fern_reader_close (which allocates).
             s = s.write("    call __fn___fern_reader_close\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("reader");
+        } else if (o.kind_tag == 299) {  // fd_fsync
+            // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
+            // Option[IoError], None once the write-back is scheduled.
+            s = s.write("    call __fn___fern_fd_fsync\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_fsync");
+        } else if (o.kind_tag == 300) {  // fd_fdatasync
+            s = s.write("    call __fn___fern_fd_fdatasync\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_fdatasync");
+        } else if (o.kind_tag == 301) {  // fd_syncfs
+            s = s.write("    call __fn___fern_fd_syncfs\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_syncfs");
+        } else if (o.kind_tag == 298) {  // sync
+            // No operands. sync(2) cannot fail, but its return is pushed for
+            // the statement-position drop, as sleep_ns's is.
+            s = s.write("    call __fn___fern_sync\n    pushq %rax\n");
+            s = s.need("sync");
         } else if (o.kind_tag == 241) {  // fd_stat
             // [fd] IS param[0]; the Fern-compiled __fn___fern_fd_stat pushes a
             // fresh Result[FileStat, IoError], the FileStat shape pre-interned
@@ -8813,6 +8830,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
         if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86_64"); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64"); }
+        fs_src = fs_src + asmcore.rt_src_sync_family(s, "x86_64");
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod("x86_64"); }
         if (s.has_need("chown_at")) { fs_src = fs_src + " " + asmcore.rt_src_chown_at("x86_64"); }
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86_64"); }

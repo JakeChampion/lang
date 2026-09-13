@@ -28,6 +28,8 @@ var payloadlessArmBoxSize = map[string]int32{
 	"__fern_writer_truncate": 8,
 	"__fern_writer_close":    8,
 	"__fern_reader_close_fd": 8,
+	"__fern_fd_fsync":        8,
+	"__fern_fd_fdatasync":    8,
 }
 
 // payloadlessArmAbsent names the result-box helpers with no uninitialised
@@ -61,6 +63,9 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_rename":            true,
 	"__fern_set_file_times":    true,
 	"__fern_truncate":          true,
+	// Neither preview has a per-filesystem flush, so every path out of
+	// __fern_fd_syncfs is Some(IoError): it has no payloadless arm.
+	"__fern_fd_syncfs": true,
 }
 
 // zeroStoreAt is the byte sequence for `i32.const 0; i32.store offset=off`.

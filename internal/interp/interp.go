@@ -663,6 +663,12 @@ func New() *Interp {
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinReaderSeek}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
+	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
+	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
+	i.Builtins["__method_Reader_fdatasync"] = &Builtin{Fn: builtinFdatasync}
+	i.Builtins["__method_Writer_fdatasync"] = &Builtin{Fn: builtinFdatasync}
+	i.Builtins["__method_Reader_syncfs"] = &Builtin{Fn: builtinSyncfs}
+	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
 	i.Builtins["__method_Array_set"] = &Builtin{Fn: builtinArraySet}
@@ -1135,6 +1141,7 @@ func New() *Interp {
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
 	i.Builtins["mknod"] = &Builtin{Fn: builtinMknod}
+	i.Builtins["sync"] = &Builtin{Fn: builtinSync}
 	i.Builtins["chown_at"] = &Builtin{Fn: builtinChownAt}
 	i.Builtins["set_file_times"] = &Builtin{Fn: builtinSetFileTimes}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
@@ -2552,6 +2559,13 @@ func fileStatValue(info os.FileInfo) *Struct {
 	}
 }
 
+// errClosedHandle marks a Reader / Writer whose fd is no longer in the
+// open-file table. Every compiled backend hands such a handle straight to the
+// kernel and gets EBADF back, so the methods below answer EBADF rather than
+// failing the interpreter: a program that closes twice, or stats what it
+// closed, did nothing illegal (#8569 is the same finding for `close`).
+var errClosedHandle = errors.New("handle closed")
+
 // streamFile is the *os.File behind a Reader / Writer: the stdio streams
 // while they are still the process's own, else the open-file table. A
 // stdio stream a test replaced with a buffer is no file, and the methods
@@ -2572,7 +2586,7 @@ func streamFile(i *Interp, v Value) (*os.File, error) {
 	default:
 		f, ok := i.openFiles[fd]
 		if !ok {
-			return nil, fmt.Errorf("handle with fd=%d not registered (closed already?)", fd)
+			return nil, errClosedHandle
 		}
 		return f, nil
 	}
@@ -2588,6 +2602,9 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("stat: expected 1 arg")
 	}
 	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2601,6 +2618,67 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 	return resultOk(fileStatValue(info)), nil
 }
 
+// syncMethod is the shared body of `fsync` / `fdatasync` / `syncfs` on
+// both handle types: resolve the descriptor, make the call, and answer
+// `Option[IoError]` — None for success, the errno otherwise.
+//
+// A stdio stream a test replaced with a buffer has no descriptor to
+// flush and answers Unsupported, the same refusal `stat` gives for it.
+func syncMethod(i *Interp, name string, args []Value, call func(int) error) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s: expected 1 arg", name)
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	if err := call(int(f.Fd())); err != nil {
+		return optionSome(classifyIoError("", err)), nil
+	}
+	return optionNone(), nil
+}
+
+// builtinFsync answers `r.fsync()` / `w.fsync()`: fsync(2), the handle's
+// data AND its metadata out to the device. A handle whose kind cannot be
+// flushed — a pipe, a FIFO, a character device — answers EINVAL, which
+// is what `sync(1)` reports as `error syncing`.
+func builtinFsync(i *Interp, args []Value) (Value, error) {
+	return syncMethod(i, "fsync", args, hostFsync)
+}
+
+// builtinFdatasync answers `r.fdatasync()` / `w.fdatasync()`:
+// fdatasync(2), which omits the metadata not needed to read the data
+// back. A directory answers EBADF, which is why `sync -d` on one is not
+// an error GNU reports.
+func builtinFdatasync(i *Interp, args []Value) (Value, error) {
+	return syncMethod(i, "fdatasync", args, hostFdatasync)
+}
+
+// builtinSyncfs answers `r.syncfs()` / `w.syncfs()`: syncfs(2), the
+// whole filesystem the handle lives on rather than the handle's own
+// file. A FIFO is flushable this way where fsync is not — the fd names
+// a filesystem even when it names nothing fsync can write.
+func builtinSyncfs(i *Interp, args []Value) (Value, error) {
+	return syncMethod(i, "syncfs", args, hostSyncfs)
+}
+
+// builtinSync answers `sync()`: sync(2), scheduling write-back of every
+// dirty buffer on the machine. It returns nothing because the call
+// cannot fail on either host this runs on.
+func builtinSync(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("sync: expected 0 args, got %d", len(args))
+	}
+	hostSync()
+	return Void{}, nil
+}
+
 // builtinReaderSeek answers `r.seek(offset, whence)`: lseek(2), with the
 // new offset back. A pipe answers ESPIPE, which reaches the caller as
 // `Other("Illegal seek")`, exactly as the compiled backends report it.
@@ -2609,6 +2687,9 @@ func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.seek: expected 3 args")
 	}
 	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}

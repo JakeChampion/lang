@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -306,6 +306,7 @@ pub function gated_builtins(): Gate[] {
         // that creates one, and a regular file standing in for a FIFO would
         // be the wrong answer presented as the right one.
         Gate { builtin: "mknod", capability: "fsnode" },
+        Gate { builtin: "sync", capability: "fssync" },
         // How large the terminal on the other end of a descriptor is. A
         // target with no terminal cannot answer: 0x0 is not "there is no
         // terminal" but "the terminal is empty", and a caller laying out

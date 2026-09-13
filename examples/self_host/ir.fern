@@ -1149,6 +1149,18 @@ pub function op_read_chunk(): Op { return op0("read_chunk"); }
 // `fd_stat` pops [fd] and pushes Result[FileStat, IoError]: fstat(2) of the
 // handle, the same record `stat` builds. Backs `r.stat()` / `w.stat()`.
 pub function op_fd_stat(): Op { return op0("fd_stat"); }
+// `fd_fsync` / `fd_fdatasync` pop [fd] and push Option[IoError]: fsync(2) /
+// fdatasync(2) of the handle, None once the write-back is scheduled. Back
+// `r.fsync()` / `w.fsync()` and their fdatasync twins. `fd_syncfs` is the same
+// shape for syncfs(2), the whole filesystem the handle lives on rather than the
+// handle's own file; neither WASI preview has it, so the wasm backends answer
+// Unsupported there.
+pub function op_fd_fsync(): Op { return op0("fd_fsync"); }
+pub function op_fd_fdatasync(): Op { return op0("fd_fdatasync"); }
+pub function op_fd_syncfs(): Op { return op0("fd_syncfs"); }
+// `sync` pops nothing and pushes nothing: sync(2), write-back of every dirty
+// buffer on the machine. It cannot fail, which is why it answers no Result.
+pub function op_sync(): Op { return op0("sync"); }
 // `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
 // lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
 pub function op_reader_seek(): Op { return op0("reader_seek"); }
@@ -1710,11 +1722,12 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 282..284, 286..290, then 298 — 281
+// NEXT FREE EXTENSION ID: 282..284, 286..290, then 302 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
-// branch in flight, as 275..280 and 291..297 were, and 298..301 are spoken
-// for by the sync family (re-grep rather than trusting this line — it has
-// been stale before, which is the drift the paragraph below is about).
+// branch in flight, as 275..280 and 291..297 were, and the sync family took
+// the 298..301 block reserved for it (re-grep rather than trusting this line
+// — it has been stale before, which is the drift the paragraph below is
+// about).
 // ADDING AN EXTENSION TAG: take the next id here AND register it in
 // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
 // for the number you took. Two branches that each claim "the next free
@@ -1805,6 +1818,7 @@ function kind_id_len4(name: string): i32 {
     if (c == b'l') { return kind_id_len4_l(name); }
     if (c == b'p' && name == "poll") { return 187; }
     if (c == b's' && name == "stat") { return 175; }
+    if (c == b's' && name == "sync") { return 298; }
     return 0;
 }
 
@@ -1939,6 +1953,7 @@ function kind_id_len7_m(name: string): i32 {
 function kind_id_len8(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len8_a(name); }
+    if (c == b'f' && name == "fd_fsync") { return 299; }
     if (c == b'b') { return kind_id_len8_b(name); }
     if (c == b'c' && name == "chown_at") { return 275; }
     if (c == b'f' && name == "f32_bits") { return 14; }
@@ -2018,6 +2033,7 @@ function kind_id_len9(name: string): i32 {
     if (c == b'a' && name == "arr_slice") { return 96; }
     if (c == b'a' && name == "ascii_run") { return 227; }
     if (c == b'c') { return kind_id_len9_c(name); }
+    if (c == b'f' && name == "fd_syncfs") { return 301; }
     if (c == b'g' && name == "getgroups") { return 248; }
     if (c == b'h' && name == "heap_mark") { return 229; }
     if (c == b'o' && name == "open_file") { return 203; }
@@ -2172,6 +2188,7 @@ function kind_id_len12(name: string): i32 {
     if (c == b'a' && name == "arr_push_i64") { return 94; }
     if (c == b'a' && name == "arr_push_f64") { return 95; }
     if (c == b'c' && name == "const_struct") { return 218; }
+    if (c == b'f' && name == "fd_fdatasync") { return 300; }
     if (c == b'd' && name == "dyn_dispatch") { return 147; }
     if (c == b'd' && name == "dyn_downcast") { return 148; }
     if (c == b'm' && name == "monotonic_ns") { return 182; }
@@ -2558,6 +2575,10 @@ function kind_name_4(id: i32): string {
     if (id == 281) { return "writer_truncate"; }
     if (id == 285) { return "signal_send"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
+    if (id == 298) { return "sync"; }
+    if (id == 299) { return "fd_fsync"; }
+    if (id == 300) { return "fd_fdatasync"; }
+    if (id == 301) { return "fd_syncfs"; }
     return "invalid";
 }
 
@@ -2633,7 +2654,8 @@ function pops0(t: i32): boolean {
         || t == 238 || t == 239 || t == 240                              // geteuid, getegid, hostname
         || t == 246 || t == 247 || t == 248 || t == 249                  // getuid, getgid, getgroups, environ
         || t == 251 || t == 252                                          // getcwd, cpu_count
-        || t == 272;                                                     // rlimit_nofile
+        || t == 272                                                      // rlimit_nofile
+        || t == 298;                                                     // sync
 }
 
 function pops1_conv(t: i32): boolean {
@@ -2679,6 +2701,7 @@ function pops1_io(t: i32): boolean {
         || t == 243 || t == 244                                          // signal_ignore, signal_default
         || t == 277 || t == 279                                          // chdir, signal_disposition
         || t == 241 || t == 250                                          // fd_stat, uname_field
+        || t == 299 || t == 300 || t == 301                              // fd_fsync, fd_fdatasync, fd_syncfs
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
         || t == 276                                                      // window_size
