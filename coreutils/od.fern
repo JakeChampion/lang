@@ -618,7 +618,7 @@ function address_text(s: Settings, off: u64): string {
 // into the line's buffer a digit at a time. The address is written once
 // per block, so building it as a string first was three allocations for
 // every sixteen bytes of input.
-function emit_address(out: u8[], s: Settings, off: u64): u8[] {
+function emit_address(own out: u8[], s: Settings, off: u64): u8[] {
   if (s.base != radix_none()) {
     out = emit_num(out, false, off, s.base, address_width(s.base), 0, false);
   }
@@ -883,7 +883,7 @@ function digit_byte(d: i32, upper: boolean): u8 {
   return (87 + d) as u8;
 }
 
-function spaces(out: u8[], n: i32): u8[] {
+function spaces(own out: u8[], n: i32): u8[] {
   var k: i32 = n;
   while (k > 0) {
     out = out.append(32 as u8);
@@ -896,7 +896,7 @@ function spaces(out: u8[], n: i32): u8[] {
 // with its sign, right-aligned in `width` columns and zero-padded to at
 // least `least` digits. The digits go in backwards and are reversed in
 // place, which keeps the whole field to one pass and no allocation.
-function emit_num(out: u8[], neg: boolean, v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
+function emit_num(own out: u8[], neg: boolean, v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
   var b: u64 = base as u64;
   var count: i32 = 1;
   var t: u64 = v;
@@ -948,11 +948,11 @@ function emit_num(out: u8[], neg: boolean, v: u64, base: i32, least: i32, width:
   return out;
 }
 
-function emit_uint(out0: u8[], v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
+function emit_uint(own out0: u8[], v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
   return emit_num(out0, false, v, base, least, width, upper);
 }
 
-function reverse_from(out: u8[], from: i32): u8[] {
+function reverse_from(own out: u8[], from: i32): u8[] {
   var a: i32 = from;
   var z: i32 = out.len() - 1;
   while (a < z) {
@@ -965,7 +965,7 @@ function reverse_from(out: u8[], from: i32): u8[] {
   return out;
 }
 
-function emit_text(out: u8[], text: string, width: i32): u8[] {
+function emit_text(own out: u8[], text: string, width: i32): u8[] {
   var k: i32 = width - text.len();
   while (k > 0) {
     out = out.append(32 as u8);
@@ -980,7 +980,7 @@ function emit_text(out: u8[], text: string, width: i32): u8[] {
 }
 
 // One unit of `sp` at `at`, right-aligned in `width` columns.
-function emit_field(out: u8[], sp: Spec, block: string, at: i32, width: i32, big: boolean): u8[] {
+function emit_field(own out: u8[], sp: Spec, block: string, at: i32, width: i32, big: boolean): u8[] {
   if (sp.kind == k_named()) {
     return emit_text(out, char_name(block[at] as i32), width);
   }
@@ -1028,7 +1028,7 @@ struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, lim
 // spec, the first line carrying the address and the rest the same width
 // in spaces. The whole block is assembled in one byte buffer and handed
 // to the writer once.
-function write_block(out: u8[], s: Settings, block: string, base: i32, n: i32, off: u64): u8[] {
+function write_block(own out: u8[], s: Settings, block: string, base: i32, n: i32, off: u64): u8[] {
   var i: i32 = 0;
   while (i < s.specs.len()) {
     if (i == 0) {
@@ -1046,7 +1046,7 @@ function write_block(out: u8[], s: Settings, block: string, base: i32, n: i32, o
 // The fields of one spec over one block. The block's pad is handed out
 // as the fields are printed — what is left divided by the fields still
 // to come — which spreads it evenly and is what lines the specs up.
-function spec_line(out: u8[], sp: Spec, s: Settings, block: string, base: i32, n: i32): u8[] {
+function spec_line(own out: u8[], sp: Spec, s: Settings, block: string, base: i32, n: i32): u8[] {
   var fields: i32 = s.block / sp.size;
   var blank: i32 = (s.block - n) / sp.size;
   var pad: i32 = sp.pad;
