@@ -118,7 +118,7 @@ function hex_shift(f: Format): i32 {
 pub struct LD { neg: boolean, kind: i32, hi: u64, lo: u64, e: i32 }
 
 pub function (f: Format) zero(neg: boolean): LD {
-  return LD { neg: neg, kind: 0, hi: 0 as u64, lo: 0 as u64, e: f.min_exp() };
+  return LD { neg: neg, kind: 0, hi: 0 as u64, lo: 0 as u64, e: 2 - f.emax - f.mant };
 }
 
 pub function inf(neg: boolean): LD {
@@ -318,12 +318,15 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
   if (top > f.emax) {
     return inf(neg);
   }
-  if (top < f.min_exp() - 1) {
+  // `emin` and `min_exp` spelled out: the accessors are calls, and
+  // this is where every operation ends.
+  var min_exp: i32 = 2 - f.emax - f.mant;
+  if (top < min_exp - 1) {
     return f.zero(neg);
   }
   var at: i32 = top - (f.mant - 1);
-  if (top < f.emin()) {
-    at = f.min_exp();
+  if (top < 1 - f.emax) {
+    at = min_exp;
   }
   var shift: i32 = at - e;
   if (shift <= 0) {
@@ -920,6 +923,13 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
   if ((a.hi | a.lo) == 0 as u64 || (b.hi | b.lo) == 0 as u64) {
     return f.zero(neg);
   }
+  if (a.hi == 0 as u64 && b.hi == 0 as u64) {
+    var ta: i32 = __ctz64(a.lo);
+    var tb: i32 = __ctz64(b.lo);
+    var xa: u64 = a.lo >> (ta as u64);
+    var yb: u64 = b.lo >> (tb as u64);
+    return round128(f, mul_hi64(xa, yb), xa * yb, a.e + ta + b.e + tb, false, neg);
+  }
   if (fits_word(a) && fits_word(b)) {
     var x: u64 = reduced(a);
     var y: u64 = reduced(b);
@@ -986,7 +996,14 @@ pub function (f: Format) div(a: LD, b: LD): LD {
   if ((a.hi | a.lo) == 0 as u64) {
     return f.zero(neg);
   }
-  if (fits_word(a) && fits_word(b)) {
+  if (a.hi == 0 as u64 && b.hi == 0 as u64) {
+    var tb: i32 = __ctz64(b.lo);
+    var d1: u64 = b.lo >> (tb as u64);
+    if (d1 <= 4294967295 as u64) {
+      var ta: i32 = __ctz64(a.lo);
+      return div_small(f, a.lo >> (ta as u64), a.e + ta, d1, b.e + tb, neg);
+    }
+  } else if (fits_word(a) && fits_word(b)) {
     var d: u64 = reduced(b);
     if (d <= 4294967295 as u64) {
       return div_small(f, reduced(a), a.e + trailing_zeros128(a.hi, a.lo), d, b.e + trailing_zeros128(b.hi, b.lo), neg);
@@ -1059,7 +1076,7 @@ pub function (a: LD) cmp(b: LD): i32 {
     }
     return 1;
   }
-  var c: i32 = mag_cmp(a, b);
+  var c: i32 = a.cmp_abs(b);
   if (an) {
     return 0 - c;
   }
@@ -1096,19 +1113,15 @@ pub function (a: LD) cmp_abs(b: LD): i32 {
   if (a.kind == 2 || b.kind == 2) {
     return 2;
   }
-  return mag_cmp(a, b);
-}
-
-function mag_cmp(a: LD, b: LD): i32 {
-  var ca: i32 = mag_class(a);
-  var cb: i32 = mag_class(b);
-  if (ca != cb) {
+  if (a.kind == 1 || b.kind == 1 || (a.hi | a.lo) == 0 as u64 || (b.hi | b.lo) == 0 as u64) {
+    var ca: i32 = mag_class(a);
+    var cb: i32 = mag_class(b);
     if (ca < cb) {
       return 0 - 1;
     }
-    return 1;
-  }
-  if (ca != 0) {
+    if (ca > cb) {
+      return 1;
+    }
     return 0;
   }
   var ta: i32 = a.e + 63 - __clz64(a.lo);
@@ -1174,14 +1187,24 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   if (mode == round_nearest()) {
     return trunc_mag(f, plus_half(f, v), v.neg);
   }
-  var drop: i32 = 0 - v.e;
-  if (!low_bits_set(v.hi, v.lo, drop)) {
-    return v;
-  }
   // The whole part, as an integer in two words, plus one when the
   // mode moves away from zero; both fit, since the value did.
-  var wh: u64 = shr_hi(v.hi, drop);
-  var wl: u64 = shr_lo(v.hi, v.lo, drop);
+  var drop: i32 = 0 - v.e;
+  var wh: u64 = 0 as u64;
+  var wl: u64 = 0 as u64;
+  if (drop < 64) {
+    if ((v.lo & ((1 as u64 << (drop as u64)) - 1 as u64)) == 0 as u64) {
+      return v;
+    }
+    wh = v.hi >> (drop as u64);
+    wl = (v.lo >> (drop as u64)) | (v.hi << ((64 - drop) as u64));
+  } else {
+    if (!low_bits_set(v.hi, v.lo, drop)) {
+      return v;
+    }
+    wh = shr_hi(v.hi, drop);
+    wl = shr_lo(v.hi, v.lo, drop);
+  }
   if (away_from_zero(mode, v.neg)) {
     wl = wl + 1 as u64;
     if (wl == 0 as u64) {
@@ -1572,7 +1595,13 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
     if ((v.hi | v.lo) == 0 as u64) {
       return fixed_u64(0 as u64, prec, v.neg);
     }
-    if (fits_word(v)) {
+    if (v.hi == 0 as u64) {
+      var tz: i32 = __ctz64(v.lo);
+      var q1: u64 = scaled_u64(v.lo >> (tz as u64), v.e + tz, prec);
+      if (q1 != 18446744073709551615 as u64) {
+        return fixed_u64(q1, prec, v.neg);
+      }
+    } else if (fits_word(v)) {
       var q: u64 = scaled_u64(reduced(v), v.e + trailing_zeros128(v.hi, v.lo), prec);
       if (q != 18446744073709551615 as u64) {
         return fixed_u64(q, prec, v.neg);

@@ -219,14 +219,16 @@ function no_format(): Fmt {
 // neither was given. `sep` is what is written between fields: the
 // --delimiter byte, or one space for the blank run it replaces. `ten`,
 // `thousand`, `kibi` and the `p10` table are the constants the
-// conversion reaches for on every number, built once.
-struct Opts { ldbl: ld.Format, from: i32, to: i32, from_unit: ld.LD, to_unit: ld.LD, units: boolean, round: i32, suffix: string, padding: i32, grouping: boolean, delim: i32, sep: string, fields: i32[], all_fields: boolean, debug: boolean, fmt: Fmt, invalid: i32, header: i32, zero: boolean, conv: boolean, ten: ld.LD, thousand: ld.LD, kibi: ld.LD, p10: ld.LD[] }
+// conversion reaches for on every number, built once; `fold_safe` is
+// how many digits fold exactly without a check and `zero_width` the
+// `%0Nf` width, both settled once the options are read.
+struct Opts { ldbl: ld.Format, from: i32, to: i32, from_unit: ld.LD, to_unit: ld.LD, units: boolean, round: i32, suffix: string, padding: i32, grouping: boolean, delim: i32, sep: string, fields: i32[], all_fields: boolean, debug: boolean, fmt: Fmt, invalid: i32, header: i32, zero: boolean, conv: boolean, ten: ld.LD, thousand: ld.LD, kibi: ld.LD, p10: ld.LD[], fold_safe: i32, zero_width: i32 }
 
 function default_opts(): Opts {
   var none: i32[] = [];
   var f: ld.Format = ld.format();
   var one: ld.LD = f.from_i64(1 as i64);
-  return Opts { ldbl: f, from: scale_none(), to: scale_none(), from_unit: one, to_unit: one, units: false, round: ld.round_from_zero(), suffix: "", padding: 0, grouping: false, delim: 0 - 1, sep: " ", fields: none, all_fields: false, debug: false, fmt: no_format(), invalid: inv_abort(), header: 0, zero: false, conv: false, ten: f.from_i64(10 as i64), thousand: f.from_i64(1000 as i64), kibi: f.from_i64(1024 as i64), p10: pow10_table(f) };
+  return Opts { ldbl: f, from: scale_none(), to: scale_none(), from_unit: one, to_unit: one, units: false, round: ld.round_from_zero(), suffix: "", padding: 0, grouping: false, delim: 0 - 1, sep: " ", fields: none, all_fields: false, debug: false, fmt: no_format(), invalid: inv_abort(), header: 0, zero: false, conv: false, ten: f.from_i64(10 as i64), thousand: f.from_i64(1000 as i64), kibi: f.from_i64(1024 as i64), p10: pow10_table(f), fold_safe: safe_digits(f), zero_width: 0 };
 }
 
 // 10^0 .. 10^33, each reached by multiplying as `pow10` reaches it. 33
@@ -700,18 +702,18 @@ function bad(f: ld.Format, msg: string): Num {
 }
 
 // The text a diagnostic quotes: the field from its first non-blank on.
-function quoted_from(s: string, from: i32): string {
-  return gnu.quote(slice_unchecked(s, from, s.len()));
+function quoted_from(s: string, from: i32, n: i32): string {
+  return gnu.quote(slice_unchecked(s, from, n));
 }
 
 // GNU's `simple_strtod_human`, which is not strtold: the digits are
 // accumulated as `v = v * 10 + d` and the fraction as an integer over a
 // power of ten, and each of those steps rounds. `numfmt --from=si 1.555`
-// answering 1.556 is exactly that.
-function parse_number(s: string, o: Opts): Num {
+// answering 1.556 is exactly that. The number is `s[start..n)`: the
+// field less the --suffix it ends with.
+function parse_number(s: string, start: i32, n: i32, o: Opts): Num {
   var f: ld.Format = o.ldbl;
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  var i: i32 = start;
   while (i < n && is_blank(s[i] as i32)) {
     i = i + 1;
   }
@@ -723,34 +725,34 @@ function parse_number(s: string, o: Opts): Num {
     neg = true;
     i = i + 1;
   }
-  var end: i32 = digit_end(s, i);
+  var end: i32 = digit_end(s, i, n);
   var digits: i32 = end - i;
-  var val: ld.LD = fold_digits(f, s, i, end);
+  var val: ld.LD = fold_digits(o, s, i, end);
   i = end;
   var prec: i32 = 0;
   if (i < n && s[i] as i32 == 46) {
-    var fend: i32 = digit_end(s, i + 1);
+    var fend: i32 = digit_end(s, i + 1, n);
     var fd: i32 = fend - (i + 1);
     // A point with no digit after it ends the number, and the number is
     // not one at all unless what follows is a SECOND point: `5.` and
     // `1.K` are invalid numbers, while `1..5` is 1 followed by `..5`.
     if (fd == 0 && (i + 1 >= n || s[i + 1] as i32 != 46)) {
-      return bad(f, "invalid number: " + quoted_from(s, from));
+      return bad(f, "invalid number: " + quoted_from(s, from, n));
     }
     if (fd == 0) {
       i = i + 1;
     } else {
       prec = fd;
       digits = digits + fd;
-      val = f.add(val, f.div(fold_digits(f, s, i + 1, fend), pow10_of(o, prec)));
+      val = f.add(val, f.div(fold_digits(o, s, i + 1, fend), pow10_of(o, prec)));
       i = fend;
     }
   }
   if (digits == 0) {
-    return bad(f, "invalid number: " + quoted_from(s, from));
+    return bad(f, "invalid number: " + quoted_from(s, from, n));
   }
   if (digits > max_acceptable_digits()) {
-    return bad(f, "value too large to be converted: " + quoted_from(s, from));
+    return bad(f, "value too large to be converted: " + quoted_from(s, from, n));
   }
   // numfmt reads no signed zero: `-0` and `-0.0` are 0. A value that is
   // merely SMALL keeps its sign all the way down, so `--to=si -- -0.5`
@@ -758,13 +760,17 @@ function parse_number(s: string, o: Opts): Num {
   if (neg && !val.is_zero()) {
     val = val.negate();
   }
-  return apply_suffix(s, from, i, val, prec, o);
+  return apply_suffix(s, from, i, n, val, prec, o);
 }
 
-// Where the run of digits starting at `from` ends.
-function digit_end(s: string, from: i32): i32 {
+// Where the run of digits starting at `from` ends, within `s[..n)`.
+function digit_end(s: string, from: i32, n: i32): i32 {
   var i: i32 = from;
-  while (i < s.len() && is_digit(s[i] as i32)) {
+  while (i < n) {
+    var b: i32 = s[i] as i32;
+    if (b < 48 || b > 57) {
+      break;
+    }
     i = i + 1;
   }
   return i;
@@ -775,12 +781,13 @@ function digit_end(s: string, from: i32): i32 {
 // plain integer arithmetic until one would not fit and only then
 // through the rounding one. Where the significand is narrower than a
 // u64 the limit is the significand's, not u64's: every step past it
-// has to round as the C one does. The first `safe_digits` cannot
+// has to round as the C one does. The first `fold_safe` digits cannot
 // overflow whatever they are, so only the digits past them are checked.
-function fold_digits(f: ld.Format, s: string, from: i32, to: i32): ld.LD {
+function fold_digits(o: Opts, s: string, from: i32, to: i32): ld.LD {
+  var f: ld.Format = o.ldbl;
   var acc: u64 = 0 as u64;
   var i: i32 = from;
-  var safe: i32 = from + safe_digits(f);
+  var safe: i32 = from + o.fold_safe;
   if (safe > to) {
     safe = to;
   }
@@ -823,9 +830,8 @@ function fold_wide(f: ld.Format, s: string, from: i32, to: i32, v0: ld.LD): ld.L
 
 // What follows the digits: the unit letter `--from` allows, then the
 // `--suffix` string, and nothing else.
-function apply_suffix(s: string, from: i32, at: i32, val0: ld.LD, prec: i32, o: Opts): Num {
+function apply_suffix(s: string, from: i32, at: i32, n: i32, val0: ld.LD, prec: i32, o: Opts): Num {
   var val: ld.LD = val0;
-  var n: i32 = s.len();
   var i: i32 = at;
   // Blanks between the number and its unit belong to neither: `1000 K`
   // is a megabyte.
@@ -836,7 +842,7 @@ function apply_suffix(s: string, from: i32, at: i32, val0: ld.LD, prec: i32, o: 
   }
   if (i >= n) {
     if (spaced && o.from == scale_none()) {
-      return bad(o.ldbl, "rejecting suffix in input: " + quoted_from(s, from) + " (consider using --from)");
+      return bad(o.ldbl, "rejecting suffix in input: " + quoted_from(s, from, n) + " (consider using --from)");
     }
     return Num { val: val, prec: prec, err: "", ok: true };
   }
@@ -846,12 +852,12 @@ function apply_suffix(s: string, from: i32, at: i32, val0: ld.LD, prec: i32, o: 
   // --from), anything else as not being one at all.
   if (o.from == scale_none()) {
     if (power >= 0) {
-      return bad(o.ldbl, "rejecting suffix in input: " + quoted_from(s, from) + " (consider using --from)");
+      return bad(o.ldbl, "rejecting suffix in input: " + quoted_from(s, from, n) + " (consider using --from)");
     }
-    return bad(o.ldbl, "invalid suffix in input: " + quoted_from(s, from));
+    return bad(o.ldbl, "invalid suffix in input: " + quoted_from(s, from, n));
   }
   if (power < 0) {
-    return bad(o.ldbl, "invalid suffix in input: " + quoted_from(s, from));
+    return bad(o.ldbl, "invalid suffix in input: " + quoted_from(s, from, n));
   }
   var base: i32 = 1000;
   var after: i32 = i + 1;
@@ -863,7 +869,7 @@ function apply_suffix(s: string, from: i32, at: i32, val0: ld.LD, prec: i32, o: 
       base = 1024;
       after = i + 2;
     } else if (o.from == scale_iec_i()) {
-      return bad(o.ldbl, "missing 'i' suffix in input: " + quoted_from(s, from) + " (e.g Ki/Mi/Gi)");
+      return bad(o.ldbl, "missing 'i' suffix in input: " + quoted_from(s, from, n) + " (e.g Ki/Mi/Gi)");
     }
   }
   var k: i32 = 0;
@@ -872,7 +878,7 @@ function apply_suffix(s: string, from: i32, at: i32, val0: ld.LD, prec: i32, o: 
     k = k + 1;
   }
   if (after < n) {
-    return bad(o.ldbl, "invalid suffix in input " + quoted_from(s, from) + ": " + gnu.quote(slice_unchecked(s, after, n)));
+    return bad(o.ldbl, "invalid suffix in input " + quoted_from(s, from, n) + ": " + gnu.quote(slice_unchecked(s, after, n)));
   }
   // A scaled value loses the precision it was written with: `1.5K` is
   // 1500, not 1500.0.
@@ -981,9 +987,8 @@ function refused_human(f: ld.Format, val: ld.LD): Human {
 // --padding outside the buffer entirely, so neither moves the refusal.
 function human_width(text: string, power: i32, o: Opts): i64 {
   var n: i64 = text.len() as i64;
-  var zw: i64 = zero_pad_width(o) as i64;
-  if (zw > n) {
-    n = zw;
+  if (o.zero_width as i64 > n) {
+    n = o.zero_width as i64;
   }
   return n + suffix_power_char(power).len() as i64;
 }
@@ -1121,7 +1126,7 @@ function pad_text(text: string, o: Opts, auto: i32): string {
     width = o.fmt.width;
   }
   // A zero-padded format width has already padded the number itself.
-  if (zero_pad_width(o) > 0) {
+  if (o.zero_width > 0) {
     return text;
   }
   if (width == 0 || text.len() >= abs_i32(width)) {
@@ -1168,14 +1173,14 @@ function abs_i32(v: i32): i32 {
 // its scale letter, --suffix, padding, and the format's surrounding
 // text — or report why it is not a number. `auto` is the width the
 // field had in the input.
-function convert(text: string, o: Opts, auto: i32): Human {
-  var body_end: i32 = text.len();
-  if (o.suffix.len() > 0 && text.len() > o.suffix.len() && text.ends_with(o.suffix)) {
-    body_end = text.len() - o.suffix.len();
+function convert(line: string, from: i32, to: i32, o: Opts, auto: i32): Human {
+  var body_end: i32 = to;
+  if (o.suffix.len() > 0 && to - from > o.suffix.len() && ends_with_at(line, to, o.suffix)) {
+    body_end = to - o.suffix.len();
   }
-  var n: Num = parse_number(slice_unchecked(text, 0, body_end), o);
-  if (o.debug && n.ok && digits_of(text, body_end) > max_unscaled_digits(o.ldbl)) {
-    gnu.error("large input value " + gnu.quote(text) + ": possible precision loss");
+  var n: Num = parse_number(line, from, body_end, o);
+  if (o.debug && n.ok && digits_of(line, from, body_end) > max_unscaled_digits(o.ldbl)) {
+    gnu.error("large input value " + gnu.quote(slice_unchecked(line, from, to)) + ": possible precision loss");
   }
   if (!n.ok) {
     return Human { text: "", unit: "", err: n.err, fatal: false };
@@ -1191,8 +1196,8 @@ function convert(text: string, o: Opts, auto: i32): Human {
   // `%0Nf` pads the NUMBER, before the scale letter, because the width
   // is inside the conversion there; every other width pads the field.
   var body_text: string = h.text;
-  if (zero_pad_width(o) > 0) {
-    body_text = zero_pad_to(h.text, zero_pad_width(o));
+  if (o.zero_width > 0) {
+    body_text = zero_pad_to(h.text, o.zero_width);
   }
   if (h.unit.len() > 0) {
     body_text = body_text + h.unit;
@@ -1238,9 +1243,25 @@ function wide_message(val: ld.LD, prec: i32, o: Opts): string {
   return "value too large to be printed: " + gnu.quote(o.ldbl.to_g(val)) + tail;
 }
 
-function digits_of(s: string, end: i32): i32 {
-  var n: i32 = 0;
+// Whether `s[..to)` ends with `suffix`.
+function ends_with_at(s: string, to: i32, suffix: string): boolean {
+  var k: i32 = suffix.len();
+  if (k > to) {
+    return false;
+  }
   var i: i32 = 0;
+  while (i < k) {
+    if (s[to - k + i] != suffix[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function digits_of(s: string, from: i32, end: i32): i32 {
+  var n: i32 = 0;
+  var i: i32 = from;
   while (i < end) {
     if (is_digit(s[i] as i32)) {
       n = n + 1;
@@ -1276,27 +1297,45 @@ function fail_field(msg: string, o: Opts, w: io_buffered.BufWriter, status: i32)
 // column its width — except for the one blank that stood as the
 // separator, which is written back as a single space.
 //
-// The writer is threaded through the fields bare and `Out` rebuilt
-// once at the end, and each field's text is a view of the line rather
-// than a copy: a line is the unit of work, and a record per field was
-// most of what the loop spent.
-function process_line(line: string, term: string, o: Opts, out: Out): Out {
+// The pieces go straight into the writer's builder and the flush check
+// is made once at the end of the line, `Out` is rebuilt once per line,
+// and each field's text is a view of the line rather than a copy: a
+// line is the unit of work, and a record per field was most of what
+// the loop spent. What separates whitespace-delimited fields is a
+// space, a tab or a newline, which -z can leave inside a line; a
+// carriage return is not one and stays part of the field.
+function process_line(line: string, from: i32, n: i32, term: string, o: Opts, out: Out): Out {
   var w: io_buffered.BufWriter = out.w;
+  var h: usize = w.handle();
   var status: i32 = out.status;
   var failed: boolean = out.failed;
-  var i: i32 = 0;
+  var i: i32 = from;
   var field: i32 = 0;
   while (true) {
     field = field + 1;
     var start: i32 = i;
     if (o.delim < 0) {
-      while (i < line.len() && is_separator(line[i] as i32)) {
+      while (i < n) {
+        var b: i32 = line[i] as i32;
+        if (b != 32 && b != 9 && b != 10) {
+          break;
+        }
         i = i + 1;
       }
     }
     var text_start: i32 = i;
-    while (i < line.len() && !ends_field(line[i] as i32, o)) {
-      i = i + 1;
+    if (o.delim < 0) {
+      while (i < n) {
+        var c: i32 = line[i] as i32;
+        if (c == 32 || c == 9 || c == 10) {
+          break;
+        }
+        i = i + 1;
+      }
+    } else {
+      while (i < n && line[i] as i32 != o.delim) {
+        i = i + 1;
+      }
     }
     // What the field looks like when it is not converted: the blanks
     // that preceded it, less the one written back as the separator.
@@ -1305,28 +1344,32 @@ function process_line(line: string, term: string, o: Opts, out: Out): Out {
       raw_from = start + 1;
     }
     if (field > 1) {
-      w = gnu.put(w, o.sep);
+      buf_push(h, o.sep);
     }
     var converted: boolean = false;
-    if (field_selected(o, field)) {
-      var h: Human = convert(slice_unchecked(line, text_start, i), o, auto_width(o, start, text_start, i, field));
-      if (h.fatal) {
-        gnu.error(h.err);
+    var selected: boolean = field == 1;
+    if (o.all_fields || o.fields.len() > 0) {
+      selected = field_selected(o, field);
+    }
+    if (selected) {
+      var hm: Human = convert(line, text_start, i, o, auto_width(o, start, text_start, i, field));
+      if (hm.fatal) {
+        gnu.error(hm.err);
         gnu.finish(w);
         exit(1);
       }
-      if (h.err.len() > 0) {
-        status = fail_field(h.err, o, w, status);
+      if (hm.err.len() > 0) {
+        status = fail_field(hm.err, o, w, status);
         failed = true;
       } else {
-        w = gnu.put(w, h.text);
+        buf_push(h, hm.text);
         converted = true;
       }
     }
     if (!converted) {
-      w = gnu.put(w, slice_unchecked(line, raw_from, i));
+      buf_push_range(h, line, raw_from, i);
     }
-    if (i >= line.len()) {
+    if (i >= n) {
       break;
     }
     // A named delimiter is consumed here; a blank run is left for the
@@ -1335,8 +1378,8 @@ function process_line(line: string, term: string, o: Opts, out: Out): Out {
       i = i + 1;
     }
   }
-  w = gnu.put(w, term);
-  return Out { w: w, status: status, failed: failed };
+  buf_push(h, term);
+  return Out { w: gnu.settle(w), status: status, failed: failed };
 }
 
 // The blanks a whitespace-delimited field is preceded by are its
@@ -1350,20 +1393,6 @@ function auto_width(o: Opts, start: i32, text_start: i32, end: i32, field: i32):
     width = width - 1;
   }
   return width;
-}
-
-function ends_field(b: i32, o: Opts): boolean {
-  if (o.delim < 0) {
-    return is_separator(b);
-  }
-  return b == o.delim;
-}
-
-// What separates whitespace-delimited fields: a space, a tab or a
-// newline, which -z can leave inside a line. A carriage return is not
-// one and stays part of the field.
-function is_separator(b: i32): boolean {
-  return b == 32 || b == 9 || b == 10;
 }
 
 function byte_string(b: i32): string {
@@ -1483,7 +1512,7 @@ function check_options(o: Opts, operands: string[]): Opts {
   if (o.debug && o.header > 0 && operands.len() > 0) {
     gnu.error("--header ignored with command-line input");
   }
-  return o;
+  return Opts { ...o, zero_width: zero_pad_width(o) };
 }
 
 // The line delimiter: NUL under -z, else newline.
@@ -1511,7 +1540,7 @@ function run_stdin(o: Opts, out0: Out): Out {
         if (chunk.len() == 0) {
           r.close();
           if (carry.len() > 0) {
-            out = one_line(carry, false, term, term_text, line + 1, o, out);
+            out = one_line(carry, 0, carry.len(), false, term, term_text, line + 1, o, out);
           }
           return out;
         }
@@ -1526,7 +1555,7 @@ function run_stdin(o: Opts, out0: Out): Out {
             break;
           }
           line = line + 1;
-          out = one_line(slice_unchecked(text, i, j), true, term, term_text, line, o, out);
+          out = one_line(text, i, j, true, term, term_text, line, o, out);
           i = j + 1;
         }
         carry = slice_unchecked(text, i, text.len()) + "";
@@ -1534,7 +1563,7 @@ function run_stdin(o: Opts, out0: Out): Out {
       Err(e) => {
         r.close();
         if (carry.len() > 0) {
-          out = one_line(carry, false, term, term_text, line + 1, o, out);
+          out = one_line(carry, 0, carry.len(), false, term, term_text, line + 1, o, out);
         }
         return out;
       }
@@ -1551,23 +1580,38 @@ function read_size(): i32 {
 // is a C string to GNU, so a NUL in it ends it and what follows is
 // lost; a header line is written with `fputs`, which is why -z prints
 // one without its terminator.
-function one_line(body0: string, had_term: boolean, term: i32, term_text: string, line: i32, o: Opts, out: Out): Out {
-  var body: str = slice_unchecked(body0, 0, body0.len());
-  var nul: i32 = __memchr(body0, 0, 0);
-  if (nul >= 0) {
-    body = slice_unchecked(body0, 0, nul);
+function one_line(text: string, from: i32, to0: i32, had_term: boolean, term: i32, term_text: string, line: i32, o: Opts, out: Out): Out {
+  var to: i32 = to0;
+  if (term != 0) {
+    var nul: i32 = nul_before(text, from, to);
+    if (nul >= 0) {
+      to = nul;
+    }
   }
   if (line <= o.header) {
-    var w: io_buffered.BufWriter = gnu.put(out.w, body);
+    var w: io_buffered.BufWriter = gnu.put(out.w, slice_unchecked(text, from, to));
     if (had_term && term != 0) {
       w = gnu.put(w, term_text);
     }
     return Out { ...out, w: w };
   }
   if (had_term) {
-    return process_line(body, term_text, o, out);
+    return process_line(text, from, to, term_text, o, out);
   }
-  return process_line(body, "", o, out);
+  return process_line(text, from, to, "", o, out);
+}
+
+// The first NUL in `text[from..to)`, or -1. A line's bytes are scanned
+// once, and only up to its own end.
+function nul_before(text: string, from: i32, to: i32): i32 {
+  var i: i32 = from;
+  while (i < to) {
+    if (text[i] == 0) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 function run_operands(operands: string[], o: Opts, out0: Out): Out {
@@ -1575,7 +1619,7 @@ function run_operands(operands: string[], o: Opts, out0: Out): Out {
   var term: string = byte_string(line_end(o));
   var k: i32 = 0;
   while (k < operands.len()) {
-    out = process_line(operands[k], term, o, out);
+    out = process_line(operands[k], 0, operands[k].len(), term, o, out);
     k = k + 1;
   }
   return out;
