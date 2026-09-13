@@ -183,11 +183,12 @@ var Named = []NamedFamily{
 			{ATT: "cvtss2sil", Intel: "cvtss2si", Prefix: 0xF3, Op: 0x2D, Probe: "cvtss2si eax, xmm1", ATTProbe: "cvtss2sil %xmm1, %eax"},
 			{ATT: "cvtss2siq", Intel: "cvtss2si", Prefix: 0xF3, Op: 0x2D, Probe: "cvtss2si rax, xmm1", ATTProbe: "cvtss2siq %xmm1, %rax"},
 		}},
-	{Name: "imm3a", Doc: "the 66 0F 3A Op /r ib three-operand forms with an xmm destination", FernFn: "x86_gas_imm3a_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "imm3a", Doc: "the 66 0F 3A Op /r ib three-operand forms with an xmm destination. pclmulqdq's imm8 picks a 64-bit half of each source, which gas disassembles under a per-value alias name; the encoding is one row", FernFn: "x86_gas_imm3a_op", Pack: opOnly, Ops: []NamedOp{
 		{ATT: "roundss", Intel: "roundss", Op: 0x0A, Probe: "roundss xmm0, xmm1, 0", ATTProbe: "roundss $0, %xmm1, %xmm0"},
 		{ATT: "roundsd", Intel: "roundsd", Op: 0x0B, Probe: "roundsd xmm0, xmm1, 0", ATTProbe: "roundsd $0, %xmm1, %xmm0"},
 		{ATT: "pcmpestri", Intel: "pcmpestri", Op: 0x61, Probe: "pcmpestri xmm0, xmm1, 0", ATTProbe: "pcmpestri $0, %xmm1, %xmm0"},
 		{ATT: "pcmpistri", Intel: "pcmpistri", Op: 0x63, Probe: "pcmpistri xmm0, xmm1, 0", ATTProbe: "pcmpistri $0, %xmm1, %xmm0"},
+		{ATT: "pclmulqdq", Intel: "pclmulqdq", Op: 0x44, Probe: "pclmulqdq xmm0, xmm1, 0", ATTProbe: "pclmulqdq $0, %xmm1, %xmm0"},
 	}},
 	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pshufd", Intel: "pshufd", Prefix: 0x66, Op: 0x70, Probe: "pshufd xmm1, xmm2, 0", ATTProbe: "pshufd $0, %xmm2, %xmm1"},

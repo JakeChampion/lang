@@ -1592,6 +1592,21 @@ function arm64_vec3same(buf: i32[], rd: i32, rn: i32, rm: i32, opcode: i32, size
     return arm64_le32(buf, arm64_vec3same_word(rd, rn, rm, opcode, size, q, u));
 }
 
+// arm64_vec3diff encodes three-registers-DIFFERENT: the widening ops, whose
+// result elements are one size up, so the opcode field is four bits and bits
+// 11:10 are zero rather than the `01` arm64_vec3same carries.
+//   0x0E200000 | Q<<30 | U<<29 | size<<22 | Rm<<16 | opcode<<12 | Rn<<5 | Rd
+function arm64_vec3diff_word(rd: i32, rn: i32, rm: i32, opcode: i32, size: i32, q: boolean, u: boolean): i64 {
+    var word: i64 = 0x0e200000 | (((size & 3) as i64) << 22) | (((rm & 31) as i64) << 16)
+        | (((opcode & 15) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    if (u) { word = word | 0x20000000; }
+    return word;
+}
+function arm64_vec3diff(buf: i32[], rd: i32, rn: i32, rm: i32, opcode: i32, size: i32, q: boolean, u: boolean): i32[] {
+    return arm64_le32(buf, arm64_vec3diff_word(rd, rn, rm, opcode, size, q, u));
+}
+
 // arm64_vec2misc encodes two-register miscellaneous: the unary ops and the
 // compare-against-zero forms, where the #0 is part of the opcode rather than
 // an immediate field.
@@ -1991,6 +2006,20 @@ function arm64_pairlong_entry(mnem: string): i32 {
 }
 // END GENERATED ARM64 PAIRLONG_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VPOLYLONG_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
+// The polynomial (carry-less) multiply-long. The size-mask slot carries the
+// HIGH flag — the `2` in the mnemonic, which selects the top half of the
+// sources; only the byte (.8h result) and doubleword (.1q result) sizes
+// exist.
+function arm64_vpolylong_entry(mnem: string): i32 {
+    match (mnem) {
+        "pmull" => { return arm64_vec_entry(false, 14, 0); },
+        "pmull2" => { return arm64_vec_entry(false, 14, 1); },
+        _ => { return 0 - 1; }
+    }
+}
+// END GENERATED ARM64 VPOLYLONG_ENTRY TABLE
+
 // arm64_gas_scalar_class decodes a bN/hN/sN/dN scalar SIMD register to its
 // element-size class (0=B, 1=H, 2=S, 3=D), or -1. arm64_gas_scalar_reg gives
 // the number.
@@ -2057,7 +2086,7 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
         || arm64_vcmpzero_entry(mnem) >= 0 || arm64_v2misc_entry(mnem) >= 0
         || arm64_vfp3_entry(mnem) >= 0 || arm64_vfp2_entry(mnem) >= 0
         || arm64_vfpcmpzero_entry(mnem) >= 0 || arm64_vshift_entry(mnem) >= 0
-        || arm64_vpermute_opc(mnem) >= 0
+        || arm64_vpermute_opc(mnem) >= 0 || arm64_vpolylong_entry(mnem) >= 0
         || arm64_gas_is_shll(mnem) || arm64_gas_is_narrow(mnem) || arm64_gas_is_vecext(mnem);
 }
 
@@ -2176,6 +2205,15 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
         var tc: i32 = arm64_gas_vreg_arrof(ops[0]);
         return Arm64Asm { ...a, code: arm64_vectbl1(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vlist_one(ops[1]),
             arm64_gas_vreg_any(ops[2]), arm64_gas_arr_q(tc)) };
+    }
+    var poly: i32 = arm64_vpolylong_entry(mnem);
+    if (poly >= 0) {
+        if (ops.len() != 3) { return a; }
+        // The SOURCE arrangement is what the encoding carries; the
+        // destination is checked by arm64_gas_bad_pmull, not encoded.
+        var yc: i32 = arm64_gas_vreg_arrof(ops[1]);
+        return Arm64Asm { ...a, code: arm64_vec3diff(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_gas_vreg_any(ops[2]), arm64_vec_entry_op(poly), arm64_gas_arr_size(yc), arm64_gas_arr_q(yc), arm64_vec_entry_u(poly)) };
     }
     var pm: i32 = arm64_vpermute_opc(mnem);
     if (pm < 0 || ops.len() != 3) { return a; }
@@ -2738,6 +2776,10 @@ function arm64_gas_arr_code(arr: string): i32 {
     if (arr == "4s") { return 5; }
     if (arr == "1d") { return 6; }
     if (arr == "2d") { return 7; }
+    // `.1q` is the single 128-bit element pmull writes — one size above
+    // `.2d`, wider than the encoding's two-bit size field, so no class mask
+    // reaches it and arm64_gas_arr_allowed refuses it everywhere.
+    if (arr == "1q") { return 9; }
     return 0 - 1;
 }
 
@@ -2851,6 +2893,10 @@ function arm64_gas_bad_lane(mnem: string, ops: string[], lm: Arm64Mem): string {
         if (arm64_gas_vlist_one(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
         var lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
         if (lc < 0) { return arm64_gas_trim(ops[0]); }
+        // These take every LANE arrangement, `.1d` included, so no size mask
+        // vets them. pmull's 128-bit element is not one: it would fold to
+        // size 0 in the field and transfer bytes.
+        if (arm64_gas_arr_size(lc) > 3) { return arm64_gas_trim(ops[0]); }
         var m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
         if (m.base < 0 || m.off != 0 || m.off_reg >= 0) { return arm64_gas_trim(ops[1]); }
         return "";
@@ -2966,6 +3012,8 @@ function arm64_gas_bad_across(mnem: string, ops: string[]): string {
 // is part of the opcode, so a non-zero one has no field to go in and would
 // assemble as the zero form.
 function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
+    var pmbad: string = arm64_gas_bad_pmull(mnem, ops);
+    if (pmbad != "-") { return pmbad; }
     var nwbad: string = arm64_gas_bad_narrowwide(mnem, ops);
     if (nwbad != "-") { return nwbad; }
     var fpbad: string = arm64_gas_bad_vecfp(mnem, ops);
@@ -2998,6 +3046,34 @@ function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
     }
     if (is_czero && arm64_gas_imm(ops[2]) != 0) { return mnem + ":imm"; }
     if (!arm64_gas_arr_allowed(arm64_vec_entry_sizes(entry), code)) { return mnem + ":arr"; }
+    return "";
+}
+
+// arm64_gas_bad_pmull vets the polynomial multiply-long, answering "-" for
+// anything else so the caller can tell "clean" from "not mine".
+//
+// The `2` in the mnemonic IS the Q bit, and both forms write a full-width
+// destination, so — unlike xtn2 or uxtl2 — nothing in the operands repeats
+// it. A source arrangement disagreeing with the mnemonic is therefore a
+// valid word for the OTHER instruction, and the sizes between byte and
+// doubleword encode nothing at all.
+function arm64_gas_bad_pmull(mnem: string, ops: string[]): string {
+    var e: i32 = arm64_vpolylong_entry(mnem);
+    if (e < 0) { return "-"; }
+    if (ops.len() != 3) { return mnem + ":arity"; }
+    var i: i32 = 0;
+    while (i < 3) {
+        if (arm64_gas_vreg_any(ops[i]) < 0) { return arm64_gas_trim(ops[i]); }
+        i = i + 1;
+    }
+    var sc: i32 = arm64_gas_vreg_arrof(ops[1]);
+    if (arm64_gas_vreg_arrof(ops[2]) != sc) { return mnem + ":arr"; }
+    var size: i32 = arm64_gas_arr_size(sc);
+    if (size != 0 && size != 3) { return mnem + ":arr"; }
+    if (arm64_gas_arr_q(sc) != (arm64_vec_entry_sizes(e) == 1)) { return mnem + ":arr"; }
+    // One element size up, always full width: .8b/.16b into .8h, .1d/.2d
+    // into .1q.
+    if (arm64_gas_vreg_arrof(ops[0]) != (size + 1) * 2 + 1) { return mnem + ":arr"; }
     return "";
 }
 

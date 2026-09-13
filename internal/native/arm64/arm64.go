@@ -636,6 +636,16 @@ func Vec2Misc(rd, rn, opcode, size uint32, q, u bool) uint32 {
 		((opcode & 0x1F) << 12) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// Vec3Diff encodes the three-register-DIFFERENT class: the widening ops,
+// whose result elements are one size up from their sources, so the opcode
+// field is four bits rather than five and bits 11:10 are zero.
+// Encoding: 0 Q U 01110 size 1 Rm opcode 00 Rn Rd =
+// 0x0E200000 | Q<<30 | U<<29 | size<<22 | Rm<<16 | opcode<<12 | Rn<<5 | Rd.
+func Vec3Diff(rd, rn, rm, opcode, size uint32, q, u bool) uint32 {
+	return 0x0E200000 | qbit(q) | ubit(u) | ((size & 3) << 22) | ((rm & regMask) << 16) |
+		((opcode & 0xF) << 12) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // VecAcross encodes the across-lanes class (addv, s/u min/max-v, the
 // widening s/uaddlv): a horizontal reduction into a scalar register.
 // Encoding: 0 Q U 01110 size 11000 opcode 10 Rn Rd =

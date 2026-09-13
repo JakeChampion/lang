@@ -1171,6 +1171,12 @@ register allocation — and not a missing instruction. uutils' 9.8 ms is
 0.06 ns a byte, which only the carry-less fold reaches, and THAT is the
 column the `pclmulqdq` / `pmull` encodings would be for.
 
+Both encodings now exist in all four assemblers (#9128), so the fold is no
+longer blocked below the IR. The kernel itself still has to be written, and
+the two targets are not symmetric: `pclmulqdq` is inside the Haswell
+baseline, while arm64's `.1q` `pmull` is FEAT_PMULL rather than base Advanced
+SIMD — see the baseline table in `docs/BACKEND-PARITY.md`.
+
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
 

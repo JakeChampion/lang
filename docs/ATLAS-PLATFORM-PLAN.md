@@ -531,6 +531,27 @@ assembler for every target you are about to emit a vector kernel on, and land
 the encodings first** — which the arm64 and wasm kernels did, and the x86-64
 one did not.
 
+**The carry-less multiply was the next round of the same rule**, and this time
+the survey came first: no assembler in the tree could encode `pclmulqdq` or
+`pmull`, so the CRC folding kernel (#9128, the second half of #9056) was
+blocked below the IR rather than inside it. All four assemblers gained the
+encodings as their own PR ahead of any kernel — x86-64's `pclmulqdq` as one
+more row of the `66 0F 3A` table both sides already share, arm64's
+`pmull`/`pmull2` as a new three-register-DIFFERENT class, each pinned against
+its external oracle and swept by the fuzz lanes.
+
+Its finding is a BASELINE one rather than an encoding one, and it inverts the
+issue's premise. `pclmulqdq` is Westmere-and-later, inside the declared
+Haswell baseline, so the x86-64 half needs nothing. arm64's `.1q` form —
+the 64x64 multiply folding actually needs, as against the `.8h` byte form — is
+**FEAT_PMULL, an optional extension, not base Advanced SIMD**: both oracles
+refuse it without `-march=armv8-a+aes`, and Raspberry Pi 4 is a declared target
+without it. So the two targets are not symmetric, and the arm64 kernel needs a
+HWCAP_PMULL decision that the x86-64 one does not. The assemblers encode it
+unconditionally regardless — one that cannot spell an instruction cannot be
+told to gate it — and `docs/BACKEND-PARITY.md`'s baseline table carries the
+rule.
+
 The wasm gap also has a sharper failure mode than the native two, worth
 recording because it shaped that PR's tests. Vector sub-opcodes are uleb128,
 and the space is dense: encode `i16x8.bitmask` (132) as a raw byte and you get

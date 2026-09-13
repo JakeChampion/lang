@@ -57,7 +57,22 @@ func fam(name string, drop ...string) []string {
 type a64Form struct {
 	name  string
 	multi bool
-	gen   func(r *rand.Rand, i int) string
+	// arch is a `.arch` directive the ORACLES need in front of the batch,
+	// empty for the plain ARMv8-A baseline they both default to. Our
+	// assembler never sees it: it encodes every mnemonic in its vocabulary
+	// unconditionally, and gating which of them a code generator may reach
+	// for is not the assembler's job.
+	arch string
+	gen  func(r *rand.Rand, i int) string
+}
+
+// oracleSrc is a batch as the external assemblers must read it. `.arch`
+// emits no bytes, so the encoding count still matches the unit count.
+func (f a64Form) oracleSrc(src string) string {
+	if f.arch == "" {
+		return src
+	}
+	return "\t.arch " + f.arch + "\n" + src
 }
 
 func a64FuzzCases() int {
@@ -966,6 +981,26 @@ func a64Forms() []a64Form {
 			mnem := a64pick(r, []string{"sshr", "ushr", "sri"})
 			return fmt.Sprintf("\t%s %s.%s, %s.%s, #%d\n", mnem, vr(r), a.spell, vr(r), a.spell, 1+r.Intn(a.elem))
 		}},
+		{name: "neon_pmull", arch: "armv8-a+aes", gen: func(r *rand.Rand, _ int) string {
+			// The carry-less multiply-long. Two source sizes exist and the
+			// `2` in the mnemonic IS the Q bit, so the four (mnemonic,
+			// arrangement) pairs are the whole space and each neighbouring
+			// pair differs by one encoded bit.
+			//
+			// `.1q` is FEAT_PMULL rather than base Advanced SIMD, which is
+			// what the form's `.arch` is for: both oracles refuse it at the
+			// plain ARMv8-A they default to.
+			src, dst := "8b", "8h"
+			mnem := "pmull"
+			if r.Intn(2) == 0 {
+				src, dst = "1d", "1q"
+			}
+			if r.Intn(2) == 0 {
+				mnem = "pmull2"
+				src = map[string]string{"8b": "16b", "1d": "2d"}[src]
+			}
+			return fmt.Sprintf("\t%s %s.%s, %s.%s, %s.%s\n", mnem, vr(r), dst, vr(r), src, vr(r), src)
+		}},
 		{name: "neon_permute", gen: func(r *rand.Rand, _ int) string {
 			return v3same(r, a64pick(r, []string{"zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"}),
 				a64arr(r, a64ArrFull))
@@ -1083,7 +1118,7 @@ func TestFuzzEncodingsAgainstGNUAs(t *testing.T) {
 				}
 				t.Fatalf("Assemble: %v", err)
 			}
-			want := gnuAsText(t, as, objcopy, src)
+			want := gnuAsText(t, as, objcopy, f.oracleSrc(src))
 			if !bytes.Equal(got, want) {
 				a64Minimize(t, f, units, as, objcopy, seed)
 			}
@@ -1098,7 +1133,7 @@ func a64Minimize(t *testing.T, f a64Form, units []string, as, objcopy string, se
 		if err != nil {
 			t.Fatalf("unit stopped assembling alone:\n%s error: %v", u, err)
 		}
-		want := gnuAsText(t, as, objcopy, u)
+		want := gnuAsText(t, as, objcopy, f.oracleSrc(u))
 		if !bytes.Equal(got, want) {
 			t.Fatalf("encoding differs from aarch64-linux-gnu-as (seed %d, form %s) — pin as:\n"+
 				"source:\n%s ours: % x\n gas:  % x", seed, f.name, u, got, want)

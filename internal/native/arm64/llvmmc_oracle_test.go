@@ -88,7 +88,7 @@ func TestEncodingsAgainstLLVMMC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Assemble: %v", err)
 			}
-			encs := a64LLVMMCEncode(t, mc, src, len(units))
+			encs := a64LLVMMCEncode(t, mc, f.oracleSrc(src), len(units))
 			want := bytes.Join(encs, nil)
 			if !bytes.Equal(got, want) {
 				a64MinimizeLLVM(t, f, units, encs, seed)
@@ -113,7 +113,7 @@ func a64MinimizeLLVM(t *testing.T, f a64Form, units []string, encs [][]byte, see
 		if !bytes.Equal(got, encs[i]) {
 			gasBytes := "(cross binutils not available)"
 			if as != "" {
-				gasBytes = fmt.Sprintf("% x", gnuAsText(t, as, objcopy, u))
+				gasBytes = fmt.Sprintf("% x", gnuAsText(t, as, objcopy, f.oracleSrc(u)))
 			}
 			t.Fatalf("encoding differs from llvm-mc (seed %d, form %s) — pin as:\n"+
 				"source:\n%s ours:    % x\n llvm-mc: % x\n gas:     %s", seed, f.name, u, got, encs[i], gasBytes)

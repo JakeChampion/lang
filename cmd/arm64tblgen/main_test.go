@@ -92,6 +92,7 @@ func TestGoAssemblerAcceptsEveryRow(t *testing.T) {
 		"arm64_vpermute_opc":     "%s v0.16b, v1.16b, v2.16b",
 		"arm64_across_entry":     "%s b0, v1.16b",
 		"arm64_pairlong_entry":   "%s v0.8h, v1.16b",
+		"arm64_vpolylong_entry":  "%s v0.8h, v1.8b, v2.8b",
 	}
 	for _, tbl := range arm64tbl.VecTables {
 		form, ok := forms[tbl.FernFn]
@@ -107,6 +108,9 @@ func TestGoAssemblerAcceptsEveryRow(t *testing.T) {
 			probe := strings.Replace(form, "%s", o.Mnemonic, 1)
 			if tbl.FernFn == "arm64_across_entry" && o.Bool() {
 				probe = o.Mnemonic + " h0, v1.16b" // widening: one class up
+			}
+			if tbl.FernFn == "arm64_vpolylong_entry" && o.Bool() {
+				probe = o.Mnemonic + " v0.8h, v1.16b, v2.16b" // the `2` is the Q bit
 			}
 			if _, _, err := arm64.AssembleProgram(".text\n"+probe+"\n", 0x400000); err != nil {
 				t.Errorf("%q: %v", probe, err)

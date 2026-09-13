@@ -1134,7 +1134,9 @@ type vecArr struct {
 }
 
 func (t vecArr) String() string {
-	names := [4][2]string{{"8b", "16b"}, {"4h", "8h"}, {"2s", "4s"}, {"1d", "2d"}}
+	// Size 4 is the 128-bit element pmull writes. It is one lane either way,
+	// so both columns spell it the same.
+	names := [5][2]string{{"8b", "16b"}, {"4h", "8h"}, {"2s", "4s"}, {"1d", "2d"}, {"1q", "1q"}}
 	if t.q {
 		return names[t.size][1]
 	}
@@ -1144,11 +1146,17 @@ func (t vecArr) String() string {
 // esize is the element width in bits.
 func (t vecArr) esize() int64 { return 8 << t.size }
 
+// vecArrNames is every arrangement either assembler parses. `1q` is the odd
+// one: a single 128-bit element, one size above `.2d`, which exists only as
+// pmull's destination. It carries a size the encoding's two-bit field cannot
+// hold, so no class mask reaches it and checkArr refuses it everywhere;
+// asmVecPolyLong is the one encoder that names it directly.
 var vecArrNames = map[string]vecArr{
 	"8b": {0, false}, "16b": {0, true},
 	"4h": {1, false}, "8h": {1, true},
 	"2s": {2, false}, "4s": {2, true},
 	"1d": {3, false}, "2d": {3, true},
+	"1q": {4, true},
 }
 
 // parseVecArr parses a `vN.<arr>` vector operand. `.1d` parses — ld1/st1
@@ -1373,6 +1381,9 @@ func asmVecClass(a *Assembler, mnem string, ops []string) (handled bool, err err
 	}
 	if _, ok := vecPairwiseLongOps[mnem]; ok {
 		return true, asmVecPairwiseLong(a, mnem, ops)
+	}
+	if _, ok := vecPolyLongOps[mnem]; ok {
+		return true, asmVecPolyLong(a, mnem, ops)
 	}
 	return false, nil
 }
@@ -1877,6 +1888,47 @@ func asmVecPairwiseLong(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
+// The polynomial multiply-long; the flag is the high half (the `2`).
+var vecPolyLongOps = vecTableUOFlag(arm64tbl.VecPolyLong)
+
+// asmVecPolyLong assembles pmull/pmull2, the carry-less multiply-long. Two
+// source sizes exist and nothing between them: .8b/.16b multiply into a .8h,
+// and .1d/.2d into the single 128-bit element spelled `.1q`.
+//
+// Which half of the sources is read comes from the MNEMONIC, not the
+// operands — both forms write a full-width destination, so unlike xtn2 or
+// uxtl2 there is no narrow side whose Q bit could say it. That makes
+// `pmull v0.8h, v1.16b, v2.16b` the failure to reject: the arrangement is
+// real, the mnemonic is real, and the word it would encode is the OTHER
+// instruction.
+func asmVecPolyLong(a *Assembler, mnem string, ops []string) error {
+	e := vecPolyLongOps[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<Ta>, Vn.<Tb>, Vm.<Tb>", mnem)
+	}
+	rd, td, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	src, tn, err := parseVecArrN(mnem, ops[1:], 2)
+	if err != nil {
+		return err
+	}
+	if tn.size != 0 && tn.size != 3 {
+		return fmt.Errorf("%s does not support the .%s arrangement", mnem, tn)
+	}
+	if tn.q != e.flag {
+		return fmt.Errorf("%s takes the .%s sources, not .%s", mnem, vecArr{tn.size, e.flag}, tn)
+	}
+	// One element size up, always full width: .8b/.16b into .8h, .1d/.2d
+	// into the single 128-bit element.
+	if want := (vecArr{tn.size + 1, true}); td != want {
+		return fmt.Errorf("%s destination of .%s sources must be .%s, not .%s", mnem, tn, want, td)
+	}
+	a.Emit(Vec3Diff(rd, src[0], src[1], e.opcode, tn.size, tn.q, e.u))
+	return nil
+}
+
 var vecAcrossOps = vecTableUOFlag(arm64tbl.VecAcross)
 
 // asmVecAcross handles the across-lanes reductions (`addv Bd, Vn.16b`, the
@@ -2079,6 +2131,13 @@ func parseVecList(mnem, op string) ([]uint32, vecArr, error) {
 		r, ti, err := parseVecArr(p)
 		if err != nil {
 			return nil, t, err
+		}
+		// The structure loads take every LANE arrangement, `.1d` included,
+		// which is why they do not go through checkArr. pmull's 128-bit
+		// element is not one of them: it would fold to size 0 in the field
+		// and load bytes.
+		if ti.size > 3 {
+			return nil, t, fmt.Errorf("%s does not take the .%s arrangement", mnem, ti)
 		}
 		if i == 0 {
 			t = ti

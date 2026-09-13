@@ -688,13 +688,20 @@ func x86Forms() []asmForm {
 			}
 		}},
 		{name: "sse_imm8", gen: func(r *rand.Rand, _ int) string {
-			switch r.Intn(3) {
+			switch r.Intn(4) {
 			case 0:
 				return nl(fmt.Sprintf("%s %s, %s, %d", pick(r, []string{"roundsd", "roundss"}), pickXmm(r), pickXmm(r), r.Intn(12)))
 			case 1:
 				return nl(fmt.Sprintf("%s %s, %s, %d", pick(r, []string{"pshufd", "shufps", "shufpd"}), pickXmm(r), pickXmm(r), r.Intn(256)))
-			default:
+			case 2:
 				return nl(fmt.Sprintf("%s %s, %s, %d", pick(r, []string{"pcmpistri", "pcmpestri"}), pickXmm(r), pickXmm(r), r.Intn(64)))
+			default:
+				// pclmulqdq reads only bits 0 and 4 of the immediate, and gas
+				// prints each of those four combinations under a different
+				// alias name — but every other bit is still encoded verbatim,
+				// so the whole byte is swept rather than the four canonical
+				// values.
+				return nl(fmt.Sprintf("pclmulqdq %s, %s, %d", pickXmm(r), pickXmm(r), r.Intn(256)))
 			}
 		}},
 		{name: "sse_mask", gen: func(r *rand.Rand, _ int) string {

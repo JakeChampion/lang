@@ -62,6 +62,20 @@ instead of crashing.
 Anything above these baselines (AVX2, BMI2, …) needs runtime dispatch first;
 none of it is used today.
 
+**The two assemblers encode more than the baselines cover, on purpose.** An
+assembler that cannot spell an instruction cannot be told to gate it, so both
+the Go and the self-host assemblers accept every mnemonic in `x86tbl` /
+`arm64tbl` unconditionally; what a *code generator* may reach for is the
+baseline's question, not theirs. One row is currently on the far side of that
+line: arm64 `pmull` / `pmull2` in the `.1q` form — the 64x64 carry-less
+multiply CRC folding needs (#9128) — is FEAT_PMULL, an optional extension, not
+base Advanced SIMD. `aarch64-linux-gnu-as` refuses it without
+`-march=armv8-a+aes`, and Raspberry Pi 4 is a declared target that lacks it.
+The `.8h` byte form of the same mnemonics is base Advanced SIMD and needs
+nothing. x86-64's `pclmulqdq` is Westmere-and-later, inside the Haswell
+baseline, so it needs nothing either — the asymmetry is real and only the
+arm64 side of a folding kernel needs a HWCAP_PMULL decision.
+
 Wasm is the broadest because it was where Map / State / file I/O / preview2
 HTTP landed first. The native backends have caught up on the edge-handler
 critical path (`function handle(req): resp` → HTTP/1.1 server). Everything
