@@ -35,10 +35,12 @@
 //    every value fits a 64-bit integer once scaled by 10^P, and the long
 //    double holds those integers exactly, the whole sequence is integer
 //    arithmetic and the terms are the same bytes engine 2 would print, so
-//    `seq 1 1000000` runs without touching a float or allocating per
-//    number.
+//    `seq -w 1 1000000` runs without touching a float.
 //
-// Engines 1 and 3 emit digits straight into the output block.
+// Engines 1 and 3 count in decimal digits (`digit_seq`), and a step
+// that divides 1000 is written by the block: a template of one block's
+// terms in which only the leading digits are patched from block to
+// block, so `seq 1 1000000` costs about one byte store per term.
 //
 // The long double is the TARGET's, and it is not one format: x87 80-bit
 // extended on x86-64, IEEE binary128 on arm64 and wasm32, binary64 on
@@ -494,15 +496,16 @@ function read_number(s: string, i: i32): (i64, i32) {
 
 // ---- buffered output -------------------------------------------------------
 //
-// One fixed byte array, filled in place and handed to the writer a block
-// at a time. Growing an array per digit is what an earlier draft did and
-// it cost more than the arithmetic: `seq 1 1000000` spent its time in
-// the buffer rather than in the numbers.
+// The digit engines push each term's pieces straight into the writer's
+// builder and settle it between terms, so a term is never split across
+// a failed write; a block of templated terms is handed to the writer
+// whole.
 //
-// `n` is how much of `buf` is used. A term is reserved before it is
-// written, so it lands whole and the block is drained afterwards rather
-// than split; a term longer than the whole buffer — the least subnormal
-// in `%f` runs to thousands of decimals — grows it.
+// The long double engine fills one fixed byte array in place instead,
+// a `Block` with `n` the bytes used. A term is reserved before it is
+// written, so it lands whole and the block is drained afterwards; a
+// term longer than the whole buffer — the least subnormal in `%f` runs
+// to thousands of decimals — grows it.
 struct Block { buf: u8[], n: i32 }
 
 // Room past the block threshold for the term that crosses it.
@@ -510,22 +513,27 @@ function slack_bytes(): i32 {
   return 4096;
 }
 
-// `reserve(b, k)` — room for a term of `k` bytes. The block is drained
-// between terms, so the only case left here is a term longer than the
-// buffer itself — the least subnormal in `%f` runs to thousands of
-// decimals — which widens it.
+// `put_bytes(o, buf, n)` — hand `buf[0:n]` to the writer; dies on the
+// first failed write.
+function put_bytes(o: io_buffered.BufWriter, buf: u8[], n: i32): io_buffered.BufWriter {
+  if (n == 0) {
+    return o;
+  }
+  return gnu.put(o, slice_unchecked(string_from_bytes_unchecked(buf), 0, n));
+}
+
+// `reserve(b, k)` — room for a term of `k` bytes.
 function reserve(b: Block, k: i32): Block {
   if (b.n + k <= b.buf.len()) {
     return b;
   }
   var wider: u8[] = __alloc_u8(b.n + k + slack_bytes());
   var i: i32 = 0;
-  var out: Block = Block { buf: wider, n: b.n };
   while (i < b.n) {
-    out = Block { ...out, buf: out.buf.with(i, b.buf[i]) };
+    wider = wider.with(i, b.buf[i]);
     i = i + 1;
   }
-  return out;
+  return Block { buf: wider, n: b.n };
 }
 
 function block_new(): Block {
@@ -552,8 +560,7 @@ function push_str(b: Block, s: string): Block {
 //
 // The writer is a separate value rather than a field: a BufWriter holds
 // a string, so keeping one inside the block would put a refcounted field
-// in every `Block { ...b, … }` the digit loops build, and those run per
-// byte.
+// in every `Block { ...b, … }` the long double engine builds.
 function drain(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
   if (b.n < block_bytes()) {
     return (o, b);
@@ -562,11 +569,7 @@ function drain(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Bloc
 }
 
 function flush_block(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
-  if (b.n == 0) {
-    return (o, b);
-  }
-  var w: io_buffered.BufWriter = gnu.put(o, slice_unchecked(string_from_bytes_unchecked(b.buf), 0, b.n) + "");
-  return (w, Block { ...b, n: 0 });
+  return (put_bytes(o, b.buf, b.n), Block { ...b, n: 0 });
 }
 
 // A sequence that printed anything ends with a newline, whatever the
@@ -583,134 +586,148 @@ function block_finish(o: io_buffered.BufWriter, b: Block): void {
   gnu.finish(flush_block(o, b).0);
 }
 
-// `push_u64(b, v)` — `v`'s digits, counted first and then filled in from
-// the least significant end, so nothing is written twice.
-function push_u64(b: Block, v: u64): Block {
-  var digits: i32 = u64_digits(v);
-  var out: Block = reserve(b, digits);
-  var base: i32 = out.n;
-  var i: i32 = base + digits;
-  var x: u64 = v;
-  // The buffer is only ever touched as `out.buf.with(...)` inside a
-  // struct literal: reading it into a local would share it with the
-  // field and copy the whole block on every byte.
-  while (i > base) {
-    i = i - 1;
-    out = Block { ...out, buf: out.buf.with(i, (48 + (x % (10 as u64)) as i32) as u8) };
-    x = x / (10 as u64);
-  }
-  return Block { ...out, n: base + digits };
-}
+// ---- decimal counters ------------------------------------------------------
+//
+// A magnitude as ASCII digits, most significant first, no leading zeros;
+// zero is the one digit `0`. Stepping it is a carry from the low end,
+// in place, which touches 1.1 digits per unit step on average.
 
-function u64_digits(v: u64): i32 {
+// `digits_of(v)` — `v` as digits.
+function digits_of(v: u64): u8[] {
   var n: i32 = 1;
   var x: u64 = v;
   while (x >= 10 as u64) {
     n = n + 1;
     x = x / (10 as u64);
   }
-  return n;
-}
-
-// ---- the exact decimal engine ----------------------------------------------
-//
-// Operands that are plain digit runs, counted in decimal rather than in
-// long double. Values inside u64 are counted there; beyond it the digits
-// themselves are the accumulator.
-// `bound` empty means no upper bound at all, which is what an infinite
-// LAST asks for.
-function seq_fast(o: io_buffered.BufWriter, b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): (io_buffered.BufWriter, Block) {
-  match (bound) {
-    Some(hi) => {
-      if (cmp_digits(first, hi) > 0) {
-        return (o, b);
-      }
-      match (digits_to_u64(hi)) {
-        Some(hi64) => {
-          match (digits_to_u64(first)) {
-            Some(lo64) => {
-              return fast_u64(o, b, lo64, step, hi64, sep);
-            },
-            None => {}
-          }
-        },
-        None => {}
-      }
-      return fast_digits(o, b, first, step, Some(hi), sep);
-    },
-    None => {
-      return fast_digits(o, b, first, step, None, sep);
-    }
+  var d: u8[] = __alloc_u8(n);
+  var i: i32 = n;
+  x = v;
+  while (i > 0) {
+    i = i - 1;
+    d = d.with(i, (48 + (x % (10 as u64)) as i32) as u8);
+    x = x / (10 as u64);
   }
+  return d;
 }
 
-function fast_digits(o: io_buffered.BufWriter, b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): (io_buffered.BufWriter, Block) {
-  var w: io_buffered.BufWriter = o;
-  var out: Block = b;
-  var cur: u8[] = first;
-  var written: boolean = false;
-  while (in_bound(cur, bound)) {
-    if (written) {
-      out = push_str(out, sep);
-    }
-    out = push_digits(out, cur);
-    var d: (io_buffered.BufWriter, Block) = drain(w, out);
-    w = d.0;
-    out = d.1;
-    written = true;
-    cur = add_u64(cur, step);
+function abs_i64(v: i64): u64 {
+  if (v < 0 as i64) {
+    return 0 as u64 - v as u64;
   }
-  return (w, terminate(out, written));
+  return v as u64;
 }
 
-function in_bound(cur: u8[], bound: Option[u8[]]): boolean {
-  match (bound) {
-    Some(hi) => {
-      return cmp_digits(cur, hi) <= 0;
-    },
-    None => {
-      return true;
+// `add_digits(d, n)` — `d + n`, carried in place from the low end. A
+// carry out of the top digit widens it.
+function add_digits(own d: u8[], n: u64): u8[] {
+  var carry: u64 = n;
+  var i: i32 = d.len() - 1;
+  while (i >= 0 && carry > 0 as u64) {
+    var lo: u64 = carry;
+    var hi: u64 = 0 as u64;
+    if (carry >= 10 as u64) {
+      lo = carry % (10 as u64);
+      hi = carry / (10 as u64);
     }
+    var sum: u64 = (d[i] as i32 - 48) as u64 + lo;
+    carry = hi;
+    if (sum >= 10 as u64) {
+      sum = sum - 10 as u64;
+      carry = carry + 1 as u64;
+    }
+    d = d.with(i, (48 + sum as i32) as u8);
+    i = i - 1;
   }
-}
-
-function fast_u64(o: io_buffered.BufWriter, b: Block, first: u64, step: u64, last: u64, sep: string): (io_buffered.BufWriter, Block) {
-  var w: io_buffered.BufWriter = o;
-  var out: Block = b;
-  var x: u64 = first;
-  var written: boolean = false;
-  while (x <= last) {
-    if (written) {
-      out = push_str(out, sep);
-    }
-    out = push_u64(out, x);
-    if (out.n >= block_bytes()) {
-      var d: (io_buffered.BufWriter, Block) = flush_block(w, out);
-      w = d.0;
-      out = d.1;
-    }
-    written = true;
-    if (last - x < step) {
-      break;
-    }
-    x = x + step;
+  if (carry == 0 as u64) {
+    return d;
   }
-  return (w, terminate(out, written));
+  return concat_digits(digits_of(carry), d);
 }
 
-// A digit string with its leading zeros dropped, as a byte array of
-// values 0-9 most significant first; zero is one 0.
-function trim_zeros(s: string): u8[] {
+// `sub_digits(d, n)` — `d - n` for `d >= n`, borrowed in place from the
+// low end. Leading zeros the subtraction leaves are dropped.
+function sub_digits(own d: u8[], n: u64): u8[] {
+  var borrow: u64 = n;
+  var i: i32 = d.len() - 1;
+  while (i >= 0 && borrow > 0 as u64) {
+    var lo: u64 = borrow;
+    var hi: u64 = 0 as u64;
+    if (borrow >= 10 as u64) {
+      lo = borrow % (10 as u64);
+      hi = borrow / (10 as u64);
+    }
+    var digit: u64 = (d[i] as i32 - 48) as u64;
+    borrow = hi;
+    if (digit < lo) {
+      digit = digit + 10 as u64 - lo;
+      borrow = borrow + 1 as u64;
+    } else {
+      digit = digit - lo;
+    }
+    d = d.with(i, (48 + digit as i32) as u8);
+    i = i - 1;
+  }
+  var z: i32 = 0;
+  while (z + 1 < d.len() && d[z] as i32 == 48) {
+    z = z + 1;
+  }
+  if (z == 0) {
+    return d;
+  }
+  return slice_digits(d, z, d.len());
+}
+
+function concat_digits(a: u8[], b: u8[]): u8[] {
+  var out: u8[] = __alloc_u8(a.len() + b.len());
   var i: i32 = 0;
-  while (i + 1 < s.len() && s[i] as i32 == 48) {
+  while (i < a.len()) {
+    var v: u8 = a[i];
+    out = out.with(i, v);
     i = i + 1;
   }
-  var out: u8[] = [];
-  while (i < s.len()) {
-    out = out.append((s[i] as i32 - 48) as u8);
+  var j: i32 = 0;
+  while (j < b.len()) {
+    var v: u8 = b[j];
+    out = out.with(i + j, v);
+    j = j + 1;
+  }
+  return out;
+}
+
+function slice_digits(d: u8[], from: i32, to: i32): u8[] {
+  var out: u8[] = __alloc_u8(to - from);
+  var i: i32 = from;
+  while (i < to) {
+    var v: u8 = d[i];
+    out = out.with(i - from, v);
     i = i + 1;
   }
   return out;
+}
+
+function zero_digits(n: i32): u8[] {
+  var out: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, 48 as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `inc_fixed(d)` — `d + 1` at a fixed width: all nines wrap to all zeros.
+function inc_fixed(own d: u8[]): u8[] {
+  var i: i32 = d.len() - 1;
+  while (i >= 0) {
+    var v: i32 = d[i] as i32 + 1;
+    if (v <= 57) {
+      return d.with(i, v as u8);
+    }
+    d = d.with(i, 48 as u8);
+    i = i - 1;
+  }
+  return d;
 }
 
 function cmp_digits(a: u8[], b: u8[]): i32 {
@@ -733,6 +750,21 @@ function cmp_digits(a: u8[], b: u8[]): i32 {
   return 0;
 }
 
+// A digit string with its leading zeros dropped; zero is one `0`.
+function trim_zeros(s: string): u8[] {
+  var i: i32 = 0;
+  while (i + 1 < s.len() && s[i] as i32 == 48) {
+    i = i + 1;
+  }
+  var out: u8[] = __alloc_u8(s.len() - i);
+  var j: i32 = i;
+  while (j < s.len()) {
+    out = out.with(j - i, s[j]);
+    j = j + 1;
+  }
+  return out;
+}
+
 function digits_to_u64(d: u8[]): Option[u64] {
   if (d.len() > 19) {
     return None;
@@ -740,52 +772,390 @@ function digits_to_u64(d: u8[]): Option[u64] {
   var v: u64 = 0 as u64;
   var i: i32 = 0;
   while (i < d.len()) {
-    v = v * (10 as u64) + d[i] as u64;
+    v = v * (10 as u64) + (d[i] as i32 - 48) as u64;
     i = i + 1;
   }
   return Some(v);
 }
 
-// `add_u64(d, n)` — the digit string plus `n`, carrying from the bottom.
-function add_u64(d: u8[], n: u64): u8[] {
-  var out: u8[] = d;
-  var carry: u64 = n;
-  var i: i32 = out.len() - 1;
-  while (i >= 0 && carry > 0 as u64) {
-    var sum: u64 = out[i] as u64 + carry % (10 as u64);
-    carry = carry / (10 as u64);
-    if (sum >= 10 as u64) {
-      sum = sum - 10 as u64;
-      carry = carry + 1 as u64;
+// ---- fixed-point terms -----------------------------------------------------
+//
+// One term as `%0<width>.<prec>Lf` prints it: the magnitude's digits with
+// the point `prec` places from the right, zero-extended leftwards to
+// reach the point and then to `width`, after the sign. The digit engine
+// is the case `prec` 0, `width` 0.
+
+// How many digits the term prints, padding included, for a non-negative
+// magnitude of `mag_len` digits.
+function fixed_digits(mag_len: i32, prec: i32, width: i32): i32 {
+  var digits: i32 = mag_len;
+  if (digits < prec + 1) {
+    digits = prec + 1;
+  }
+  var room: i32 = width;
+  if (prec > 0) {
+    room = room - 1;
+  }
+  if (digits < room) {
+    digits = room;
+  }
+  return digits;
+}
+
+// The byte offset within a term of digit `i` (from the left, of `digits`
+// in all): past the point once the fraction starts.
+function digit_col(i: i32, digits: i32, prec: i32): i32 {
+  if (prec > 0 && i >= digits - prec) {
+    return i + 1;
+  }
+  return i;
+}
+
+// `emit_fixed(h, mag, neg, prec, width)` — the term, pushed into the
+// builder `h` as at most five pieces: sign, leading zeros and digits
+// before the point, the point, zeros and digits after it. A magnitude
+// of up to seven digits is a string without an allocation.
+function emit_fixed(h: usize, mag: u8[], neg: boolean, prec: i32, width: i32): void {
+  var w: i32 = width;
+  if (neg) {
+    buf_push_byte(h, 45);
+    w = w - 1;
+  }
+  var digits: i32 = fixed_digits(mag.len(), prec, w);
+  var zeros: i32 = digits - mag.len();
+  var head: i32 = digits - prec;
+  var s: string = string_from_bytes_unchecked(mag);
+  if (zeros >= head) {
+    push_zeros(h, head);
+  } else {
+    push_zeros(h, zeros);
+    buf_push_range(h, s, 0, head - zeros);
+  }
+  if (prec == 0) {
+    return;
+  }
+  buf_push_byte(h, 46);
+  var from: i32 = head - zeros;
+  if (from < 0) {
+    push_zeros(h, 0 - from);
+    from = 0;
+  }
+  buf_push_range(h, s, from, s.len());
+}
+
+function push_zeros(h: usize, n: i32): void {
+  var left: i32 = n;
+  while (left > 0) {
+    var c: i32 = left;
+    if (c > zeros().len()) {
+      c = zeros().len();
     }
-    out = out.with(i, sum as u8);
-    i = i - 1;
+    buf_push_range(h, zeros(), 0, c);
+    left = left - c;
   }
-  while (carry > 0 as u64) {
-    out = prepend_digit(out, (carry % (10 as u64)) as i32);
-    carry = carry / (10 as u64);
-  }
-  return out;
 }
 
-function prepend_digit(d: u8[], v: i32): u8[] {
-  var out: u8[] = d.append(0 as u8);
-  var i: i32 = out.len() - 1;
-  while (i > 0) {
-    out = out.with(i, out[i - 1]);
-    i = i - 1;
-  }
-  return out.with(0, v as u8);
+function zeros(): string {
+  return "0000000000000000000000000000000000000000000000000000000000000000";
 }
 
-function push_digits(b: Block, d: u8[]): Block {
-  var out: Block = reserve(b, d.len());
-  var i: i32 = 0;
-  while (i < d.len()) {
-    out = Block { ...out, buf: out.buf.with(out.n, (48 + d[i] as i32) as u8), n: out.n + 1 };
+// ---- the digit engine ------------------------------------------------------
+//
+// Non-negative terms counted in decimal digits, unbounded in size, at
+// any positive step. A step that divides 1000 is written by the BLOCK:
+// the terms in `[q000, q999]` all have the same low three digits from one
+// block to the next, so a template of those records — each followed by
+// the separator — serves every block, and only the digits of `q` change
+// in it. Counting `q` up in place touches 1.1 columns of the template
+// per block on average, and a block is one write(2). Terms before the
+// first block, after the last, and at any other step go one at a time.
+// `bound` empty means no upper bound at all, which is what an infinite
+// LAST asks for. `lead` says a separator precedes the first term.
+
+// The low digits a block holds fixed, and the terms they span.
+function block_digits(): i32 {
+  return 3;
+}
+
+function block_span(): i32 {
+  return 1000;
+}
+
+// Whether the block writer takes `step`: it must divide the span, and
+// leave a block at least 100 terms so a write carries its cost.
+function block_step(step: u64): boolean {
+  return step <= 10 as u64 && (block_span() as u64) % step == 0 as u64;
+}
+
+function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], prec: i32, width: i32, sep: string, lead: boolean): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o;
+  var h: usize = w.handle();
+  var cur: u8[] = first;
+  var sep_first: boolean = lead;
+  var blocked: boolean = block_step(step);
+  // The residue every term leaves modulo the step, which is the low
+  // digits of a block's first term.
+  var r: i32 = 0;
+  if (blocked) {
+    r = low_value(first) % (step as i32);
+  }
+  var qmax: Option[u8[]] = block_bound(bound, r);
+  var hi: u8[] = zero_digits(1);
+  var bounded: boolean = false;
+  match (bound) {
+    Some(b) => {
+      hi = b;
+      bounded = true;
+    },
+    None => {}
+  }
+  while (!bounded || cur.len() < hi.len() || cmp_digits(cur, hi) <= 0) {
+    if (sep_first) {
+      buf_push(h, sep);
+    }
+    if (blocked && block_ok(cur, r, qmax, prec, width)) {
+      w = gnu.flush(w);
+      var b: (io_buffered.BufWriter, u8[]) = blocks(w, block_index(cur), r, step as i32, qmax, prec, width, sep);
+      w = b.0;
+      cur = b.1;
+      sep_first = false;
+      continue;
+    }
+    sep_first = true;
+    emit_fixed(h, cur, false, prec, width);
+    if (buf_len(h) >= block_bytes()) {
+      w = gnu.flush(w);
+    }
+    cur = add_digits(cur, step);
+  }
+  return w;
+}
+
+// The value of `cur`'s low digits: `cur` modulo the span.
+function low_value(cur: u8[]): i32 {
+  var i: i32 = cur.len() - block_digits();
+  if (i < 0) {
+    i = 0;
+  }
+  var v: i32 = 0;
+  while (i < cur.len()) {
+    v = v * 10 + (cur[i] as i32 - 48);
     i = i + 1;
   }
-  return out;
+  return v;
+}
+
+// The block index a block stops short of, `floor((LAST - r) / 1000)`:
+// a block is only written when the next block's first term is in
+// range, which is what lets every record end with the separator.
+function block_bound(bound: Option[u8[]], r: i32): Option[u8[]] {
+  match (bound) {
+    Some(hi) => {
+      var last: u8[] = slice_digits(hi, 0, hi.len());
+      last = sub_digits(last, r as u64);
+      return Some(block_index(last));
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// `cur` with its low digits dropped: the block it lies in.
+function block_index(cur: u8[]): u8[] {
+  if (cur.len() <= block_digits()) {
+    return zero_digits(1);
+  }
+  return slice_digits(cur, 0, cur.len() - block_digits());
+}
+
+// Whether the block starting at `cur` can be written from a template:
+// `cur` is its block's first term, the next block's first term is in
+// range, and the block's terms are all the same length — which only
+// block 0 can fail, when neither the precision nor the width reaches
+// three digits.
+function block_ok(cur: u8[], r: i32, qmax: Option[u8[]], prec: i32, width: i32): boolean {
+  if (low_value(cur) != r) {
+    return false;
+  }
+  var q: u8[] = block_index(cur);
+  if (!block_fits(q, 0, qmax)) {
+    return false;
+  }
+  if (q.len() == 1 && q[0] as i32 == 48) {
+    return fixed_digits(1, prec, width) == fixed_digits(block_digits(), prec, width);
+  }
+  return true;
+}
+
+// Whether block `q[z:]` — `q` read past `z` leading zeros — lies below
+// `qmax`.
+function block_fits(q: u8[], z: i32, qmax: Option[u8[]]): boolean {
+  match (qmax) {
+    Some(hi) => {
+      var len: i32 = q.len() - z;
+      if (len != hi.len()) {
+        return len < hi.len();
+      }
+      var i: i32 = 0;
+      while (i < len) {
+        if (q[z + i] != hi[i]) {
+          return q[z + i] < hi[i];
+        }
+        i = i + 1;
+      }
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
+}
+
+// `blocks(o, q, r, step, qmax, prec, width, sep)` — every block from `q`
+// up to the bound, and the digits of the term that follows the last.
+//
+// The template's `prefix` is `q` zero-padded to the digits the term
+// leaves in front of the block's own three. Counting it up in place
+// carries through those zeros, so a term that gains a digit only
+// changes the template's layout — and rebuilds it — once the prefix has
+// no zero left to carry into.
+function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Option[u8[]], prec: i32, width: i32, sep: string): (io_buffered.BufWriter, u8[]) {
+  var w: io_buffered.BufWriter = o;
+  var k: i32 = block_digits();
+  var m: i32 = block_span() / step;
+  var index: u8[] = q;
+  while (true) {
+    var mag_len: i32 = index.len() + k;
+    if (index.len() == 1 && index[0] as i32 == 48) {
+      mag_len = k;
+    }
+    var digits: i32 = fixed_digits(mag_len, prec, width);
+    var p: i32 = digits - k;
+    var prefix: u8[] = pad_digits(index, p);
+    var rec: i32 = digits + sep.len();
+    if (prec > 0) {
+      rec = rec + 1;
+    }
+    var t: u8[] = template(prefix, r, step, prec, sep, rec);
+    while (true) {
+      w = gnu.put(w, string_from_bytes_unchecked(t));
+      prefix = inc_fixed(prefix);
+      // The digits that carried are now zeros; the one before them took
+      // the increment. Both are patched into every record.
+      var i: i32 = p - 1;
+      while (i >= 0 && prefix[i] as i32 == 48) {
+        t = patch(t, digit_col(i, digits, prec), rec, m, 48 as u8);
+        i = i - 1;
+      }
+      if (i < 0) {
+        break;
+      }
+      var v: u8 = prefix[i];
+      t = patch(t, digit_col(i, digits, prec), rec, m, v);
+      var z: i32 = 0;
+      while (z + 1 < p && prefix[z] as i32 == 48) {
+        z = z + 1;
+      }
+      if (!block_fits(prefix, z, qmax)) {
+        return (w, first_term(slice_digits(prefix, z, p), r));
+      }
+    }
+    index = zero_digits(p + 1).with(0, 49 as u8);
+    if (!block_fits(index, 0, qmax)) {
+      return (w, first_term(index, r));
+    }
+  }
+}
+
+// The first term of block `q`: `q000 + r`.
+function first_term(q: u8[], r: i32): u8[] {
+  var start: u8[] = concat_digits(q, zero_digits(block_digits()));
+  start = add_digits(start, r as u64);
+  return start;
+}
+
+// `q` zero-padded to `p` digits; block 0's prefix is all zeros.
+function pad_digits(q: u8[], p: i32): u8[] {
+  if (q.len() == 1 && q[0] as i32 == 48) {
+    return zero_digits(p);
+  }
+  return concat_digits(zero_digits(p - q.len()), q);
+}
+
+// `template(prefix, r, step, prec, sep, rec)` — the block's records
+// `prefix` + low digits `r`, `r + step`, … below the span, each
+// followed by `sep` and `rec` bytes long, with the point in place.
+function template(prefix: u8[], r: i32, step: i32, prec: i32, sep: string, rec: i32): u8[] {
+  var k: i32 = block_digits();
+  var p: i32 = prefix.len();
+  var digits: i32 = p + k;
+  var t: u8[] = __alloc_u8(block_span() / step * rec);
+  var pos: i32 = 0;
+  var low: i32 = r;
+  while (low < block_span()) {
+    var i: i32 = 0;
+    while (i < digits) {
+      if (prec > 0 && i == digits - prec) {
+        t = t.with(pos, 46 as u8);
+        pos = pos + 1;
+      }
+      var b: u8 = 48 as u8;
+      if (i < p) {
+        b = prefix[i];
+      } else {
+        b = (48 + low / power_of_ten(digits - 1 - i) % 10) as u8;
+      }
+      t = t.with(pos, b);
+      pos = pos + 1;
+      i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < sep.len()) {
+      var s: u8 = sep[j];
+      t = t.with(pos, s);
+      pos = pos + 1;
+      j = j + 1;
+    }
+    low = low + step;
+  }
+  return t;
+}
+
+function power_of_ten(n: i32): i32 {
+  var v: i32 = 1;
+  var i: i32 = 0;
+  while (i < n) {
+    v = v * 10;
+    i = i + 1;
+  }
+  return v;
+}
+
+// `patch(t, col, rec, m, v)` — byte `col` of each of the `m` records.
+function patch(own t: u8[], col: i32, rec: i32, m: i32, v: u8): u8[] {
+  var pos: i32 = col;
+  var i: i32 = 0;
+  while (i < m) {
+    t = t.with(pos, v);
+    pos = pos + rec;
+    i = i + 1;
+  }
+  return t;
+}
+
+// Operands that are plain digit runs, counted in decimal rather than in
+// long double.
+function seq_fast(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], sep: string): io_buffered.BufWriter {
+  match (bound) {
+    Some(hi) => {
+      if (cmp_digits(first, hi) > 0) {
+        return o;
+      }
+    },
+    None => {}
+  }
+  return gnu.put(digit_seq(o, first, step, bound, 0, 0, sep, false), "\n");
 }
 
 // ---- the long double engine ------------------------------------------------
@@ -993,7 +1363,7 @@ function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block 
       out = push_str(out, s);
     },
     None => {
-      write_overflow(o, out);
+      write_overflow(flush_block(o, out).0);
     }
   }
   return push_str(out, f.post);
@@ -1001,8 +1371,8 @@ function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block 
 
 // glibc's EOVERFLOW: a conversion whose field cannot be counted in an
 // int. Reported once, with the strerror text GNU prints.
-function write_overflow(o: io_buffered.BufWriter, b: Block): void {
-  gnu.finish(flush_block(o, b).0);
+function write_overflow(o: io_buffered.BufWriter): void {
+  gnu.finish(o);
   gnu.error("write error: Value too large for defined data type");
   exit(1);
 }
@@ -1012,7 +1382,8 @@ function write_overflow(o: io_buffered.BufWriter, b: Block): void {
 // Every value held as an integer number of 10^-P units. Exact, so the
 // sequence ends where the decimals say it ends rather than where the
 // binary approximation does, and each term is emitted as digits with a
-// point pushed in — no formatting, no allocation.
+// point pushed in — no formatting, no allocation. A unit step over
+// non-negative terms is the digit engine's block writer.
 // `scaled(arg, p, limit)` — `arg`'s value times 10^p as an integer, or
 // None when the spelling needs more than `p` fraction digits, is not a
 // plain decimal (hex, inf, nan), does not fit an i64, or lands past
@@ -1133,95 +1504,83 @@ function zero_term_neg(f: ld.Format, first: ld.LD, step: ld.LD, fi: i64, si: i64
 
 // `zero_neg` is the sign a term of zero carries, which the scaling
 // cannot hold: it is the long double's sign, not the decimal's.
-function dec_seq(o: io_buffered.BufWriter, b: Block, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, zero_neg: boolean): (io_buffered.BufWriter, Block) {
+//
+// Terms below zero — and a zero that prints as `-0` — go one at a time,
+// as does a descending sequence; an ascending run of non-negative terms
+// is the digit engine's, blocks included.
+function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, zero_neg: boolean): io_buffered.BufWriter {
   if (step > 0 as i64 && first > last || step < 0 as i64 && first < last) {
-    return (o, b);
+    return o;
   }
-  var count: i64 = (last - first) / step + 1 as i64;
+  if (step < 0 as i64) {
+    return gnu.put(dec_terms(o, first, last, step, prec, width, sep, zero_neg, false), "\n");
+  }
+  var below: i64 = 0 as i64 - 1 as i64;
+  if (zero_neg) {
+    below = 0 as i64;
+  }
   var w: io_buffered.BufWriter = o;
-  var out: Block = b;
-  var x: i64 = first;
-  var i: i64 = 0 as i64;
-  while (i < count) {
-    if (i > 0 as i64) {
-      out = push_str(out, sep);
+  var start: i64 = first;
+  var lead: boolean = false;
+  if (first <= below) {
+    var stop: i64 = below;
+    if (last < stop) {
+      stop = last;
     }
-    out = push_fixed(out, x, prec, width, zero_neg && x == 0 as i64);
-    if (out.n >= block_bytes()) {
-      var d: (io_buffered.BufWriter, Block) = flush_block(w, out);
-      w = d.0;
-      out = d.1;
-    }
-    x = x + step;
-    i = i + 1 as i64;
+    // The last term at or below `stop`.
+    stop = first + (stop - first) / step * step;
+    w = dec_terms(w, first, stop, step, prec, width, sep, zero_neg, false);
+    start = stop + step;
+    lead = true;
   }
-  return (w, terminate(out, count > 0 as i64));
+  if (start <= last) {
+    w = digit_seq(w, digits_of(start as u64), step as u64, Some(digits_of(last as u64)), prec, width, sep, lead);
+  }
+  return gnu.put(w, "\n");
 }
 
-// One scaled value as `[-]ddd[.ddd]`, zero-padded to `width` after the
-// sign — the bytes `%0<width>.<prec>Lf` would produce.
-function push_fixed(b: Block, v: i64, prec: i32, width: i32, neg_zero: boolean): Block {
-  var neg: boolean = v < 0 as i64 || neg_zero;
-  var mag: u64 = v as u64;
-  if (v < 0 as i64) {
-    mag = 0 as u64 - mag;
+// `dec_terms(o, first, last, step, …)` — every term from `first` to
+// `last`, one at a time, the magnitude stepped in place as digits. Only
+// a step across zero, where the magnitude turns around, starts over
+// from the value.
+function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, prec: i32, width: i32, sep: string, zero_neg: boolean, lead: boolean): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o;
+  var h: usize = w.handle();
+  var count: i64 = (last - first) / step + 1 as i64;
+  var x: i64 = first;
+  var mag: u8[] = digits_of(abs_i64(x));
+  var sep_first: boolean = lead;
+  var i: i64 = 0 as i64;
+  while (i < count) {
+    if (sep_first) {
+      buf_push(h, sep);
+    }
+    sep_first = true;
+    emit_fixed(h, mag, x < 0 as i64 || zero_neg && x == 0 as i64, prec, width);
+    if (buf_len(h) >= block_bytes()) {
+      w = gnu.flush(w);
+    }
+    i = i + 1 as i64;
+    if (i < count) {
+      var y: i64 = x + step;
+      mag = step_mag(mag, x, y, step);
+      x = y;
+    }
   }
-  var digits: i32 = u64_digits(mag);
-  var int_digits: i32 = digits - prec;
-  if (int_digits < 1) {
-    int_digits = 1;
+  return w;
+}
+
+// `|y|` from `|x|`, where `y` is `x + step`: added to or taken from the
+// digits in place while the sign holds, recounted once it flips.
+function step_mag(own mag: u8[], x: i64, y: i64, step: i64): u8[] {
+  var up: u64 = abs_i64(step);
+  if (x >= 0 as i64 && step > 0 as i64 || x <= 0 as i64 && step < 0 as i64) {
+    return add_digits(mag, up);
   }
-  var total: i32 = int_digits;
-  if (prec > 0) {
-    total = total + 1 + prec;
+  if (x < 0 as i64 && y <= 0 as i64 || x > 0 as i64 && y >= 0 as i64) {
+    return sub_digits(mag, up);
   }
-  if (neg) {
-    total = total + 1;
-  }
-  var room: i32 = total;
-  if (width > room) {
-    room = width;
-  }
-  var out: Block = reserve(b, room);
-  if (neg) {
-    out = push_byte(out, 45);
-  }
-  var pad: i32 = width - total;
-  while (pad > 0) {
-    out = push_byte(out, 48);
-    pad = pad - 1;
-  }
-  // The integer part, then the point, then the fraction: each run is
-  // filled from its low end, so the width is needed up front and no
-  // byte is written twice.
-  var base: i32 = out.n;
-  var span: i32 = int_digits + prec;
-  var point: i32 = base + int_digits;
-  var i: i32 = base + span;
-  if (prec > 0) {
-    i = i + 1;
-  }
-  var x: u64 = mag;
-  var k: i32 = 0;
-  while (k < prec) {
-    i = i - 1;
-    out = Block { ...out, buf: out.buf.with(i, (48 + (x % (10 as u64)) as i32) as u8) };
-    x = x / (10 as u64);
-    k = k + 1;
-  }
-  if (prec > 0) {
-    i = i - 1;
-    out = Block { ...out, buf: out.buf.with(i, 46 as u8) };
-  }
-  while (i > base) {
-    i = i - 1;
-    out = Block { ...out, buf: out.buf.with(i, (48 + (x % (10 as u64)) as i32) as u8) };
-    x = x / (10 as u64);
-  }
-  if (prec > 0) {
-    span = span + 1;
-  }
-  return Block { ...out, n: base + span };
+  return digits_of(abs_i64(y));
 }
 
 // ---- main ------------------------------------------------------------------
@@ -1421,16 +1780,14 @@ function main(): i32 {
   }
   var last: Operand = scan_arg(ldbl, last_str);
   var o: io_buffered.BufWriter = gnu.out_with(block_bytes());
-  var b: Block = block_new();
   if (!a.has_format) {
     f = default_format(ldbl, first, step, last, a.equal_width);
   } else if (fmt_overflows(f)) {
-    write_overflow(o, b);
+    write_overflow(o);
   }
   match (use_fast(a, f, first, step, last, first_str, step_str, last_str)) {
     Some(fast) => {
-      var r: (io_buffered.BufWriter, Block) = seq_fast(o, b, fast.first, fast.step, fast.bound, a.sep);
-      block_finish(r.0, r.1);
+      gnu.finish(seq_fast(o, fast.first, fast.step, fast.bound, a.sep));
       return 0;
     },
     None => {}
@@ -1445,8 +1802,7 @@ function main(): i32 {
             match (scaled(last_str, p, exact)) {
               Some(li) => {
                 var nz: boolean = zero_term_neg(ldbl, first.v, step.v, fi, si);
-                var r: (io_buffered.BufWriter, Block) = dec_seq(o, b, fi, si, li, p, f.spec.width as i32, a.sep, nz);
-                block_finish(r.0, r.1);
+                gnu.finish(dec_seq(o, fi, si, li, p, f.spec.width as i32, a.sep, nz));
                 return 0;
               },
               None => {}
@@ -1458,7 +1814,7 @@ function main(): i32 {
       None => {}
     }
   }
-  var r: (io_buffered.BufWriter, Block) = print_numbers(o, b, f, first.v, step.v, last.v, a.sep);
+  var r: (io_buffered.BufWriter, Block) = print_numbers(o, block_new(), f, first.v, step.v, last.v, a.sep);
   block_finish(r.0, r.1);
   return 0;
 }
