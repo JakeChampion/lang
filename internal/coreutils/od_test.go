@@ -146,6 +146,18 @@ func odCases(t *testing.T) []invocation {
 	raw := odFile(t, dir, "na\xffme", []byte("x\n"))
 	// Past a read block, so the elision and the offsets cross one.
 	big := odFile(t, dir, "big", []byte(strings.Repeat("0123456789abcdef", 20000)))
+	// A run of identical blocks that straddles the seam between two
+	// reads at every block width, with a lone odd byte just before it
+	// and a short block after, so the fold that carries a block across
+	// the seam is the one being compared.
+	dupBig := odFile(t, dir, "dupbig", []byte(strings.Repeat("A", 66000)+"B"+strings.Repeat("A", 66000)+"tail"))
+	// Printable runs that cross a read boundary, one NUL-terminated and
+	// one broken by a newline just past it, for -S.
+	strsBig := odFile(t, dir, "strsbig", []byte(strings.Repeat("A", 66000)+"\x00"+strings.Repeat("B", 10)+"\n"+
+		strings.Repeat("C", 5)+"\x00"+strings.Repeat("D", 65540)+"\nabc\x00"))
+	// A run -N can cut, and one that ends at EOF with no terminator.
+	runLim := odFile(t, dir, "runlim", []byte("AAAAAAAA\x00BBBB\x00"))
+	noTerm := odFile(t, dir, "noterm", []byte("AAAA"))
 
 	cases := []invocation{
 		// The default dump.
@@ -396,6 +408,111 @@ func odCases(t *testing.T) []invocation {
 		{name: "strings past ptrdiff max", args: []string{"-S", "9223372036854775808", strs}},
 		{name: "strings at uintmax", args: []string{"-S", "18446744073709551615", strs}},
 		{name: "strings past uintmax", args: []string{"-S", "18446744073709551616", strs}},
+
+		// Every integer kind and size at every width, over bytes that
+		// reach the top bit, so the sign, the zero padding, the digit
+		// grouping and the field's own blank are all pinned per size.
+		{name: "x1 at width one", args: []string{"-w1", "-t", "x1", random}},
+		{name: "x2 at width two", args: []string{"-w2", "-t", "x2", random}},
+		{name: "x4 at width four", args: []string{"-w4", "-t", "x4", random}},
+		{name: "x8 at width eight", args: []string{"-w8", "-t", "x8", random}},
+		{name: "x8 at width sixty-four", args: []string{"-w64", "-t", "x8", random}},
+		{name: "x1 at width sixty-four", args: []string{"-w64", "-t", "x1", random}},
+		{name: "o1 at width one", args: []string{"-w1", "-t", "o1", random}},
+		{name: "o2 at width two", args: []string{"-w2", "-t", "o2", random}},
+		{name: "o4 at width four", args: []string{"-w4", "-t", "o4", random}},
+		{name: "o8 at width eight", args: []string{"-w8", "-t", "o8", random}},
+		{name: "o8 at width sixty-four", args: []string{"-w64", "-t", "o8", random}},
+		{name: "o4 at width thirty-two", args: []string{"-w32", "-t", "o4", random}},
+		{name: "d1 at width one", args: []string{"-w1", "-t", "d1", random}},
+		{name: "d2 at width sixteen", args: []string{"-w16", "-t", "d2", random}},
+		{name: "d4 at width thirty-two", args: []string{"-w32", "-t", "d4", random}},
+		{name: "d8 at width sixty-four", args: []string{"-w64", "-t", "d8", random}},
+		{name: "u1 at width sixty-four", args: []string{"-w64", "-t", "u1", random}},
+		{name: "u2 at width two", args: []string{"-w2", "-t", "u2", random}},
+		{name: "u4 at width sixteen", args: []string{"-w16", "-t", "u4", random}},
+		{name: "u8 at width sixty-four", args: []string{"-w64", "-t", "u8", random}},
+		{name: "signed sizes over arbitrary bytes", args: []string{"-t", "dC", "-t", "dS", "-t", "dI", "-t", "dL", random}},
+		{name: "unsigned sizes over arbitrary bytes", args: []string{"-t", "uC", "-t", "uS", "-t", "uI", "-t", "uL", random}},
+		{name: "octal sizes over arbitrary bytes", args: []string{"-t", "oC", "-t", "oS", "-t", "oI", "-t", "oL", random}},
+		{name: "hex sizes over arbitrary bytes", args: []string{"-t", "xC", "-t", "xS", "-t", "xI", "-t", "xL", random}},
+		{name: "the extremes of every signed size", args: []string{"-t", "d1", "-t", "d2", "-t", "d4", "-t", "d8", zeros, allBytes}},
+		{name: "a at width one", args: []string{"-w1", "-t", "a", allBytes}},
+		{name: "named characters at width sixty-four", args: []string{"-w64", "-t", "a", allBytes}},
+		{name: "characters at width sixty-four", args: []string{"-w64", "-t", "c", allBytes}},
+
+		// The pad a narrower spec gets from a wider one, per kind.
+		{name: "octal padded by decimal", args: []string{"-t", "o8", "-t", "d1", random}},
+		{name: "hex padded by characters", args: []string{"-t", "x8", "-t", "c", random}},
+		{name: "decimal padded by named characters", args: []string{"-t", "d2", "-t", "a", random}},
+		{name: "one type string of two hex sizes", args: []string{"-t", "x1x8", random}},
+		{name: "one type string of two octal sizes", args: []string{"-t", "o1o8", random}},
+		{name: "padding on a short last block", args: []string{"-t", "x1", "-t", "o8", "-t", "c", short}},
+
+		// The address in each radix past its zero-padded width, which the
+		// label reaches without a two-mebibyte file: seven hex digits is
+		// an odd count, and eight decimal ones outgrow the field.
+		{name: "octal label past seven digits", args: []string{"--traditional", short, "4", "20000000"}},
+		{name: "hex label of seven digits", args: []string{"--traditional", "-A", "x", short, "4", "0x1000000"}},
+		{name: "hex label of eight digits", args: []string{"--traditional", "-A", "x", short, "4", "0x12345678"}},
+		{name: "decimal label past seven digits", args: []string{"--traditional", "-A", "d", short, "4", "12345678."}},
+		{name: "no address with a label past its width", args: []string{"--traditional", "-A", "n", short, "4", "20000000"}},
+		{name: "address none with octal eight-byte units", args: []string{"-A", "n", "-t", "o8", random}},
+		{name: "address decimal with hex eight-byte units", args: []string{"-A", "d", "-t", "x8", big}},
+		{name: "address hex with octal eight-byte units", args: []string{"-A", "x", "-t", "o8", big}},
+		{name: "address decimal at width one", args: []string{"-A", "d", "-w1", "-t", "x1", short}},
+
+		// -j and -N against the unit, the block and the read.
+		{name: "skip to the last byte", args: []string{"-j", "15", "-N", "1", "-t", "x8", short}},
+		{name: "read one past a block", args: []string{"-N", "17", "-t", "x8", allBytes}},
+		{name: "skip one and read a block of eight-byte units", args: []string{"-j", "1", "-N", "16", "-t", "x8", allBytes}},
+		{name: "read three bytes as two-byte units", args: []string{"-N", "3", "-t", "x2", allBytes}},
+		{name: "read one byte as an eight-byte octal unit", args: []string{"-N", "1", "-t", "o8", allBytes}},
+		{name: "read one byte as an eight-byte signed unit", args: []string{"-N", "1", "-t", "d8", allBytes}},
+		{name: "skip to a read boundary", args: []string{"-j", "65536", "-t", "x1", big}},
+		{name: "skip just short of a read boundary", args: []string{"-j", "65530", "-t", "x1", big}},
+		{name: "read to a read boundary", args: []string{"-N", "65536", "-t", "x8", big}},
+		{name: "read past a read boundary", args: []string{"-N", "65540", "-t", "x8", big}},
+		{name: "a short last block of eight-byte units at width thirty-two", args: []string{"-w32", "-t", "o8", random}},
+		{name: "a short last block of eight-byte hex at width sixty-four", args: []string{"-w64", "-t", "x8", "--endian=big", random}},
+
+		// The fold across the seam between reads, at widths that do and
+		// do not divide a read.
+		{name: "fold across a read", args: []string{"-t", "x1", dupBig}},
+		{name: "fold across a read at width seven", args: []string{"-w7", "-t", "x1", dupBig}},
+		{name: "fold across a read at width three", args: []string{"-w3", dupBig}},
+		{name: "fold across a read at width sixty-four", args: []string{"-w64", "-t", "x8", dupBig}},
+		{name: "no fold across a read", args: []string{"-v", "-t", "x8", dupBig}},
+		{name: "no fold across a read at width seven", args: []string{"-v", "-w7", "-t", "x1", dupBig}},
+		{name: "fold cut at the seam", args: []string{"-N", "66001", "-t", "x1", dupBig}},
+		{name: "fold from the seam", args: []string{"-j", "65536", "-t", "x1", dupBig}},
+		{name: "no fold of the big file", args: []string{"-v", "-t", "x8", big}},
+		{name: "fold of the big file at width seven", args: []string{"-w7", "-t", "x1", big}},
+
+		// Byte order for every size and kind.
+		{name: "endian big octal eight bytes", args: []string{"--endian=big", "-t", "o8", random}},
+		{name: "endian big signed four bytes", args: []string{"--endian=big", "-t", "d4", random}},
+		{name: "endian big unsigned two bytes", args: []string{"--endian=big", "-t", "u2", random}},
+		{name: "endian little hex eight bytes", args: []string{"--endian=little", "-t", "x8", random}},
+		{name: "endian little signed eight bytes", args: []string{"--endian=little", "-t", "d8", random}},
+		{name: "endian big at a partial eight-byte unit", args: []string{"--endian=big", "-t", "x8", "-w7", short}},
+		{name: "endian big unsigned at width seven", args: []string{"--endian=big", "-t", "u2", "-w7", short}},
+
+		// The printable trailer at widths that put the pad before it.
+		{name: "z trailer at width sixty-four", args: []string{"-t", "x1z", "-w64", random}},
+		{name: "z trailer at width seven", args: []string{"-t", "o2z", "-w7", short}},
+		{name: "z trailer on eight-byte units", args: []string{"-t", "x8z", random}},
+		{name: "z trailer with a fold", args: []string{"-t", "x1z", dupBig}},
+
+		// -S with a run across a read boundary.
+		{name: "strings across a read", args: []string{"-S", "3", strsBig}},
+		{name: "strings across a read in hex", args: []string{"-A", "x", "-S", "3", strsBig}},
+		{name: "strings across a read with no address", args: []string{"-A", "n", "-S", "3", strsBig}},
+		{name: "strings as long as the run across a read", args: []string{"-S", "66000", strsBig}},
+		{name: "strings longer than the run across a read", args: []string{"-S", "66001", strsBig}},
+		{name: "strings bounded just past the run", args: []string{"-S", "3", "-N", "66001", strsBig}},
+		{name: "strings skipping to the seam", args: []string{"-S", "3", "-j", "65536", strsBig}},
+		{name: "strings skipping into the run", args: []string{"-S", "3", "-j", "65990", strsBig}},
 
 		// The traditional operand forms.
 		{name: "offset operand", args: []string{short, "4"}},

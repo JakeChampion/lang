@@ -550,89 +550,27 @@ function address_width(base: i32): i32 {
   return 7;
 }
 
-function digits_in(v: u64, base: i32, upper: boolean): string {
-  if (v == 0 as u64) {
-    return "0";
-  }
-  var out: u8[] = [];
-  var n: u64 = v;
-  var b: u64 = base as u64;
-  while (n > 0 as u64) {
-    var d: i32 = (n % b) as i32;
-    var c: i32 = 48 + d;
-    if (d >= 10) {
-      c = 87 + d;
-      if (upper) {
-        c = 55 + d;
-      }
-    }
-    out = out.append(c as u8);
-    n = n / b;
-  }
-  var rev: u8[] = [];
-  var i: i32 = out.len() - 1;
-  while (i >= 0) {
-    rev = rev.append(out[i]);
-    i = i - 1;
-  }
-  return string_from_bytes_unchecked(rev);
-}
-
-function zero_pad(s: string, n: i32): string {
-  if (s.len() >= n) {
-    return s;
-  }
-  return "0".repeat(n - s.len()) + s;
-}
-
-function space_pad(s: string, n: i32): string {
-  if (s.len() >= n) {
-    return s;
-  }
-  return " ".repeat(n - s.len()) + s;
-}
-
-function format_address(base: i32, off: u64): string {
-  if (base == radix_none()) {
-    return "";
-  }
-  return zero_pad(digits_in(off, base, false), address_width(base));
-}
-
-// The whole leading text of a line: the address, and the pseudo-address
-// in parentheses after it when a LABEL operand asked for one. `-A n`
-// prints no address, but a label still prints — in octal, which is the
-// radix GNU restores for exactly that case.
-function address_text(s: Settings, off: u64): string {
-  if (!s.labelled) {
-    return format_address(s.base, off);
-  }
-  if (s.base == radix_none()) {
-    return "(" + format_address(8, off) + ")";
-  }
-  return format_address(s.base, off) + " (" + format_address(s.base, off - s.skip + s.label) + ")";
-}
-
-// `emit_address(out, s, off)` — the same text as `address_text`, put
-// into the line's buffer a digit at a time. The address is written once
-// per block, so building it as a string first was three allocations for
-// every sixteen bytes of input.
-function emit_address(own out: u8[], s: Settings, off: u64): u8[] {
+// `push_address(h, t, s, off)` — the whole leading text of a line: the
+// address, and the pseudo-address in parentheses after it when a LABEL
+// operand asked for one. `-A n` prints no address, but a label still
+// prints — in octal, which is the radix GNU restores for exactly that
+// case.
+function push_address(h: usize, t: Tables, s: Settings, off: u64): void {
   if (s.base != radix_none()) {
-    out = emit_num(out, false, off, s.base, address_width(s.base), 0, false);
+    push_num(h, t, false, off, s.base, address_width(s.base), 0);
   }
   if (!s.labelled) {
-    return out;
+    return;
   }
   if (s.base == radix_none()) {
-    out = out.append(40 as u8);
-    out = emit_num(out, false, off, 8, address_width(8), 0, false);
-    return out.append(41 as u8);
+    buf_push_byte(h, 40);
+    push_num(h, t, false, off, 8, address_width(8), 0);
+    buf_push_byte(h, 41);
+    return;
   }
-  out = out.append(32 as u8);
-  out = out.append(40 as u8);
-  out = emit_num(out, false, off - s.skip + s.label, s.base, address_width(s.base), 0, false);
-  return out.append(41 as u8);
+  buf_push(h, " (");
+  push_num(h, t, false, off - s.skip + s.label, s.base, address_width(s.base), 0);
+  buf_push_byte(h, 41);
 }
 
 // ---- one unit --------------------------------------------------------------
@@ -641,15 +579,18 @@ function emit_address(own out: u8[], s: Settings, off: u64): u8[] {
 // input is being read in.
 function unit_value(block: string, at: i32, size: i32, big: boolean): u64 {
   var v: u64 = 0 as u64;
-  var i: i32 = 0;
-  while (i < size) {
-    var k: i32 = at + i;
-    if (big) {
-      v = (v << 8 as u64) + (block[k] as i32) as u64;
-    } else {
-      v = v + ((block[k] as i32) as u64 << (i * 8) as u64);
+  if (big) {
+    var i: i32 = 0;
+    while (i < size) {
+      v = (v << 8 as u64) + (block[at + i] as i32) as u64;
+      i = i + 1;
     }
-    i = i + 1;
+    return v;
+  }
+  var j: i32 = size - 1;
+  while (j >= 0) {
+    v = (v << 8 as u64) + (block[at + j] as i32) as u64;
+    j = j - 1;
   }
   return v;
 }
@@ -665,55 +606,6 @@ function signed_value(v: u64, size: i32): i64 {
     return v as i64 - (1 as i64 << bits as i64);
   }
   return v as i64;
-}
-
-// The named-character table `-t a` prints, which is ASCII's own names
-// for the first thirty-three codes plus `del`. The high bit is dropped
-// before the lookup, so 0xff is `del`.
-function char_name(c: i32): string {
-  var b: i32 = c % 128;
-  if (b == 127) {
-    return "del";
-  }
-  if (b > 32) {
-    return byte_str(b);
-  }
-  var names: string[] = ["nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs", "ht", "nl", "vt", "ff", "cr", "so", "si", "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us", "sp"];
-  return names[b];
-}
-
-// `-t c`: the seven named C escapes and NUL keep their backslash, a
-// printable byte is itself, and anything else is three octal digits with
-// NO backslash — which is GNU's rendering, not C's.
-function char_escape(c: i32): string {
-  if (c == 0) {
-    return "\\0";
-  }
-  if (c == 7) {
-    return "\\a";
-  }
-  if (c == 8) {
-    return "\\b";
-  }
-  if (c == 9) {
-    return "\\t";
-  }
-  if (c == 10) {
-    return "\\n";
-  }
-  if (c == 11) {
-    return "\\v";
-  }
-  if (c == 12) {
-    return "\\f";
-  }
-  if (c == 13) {
-    return "\\r";
-  }
-  if (c >= 32 && c < 127) {
-    return byte_str(c);
-  }
-  return zero_pad(digits_in(c as u64, 8, false), 3);
 }
 
 function is_printable(c: i32): boolean {
@@ -859,38 +751,262 @@ function ftoa(f: ld.Format, v: ld.LD): string {
 
 // ---- one field -------------------------------------------------------------
 //
-// A field goes into the line's byte buffer directly. Nothing here builds
-// a string: a dump of a 62 MiB file writes sixty-two million fields, and
-// one allocation apiece is the whole difference between this and GNU.
-function digit_byte(d: i32, upper: boolean): u8 {
+// A field goes straight into stdout's builder as ranges of a few tables
+// built once. Every entry carries a blank in front of its digits, so the
+// single space that usually separates fields is part of the first push:
+// `-t x1` is one push per byte, the default `-t o2` two per unit, `-c` and
+// `-a` one per byte. No field costs an allocation or a byte-at-a-time
+// append; a dump of 62 MiB writes sixty-two million of them.
+//
+//   hex     256 entries of " xx"   — one per byte of the value
+//   oct     512 entries of " ooo"  — one per nine bits
+//   dec     100 entries of "dd"    — one per hundred
+//   chars   256 entries of "   c"  — what -t c prints, right-aligned in 4
+//   names   256 entries of " nul"  — what -t a prints, right-aligned in 4
+struct Tables { hex: string, oct: string, dec: string, blanks: string, chars: string, names: string }
+
+function blank_run(): i32 {
+  return 64;
+}
+
+function tables_new(): Tables {
+  var hex: u8[] = __alloc_u8(768);
+  var i: i32 = 0;
+  while (i < 256) {
+    hex = hex.with(i * 3, 32 as u8);
+    hex = hex.with(i * 3 + 1, digit_byte(i >> 4));
+    hex = hex.with(i * 3 + 2, digit_byte(i & 15));
+    i = i + 1;
+  }
+  var oct: u8[] = __alloc_u8(2048);
+  i = 0;
+  while (i < 512) {
+    oct = oct.with(i * 4, 32 as u8);
+    oct = oct.with(i * 4 + 1, (48 + (i >> 6)) as u8);
+    oct = oct.with(i * 4 + 2, (48 + (i >> 3 & 7)) as u8);
+    oct = oct.with(i * 4 + 3, (48 + (i & 7)) as u8);
+    i = i + 1;
+  }
+  var dec: u8[] = __alloc_u8(200);
+  i = 0;
+  while (i < 100) {
+    dec = dec.with(i * 2, (48 + i / 10) as u8);
+    dec = dec.with(i * 2 + 1, (48 + i % 10) as u8);
+    i = i + 1;
+  }
+  var chars: u8[] = __alloc_u8(1024);
+  var names: u8[] = __alloc_u8(1024);
+  i = 0;
+  while (i < 256) {
+    chars = right_aligned(chars, i * 4, char_text(i));
+    names = right_aligned(names, i * 4, char_name(i));
+    i = i + 1;
+  }
+  return Tables { hex: string_from_bytes_unchecked(hex), oct: string_from_bytes_unchecked(oct), dec: string_from_bytes_unchecked(dec), blanks: " ".repeat(blank_run()), chars: string_from_bytes_unchecked(chars), names: string_from_bytes_unchecked(names) };
+}
+
+// `text` in the four bytes of `table` at `at`, right-aligned in blanks.
+function right_aligned(own table: u8[], at: i32, text: string): u8[] {
+  var k: i32 = 0;
+  while (k < 4 - text.len()) {
+    table = table.with(at + k, 32 as u8);
+    k = k + 1;
+  }
+  var j: i32 = 0;
+  while (j < text.len()) {
+    table = table.with(at + k + j, text[j]);
+    j = j + 1;
+  }
+  return table;
+}
+
+function digit_byte(d: i32): u8 {
   if (d < 10) {
     return (48 + d) as u8;
-  }
-  if (upper) {
-    return (55 + d) as u8;
   }
   return (87 + d) as u8;
 }
 
-function spaces(own out: u8[], n: i32): u8[] {
-  var k: i32 = n;
-  while (k > 0) {
-    out = out.append(32 as u8);
-    k = k - 1;
+// `-t c`: the seven named C escapes and NUL keep their backslash, a
+// printable byte is itself, and anything else is three octal digits with
+// NO backslash — which is GNU's rendering, not C's.
+function char_text(c: i32): string {
+  if (c == 0) {
+    return "\\0";
   }
-  return out;
+  if (c == 7) {
+    return "\\a";
+  }
+  if (c == 8) {
+    return "\\b";
+  }
+  if (c == 9) {
+    return "\\t";
+  }
+  if (c == 10) {
+    return "\\n";
+  }
+  if (c == 11) {
+    return "\\v";
+  }
+  if (c == 12) {
+    return "\\f";
+  }
+  if (c == 13) {
+    return "\\r";
+  }
+  if (is_printable(c)) {
+    return byte_str(c);
+  }
+  var d: u8[] = [];
+  d = d.append((48 + (c >> 6)) as u8);
+  d = d.append((48 + (c >> 3 & 7)) as u8);
+  d = d.append((48 + (c & 7)) as u8);
+  return string_from_bytes_unchecked(d);
 }
 
-// `emit_num(out, neg, v, base, least, width, upper)` — the magnitude `v`
-// with its sign, right-aligned in `width` columns and zero-padded to at
-// least `least` digits. The digits go in backwards and are reversed in
-// place, which keeps the whole field to one pass and no allocation.
-function emit_num(own out: u8[], neg: boolean, v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
-  var b: u64 = base as u64;
+// `-t a`: ASCII's own names for the first thirty-three codes and `del`,
+// with the high bit dropped before the lookup, so 0xff is `del`.
+function char_name(c: i32): string {
+  var b: i32 = c % 128;
+  if (b == 127) {
+    return "del";
+  }
+  if (b > 32) {
+    return byte_str(b);
+  }
+  var names: string[] = ["nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs", "ht", "nl", "vt", "ff", "cr", "so", "si", "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us", "sp"];
+  return names[b];
+}
+
+function push_blanks(h: usize, t: Tables, n: i32): void {
+  var k: i32 = n;
+  while (k > blank_run()) {
+    buf_push_range(h, t.blanks, 0, blank_run());
+    k = k - blank_run();
+  }
+  if (k > 0) {
+    buf_push_range(h, t.blanks, 0, k);
+  }
+}
+
+// `push_num(h, t, neg, v, base, least, width)` — the magnitude `v` with
+// its sign, zero-padded to at least `least` digits and right-aligned in
+// `width` columns.
+function push_num(h: usize, t: Tables, neg: boolean, v: u64, base: i32, least: i32, width: i32): void {
+  if (base == 16) {
+    push_hex(h, t, v, least, width);
+  } else if (base == 8) {
+    push_oct(h, t, v, least, width);
+  } else {
+    push_dec(h, t, neg, v, least, width);
+  }
+}
+
+// The last of the blanks goes with the first pair when the number starts
+// with a whole pair, which is every number but an address of an odd
+// number of digits.
+function push_hex(h: usize, t: Tables, v: u64, least: i32, width: i32): void {
+  var digits: i32 = least;
+  if (least < 16 && v >> (least * 4) as u64 != 0 as u64) {
+    digits = hex_count(v);
+  }
+  var blanks: i32 = width - digits;
+  var lead: i32 = 0;
+  if (digits % 2 == 1) {
+    push_blanks(h, t, blanks);
+    var d: i32 = (v >> ((digits - 1) * 4) as u64 & 15 as u64) as i32;
+    buf_push_range(h, t.hex, d * 3 + 2, d * 3 + 3);
+    digits = digits - 1;
+  } else if (blanks > 0) {
+    push_blanks(h, t, blanks - 1);
+    lead = 1;
+  }
+  var shift: i32 = (digits - 2) * 4;
+  while (shift >= 0) {
+    var b: i32 = (v >> shift as u64 & 255 as u64) as i32;
+    buf_push_range(h, t.hex, b * 3 + 1 - lead, b * 3 + 3);
+    lead = 0;
+    shift = shift - 8;
+  }
+}
+
+function hex_count(v: u64): i32 {
   var count: i32 = 1;
-  var t: u64 = v;
-  while (t >= b) {
-    t = t / b;
+  var rest: u64 = v >> 4 as u64;
+  while (rest != 0 as u64) {
+    count = count + 1;
+    rest = rest >> 4 as u64;
+  }
+  return count;
+}
+
+// Octal digits are three bits, so the top group of a number is one or
+// two digits and the rest come three at a time. A field's digit count is
+// the width its unit can need, which is where the zero padding comes
+// from; only an address is counted.
+function push_oct(h: usize, t: Tables, v: u64, least: i32, width: i32): void {
+  var digits: i32 = least;
+  if (least < 22 && v >> (least * 3) as u64 != 0 as u64) {
+    digits = oct_count(v);
+  }
+  push_oct_digits(h, t, v, digits, digits % 3, width - digits);
+}
+
+// The head of an N-byte unit's octal digits: 8N bits over groups of three.
+function oct_head(size: i32): i32 {
+  if (size == 4) {
+    return 2;
+  }
+  if (size == 8) {
+    return 1;
+  }
+  return 0;
+}
+
+function push_oct_digits(h: usize, t: Tables, v: u64, digits: i32, head: i32, blanks: i32): void {
+  var lead: i32 = 0;
+  if (head > 0) {
+    push_blanks(h, t, blanks);
+    var top: i32 = (v >> ((digits - head) * 3) as u64 & 63 as u64) as i32;
+    buf_push_range(h, t.oct, top * 4 + 4 - head, top * 4 + 4);
+  } else if (blanks > 0) {
+    lead = 1;
+    if (blanks > 1) {
+      push_blanks(h, t, blanks - 1);
+    }
+  }
+  var shift: i32 = (digits - head - 3) * 3;
+  while (shift >= 0) {
+    var g: i32 = (v >> shift as u64 & 511 as u64) as i32;
+    buf_push_range(h, t.oct, g * 4 + 1 - lead, g * 4 + 4);
+    lead = 0;
+    shift = shift - 9;
+  }
+}
+
+function oct_count(v: u64): i32 {
+  var count: i32 = 1;
+  var rest: u64 = v >> 3 as u64;
+  while (rest != 0 as u64) {
+    count = count + 1;
+    rest = rest >> 3 as u64;
+  }
+  return count;
+}
+
+// The digits come two at a time from the top: `top` is the leading one or
+// two, and `p` the power of a hundred under them.
+function push_dec(h: usize, t: Tables, neg: boolean, v: u64, least: i32, width: i32): void {
+  var top: u64 = v;
+  var p: u64 = 1 as u64;
+  var count: i32 = 1;
+  while (top >= 100 as u64) {
+    top = top / (100 as u64);
+    p = p * (100 as u64);
+    count = count + 2;
+  }
+  if (top >= 10 as u64) {
     count = count + 1;
   }
   var digits: i32 = count;
@@ -901,100 +1017,62 @@ function emit_num(own out: u8[], neg: boolean, v: u64, base: i32, least: i32, wi
   if (neg) {
     taken = taken + 1;
   }
-  // `spaces` and the reversal are written out here rather than called:
-  // an array handed to a function is a second reference to its buffer,
-  // so every call would copy the line so far (#8498).
-  var k: i32 = width - taken;
-  while (k > 0) {
-    out = out.append(32 as u8);
-    k = k - 1;
-  }
+  push_blanks(h, t, width - taken);
   if (neg) {
-    out = out.append(45 as u8);
+    buf_push_byte(h, 45);
   }
-  k = digits - count;
+  var k: i32 = digits - count;
   while (k > 0) {
-    out = out.append(48 as u8);
+    buf_push_byte(h, 48);
     k = k - 1;
   }
-  var from: i32 = out.len();
-  var n: u64 = v;
-  var i: i32 = 0;
-  while (i < count) {
-    out = out.append(digit_byte((n % b) as i32, upper));
-    n = n / b;
-    i = i + 1;
+  var q: i32 = top as i32;
+  if (q >= 10) {
+    buf_push_range(h, t.dec, q * 2, q * 2 + 2);
+  } else {
+    buf_push_byte(h, 48 + q);
   }
-  var a: i32 = from;
-  var z: i32 = out.len() - 1;
-  while (a < z) {
-    var swap: u8 = out[a];
-    out = out.with(a, out[z]);
-    out = out.with(z, swap);
-    a = a + 1;
-    z = z - 1;
+  var rest: u64 = v - top * p;
+  while (p > 1 as u64) {
+    p = p / (100 as u64);
+    q = (rest / p) as i32;
+    rest = rest - q as u64 * p;
+    buf_push_range(h, t.dec, q * 2, q * 2 + 2);
   }
-  return out;
 }
 
-function emit_uint(own out0: u8[], v: u64, base: i32, least: i32, width: i32, upper: boolean): u8[] {
-  return emit_num(out0, false, v, base, least, width, upper);
+// One of the four-column tables' entries, right-aligned in `width`.
+function push_entry(h: usize, t: Tables, table: string, c: i32, width: i32): void {
+  if (width > 4) {
+    push_blanks(h, t, width - 4);
+  }
+  buf_push_range(h, table, c * 4, c * 4 + 4);
 }
 
-function reverse_from(own out: u8[], from: i32): u8[] {
-  var a: i32 = from;
-  var z: i32 = out.len() - 1;
-  while (a < z) {
-    var t: u8 = out[a];
-    out = out.with(a, out[z]);
-    out = out.with(z, t);
-    a = a + 1;
-    z = z - 1;
-  }
-  return out;
+function push_text(h: usize, t: Tables, text: string, width: i32): void {
+  push_blanks(h, t, width - text.len());
+  buf_push(h, text);
 }
 
-function emit_text(own out: u8[], text: string, width: i32): u8[] {
-  var k: i32 = width - text.len();
-  while (k > 0) {
-    out = out.append(32 as u8);
-    k = k - 1;
-  }
-  var i: i32 = 0;
-  while (i < text.len()) {
-    out = out.append(text[i]);
-    i = i + 1;
-  }
-  return out;
-}
-
-// One unit of `sp` at `at`, right-aligned in `width` columns.
-function emit_field(own out: u8[], sp: Spec, block: string, at: i32, width: i32, big: boolean): u8[] {
-  if (sp.kind == k_named()) {
-    return emit_text(out, char_name(block[at] as i32), width);
-  }
+// One unit of `sp` at `at`, right-aligned in `width` columns, for the
+// kinds without a line loop of their own.
+function push_field(h: usize, t: Tables, sp: Spec, block: string, at: i32, width: i32, big: boolean): void {
   if (sp.kind == k_char()) {
-    return emit_text(out, char_escape(block[at] as i32), width);
+    push_entry(h, t, t.chars, block[at] as i32, width);
+  } else if (sp.kind == k_unsigned()) {
+    push_dec(h, t, false, unit_value(block, at, sp.size, big), 1, width);
+  } else if (sp.kind == k_signed()) {
+    var n: i64 = signed_value(unit_value(block, at, sp.size, big), sp.size);
+    if (n < 0 as i64) {
+      push_dec(h, t, true, negated(n), 1, width);
+    } else {
+      push_dec(h, t, false, n as u64, 1, width);
+    }
+  } else if (sp.kind == k_named()) {
+    push_entry(h, t, t.names, block[at] as i32, width);
+  } else {
+    push_text(h, t, ftoa(float_format(sp.size), decode_float(block, at, sp.size, big)), width);
   }
-  if (sp.kind == k_float()) {
-    var f: ld.Format = float_format(sp.size);
-    return emit_text(out, ftoa(f, decode_float(block, at, sp.size, big)), width);
-  }
-  var v: u64 = unit_value(block, at, sp.size, big);
-  if (sp.kind == k_octal()) {
-    return emit_uint(out, v, 8, sp.fw, width, false);
-  }
-  if (sp.kind == k_hex()) {
-    return emit_uint(out, v, 16, sp.fw, width, false);
-  }
-  if (sp.kind == k_unsigned()) {
-    return emit_uint(out, v, 10, 1, width, false);
-  }
-  var n: i64 = signed_value(v, sp.size);
-  if (n < 0 as i64) {
-    return emit_num(out, true, negated(n), 10, 1, width, false);
-  }
-  return emit_num(out, false, n as u64, 10, 1, width, false);
 }
 
 // The magnitude of a negative i64, taken in u64 so the least one has a
@@ -1004,78 +1082,153 @@ function negated(n: i64): u64 {
 }
 
 // ---- output ----------------------------------------------------------------
-struct Out { w: io_buffered.BufWriter }
-
-function put(o: Out, s: string): Out {
-  return Out { w: gnu.put(o.w, s) };
-}
-
 // `Settings` — everything the option scan decides.
 struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, limit: u64, limited: boolean, dups: boolean, big: boolean, strings: boolean, min_string: u64, label: u64, labelled: boolean }
 
-// `write_block(o, s, block, n, off)` — one input block through every
-// spec, the first line carrying the address and the rest the same width
-// in spaces. The whole block is assembled in one byte buffer and handed
-// to the writer once.
-function write_block(own out: u8[], s: Settings, block: string, base: i32, n: i32, off: u64): u8[] {
+// `write_block(h, t, s, block, base, n, off)` — one input block through
+// every spec, the first line carrying the address and the rest the same
+// width in spaces.
+function write_block(h: usize, t: Tables, s: Settings, block: string, base: i32, n: i32, off: u64): void {
   var i: i32 = 0;
   while (i < s.specs.len()) {
     if (i == 0) {
-      out = emit_address(out, s, off);
+      push_address(h, t, s, off);
     } else {
-      out = spaces(out, address_width(s.base));
+      push_blanks(h, t, address_width(s.base));
     }
-    out = spec_line(out, s.specs[i], s, block, base, n);
-    out = out.append(10 as u8);
+    spec_line(h, t, s.specs[i], s, block, base, n);
+    buf_push_byte(h, 10);
     i = i + 1;
   }
-  return out;
 }
 
-// The fields of one spec over one block. The block's pad is handed out
-// as the fields are printed — what is left divided by the fields still
-// to come — which spreads it evenly and is what lines the specs up.
-function spec_line(own out: u8[], sp: Spec, s: Settings, block: string, base: i32, n: i32): u8[] {
+// The fields of one spec over one block, `fields` of them less the
+// `blank` at the end of a short block. The block's pad is handed out as
+// the fields are printed — what is left divided by the fields still to
+// come — which spreads it evenly and is what lines the specs up. The
+// two integer kinds a dump is usually made of have a loop each, with the
+// field written in the loop rather than behind a call.
+function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: string, base: i32, n: i32): void {
   var fields: i32 = s.block / sp.size;
   var blank: i32 = (s.block - n) / sp.size;
+  var used: i32 = 0;
+  if (sp.kind == k_hex()) {
+    used = hex_line(h, t, sp, block, base, fields, blank, s.big);
+  } else if (sp.kind == k_octal()) {
+    used = oct_line(h, t, sp, block, base, fields, blank, s.big);
+  } else {
+    used = other_line(h, t, sp, block, base, fields, blank, s.big);
+  }
+  if (!sp.z) {
+    return;
+  }
+  push_blanks(h, t, s.wpb - used);
+  buf_push(h, "  >");
+  var from: i32 = base;
+  var i: i32 = 0;
+  while (i < n) {
+    if (!is_printable(block[base + i] as i32)) {
+      buf_push_range(h, block, from, base + i);
+      buf_push_byte(h, 46);
+      from = base + i + 1;
+    }
+    i = i + 1;
+  }
+  buf_push_range(h, block, from, base + n);
+  buf_push_byte(h, 60);
+}
+
+// A hexadecimal field is the unit's bytes in print order, a table entry
+// each, so it is read straight from the block; the last blank before it
+// comes with the first byte's entry. Returns the columns written.
+function hex_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
+  var hex: string = t.hex;
+  var size: i32 = sp.size;
+  var fw: i32 = sp.fw;
   var pad: i32 = sp.pad;
+  var w: i32 = fw + 1;
   var used: i32 = 0;
   var i: i32 = fields;
   var at: i32 = base;
   while (i > blank) {
-    var next_pad: i32 = pad * (i - 1) / i;
-    var w: i32 = pad - next_pad + sp.fw + 1;
-    pad = next_pad;
-    if (sp.kind == k_hex()) {
-      out = emit_num(out, false, unit_value(block, at, sp.size, s.big), 16, sp.fw, w, false);
-    } else if (sp.kind == k_octal()) {
-      out = emit_num(out, false, unit_value(block, at, sp.size, s.big), 8, sp.fw, w, false);
-    } else if (sp.kind == k_unsigned()) {
-      out = emit_num(out, false, unit_value(block, at, sp.size, s.big), 10, 1, w, false);
-    } else {
-      out = emit_field(out, sp, block, at, w, s.big);
+    if (pad > 0) {
+      var next_pad: i32 = pad * (i - 1) / i;
+      w = pad - next_pad + fw + 1;
+      pad = next_pad;
     }
+    var lead: i32 = 0;
+    if (w > fw) {
+      lead = 1;
+      if (w > fw + 1) {
+        push_blanks(h, t, w - fw - 1);
+      }
+    }
+    var end: i32 = at + size;
+    if (big) {
+      var j: i32 = at;
+      while (j < end) {
+        var b: i32 = block[j] as i32;
+        buf_push_range(h, hex, b * 3 + 1 - lead, b * 3 + 3);
+        lead = 0;
+        j = j + 1;
+      }
+    } else {
+      var k: i32 = end - 1;
+      while (k >= at) {
+        var c: i32 = block[k] as i32;
+        buf_push_range(h, hex, c * 3 + 1 - lead, c * 3 + 3);
+        lead = 0;
+        k = k - 1;
+      }
+    }
+    used = used + w;
+    at = end;
+    i = i - 1;
+  }
+  return used;
+}
+
+function oct_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
+  var size: i32 = sp.size;
+  var fw: i32 = sp.fw;
+  var pad: i32 = sp.pad;
+  var w: i32 = fw + 1;
+  var used: i32 = 0;
+  var i: i32 = fields;
+  var at: i32 = base;
+  var head: i32 = oct_head(size);
+  while (i > blank) {
+    if (pad > 0) {
+      var next_pad: i32 = pad * (i - 1) / i;
+      w = pad - next_pad + fw + 1;
+      pad = next_pad;
+    }
+    push_oct_digits(h, t, unit_value(block, at, size, big), fw, head, w - fw);
+    used = used + w;
+    at = at + size;
+    i = i - 1;
+  }
+  return used;
+}
+
+function other_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
+  var pad: i32 = sp.pad;
+  var w: i32 = sp.fw + 1;
+  var used: i32 = 0;
+  var i: i32 = fields;
+  var at: i32 = base;
+  while (i > blank) {
+    if (pad > 0) {
+      var next_pad: i32 = pad * (i - 1) / i;
+      w = pad - next_pad + sp.fw + 1;
+      pad = next_pad;
+    }
+    push_field(h, t, sp, block, at, w, big);
     used = used + w;
     at = at + sp.size;
     i = i - 1;
   }
-  if (!sp.z) {
-    return out;
-  }
-  out = spaces(out, s.wpb - used);
-  out = out.append(32 as u8);
-  out = out.append(32 as u8);
-  out = out.append(62 as u8);
-  i = 0;
-  while (i < n) {
-    var c: i32 = block[base + i] as i32;
-    if (!is_printable(c)) {
-      c = 46;
-    }
-    out = out.append(c as u8);
-    i = i + 1;
-  }
-  return out.append(60 as u8);
+  return used;
 }
 
 // ---- the input -------------------------------------------------------------
@@ -1280,25 +1433,20 @@ function skip_in_file(s0: Src, left0: u64): (u64, Src) {
 
 // ---- the dump --------------------------------------------------------------
 //
-// Input arrives a page at a time and output leaves a page at a time. The
-// per-BLOCK buffer stays small on purpose: a byte array that is passed to
-// a function and appended to inside it is a second reference to the same
-// buffer, so the append copies (#8498), and a buffer that grew across the
-// whole page would pay that copy on every field. The page-sized
-// accumulation is a string built in this frame, where nothing else holds
-// it.
-function dump(o0: Out, s: Settings, src0: Src): (Out, Src) {
-  var o: Out = o0;
+// Input arrives a page at a time and output goes straight into stdout's
+// builder, which is flushed at its threshold once per page rather than
+// checked on every piece. The block before this one is almost always the
+// one just behind it in the same page, so the elision compares two ranges
+// of the page and only carries a copy across the seam between pages.
+function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
+  var w: io_buffered.BufWriter = w0;
+  var h: usize = w.handle();
   var src: Src = src0;
   var off: u64 = s.skip;
   var left: u64 = s.limit;
-  // The block before this one is almost always the one just behind it in
-  // the same page, so the elision compares two ranges of the page and
-  // only carries a copy across the seam between pages.
-  var carry: u8[] = zero_bytes(s.block);
+  var carry: string = "";
   var have_prev: boolean = false;
   var folded: boolean = false;
-  var pending: string = "";
   var per_read: i32 = read_size() / s.block * s.block;
   if (per_read < s.block) {
     per_read = s.block;
@@ -1323,95 +1471,57 @@ function dump(o0: Out, s: Settings, src0: Src): (Out, Src) {
       var repeat: boolean = false;
       if (!s.dups && have_prev) {
         if (at >= s.block) {
-          repeat = same_range(chunk, at - s.block, at, s.block);
+          repeat = __mismatch(chunk, at - s.block, chunk, at, s.block) == s.block;
         } else {
-          repeat = same_carry(chunk, at, carry, s.block);
+          repeat = __mismatch(chunk, at, carry, 0, s.block) == s.block;
         }
       }
       if (repeat) {
         if (!folded) {
-          pending = pending + "*\n";
+          buf_push(h, "*\n");
           folded = true;
         }
       } else {
-        var line: u8[] = [];
-        line = write_block(line, s, chunk, at, s.block, off);
-        pending = pending + string_from_bytes_unchecked(line);
+        write_block(h, t, s, chunk, at, s.block, off);
         folded = false;
       }
       have_prev = true;
       off = off + s.block as u64;
       at = at + s.block;
-      if (pending.len() >= read_size()) {
-        o = put(o, pending);
-        pending = "";
-      }
     }
+    w = gnu.settle(w);
     if (at < chunk.len()) {
       var tail: i32 = chunk.len() - at;
-      var last: u8[] = [];
-      last = write_block(last, s, pad_block(slice_unchecked(chunk, at, chunk.len()) + "", s.block), 0, tail, off);
-      pending = pending + string_from_bytes_unchecked(last);
+      write_block(h, t, s, pad_block(chunk, at, s.block), 0, tail, off);
       off = off + tail as u64;
       break;
     }
     if (at >= s.block) {
-      var k: i32 = 0;
-      while (k < s.block) {
-        carry = carry.with(k, chunk[at - s.block + k]);
-        k = k + 1;
-      }
+      carry = slice_unchecked(chunk, at - s.block, at) + "";
     }
     if (chunk.len() < want) {
       break;
     }
   }
   if ((s.base != radix_none() || s.labelled) && src.opened) {
-    pending = pending + address_text(s, off) + "\n";
+    push_address(h, t, s, off);
+    buf_push_byte(h, 10);
   }
-  if (pending.len() > 0) {
-    o = put(o, pending);
-  }
-  return (o, src);
+  return (gnu.check(w), src);
 }
 
-function zero_bytes(n: i32): u8[] {
-  return __alloc_u8(n);
-}
-
-function same_range(chunk: string, a: i32, b: i32, n: i32): boolean {
+// The short last block from `at`, completed with zeros so a multi-byte
+// unit at its end still has a whole unit to print. `__alloc_u8` hands
+// back stale bytes, so the zeros are written.
+function pad_block(chunk: string, at: i32, n: i32): string {
+  var out: u8[] = __alloc_u8(n);
   var i: i32 = 0;
-  while (i < n) {
-    if (chunk[a + i] != chunk[b + i]) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-function same_carry(chunk: string, at: i32, carry: u8[], n: i32): boolean {
-  var i: i32 = 0;
-  while (i < n) {
-    if (chunk[at + i] != carry[i]) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-// A short last block is completed with zeros so a multi-byte unit at its
-// end still has a whole unit to print.
-function pad_block(block: string, n: i32): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
-  while (i < block.len()) {
-    out = out.append(block[i]);
+  while (at + i < chunk.len()) {
+    out = out.with(i, chunk[at + i]);
     i = i + 1;
   }
   while (i < n) {
-    out = out.append(0 as u8);
+    out = out.with(i, 0 as u8);
     i = i + 1;
   }
   return string_from_bytes_unchecked(out);
@@ -1421,14 +1531,17 @@ function pad_block(block: string, n: i32): string {
 //
 // `-S N` reports the NUL-terminated runs of at least N printable
 // characters, each with the offset it starts at. A run broken by a byte
-// that is neither printable nor NUL is not a string at all.
-function dump_strings(o0: Out, s: Settings, src0: Src): (Out, Src) {
-  var o: Out = o0;
+// that is neither printable nor NUL is not a string at all. The run in
+// progress is a range of the current read, from `from`; only the part a
+// read boundary cuts off is copied, into `held`.
+function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
+  var w: io_buffered.BufWriter = w0;
+  var h: usize = w.handle();
   var src: Src = src0;
   var off: u64 = s.skip;
   var left: u64 = s.limit;
   var start: u64 = off;
-  var run: u8[] = [];
+  var held: usize = buf_new(256);
   while (true) {
     var want: i32 = read_size();
     if (s.limited && left < want as u64) {
@@ -1444,39 +1557,53 @@ function dump_strings(o0: Out, s: Settings, src0: Src): (Out, Src) {
       break;
     }
     left = left - block.len() as u64;
+    if (buf_len(held) == 0) {
+      start = off;
+    }
+    var from: i32 = 0;
     var i: i32 = 0;
     while (i < block.len()) {
       var c: i32 = block[i] as i32;
       if (c == 0) {
-        if (run.len() as u64 >= s.min_string) {
-          o = put(o, string_prefix(s, start) + string_from_bytes_unchecked(run) + "\n");
+        if ((buf_len(held) + (i - from)) as u64 >= s.min_string) {
+          buf_push_range(held, block, from, i);
+          push_run(h, t, s, start, held);
+          w = gnu.settle(w);
         }
-        var empty: u8[] = [];
-        run = empty;
+        drop_held(held);
+        from = i + 1;
         start = off + (i + 1) as u64;
-      } else if (is_printable(c)) {
-        if (run.len() == 0) {
-          start = off + i as u64;
-        }
-        run = run.append(c as u8);
-      } else {
-        var none: u8[] = [];
-        run = none;
+      } else if (!is_printable(c)) {
+        drop_held(held);
+        from = i + 1;
         start = off + (i + 1) as u64;
       }
       i = i + 1;
     }
+    if (from < block.len()) {
+      buf_push_range(held, block, from, block.len());
+    }
     off = off + block.len() as u64;
   }
-  return (o, src);
+  buf_free(held);
+  return (gnu.check(w), src);
 }
 
-function string_prefix(s: Settings, off: u64): string {
-  var a: string = address_text(s, off);
-  if (a.len() == 0) {
-    return "";
+// One string: its address, when there is one, then the run `held`
+// holds, which this empties.
+function push_run(h: usize, t: Tables, s: Settings, at: u64, held: usize): void {
+  if (s.base != radix_none() || s.labelled) {
+    push_address(h, t, s, at);
+    buf_push_byte(h, 32);
   }
-  return a + " ";
+  buf_push(h, buf_take(held));
+  buf_push_byte(h, 10);
+}
+
+function drop_held(held: usize): void {
+  if (buf_len(held) > 0) {
+    var _: string = buf_take(held);
+  }
 }
 
 // ---- traditional operands --------------------------------------------------
@@ -1785,17 +1912,18 @@ function main(): i32 {
   if (skip > 0 as u64) {
     src = skip_input(src, skip);
   }
-  var o: Out = Out { w: gnu.out_with(65536) };
+  var t: Tables = tables_new();
+  var w: io_buffered.BufWriter = gnu.out_with(65536);
   if (strings) {
-    var ds: (Out, Src) = dump_strings(o, s, src);
-    o = ds.0;
+    var ds: (io_buffered.BufWriter, Src) = dump_strings(w, t, s, src);
+    w = ds.0;
     src = ds.1;
   } else {
-    var dd: (Out, Src) = dump(o, s, src);
-    o = dd.0;
+    var dd: (io_buffered.BufWriter, Src) = dump(w, t, s, src);
+    w = dd.0;
     src = dd.1;
   }
-  gnu.finish(o.w);
+  gnu.finish(w);
   if (!src.ok) {
     return 1;
   }
