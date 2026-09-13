@@ -1356,7 +1356,7 @@ function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
 }
 
 // Store `v` at `at`, growing the array when `at` is its length.
-function push_at(a: i32[], at: i32, v: i32): i32[] {
+function push_at(own a: i32[], at: i32, v: i32): i32[] {
   if (at < a.len()) {
     return a.with(at, v);
   }
