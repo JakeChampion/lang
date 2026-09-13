@@ -218,8 +218,9 @@ Unsupported constructs refuse the whole function with a reason.
 
 Refused, each with its own reason: calls of the remaining builtins, local
 function values and void functions, the 32-bit float, the unsigned and
-pointer integer widths, string ordering, generic records,
-destructuring, labelled loops, match guards and the pattern shapes above,
+pointer integer widths, string ordering, generic records, the struct,
+nested and `@`-bound destructuring forms, labelled loops, match guards and
+the pattern shapes above,
 `defer`, closures, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
 
@@ -345,10 +346,10 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit string views, integer widths other than i32
-and u8, floats, the remaining builtins, destructuring, closures or generics,
-so no production consumer is switched and no AST ownership analysis is
-deleted.
+The producer does not yet admit the unsigned and pointer integer widths, the
+32-bit float, the remaining builtins, the struct and nested destructuring
+forms, closures or generics, so no production consumer is switched and no
+AST ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -363,7 +364,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,396 of its 7,712
+Measured against the whole loaded self-hosted compiler, 5,415 of its 7,713
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -379,9 +380,9 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (961),
-destructuring (321), names that are not semantic values (309) and record
-literals (108). The string view was worth +355 once the sites that stored
+The leaves are now led by callees with no semantic contract (1,027), names
+that are not semantic values (393), record literals (141) and a binding
+whose type is not its value's (103). The string view was worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, as usual, against a
 leaf histogram that had ranked them differently. The declared field width
 was worth the 81 it was measured at — every construction with a wide field,
@@ -394,12 +395,17 @@ builtins (`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the
 it. A further 226 functions produce and plan but are refused by the unit
 planner for an `.append` whose receiver is not moved, 44 for a `.with` under
 the same rule, and 5 by physical RC lowering for an unsupported value type.
+The flat tuple destructure was worth +19 lowered against a leaf of 321: a
+probe keyed by pattern shape showed the leaf was entirely the flat tuple
+form, and nearly every function holding one refuses again one leaf further
+in, which is what moved the callee, name and record-literal leaves up.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,
 and the function value, which is a shape this boundary has no form for yet;
-destructuring and the module-level constant (nearly every unbound name is a
-`parser__ORIGIN_*` or a backend's `PK_*` constant) are the next two measured
+the module-level constant (nearly every unbound name is a
+`parser__ORIGIN_*` or a backend's `PK_*` constant, a zero-argument function
+the AST caller calls) and the record literal are the next two measured
 leaves and are shapes rather than vocabulary. The `.append` receiver gate
 stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape

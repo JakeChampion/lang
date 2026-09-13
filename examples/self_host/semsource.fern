@@ -807,10 +807,62 @@ function destructures(v: ast.StmtVar): boolean {
     return parser.is_destr_marker(v.type_name);
 }
 
+// A tuple destructure binds each name to a projection of the one initializer
+// value, which stays live under those borrows as any container does. The
+// checker's post-declaration scope types each binding, and it must be the
+// tuple's element exactly; a discard is a binding no read follows. A nested
+// position, the struct form and the `@` binder are refused.
+function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
+    if (parser.is_destr_marker(v.type_name)) { return fail(s, "unsupported destructuring declaration"); }
+    var names: string[] = pattern_names(v.name);
+    for name in names { if (name.len() == 0 || name[0] == b'(') { return fail(s, "unsupported destructuring declaration"); } }
+    var ty: typeinfo.Type = checked(v.init, s);
+    if (tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    var after: checker.Scope = checker.bind_stmt(st, s.scope);
+    var whole: Value = expr(v.init, s, ty);
+    s = whole.s;
+    if (!s.ok) { return s; }
+    if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, "binding type does not match its semantic value"); }
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var elem: typeinfo.Type = checker.scope_type(after, names[i]);
+        if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved binding type"); }
+        if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, "binding type does not match its semantic value"); }
+        var part: Value = define(s, ssasem.tuple_get(), [whole.id], i, "", elem);
+        s = bind(part.s, names[i], part.id);
+        i = i + 1;
+    }
+    return State { ...s, scope: after };
+}
+
+function tuple_arity(t: typeinfo.Type): i32 {
+    if let typeinfo.TypeTuple(tup) = t { return tup.elements.len(); }
+    return 0 - 1;
+}
+
+// The parser joins a pattern's names with commas and keeps a nested position
+// in its own parentheses, so only a top-level comma separates two names.
+function pattern_names(encoded: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < encoded.len()) {
+        if (encoded[i] == b'(') { depth = depth + 1; }
+        if (encoded[i] == b')') { depth = depth - 1; }
+        if (encoded[i] == b',' && depth == 0) {
+            out = out.append(slice_unchecked(encoded, start, i) + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out.append(slice_unchecked(encoded, start, encoded.len()) + "");
+}
+
 // The checker's post-declaration scope names the binding's type; the
 // initializer's semantic value must carry exactly that type.
 function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-    if (destructures(v)) { return fail(s, "unsupported destructuring declaration"); }
+    if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = checker.scope_type(after, v.name);
     if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved binding type"); }
