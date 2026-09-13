@@ -204,8 +204,40 @@ var VecPairwiseLong = VecTable{
 	},
 }
 
+// VecPolyLong is the polynomial (carry-less) multiply-long class. It is the
+// three-register-DIFFERENT shape: the result elements are one size up, so
+// eight byte products fill a .8h and one doubleword product fills the single
+// 128-bit element GNU as spells `.1q`.
+//
+// Aux is the HIGH flag, which is the `2` in the mnemonic. Unlike the
+// narrowing and widening classes, nothing in the operands says which half of
+// the sources is read — pmull and pmull2 differ only in the Q bit, and both
+// write a full-width destination — so the mnemonic is the only carrier.
+//
+// Only the byte and doubleword sizes exist. The .4h/.2s sources that would
+// sit between them encode nothing, which is why the size mask is not a
+// contiguous run and the encoders check the two cases rather than a mask.
+//
+// The .1q form is FEAT_PMULL, not base Advanced SIMD: `aarch64-linux-gnu-as`
+// refuses it without `-march=armv8-a+aes`, and Raspberry Pi 4 is a declared
+// target without it. Encoding it is unconditional here — an assembler that
+// cannot spell an instruction cannot be told to gate it — but a CODE
+// GENERATOR reaching for it needs a HWCAP_PMULL check, which the byte form
+// and every other row in this file do not.
+var VecPolyLong = VecTable{
+	FernFn: "arm64_vpolylong_entry",
+	Aux:    "high",
+	Doc: "// The polynomial (carry-less) multiply-long. The size-mask slot carries the\n" +
+		"// HIGH flag — the `2` in the mnemonic, which selects the top half of the\n" +
+		"// sources; only the byte (.8h result) and doubleword (.1q result) sizes\n" +
+		"// exist.\n",
+	Ops: []VecOp{
+		{"pmull", false, 0x0E, 0}, {"pmull2", false, 0x0E, 1},
+	},
+}
+
 // VecTables is every class, for the gates that enumerate the vocabulary.
-var VecTables = []VecTable{VecInt3, VecLogical3, VecCmpZero, VecInt2Misc, VecFP3, VecFP2Misc, VecFPCmpZero, VecShiftImm, VecPermute, VecAcross, VecPairwiseLong}
+var VecTables = []VecTable{VecInt3, VecLogical3, VecCmpZero, VecInt2Misc, VecFP3, VecFP2Misc, VecFPCmpZero, VecShiftImm, VecPermute, VecAcross, VecPairwiseLong, VecPolyLong}
 
 // Bool is the Aux field read as a flag.
 func (o VecOp) Bool() bool { return o.Aux != 0 }

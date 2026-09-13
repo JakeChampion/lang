@@ -489,6 +489,13 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"uminv b23, v9.8b", 0x2e31a937},
 		{"saddlv h23, v9.16b", 0x4e303937},
 		{"uaddlv s23, v9.8h", 0x6e703937},
+
+		{"pmull v0.8h, v1.8b, v2.8b", 0x0e22e020},
+		{"pmull2 v0.8h, v1.16b, v2.16b", 0x4e22e020},
+		{"pmull v0.1q, v1.1d, v2.1d", 0x0ee2e020},
+		{"pmull2 v0.1q, v1.2d, v2.2d", 0x4ee2e020},
+		{"pmull v31.8h, v30.8b, v29.8b", 0x0e3de3df},
+		{"pmull2 v31.1q, v30.2d, v29.2d", 0x4efde3df},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
 		// The pair must differ by exactly one element size.
@@ -522,6 +529,20 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"umaxv s23, v9.2s",
 		"addv d23, v9.2d",
 		"sminv v0.8h, v9.8h",
+		// pmull's `2` IS the Q bit and both forms write a full-width
+		// destination, so nothing in the operands repeats it: a source
+		// arrangement disagreeing with the mnemonic is the OTHER
+		// instruction. Only the byte and doubleword sizes exist, and `.1q`
+		// belongs to pmull alone.
+		"pmull v0.8h, v1.16b, v2.16b",
+		"pmull2 v0.8h, v1.8b, v2.8b",
+		"pmull v0.1q, v1.2d, v2.2d",
+		"pmull2 v0.1q, v1.1d, v2.1d",
+		"pmull v0.4s, v1.4h, v2.4h",
+		"pmull v0.16b, v1.8b, v2.8b",
+		"pmull2 v0.1q, v1.2d, v2.1d",
+		"add v0.1q, v1.1q, v2.1q",
+		"ld1 {v0.1q}, [x0]",
 	})
 }
 

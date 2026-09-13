@@ -2672,7 +2672,7 @@ function x86_gas_cvt2si(mnem: string): i32 {
         _ => { return 0 - 1; }
     }
 }
-// x86_gas_is_imm3a: the 66 0F 3A Op /r ib three-operand forms with an xmm destination.
+// x86_gas_is_imm3a: the 66 0F 3A Op /r ib three-operand forms with an xmm destination. pclmulqdq's imm8 picks a 64-bit half of each source, which gas disassembles under a per-value alias name; the encoding is one row.
 function x86_gas_is_imm3a(mnem: string): boolean { return x86_gas_imm3a_op(mnem) >= 0; }
 function x86_gas_imm3a_op(mnem: string): i32 {
     match (mnem) {
@@ -2680,6 +2680,7 @@ function x86_gas_imm3a_op(mnem: string): i32 {
         "roundsd" => { return 11; },
         "pcmpestri" => { return 97; },
         "pcmpistri" => { return 99; },
+        "pclmulqdq" => { return 68; },
         _ => { return 0 - 1; }
     }
 }

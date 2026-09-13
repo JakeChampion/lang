@@ -12,7 +12,9 @@ import (
 // surface here is: GPR<->XMM transfers (movq/movd), scalar arithmetic
 // (add/sub/mul/div/sqrt sd/ss), ordered compares (ucomis/comis),
 // conversions (cvtsi2s*, cvtts*2si, cvts*2s*), aligned moves (movap*),
-// scalar loads/stores (movsd/movss), and roundsd.
+// scalar loads/stores (movsd/movss), and roundsd. The packed-integer
+// vocabulary the vector kernels reach for — the carry-less multiply among it
+// — rides the same encoders.
 
 // sseOps are the two-operand "dst, src" forms encoded as
 // [prefix] [REX] 0F <op> /r, with ModRM.reg = dst and rm = src. The
@@ -270,7 +272,7 @@ func (a *Assembler) movsdss(prefix byte, ops []Operand) error {
 }
 
 // sse3AImm8 encodes the 66 0F 3A <op> /r ib forms with an xmm destination:
-// roundsd (0B), roundss (0A), pcmpistri (63), pcmpestri (61).
+// roundsd (0B), roundss (0A), pcmpistri (63), pcmpestri (61), pclmulqdq (44).
 func (a *Assembler) sse3AImm8(op byte, ops []Operand, name string) error {
 	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
 		return fmt.Errorf("%s expects xmm, xmm/mem, imm8", name)

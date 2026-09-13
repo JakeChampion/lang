@@ -728,6 +728,15 @@ func TestSIMDPinnedEncodings(t *testing.T) {
 		{"\tuadalp v0.2d, v1.4s\n", 0x6ea06820},
 		{"\tuadalp v0.1d, v1.2s\n", 0x2ea06820},
 		{"\tuadalp v31.4s, v30.8h\n", 0x6e606bdf},
+		// The polynomial multiply-long. The size field is the SOURCE's and
+		// Q comes from the mnemonic, so the two halves of one size differ
+		// by a single bit that the operands do not name twice.
+		{"\tpmull v0.8h, v1.8b, v2.8b\n", 0x0e22e020},
+		{"\tpmull2 v0.8h, v1.16b, v2.16b\n", 0x4e22e020},
+		{"\tpmull v0.1q, v1.1d, v2.1d\n", 0x0ee2e020},
+		{"\tpmull2 v0.1q, v1.2d, v2.2d\n", 0x4ee2e020},
+		{"\tpmull v31.8h, v30.8b, v29.8b\n", 0x0e3de3df},
+		{"\tpmull2 v31.1q, v30.2d, v29.2d\n", 0x4efde3df},
 	}
 	for _, c := range cases {
 		got, err := arm64.Assemble(c.asm)
@@ -753,6 +762,42 @@ func TestSIMDRejects(t *testing.T) {
 		// size up with the same Q. Each is refused by clang and by
 		// aarch64-linux-gnu-as; each would otherwise encode a real
 		// instruction writing a different lane count from the one written.
+		// pmull's `.1q` is the one arrangement that exists nowhere else in
+		// the vocabulary, so every other class has to refuse it — and none
+		// of them would fail loudly on their own: the encoding's size field
+		// is two bits, so a 128-bit element folds to size 0 and writes a
+		// byte-lane instruction. Each line here is refused by
+		// aarch64-linux-gnu-as even with `-march=armv8-a+aes`.
+		"\tadd v0.1q, v1.1q, v2.1q\n",
+		"\tand v0.1q, v1.1q, v2.1q\n",
+		"\tneg v0.1q, v1.1q\n",
+		"\tzip1 v0.1q, v1.1q, v2.1q\n",
+		"\tfadd v0.1q, v1.1q, v2.1q\n",
+		"\tshl v0.1q, v1.1q, #3\n",
+		"\tcmeq v0.1q, v1.1q, #0\n",
+		"\tuaddlp v0.1q, v1.2d\n",
+		"\tmovi v0.1q, #0\n",
+		"\tdup v0.1q, x1\n",
+		"\text v0.1q, v1.1q, v2.1q, #1\n",
+		"\ttbl v0.1q, {v1.16b}, v2.1q\n",
+		"\taddv b0, v1.1q\n",
+		"\txtn v0.1q, v1.2d\n",
+		"\tld1 {v0.1q}, [x0]\n",
+		"\tld1r {v0.1q}, [x0]\n",
+		"\tst1 {v0.1q}, [x0]\n",
+		// pmull itself. The `2` is the Q bit and nothing in the operands
+		// repeats it, so a source arrangement disagreeing with the mnemonic
+		// is the OTHER instruction rather than a malformed one; the sizes
+		// between byte and doubleword encode nothing at all.
+		"\tpmull v0.8h, v1.16b, v2.16b\n",
+		"\tpmull2 v0.8h, v1.8b, v2.8b\n",
+		"\tpmull v0.1q, v1.2d, v2.2d\n",
+		"\tpmull2 v0.1q, v1.1d, v2.1d\n",
+		"\tpmull v0.4s, v1.4h, v2.4h\n",
+		"\tpmull v0.2d, v1.2s, v2.2s\n",
+		"\tpmull v0.16b, v1.8b, v2.8b\n",
+		"\tpmull v0.8h, v1.8h, v2.8h\n",
+		"\tpmull2 v0.1q, v1.2d, v2.1d\n",
 		"\tuaddlp v0.16b, v1.16b\n",
 		"\tuaddlp v0.4s, v1.16b\n",
 		"\tuaddlp v0.8h, v1.8b\n",

@@ -531,6 +531,30 @@ assembler for every target you are about to emit a vector kernel on, and land
 the encodings first** — which the arm64 and wasm kernels did, and the x86-64
 one did not.
 
+**The carry-less multiply was the next round of the same rule**, and this time
+the survey came first: no assembler in the tree could encode `pclmulqdq` or
+`pmull`, so the CRC folding kernel (#9128, the second half of #9056) was
+blocked below the IR rather than inside it. All four assemblers gained the
+encodings as their own PR ahead of any kernel — x86-64's `pclmulqdq` as one
+more row of the `66 0F 3A` table both sides already share, arm64's
+`pmull`/`pmull2` as a new three-register-DIFFERENT class, each pinned against
+its external oracle and swept by the fuzz lanes.
+
+Its finding was a BASELINE one rather than an encoding one, and it inverted the
+issue's premise. `pclmulqdq` is Westmere-and-later, inside the declared Haswell
+baseline, so the x86-64 half needed nothing. arm64's `.1q` form — the 64x64
+multiply folding actually needs, as against the `.8h` byte form — is
+**FEAT_PMULL, an optional extension, not base Advanced SIMD**: both oracles
+refuse it without `-march=armv8-a+aes`.
+
+**That was settled by raising the arm64 baseline** to ARMv8.2-A with the crypto
+extensions, which drops the Raspberry Pi and nothing else — see
+`docs/BACKEND-PARITY.md`. So a folding kernel needs no HWCAP_PMULL check and no
+runtime dispatch on either architecture, and the two targets are symmetric
+again. Note the emulator is no help either way: every qemu-aarch64 core model
+runs `pmull.1q`, `cortex-a72` included, so the qemu lane could never have
+caught the old baseline's violation.
+
 The wasm gap also has a sharper failure mode than the native two, worth
 recording because it shaped that PR's tests. Vector sub-opcodes are uleb128,
 and the space is dense: encode `i16x8.bitmask` (132) as a raw byte and you get

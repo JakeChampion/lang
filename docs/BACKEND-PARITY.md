@@ -47,7 +47,7 @@ inside a codegen switch:
 
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
-| arm64 / arm64-darwin | ARMv8-A, Advanced SIMD included | `clz`, `rbit`, and the SIMD-side popcount (`cnt` + `addv`). Advanced SIMD is mandatory on the ARMv8-A application profile, so this is the architecture floor, not a raise. |
+| arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, and the carry-less multiply `pmull` / `pmull2` in its `.1q` form. This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
 | x86-64 | Haswell-class, 2013 — SSE4.2 + BMI1 (AMD: Piledriver/Jaguar and later) | `popcnt` (SSE4.2) and `lzcnt` / `tzcnt` (BMI1), alongside the SSE4.1 `roundsd` and SSE2 floating point the backend already required. |
 | wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
@@ -61,6 +61,36 @@ instead of crashing.
 
 Anything above these baselines (AVX2, BMI2, …) needs runtime dispatch first;
 none of it is used today.
+
+**The two assemblers encode more than the baselines cover, on purpose.** An
+assembler that cannot spell an instruction cannot be told to gate it, so both
+the Go and the self-host assemblers accept every mnemonic in `x86tbl` /
+`arm64tbl` unconditionally; what a *code generator* may reach for is the
+baseline's question, not theirs.
+
+**What the arm64 raise cost, and what it did not buy.** The crypto extensions
+are what `pmull.1q` needs (#9128), and the only declared hardware without them
+was the Raspberry Pi — Broadcom omits them on the Pi 4 (BCM2711) and Pi 5
+(BCM2712), which is a licensee choice rather than a core limitation, since
+ARM's own A72 and A76 have them. Graviton 2 and later, Apple Silicon, and
+mainstream Android SoCs all carry them. x86-64 paid nothing at all for the
+matching `pclmulqdq`: it is Westmere-and-later, older than the Haswell line,
+and the cut-down Haswell Pentium/Celeron parts that lack it also lack BMI1, so
+the existing baseline already excluded them.
+
+**SVE is NOT in the arm64 baseline and cannot be, whatever else is raised.**
+Apple Silicon has no SVE through M4, so the common denominator across Graviton,
+Apple and Android tops out below it. "Modern" on this architecture means
+ARMv8.2-A plus the optional feature bits every one of those parts implements —
+it does not mean the newest instruction set ARM has published.
+
+**qemu-aarch64 cannot check any of this.** Every named core model it offers —
+`cortex-a53`, `a55`, `a72`, `a76`, `max` — executes `pmull v0.1q` including
+`cortex-a72`, the Pi 4's exact core, and the crypto bits are not a settable
+property. So the emulator runs whatever we emit and can neither confirm nor
+refute a baseline claim; the qemu lane is a correctness gate, not a portability
+one. Under the old baseline that was a hazard (green in CI, SIGILL on a Pi);
+under this one there is nothing left below us for it to miss.
 
 Wasm is the broadest because it was where Map / State / file I/O / preview2
 HTTP landed first. The native backends have caught up on the edge-handler

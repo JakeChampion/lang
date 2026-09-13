@@ -44,8 +44,11 @@ Unscheduled; it constrains design choices today, it is not work in flight.
 ## Targets
 
 - **ARM64 / aarch64 Linux** — the default target. qemu-aarch64 under test; real
-  hardware is AWS Graviton, Raspberry Pi 4+ (64-bit), Android, Apple Silicon via
-  Linux containers. Baseline: plain ARMv8-A, Advanced SIMD included.
+  hardware is AWS Graviton 2+, Android, Apple Silicon via Linux containers.
+  Baseline: **ARMv8.2-A with the cryptographic extensions**, so Advanced SIMD,
+  `crc32`, LSE atomics and `pmull`/`aes` are all assumable. Raspberry Pi is NOT
+  a target: Broadcom omits the crypto extensions on the Pi 4 and 5, and that is
+  the whole of what the baseline drops.
 - **ARM64 / aarch64 Darwin** — Mach-O for native Apple Silicon
   (`-target arm64-darwin`), no Linux container needed. Verified end-to-end on the
   `macos-15` CI runner; CI pins that label rather than floating `macos-latest`,
@@ -59,8 +62,11 @@ Unscheduled; it constrains design choices today, it is not work in flight.
   **silently** below the baseline (same opcodes as bsr/bsf plus an F3 the older
   CPU ignores) where POPCNT faults. No Darwin x86-64.
 
-Raising either CPU baseline is a project decision, not a codegen one. Per-backend
-support table, version-support stance, and known limitations:
+Raising either CPU baseline is a project decision, not a codegen one, and the
+standing direction is to **target modern hardware and raise the baseline rather
+than carry an old part**. Broader reach, if it is ever wanted, arrives as an
+opt-in `-march`-style flag — not as runtime dispatch, which stays off the table.
+Per-backend support table, version-support stance, and known limitations:
 `docs/BACKEND-PARITY.md`.
 
 The IR layer is target-agnostic; **new optimisations belong in `internal/ir`** so

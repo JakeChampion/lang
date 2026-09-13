@@ -1171,6 +1171,15 @@ register allocation — and not a missing instruction. uutils' 9.8 ms is
 0.06 ns a byte, which only the carry-less fold reaches, and THAT is the
 column the `pclmulqdq` / `pmull` encodings would be for.
 
+Both encodings now exist in all four assemblers (#9128), so the fold is no
+longer blocked below the IR; the kernel itself still has to be written. Both
+are inside their baselines and neither needs runtime dispatch — `pclmulqdq`
+always was, and the arm64 baseline was raised to ARMv8.2-A with the crypto
+extensions to take `pmull.1q`. arm64 has a second option worth measuring
+against the fold rather than assuming past: `crc32` is in the same baseline,
+and reaching cksum's non-reflected CRC from that reflected instruction is an
+`rbit` away.
+
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
 
