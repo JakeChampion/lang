@@ -243,16 +243,34 @@ function boolean_value(b: boolean): i32 {
     return 0;
 }
 
-// A bare name that is no binding is a unit variant of the expected enum, or a
-// module-level constant: the parser desugars `const` to a zero-parameter
-// function and the AST lowering calls one on a bare reference, so it is a
-// call here too. The checker types a reference to a function VALUE as a
-// function, never as the result its contract names, which keeps one from
-// being called.
+// A bare name at a function-typed destination is a declaration's ADDRESS, not
+// a call of it. The signature the address promises is the contract this
+// boundary derived for that declaration, so the value joins the call table and
+// a refused declaration refuses its referrer exactly as a call does. A counted
+// parameter is refused: an indirect callee only ever lends what it is handed,
+// so an address that promises to consume an argument is not one this
+// vocabulary can hand out.
+function func_ref(name: string, ty: typeinfo.Type, s: State): Value {
+    var at: i32 = ssasem.find_contract(s.contracts, name);
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + name); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (!semtypes.equal(ssasem.contract_type(contract), ty)) { return refused(s, "function value signature"); }
+    for m in contract.modes { if (m == ssaunits.counted_mode()) { return refused(s, "function value consumes an argument"); } }
+    if (ssasem.find_contract(s.calls, name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.func_value(), [], 0, name, ty);
+}
+
+// A bare name that is no binding is a declaration's address where a function
+// is expected, a unit variant of the expected enum, or a module-level
+// constant: the parser desugars `const` to a zero-parameter function and the
+// AST lowering calls one on a bare reference, so it is a call here too. The
+// checker types a reference to a function VALUE as a function, never as the
+// result its contract names, which is what separates the two.
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
     var value: i32 = lookup(s, id.name);
     if (value >= 0) { return Value { s: s, id: value }; }
     var ty: typeinfo.Type = checked(e, s);
+    if (ssasem.is_func(ty)) { return func_ref(id.name, ty, s); }
     var owner: string = union_name(ty);
     if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
     var at: i32 = ssasem.find_contract(s.contracts, id.name);
@@ -758,9 +776,36 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
     return define(s, ssasem.str_as(), [v.id], 0, "", param);
 }
 
-// A call in statement position may return nothing: its value is void and
-// no name binds it. In expression position a void result is refused, since
-// the checker types nothing by it.
+// A call of a bound name whose value is a function: the callee is the address
+// that name holds and its TYPE is the whole contract, since no declaration is
+// in hand. Every reference argument is lent — a function type spells no `own`,
+// so an indirect callee only reads what it is handed — and the result is a
+// unit of this function's own, the way a direct call's is.
+function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
+    var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
+    var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
+    if (c.type_argc > 0 || c.args.len() != params.len()) { return refused(s, "call arity"); }
+    if (is_void(result)) { return refused(s, "unsupported void call"); }
+    var ids: i32[] = [callee];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var v: Value = lend(expr(c.args[i], s, params[i]), params[i], ssaunits.borrow_mode());
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (!semtypes.equal(s.values[v.id], params[i])) { return refused(s, "call argument type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    return define(s, ssasem.call_value(), ids, 0, "", result);
+}
+
+// A name bound in this body holds a VALUE, not a declaration: a function value
+// is called through the address it holds, and nothing else is a callee.
+function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
+    if (ssasem.is_func(s.values[bound])) { return indirect_call(c, bound, s); }
+    return refused(s, "unsupported call target");
+}
+
 function is_slice_call(name: string, c: ast.ExprCall): boolean {
     return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
 }
@@ -779,11 +824,16 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
     return invoke(c.args, contract, s);
 }
 
+// A call in statement position may return nothing: its value is void and
+// no name binds it. In expression position a void result is refused, since
+// the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value {
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
-    if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }
+    var bound: i32 = lookup(s, name);
+    if (bound >= 0) { return bound_call(c, bound, s); }
+    if (name == "") { return refused(s, "unsupported call target"); }
     if (is_slice_call(name, c)) { return string_slice(c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
     if (at < 0) { return variant_call(e, name, c, s); }
@@ -1639,6 +1689,7 @@ pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.
     var s: State = initial(fd, scope, contracts);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
+    if (ssasem.is_func(s.result)) { return refuse("function value result"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s);
@@ -1652,6 +1703,9 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     if (unsupported_declaration(fd) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope);
     if (!semtypes.concrete(result, true) || ssasem.is_view(result)) { return none; }
+    // A caller of a fn-returning declaration reads an env box out of it, which
+    // is not the bare address this vocabulary has; so it has no contract here.
+    if (ssasem.is_func(result)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);

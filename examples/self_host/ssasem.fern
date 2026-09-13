@@ -60,6 +60,8 @@ pub function str_index(): i32 { return 0 - 16; }
 pub function cast(): i32 { return 0 - 17; }
 pub function str_as(): i32 { return 0 - 18; }
 pub function with(): i32 { return 0 - 19; }
+pub function func_value(): i32 { return 0 - 20; }
+pub function call_value(): i32 { return 0 - 21; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -133,6 +135,27 @@ pub function is_view(t: typeinfo.Type): boolean {
 // Either string type. A read of the bytes — the length, a byte, a window, an
 // operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
+
+// A function value: one word holding a declaration's address.
+pub function is_func(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeFunc(_) = t { return true; }
+    return false;
+}
+
+pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
+    if let typeinfo.TypeFunc(fn) = t { return fn.param_types; }
+    return [];
+}
+
+pub function func_result(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeFunc(fn) = t { return fn.ret_type; }
+    return typeinfo.unchecked();
+}
+
+// The function type a declared contract has as a value.
+pub function contract_type(c: Contract): typeinfo.Type {
+    return typeinfo.TypeFunc { param_types: c.params, ret_type: c.result, params_known: true };
+}
 
 function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 0 || ins.result != ins.imm || !semtypes.equal(result, f.params[ins.imm])) { return "parameter type or identity"; }
@@ -373,6 +396,43 @@ function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
+// A function value names a declaration whose contract this function holds, so
+// the address it hands out is checked against the signature that contract
+// spells rather than against the name it was written with.
+function func_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 0) { return "function value arity"; }
+    if (!is_func(result)) { return "function value type"; }
+    var at: i32 = find_contract(f.calls, ins.str);
+    if (at < 0) { return "missing function value contract"; }
+    if (!semtypes.equal(contract_type(f.calls[at]), result)) { return "function value signature"; }
+    return "";
+}
+
+// A call through a function value. The callee is operand 0 and its TYPE is the
+// whole contract: no declaration is in hand, so the signature the value
+// carries is what the arguments and the result are held to.
+function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() == 0) { return "indirect call arity"; }
+    var sig: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_func(sig)) { return "indirect call target type"; }
+    var params: typeinfo.Type[] = func_params(sig);
+    if (ins.args.len() != params.len() + 1) { return "indirect call arity"; }
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (!semtypes.equal(params[i], f.values[ins.args[i + 1]])) { return "indirect call argument type"; }
+        i = i + 1;
+    }
+    if (!semtypes.equal(func_result(sig), result)) { return "indirect call result type"; }
+    return "";
+}
+
+pub function is_function_op(kind: i32): boolean { return kind == func_value() || kind == call_value(); }
+
+function function_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == func_value()) { return func_value_error(ins, f, result); }
+    return call_value_error(ins, f, result);
+}
+
 function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == variant_new()) { return variant_construction_error(ins, f, result); }
     if (ins.kind_tag == variant_is()) { return variant_test_error(ins, f, result); }
@@ -574,6 +634,7 @@ function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     var kind: i32 = ins.kind_tag;
     if (is_aggregate_op(kind)) { return aggregate_error(ins, f, result); }
     if (kind == call()) { return call_error(ins, f, result); }
+    if (is_function_op(kind)) { return function_error(ins, f, result); }
     if (is_builtin_op(kind)) { return builtin_error(ins, f, result); }
     if (is_variant_op(kind)) { return variant_error(ins, f, result); }
     return "unsupported semantic operation";
@@ -588,6 +649,68 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     if (kind == 1 || kind == 2 || kind == 5) { return constant_error(ins, result); }
     if (scalar_op(kind)) { return scalar_error(ins, f, result); }
     return composite_error(ins, f, result);
+}
+
+// A function type is one word of code address, and the stack IR's untagged
+// indirect call describes every slot of a funcref as that word — so a wide
+// parameter or result has no place in a signature this vocabulary dispatches
+// through, and a function type inside another has no address to take.
+function func_shape_error(fn: typeinfo.TypeFunc): string {
+    if (!fn.params_known) { return "function type without a signature"; }
+    for p in fn.param_types { if (!narrow_word(p)) { return "function signature slot"; } }
+    if (is_void(fn.ret_type) || !narrow_word(fn.ret_type)) { return "function signature slot"; }
+    return "";
+}
+
+function narrow_word(t: typeinfo.Type): boolean {
+    if (is_func(t) || is_i64(t) || is_f64(t) || nests_func(t)) { return false; }
+    return semtypes.concrete(t, false);
+}
+
+// A function value is a value and a parameter, never an element or a field: a
+// container slot and a declared field each hold a counted reference or a
+// scalar, and an AST-lowered read of a fn-typed field takes an env box rather
+// than the bare address.
+function nests_func(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t { return holds_func(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t {
+        for e in tup.elements { if (holds_func(e)) { return true; } }
+    }
+    if let typeinfo.TypeMap(m) = t { return holds_func(m.key) || holds_func(m.value); }
+    return false;
+}
+
+function holds_func(t: typeinfo.Type): boolean { return is_func(t) || nests_func(t); }
+
+function type_placement_error(t: typeinfo.Type): string {
+    if let typeinfo.TypeFunc(fn) = t { return func_shape_error(fn); }
+    if (nests_func(t)) { return "function value is not an element"; }
+    return "";
+}
+
+function field_placement_error(f: Func): string {
+    for record in f.records {
+        for field in record.fields { if (holds_func(field.ty)) { return "function value is not a field"; } }
+    }
+    for e in f.enums {
+        for v in e.variants {
+            for field in v.fields { if (holds_func(field.ty)) { return "function value is not a field"; } }
+        }
+    }
+    return "";
+}
+
+function placement_error(f: Func): string {
+    var named: typeinfo.Type[] = f.values.append(f.result);
+    for c in f.calls {
+        for t in c.params { named = named.append(t); }
+        named = named.append(c.result);
+    }
+    for t in named {
+        var why: string = type_placement_error(t);
+        if (why != "") { return why; }
+    }
+    return field_placement_error(f);
 }
 
 // The graph's own dimensions, before any type is read off it: one type per
@@ -611,6 +734,8 @@ function schema_error(f: Func): string {
     for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
     for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
+    if (why != "") { return why; }
+    why = placement_error(f);
     if (why != "") { return why; }
     return semrecords.verify(f.records, f.enums);
 }

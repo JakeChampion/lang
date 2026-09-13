@@ -242,8 +242,35 @@ Unsupported constructs refuse the whole function with a reason.
   on the register backends; they copy now (`+ ""`), which is what the
   checker rule will demand of them.
 
-Refused, each with its own reason: calls of the remaining builtins, local
-function values and void functions, the 32-bit float, the unsigned and
+- A function VALUE and the call through one. A bare name at a function-typed
+  destination is a declaration's ADDRESS (the stack IR's `const_func`), typed
+  by the contract this boundary derived for that declaration — so the value
+  joins the call table and a refused declaration refuses its referrer exactly
+  as a call does. Calling a bound name that holds one is `call_indirect`, and
+  its whole contract is the function TYPE, since no declaration is in hand: a
+  function type spells no `own`, so every reference argument is LENT — the
+  convention irlower's own env-box trampoline states, and enforces by
+  un-`own`ing a parameter it trampolines — and the result is a unit of the
+  caller's own the way a direct call's is.
+
+  The address of a declaration with a COUNTED parameter is refused ("function
+  value consumes an argument"): it promises the opposite of that convention,
+  and a function type has no way to say so. The AST path takes the shape and
+  leaks it — `apply(eat, a)` for `eat(own xs: i32[])` frees nothing — which is
+  a checker hole this boundary declines to inherit rather than a rule it
+  invents.
+
+  The address is one i32-shaped word, so it is a value and a parameter and
+  never an element or a declared field: a container slot holds a counted
+  reference, and an AST-lowered read of a fn-typed field takes an env box
+  rather than the bare address. A function-typed RESULT is refused for the same
+  reason. Every slot of the signature is that same word — a wide parameter or
+  result is refused ("function signature slot"), because the untagged
+  `call_indirect` this boundary emits describes each slot as one, and a
+  funcref type is structural on wasm.
+
+Refused, each with its own reason: calls of the remaining builtins, a void
+call in expression position, the 32-bit float, the unsigned and
 pointer integer widths, string ordering, generic records, the struct,
 nested and `@`-bound destructuring forms, labelled loops, match guards and
 the pattern shapes above,
@@ -309,7 +336,14 @@ one by hand.
   whose only use is the slice; and a view receiver on a `string` method. The
   float shapes: a quotient sign-flipped and scaled, the three comparison
   answers, a loop-carried accumulator, an f64 crossing a produced-to-produced
-  call as a parameter and a result, and an i64 converted to f64 and back.
+  call as a parameter and a result, and an i64 converted to f64 and back. The
+  function-value shapes: an address handed to a produced callee and called
+  there, a scalar and a reference argument lent across an indirect call, a
+  temporary array literal lent to one, an indirect call whose counted result
+  the caller owns and one whose result it discards, and an address carried
+  through a branch join. The wasm leg is what holds an indirect call to its
+  ABI: a lost slot class there is an `indirect call type mismatch` rather than
+  a wrong number.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -396,6 +430,7 @@ element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
 Measured against the whole loaded self-hosted compiler, 5,990 of its 7,735
+Measured against the whole loaded self-hosted compiler, 5,900 of its 7,735
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -434,8 +469,9 @@ module-level constant closed the name leaf outright, +78 lowered of 393: a
 `const` is a zero-parameter function to the parser, the AST lowering calls
 one on a bare reference, and so does this boundary, when the name has a
 zero-parameter contract whose result is the checked type — a reference to a
-function VALUE is typed as a function, never as the result, so it stays
-refused. Nearly every constant's reader refuses again at the callee leaf.
+function VALUE is typed as a function, never as the result, so it takes the
+address form above instead. Nearly every constant's reader refuses again at
+the callee leaf.
 The void call and the six builtin contracts were worth +201 together; keyed
 by callee, the leaf that remains is the function value — the `astwalk`
 folds and the closures behind them — and the builtins whose result is an
@@ -457,9 +493,7 @@ leaf by builtin on its own: the `astwalk` folds that take a function value
 tail of runtime builtins. Five of the tail took contracts for +78 —
 `write` and `exit` as void calls, `string_from_bytes_unchecked` handing
 back a fresh string, `f64_bits` and `f64_from_bits` as values — each
-lowered to the stack IR op the AST lowering already emits for it. What
-the folds and `env` need is a form for a function value and for the
-builtin `Option`, which are shapes, not vocabulary.
+lowered to the stack IR op the AST lowering already emits for it.
 
 The loop element's checker binding closed the record-literal leaf from 226 to
 74, +93 lowered. A probe naming the checker's reason at every refused literal
@@ -482,6 +516,52 @@ runtime builtins a body calls, which is a vocabulary question and not a leaf,
 and the function value, which is a shape this boundary has no form for yet;
 the unresolved variant field type is the next measured leaf. The `.append`
 receiver gate stays deferred: it needs a clone form for a receiver
+The function value and the indirect call above closed the shape half of that
+leaf and were worth +3 lowered (5,897 to 5,900), which is the measurement and
+not the histogram: the fn-value leaf is almost entirely the `astwalk` folds,
+and those are refused for a reason a form for the ADDRESS does not touch.
+
+**The `astwalk` fold family stays refused, and the reason is not
+vocabulary.** It is the largest single leaf — 538 functions between
+`fold_stmt_nodes` (221), `fold_stmt_spine` (142), `fold_expr_pruned` (118),
+`fold_stmt` (37), `fold_stmt_pruned` (10), `fold_expr_nodes` (7) and two more
+— and every one of them threads an accumulator typed by an ERASED type
+variable, for which this boundary has no sound unit rule:
+
+- Fern does not monomorphise, so one body serves every instantiation and can
+  emit no retain and no release on the erased word: `__fern_rc_dec` on a `T`
+  bound to i32 would decrement an integer.
+- A fold REPLACES that accumulator once per visited node
+  (`acc = visit(st, acc)`). Under the function-value convention the visitor
+  lends its accumulator and hands back a unit of the caller's own, so every
+  step creates one erased unit and abandons the previous one. Only the fold
+  sees those intermediates, and the fold is the one body that cannot release
+  them. Calling the erased result no unit instead leaks it at the caller;
+  calling it a unit makes the fold release a word it does not own at every
+  scalar instantiation.
+
+So an erased word is soundly expressible only where it is PASSED THROUGH and
+never replaced, which no fold is, and a contract with an erased parameter
+needs a call-site instantiation this boundary also does not have. Two further
+facts sit underneath. The visitors the compiler
+actually passes do not agree with each other — a lifted `(s, a) => a` hands
+back the argument it was lent, where `fwd_scan_stmt` hands back a fresh box —
+so there is no one convention to write down even for the concrete callees.
+And the checker erases `T` for only half the family: only a PROMOTED
+generic's variables land in `FuncDecl.type_params`, and
+`type_from_name_erasing_tparams` has nothing to erase against without them,
+so `fold_expr`, `fold_stmt`, `fold_expr_pruned`, `fold_stmt_pruned` and
+`fold_stmt_own` reach this boundary with an unresolved `T` where
+`fold_expr_nodes`, `fold_stmt_nodes`, `fold_stmt_spine` and
+`fold_stmt_own_pruned` reach it erased. Admitting the family needs the
+function-value ABI settled first — whether an indirect callee may consume a
+reference, and what a generic's erased result owns — which is a language
+decision, not a vocabulary one.
+
+Next, by measured leaf: the record literal (228) and the builtins whose
+result is an instantiated builtin union, `env` (145) and `read_file` (26);
+both are shapes rather than vocabulary. The `.append` receiver gate
+stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the
 dominant refused shape is a borrowed-parameter accumulator in a loop, where a

@@ -103,5 +103,8 @@ pub function needs_anchor(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return false; }
     if let typeinfo.TypeFloat(_) = t { return false; }
     if let typeinfo.TypeVoid(_) = t { return false; }
+    // A function value is a declaration's address: it names code, never a
+    // box, so nothing keeps it alive and nothing anchors it.
+    if let typeinfo.TypeFunc(_) = t { return false; }
     return true;
 }

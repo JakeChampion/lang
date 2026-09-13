@@ -47,11 +47,13 @@ function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     return narrow_slot(t) && !ssasem.is_view(t) && supported(t, f);
 }
 // The types whose stack representation needs no declaration looked up: a
-// boolean and a void ride one word, and a string is its own box.
+// boolean and a void ride one word, a string is its own box, and a function
+// value is one i32-shaped word holding a declaration's address.
 function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
+    if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
@@ -468,9 +470,10 @@ function kind_in(kinds: i32[], k: i32): boolean {
 }
 
 // Everything that is not a container operation: the constants, a parameter, a
-// copy, a phi, the scalar operators and a call.
+// copy, a phi, the scalar operators, a call, a function value and the call
+// through one.
 function value_op(k: i32): boolean {
-    return kind_in([1, 2, 5, 6, 7, 8, ssasem.call()], k) || ssasem.scalar_op(k);
+    return kind_in([1, 2, 5, 6, 7, 8, ssasem.call()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
 
 function container_op(k: i32): boolean {
@@ -688,6 +691,7 @@ function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
 function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
+    if (ssasem.is_function_op(ins.kind_tag)) { return emit(function_site(r, ins), ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
@@ -740,6 +744,22 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     r = emit(r, ir.op_load_local(ins.args[2]));
     r = emit(r, ir.op_arr_set(32));
     return emit(r, ir.op_load_local(base));
+}
+
+// A function value and the call through one. The value is a declaration's
+// address and takes no operand; the call pushes its arguments and then the
+// address, which is the order call_indirect pops them in. Every slot of the
+// signature is one i32-shaped word — the semantic verifier refuses a wide one
+// — so the call needs no funcref signature tag.
+function function_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.func_value()) { return emit(r, ir.op_const_func(0, ins.str)); }
+    var i: i32 = 1;
+    while (i < ins.args.len()) {
+        r = emit(r, ir.op_load_local(ins.args[i]));
+        i = i + 1;
+    }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    return emit(r, ir.op_call_indirect(ins.args.len() - 1));
 }
 
 function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
