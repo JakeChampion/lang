@@ -1044,7 +1044,7 @@ function main(): i32 {
       h2 = l2;
     }
     push_join(w.handle(), h1, h2, !have1, o, ac1, ac2);
-      w = gnu.settle(w);
+    w = gnu.settle(w);
     // A header is not compared with the line after it.
     in1 = In { ...in1, hasprev: false };
     in2 = In { ...in2, hasprev: false };
@@ -1078,7 +1078,7 @@ function main(): i32 {
     if (d < 0) {
       if (o.unpair1) {
         push_join(w.handle(), l1, blank, false, o, ac1, ac2);
-      w = gnu.settle(w);
+        w = gnu.settle(w);
       }
       in1 = next_line(in1, o, run.unpairable, w);
       if (in1.msg.len() > 0) {
@@ -1097,7 +1097,7 @@ function main(): i32 {
     if (d > 0) {
       if (o.unpair2) {
         push_join(w.handle(), blank, l2, true, o, ac1, ac2);
-      w = gnu.settle(w);
+        w = gnu.settle(w);
       }
       in2 = next_line(in2, o, run.unpairable, w);
       if (in2.msg.len() > 0) {
@@ -1163,7 +1163,7 @@ function main(): i32 {
     if (o.pairs) {
       if (!many1 && !many2) {
         push_join(w.handle(), head1, head2, false, o, ac1, ac2);
-      w = gnu.settle(w);
+        w = gnu.settle(w);
       } else {
         if (!many1) {
           g1 = g1.append(head1);
@@ -1176,7 +1176,7 @@ function main(): i32 {
           var j: i32 = 0;
           while (j < g2.len()) {
             push_join(w.handle(), g1[i], g2[j], false, o, ac1, ac2);
-      w = gnu.settle(w);
+            w = gnu.settle(w);
             j = j + 1;
           }
           i = i + 1;
