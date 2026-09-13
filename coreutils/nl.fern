@@ -309,7 +309,7 @@ function with_pads(o: Opts): Opts {
 function push_lineno(h: usize, n: i64, o: Opts): void {
   var mag: u64 = n as u64;
   if (n < 0 as i64) {
-    mag = (0 as u64) - mag;
+    mag = 0 as u64 - mag;
   }
   var len: i32 = gnu.decimal_len(mag);
   if (n < 0 as i64) {

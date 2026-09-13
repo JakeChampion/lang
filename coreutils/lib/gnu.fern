@@ -842,7 +842,7 @@ pub function push_u64(h: usize, n: u64): void {
 pub function push_i64(h: usize, n: i64): void {
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
-    push_u64(h, (0 as u64) - (n as u64));
+    push_u64(h, 0 as u64 - n as u64);
     return;
   }
   push_u64(h, n as u64);
