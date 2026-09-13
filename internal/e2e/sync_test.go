@@ -9,18 +9,28 @@
 // exists in neither preview and must refuse by name.
 //
 // A wrong syscall number is the failure this is built to catch, and it is
-// invisible to any test that only checks a call compiled: fsync and fdatasync
-// are adjacent numbers on every target, sync and syncfs are far apart on one
-// and absent on another, and a number that names some OTHER syscall can
-// return 0 and look like success. So the probe never trusts a bare `ok` — it
-// pins each call to a DISTINGUISHING answer:
+// invisible to any test that only checks a call compiled: a number that names
+// some OTHER syscall can return 0 and look like success. So the probe never
+// trusts a bare `ok` — it pins each call to a DISTINGUISHING answer:
 //
-//   - fsync and fdatasync on a FIFO are EINVAL, where syncfs on the same
-//     descriptor succeeds. That separates the three from each other: a
-//     syncfs that was really an fsync fails the FIFO case, and an fsync that
-//     was really a syncfs fails it the other way.
+//   - fsync and fdatasync on a character device are EINVAL, where syncfs on
+//     the same descriptor succeeds. That separates the per-FILE pair from the
+//     per-FILESYSTEM call: a syncfs that was really an fsync fails it one
+//     way, an fsync that was really a syncfs fails it the other.
 //   - every method on a CLOSED handle is EBADF, which a call that ignored its
 //     argument (or never reached the kernel) cannot produce.
+//
+// What it does NOT separate is fsync from fdatasync, and no behavioural test
+// can: their error contracts are identical — every descriptor that answers
+// EINVAL for one answers EINVAL for the other, both answer EBADF on a closed
+// fd, and fdatasync's only difference is metadata it may skip WRITING, which
+// nothing here can observe. (A directory fd does not separate them either;
+// measured, both succeed.) So a transposition of the two — and they are
+// adjacent on both Linux targets, though not on Darwin, where they are 95 and
+// 187 — passes everything below. That pair is held instead by
+// TestSyscallNumbersMatchTheKernelTable in each native backend, which compares
+// the hand-written table against Go's own generated zsysnum transcription of
+// the same kernel source.
 //
 // The Go side then reads the bytes back through os.ReadFile, so a write the
 // program believed it had flushed is checked against the tree rather than

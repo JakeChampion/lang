@@ -3866,6 +3866,9 @@ func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Writer.truncate: expected 2 args")
 	}
 	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
