@@ -391,7 +391,13 @@ parameter, a record with an enum field, and a struct-union widened from both
 members, matched, and carried across a loop as a phi; balanced on every
 target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
-results, still rely on the AST caller's own syntactic rows.
+results, still rely on the AST caller's own syntactic rows. So does a borrowed
+record PARAMETER, and that one is measured: when a produced callee RETAINS a
+counted-element array field of one, the AST-lowered caller's release of the
+record frees its box and leaves the field's buffer — 40 bytes for a
+two-element `string[]`, 56 for a four-element one. Retaining the field into a
+tuple is enough; no array builtin is involved, and the same program lowered
+entirely by the AST pipeline balances.
 
 Measured against the whole loaded self-hosted compiler, 6,185 of its 7,735
 functions produce, plan and physically lower.
@@ -409,8 +415,8 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (1,069), record
-literals (219), a variant field whose type is unresolved (97) and a binding
+The leaves are now led by callees with no semantic contract (977), record
+literals (226), a variant field whose type is unresolved (98) and a binding
 whose type is not its value's (75). The string view was worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, as usual, against a
 leaf histogram that had ranked them differently. The declared field width
@@ -463,9 +469,9 @@ keyed by the receiver's mode and defining instruction ranked the 295 refusals
 and disagreed with the note this gate was deferred on: not one receiver was
 owned-but-live, and not one was a borrowed-parameter accumulator in a loop.
 They were 151 appends and 5 withs on a borrowed PARAMETER, 99 appends and 39
-withs on a record FIELD read, and one on an array element — the
-immutable-update threading shape, where the AST lowering already clones
-(`irlower.lower_arr_append_value`). The loop accumulator plans either way,
+withs on a record FIELD read — the immutable-update threading shape, where the
+AST lowering already clones (`irlower.lower_arr_append_value`) — and one on an
+array element. The loop accumulator plans either way,
 because what its body appends to is the header PHI, and a phi is a unit of
 this function's own however its sources reached it.
 
