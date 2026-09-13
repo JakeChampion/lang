@@ -741,7 +741,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
   // the line's range out of the held text, then the terminator.
   if (a.range) {
     while (i as u64 < head) {
-      gnu.push_u64(h, a.lo + perm[i]);
+      io_buffered.buf_push_u64(h, a.lo + perm[i]);
       buf_push(h, term);
       o = gnu.settle(o);
       i = i + 1;
@@ -783,7 +783,7 @@ function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): 
     }
     var j: u64 = got.0;
     if (a.range) {
-      gnu.push_u64(h, a.lo + j);
+      io_buffered.buf_push_u64(h, a.lo + j);
     } else if (src.boxed) {
       buf_push(h, src.held[j as i32]);
     } else {

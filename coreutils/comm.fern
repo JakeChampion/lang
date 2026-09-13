@@ -550,11 +550,11 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
     None => {}
   }
   if (cfg.total) {
-    gnu.push_u64(h, t0);
+    io_buffered.buf_push_u64(h, t0);
     buf_push(h, cfg.sep);
-    gnu.push_u64(h, t1);
+    io_buffered.buf_push_u64(h, t1);
     buf_push(h, cfg.sep);
-    gnu.push_u64(h, t2);
+    io_buffered.buf_push_u64(h, t2);
     buf_push(h, cfg.sep);
     buf_push(h, "total");
     buf_push_byte(h, term);

@@ -178,7 +178,7 @@ pub function (b: BufWriter) write_u64(n: u64): BufWriter {
 // `(b).write_i64(n)` — `write_u64` with a sign.
 pub function (b: BufWriter) write_i64(n: i64): BufWriter {
   if (n < 0 as i64) {
-    return b.write_string("-").write_u64((0 as u64) - (n as u64));
+    return b.write_string("-").write_u64(0 as u64 - n as u64);
   }
   return b.write_u64(n as u64);
 }
@@ -194,14 +194,36 @@ pub function buf_push_u64(h: usize, n: u64): void {
       buf_push_byte(h, 48 + n as i32);
       return;
     }
-    var k: i32 = (n as i32) * 2;
+    var k: i32 = n as i32 * 2;
     buf_push_range(h, __digit_pairs(), k, k + 2);
     return;
   }
   var q: u64 = n / (100 as u64);
   buf_push_u64(h, q);
-  var r: i32 = ((n - q * (100 as u64)) as i32) * 2;
+  var r: i32 = (n - q * (100 as u64)) as i32 * 2;
   buf_push_range(h, __digit_pairs(), r, r + 2);
+}
+
+// `buf_push_i64(h, n)` — `buf_push_u64` with a sign.
+pub function buf_push_i64(h: usize, n: i64): void {
+  if (n < 0 as i64) {
+    buf_push_byte(h, 45);
+    buf_push_u64(h, 0 as u64 - n as u64);
+    return;
+  }
+  buf_push_u64(h, n as u64);
+}
+
+// `buf_u64_len(n)` — how many bytes `buf_push_u64` writes for `n`, for a
+// caller that pads the number to a field.
+pub function buf_u64_len(n: u64): i32 {
+  var d: i32 = 1;
+  var x: u64 = n;
+  while (x >= 10 as u64) {
+    d = d + 1;
+    x = x / (10 as u64);
+  }
+  return d;
 }
 
 // "00" through "99", each at twice its value: a static literal, never

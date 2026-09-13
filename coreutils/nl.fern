@@ -311,33 +311,33 @@ function push_lineno(h: usize, n: i64, o: Opts): void {
   if (n < 0 as i64) {
     mag = 0 as u64 - mag;
   }
-  var len: i32 = gnu.decimal_len(mag);
+  var len: i32 = io_buffered.buf_u64_len(mag);
   if (n < 0 as i64) {
     len = len + 1;
   }
   if (len >= o.width) {
-    gnu.push_i64(h, n);
+    io_buffered.buf_push_i64(h, n);
     return;
   }
   var need: i32 = o.width - len;
   if (o.fmt == fmt_ln()) {
-    gnu.push_i64(h, n);
+    io_buffered.buf_push_i64(h, n);
     buf_push_range(h, o.pad, 0, need);
     return;
   }
   if (o.fmt == fmt_rn()) {
     buf_push_range(h, o.pad, 0, need);
-    gnu.push_i64(h, n);
+    io_buffered.buf_push_i64(h, n);
     return;
   }
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
     buf_push_range(h, o.zeros, 0, need);
-    gnu.push_u64(h, mag);
+    io_buffered.buf_push_u64(h, mag);
     return;
   }
   buf_push_range(h, o.zeros, 0, need);
-  gnu.push_u64(h, mag);
+  io_buffered.buf_push_u64(h, mag);
 }
 
 // ---- the running state ------------------------------------------------------
