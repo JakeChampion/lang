@@ -77,10 +77,7 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the size of the block the accumulated output
-// is handed to the buffered writer in. The writer's threshold is the
-// same number, so a full block goes straight to the fd instead of being
-// copied into its buffer first.
+// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -148,13 +145,13 @@ function main(): i32 {
   return run(files, stops, all && !first_only);
 }
 
-// `run(files, stops, convert_all)` — the whole conversion. One function
-// because `out` is the accumulator: a bare local appended to inline
-// grows in place, where the same appends through a helper copy the
-// buffer every time (#8785).
+// `run(files, stops, convert_all)` — the whole conversion. Every piece
+// of a line is pushed straight into stdout's builder, which is flushed
+// once it holds a block, so no byte is copied into an accumulator on the
+// way.
 function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var out: string = "";
+  var h: usize = o.handle();
   var pad: string = "        ";
   var ok: boolean = true;
   // Non-zero when every stop is the same distance apart, which is the
@@ -201,8 +198,6 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
                   opened = true;
                 },
                 Err(e) => {
-                  o = o.write_string(out);
-                  out = "";
                   o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
                   ok = false;
                 }
@@ -218,8 +213,6 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
               piece = c;
             },
             Err(e) => {
-              o = o.write_string(out);
-              out = "";
               o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
               ok = false;
               read_ok = false;
@@ -268,7 +261,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
     if (!convert_all && lead != 32 && lead != 9) {
       // Nothing to convert: only leading blanks are candidates and this
       // line has none, so it goes out as it stands.
-      out = out + slice_unchecked(buf, lo, hi);
+      buf_push_range(h, buf, lo, hi);
     } else {
       // The line stays a view into the chunk: every scan below is
       // bounded by `end`, so nothing here needs it copied out.
@@ -304,14 +297,14 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             while (pad.len() < pending) {
               pad = pad + "                                ";
             }
-            out = out + slice_unchecked(pad, 0, pending);
+            buf_push_range(h, pad, 0, pending);
             pending = 0;
             held = false;
-            out = out + slice_unchecked(buf, p, end);
+            buf_push_range(h, buf, p, end);
             p = end;
           } else {
             if (held) {
-              out = out + "\t";
+              buf_push_byte(h, 9);
               pending = 0;
               held = false;
               after_nb = false;
@@ -319,14 +312,14 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             if (c == 9) {
               column = target;
               pending = 0;
-              out = out + "\t";
+              buf_push_byte(h, 9);
               after_nb = false;
             } else {
               column = column + 1 as u64;
               pending = pending + 1;
               if (column == target) {
                 if (pending > 1 || !after_nb) {
-                  out = out + "\t";
+                  buf_push_byte(h, 9);
                   pending = 0;
                   after_nb = false;
                 } else {
@@ -340,16 +333,16 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
           while (pad.len() < pending) {
             pad = pad + "                                ";
           }
-          out = out + slice_unchecked(pad, 0, pending);
+          buf_push_range(h, pad, 0, pending);
           pending = 0;
           held = false;
           if (!convert) {
-            out = out + slice_unchecked(buf, p, end);
+            buf_push_range(h, buf, p, end);
             p = end;
           } else if (!convert_all) {
             // Default: the first byte that is not a blank ends the
             // convertible part of the line.
-            out = out + slice_unchecked(buf, p, end);
+            buf_push_range(h, buf, p, end);
             p = end;
             convert = false;
           } else {
@@ -371,7 +364,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
               }
               q = q + 1;
             }
-            out = out + slice_unchecked(buf, p, q);
+            buf_push_range(h, buf, p, q);
             p = q;
             after_nb = true;
           }
@@ -380,15 +373,13 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       while (pad.len() < pending) {
         pad = pad + "                                ";
       }
-      out = out + slice_unchecked(pad, 0, pending);
+      buf_push_range(h, pad, 0, pending);
     }
-    if (out.len() >= block_size()) {
-      o = o.write_string(out);
-      out = "";
+    if (buf_len(h) >= block_size()) {
+      o = o.flush();
     }
   }
 
-  o = o.write_string(out);
   gnu.finish(o);
   if (!ok) {
     return 1;
