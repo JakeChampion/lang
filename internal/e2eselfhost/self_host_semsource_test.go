@@ -316,6 +316,34 @@ function refused_own_value(n: i32): i32 { return apply_arr(eat_len, [n]); }
 function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function refused_fn_result(): (i32) => i32 { return twice_it; }
 function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
+
+// A free builtin whose result the checker types is a value like any other, so
+// the record literal, array or operator written around the call keeps its own
+// type instead of collapsing to unknown. The byte array such a call is handed
+// carries the element its parameter declares: there is no implicit numeric
+// conversion, so an i32 written into a u8[] literal is refused.
+struct Frag { text: string, n: i32 }
+function frag_of(bs: u8[], n: i32): Frag { return Frag { text: string_from_bytes_unchecked(bs), n: n }; }
+function byte_text(b: u8): i32 { return string_from_bytes_unchecked([b]).len(); }
+function rounded(x: f64, n: i32): i32 { return n + wide_low(f64_bits(x)); }
+function wide_low(n: i64): i32 { return (n & 255i64) as i32; }
+function refused_byte_width(b: i32): i32 { return string_from_bytes_unchecked([b]).len(); }
+
+// Cell[T] is a nominal name over a one-element box rather than a declared
+// record, so a cell-typed declared field resolves through its element and the
+// enum or record carrying one has a schema. The cell's own vocabulary —
+// cell_new, get and set — is not here, so a body that names it is refused.
+struct Cellar { c: Cell[i32], n: i32 }
+enum Boxed { Plain(i32), Celled(Cell[i32], i32) }
+function cell_field(k: Cellar): i32 { return k.n; }
+function cell_payload(own b: Boxed): i32 {
+    match (b) {
+        Plain(k) => { return k; },
+        Celled(_, k) => { return k; }
+    }
+    return 0 - 1;
+}
+function refused_cell_new(n: i32): i32 { var c: Cell[i32] = cell_new(n); return c.get(); }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -1198,6 +1226,29 @@ function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
     }
     return t;
 }
+// A Cell[T] is the language's one mutable slot and IS a one-element array box,
+// so a cell-typed field is a counted reference: the container retains it at a
+// construction and releases it at a drop, walked at the cell's element. main
+// holds the only cell_new and hands every holder straight to an own parameter,
+// because the AST lowering does not reclaim a cell-typed field at all
+// (docs/SELFHOST-SEMANTIC-SOURCE.md records the reproduction).
+struct Slot { c: Cell[i32], n: i32 }
+struct Note { w: Cell[string], n: i32 }
+enum Held { Bare(i32), Boxed(Cell[i32], i32) }
+@noinline function slot_n(own s: Slot): i32 { return s.n; }
+@noinline function note_n(own t: Note): i32 { return t.n; }
+@noinline function held_n(own h: Held): i32 {
+    match (h) {
+        Bare(k) => { return k; },
+        Boxed(_, k) => { return k + 1; }
+    }
+    return 0 - 1;
+}
+@noinline function slot_share(s: Slot): i32 { return slot_n(Slot { c: s.c, n: s.n + 1 }); }
+@noinline function note_share(t: Note): i32 { return note_n(Note { w: t.w, n: t.n + 2 }); }
+@noinline function slot_pair(own s: Slot): i32 { var k: i32 = slot_share(s); return k + slot_n(s); }
+@noinline function note_pair(own t: Note): i32 { var k: i32 = note_share(t); return k + note_n(t); }
+@noinline function slot_held(own s: Slot): i32 { var cc: Cell[i32] = s.c; return held_n(Boxed(cc, s.n)); }
 // Function values and the calls through them: an address handed to a produced
 // callee, a scalar and a reference argument lent across one, an indirect call
 // whose counted result the caller owns and one whose result it discards, and
@@ -1353,6 +1404,9 @@ function main(): i32 {
     print_int(push_field_len(bp, 5)); print(""); print_int(set_field_at(bp, 0, 7)); print("");
     print_int(elem_push(9)); print(""); print_int(push_kept(fill(1), 9)); print("");
     print_int(build_rows(4)); print(""); print_int(word_lens(0)); print(""); print_int(word_set(0)); print("");
+    print_int(slot_pair(Slot { c: cell_new(4), n: 3 })); print("");
+    print_int(note_pair(Note { w: cell_new("ab"), n: 5 })); print("");
+    print_int(held_n(Bare(6))); print(""); print_int(slot_held(Slot { c: cell_new(1), n: 8 })); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1393,10 +1447,16 @@ function main(): i32 {
 // The for-loop tail runs over lens = fill(2) = [2, 3, 4]: sum 9; skip_two drops
 // the 2 for 7; until_two_for breaks at once for 0; first_gt past 2 is 3;
 // shadow_for is 9 plus the outer x of 100; temp_for(2) sums [2, 3, 4] again.
+// The cell shapes: slot_pair lends its own Slot to slot_share, which retains
+// the cell into a fresh Slot it consumes for 3 + 1 = 4, then consumes its own
+// for 3 — 7, with the cell released twice and freed once. note_pair is the
+// same over a string cell: 5 + 2 = 7 then 5, for 12. held_n(Bare(6)) takes the
+// payload-free arm for 6, and slot_held binds its Slot's cell, retains it into
+// a Boxed payload, drops the Slot and consumes the payload for 8 + 1 = 9.
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n7\n12\n6\n9\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1481,7 +1541,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

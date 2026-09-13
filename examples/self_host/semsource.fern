@@ -1588,6 +1588,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         }
         return out;
     }
+    if (semtypes.is_cell(t)) { return schema_of(semtypes.cell_elem(t), s, out); }
     if let typeinfo.TypeStruct(r) = t {
         if (semrecords.find(out.records, t) >= 0) { return out; }
         return record_entry(t, r, s, out);

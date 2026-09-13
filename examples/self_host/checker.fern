@@ -347,6 +347,52 @@ function t_unknown(reason: string): typeinfo.Type {
   return typeinfo.TypeUnknown { reason: reason };
 }
 
+// Cell[T] is the reserved builtin struct over one mutable slot; its single
+// instantiation arg is the element. An argless `Cell` — what `cell_new(v)`
+// yields, since the destination names T — has no element to give.
+function is_cell_type(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(s) = t { return s.name == "Cell"; }
+  return false;
+}
+
+function cell_elem_type(t: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeStruct(s) = t {
+    if (s.args.len() == 1) { return s.args[0]; }
+  }
+  return t_unknown("cell element");
+}
+
+// `Cell[T]` resolves to the reserved builtin struct CARRYING its element, the
+// shape native's builtinStructDecls registers. The element is what a cell-typed
+// field's reclamation reads, so it survives rather than being erased the way a
+// user generic's args are.
+function is_cell_ref(r: parser.TypeRef): boolean {
+  return r.base == "Cell" && r.args.len() == 1;
+}
+
+// Cell[T]'s two methods (docs/CELL-TYPE-PLAN.md): `get` reads the slot and
+// `set` writes it in place, yielding nothing so `c.set(v);` is a statement
+// rather than an E055 discard. Unknown for every other receiver or name, which
+// is the caller's signal to keep resolving.
+function cell_method_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32): typeinfo.Type {
+  if (!is_method || !is_cell_type(recv)) { return t_unknown("not a cell method call"); }
+  if (name == "get" && argc == 0) { return cell_elem_type(recv); }
+  if (name == "set" && argc == 1) { return t_void(); }
+  return t_unknown("not a cell method");
+}
+
+// The free builtins whose RESULT the expression written around the call needs:
+// the byte-array string constructor and the two f64 bit reinterpretations,
+// typed as native's FuncSigs type them. Left unknown they collapsed the struct
+// literal, array or operator holding the call.
+function free_builtin_result(name: string, is_method: boolean, argc: i32): typeinfo.Type {
+  if (is_method || argc != 1) { return t_unknown("not a typed free builtin"); }
+  if (name == "string_from_bytes_unchecked") { return t_string(); }
+  if (name == "f64_bits") { return t_i64(); }
+  if (name == "f64_from_bits") { return t_float(); }
+  return t_unknown("not a typed free builtin");
+}
+
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
 // analogue of asmcore's ty_tag. Recursive over the composite variants so the
 // full decoded shape (array element, tuple elements, map key/value, and the
@@ -3061,6 +3107,10 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     return t_unknown("slice_unchecked: first argument must be a string");
   }
+  var free_builtin: typeinfo.Type = free_builtin_result(name, is_method, c.args.len());
+  if (!is_unknown(free_builtin)) {
+    return free_builtin;
+  }
   // `s.len()` — the method spelling of the `len(s)` builtin above. It
   // resolves through the user MethodSig table, which has no entry for a
   // primitive receiver, so the statement types unknown. An unknown
@@ -3082,6 +3132,10 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       typeinfo.TypeString(_) => { return t_array(t_u8()); },
       _ => {}
     }
+  }
+  var cell_method: typeinfo.Type = cell_method_type(recv_ty, name, is_method, c.args.len());
+  if (!is_unknown(cell_method)) {
+    return cell_method;
   }
   // Built-in VMap method dispatch — handled ahead of
   // the user MethodSig lookup.
@@ -4462,6 +4516,8 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     // `var: Type = <recursive call>` doesn't reliably trigger the struct→union
     // wrap here; see the t_i32 note.)
     return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names));
+  } else if (is_cell_ref(r)) {
+    return t_struct_g("Cell", [type_from_ref_names(r.args[0], struct_names, union_names)]);
   } else if (r.base == "Map" && r.args.len() > 2) {
     // A (never-emitted) 3+ arg `Map[K, A, B]`: the value is "everything after
     // the first comma" — the trailing args re-joined and resolved as one name

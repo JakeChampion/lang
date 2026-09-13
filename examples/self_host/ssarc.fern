@@ -8,6 +8,7 @@ import "./ssasem";
 import "./ssalayout";
 import "./ssaunits";
 import "./semrecords";
+import "./semtypes";
 import "./typeinfo";
 import "./util";
 
@@ -56,15 +57,22 @@ function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
 }
+// A nominal box is named by a declaration this function's schema table carries,
+// except a cell's: no declaration names it, and what it holds is one slot of
+// its element.
+function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if (semtypes.is_cell(t)) { return walkable(semtypes.cell_elem(t), f); }
+    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
+    if let typeinfo.TypeUnion(u) = t { return u.args.len() == 0 && semrecords.find_enum(f.enums, t) >= 0; }
+    return false;
+}
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (supported_leaf(t)) { return true; }
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
     if let typeinfo.TypeFloat(_) = t { return ssasem.is_f64(t); }
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
-    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
-    if let typeinfo.TypeUnion(u) = t { return u.args.len() == 0 && semrecords.find_enum(f.enums, t) >= 0; }
-    return false;
+    return supported_nominal(t, f);
 }
 
 function reference(t: typeinfo.Type): boolean {
@@ -140,6 +148,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeTuple(tup) = t {
         for elem in tup.elements { if (reference(elem)) { return true; } }
     }
+    if (semtypes.is_cell(t)) { return reference(semtypes.cell_elem(t)); }
     if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
     if let typeinfo.TypeUnion(_) = t {
         for v in variants_of(t, f) { if (fields_have_children(v.fields)) { return true; } }
@@ -153,6 +162,7 @@ function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch
         r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
         r = emit(r, ir.op_if(0));
         if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
+        if (semtypes.is_cell(t)) { r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f); }
         if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
         if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
         r = emit(r, ir.op_end());
@@ -346,6 +356,7 @@ function schema_types_error(f: ssasem.Func): string {
 }
 
 function named(t: typeinfo.Type): string {
+    if (semtypes.is_cell(t)) { return ""; }
     if let typeinfo.TypeStruct(r) = t { return r.name; }
     if let typeinfo.TypeUnion(u) = t { return u.name; }
     return "";

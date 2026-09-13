@@ -1122,3 +1122,84 @@ refused function value consumes an argument
 refused produced graph fails semantic verification: function signature slot
 refused function value result
 refused produced graph fails semantic verification: function value is not an element
+modes 2 1 result Frag
+v0:u8[] v1:i32 v2:string v3:Frag
+func frag_of {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call string_from_bytes_unchecked v0
+    v3 = record_new v2 v1
+    ret v3
+}
+
+modes 1 result i32
+v0:u8 v1:u8[] v2:string v3:i32
+func byte_text {
+  b0:
+    v0 = param 0
+    v1 = array_new v0
+    v2 = call string_from_bytes_unchecked v1
+    v3 = length v2
+    ret v3
+}
+
+modes 1 1 result i32
+v0:f64 v1:i32 v2:i64 v3:i32 v4:i32
+func rounded {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call f64_bits v0
+    v3 = call wide_low v2
+    v4 = binary + v1 v3
+    ret v4
+}
+
+modes 1 result i32
+v0:i64 v1:i64 v2:i64 v3:i32
+func wide_low {
+  b0:
+    v0 = param 0
+    v1 = const_int 255
+    v2 = binary & v0 v1
+    v3 = cast v2
+    ret v3
+}
+
+refused array element type
+modes 2 result i32
+v0:Cellar v1:i32
+func cell_field {
+  b0:
+    v0 = param 0
+    v1 = record_get 1 v0
+    ret v1
+}
+
+modes 3 result i32
+v0:Boxed v1:boolean v2:i32 v3:boolean v4:i32 v5:i32 v6:i32 v7:i32
+func cell_payload {
+  b0:
+    v0 = param 0
+    v1 = variant_is Plain v0
+    brif v1 b2 b3
+  b2:
+    v2 = variant_get 0 Plain v0
+    ret v2
+  b3:
+    v3 = variant_is Celled v0
+    brif v3 b4 b5
+  b4:
+    v4 = variant_get 1 Celled v0
+    ret v4
+  b5:
+    br b1
+  b1:
+    v5 = const_int 0
+    v6 = const_int 1
+    v7 = binary - v5 v6
+    ret v7
+}
+
+refused call target has no semantic contract: cell_new
