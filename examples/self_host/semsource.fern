@@ -46,6 +46,7 @@ function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: t
 function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
+function t_str(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
 function is_i32(t: typeinfo.Type): boolean { return semtypes.equal(t, t_i32()); }
 function is_bool(t: typeinfo.Type): boolean { return semtypes.equal(t, t_bool()); }
@@ -286,6 +287,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         var v: Value = expr(e, s, elem);
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+        if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type"); }
         ids = ids.append(v.id);
     }
@@ -320,7 +322,7 @@ function index(ix: ast.ExprIndex, s: State): Value {
     // A string's element is one byte, typed u8 the way the checker types it.
     // Nothing is borrowed, so this is a read of the source rather than a
     // projection of it.
-    if (ssasem.is_string(s.values[container.id])) {
+    if (ssasem.is_text(s.values[container.id])) {
         return define(s, ssasem.str_index(), [container.id, at.id], 0, "", t_u8());
     }
     var elem: typeinfo.Type = element_type(s.values[container.id]);
@@ -583,7 +585,7 @@ function logical(b: ast.ExprBinary, s: State): Value {
 // nothing.
 function builtin_length(recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
-    var sized: boolean = ssasem.is_string(t);
+    var sized: boolean = ssasem.is_text(t);
     if let typeinfo.TypeArray(_) = t { sized = true; }
     if (!sized) { return refused(s, "unsupported call target"); }
     return define(s, ssasem.length(), [recv.id], 0, "", t_i32());
@@ -591,7 +593,10 @@ function builtin_length(recv: Value, s: State): Value {
 
 // `.append` hands the receiver's own unit to the runtime and takes back one:
 // the same box when the push fits, a fresh one when it grew. The element is a
-// value the new array holds.
+// value the new array holds — so it cannot be a view, whose bytes belong to a
+// source the array may outlive. The checker's borrowed-argument carve-out lets
+// one through today (docs/STR-VIEW-CONTRACT.md, the escaping positions #8635
+// closes); this boundary refuses it, as it does an array literal's.
 function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     var elem: typeinfo.Type = element_type(t);
@@ -599,6 +604,7 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     var v: Value = expr(c.args[0], s, elem);
     s = v.s;
     if (!s.ok) { return v; }
+    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
     return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
 }
@@ -624,19 +630,24 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     var owner: string = struct_name(s.values[recv.id]);
     if (owner == "") { owner = union_name(s.values[recv.id]); }
     // A builtin's receiver names no declaration this boundary can hold a
-    // contract for, so it is matched by shape instead.
-    if (owner == "") { return builtin_call(c, fa, recv, s); }
+    // contract for, so it is matched by shape instead. A string's methods are
+    // declared in the standard library on a `string` receiver, and a view
+    // reaches them as a lent box; the two builtins every text has come first.
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s); }
+    if (owner == "") { owner = "string"; }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
     if (at < 0) { return refused(s, "call target has no semantic contract"); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    recv = lend(recv, contract.params[0], contract.modes[0]);
+    s = recv.s;
     if (!semtypes.equal(s.values[recv.id], contract.params[0])) { return refused(s, "call receiver type"); }
     var ids: i32[] = [recv.id];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = expr(c.args[i], s, contract.params[i + 1]);
+        var v: Value = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1]);
         s = v.s;
         if (!s.ok) { return v; }
         if (!semtypes.equal(s.values[v.id], contract.params[i + 1])) { return refused(s, "call argument type"); }
@@ -649,12 +660,13 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
 
 // `slice_unchecked(s, start, end)` reads a window of a string's bytes. The box
 // it hands back is this function's to release; the bytes stay the source's, so
-// the result is anchored to it and the source must outlive the view.
+// the result is anchored to it and the source must outlive the view. It is a
+// view, as the checker types it, whether the source is owned or a view itself.
 function string_slice(c: ast.ExprCall, s: State): Value {
     var src: Value = expr(c.args[0], s, typeinfo.unchecked());
     s = src.s;
     if (!s.ok) { return src; }
-    if (!ssasem.is_string(s.values[src.id])) { return refused(s, "unsupported call target"); }
+    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported call target"); }
     var lo: Value = expr(c.args[1], s, t_i32());
     s = lo.s;
     if (!s.ok) { return lo; }
@@ -662,7 +674,19 @@ function string_slice(c: ast.ExprCall, s: State): Value {
     s = hi.s;
     if (!s.ok) { return hi; }
     if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) { return refused(s, "slice bound type"); }
-    return define(s, ssasem.slice(), [src.id, lo.id, hi.id], 0, "", typeinfo.TypeString { tag: 0 });
+    return define(s, ssasem.slice(), [src.id, lo.id, hi.id], 0, "", t_str());
+}
+
+// A view where a BORROWED `string` parameter is declared: the callee reads
+// the box and hands it back, so the view's bytes are lent the way any
+// borrowed argument's are (the checker's str_arg_borrow). A counted parameter
+// would take the box as its own, which a view's box is not, so the retag is
+// not offered there and the exact-type rule refuses the call.
+function lend(v: Value, param: typeinfo.Type, m: i32): Value {
+    var s: State = v.s;
+    if (!s.ok || m != ssaunits.borrow_mode()) { return v; }
+    if (!ssasem.is_view(s.values[v.id]) || !ssasem.is_string(param)) { return v; }
+    return define(s, ssasem.str_as(), [v.id], 0, "", param);
 }
 
 function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
@@ -683,7 +707,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = expr(c.args[i], s, contract.params[i]);
+        var v: Value = lend(expr(c.args[i], s, contract.params[i]), contract.params[i], contract.modes[i]);
         s = v.s;
         if (!s.ok) { return v; }
         if (!semtypes.equal(s.values[v.id], contract.params[i])) { return refused(s, "call argument type"); }
@@ -694,13 +718,15 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     return define(s, ssasem.call(), ids, 0, name, contract.result);
 }
 
-// A union-typed destination accepts any of its members. The widening is a
-// verified operation, not an implicit reinterpretation: the value carries
-// exactly the type the destination declared, and every obligation site keeps
-// its exact-type rule.
+// A union-typed destination accepts any of its members, and a view-typed one
+// accepts an owned string, whose box it borrows. Each widening is a verified
+// operation, not an implicit reinterpretation: the value carries exactly the
+// type the destination declared, and every obligation site keeps its
+// exact-type rule.
 function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
+    if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
     var owner: string = union_name(expected);
     if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) { return v; }
     var member: string = struct_name(s.values[v.id]);
@@ -1449,6 +1475,7 @@ pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.
     if (why != "") { return refuse(why); }
     var s: State = initial(fd, scope, contracts);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
+    if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s);
@@ -1461,7 +1488,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     var none: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
     if (unsupported_declaration(fd) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope);
-    if (!semtypes.concrete(result, true)) { return none; }
+    if (!semtypes.concrete(result, true) || ssasem.is_view(result)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);

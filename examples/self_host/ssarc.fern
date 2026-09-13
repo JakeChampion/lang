@@ -18,11 +18,13 @@ function empty(why: string): irlower.LowerResult {
 
 // This physical boundary refuses types whose stack representation is not
 // implemented here, even when the unit planner knows their abstract
-// ownership: floats, string views, and a record with no schema or with type
-// arguments (its box is named by the bare declaration). The byte rides the
-// same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
-// integer gets a slot of its own, which is a VALUE here but never a container
-// element (narrow_slot).
+// ownership: floats, and a record with no schema or with type arguments (its
+// box is named by the bare declaration). The byte rides the same i32-shaped
+// slot as an i32, narrowed by the wrap below; the 64-bit integer gets a slot
+// of its own, which is a VALUE here but never a container element
+// (narrow_slot). A string view is a value here and never an element either: a
+// container's drop frees its elements with the owned string's helper, which is
+// not a view's.
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
     return true;
@@ -39,13 +41,13 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
 function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t); }
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return narrow_slot(t) && supported(t, f);
+    return narrow_slot(t) && !ssasem.is_view(t) && supported(t, f);
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
-    if let typeinfo.TypeString(_) = t { return ssasem.is_string(t); }
+    if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
@@ -82,25 +84,15 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 
 // A string box is released by its own helper: its block starts before the
 // value, where an array's starts before the data words.
-// A string slice's box is this function's, but its bytes belong to the source.
+// A view's box is this function's, but its bytes belong to the source.
 // __fern_str_view_free frees the box alone when the rc is the immortal view
 // sentinel and takes the ordinary path otherwise, which is what makes one
 // release symbol correct on both the register backends and wasm (whose slices
 // copy, so the result is an ordinary counted box).
-function release_name(t: typeinfo.Type, view: boolean): string {
-    if let typeinfo.TypeString(_) = t {
-        if (view) { return "__fern_str_view_free"; }
-        return "__fern_str_free";
-    }
+function release_name(t: typeinfo.Type): string {
+    if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
+    if (ssasem.is_string(t)) { return "__fern_str_free"; }
     return "__fern_rc_dec";
-}
-
-// Whether `value` is the result of a slice, and so holds a borrowed-byte box.
-function slice_result(f: ssasem.Func, value: i32): boolean {
-    for b in f.graph.blocks {
-        for ins in b.insts { if (ins.result == value && ins.kind_tag == ssasem.slice()) { return true; } }
-    }
-    return false;
 }
 
 function emit(r: irlower.LowerResult, op: ir.Op): irlower.LowerResult {
@@ -153,7 +145,7 @@ function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch
         if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
         r = emit(r, ir.op_end());
     }
-    return helper(r, slot, release_name(t, slice_result(f, slot)));
+    return helper(r, slot, release_name(t));
 }
 
 // A variant box carries only its own variant's fields, so the walk selects
@@ -460,10 +452,11 @@ function variant_op(k: i32): boolean {
         || identity_op(k);
 }
 
-// A struct-union's member is its own box, so widening and narrowing move no
+// A struct-union's member is its own box, and a view and the string it
+// borrows are one box, so widening, narrowing and a string retag move no
 // bytes: the operand is already on the stack and the store below takes it.
 function identity_op(k: i32): boolean {
-    return k == ssasem.variant_up() || k == ssasem.variant_as();
+    return k == ssasem.variant_up() || k == ssasem.variant_as() || k == ssasem.str_as();
 }
 
 function supported_op(k: i32): boolean { return value_op(k) || container_op(k); }
@@ -550,7 +543,7 @@ function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerRes
 
 function scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.cast()) { return cast(r, f, ins); }
-    if (ins.kind_tag == 9 && ssasem.is_string(f.values[ins.args[0]])) { return string_binary(r, ins); }
+    if (ins.kind_tag == 9 && ssasem.is_text(f.values[ins.args[0]])) { return string_binary(r, ins); }
     if (ins.kind_tag == 10 && ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
     var w: i32 = operand_width(f, ins);
     if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(binary_kind(ins.str), w, false)); }
@@ -589,7 +582,7 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make(ins.args.len())); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), 0 - 1)); }
     if (ins.kind_tag == ssasem.length()) {
-        if (ssasem.is_string(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
+        if (ssasem.is_text(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
         return emit(r, ir.op_arr_len());
     }
     // The unit planner admits an append only where the receiver's unit is

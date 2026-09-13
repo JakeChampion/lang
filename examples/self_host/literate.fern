@@ -112,12 +112,12 @@ function split_lines(src: string): string[] {
     var n: i32 = src.len();
     while (i < n) {
         if (src[i] == b'\n') {
-            lines = lines.append(slice_unchecked(src, start, i));
+            lines = lines.append(slice_unchecked(src, start, i) + "");
             start = i + 1;
         }
         i = i + 1;
     }
-    lines = lines.append(slice_unchecked(src, start, n));
+    lines = lines.append(slice_unchecked(src, start, n) + "");
     return lines;
 }
 
@@ -180,7 +180,7 @@ function split_ws(s: string): string[] {
         while (i < n && (s[i] == b' ' || s[i] == b'\t')) { i = i + 1; }
         var start: i32 = i;
         while (i < n && s[i] != b' ' && s[i] != b'\t') { i = i + 1; }
-        if (i > start) { words = words.append(slice_unchecked(s, start, i)); }
+        if (i > start) { words = words.append(slice_unchecked(s, start, i) + ""); }
     }
     return words;
 }

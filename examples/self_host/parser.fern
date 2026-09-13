@@ -8609,7 +8609,7 @@ pub function split_top_commas(s: string): string[] {
         if (s[i] == b'[' || s[i] == b'(') { depth = depth + 1; }
         if (s[i] == b']' || s[i] == b')') { depth = depth - 1; }
         if (depth == 0 && s[i] == b',') {
-            out = out.append(slice_unchecked(s, start, i));
+            out = out.append(slice_unchecked(s, start, i) + "");
             i = i + 1;
             if (i < s.len() && s[i] == b' ') { i = i + 1; }
             start = i;
@@ -8617,7 +8617,7 @@ pub function split_top_commas(s: string): string[] {
         }
         i = i + 1;
     }
-    out = out.append(slice_unchecked(s, start, s.len()));
+    out = out.append(slice_unchecked(s, start, s.len()) + "");
     return out;
 }
 
@@ -8867,14 +8867,14 @@ function split_dunder(s: string): string[] {
     var i: i32 = 0;
     while (i + 1 < s.len()) {
         if (slice_unchecked(s, i, i + 2) == "__") {
-            out = out.append(slice_unchecked(s, start, i));
+            out = out.append(slice_unchecked(s, start, i) + "");
             i = i + 2;
             start = i;
             continue;
         }
         i = i + 1;
     }
-    out = out.append(slice_unchecked(s, start, s.len()));
+    out = out.append(slice_unchecked(s, start, s.len()) + "");
     return out;
 }
 
@@ -8969,7 +8969,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
         if (concrete.len() > mpfx.len() && slice_unchecked(concrete, 0, mpfx.len()) == mpfx) {
             var pp: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
             var ckey: str = slice_unchecked(concrete, mpfx.len(), concrete.len());
-            var cp: string[] = [ckey];
+            var cp: string[] = [ckey + ""];
             if (pp.len() != 1) { cp = split_dunder(ckey); }
             if (pp.len() == cp.len()) {
                 var b2: MEnv = binds;
@@ -9138,14 +9138,14 @@ function split_inst_key(s: string): string[] {
     var i: i32 = 0;
     while (i < s.len()) {
         if (s[i] == b';') {
-            out = out.append(slice_unchecked(s, start, i));
+            out = out.append(slice_unchecked(s, start, i) + "");
             i = i + 1;
             start = i;
             continue;
         }
         i = i + 1;
     }
-    out = out.append(slice_unchecked(s, start, s.len()));
+    out = out.append(slice_unchecked(s, start, s.len()) + "");
     return out;
 }
 
@@ -9590,7 +9590,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                         var recvt: string = mono_infer(cfa.obj, env, funcs);
                         if (type_ends_arr(recvt)) {
                             var el: str = slice_unchecked(recvt, 0, recvt.len() - 2);
-                            return subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el]);
+                            return subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
                         }
                     }
                     // Generic-struct method with its own type params — folded to
@@ -10698,7 +10698,7 @@ pub function register_array_method_generics(mod: Module): Module {
         var fd: FuncDecl = mod.funcs[i];
         if (is_generic_array_method(fd)) {
             var elem: str = slice_unchecked(fd.receiver_type, 0, fd.receiver_type.len() - 2);
-            var tps: string[] = [elem];
+            var tps: string[] = [elem + ""];
             // Fold the receiver into a leading param named after the
             // receiver, so the body's references to it resolve normally.
             var nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, is_str: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];

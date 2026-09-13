@@ -6264,7 +6264,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 var doff: i32 = p.data.len();
                 p = arm64_gas_dlabel(p, before, doff);
             } else if (section == 2) {
-                p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
+                p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before + "") };
                 p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
             } else if (arm64_gas_is_digits(before + "")) {
                 var nv: i32 = arm64_gas_atoi(before + "");

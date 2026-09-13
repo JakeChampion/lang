@@ -1056,7 +1056,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
             if (irlower.is_struct_array_field_type(structs, fft)) {
                 var felem: str = slice_unchecked(fft, 0, fft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, felem) && util.index_of_str(out, felem) < 0) {
-                    out = out.append(felem);
+                    out = out.append(felem + "");
                 }
             }
             // A DIRECT nested-struct field, for the same reason: the reclaim
@@ -1095,7 +1095,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
             if (irlower.is_struct_array_field_type(structs, ft)) {
                 var aelem: str = slice_unchecked(ft, 0, ft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, aelem)) {
-                    if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem); }
+                    if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem + ""); }
                 }
             }
             k = k + 1;
@@ -1132,7 +1132,7 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
             if (irlower.is_struct_array_field_type(structs, ft)) {
                 var elem: str = slice_unchecked(ft, 0, ft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
-                    out = out.append(elem);
+                    out = out.append(elem + "");
                 }
             }
             k = k + 1;
@@ -9393,7 +9393,7 @@ pub function wat_escape(s: string): string {
     while (i < s.len()) {
         var b: i32 = s[i] as i32;
         if (b >= 32 && b <= 126 && b != 34 && b != 92) {
-            parts = parts.append(slice_unchecked(s, i, i + 1));
+            parts = parts.append(slice_unchecked(s, i, i + 1) + "");
         } else {
             parts = parts.append("\\" + hex_digit(b / 16) + hex_digit(b % 16));
         }

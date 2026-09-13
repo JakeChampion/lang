@@ -1778,14 +1778,14 @@ function x86_str_split(s: string, sep: string): string[] {
             hit = j == m;
         }
         if (hit) {
-            out = out.append(slice_unchecked(s, start, i));
+            out = out.append(slice_unchecked(s, start, i) + "");
             i = i + m;
             start = i;
         } else {
             i = i + 1;
         }
     }
-    out = out.append(slice_unchecked(s, start, n));
+    out = out.append(slice_unchecked(s, start, n) + "");
     return out;
 }
 
