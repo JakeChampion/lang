@@ -1,0 +1,23 @@
+import "std/i32";
+// A scalar bound to an integer sum and then handed to another scalar by
+// assignment: the sum is not a string concat, so nothing about the value is
+// a box to retain or release.
+function bump(x: i32): i32 {
+    return x + 1;
+}
+
+function lower(a: i32, b: i32): i32 {
+    var e: i32 = a + bump(a);
+    var eb: i32 = b + bump(b);
+    if (eb < e) {
+        e = eb;
+    }
+    return e;
+}
+
+function main(): i32 {
+    print(lower(0 - 63, 0 - 68).to_string());
+    print(lower(0 - 68, 0 - 63).to_string());
+    print(lower(100000, 3).to_string());
+    return 0;
+}

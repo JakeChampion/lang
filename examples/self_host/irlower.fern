@@ -7907,8 +7907,9 @@ function str_local_binding_is_fresh(init: ast.Expr): boolean {
             }
         },
         ast.ExprBinary(b) => {
-            // A CONCAT (fresh when it is a string; int-add is filtered by is_str).
-            return b.op == "+";
+            // A concat allocates a fresh box. The checker's tag tells it from an
+            // integer add; an unannotated tree keeps the structural answer.
+            return b.op == "+" && (b.ty == "" || b.ty == "string");
         },
         _ => { return false; },
     }
@@ -36554,6 +36555,9 @@ function collect_fresh_string_names(stmts: ast.Stmt[], acc: string[]): string[] 
 function collect_fresh_string_in_stmt(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
+            // A binding declared at a scalar type holds no box whatever its
+            // initializer's shape.
+            if (v.type_name != "" && v.type_name != "string") { return acc; }
             if (str_local_binding_is_fresh(v.init)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
