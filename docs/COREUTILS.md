@@ -524,8 +524,9 @@ GNU binary at `/usr/bin` on this host and are unmeasured.
 Where Fern wins outright (every row at or above 1x): `basename`,
 `csplit`, `df`, `dirname`, `echo`, `false`, `fold`, `hostid`, `id`,
 `mkdir`, `mknod`, `mktemp`, `nproc`, `pwd`, `readlink`, `rm`, `rmdir`,
-`runcon`, `sleep`, `tee`, `true`, `tsort`, `uname`, `uniq`, `users`, `wc`,
-`whoami`, `yes`; `seq` on every row; `od` on every row but `-t f8`. The
+`runcon`, `sleep`, `tee`, `true`, `tsort`, `uname`, `users`, `wc`,
+`whoami`, `yes`; `seq` on every row; `od` on every row but `-t f8`; `uniq`
+on every row but `-f1 -c`. The
 startup-bound utilities the loaded survey put under 1x — `arch`, `groups`,
 `tty`, `link`, `unlink`, `ln`, `mv`, `mkfifo`, `truncate`, `realpath`, the
 `chmod`/`chown`/`chgrp`/`chcon` tree rows within 10% — retire a fortieth of
