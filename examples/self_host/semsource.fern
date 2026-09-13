@@ -243,34 +243,19 @@ function boolean_value(b: boolean): i32 {
     return 0;
 }
 
-// A bare name at a function-typed destination is a declaration's ADDRESS, not
-// a call of it. The signature the address promises is the contract this
-// boundary derived for that declaration, so the value joins the call table and
-// a refused declaration refuses its referrer exactly as a call does. A counted
-// parameter is refused: an indirect callee only ever lends what it is handed,
-// so an address that promises to consume an argument is not one this
-// vocabulary can hand out.
-function func_ref(name: string, ty: typeinfo.Type, s: State): Value {
-    var at: i32 = ssasem.find_contract(s.contracts, name);
-    if (at < 0) { return refused(s, "call target has no semantic contract: " + name); }
-    var contract: ssasem.Contract = s.contracts[at];
-    if (!semtypes.equal(ssasem.contract_type(contract), ty)) { return refused(s, "function value signature"); }
-    for m in contract.modes { if (m == ssaunits.counted_mode()) { return refused(s, "function value consumes an argument"); } }
-    if (ssasem.find_contract(s.calls, name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.func_value(), [], 0, name, ty);
-}
-
-// A bare name that is no binding is a declaration's address where a function
-// is expected, a unit variant of the expected enum, or a module-level
-// constant: the parser desugars `const` to a zero-parameter function and the
-// AST lowering calls one on a bare reference, so it is a call here too. The
-// checker types a reference to a function VALUE as a function, never as the
-// result its contract names, which is what separates the two.
+// A bare name that is no binding is a unit variant of the expected enum, or a
+// module-level constant: the parser desugars `const` to a zero-parameter
+// function and the AST lowering calls one on a bare reference, so it is a call
+// here too. A name at a FUNCTION-typed destination is the bare address of a
+// declaration, which is not what a function value holds here: the lambda lift
+// wraps one into an environment box (`__mkclo$<name>$wrapN()`) before this
+// boundary reads the tree, and a call through a value dispatches through that
+// box.
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
     var value: i32 = lookup(s, id.name);
     if (value >= 0) { return Value { s: s, id: value }; }
     var ty: typeinfo.Type = checked(e, s);
-    if (ssasem.is_func(ty)) { return func_ref(id.name, ty, s); }
+    if (ssasem.is_func(ty)) { return refused(s, "function address is not a closure value"); }
     var owner: string = union_name(ty);
     if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
     var at: i32 = ssasem.find_contract(s.contracts, id.name);
@@ -776,11 +761,12 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
     return define(s, ssasem.str_as(), [v.id], 0, "", param);
 }
 
-// A call of a bound name whose value is a function: the callee is the address
-// that name holds and its TYPE is the whole contract, since no declaration is
-// in hand. Every reference argument is lent — a function type spells no `own`,
-// so an indirect callee only reads what it is handed — and the result is a
-// unit of this function's own, the way a direct call's is.
+// A call of a bound name whose value is a function: the callee is the closure
+// box that name holds and its TYPE is the whole contract, since no declaration
+// is in hand. Every reference argument is lent — a function type spells no
+// `own`, so an indirect callee only reads what it is handed — and the result
+// is a unit of this function's own, the way a direct call's is. The box itself
+// is lent too: it is the environment the body reads its captures out of.
 function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
@@ -810,6 +796,48 @@ function is_slice_call(name: string, c: ast.ExprCall): boolean {
     return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
 }
 
+// The lambda lift's closure constructor names no declaration of its own: it
+// is the marker `irlower.lift_inline_closures` leaves where a capturing inline
+// lambda — or a bare function name at a function-typed argument — was written.
+// The name it carries is the body the lift hoisted; "" is no marker.
+function closure_body(name: string): string {
+    var marker: string = "__mkclo$";
+    if (name.len() <= marker.len() || slice_unchecked(name, 0, marker.len()) != marker) { return ""; }
+    return slice_unchecked(name, marker.len(), name.len()) + "";
+}
+
+// A closure VALUE: the environment box the lift builds, holding the hoisted
+// body's address and the captures that body reads back out of it. The body is
+// a declaration like any other, so the box hands out its contract minus the
+// environment parameter, and it joins the call table — a refused body refuses
+// its constructor the way a refused callee refuses its caller.
+//
+// The box is a fresh unit of this function's own, and its release is one
+// decrement with no walk of its slots: a function type names no capture for a
+// drop helper to be derived from, so a reference in a slot would be a unit
+// nothing owns. Every capture is therefore a VALUE. A counted parameter is
+// refused for the reason an indirect call lends every reference it is handed:
+// a function type cannot spell `own`.
+function closure(body: string, c: ast.ExprCall, s: State): Value {
+    var at: i32 = ssasem.find_contract(s.contracts, body);
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + body); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (!ssasem.closure_env(contract)) { return refused(s, "closure environment parameter"); }
+    for m in contract.modes { if (m == ssaunits.counted_mode()) { return refused(s, "function value consumes an argument"); } }
+    var ids: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var v: Value = expr(c.args[i], s, typeinfo.unchecked());
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (reference(s.values[v.id])) { return refused(s, "closure capture is a reference"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    if (ssasem.find_contract(s.calls, body) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.closure_new(), ids, 0, body, ssasem.closure_type(contract));
+}
+
 // A name with no contract may still be a variant constructor of the enum the
 // call is written against.
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State): Value {
@@ -835,6 +863,8 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
     if (is_slice_call(name, c)) { return string_slice(c, s); }
+    var body: string = closure_body(name);
+    if (body.len() > 0) { return closure(body, c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
     if (at < 0) { return variant_call(e, name, c, s); }
     return direct_call(c, s.contracts[at], s, statement);

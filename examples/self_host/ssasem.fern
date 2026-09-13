@@ -60,7 +60,7 @@ pub function str_index(): i32 { return 0 - 16; }
 pub function cast(): i32 { return 0 - 17; }
 pub function str_as(): i32 { return 0 - 18; }
 pub function with(): i32 { return 0 - 19; }
-pub function func_value(): i32 { return 0 - 20; }
+pub function closure_new(): i32 { return 0 - 20; }
 pub function call_value(): i32 { return 0 - 21; }
 
 function failed(why: string): Analysis {
@@ -136,7 +136,7 @@ pub function is_view(t: typeinfo.Type): boolean {
 // operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
 
-// A function value: one word holding a declaration's address.
+// A function value: the env box a closure is carried in.
 pub function is_func(t: typeinfo.Type): boolean {
     if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
@@ -155,6 +155,25 @@ pub function func_result(t: typeinfo.Type): typeinfo.Type {
 // The function type a declared contract has as a value.
 pub function contract_type(c: Contract): typeinfo.Type {
     return typeinfo.TypeFunc { param_types: c.params, ret_type: c.result, params_known: true };
+}
+
+// A closure body's first parameter is the environment it reads its captures
+// out of: the box itself, an array of i32-shaped words.
+pub function closure_env(c: Contract): boolean {
+    if (c.params.len() == 0) { return false; }
+    if let typeinfo.TypeArray(a) = c.params[0] { return semtypes.equal(a.elem, env_word()); }
+    return false;
+}
+
+function env_word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
+
+// The type a closure over `c` hands out: what its body promises minus the
+// environment parameter, which the box supplies rather than the caller.
+pub function closure_type(c: Contract): typeinfo.Type {
+    var params: typeinfo.Type[] = [];
+    var i: i32 = 1;
+    while (i < c.params.len()) { params = params.append(c.params[i]); i = i + 1; }
+    return typeinfo.TypeFunc { param_types: params, ret_type: c.result, params_known: true };
 }
 
 function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -395,21 +414,31 @@ function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// A function value names a declaration whose contract this function holds, so
-// the address it hands out is checked against the signature that contract
-// spells rather than against the name it was written with.
-function func_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-    if (ins.args.len() != 0) { return "function value arity"; }
-    if (!is_func(result)) { return "function value type"; }
+// A closure value is one box: the address of the body this function holds a
+// contract for, then the captures. The type it hands out is that contract
+// minus the environment parameter the body reads the captures through.
+//
+// Every capture is a VALUE. The box is released by one decrement with no walk
+// of its slots — there is no per-closure drop helper, and a function type
+// names no capture for one to be derived from — so a reference in a slot
+// would be a unit nothing here owns. The capture COUNT is not checked: the
+// contract records the body's signature, not how many words it reads out of
+// its environment, and the two sides are written by one lift.
+function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (!is_func(result)) { return "closure value type"; }
     var at: i32 = find_contract(f.calls, ins.str);
-    if (at < 0) { return "missing function value contract"; }
-    if (!semtypes.equal(contract_type(f.calls[at]), result)) { return "function value signature"; }
+    if (at < 0) { return "missing closure body contract"; }
+    var c: Contract = f.calls[at];
+    if (!closure_env(c)) { return "closure environment parameter"; }
+    if (!semtypes.equal(closure_type(c), result)) { return "closure signature"; }
+    for arg in ins.args { if (semtypes.needs_anchor(f.values[arg])) { return "closure capture is a reference"; } }
     return "";
 }
 
 // A call through a function value. The callee is operand 0 and its TYPE is the
 // whole contract: no declaration is in hand, so the signature the value
-// carries is what the arguments and the result are held to.
+// carries is what the arguments and the result are held to. The box it names
+// is lent to the body as the environment, never consumed.
 function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() == 0) { return "indirect call arity"; }
     var sig: typeinfo.Type = f.values[ins.args[0]];
@@ -425,10 +454,10 @@ function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
     return "";
 }
 
-pub function is_function_op(kind: i32): boolean { return kind == func_value() || kind == call_value(); }
+pub function is_function_op(kind: i32): boolean { return kind == closure_new() || kind == call_value(); }
 
 function function_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-    if (ins.kind_tag == func_value()) { return func_value_error(ins, f, result); }
+    if (ins.kind_tag == closure_new()) { return closure_error(ins, f, result); }
     return call_value_error(ins, f, result);
 }
 
@@ -666,10 +695,9 @@ function narrow_word(t: typeinfo.Type): boolean {
     return semtypes.concrete(t, false);
 }
 
-// A function value is a value and a parameter, never an element or a field: a
-// container slot and a declared field each hold a counted reference or a
-// scalar, and an AST-lowered read of a fn-typed field takes an env box rather
-// than the bare address.
+// A function value is a value and a parameter, never an element or a field:
+// releasing a container or a record walks its slots by their declared types,
+// and a function type names no captures for that walk to reach.
 function nests_func(t: typeinfo.Type): boolean {
     if let typeinfo.TypeArray(a) = t { return holds_func(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {

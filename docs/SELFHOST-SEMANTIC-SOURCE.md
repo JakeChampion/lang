@@ -261,30 +261,61 @@ Unsupported constructs refuse the whole function with a reason.
   on the register backends; they copy now (`+ ""`), which is what the
   checker rule will demand of them.
 
-- A function VALUE and the call through one. A bare name at a function-typed
-  destination is a declaration's ADDRESS (the stack IR's `const_func`), typed
-  by the contract this boundary derived for that declaration — so the value
-  joins the call table and a refused declaration refuses its referrer exactly
-  as a call does. Calling a bound name that holds one is `call_indirect`, and
-  its whole contract is the function TYPE, since no declaration is in hand: a
-  function type spells no `own`, so every reference argument is LENT — the
-  convention irlower's own env-box trampoline states, and enforces by
-  un-`own`ing a parameter it trampolines — and the result is a unit of the
-  caller's own the way a direct call's is.
+- A function VALUE and the call through one. A value is the environment BOX
+  the lambda lift builds before this boundary reads the tree: one allocation
+  holding the hoisted body's address in slot 0 and the captures after it.
+  `__mkclo$<body>(caps…)` is the constructor (the semantic `closure_new`),
+  typed by the contract this boundary derived for that body MINUS the `__env`
+  parameter the body reads its captures through — so the body joins the call
+  table and a refused one refuses its constructor exactly as a refused callee
+  refuses its caller, and the address it names is a symbol the module defines.
+  The box is a fresh unit of the constructing function's own, released when
+  dead by the ordinary decrement. The capture COUNT is not checked: a contract
+  records the body's signature, not how many words it reads out of its
+  environment, and one lift writes both sides.
 
-  The address of a declaration with a COUNTED parameter is refused ("function
-  value consumes an argument"): it promises the opposite of that convention,
-  and a function type has no way to say so. The AST path takes the shape and
-  leaks it — `apply(eat, a)` for `eat(own xs: i32[])` frees nothing — which is
-  a checker hole this boundary declines to inherit rather than a rule it
-  invents.
+  Every capture is a VALUE. That release is one decrement with no walk of the
+  box's slots — a function type names no capture for a drop helper to be
+  derived from, and no static helper could serve a phi joining two bodies with
+  different layouts — so a counted capture would be a unit nothing owns. It is
+  refused ("closure capture is a reference"), which is where the payoff stops
+  anyway: a body capturing one reads it back out of the `i32[]` environment at
+  a type that is not the slot's and refuses on its own account. A wide capture
+  is refused at the physical layer for the reason a wide array element is —
+  the box stores each slot through `op_arr_make` at width 32 — and the lift
+  declines one before that.
 
-  The address is one i32-shaped word, so it is a value and a parameter and
-  never an element or a declared field: a container slot holds a counted
-  reference, and an AST-lowered read of a fn-typed field takes an env box
-  rather than the bare address. A function-typed RESULT is refused for the same
-  reason. Every slot of the signature is that same word — a wide parameter or
-  result is refused ("function signature slot"), because the untagged
+  Calling a bound name that holds one is `call_indirect`, environment-FIRST:
+  the box, the written arguments, then the address out of slot 0. That is the
+  one ABI a function type has here, because it is the one
+  `irlower.lower_func` gives every fn-typed parameter of a free function and
+  the one the lift's argument wrapping feeds it. The whole contract is the
+  function TYPE, since no declaration is in hand: a function type spells no
+  `own`, so every reference argument is LENT — the convention irlower's own
+  trampoline states, and enforces by un-`own`ing the leak-safe array parameter
+  it trampolines — and the result is a unit of the caller's own the way a
+  direct call's is. The box itself is lent too, never consumed.
+
+  A body with a COUNTED parameter is refused ("function value consumes an
+  argument"): it promises the opposite of that convention, and a function type
+  has no way to say so. An `own string` parameter reaches it, because the
+  trampoline un-owns only the leak-safe array. The AST path takes the shape
+  and leaks it — `apply(eat, a)` for `eat(own xs: i32[])` frees nothing —
+  which is a checker hole this boundary declines to inherit rather than a rule
+  it invents.
+
+  A BARE name at a function-typed destination is a declaration's address,
+  which is not what a value holds here, and is refused. The lift wraps one
+  into a `$wrapN` trampoline's box before this boundary sees it, so the
+  refusal is unreachable in a module any backend lowers: removing the address
+  form moved the census by nothing, measured on its own.
+
+  The box is one i32-shaped word, so it is a value and a parameter and never
+  an element or a declared field: releasing a container or a record walks its
+  slots by their declared types, and a function type names no captures for
+  that walk to reach. A function-typed RESULT is refused for the same reason.
+  Every slot of the signature is that same word — a wide parameter or result
+  is refused ("function signature slot"), because the untagged
   `call_indirect` this boundary emits describes each slot as one, and a
   funcref type is structural on wasm.
 
@@ -293,7 +324,7 @@ call in expression position, the 32-bit float, the unsigned and
 pointer integer widths, string ordering, generic records, the struct,
 nested and `@`-bound destructuring forms, labelled loops, match guards and
 the pattern shapes above,
-`defer`, closures, receiver methods, generics, external and async functions,
+`defer`, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
 
 ## Calls
@@ -331,6 +362,12 @@ one by hand.
 
 `internal/e2eselfhost/self_host_semsource_test.go`:
 
+Both drivers run `irlower.lift_lambdas` over the module first, the way every
+production backend reaches a tree it lowers. That is what puts a closure in
+front of the boundary at all — the lift is where a lambda becomes a hoisted
+body and a `__mkclo$` box — and it holds the two drivers to the same input the
+census measures.
+
 - `TestSelfHostSemanticSourcePrint` builds a driver from the self-host tree
   and pins the produced graphs, value types, parameter modes and refusal
   reasons for a fixture module against `testdata/semsource_print.golden`.
@@ -348,30 +385,32 @@ one by hand.
   result, a returned parameter, recursion, a call result carried into a loop
   header, the AST-lowered `main` binding, discarding and projecting tuple and
   array results under `ssarc.caller_sigs`, the byte and cast shapes below, the
-  enum shapes above, the total-match shapes (a value-returning body closed by
-  a match over a four-variant enum, over the same enum as an `own` parameter
+  enum shapes above, the total-match shapes (a value-returning body closed by a
+  match over a four-variant enum, over the same enum as an `own` parameter
   consumed arm by arm, and over a struct-union narrowed to its member, each
   called from a produced caller and again per step of a loop), every receiver
   the planner does not move (a borrowed parameter's box, a record field's, an
   element of a borrowed array of arrays, an `own` parameter's read again after
   the push, the field receiver appended to in a loop, and a `string[]` through
   both builtins, each asserting the source keeps its length and its elements),
-  the loop header whose first step pushes on the caller's own box, and the
-  view shapes: a scanning loop binding a slice per iteration and comparing,
+  the loop header whose first step pushes on the caller's own box, and the view
+  shapes: a scanning loop binding a slice per iteration and comparing,
   measuring, indexing and lending it to a `str` and to a borrowed `string`
   parameter; an owned string lent to `str` bindings and re-lent; a view of a
   view; a view whose source is a temporary whose only use is the slice; and a
-  view receiver on a `string` method. The float shapes: a quotient
-  sign-flipped and scaled, the three comparison answers, a loop-carried
-  accumulator, an f64 crossing a produced-to-produced call as a parameter and
-  a result, and an i64 converted to f64 and back. The
-  function-value shapes: an address handed to a produced callee and called
-  there, a scalar and a reference argument lent across an indirect call, a
-  temporary array literal lent to one, an indirect call whose counted result
-  the caller owns and one whose result it discards, and an address carried
-  through a branch join. The wasm leg is what holds an indirect call to its
-  ABI: a lost slot class there is an `indirect call type mismatch` rather than
-  a wrong number.
+  view receiver on a `string` method. The float shapes: a quotient sign-flipped
+  and scaled, the three comparison answers, a loop-carried accumulator, an f64
+  crossing a produced-to-produced call as a parameter and a result, and an i64
+  converted to f64 and back. The function-value shapes: a bare name boxed into a
+  trampoline and handed to a produced callee to be called there, a scalar and a
+  reference argument lent across an indirect call, a temporary array literal
+  lent to one, an indirect call whose counted result the caller owns and one
+  whose result it discards, and a box carried through a branch join. The closure
+  shapes are where the box's own unit dies: a capturing lambda lent to a
+  produced callee and released after it, a loop building one per step, and a
+  binding rebound on one arm of a branch so the join releases the box the other
+  arm built. The wasm leg is what holds an indirect call to its ABI: a lost slot
+  class there is an `indirect call type mismatch` rather than a wrong number.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -436,8 +475,8 @@ caller hands over, which is the row-less reading already.
 
 The producer does not yet admit the unsigned and pointer integer widths, the
 32-bit float, the remaining builtins, the struct and nested destructuring
-forms, closures or generics, so no production consumer is switched and no
-AST ownership analysis is deleted.
+forms, a closure capturing a reference, or generics, so no production consumer
+is switched and no AST ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -467,7 +506,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,309 of its 7,738
+Measured against the whole loaded self-hosted compiler, 6,359 of its 7,747
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -483,14 +522,14 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (1,018), a variant
-field whose type is unresolved (98), a binding whose type is not its value's
-(75), record literals (74) and destructuring declarations (59). The string
-view was worth +355 once the sites that stored one were made to copy, and the
-f64 +273 — each measured, against a leaf histogram that had ranked them
-differently. The declared field width was worth the 81 it was measured at —
-every construction with a wide field, `ir.Op`'s f64 and i64 among them,
-resolved its declaration — and `.with` +233:
+The leaves are now led by callees with no semantic contract (780), a
+closure capturing a reference (186), a variant field whose type is
+unresolved (99), a binding whose type is not its value's (75) and record
+literals (76). The string view was worth +355 once the sites that stored
+one were made to copy, and the f64 +273 — each measured, against a leaf
+histogram that had ranked them differently. The declared field width was worth
+the 81 it was measured at — every construction with a wide field, `ir.Op`'s
+f64 and i64 among them, resolved its declaration — and `.with` +233:
 the builtin-call leaf was 453 functions of which 439 were a `.with`, which a
 probe keyed by callee showed and the bare leaf histogram could not. The callee
 leaf is the same shape: keyed by name it is a handful of runtime builtins
@@ -516,10 +555,13 @@ the same leaf in disguise: a probe keyed by the checker's reason showed every
 one a field whose value is such a call. The literal tree, the
 destination-typed literal and the string loop were worth +62 together: the
 iterable leaf (67) closed outright and the two literal mismatches with it.
-A shift whose count is another integer width — `n << k` with `n: i64` and
-`k: i32` — was the operator leaf (52); the count now reaches the
-operator through a `cast` to the value's width, which is the masking the
-runtime does anyway, worth +41.
+What remains of the binding-mismatch leaf is the lifted lambda body reading
+its captures out of the untyped `__env` word array, which is also what the
+closure form's reference-capture refusal reaches from the other side. A shift
+whose count is another integer width — `n << k` with `n: i64` and `k: i32` —
+was the operator leaf (52); the count now reaches the operator through a
+`cast` to the value's width, which is the masking the runtime does anyway,
+worth +41.
 
 The total match was worth +10 lowered and closed the fall-through leaf (12)
 outright, the other two moving one leaf further in to a closure callee. It is
@@ -629,19 +671,44 @@ next optimisation this boundary wants, not a correctness gap.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,
-and the function value, whose shape half the indirect call form below closed.
+and the function value, whose shape half the indirect call form above closed.
 That was worth +3 lowered, which is the measurement and not the histogram:
 the fn-value leaf is almost entirely the `astwalk` folds, and those are
 refused for a reason a form for the ADDRESS does not touch.
 
+The closure CONSTRUCTOR was worth +49 lowered against a leaf of 254 across 90
+distinct `__mkclo$` names, and the shortfall is the honest part of the
+measurement. A probe naming the higher-order callee each closure is handed to
+ranked those 90 before the form was written: the payable ones go to
+`wasm_ir.any_op`, `parser.map_expr_kids` and `astwalk.map_stmts` / `map_expr`
+/ `map_stmt`, all concrete and already produced. Of the 254, 186 refuse one
+leaf further in at a capture that is a reference, 15 at the `astwalk` folds
+below, and 4 at a record literal or a destructure; the leaf histogram alone
+ranked the constructor fifth and could not see any of that. The
+reference-capture half is not a form this boundary is missing: the hoisted
+body refuses the same shape from the other side, so admitting the constructor
+there would move the census by nothing while making the box own a unit nothing
+releases.
+
+Admitting the box settled the ABI question the address form had left open.
+`irlower.lower_func` marks every fn-typed parameter of a free function a
+closure local and dispatches a call through it environment-first, and the lift
+boxes every fn-value argument to match, so a produced body emitting the
+bare-address call disagreed with the AST lowering for the same parameter:
+`wasm_ir.any_op` produced and lowered a `call_indirect` on what is a box
+pointer at run time. No production consumer reads these bodies, so nothing had
+executed it. One function type carries one ABI; the box is the one the only
+program this boundary reads has. The address form went with it, measured at
+zero.
+
 **The `astwalk` fold family stays refused, and the reason is not vocabulary.**
 `docs/ERASED-GENERICS-RC.md` states the three candidate unit rules for an
 erased accumulator and what each costs; the summary is here. It is the largest
-single leaf — 547 functions between `fold_stmt_nodes` (224), `fold_stmt_spine`
-(142), `fold_expr_pruned` (119), `fold_stmt` (40), `fold_stmt_pruned` (12),
-`fold_expr_nodes` (7) and two more — and every one of them threads an
-accumulator typed by an ERASED type variable, for which this boundary has no
-sound unit rule:
+single leaf — 564 functions between `fold_stmt_nodes` (229),
+`fold_stmt_spine` (148), `fold_expr_pruned` (121), `fold_stmt` (41),
+`fold_stmt_pruned` (12), `fold_expr_nodes` (7) and two more — and
+every one of them threads an accumulator typed by an ERASED type variable, for
+which this boundary has no sound unit rule:
 
 - The per-module emit path runs no monomorphiser, so one body serves every
   instantiation and can emit no retain and no release on the erased word:
@@ -668,18 +735,20 @@ generic's variables land in `FuncDecl.type_params`, and
 so `fold_expr`, `fold_stmt`, `fold_expr_pruned`, `fold_stmt_pruned` and
 `fold_stmt_own` reach this boundary with an unresolved `T` where
 `fold_expr_nodes`, `fold_stmt_nodes`, `fold_stmt_spine` and
-`fold_stmt_own_pruned` reach it erased. Admitting the family needs the
-function-value ABI settled first — whether an indirect callee may consume a
-reference, and what a generic's erased result owns — which is a language
-decision, not a vocabulary one.
+`fold_stmt_own_pruned` reach it erased. Admitting the family needs what a
+generic's erased result owns settled first, which is a language decision, not
+a vocabulary one. The other half of that question — whether an indirect
+callee may consume a reference — the closure form answers: it may not, and a
+body declaring an `own` parameter is refused rather than boxed.
 
-Next, by measured leaf: the instantiated builtin union, which is one piece
-carrying four leaves — `env` (158), `read_file` (26), the `Option` scrutinee
-(8) and the `Result` result type (3) — and then the unresolved variant field
-type (98) and the record literal (74). The binding mismatch (75) and the
-destructuring declaration (59) are NOT next: both are the closure env box,
-so they land with the fold family behind the same function-value ABI
-decision, and neither is worth building against until it is taken. Then a
-production consumer that lowers produced functions through this pipeline and
-feeds `caller_sigs` to the remaining AST callers — a union result being the
-position that fixture measured a leak at.
+Next, by measured leaf: a closure capturing a reference (186), which is
+the hoisted body's untyped `__env` read and not a closure form; then the
+instantiated builtin union, one piece carrying four leaves — `env` (158),
+`read_file` (26), the `Option` scrutinee (8) and the `Result` result type (3)
+— and the unresolved variant field type (99) and the record literal
+(76). The binding mismatch (75) and the destructuring declaration (59)
+are NOT next: both are the closure env box, so they land with the fold family
+behind the same function-value ABI decision, and neither is worth building
+against until it is taken. Then a production consumer that lowers produced
+functions through this pipeline and feeds `caller_sigs` to the remaining AST
+callers — a union result being the position that fixture measured a leak at.
