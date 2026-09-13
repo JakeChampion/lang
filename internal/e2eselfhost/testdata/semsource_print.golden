@@ -141,7 +141,7 @@ func view {
     ret v0
 }
 
-refused call target has no semantic contract
+refused call target has no semantic contract: abs
 modes result f64
 v0:f64
 func float_literal {
@@ -348,7 +348,7 @@ func owned_append {
     ret v2
 }
 
-refused call target was refused: call target has no semantic contract
+refused call target was refused: call target has no semantic contract: abs
 modes 1 result P
 v0:i32 v1:i32 v2:i32 v3:i32[] v4:P
 func make {
@@ -438,7 +438,7 @@ func string_length {
     ret v1
 }
 
-refused call target has no semantic contract
+refused call target has no semantic contract: string.trim
 modes 1 result Shape
 v0:i32 v1:i32 v2:boolean v3:Shape v4:i32 v5:boolean v6:Shape v7:i32 v8:boolean v9:i32 v10:i32 v11:i32[] v12:Shape v13:i32[] v14:Shape
 func shape {

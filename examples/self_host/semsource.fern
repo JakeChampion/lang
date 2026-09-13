@@ -706,7 +706,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     if (owner == "") { owner = "string"; }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
-    if (at < 0) { return refused(s, "call target has no semantic contract"); }
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + key); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
@@ -771,7 +771,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value
     if (at < 0) {
         var owner: string = union_name(checked(e, s));
         if (owner != "" && checker.variant_sig(s.scope, name, owner).name.len() > 0) { return variant(e, name, owner, c.args, s); }
-        return refused(s, "call target has no semantic contract");
+        return refused(s, "call target has no semantic contract: " + name);
     }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
