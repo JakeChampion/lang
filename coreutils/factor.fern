@@ -1231,7 +1231,7 @@ function handle_stdin(st: State, exponents: boolean): State {
     var i: i32 = 0;
     if (carry.len() > 0) {
       var f: i32 = 0;
-      while (f < lim && !is_blank(chunk[f] as i32)) {
+      while (f < n && !is_blank(chunk[f] as i32)) {
         f = f + 1;
       }
       carry = carry + slice_unchecked(chunk, 0, f);

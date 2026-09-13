@@ -234,6 +234,10 @@ func factorCases(t *testing.T) []invocation {
 		// an invalid token longer than a chunk.
 		{name: "stdin tokens across a chunk boundary", stdin: strings.Repeat("12345 ", 12000)},
 		{name: "stdin token longer than a chunk", stdin: strings.Repeat("x", 70000) + "\n5\n"},
+		// A token that spans more than two reads: every middle chunk is
+		// carried whole, blank or not.
+		{name: "stdin token spanning four chunks", stdin: strings.Repeat("a", 200000) + "\n"},
+		{name: "stdin tokens around a three-chunk token", stdin: strings.Repeat("b", 140000) + " 15 " + strings.Repeat("c", 70000) + "\n77\n"},
 	}
 }
 
