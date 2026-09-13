@@ -1452,13 +1452,12 @@ pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
     return s.slot_of(ownflag_name(s.locals[slot].slot_name));
 }
 
-// Bind a scalar-array projection as a borrow, releasing an owned replacement
-// from the previous loop iteration first. The projected value is on the stack.
-// Stores and consuming calls reuse the same dynamic ownership protocol as a
-// borrowed parameter. No alias or last-use inference is needed at this bind.
-function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): LowerState {
-    var st: LowerState = s.mark_arr(slot, true).mark_borrowed_arr(slot, true);
-    // Keep the projection's declared element representation with its binding.
+// mark_scalar_array_elems stamps a slot with the element representation its
+// declared scalar-array type names, so every read and store through the slot
+// picks the element's width: the 8-byte integer and float strides, the
+// unsigned overlays, the packed byte and the boolean and char dispatch.
+function mark_scalar_array_elems(s: LowerState, slot: i32, ty: string): LowerState {
+    var st: LowerState = s;
     if (ty == "i64[]" || ty == "u64[]") { st = st.mark_i64arr(slot, true); }
     if (ty == "u64[]") { st = st.mark_u64(slot, true); }
     if (ty == "f64[]" || ty == "f32[]") { st = st.mark_f64arr(slot, true); }
@@ -1467,6 +1466,15 @@ function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): 
     if (ty == "boolean[]") { st = st.mark_boolarr(slot, true); }
     if (ty == "u8[]") { st = st.mark_subword(slot, "u8"); }
     if (ty == "char[]") { st = st.mark_struct_type(slot, "char"); }
+    return st;
+}
+
+// Bind a scalar-array projection as a borrow, releasing an owned replacement
+// from the previous loop iteration first. The projected value is on the stack.
+// Stores and consuming calls reuse the same dynamic ownership protocol as a
+// borrowed parameter. No alias or last-use inference is needed at this bind.
+function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): LowerState {
+    var st: LowerState = mark_scalar_array_elems(s.mark_arr(slot, true).mark_borrowed_arr(slot, true), slot, ty);
     var flag: i32 = st.ownflag_slot_of(slot);
     if (flag < 0) {
         flag = st.locals.len();
@@ -21970,15 +21978,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         var vfb: LowerState = vfs.add_local(v.name);
         vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var vfslot: i32 = vfb.slot_of(v.name);
-        vfb = vfb.mark_arr(vfslot, true);
-        if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); if (vfft == "f32[]") { vfb = vfb.mark_f32arr(vfslot, true); } }
-        else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
-        // The dispatch-only boolean[] overlay (#6117). This branch RETURNS
-        // before the VarTypes classification, so the element kind has to be
-        // stamped here too — and it is the branch that matters for a field
-        // receiver, because `b.flags.to_json()` snapshots into exactly this
-        // shape of hidden `var` before the serialiser's loop indexes it.
-        else if (vfft == "boolean[]") { vfb = vfb.mark_boolarr(vfslot, true); }
+        // This branch RETURNS before the VarTypes classification, so the
+        // element representation is stamped here, from the field's declared
+        // type — the same stamp a borrowed projection gets.
+        vfb = mark_scalar_array_elems(vfb.mark_arr(vfslot, true), vfslot, vfft);
         return vfb.emit(ir.op_store_local(vfslot));
     }
     // Binding an ARRAY-OF-STRUCT field (`var ps: P[] = obj.params`,
