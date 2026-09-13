@@ -177,7 +177,7 @@ function main(): i32 {
 // line delimiter; one that cannot be opened produces nothing at all.
 function run_serial(files: string[], delims: string[], term: i32): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var out: string = "";
+  var h: usize = o.handle();
   var ok: boolean = true;
   var termstr: string = byte_str(term);
 
@@ -196,8 +196,6 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
           opened = true;
         },
         Err(e) => {
-          o = o.write_string(out);
-          out = "";
           o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
           ok = false;
         }
@@ -224,8 +222,6 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
             piece = c;
           },
           Err(e) => {
-            o = o.write_string(out);
-            out = "";
             o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
             ok = false;
             read_ok = false;
@@ -249,7 +245,7 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
       if (terminated || end > pos) {
         if (!in_line) {
           if (!first_line) {
-            out = out + delims[di];
+            buf_push(h, delims[di]);
             di = di + 1;
             if (di >= delims.len()) {
               di = 0;
@@ -258,29 +254,26 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
           first_line = false;
           in_line = true;
         }
-        out = out + slice_unchecked(chunk, pos, end);
+        buf_push_range(h, chunk, pos, end);
       }
       pos = end;
       if (terminated) {
         pos = pos + 1;
         in_line = false;
       }
-      if (out.len() >= block_size()) {
-        o = o.write_string(out);
-        out = "";
+      if (buf_len(h) >= block_size()) {
+        o = o.flush();
       }
     }
-    out = out + termstr;
+    buf_push(h, termstr);
     if (!is_stdin) {
       r.close();
     }
-    if (out.len() >= block_size()) {
-      o = o.write_string(out);
-      out = "";
+    if (buf_len(h) >= block_size()) {
+      o = o.flush();
     }
   }
 
-  o = o.write_string(out);
   gnu.finish(o);
   if (!ok) {
     return 1;
@@ -294,7 +287,7 @@ function run_serial(files: string[], delims: string[], term: i32): i32 {
 // produces something.
 function run_parallel(files: string[], delims: string[], term: i32): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var out: string = "";
+  var h: usize = o.handle();
   var ok: boolean = true;
   var termstr: string = byte_str(term);
 
@@ -370,7 +363,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
             produced = true;
             somedone = true;
             if (held.len() > 0) {
-              out = out + held;
+              buf_push(h, held);
               held = "";
             }
             var upto: i32 = w;
@@ -378,7 +371,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
               upto = w + 1;
               took_term = true;
             }
-            out = out + slice_unchecked(ck, cp, upto);
+            buf_push_range(h, ck, cp, upto);
             poss = poss.with(k, w + 1);
           }
         }
@@ -394,8 +387,6 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
               piece = c;
             },
             Err(e) => {
-              o = o.write_string(out);
-              out = "";
               o = gnu.error_out(o, gnu.quotef(files[i]) + ": " + gnu.io_error_text(e));
               ok = false;
               read_ok = false;
@@ -412,7 +403,7 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
           produced = true;
           somedone = true;
           if (held.len() > 0) {
-            out = out + held;
+            buf_push(h, held);
             held = "";
           }
           // The line itself, terminator dropped.
@@ -429,8 +420,6 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
                     more = c;
                   },
                   Err(e) => {
-                    o = o.write_string(out);
-                    out = "";
                     o = gnu.error_out(o, gnu.quotef(files[i]) + ": " + gnu.io_error_text(e));
                     ok = false;
                     read2 = false;
@@ -451,11 +440,11 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
                   upto = j + 1;
                   took_term = true;
                 }
-                out = out + slice_unchecked(chunks[k], poss[k], upto);
+                buf_push_range(h, chunks[k], poss[k], upto);
                 poss = poss.with(k, j + 1);
                 reading = false;
               } else {
-                out = out + slice_unchecked(chunks[k], poss[k], chunks[k].len());
+                buf_push_range(h, chunks[k], poss[k], chunks[k].len());
                 poss = poss.with(k, chunks[k].len());
               }
             }
@@ -477,9 +466,9 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
         }
         if (i + 1 == files.len()) {
           if (somedone) {
-            out = out + held;
+            buf_push(h, held);
             held = "";
-            out = out + termstr;
+            buf_push(h, termstr);
           }
         } else {
           held = held + delims[di];
@@ -491,10 +480,10 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
       } else {
         if (i + 1 == files.len()) {
           if (!took_term) {
-            out = out + termstr;
+            buf_push(h, termstr);
           }
         } else if (delims[di].len() > 0) {
-          out = out + delims[di];
+          buf_push(h, delims[di]);
           di = di + 1;
           if (di >= delims.len()) {
             di = 0;
@@ -508,13 +497,11 @@ function run_parallel(files: string[], delims: string[], term: i32): i32 {
       }
       i = i + 1;
     }
-    if (out.len() >= block_size()) {
-      o = o.write_string(out);
-      out = "";
+    if (buf_len(h) >= block_size()) {
+      o = o.flush();
     }
   }
 
-  o = o.write_string(out);
   gnu.finish(o);
   if (!ok) {
     return 1;
