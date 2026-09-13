@@ -1,0 +1,36 @@
+import "std/i32";
+// A sole-owner i64[], u64[] or f64[] grown by appending in a loop reclaims
+// each superseded buffer as an i32[] does; the values read back intact.
+function grow_i64(n: i32): i64 {
+    var xs: i64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        xs = xs.append((i as i64) * 3000000000i64);
+        i = i + 1;
+    }
+    return xs[n - 1] + xs[0];
+}
+function grow_u64(n: i32): u64 {
+    var xs: u64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        xs = xs.append((i as u64) << (40 as u64));
+        i = i + 1;
+    }
+    return xs[n - 1] >> (40 as u64);
+}
+function grow_f64(n: i32): f64 {
+    var xs: f64[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        xs = xs.append((i as f64) * 0.5);
+        i = i + 1;
+    }
+    return xs[n - 1] + xs[1];
+}
+function main(): i32 {
+    print(((grow_i64(100) / 1000000000i64) as i32).to_string());
+    print((grow_u64(100) as i32).to_string());
+    print(((grow_f64(100) * 2.0) as i32).to_string());
+    return 0;
+}

@@ -907,8 +907,9 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // 8-byte-stride push.
             s = s.mark_arr_push();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_push\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 93) {  // arr_push_owned
-            // The sole-owner self-append (irlower's !aliased `a = a.append(v)`):
+        } else if (o.kind_tag == 93 || o.kind_tag == 302 || o.kind_tag == 303) {  // arr_push_owned, arr_push_owned_i64, arr_push_owned_f64
+            // The sole-owner self-append (irlower's !aliased `a = a.append(v)`),
+            // at every element width since every slot is 8 bytes here:
             // reclaims the old buffer on a grow-realloc (the arm64
             // __fern_arr_push_owned wrapper, asm_arm64.emit_runtime — mirrors
             // asm_ir's). Sound because the emit site proved the slot unaliased.

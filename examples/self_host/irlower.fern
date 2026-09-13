@@ -23703,6 +23703,17 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 // tripped the exit-137 alloc trap on its own; oversized functions also
 // miscompile — cf. #2720). Body moved verbatim; the trailing s.fail()
 // preserves lower_stmt's own post-match fallback for any fall-through.
+// The 8-byte-element push: the sole-owner form reclaims the superseded buffer
+// on a grow, as arr_push_owned does for a 4-byte-slot array.
+function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
+    if (is_f64) {
+        if (sole_owner) { return ir.op_arr_push_owned_f64(); }
+        return ir.op_arr_push_f64();
+    }
+    if (sole_owner) { return ir.op_arr_push_owned_i64(); }
+    return ir.op_arr_push_i64();
+}
+
 function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     var slot: i32 = s.slot_of(a.target);
     if (slot < 0) { return s.fail(); }
@@ -23838,11 +23849,15 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // Parallels the i64[] path below; on the register
                             // backends both reuse __fern_arr_push, wasm uses its
                             // f64-typed $__fern_arr_push_f64.
+                            // A sole-owner target takes the reclaim-on-grow push at
+                            // every element width; an aliased target or a parameter
+                            // keeps the plain one (the i32 branch below says why).
+                            var sole_owner: boolean = !s.is_aliased_name(a.target) && slot >= s.frame.n_params;
                             if (s.is_f64arr_slot(slot)) {
                                 var apf: LowerState = s.emit(ir.op_load_local(slot));
                                 apf = lower_expr(wc.args[0], apf);
                                 if (!apf.ok) { return apf; }
-                                apf = apf.emit(ir.op_arr_push_f64());
+                                apf = apf.emit(wide_push_op(sole_owner, true));
                                 return emit_arr_store(apf, slot, false, false);
                             }
                             // i64[] / u64[] (8-byte element): lower the value as
@@ -23853,7 +23868,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 var ap8: LowerState = s.emit(ir.op_load_local(slot));
                                 ap8 = lower_i64(wc.args[0], ap8);
                                 if (!ap8.ok) { return ap8; }
-                                ap8 = ap8.emit(ir.op_arr_push_i64());
+                                ap8 = ap8.emit(wide_push_op(sole_owner, false));
                                 return emit_arr_store(ap8, slot, false, false);
                             }
                             var aps: LowerState = s.emit(ir.op_load_local(slot));
