@@ -317,9 +317,9 @@
 # checked capture resolution; the whole compiler shrinks against its PR parent.
 fern.fern 11540956
 asm_load_run.fern 8325836
-asm_modload_run.fern 7940084
+asm_modload_run.fern 8340668
 asm_ir_run.fern 8091548
-asm_run.fern 7298796
+asm_run.fern 7667476
 wasm_ir_run.fern 7377260
 wasm_run.fern 7352348
 wasm_runio_run.fern 7318652
