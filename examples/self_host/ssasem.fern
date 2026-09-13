@@ -553,14 +553,26 @@ function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 
 // Constructions, projections and calls: the operations whose contract is a
 // container's shape rather than a scalar's type.
-function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+// An array, a tuple and a record: the containers whose contract is a shape
+// spelled out beside the value rather than in a declaration table.
+function is_aggregate_op(kind: i32): boolean {
+    return kind == array_new() || kind == tuple_new() || kind == array_get()
+        || kind == tuple_get() || kind == record_new() || kind == record_get();
+}
+
+function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var kind: i32 = ins.kind_tag;
     if (kind == array_new()) { return array_construction_error(ins, f, result); }
     if (kind == tuple_new()) { return tuple_construction_error(ins, f, result); }
     if (kind == array_get()) { return array_projection_error(ins, f, result); }
     if (kind == tuple_get()) { return tuple_projection_error(ins, f, result); }
     if (kind == record_new()) { return record_construction_error(ins, f, result); }
-    if (kind == record_get()) { return record_projection_error(ins, f, result); }
+    return record_projection_error(ins, f, result);
+}
+
+function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    var kind: i32 = ins.kind_tag;
+    if (is_aggregate_op(kind)) { return aggregate_error(ins, f, result); }
     if (kind == call()) { return call_error(ins, f, result); }
     if (is_builtin_op(kind)) { return builtin_error(ins, f, result); }
     if (is_variant_op(kind)) { return variant_error(ins, f, result); }
@@ -578,10 +590,19 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
     return composite_error(ins, f, result);
 }
 
-function schema_error(f: Func): string {
+// The graph's own dimensions, before any type is read off it: one type per
+// value, one per declared parameter, and no closure environment, whose
+// contract this vocabulary has no form for.
+function dimension_error(f: Func): string {
     if (f.graph.nvals < 0 || f.values.len() != f.graph.nvals || f.params.len() != f.graph.nparams) { return "semantic type dimensions"; }
     if (f.graph.takes_env) { return "closure contract not available"; }
-    var why: string = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
+    return "";
+}
+
+function schema_error(f: Func): string {
+    var why: string = dimension_error(f);
+    if (why != "") { return why; }
+    why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
     if (why != "") { return why; }
     if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
     // A void value is what a call to a void contract defines, and nothing

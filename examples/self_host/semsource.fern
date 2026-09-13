@@ -761,22 +761,33 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
 // A call in statement position may return nothing: its value is void and
 // no name binds it. In expression position a void result is refused, since
 // the checker types nothing by it.
+function is_slice_call(name: string, c: ast.ExprCall): boolean {
+    return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
+}
+
+// A name with no contract may still be a variant constructor of the enum the
+// call is written against.
+function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State): Value {
+    var owner: string = union_name(checked(e, s));
+    if (owner != "" && checker.variant_sig(s.scope, name, owner).name.len() > 0) { return variant(e, name, owner, c.args, s); }
+    return refused(s, "call target has no semantic contract: " + name);
+}
+
+function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean): Value {
+    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
+    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
+    return invoke(c.args, contract, s);
+}
+
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value {
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }
-    if (name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0) { return string_slice(c, s); }
+    if (is_slice_call(name, c)) { return string_slice(c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
-    if (at < 0) {
-        var owner: string = union_name(checked(e, s));
-        if (owner != "" && checker.variant_sig(s.scope, name, owner).name.len() > 0) { return variant(e, name, owner, c.args, s); }
-        return refused(s, "call target has no semantic contract: " + name);
-    }
-    var contract: ssasem.Contract = s.contracts[at];
-    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
-    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
-    return invoke(c.args, contract, s);
+    if (at < 0) { return variant_call(e, name, c, s); }
+    return direct_call(c, s.contracts[at], s, statement);
 }
 
 // Each argument is produced at the parameter's type and lent by the

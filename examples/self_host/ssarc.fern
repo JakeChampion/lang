@@ -46,12 +46,18 @@ function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t) && !s
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     return narrow_slot(t) && !ssasem.is_view(t) && supported(t, f);
 }
-function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
+// The types whose stack representation needs no declaration looked up: a
+// boolean and a void ride one word, and a string is its own box.
+function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
-    if let typeinfo.TypeFloat(_) = t { return ssasem.is_f64(t); }
     if let typeinfo.TypeString(_) = t { return true; }
+    return false;
+}
+function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if (supported_leaf(t)) { return true; }
+    if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
+    if let typeinfo.TypeFloat(_) = t { return ssasem.is_f64(t); }
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
@@ -669,14 +675,21 @@ function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     return emit(r, ir.op_const_i32(ins.imm));
 }
 
+// Integer negation is a zero-minus, so the zero is pushed under the operand at
+// the operand's own width or the two sides of the subtraction disagree; a
+// float has its own sign-flip opcode and pushes nothing.
+function negation_zero(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_f64(f.values[ins.args[0]])) { return emit(r, zero(f.values[ins.args[0]])); }
+    return r;
+}
+
+function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
+
 function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
-    // Integer negation is a zero-minus, so the zero is pushed at the operand's
-    // own width or the two sides of the subtraction disagree; a float has its
-    // own sign-flip opcode and pushes nothing.
-    if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_f64(f.values[ins.args[0]])) { r = emit(r, zero(f.values[ins.args[0]])); }
+    r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
-    if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 5) { r = constant(r, f, ins); }
+    if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
     if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
     // A call's counted parameters were supplied before its operands were

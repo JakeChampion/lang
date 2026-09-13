@@ -57,11 +57,16 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
 }
-function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
+// The types this pass plans no unit for: every scalar.
+function unit_free(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
+    return false;
+}
+function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if (unit_free(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
