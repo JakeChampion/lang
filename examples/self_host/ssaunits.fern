@@ -3,6 +3,7 @@ import "./ssa";
 import "./ssasem";
 import "./ssadeps";
 import "./semrecords";
+import "./semtypes";
 import "./typeinfo";
 
 pub function value_mode(): i32 { return 1; }
@@ -72,6 +73,8 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
+    // A cell holds one unit of its own and one slot; no declaration names it.
+    if (semtypes.is_cell(t)) { return supported(semtypes.cell_elem(t), f); }
     if let typeinfo.TypeStruct(_) = t { return semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
     return false;

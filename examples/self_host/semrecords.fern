@@ -54,6 +54,7 @@ function resolved_all(types: typeinfo.Type[], records: Record[], enums: Enum[]):
 // Follow structural types, not nominal field edges. The table verifies every
 // field separately, so recursive declarations never recurse during validation.
 function resolved(ty: typeinfo.Type, records: Record[], enums: Enum[]): boolean {
+    if (semtypes.is_cell(ty)) { return resolved(semtypes.cell_elem(ty), records, enums); }
     if let typeinfo.TypeStruct(s) = ty { return find(records, ty) >= 0 && resolved_all(s.args, records, enums); }
     if let typeinfo.TypeUnion(u) = ty { return find_enum(enums, ty) >= 0 && resolved_all(u.args, records, enums); }
     return resolved_structural(ty, records, enums);

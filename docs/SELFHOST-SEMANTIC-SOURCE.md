@@ -354,6 +354,20 @@ Unsupported constructs refuse the whole function with a reason.
   `call_indirect` this boundary emits describes each slot as one, and a
   funcref type is structural on wasm.
 
+- `Cell[T]`, the language's one mutable slot, as a VALUE and a declared field.
+  It is a nominal name over a one-element box rather than a declared record —
+  no declaration names it, and what it holds is one slot of its element — so
+  every table that reads a nominal's schema reads a cell through that element
+  instead. Physically it IS the one-element array `cell_new(v)` lowers to, so
+  its box is released like an array's and its slot, when the element is a
+  reference, walked by the same element loop. The element decides what a cell
+  may hold: whatever this boundary can drop. A cell with no element — what an
+  unannotated `var c = cell_new(0)` carries, since the destination names T —
+  has no layout and is refused. The cell's own vocabulary, `cell_new` and
+  `get` and `set`, is NOT here: a body naming one is refused at the callee, so
+  a produced function receives, stores, projects and drops cells but never
+  makes or reads one.
+
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, the 32-bit float, the unsigned and
 pointer integer widths, string ordering, generic records, the struct,
@@ -446,6 +460,10 @@ census measures.
   binding rebound on one arm of a branch so the join releases the box the other
   arm built. The wasm leg is what holds an indirect call to its ABI: a lost slot
   class there is an `indirect call type mismatch` rather than a wrong number.
+  The cell shapes: a record and a variant payload each holding a `Cell[i32]`, a
+  record holding a `Cell[string]`, every one constructed from a field read of a
+  borrowed or owned holder, bound, matched and dropped, with the holder handed
+  in as an `own` parameter so the cell's release is produced code's.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -541,7 +559,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,442 of its 7,750
+Measured against the whole loaded self-hosted compiler, 6,531 of its 7,759
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -557,10 +575,10 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (780), a
-closure capturing a reference (186), a variant field whose type is
-unresolved (99), a binding whose type is not its value's (75) and record
-literals (76). The string view was worth +355 once the sites that stored
+The leaves are now led by callees with no semantic contract (819), a closure
+capturing a reference (225), a binding whose type is not its value's (75), a
+destructuring declaration (61) and a call target (49). The string view was
+worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, against a leaf
 histogram that had ranked them differently. The declared field width was worth
 the 81 it was measured at — every construction with a wide field, `ir.Op`'s
@@ -672,10 +690,61 @@ operator's width. What remains of the record-literal leaf is three sites and
 no record shape: two are a field whose value calls a runtime builtin the
 self-host CHECKER has no signature for (`string_from_bytes_unchecked`,
 `f64_bits`), so `check_expr` hands back the unknown that collapses the
-literal, and one is a field whose value is a call taking function values. A
-builtin signature table for `check_expr` would move the first two, but it
-retypes every builtin call in the twelve diagnostic walkers with it, so it is
-its own change rather than a record one.
+literal, and one is a field whose value is a call taking function values.
+
+Typing those two in `check_expr` took the record-literal leaf from 74 to the
+one function the third site holds, and it was not a record change: the leaf
+became `array element type` at 72 on the way,
+because the byte-array argument both builtins are handed was written `[b]`
+over an `i32` local against a `u8[]` parameter. Fern has no implicit numeric
+conversion, so the boundary refuses the element rather than narrowing it on a
+guess; the two lexer sites now write the byte they mean (`b as u8`, and a
+digit buffer declared `u8[]`). The 74-function leaf was worth +28 lowered —
+the rest refuse again at the function-value and closure leaves. Retyping a
+builtin call does move the twelve diagnostic walkers with it: measured over
+every `.fern` file in the repository, the single-module checker driver reports
+three further `E043 no method` lines, each on a call whose receiver is now
+typed and whose method lives in a `std/*` module that driver does not resolve
+— the same false positive that driver already reports 15 times in
+`utf8_codepoints` alone.
+
+`Cell[T]` was the whole variant-field leaf: a probe keyed by union, variant
+and field showed all 98 functions were `interp.Value`, whose `VCellI` payload
+is declared `Cell[i32]` and resolved to unknown, so every function naming that
+union lost its schema. The self-host checker now resolves the annotation to
+the reserved builtin struct carrying its element, the shape native's
+`builtinStructDecls` registers, and types the cell's two methods beside the
+map's. A cell is NOT a declared record: no declaration names it, and what it
+holds is one slot of its element, so `semrecords.resolved`, `schema_of`,
+`ssaunits.supported` and `ssarc.supported` read it through that element. Its
+box IS a one-element array box — `cell_new(v)` lowers to `[v]` — so the drop
+walks the slot with the array machinery and releases the box the way an
+array's is released. That was worth +51 lowered of the 98, measured; the
+other 47 refuse again one leaf further in.
+
+**The AST lowering does not reclaim a cell-typed struct field at all**, which
+is the self-host half of `docs/CELL-TYPE-PLAN.md` §RC and is unrelated to this
+boundary — a pure-AST `struct Slot { c: Cell[i32], n: i32 }` bound in `main`
+leaks 32 bytes under `FERN_LEAKCHECK` where native balances, as does a local
+`Cell[string]` whose slot holds a heap string. Admitting the field to the
+struct-drop walk alone is NOT the fix: the construction side takes no count
+for a cell field either, so a cell aliased into two structs turns the leak
+into a use-after-free under the sanitizer (measured). The executable fixtures
+therefore hand every cell-bearing holder straight to an `own` parameter, so
+each one is released by produced code.
+
+The cell fixture also found a lowering bug of its own, since fixed
+(`internal/e2eselfhost/self_host_variant_name_shadow_test.go`): a variant
+whose name a plain struct also declares had its match arm read the payload
+through the STRUCT. An arm resolves its owner from the pattern's `Enum.`
+qualifier and falls through to the scrutinee only when no decl of that name
+carries that owner — but an absent qualifier is the empty string, and a plain
+struct's enum_owner is the empty string too, so the fall-through never ran.
+The struct's field 0 is not `__ev`, so the arm took the struct-union member
+form, bound only its first binder and left the rest unbound; an unbound name
+lowers as a function ADDRESS, which is a symbol nothing defines. The fixture
+named its variant after a struct already in the same module by accident, and
+the lift that reaches this boundary now put the two in one module.
 
 The `.append` receiver gate is gone, +295 planned and +288 lowered. A probe
 keyed by the receiver's mode and defining instruction ranked the 295 refusals
@@ -789,20 +858,12 @@ of them. `env`, `read_line`, `read_file`, `read_dir`, `args`, `putchar`,
 `f32_from_bits`, `__rc_underflow_count` and `Some` all closed outright, and
 so did the match-scrutinee refusal.
 
-Next, by measured leaf: a closure capturing a reference (206), which is the
-hoisted body's untyped `__env` read and not a closure form; the `astwalk`
-fold family (642 across its members); the unresolved variant field type
-(99); and the record literal (80). The binding mismatch (75) and the
-destructuring declaration (61) are NOT next: both are the closure env box,
-so they land with the fold family behind the same function-value ABI
-decision, and neither is worth building against until it is taken. The
-named callees that remain are small and each its own vocabulary:
-`util__append_all` (6, an erased type variable, refused for the fold
-family's reason), `map_new` (5) and `cell_new` (1), which need the Map and
-Cell representations; `create_dir_all` (5) and `write_file` (4), whose
-`Result[(), IoError]` has a payload with no type here;
-`arm64_native__arm64_gas_bcond_suffix` (4), a `str` result that escapes its
-source; and `stat` / `lstat` (3), whose FileStat carries u32 fields. Then a
-production consumer that lowers produced functions through this pipeline and
-feeds `caller_sigs` to the remaining AST callers — a union result being the
-position that fixture measured a leak at.
+Next, by measured leaf: a closure capturing a reference (246), which is
+the hoisted body's untyped `__env` read and not a closure form, and the
+`astwalk` fold family (685 across its members) — one question, not two.
+The binding mismatch (75), the destructuring declaration (61) and the call
+target (49) are NOT next: all three are the closure env box, so they land
+behind the same function-value ABI decision and none is worth building against
+until it is taken. Then a production consumer that lowers produced functions
+through this pipeline and feeds `caller_sigs` to the remaining AST callers — a
+union result being the position that fixture measured a leak at.

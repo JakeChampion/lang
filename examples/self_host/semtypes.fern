@@ -83,8 +83,26 @@ function concrete_container(t: typeinfo.Type): boolean {
     return false;
 }
 
+// Cell[T] is the language's one mutable slot (docs/CELL-TYPE-PLAN.md): a
+// reserved name over a one-element box rather than a declared record, so its
+// element is read from the instantiation and an argless `Cell` names no layout.
+pub function is_cell(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(s) = t { return s.name == "Cell"; }
+    return false;
+}
+
+pub function cell_elem(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeStruct(s) = t { if (s.args.len() == 1) { return s.args[0]; } }
+    return typeinfo.unchecked();
+}
+
+function concrete_struct(s: typeinfo.TypeStruct): boolean {
+    if (s.name == "Cell") { return s.args.len() == 1 && concrete(s.args[0], false); }
+    return s.name.len() > 0 && concrete_list(s.args);
+}
+
 function concrete_named(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeStruct(s) = t { return s.name.len() > 0 && concrete_list(s.args); }
+    if let typeinfo.TypeStruct(s) = t { return concrete_struct(s); }
     if let typeinfo.TypeUnion(u) = t { return u.name.len() > 0 && concrete_list(u.args); }
     if let typeinfo.TypeFunc(f) = t { return f.params_known && concrete_list(f.param_types) && concrete(f.ret_type, true); }
     return false;
