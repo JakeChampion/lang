@@ -50,12 +50,14 @@ Unsupported constructs refuse the whole function with a reason.
   many fields as the schema declares, each naming a distinct slot, covers
   every slot exactly once.
 - String literals as the SSA `const_str` constant, string `+` as a fresh
-  concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
-  beside the scalar rules. A string constant and a concatenation are units
-  of the function's own, released when dead; a literal's static box is
-  immortal to the runtime, so its release is a no-op. `for c in s` over a
-  string is one `str_index` read per step, the byte typed u8 as the checker
-  types it, with the text borrowed for the loop's span.
+  concatenation, and every string comparison, typed by `ssasem.binary_result`
+  beside the scalar rules. Equality is the runtime's `str_eq`; an ordering is
+  its `str_cmp` — a signed i32 under, at or over zero — against a zero
+  constant, the same shape the AST lowering emits. A string constant and a
+  concatenation are units of the function's own, released when dead; a
+  literal's static box is immortal to the runtime, so its release is a no-op.
+  `for c in s` over a string is one `str_index` read per step, the byte typed
+  u8 as the checker types it, with the text borrowed for the loop's span.
 - The integer operators — arithmetic, division and remainder, the bitwise
   three, and both shifts — plus integer comparisons, boolean `==` / `!=`, unary
   `-` and `!`. These are new semantic kinds (the SSA `binary` / `unary` tags)
@@ -66,35 +68,39 @@ Unsupported constructs refuse the whole function with a reason.
   wraps, and a shift count is masked to the operand width. So none of them
   needs a guard, a branch or an abort path here.
 
-  Each runs at ONE width: both operands carry the same integer type and so
-  does the result. Fern has no implicit numeric CONVERSION, so a byte and an
-  i32 cannot meet at all. The checker does auto-widen the narrower side of a
-  same-signedness pair (`i64 + i32`), rewriting the operand with a cast, but
+  Each runs at ONE width AND signedness: both operands carry the same integer
+  type and so does the result. Fern has no implicit numeric CONVERSION, so a
+  byte and an i32 cannot meet at all. The checker does auto-widen the narrower
+  side of a same-signedness pair (`i64 + i32`), rewriting the operand with a
+  cast, but
   the tree this producer reads is not the rewritten one — so a mixed-width
   operator is refused here rather than promoted on a guess.
 
-- The integer types are i32, u8 and i64. A byte rides the same i32-shaped slot
-  on every backend, so it costs no new physical representation — what
-  distinguishes it is the range, and `+`, `-`, `*` and `<<` mask their result
-  back to it. **So does an i32's**: the stack IR runs the operators in a
-  register wider than either type, and without the mask a produced
+- The integer types are i32, u8, u32, i64 and u64. A byte and a u32 ride the
+  same i32-shaped slot on every backend, so they cost no new physical
+  representation — what distinguishes each is the range, and `+`, `-`, `*` and
+  `<<` mask their result back to it. **So does an i32's**: the stack IR runs
+  the operators in a register wider than either type, and without the mask a
+  produced
   `2147483647 + 1` was 2147483648 rather than INT_MIN. The AST lowering has
   emitted that step since #3581; this boundary did not, and the executable
   fixture now pins both widths through a comparison (a printed result is
   truncated on its way out and reads the same either way).
 
-- An i64 gets a slot of its own, which only wasm spells out: in the function's
-  type for a parameter and a result (`irlower.result_i64`), and in its locals
-  otherwise. Its operators run at width 64 and are already full-width, so
-  nothing masks after them; negation pushes its zero at that width too, or the
-  subtraction's two sides disagree. A 64-bit literal does not fit the semantic
-  constant's i32 immediate at all, so it carries the literal's SOURCE TEXT
-  instead — the form the backends splice straight into a 64-bit immediate, and
-  the one the AST lowering already uses for the same literal. An integer
-  literal TREE — `0 - 1`, `1 << 40` — is the width of its destination, or of
-  the operand beside it, before either side is produced, the way the checker
-  settles it; without that a 32-bit `0 - 1` fails the exact-type rule at an
-  i64 binding.
+- An i64 or u64 gets a slot of its own, which only wasm spells out: in the
+  function's type for a parameter and a result (`irlower.result_i64`), and in
+  its locals otherwise. Its operators run at width 64 and are already
+  full-width, so nothing masks after them; negation pushes its zero at that
+  width too, or the subtraction's two sides disagree. A 64-bit literal does not
+  fit the semantic constant's i32 immediate at all, so it carries the literal's
+  SOURCE TEXT instead — the form the backends splice straight into a 64-bit
+  immediate, and the one the AST lowering already uses for the same literal. A
+  u32 literal has the same problem one value short of half its range, so the
+  u32 takes the text form at every value rather than at some of them
+  (`ssasem.text_constant`). An integer literal TREE — `0 - 1`, `1 << 40` — is
+  the width of its destination, or of the operand beside it, before either
+  side is produced, the way the checker settles it; without that a 32-bit
+  `0 - 1` fails the exact-type rule at an i64 binding.
 
   It is a VALUE here and a record or variant FIELD, never an array or tuple
   ELEMENT. An array or tuple stores one i32-shaped word per slot —
@@ -110,20 +116,32 @@ Unsupported constructs refuse the whole function with a reason.
   a narrow store; a read takes its offset from the field index alone and its
   width from the schema this boundary verified the projection against.
 
-  u64 and usize are not admitted: they select the unsigned operators, which is
-  a second signedness rule and not just a second width.
+  An unsigned operand takes the operator forms that read no sign bit — the
+  four orderings, the right shift, division and remainder — through
+  `irlower.to_unsigned_kind`, the same remap the AST lowering applies. The
+  byte goes through it too, though nothing turns on that: 0..255 is inside the
+  signed range at every slot width. Negation is refused at every unsigned
+  width, as it is at the byte: its result leaves the range the type names, and
+  the wrap this boundary would emit is not what the source means by it. `usize`
+  is not admitted at all — the checker has no Type for the name, so a
+  declaration naming one is unresolved here.
 
-- A cast between the integer types, or between one of the two signed widths
-  and the f64, as the semantic `cast` kind. `e as T` reaches the producer as
-  a unary whose operator names T, and the destination is the checker's type
+- A cast between the integer types, or between one of the four 32- and 64-bit
+  ones and the f64, as the semantic `cast` kind. `e as T` reaches the producer
+  as a unary whose operator names T, and the destination is the checker's type
   for the whole expression rather than the spelling. Crossing the 64-bit
-  boundary is an explicit extend or wrap; inside the i32 domain a narrowing
-  masks and a widening emits nothing, because the narrower type's own
-  producing sites keep its value in range. Into the f64 is the signed convert
-  at the operand's width and out of it the truncation toward zero at the
-  result's — real instructions, which is why the byte, whose convert has no
-  opcode at that width, is not offered them. A cast to or from anything else
-  — a string, the `as?` downcast — is refused.
+  boundary is an explicit extend or wrap, and the SOURCE's signedness is what
+  an extension extends by: only the signed 32-bit width fills the high half
+  from a sign bit. Inside the i32 domain the conversion is the destination's
+  own mask — the byte's 255, the u32's zero-extension of the low word, the
+  i32's sign-extension of it — and nothing at all where the operand's type
+  already keeps its value inside that range. Into the f64 is the convert at the
+  operand's width and signedness, and out of it the truncation toward zero at
+  the result's, unsigned where the destination has no sign bit — real
+  instructions, which is why the byte, whose convert has no opcode at that
+  width, is not offered them and reaches the float through the i32 the source
+  writes. A cast to or from anything else — a string, the `as?` downcast — is
+  refused.
 
 - The f64, as a VALUE and a declared field but never an array or tuple element,
   for the same reason the i64 is one (`narrow_slot`): it gets a slot of its
@@ -147,9 +165,11 @@ Unsupported constructs refuse the whole function with a reason.
   and `65` in an i32 position an i32. For an operator, that width is decided
   BEFORE either operand is produced — from the checker's type for the whole
   expression, or from whichever operand bears one — so a literal takes it on
-  either side. The value is `util.lit_to_i32`'s, the same one the production
-  lowering reads, and a constant outside its type's range is refused rather
-  than wrapped.
+  either side. A literal that rides the instruction's immediate takes
+  `util.lit_to_i32`'s value, the same one the production lowering reads, and a
+  constant outside its type's range is refused rather than wrapped; one at a
+  width with no immediate to ride (`ssasem.text_constant` — the 64-bit types
+  and the u32) carries its source text instead, which the backends splice.
 - `&&` and `||` as control flow: the right operand runs on its own edge and the
   result is a boolean phi.
 - `if` / `else` with binding joins, `while` and `loop` with unlabelled `break`
@@ -272,7 +292,7 @@ Unsupported constructs refuse the whole function with a reason.
 - The string view, `str` (`typeinfo.TypeString` tag 1). A slice IS one, as the
   checker types it, of an owned string or of another view; a `str` parameter
   is a borrowed reference like any other; a `str` binding holds one. Every
-  read — the length, a byte, a window, `==` / `!=` and `+` — is blind to which
+  read — the length, a byte, a window, a comparison and `+` — is blind to which
   string type holds the bytes (`ssasem.is_text`), and `+`'s result is owned.
   Physically a view is a box over the source's bytes carrying the immortal rc
   sentinel, so `ssarc` releases a view-typed unit through
@@ -377,8 +397,8 @@ Unsupported constructs refuse the whole function with a reason.
   makes or reads one.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
-call in expression position, the 32-bit float, the unsigned and
-pointer integer widths, string ordering, generic records, the struct,
+call in expression position, the 32-bit float, the pointer integer width,
+unsigned negation, generic records, the struct,
 nested and `@`-bound destructuring forms, labelled loops, match guards and
 the pattern shapes above,
 `defer`, receiver methods, generics, external and async functions,
@@ -534,10 +554,10 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the unsigned and pointer integer widths, the
-32-bit float, the remaining builtins, the struct and nested destructuring
-forms, a closure capturing a reference, or generics, so no production consumer
-is switched and no AST ownership analysis is deleted.
+The producer does not yet admit the pointer integer width, the 32-bit float,
+the remaining builtins, the struct and nested destructuring forms, a closure
+capturing a reference, or generics, so no production consumer is switched and
+no AST ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -567,8 +587,10 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,534 of its 7,759
-functions produce, plan and physically lower.
+Measured against the whole loaded self-hosted compiler, 6,563 of its 7,759
+functions produce, plan and physically lower. The three stages now report the
+same number: neither the unit planner nor physical RC refuses anything a
+producer admitted, so every remaining refusal is a producer's.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
 module tree the way the production compiler does and counts the stage each
@@ -583,9 +605,10 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (819), a closure
-capturing a reference (225), a binding whose type is not its value's (75), a
-destructuring declaration (61) and a call target (49). The string view was
+The leaves are now led by callees with no semantic contract (739, of which
+the `astwalk` fold family is 695), a closure capturing a reference (246), a
+binding whose type is not its value's (75), a destructuring declaration (62)
+and a call target (49). The string view was
 worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, against a leaf
 histogram that had ranked them differently. The declared field width was worth
@@ -627,6 +650,20 @@ whose count is another integer width — `n << k` with `n: i64` and `k: i32` —
 was the operator leaf (52); the count now reaches the operator through a
 `cast` to the value's width, which is the masking the runtime does anyway,
 worth +41.
+
+The three leaves at the widths and the string order closed together for +15
+lowered, and each was a single shape a probe named outright rather than the
+mixture its reason reads as. All 14 of the operator leaf were a string `<`;
+all 18 of the cast leaf a same-width sign reinterpretation, `i32 as u32` in
+the division-magic derivations and `i64 as u64` in the interpreter; the one
+literal-width refusal a `2147483648u32`. The cast and the literal are one
+piece of work, not two: admitting the conversion alone would have moved its
+refusal to the next operator on the result, so the unsigned widths are
+admitted as whole types — the operator forms that read no sign bit, the
+extension that fills the high half with zeros, the u32's own arithmetic mask
+and its text constant form. The +15 against a leaf of 33 is the usual shape:
+most of the unblocked functions refuse again one leaf further in, which is
+where the `f32_bits` callee leaf came from (3 to 10).
 
 The total match was worth +10 lowered and closed the fall-through leaf (12)
 outright, the other two moving one leaf further in to a closure callee. It is

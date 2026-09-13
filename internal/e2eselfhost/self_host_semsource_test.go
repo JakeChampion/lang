@@ -50,7 +50,26 @@ function nested(rows: i32[][]): (i32, i32[]) {
 function view(s: string): string { return s; }
 function refused_call(n: i32): i32 { return abs(n); }
 function float_literal(): f64 { return 1.5; }
-function refused_width(n: u64): u64 { return n + 1; }
+// The unsigned widths: the u64 rides the i64's slot and the u32 the i32's, and
+// each takes the operator forms that read no sign bit. A u32 literal past 2^31
+// has no signed immediate to ride, so it carries its source text the way a
+// 64-bit one does; a cast names the mask its destination applies. Negation is
+// refused at both, as it is at the byte: its result leaves the range the type
+// names.
+function wide_unsigned(n: u64): u64 { return n + 1u64; }
+function half_unsigned(d: u32): u32 { return (2147483648u32 / d) >> 1; }
+function unsigned_widths(n: i32): i32 { return ((n as u32) as u64) as i32; }
+function unsigned_float(n: u32): f64 { return n as f64; }
+function refused_unsigned_negation(n: u32): u32 { return -n; }
+// String ordering is the runtime's byte compare against zero, and it reads a
+// view's bytes as readily as an owned string's.
+function sorted(a: string, b: string): boolean { return a < b; }
+function ordered(a: string, b: str): i32 {
+    if (a <= b) { return 1; }
+    if (a > b) { return 2; }
+    if (a >= b) { return 3; }
+    return 0;
+}
 function refused_fallthrough(n: i32): i32 { if (n > 0) { return 1; } }
 function destructure(): i32 { var (a, b) = (1, 2); return a + b; }
 function split_pair(p: (i32, i32[])): i32 { var (_, xs) = p; var (n, ys) = p; return n + xs.len() + ys.len(); }
@@ -1051,6 +1070,81 @@ enum Chain { End, Link(i32, Chain) }
 @noinline function wide_of(n: i32): i64 { return (n as i64) * 1000000007i64; }
 @noinline function wide_hi(v: i64): i32 { return (v >> 32) as i32; }
 @noinline function wide_call(n: i32): i32 { return wide_hi(wide_of(n)); }
+// The unsigned widths. Every value below has the slot's sign bit set, so a
+// signed opcode answers differently rather than identically: the ordering,
+// the division, the remainder and the right shift all read the slot without a
+// sign bit, and a u32 arithmetic result that leaves the range wraps back to
+// it. A u32 literal past 2^31 has no signed immediate to ride and reaches the
+// backends as its source text.
+@noinline function u32_cmp(n: u32): i32 {
+    if (n > 1u32) { return 1; }
+    return 0;
+}
+@noinline function u32_div(n: u32): i32 { return (n / 3u32) as i32; }
+@noinline function u32_rem(n: u32): i32 { return (n % 7u32) as i32; }
+@noinline function u32_shift(n: u32): i32 { return (n >> 28) as i32; }
+@noinline function u32_wrap(n: u32): i32 { return ((n * n) >> 16) as i32; }
+// The casts a u32 sits at either end of: an i32 widens into it by taking the
+// low word unsigned, and it narrows to the i32 whose sign bit is its top bit,
+// to a byte, and — through a real conversion, not a reinterpretation — to and
+// from the f64, whose signed truncation would clamp at the signed maximum.
+@noinline function u32_widen(n: i32): i32 { return ((n as u32) >> 24) as i32; }
+@noinline function u32_signed(n: u32): i32 { return n as i32; }
+@noinline function u32_byte(n: u32): i32 { return (n as u8) as i32; }
+@noinline function u32_float(n: u32): i32 { return ((n as f64) / 1000000.0) as i32; }
+@noinline function u32_of_f64(x: f64): i32 { return ((x as u32) >> 8) as i32; }
+// The same at 64 bits, where the value also needs a slot of its own.
+@noinline function u64_cmp(): i32 {
+    var m: u64 = 1u64 << 63;
+    if (m > 1u64) { return 1; }
+    return 0;
+}
+@noinline function u64_div(): i32 {
+    var m: u64 = 1u64 << 63;
+    return (m / 1000000000000000u64) as i32;
+}
+@noinline function u64_rem(): i32 {
+    var m: u64 = 1u64 << 63;
+    return (m % 1000000000u64) as i32;
+}
+@noinline function u64_shift(): i32 {
+    var m: u64 = 1u64 << 63;
+    return (m >> 60) as i32;
+}
+// A widening extends by the SOURCE's signedness: an i32 fills the high half
+// from its sign bit, a u32 with zeros.
+@noinline function u64_from_i32(n: i32): i32 { return ((n as u64) >> 60) as i32; }
+@noinline function u64_from_u32(n: u32): i32 { return ((n as u64) >> 24) as i32; }
+@noinline function u64_narrow(): i32 {
+    var m: u64 = (1u64 << 63) + 12345u64;
+    return ((m as u32) >> 4) as i32;
+}
+@noinline function u64_float(): i32 {
+    var m: u64 = 1u64 << 63;
+    return ((m as f64) / 1000000000000000.0) as i32;
+}
+@noinline function u64_of_f64(x: f64): i32 { return ((x as u64) >> 32) as i32; }
+// The string comparisons. Ordering is the runtime's byte compare against
+// zero, blind to which box holds the bytes: an owned string, a view of one,
+// and a temporary this function owns and has to release all order the same.
+@noinline function ord_bits(a: string, b: string): i32 {
+    var n: i32 = 0;
+    if (a < b) { n = n + 1; }
+    if (a <= b) { n = n + 2; }
+    if (a > b) { n = n + 4; }
+    if (a >= b) { n = n + 8; }
+    return n;
+}
+@noinline function ord_view(s: string): i32 {
+    var head: str = slice_unchecked(s, 0, 1);
+    var tail: str = slice_unchecked(s, 1, 2);
+    if (head < tail) { return 1; }
+    return 0;
+}
+@noinline function ord_temp(a: string): i32 {
+    if (a + "!" < "b") { return 1; }
+    return 0;
+}
 // A string view. A slice is one; an owned string bound or passed where a view
 // is declared is lent (the box borrowed, never released here); a view passed
 // to a borrowed 'string' parameter, a method's receiver included, is lent the
@@ -1145,6 +1239,32 @@ struct WideRec { d: f64, n: i64, s: string }
     if (ys[1] != v) { return 0 - 1; }
     if (xs[1] == v) { return 0 - 2; }
     return ((ys[1] + xs[1]) >> 32) as i32;
+}
+// The eight-byte element ops name the SLOT, not the sign, so a u64 element
+// takes the same ones an i64 does. Every value here lives above 2^32,
+// so a 32-bit slot loses the whole high word and the readback reports it.
+@noinline function uwide_lit(n: u64): u64[] { return [n, n * 3u64, n + 1u64]; }
+@noinline function uwide_sum(own xs: u64[]): u64 {
+    var total: u64 = 0u64;
+    var i: i32 = 0;
+    while (i < xs.len()) { total = total + xs[i]; i = i + 1; }
+    return total;
+}
+@noinline function uwide_lit_sum(n: u64): i32 { return (uwide_sum(uwide_lit(n)) >> 32u64) as i32; }
+@noinline function uwide_grow(n: u64, k: i32): i32 {
+    var xs: u64[] = [];
+    var i: i32 = 0;
+    while (i < k) { xs = xs.append(n + (i as u64)); i = i + 1; }
+    if (xs.len() != k) { return 0 - 1; }
+    if (k > 0 && xs[0] != n) { return 0 - 2; }
+    return (uwide_sum(xs) >> 32u64) as i32;
+}
+@noinline function uwide_set(own xs: u64[], i: i32, v: u64): u64[] { return xs.with(i, v); }
+@noinline function uwide_copy_set(xs: u64[], v: u64): i32 {
+    var ys: u64[] = uwide_set(xs, 1, v);
+    if (ys[1] != v) { return 0 - 1; }
+    if (xs[1] == v) { return 0 - 2; }
+    return ((ys[1] + xs[1]) >> 32u64) as i32;
 }
 @noinline function float_arr(x: f64): f64[] { return [x, x * 2.0, x + 1.0]; }
 @noinline function float_sum(own ds: f64[]): f64 {
@@ -1648,6 +1768,8 @@ function main(): i32 {
     print_int(mk_wide(2.5, 4294967296i64, "abcd")); print(""); print_int(mk_span(0.25)); print("");
     print_int(wide_lit_sum(5000000000i64)); print(""); print_int(wide_grow(4294967296i64, 6)); print("");
     print_int(wide_grow(1i64, 0)); print(""); print_int(wide_copy_set([1i64, 4294967296i64, 3i64], 8589934592i64)); print("");
+    print_int(uwide_lit_sum(5000000000u64)); print(""); print_int(uwide_grow(4294967296u64, 6)); print("");
+    print_int(uwide_copy_set([1u64, 4294967296u64, 3u64], 8589934592u64)); print("");
     print_int(float_lit_sum(1.5)); print(""); print_int(float_grow(0.5, 5)); print(""); print_int(float_grow(2.0, 1)); print("");
     print_int(fill_squares(5)); print(""); print_int(copy_set([1, 2])); print(""); print_int(word_swap(1)); print("");
     print_int(shared_word(1)); print("");
@@ -1687,6 +1809,19 @@ function main(): i32 {
     print_int(slot_pair(Slot { c: cell_new(4), n: 3 })); print("");
     print_int(note_pair(Note { w: cell_new("ab"), n: 5 })); print("");
     print_int(held_n(Bare(6))); print(""); print_int(slot_held(Slot { c: cell_new(1), n: 8 })); print("");
+    print_int(u32_cmp(4294967295u32)); print(""); print_int(u32_div(4294967295u32)); print("");
+    print_int(u32_rem(4294967295u32)); print(""); print_int(u32_shift(4294967295u32)); print("");
+    print_int(u32_wrap(65536u32)); print(""); print_int(u32_widen(0 - 1)); print("");
+    print_int(u32_signed(4294967295u32)); print(""); print_int(u32_byte(4294967295u32)); print("");
+    print_int(u32_float(4294967295u32)); print(""); print_int(u32_of_f64(3000000000.0)); print("");
+    print_int(u64_cmp()); print(""); print_int(u64_div()); print("");
+    print_int(u64_rem()); print(""); print_int(u64_shift()); print("");
+    print_int(u64_from_i32(0 - 1)); print(""); print_int(u64_from_u32(4294967295u32)); print("");
+    print_int(u64_narrow()); print(""); print_int(u64_float()); print("");
+    print_int(u64_of_f64(5000000000.0 * 2000000000.0)); print("");
+    print_int(ord_bits("ab", "b")); print(""); print_int(ord_bits("b", "ab")); print("");
+    print_int(ord_bits("ab", "ab")); print(""); print_int(ord_view("ab")); print("");
+    print_int(ord_view("ba")); print(""); print_int(ord_temp("ab")); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1754,7 +1889,28 @@ function main(): i32 {
 // for (2^33 + 2^32) >> 32 = 3. The float elements: float_lit_sum(1.5) sums
 // [1.5, 3.0, 2.5] for 70, float_grow(0.5, 5) replaces the 0.5 with 2.0 and
 // doubles 14.0 for 28, and float_grow(2.0, 1) doubles the replaced 8.0 for 16.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n"
+// The u64 elements answer the same way at the same slot: uwide_lit_sum(5e9)
+// is 5, uwide_grow(2^32, 6) is 6, and uwide_copy_set is 3.
+// The unsigned tail, every value chosen so a signed opcode gives a DIFFERENT
+// number: 4294967295u32 is above 1 (1), divides by 3 to 1431655765 and leaves
+// 3 mod 7, shifts right by 28 to 15 rather than to -1, masks to the byte 255
+// and reinterprets as the i32 -1; 65536 * 65536 wraps to 0 at 2^32; -1 widens
+// into the u32 whose top byte is 255; the u32 converts to the f64 4294967295,
+// a millionth of which truncates to 4294, and 3e9 truncates back into the u32
+// 3000000000, an eighth of a kibi of which is 11718750. At 64 bits 2^63 is
+// above 1 (1), divides by 10^15 to 9223 and leaves 854775808 mod 10^9, shifts
+// right by 60 to 8; -1 sign-extends into a u64 whose top nibble is 15 where a
+// u32's 4294967295 zero-extends to a value 255 after a 24-bit shift; 2^63 +
+// 12345 keeps only the 12345 in its low word, 771 after a 4-bit shift; the u64
+// converts to the f64 2^63, a quadrillionth of which is 9223; and 10^19
+// truncates back into the u64 whose high word is 2328306436 — the i32 print
+// of which is -1966660860, where a signed truncation would have clamped at
+// INT64_MAX and printed 2147483647.
+// The string comparisons: "ab" is under "b" (1 + 2 = 3), "b" over it
+// (4 + 8 = 12), and a string is under-or-equal and over-or-equal itself
+// (2 + 8 = 10). Two views of one string order by the bytes they point at, and
+// a concatenation this function owns orders before it is released.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1840,7 +1996,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

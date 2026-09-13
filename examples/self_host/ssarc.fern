@@ -33,7 +33,7 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
-    return i.width == 32 || (i.width == 8 && i.unsigned) || (i.width == 64 && !i.unsigned);
+    return i.width == 32 || (i.width == 8 && i.unsigned) || i.width == 64;
 }
 
 // A value that fits the ONE i32-shaped word a tuple stores per element:
@@ -41,7 +41,7 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
 // no store width to be written at. An array's element ops each carry their
 // own width, and a record or variant field stores at the width its
 // declaration names, so neither has to narrow.
-function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t) && !ssasem.is_f64(t); }
+function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_f64(t); }
 
 function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     return narrow_slot(t) && element_supported(t, f);
@@ -54,10 +54,11 @@ function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 // The slot width an array's element ops carry: eight bytes for a 64-bit
 // scalar, one i32-shaped word for everything else. Only wasm packs the narrow
 // slot; the register backends give every element eight bytes and ignore the
-// width. The i64 and the f64 share the width and differ in the load and store
-// wasm selects, which the `_i64` forms carry instead.
+// width. The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take
+// the same ones; the f64 shares the width and differs in the load and store
+// wasm selects.
 function elem_width(t: typeinfo.Type): i32 {
-    if (ssasem.is_i64(t) || ssasem.is_f64(t)) { return 64; }
+    if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
     return 32;
 }
 
@@ -67,23 +68,23 @@ function elem_type(t: typeinfo.Type): typeinfo.Type {
 }
 
 function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
-    if (ssasem.is_i64(elem)) { return ir.op_arr_make_i64(n); }
+    if (ssasem.is_wide(elem)) { return ir.op_arr_make_i64(n); }
     return ir.op_arr_make(n, elem_width(elem));
 }
 
 function arr_get_op(elem: typeinfo.Type): ir.Op {
-    if (ssasem.is_i64(elem)) { return ir.op_arr_get_i64(); }
+    if (ssasem.is_wide(elem)) { return ir.op_arr_get_i64(); }
     return ir.op_arr_get(elem_width(elem));
 }
 
 function arr_set_op(elem: typeinfo.Type): ir.Op {
-    if (ssasem.is_i64(elem)) { return ir.op_arr_set_i64(); }
+    if (ssasem.is_wide(elem)) { return ir.op_arr_set_i64(); }
     return ir.op_arr_set(elem_width(elem));
 }
 
 // The sole-owner push, which reclaims the superseded buffer when it grows.
 function arr_push_op(elem: typeinfo.Type): ir.Op {
-    if (ssasem.is_i64(elem)) { return ir.op_arr_push_owned_i64(); }
+    if (ssasem.is_wide(elem)) { return ir.op_arr_push_owned_i64(); }
     if (ssasem.is_f64(elem)) { return ir.op_arr_push_owned_f64(); }
     return ir.op_arr_push_owned();
 }
@@ -469,7 +470,9 @@ function leaf_key(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "str"; }
     if (ssasem.is_string(t)) { return "string"; }
     if (ssasem.is_i64(t)) { return "i64"; }
+    if (ssasem.is_u64(t)) { return "u64"; }
     if (ssasem.is_u8(t)) { return "u8"; }
+    if (ssasem.is_u32(t)) { return "u32"; }
     if (ssasem.is_f64(t)) { return "f64"; }
     if (ssasem.is_integer(t)) { return "i32"; }
     return "bool";
@@ -617,7 +620,7 @@ function supported_op(k: i32): boolean { return value_op(k) || container_op(k); 
 // the function's type, where the register backends give every value the same
 // 64-bit slot and ignore the distinction.
 function result_kind(t: typeinfo.Type): i32 {
-    if (ssasem.is_i64(t)) { return irlower.result_i64(); }
+    if (ssasem.is_wide(t)) { return irlower.result_i64(); }
     if (ssasem.is_f64(t)) { return irlower.result_f64(); }
     return irlower.result_i32();
 }
@@ -630,7 +633,7 @@ function frame(f: ssasem.Func): irlower.LowerResult {
     while (vi < f.values.len()) {
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
         if let typeinfo.TypeString(_) = f.values[vi] { r = irlower.LowerResult { ...r, str_slots: r.str_slots.append(vi) }; }
-        if (ssasem.is_i64(f.values[vi])) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) }; }
+        if (ssasem.is_wide(f.values[vi])) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) }; }
         if (ssasem.is_f64(f.values[vi])) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) }; }
         vi = vi + 1;
     }
@@ -663,26 +666,37 @@ function wraps(op: string): boolean {
 // per-width arithmetic does (`2147483647 + 1` is INT_MIN, `255u8 + 1` is 0).
 function wrap_kind(t: typeinfo.Type): string {
     if (ssasem.is_u8(t)) { return "u8"; }
+    if (ssasem.is_u32(t)) { return "u32"; }
     return "i32";
 }
 
-// Scalar operators are verified integer/boolean contracts; negation is the
-// stack IR's zero-minus form. A string `+` is the runtime's concatenation,
-// a fresh box; string equality reads both operands. The verifier admits no
-// other string operator (ssasem.string_result), so a string binary that is
-// not `+` is `==` or `!=`.
+// The stack IR's name for an integer operator at its operands' own
+// signedness. The orderings, the right shift and div/rem read the slot's sign
+// bit, which an unsigned operand does not have; the verifier gives both
+// operands the same type, so one of them names the form.
+function integer_kind(op: string, operand: typeinfo.Type): string {
+    if (ssasem.is_unsigned_int(operand)) { return irlower.to_unsigned_kind(binary_kind(op)); }
+    return binary_kind(op);
+}
+
 // The width the operator RUNS at, which a comparison's boolean result does not
 // name — its operands do.
 function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
-    if (ssasem.is_i64(f.values[ins.args[0]])) { return 64; }
+    if (ssasem.is_wide(f.values[ins.args[0]])) { return 64; }
     return 0;
 }
 
-// A string `+` is the runtime's concatenation, a fresh box; string equality
-// reads both operands. The verifier admits no other string operator
-// (ssasem.string_result), so a string binary that is not `+` is `==` or `!=`.
+// A string `+` is the runtime's concatenation, a fresh box; equality reads
+// both operands, and an ordering is `str_cmp` — which hands back a signed i32
+// under, at or over zero — against a zero constant. The verifier admits no
+// other string operator (ssasem.string_result).
 function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
+    if (ins.str != "==" && ins.str != "!=") {
+        r = emit(r, ir.op_str_cmp());
+        r = emit(r, ir.op_const_i32(0));
+        return emit(r, ir.op_bin(binary_kind(ins.str), 0, false));
+    }
     r = emit(r, ir.op_str_eq());
     if (ins.str == "!=") { return emit(r, ir.op_bin("not", 0, false)); }
     return r;
@@ -702,37 +716,65 @@ function scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower
     if (ins.kind_tag == 10 && ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
     if (ssasem.is_f64(f.values[ins.args[0]])) { return float_scalar(r, ins); }
     var w: i32 = operand_width(f, ins);
-    if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(binary_kind(ins.str), w, false)); }
+    if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false)); }
     else { r = emit(r, ir.op_bin("sub", w, false)); }
     // The 64-bit operators are already full-width, so only a narrower result
     // can leave the range its type names.
-    if (!wraps(ins.str) || ssasem.is_i64(f.values[ins.result])) { return r; }
+    if (!wraps(ins.str) || ssasem.is_wide(f.values[ins.result])) { return r; }
     return emit(r, ir.op_int_cast(wrap_kind(f.values[ins.result])));
 }
 
+// The mask a NARROW destination applies to a narrow operand: the byte's 255,
+// the u32's zero-extension of the low word, the i32's sign-extension of it.
+// "" where the operand's own type already keeps its value inside the
+// destination's range — a byte is inside every wider narrow type, and a
+// conversion to the type the value already has moves no bits.
+function narrow_mask(from: typeinfo.Type, to: typeinfo.Type): string {
+    if (semtypes.equal(from, to)) { return ""; }
+    if (ssasem.is_u8(to)) { return "u8"; }
+    if (ssasem.is_u8(from)) { return ""; }
+    if (ssasem.is_u32(to)) { return "u32"; }
+    return "i32";
+}
+
+// Out of the f64: a truncation toward zero at the destination's width and
+// signedness. The signed forms clamp at the signed maximum, which is the wrong
+// answer for a destination that has no sign bit.
+function from_f64(to: typeinfo.Type): ir.Op {
+    if (ssasem.is_u64(to)) { return ir.op_f64_to_u64(); }
+    if (ssasem.is_wide(to)) { return ir.op_f64_to_i64(); }
+    if (ssasem.is_u32(to)) { return ir.op_f64_to_u32(); }
+    return ir.op_f64_to_i32();
+}
+
 // A conversion between the integer types, in the two domains the stack IR
-// separates. Crossing the 64-bit boundary is an explicit extend or wrap; a
-// narrowing inside the i32 domain is a mask, and a widening inside it moves no
-// bits at all, because the narrower type's own producing sites keep its value
-// in range. Into and out of the f64 is a real conversion: the signed convert
-// at the operand's width, and the truncation toward zero at the result's.
+// separates. Crossing the 64-bit boundary is an explicit extend or wrap, and
+// the SOURCE's signedness is what an extension extends by: only the signed
+// 32-bit width fills the high half from a sign bit. Inside the narrow domain
+// the conversion is the destination's own mask. Into and out of the f64 is a
+// real conversion: the convert at the operand's width and signedness, and the
+// truncation toward zero at the result's.
 function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var from: typeinfo.Type = f.values[ins.args[0]];
     var to: typeinfo.Type = f.values[ins.result];
     if (ssasem.is_f64(to)) {
-        if (ssasem.is_i64(from)) { return emit(r, ir.op_int_to_f64(64, false)); }
-        return emit(r, ir.op_int_to_f64(32, false));
+        var bits: i32 = 32;
+        if (ssasem.is_wide(from)) { bits = 64; }
+        return emit(r, ir.op_int_to_f64(bits, ssasem.is_unsigned_int(from)));
     }
-    if (ssasem.is_f64(from)) {
-        if (ssasem.is_i64(to)) { return emit(r, ir.op_f64_to_i64()); }
-        return emit(r, ir.op_f64_to_i32());
+    if (ssasem.is_f64(from)) { return emit(r, from_f64(to)); }
+    if (ssasem.is_wide(to)) {
+        if (ssasem.is_wide(from)) { return r; }
+        return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
     }
-    if (ssasem.is_i64(from) && ssasem.is_i64(to)) { return r; }
-    if (ssasem.is_i64(to)) { return emit(r, ir.op_int_extend(ssasem.is_u8(from))); }
-    if (ssasem.is_i64(from)) { r = emit(r, ir.op_int_wrap(false)); }
-    else if (ssasem.is_u8(from)) { return r; }
-    if (!ssasem.is_u8(to)) { return r; }
-    return emit(r, ir.op_int_cast("u8"));
+    if (ssasem.is_wide(from)) {
+        r = emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(to)));
+        if (!ssasem.is_u8(to)) { return r; }
+        return emit(r, ir.op_int_cast("u8"));
+    }
+    var mask: string = narrow_mask(from, to);
+    if (mask == "") { return r; }
+    return emit(r, ir.op_int_cast(mask));
 }
 
 // A record box is named by its declaration, a variant box by its variant. The
@@ -751,7 +793,7 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }
-    if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_i64(f.values[ins.result]))); }
+    if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_wide(f.values[ins.result]))); }
     return field_get(r, f, ins);
 }
 
@@ -761,12 +803,12 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
 // half, and the schema this boundary verified the projection against is what
 // says so.
 function load_width(t: typeinfo.Type): i32 {
-    if (ssasem.is_i64(t) || ssasem.is_f64(t)) { return 64; }
+    if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
     return 0;
 }
 function field_get(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var t: typeinfo.Type = f.values[ins.result];
-    if (ssasem.is_i64(t)) { return emit(r, ir.op_struct_get_i64(ins.imm)); }
+    if (ssasem.is_wide(t)) { return emit(r, ir.op_struct_get_i64(ins.imm)); }
     return emit(r, ir.op_struct_get(ins.imm, load_width(t)));
 }
 
@@ -818,12 +860,16 @@ function option_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, who
 // Zero at a given width: a 64-bit literal reaches the backends as source text,
 // which they splice into a 64-bit immediate, and nothing narrower needs one.
 function zero(t: typeinfo.Type): ir.Op {
-    if (ssasem.is_i64(t)) { return ir.op_const_i64_text("0"); }
+    if (ssasem.is_wide(t)) { return ir.op_const_i64_text("0"); }
     return ir.op_const_i32(0);
 }
 
+// A constant the verifier gave literal text to reaches the backends as that
+// text, spliced into an immediate of its own width (ssasem.text_constant);
+// every other integer constant rides the instruction's i32 immediate.
 function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    if (ins.kind_tag == 1 && ssasem.is_i64(f.values[ins.result])) { return emit(r, ir.op_const_i64_text(ins.str)); }
+    if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) { return emit(r, ir.op_const_i64_text(ins.str)); }
+    if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) { return emit(r, ir.op_const_i32_text(ins.str)); }
     if (ins.kind_tag == 1 && ssasem.is_f64(f.values[ins.result])) { return emit(r, ir.op_const_f64_text(ins.str)); }
     if (ins.kind_tag == 5) { return emit(r, ir.op_const_str(ins.str)); }
     return emit(r, ir.op_const_i32(ins.imm));

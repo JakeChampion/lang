@@ -87,6 +87,14 @@ pub function is_u8(t: typeinfo.Type): boolean {
     return false;
 }
 
+// The unsigned 32-bit integer. Like the byte it rides an i32-shaped slot, but
+// over the whole 32-bit range, so a value past 2^31 fills the slot's sign bit
+// and every operator that reads one takes its unsigned form.
+pub function is_u32(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == 32 && i.unsigned && !i.is_char; }
+    return false;
+}
+
 // A signed 64-bit integer. Unlike the byte it needs a slot of its own, which
 // only wasm spells out; the register backends already give every value a
 // 64-bit one.
@@ -94,6 +102,20 @@ pub function is_i64(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(i) = t { return i.width == 64 && !i.unsigned && !i.is_char; }
     return false;
 }
+
+// The unsigned 64-bit integer: the i64's slot, read without a sign bit.
+pub function is_u64(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == 64 && i.unsigned && !i.is_char; }
+    return false;
+}
+
+// The types that need a 64-bit slot of their own, which only wasm spells out.
+pub function is_wide(t: typeinfo.Type): boolean { return is_i64(t) || is_u64(t); }
+
+// The integer types read without a sign bit. It is what a widening extends by
+// and which form of the sign-reading operators — the orderings, the right
+// shift, division and remainder — the operand takes.
+pub function is_unsigned_int(t: typeinfo.Type): boolean { return is_u8(t) || is_u32(t) || is_u64(t); }
 
 // The 64-bit float. Like the i64 it rides a slot of its own that only wasm
 // spells out; its operators are the float opcodes, which never wrap.
@@ -107,7 +129,16 @@ pub function is_f64(t: typeinfo.Type): boolean {
 // The checker auto-widens the narrower side of a mixed-width operator, but the
 // tree this producer reads is not rewritten with that conversion, so a mixed
 // operator is refused here rather than guessed at.
-pub function is_integer(t: typeinfo.Type): boolean { return is_i32(t) || is_u8(t) || is_i64(t); }
+pub function is_integer(t: typeinfo.Type): boolean {
+    return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t);
+}
+
+// A constant whose value has no i32 immediate to ride carries the literal's
+// SOURCE TEXT instead, which the backends splice into an immediate of the
+// right width. The 64-bit types do not fit the immediate at all, and neither
+// does a u32 past 2^31 — so the u32 takes the text form at every value rather
+// than at some of them.
+pub function text_constant(t: typeinfo.Type): boolean { return is_wide(t) || is_u32(t); }
 
 function is_bool(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
@@ -182,16 +213,16 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// A narrow integer constant carries its value in the instruction's i32
+// A narrow signed integer constant carries its value in the instruction's i32
 // immediate, and the physical form pushes it with no mask, so its type's range
-// has to hold HERE rather than be wrapped later. A 64-bit one does not fit
-// that immediate at all, so it carries the literal's SOURCE TEXT instead — the
-// form the backends splice straight into a 64-bit immediate, and the one the
-// AST lowering already uses for the same literal.
+// has to hold HERE rather than be wrapped later. A constant with no such
+// immediate to ride (text_constant) carries the literal's SOURCE TEXT instead
+// — the form the backends splice straight into an immediate of its own width,
+// and the one the AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (!is_integer(result)) { return "integer constant type"; }
-    if (is_i64(result)) {
-        if (ins.str == "" || ins.imm != 0) { return "wide constant needs its literal text"; }
+    if (text_constant(result)) {
+        if (ins.str == "" || ins.imm != 0) { return "constant needs its literal text"; }
         return "";
     }
     if (ins.str != "") { return "narrow constant carries text"; }
@@ -550,10 +581,10 @@ function float_op(op: string): boolean {
 }
 
 // The integer operators and orderings at one width, equality on booleans;
-// string concatenation, a fresh string, and string equality. An operator
-// whose operands carry different integer types has no contract here: the
-// conversion is a cast the source has to write. String ordering and operator
-// overloads have none either.
+// string concatenation, a fresh string, and the string comparisons. An
+// operator whose operands carry different integer types has no contract here:
+// the conversion is a cast the source has to write. Operator overloads have
+// none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
     if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
     if (is_f64(left) && is_f64(right)) { return float_result(op, left); }
@@ -574,15 +605,19 @@ function float_result(op: string, t: typeinfo.Type): typeinfo.Type {
     return typeinfo.unchecked();
 }
 
+// A string `+` is concatenation; every comparison is the runtime's byte-order
+// compare, which orders the two boxes' bytes and is blind to which box holds
+// them.
 function string_result(op: string): typeinfo.Type {
     if (op == "+") { return typeinfo.TypeString { tag: 0 }; }
-    if (op == "==" || op == "!=") { return typeinfo.TypeBool { tag: 0 }; }
+    if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
 
-// Negation keeps its operand's type, at either signed width. A byte has no
-// negation here: the result of one leaves the range the type names, and what
-// the source would mean by it is not the wrap this boundary would emit.
+// Negation keeps its operand's type, at either signed width. An unsigned
+// operand has no negation here: the result of one leaves the range the type
+// names, and what the source would mean by it is not the wrap this boundary
+// would emit.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
     if (op == "-" && (is_i32(operand) || is_i64(operand) || is_f64(operand))) { return operand; }
     if (op == "!" && is_bool(operand)) { return typeinfo.TypeBool { tag: 0 }; }
@@ -596,17 +631,17 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// A conversion between the integer types, or between one of the two signed
-// widths and the f64. Every narrowing site keeps its value in range, so the
-// operand of an integer widening already holds the value the wider type names
-// and the conversion moves no bits; a narrowing masks. A float conversion is a
-// real instruction either way — a convert into the float, a truncation toward
-// zero out of it — so it is not a reinterpretation of the slot, and only the
-// widths the backends have an opcode for are admitted.
+// A conversion between the integer types, or between one of the four 32- and
+// 64-bit ones and the f64. An integer conversion is the destination's own mask
+// or extension, which every width here has. A float conversion is a real
+// instruction either way — a convert into the float, a truncation toward zero
+// out of it — so it is not a reinterpretation of the slot, and only the widths
+// the backends have an opcode for are admitted: the byte has none, and reaches
+// the float through the i32 the source writes.
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (is_integer(from) && is_integer(to)) { return true; }
-    if (is_f64(to)) { return is_i32(from) || is_i64(from); }
-    if (is_f64(from)) { return is_i32(to) || is_i64(to); }
+    if (is_f64(to)) { return is_integer(from) && !is_u8(from); }
+    if (is_f64(from)) { return is_integer(to) && !is_u8(to); }
     return false;
 }
 
@@ -686,7 +721,7 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
 }
 
 function narrow_word(t: typeinfo.Type): boolean {
-    if (is_func(t) || is_i64(t) || is_f64(t) || nests_func(t)) { return false; }
+    if (is_func(t) || is_wide(t) || is_f64(t) || nests_func(t)) { return false; }
     return semtypes.concrete(t, false);
 }
 
