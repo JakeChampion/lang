@@ -62,7 +62,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
-    if let typeinfo.TypeString(s) = t { return s.tag == 0; }
+    if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if let typeinfo.TypeStruct(_) = t { return semrecords.find(f.records, t) >= 0; }

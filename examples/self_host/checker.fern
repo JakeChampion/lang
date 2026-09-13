@@ -4873,7 +4873,7 @@ function split_fn_param_spellings(csv: string): string[] {
   var i: i32 = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || (csv[i] == b',' && depth == 0)) {
-      out = out.append(slice_unchecked(csv, start, i));
+      out = out.append(slice_unchecked(csv, start, i) + "");
       start = i + 1;
     } else if (csv[i] == b'(' || csv[i] == b'[') {
       depth = depth + 1;
@@ -9759,7 +9759,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                           // through, so it does NOT count toward
                           // exhaustiveness (#4344).
                           if (!elem.has_guard) {
-                            covered = covered.append(cbare);
+                            covered = covered.append(cbare + "");
                           }
                           if (!util.has_str(usig.variants, cbare)) {
                             out = out.append(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, elem.line, elem.col));
@@ -13556,14 +13556,14 @@ function e060_split_traits(set: string): string[] {
   var i: i32 = 0;
   while (i + 3 <= set.len()) {
     if (slice_unchecked(set, i, i + 3) == " + ") {
-      out = out.append(slice_unchecked(set, start, i));
+      out = out.append(slice_unchecked(set, start, i) + "");
       start = i + 3;
       i = i + 3;
     } else {
       i = i + 1;
     }
   }
-  return out.append(slice_unchecked(set, start, set.len()));
+  return out.append(slice_unchecked(set, start, set.len()) + "");
 }
 
 // e060_trait_known: the trait appears in trait_reqs (declared in the merged

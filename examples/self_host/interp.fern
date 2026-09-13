@@ -262,7 +262,7 @@ function split_binding_names(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || csv[i] == b',') {
-            out = out.append(slice_unchecked(csv, start, i));
+            out = out.append(slice_unchecked(csv, start, i) + "");
             start = i + 1;
         }
         i = i + 1;

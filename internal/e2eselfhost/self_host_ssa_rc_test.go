@@ -400,16 +400,21 @@ function main(): i32 {
     var badRecvAppend = ssasem.Func { graph: appendGraph, values: [strTy, i32ty, strTy],
         params: [strTy, i32ty], result: strTy, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badRecvAppend, [3, 1]).why != "append container type") { return 45; }
-    // A slice owns its box and borrows the source's bytes, so it is released by
-    // the view helper rather than the ordinary string free — which would skip
-    // the immortal rc sentinel and leak the box on the register backends.
-    // The slice must DIE here, not be returned: a returned value is handed to
-    // the caller, so it has no drop site and would emit no release at all.
+    // A slice is a VIEW: it owns its box and borrows the source's bytes, so it
+    // is released by the view helper rather than the ordinary string free —
+    // which would skip the immortal rc sentinel and leak the box on the
+    // register backends. Its type says so, and a slice typed as an owned
+    // string is refused. The slice must DIE here, not be returned: a returned
+    // value is handed to the caller, so it has no drop site and would emit no
+    // release at all.
+    var viewTy: typeinfo.Type = typeinfo.TypeString { tag: 1 };
     var sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.slice(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(1) }] };
-    var sliceFunc = ssasem.Func { graph: sliceGraph, values: [strTy, i32ty, i32ty, strTy],
+    var sliceFunc = ssasem.Func { graph: sliceGraph, values: [strTy, i32ty, i32ty, viewTy],
         params: [strTy, i32ty, i32ty], result: i32ty, records: [], enums: [], calls: [] };
+    var ownedSlice = ssasem.Func { ...sliceFunc, values: [strTy, i32ty, i32ty, strTy] };
+    if (ssaunits.plan(ownedSlice, [2, 1, 1]).why != "slice container type") { return 103; }
     var slicePlan = ssaunits.plan(sliceFunc, [2, 1, 1]);
     if (!slicePlan.ok) { eprint(slicePlan.why); return 46; }
     var sliceLowered = ssarc.lower(sliceFunc, [2, 1, 1], slicePlan);
@@ -437,7 +442,7 @@ function main(): i32 {
         if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { return 52; }
     }
     // The bounds are i32 and the receiver is a string; neither is negotiable.
-    var badBound = ssasem.Func { ...sliceFunc, values: [strTy, strTy, i32ty, strTy], params: [strTy, strTy, i32ty], result: i32ty };
+    var badBound = ssasem.Func { ...sliceFunc, values: [strTy, strTy, i32ty, viewTy], params: [strTy, strTy, i32ty], result: i32ty };
     if (ssaunits.plan(badBound, [2, 2, 1]).why != "slice bound type") { return 53; }
     // A schema field the walk never reads only has to LAY OUT, not lower. A
     // wide scalar ahead of a reference field shifts nothing, because every

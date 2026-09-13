@@ -153,10 +153,44 @@ Unsupported constructs refuse the whole function with a reason.
   owns nothing, so — unlike the slice beside it — this is NOT a projection:
   the byte outlives the string it came from, and nothing has to keep the
   source alive for it.
+- The string view, `str` (`typeinfo.TypeString` tag 1). A slice IS one, as the
+  checker types it, of an owned string or of another view; a `str` parameter
+  is a borrowed reference like any other; a `str` binding holds one. Every
+  read — the length, a byte, a window, `==` / `!=` and `+` — is blind to which
+  string type holds the bytes (`ssasem.is_text`), and `+`'s result is owned.
+  Physically a view is a box over the source's bytes carrying the immortal rc
+  sentinel, so `ssarc` releases a view-typed unit through
+  `__fern_str_view_free`, which frees the box alone on the sentinel and takes
+  the ordinary path otherwise (wasm slices copy). The release helper is now
+  chosen by the TYPE, not by finding the slice instruction behind the value.
+
+  Crossing between the two string types is the `str_as` kind, an identity
+  that borrows its operand the way `variant_up` does: an owned string reaches
+  a view-typed destination — a `str` binding, a `str` parameter — as a borrow
+  of its box, and a view reaches a BORROWED `string` parameter (a method's
+  receiver included, which is how `to_owned` and every other std/string
+  method takes one) the way the checker's `str_arg_borrow` carve-out lets it.
+  A counted `string` parameter is not offered the retag: it would take the
+  box as its own, which a view's box is not. A string's methods are declared
+  in the standard library on a `string` receiver, so a text receiver now
+  resolves `string.<m>` contracts the way a struct's does.
+
+  What a view may NOT do is escape its source. A function whose result is
+  `str` is refused ("view result escapes its source"): the caller's model has
+  no anchor for a result to its argument. A view as an array element — an
+  array literal's, or `.append`'s — is refused too ("view element escapes its
+  source"): the array may outlive the source. The checker's borrowed-argument
+  carve-out lets `xs.append(slice_unchecked(s, a, b))` through today — the
+  escaping position docs/STR-VIEW-CONTRACT.md's decision hands to #8635 —
+  and this boundary refuses it rather than inheriting the hole. The
+  compiler's own sources did it in 26 places, split helpers handing back a
+  `string[]` of windows onto their argument, each element a leaked view box
+  on the register backends; they copy now (`+ ""`), which is what the
+  checker rule will demand of them.
 
 Refused, each with its own reason: calls of the remaining builtins, local
 function values and void functions, floats in expressions, the unsigned and
-pointer integer widths, string views (`str`), string ordering, generic records,
+pointer integer widths, string ordering, generic records,
 destructuring, labelled loops, match guards and the pattern shapes above,
 `defer`, closures, receiver methods, generics, external and async functions,
 and a value-returning body that falls through.
@@ -213,8 +247,11 @@ one by hand.
   result, a returned parameter, recursion, a call result carried into a
   loop header, the AST-lowered `main` binding, discarding and projecting
   tuple and array results under `ssarc.caller_sigs`, the byte and cast shapes
-  below, and the enum shapes
-  above.
+  below, the enum shapes above, and the view shapes: a scanning loop binding
+  a slice per iteration and comparing, measuring, indexing and lending it to
+  a `str` and to a borrowed `string` parameter; an owned string lent to `str`
+  bindings and re-lent; a view of a view; a view whose source is a temporary
+  whose only use is the slice; and a view receiver on a `string` method.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -281,7 +318,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 4,428 of its 7,656
+Measured against the whole loaded self-hosted compiler, 4,809 of its 7,711
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -297,20 +334,22 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract, then bindings
-whose declared type is a string VIEW (`str`) where the producer has an owned
-`string`, calls of a builtin with no contract here, FLOAT literals — 368 of
-which are one record's `f64` field, `ir.Op`'s — and destructuring. A further 186 functions produce and plan but are refused by the
-unit planner for an `.append` whose receiver is not moved, and 1 by physical
-RC lowering for an `i64` array element.
+The leaves are now led by callees with no semantic contract (900), calls of
+a builtin with no contract here (430), FLOAT literals (407, most of them one
+record's `f64` field, `ir.Op`'s), names that are not semantic values (264)
+and destructuring (263). The string view was worth +355 once the sites that
+stored one were made to copy — measured, as usual, against a leaf histogram
+that had put it second. A further 209 functions produce and plan but are
+refused by the unit planner for an `.append` whose receiver is not moved,
+and 7 by physical RC lowering, for an `i64` element and an unsupported value
+type.
 
-Next, by measured leaf: `str`, the borrowed string view, which is what
-`slice_unchecked` actually hands back and what every scanning loop in this
-compiler binds. Then f64, which `ir.Op` waits behind along with i64 — and
+Next, by measured leaf: f64, which `ir.Op` waits behind along with i64 — and
 beyond it the per-field store width a construction withholds today (the -1
 declaration index), because a wide field built through a narrow slot is a wasm
 miscompile rather than a refusal, which is why i64 is a value here and not an
-element. The
+element. Behind the two largest leaves stands the same thing: a contract for
+the builtins a body calls, which is a vocabulary question and not a leaf. The
 `.append` receiver gate stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the

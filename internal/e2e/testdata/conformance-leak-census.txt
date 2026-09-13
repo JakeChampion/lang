@@ -14,9 +14,9 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-07: 495 fixtures, 426 clean, 69 leaking, 7495
+# Measured 2026-09-13: 504 fixtures, 437 clean, 67 leaking, 7309
 # unpaired allocations. The distribution is heavily skewed — the median
-# leaking fixture is 2, and regex_captures_assert alone is 5987 of the
+# leaking fixture is 2, and regex_captures_assert alone is 5881 of the
 # total.
 #
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
@@ -96,6 +96,10 @@
 # this file for reasons unrelated to reference counting. Sites are
 # printed on failure instead, where addr2line on a -g build turns one
 # into a source line.
+# The two are the stdout() handles of the case's two `rounds` calls, which
+# keep the static sentinel no release can reclaim (rcresults.go, #8398). The
+# Writer.write result boxes that made this 4 are reclaimed since #8405. The
+# accumulator the case measures is clean — it is what the "flat" line asserts.
 
 ackermann                                            0
 add_sub_pair                                         0
@@ -114,10 +118,6 @@ alloc_flat_read_chunk                                1
 alloc_flat_struct_self_update                        0
 alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
-# The two are the stdout() handles of the case's two `rounds` calls, which
-# keep the static sentinel no release can reclaim (rcresults.go, #8398). The
-# Writer.write result boxes that made this 4 are reclaimed since #8405. The
-# accumulator the case measures is clean — it is what the "flat" line asserts.
 alloc_flat_writer_accumulator                        2
 alloc_grows_when_retained                            0
 args                                                 2
@@ -442,19 +442,19 @@ read_all_stdin_chunks                                1
 read_line                                            1
 recursive_tree                                       0
 regex_basic                                          0
-regex_captures                                       129
-regex_captures_all                                   127
-regex_captures_assert                                5987
+regex_captures                                       121
+regex_captures_all                                   125
+regex_captures_assert                                5881
 regex_ci                                             0
 regex_convenience                                    0
 regex_counts                                         0
 regex_escapes                                        0
 regex_find                                           0
 regex_groups                                         0
-regex_named_groups                                   147
+regex_named_groups                                   139
 regex_ops                                            0
 regex_replace_edge                                   0
-regex_replace_groups                                 87
+regex_replace_groups                                 83
 regex_wordbound                                      0
 result_err_path                                      1
 result_match                                         0
@@ -579,6 +579,7 @@ u32_large_to_f64_back                                0
 u32_literal_suffix_width                             0
 u32_literal_unsigned_ops                             0
 u32_u64_bitops                                       0
+u64_field_array_with                                 0
 u64_if_expr_suffix                                   0
 u64_literal_compare                                  0
 u64_max_to_f64_is_huge                               0

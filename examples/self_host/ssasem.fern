@@ -58,6 +58,7 @@ pub function append(): i32 { return 0 - 14; }
 pub function slice(): i32 { return 0 - 15; }
 pub function str_index(): i32 { return 0 - 16; }
 pub function cast(): i32 { return 0 - 17; }
+pub function str_as(): i32 { return 0 - 18; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -108,12 +109,22 @@ function is_void(t: typeinfo.Type): boolean {
     return false;
 }
 
-// An owned string: the view tag is a borrow of another string's bytes and has
-// no contract here.
+// An owned string, whose box holds its bytes.
 pub function is_string(t: typeinfo.Type): boolean {
     if let typeinfo.TypeString(s) = t { return s.tag == 0; }
     return false;
 }
+
+// A string view (the checker's `str`): a box of its own over ANOTHER string's
+// bytes, so it is released by the helper that frees the box alone.
+pub function is_view(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeString(s) = t { return s.tag == 1; }
+    return false;
+}
+
+// Either string type. A read of the bytes — the length, a byte, a window, an
+// operator — is blind to which box holds them.
+pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
 
 function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 0 || ins.result != ins.imm || !semtypes.equal(result, f.params[ins.imm])) { return "parameter type or identity"; }
@@ -227,7 +238,7 @@ function length_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (!is_i32(result)) { return "length result type"; }
     var recv: typeinfo.Type = f.values[ins.args[0]];
     if let typeinfo.TypeArray(_) = recv { return ""; }
-    if (is_string(recv)) { return ""; }
+    if (is_text(recv)) { return ""; }
     return "length container type";
 }
 
@@ -318,10 +329,23 @@ function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "";
 }
 
+// A retag between the two string types hands back the same box, so like a
+// widening it borrows its operand. Owned to view is a borrow of the source's
+// bytes anywhere a view is declared; view to owned is a borrow the producer
+// hands only to a borrowed parameter, which this verifier cannot see, so its
+// rule is the type pair alone.
+function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "string retag arity"; }
+    var from: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_text(from) || !is_text(result) || semtypes.equal(from, result)) { return "string retag type"; }
+    return "";
+}
+
 function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == variant_new()) { return variant_construction_error(ins, f, result); }
     if (ins.kind_tag == variant_is()) { return variant_test_error(ins, f, result); }
     if (ins.kind_tag == variant_up()) { return widening_error(ins, f, result); }
+    if (ins.kind_tag == str_as()) { return retag_error(ins, f, result); }
     if (ins.kind_tag == variant_as()) { return narrowing_error(ins, f, result); }
     return variant_projection_error(ins, f, result);
 }
@@ -329,10 +353,11 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // A window onto a string's bytes. The register backends hand back a box of
 // their own over the SOURCE's bytes, so the result owns a box and borrows the
 // data — it is anchored to its source like any projection, and released by the
-// helper that frees a view's box without touching the bytes.
+// helper that frees a view's box without touching the bytes. Its type says so:
+// a slice is a view, of an owned string or of another view.
 function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 3) { return "slice arity"; }
-    if (!is_string(result) || !is_string(f.values[ins.args[0]])) { return "slice container type"; }
+    if (!is_view(result) || !is_text(f.values[ins.args[0]])) { return "slice container type"; }
     if (!is_i32(f.values[ins.args[1]]) || !is_i32(f.values[ins.args[2]])) { return "slice bound type"; }
     return "";
 }
@@ -345,7 +370,7 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "string index arity"; }
     if (!is_u8(result)) { return "string index result type"; }
-    if (!is_string(f.values[ins.args[0]])) { return "string index container type"; }
+    if (!is_text(f.values[ins.args[0]])) { return "string index container type"; }
     if (!is_i32(f.values[ins.args[1]])) { return "string index type"; }
     return "";
 }
@@ -365,7 +390,7 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 
 function is_variant_op(kind: i32): boolean {
     return kind == variant_new() || kind == variant_is() || kind == variant_get()
-        || kind == variant_up() || kind == variant_as();
+        || kind == variant_up() || kind == variant_as() || kind == str_as();
 }
 
 // A variant's field, and a narrowing to a variant, exist only while the value
@@ -412,7 +437,7 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
         if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
-    if (is_string(left) && is_string(right)) { return string_result(op); }
+    if (is_text(left) && is_text(right)) { return string_result(op); }
     return typeinfo.unchecked();
 }
 
@@ -603,12 +628,12 @@ function guard_error(f: Func): string {
     return "";
 }
 
-// A widening and a narrowing hand back the same box, so each borrows its
-// source exactly as a projection does.
+// A widening, a narrowing and a string retag hand back the same box, so each
+// borrows its source exactly as a projection does.
 function projects(kind: i32): boolean {
     return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
         || kind == variant_get() || kind == variant_up() || kind == variant_as()
-        || kind == slice();
+        || kind == slice() || kind == str_as();
 }
 
 function borrow_parents(f: Func): i32[] {

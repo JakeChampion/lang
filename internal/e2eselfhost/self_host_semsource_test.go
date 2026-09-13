@@ -187,6 +187,26 @@ function wide_ops(n: i32): i32 {
 
 function refused_float_cast(n: i32): f64 { return n as f64; }
 function refused_mixed_width(b: u8, n: i32): i32 { return b + n; }
+
+// A string view: a slice is one; an owned string bound or passed where a view
+// is declared is lent (a retag that borrows the box); a view passed to a
+// borrowed 'string' parameter is the retag the other way. A view result would
+// escape its source, so it is refused.
+function view_len(v: str): i32 { return v.len(); }
+function view_of(s: string): i32 {
+    var v: str = slice_unchecked(s, 1, 3);
+    var w: str = s;
+    var inner: str = slice_unchecked(w, 0, 1);
+    if (v == w || inner != "a") { return v[0] as i32; }
+    return v.len() + view_len(s) + string_length(v) + inner.len();
+}
+function copy_view(v: str): string { return v + ""; }
+function refused_view_result(s: string): str { return slice_unchecked(s, 0, 1); }
+function refused_view_element(s: string): i32 {
+    var xs: string[] = [];
+    xs = xs.append(slice_unchecked(s, 0, 1));
+    return xs.len();
+}
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -576,7 +596,7 @@ enum Chain { End, Link(i32, Chain) }
 @noinline function head_of(s: string, n: i32): i32 { return slice_unchecked(s, 0, n).len(); }
 @noinline function mid_of(n: i32): i32 {
     var s: string = grown(n);
-    var v: string = slice_unchecked(s, 1, 4);
+    var v: str = slice_unchecked(s, 1, 4);
     return v.len() + s.len();
 }
 @noinline function temp_slice(n: i32): i32 { return slice_unchecked(grown(n), 0, 3).len(); }
@@ -756,6 +776,40 @@ enum Chain { End, Link(i32, Chain) }
 @noinline function wide_of(n: i32): i64 { return (n as i64) * 1000000007i64; }
 @noinline function wide_hi(v: i64): i32 { return (v >> 32) as i32; }
 @noinline function wide_call(n: i32): i32 { return wide_hi(wide_of(n)); }
+// A string view. A slice is one; an owned string bound or passed where a view
+// is declared is lent (the box borrowed, never released here); a view passed
+// to a borrowed 'string' parameter, a method's receiver included, is lent the
+// other way. Every read is blind to which box holds the bytes.
+@noinline function view_len(v: str): i32 { return v.len(); }
+@noinline function (s: string) copied(): string { return s + ""; }
+@noinline function scan_views(s: string): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i + 2 <= s.len()) {
+        var w: str = slice_unchecked(s, i, i + 2);
+        if (w == "cd") { t = t + 100; }
+        t = t + w.len() + view_len(w) + text_size(w) + (w[0] as i32);
+        i = i + 1;
+    }
+    return t;
+}
+@noinline function lent_views(n: i32): i32 {
+    var s: string = grown(n);
+    var v: str = s;
+    var u: str = v;
+    var inner: str = slice_unchecked(v, 1, 3);
+    var o: string = inner.copied();
+    var p: string = u.copied() + o;
+    return v.len() + u.len() + inner.len() + o.len() + p.len() + view_len(s);
+}
+// The source is a temporary whose only use is the slice; the view of a view
+// keeps both alive across its reads.
+@noinline function view_of_temp(n: i32): i32 {
+    var v: str = slice_unchecked(grown(n), 0, 2);
+    var w: str = slice_unchecked(v, 1, 2);
+    if (w != "b") { return 0 - 1; }
+    return v.copied().len() + w.len();
+}
 @noinline function upper(s: string, i: i32): i32 {
     var c: u8 = s[i];
     if (c >= b'a' && c <= b'z') { c = c - 32; }
@@ -890,6 +944,8 @@ function main(): i32 {
     print_int(wide_hex()); print(""); print_int(wide_cmp(5)); print("");
     print_int(wide_cmp(1)); print(""); print_int(wide_div(5)); print("");
     print_int(wide_call(5)); print(""); print_int(wide_call(0)); print("");
+    print_int(scan_views("abcdef")); print(""); print_int(lent_views(1)); print(""); print_int(lent_views(0)); print("");
+    print_int(view_of_temp(2)); print(""); print_int(view_of_temp(0)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -927,7 +983,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1012,7 +1068,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
