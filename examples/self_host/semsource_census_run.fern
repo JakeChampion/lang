@@ -74,6 +74,7 @@ function main(): i32 {
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
             merged = irlower.lift_lambdas(merged);
+            var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
 
             var produced: semsource.Produced[] = semsource.build_module(merged);
             var total: i32 = produced.len();
@@ -97,7 +98,7 @@ function main(): i32 {
                         plan_why = hist_bump(plan_why, plan.why);
                     } else {
                         n_planned = n_planned + 1;
-                        var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan);
+                        var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab);
                         if (!lr.ok) { rc_why = hist_bump(rc_why, lr.why); } else { n_lowered = n_lowered + 1; }
                     }
                 }

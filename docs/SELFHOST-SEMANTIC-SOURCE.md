@@ -88,14 +88,19 @@ Unsupported constructs refuse the whole function with a reason.
   instead — the form the backends splice straight into a 64-bit immediate, and
   the one the AST lowering already uses for the same literal.
 
-  It is a VALUE here and never a container ELEMENT. Every container this
-  boundary builds stores one i32-shaped word per slot — `op_arr_make` and
-  `op_arr_get` are emitted at width 32, and `op_struct_make` withholds the
-  per-field store width (the -1 declaration index) — so a wide element would be
-  written through a narrow store on wasm. An array or tuple TYPE carrying one
-  is refused; a record or variant type says nothing about its fields, so the
-  refusal there is on the construction's operand, which is the one place a wide
-  field shows (the drop walk never reads a scalar field at all).
+  It is a VALUE here and a record or variant FIELD, never an array or tuple
+  ELEMENT. An array or tuple stores one i32-shaped word per slot —
+  `op_arr_make` and `op_arr_get` are emitted at width 32 — so a wide element
+  would be written through a narrow store on wasm, and an array or tuple TYPE
+  carrying one is refused. A record or variant stores each field at the width
+  its declaration names: the construction carries its declaration's index
+  (`op_struct_make`), a record's resolved by name and a variant's by name
+  within its enum, since two enums may declare one variant name with
+  differently sized payloads; the physical lowering takes the declaration
+  table for it, as the AST lowering does. A wide operand of a construction
+  whose declaration is not in the table is refused rather than built through
+  a narrow store; a read takes its offset from the field index alone and its
+  width from the schema this boundary verified the projection against.
 
   u64 and usize are not admitted: they select the unsigned operators, which is
   a second signedness rule and not just a second width.
@@ -112,8 +117,9 @@ Unsupported constructs refuse the whole function with a reason.
   opcode at that width, is not offered them. A cast to or from anything else
   — a string, the `as?` downcast — is refused.
 
-- The f64, as a VALUE and never a container element, for the same reason the
-  i64 is one (`narrow_slot`): it gets a slot of its own that only wasm spells
+- The f64, as a VALUE and a declared field but never an array or tuple element,
+  for the same reason the i64 is one (`narrow_slot`): it gets a slot of its
+  own that only wasm spells
   out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
   literal is an f64 — the checker types it polymorphic and settles it where it
   lands, and this vocabulary has one float width, so only a `f32` suffix or
@@ -338,7 +344,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,082 of its 7,712
+Measured against the whole loaded self-hosted compiler, 5,163 of its 7,712
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -358,20 +364,16 @@ The leaves are now led by callees with no semantic contract (900), calls of
 a builtin with no contract here (453), names that are not semantic values
 (298) and destructuring (264). The string view was worth +355 once the sites
 that stored one were made to copy, and the f64 +273 — each measured, as
-usual, against a leaf histogram that had ranked them differently. A further
-209 functions produce and plan but are refused by the unit planner for an
-`.append` whose receiver is not moved, and 83 by physical RC lowering: 81 of
-them constructions with a wide field, `ir.Op`'s f64 and i64 among them, and
-2 for an unsupported value type.
+usual, against a leaf histogram that had ranked them differently. The
+declared field width was worth the 81 it was measured at — every
+construction with a wide field, `ir.Op`'s f64 and i64 among them, resolved
+its declaration. A further 209 functions produce and plan but are refused by
+the unit planner for an `.append` whose receiver is not moved, and 2 by
+physical RC lowering for an unsupported value type.
 
-Next, by measured leaf: the per-field store width a construction withholds
-today (the -1 declaration index), which is what stands between `ir.Op` and
-the boundary now that both of its wide scalars are values — a wide field
-built through a narrow slot is a wasm miscompile rather than a refusal, which
-is why i64 and f64 are values here and not elements. Behind the two largest
-leaves stands the same thing: a contract for the builtins a body calls, which
-is a vocabulary question and not a leaf. The
-`.append` receiver gate stays deferred: it needs a clone form for a receiver
+Next, by measured leaf: behind the two largest leaves stands the same thing,
+a contract for the builtins a body calls, which is a vocabulary question and
+not a leaf. The `.append` receiver gate stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the
 dominant refused shape is a borrowed-parameter accumulator in a loop, where a

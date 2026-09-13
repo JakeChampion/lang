@@ -21,10 +21,11 @@ function empty(why: string): irlower.LowerResult {
 // ownership: the 32-bit float, and a record with no schema or with type
 // arguments (its box is named by the bare declaration). The byte rides the
 // same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
-// integer and the f64 each get a slot of their own, which is a VALUE here but
-// never a container element (narrow_slot). A string view is a value here and
-// never an element either: a container's drop frees its elements with the
-// owned string's helper, which is not a view's.
+// integer and the f64 each get a slot of their own, which is a VALUE here and
+// a declared field but never an array or tuple element (narrow_slot). A
+// string view is a value here and never an element either: a container's
+// drop frees its elements with the owned string's helper, which is not a
+// view's.
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
     return true;
@@ -33,12 +34,12 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
     return i.width == 32 || (i.width == 8 && i.unsigned) || (i.width == 64 && !i.unsigned);
 }
 
-// A value that fits the ONE i32-shaped word every container this boundary
-// builds stores per element. `op_arr_make` and `op_arr_get` are emitted at
-// width 32, and `op_struct_make` withholds the per-field store width (the -1
-// declaration index), so a 64-bit element would be written through a 32-bit
-// slot on wasm. A 64-bit scalar, integer or float, is therefore a value here
-// and not an element.
+// A value that fits the ONE i32-shaped word an array or tuple stores per
+// element: `op_arr_make` and `op_arr_get` are emitted at width 32, so a 64-bit
+// element would be written through a 32-bit slot on wasm. A 64-bit scalar,
+// integer or float, is therefore a value here and not an array or tuple
+// element; a record or variant field stores at the width its declaration
+// names.
 function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t) && !ssasem.is_f64(t); }
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
@@ -284,12 +285,32 @@ function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
 // here at all, and an array or tuple of scalars needs only its own box
 // released. Asking `supported` of every field instead refuses a function for
 // a field it never reads.
-// A construction writes one word per operand, so an operand that needs a wider
-// store has no form here — the same rule `narrow_slot` states for an array or
-// tuple element, applied to a record or variant field, which only a
-// construction reveals (the drop walk never reads a scalar field at all).
-function construction_error(f: ssasem.Func, ins: ssa.SInst): string {
-    for arg in ins.args { if (!narrow_slot(f.values[arg])) { return "unsupported physical RC construction element"; } }
+// An array or tuple construction writes one word per operand, so an operand
+// that needs a wider store has no form there. A record or variant stores each
+// field at the width its declaration names, which is what `op_struct_make`
+// carries as the declaration index; a wide field of a construction whose
+// declaration is not in the table has no store width to carry.
+function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): string {
+    var declared: boolean = ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
+    for arg in ins.args {
+        if (narrow_slot(f.values[arg])) { continue; }
+        if (!declared) { return "unsupported physical RC construction element"; }
+        if (decl_of(f, ins, structs) < 0) { return "unsupported physical RC construction without declaration"; }
+    }
+    return "";
+}
+
+// The declaration a record or variant construction stores its fields
+// through: a record's by its name, a variant's by its name within its enum,
+// since two enums may declare one variant name with differently sized
+// payloads. -1 when the table holds no such declaration.
+function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): i32 {
+    if (ins.kind_tag == ssasem.record_new()) { return irlower.decl_index_of(structs, record_name(f.values[ins.result])); }
+    return irlower.variant_decl_index(structs, ins.str, enum_name(f.values[ins.result]));
+}
+
+function enum_name(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnion(u) = t { return u.name; }
     return "";
 }
 
@@ -410,7 +431,7 @@ function types_error(f: ssasem.Func): string {
     return "";
 }
 
-function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
+function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
     var why: string = ssaunits.verify(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
@@ -421,7 +442,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): string {
         for ins in b.insts {
             if (!supported_op(ins.kind_tag)) { return "unsupported physical RC operation"; }
             if (builds(ins.kind_tag)) {
-                why = construction_error(f, ins);
+                why = construction_error(f, ins, structs);
                 if (why != "") { return why; }
             }
         }
@@ -593,16 +614,14 @@ function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.L
 }
 
 // A record box is named by its declaration, a variant box by its variant. The
-// -1 declaration index withholds the per-field store width, which only a
-// construction needs and only wasm reads; every value this vocabulary admits
-// is one i32-shaped word, so nothing built here needs a wider store. A schema
-// may name a wider field, but a walk only READS it, at an offset the backends
-// take from the field index alone.
-function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    if (variant_op(ins.kind_tag)) { return variant(r, f, ins); }
+// declaration index is where wasm reads each field's store width; the register
+// backends store every field as 8 bytes, and every read takes its offset from
+// the field index alone.
+function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
+    if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_arr_make(ins.args.len(), 32)); }
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make(ins.args.len())); }
-    if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), 0 - 1)); }
+    if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), decl_of(f, ins, structs))); }
     if (ins.kind_tag == ssasem.length()) {
         if (ssasem.is_text(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
         return emit(r, ir.op_arr_len());
@@ -632,9 +651,9 @@ function field_get(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
     return emit(r, ir.op_struct_get(ins.imm, load_width(t)));
 }
 
-function variant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function variant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (identity_op(ins.kind_tag)) { return r; }
-    if (ins.kind_tag == ssasem.variant_new()) { return emit(r, ir.op_struct_make(ins.str, ins.args.len(), 0 - 1)); }
+    if (ins.kind_tag == ssasem.variant_new()) { return emit(r, ir.op_struct_make(ins.str, ins.args.len(), decl_of(f, ins, structs))); }
     if (ins.kind_tag == ssasem.variant_is()) { return emit(r, ir.op_variant_is(ins.str)); }
     return field_get(r, f, ins);
 }
@@ -653,7 +672,7 @@ function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     return emit(r, ir.op_const_i32(ins.imm));
 }
 
-function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     // Integer negation is a zero-minus, so the zero is pushed at the operand's
     // own width or the two sides of the subtraction disagree; a float has its
     // own sign-flip opcode and pushes nothing.
@@ -661,7 +680,7 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 5) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
-    if (container_op(ins.kind_tag)) { r = container(r, f, ins); }
+    if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
     // A call's counted parameters were supplied before its operands were
     // loaded; its result is the unit the callee returns.
     if (ins.kind_tag == ssasem.call()) { r = emit(r, ir.op_call_direct(ins.str, ins.args.len())); }
@@ -669,14 +688,14 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     return emit(r, ir.op_store_local(ins.result));
 }
 
-function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): irlower.LowerResult {
+function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab): irlower.LowerResult {
     r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
             r = supplies(r, step);
-            r = instruction(r, f, ins);
+            r = instruction(r, f, ins, structs);
             r = drops(r, step, f);
         }
         pos = pos + 1;
@@ -761,7 +780,7 @@ function inner(l: ssalayout.Layout, first: i32, last: i32, looping: boolean, at:
 // Emit layout indices first..last. A looping region is one natural loop:
 // its `loop` label opens first, then a `block` per position inside that no
 // nested loop owns, each closed just before its position is reached.
-function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean): Emit {
+function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irlower.StructTab): Emit {
     if (looping) { e = push(e, ir.op_loop(0), first); }
     var target: i32 = last;
     while (target > first) {
@@ -772,10 +791,10 @@ function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, 
     while (position <= last) {
         if (position > first) { e = pop(e); }
         if (l.loop_end[position] >= 0 && (position > first || !looping)) {
-            e = region(e, f, p, l, position, l.loop_end[position], true);
+            e = region(e, f, p, l, position, l.loop_end[position], true, structs);
             position = l.loop_end[position] + 1;
         } else {
-            var r: irlower.LowerResult = block_body(e.r, f, p, f.graph.blocks[l.order[position]]);
+            var r: irlower.LowerResult = block_body(e.r, f, p, f.graph.blocks[l.order[position]], structs);
             e = terminator(Emit { ...e, r: r }, f, p, l.order, position);
             position = position + 1;
         }
@@ -867,12 +886,15 @@ function without_rows(rows: string[], name: string, prefixes: string[]): string[
     return out;
 }
 
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan): irlower.LowerResult {
-    var why: string = validate(f, modes, p);
+// `structs` is the declaration table the backends read a construction's field
+// store widths from; the physical lowering names a declaration by index, as
+// the AST lowering does.
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): irlower.LowerResult {
+    var why: string = validate(f, modes, p, structs);
     if (why != "") { return empty(why); }
     var layout: ssalayout.Layout = ssalayout.compute(f.graph);
     if (!layout.ok) { return empty("physical RC needs reducible graph"); }
-    var e: Emit = region(Emit { r: frame(f), labels: [], why: "" }, f, p, layout, 0, layout.order.len() - 1, false);
+    var e: Emit = region(Emit { r: frame(f), labels: [], why: "" }, f, p, layout, 0, layout.order.len() - 1, false, structs);
     if (e.why != "") { return empty(e.why); }
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
