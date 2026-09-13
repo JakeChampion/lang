@@ -59,10 +59,7 @@ function help_text(): string {
   return out;
 }
 
-// Bytes per read(2), and the size of the block the accumulated output
-// is handed to the buffered writer in. The writer's threshold is the
-// same number, so a full block goes straight to the fd instead of being
-// copied into its buffer first.
+// Bytes per read(2), and the writer's threshold: bytes per write(2).
 function read_size(): i32 {
   return 65536;
 }
@@ -202,13 +199,13 @@ function main(): i32 {
   return run(files, width, count_bytes, break_spaces);
 }
 
-// `run(files, width, count_bytes, break_spaces)` — the whole fold. One
-// function because `out` is the output accumulator: a bare local
-// appended to inline grows in place, and the same appends through a
-// helper copy the buffer every time (#8785).
+// `run(files, width, count_bytes, break_spaces)` — the whole fold. Every
+// output line is pushed straight into stdout's builder, which is flushed
+// once it holds a block, so no byte is copied into an accumulator on the
+// way.
 function run(files: string[], width: u64, count_bytes: boolean, break_spaces: boolean): i32 {
   var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var out: string = "";
+  var h: usize = o.handle();
   var ok: boolean = true;
 
   var fi: i32 = 0;
@@ -249,8 +246,6 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
                   opened = true;
                 },
                 Err(e) => {
-                  o = o.write_string(out);
-                  out = "";
                   o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
                   ok = false;
                 }
@@ -266,8 +261,6 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
               piece = c;
             },
             Err(e) => {
-              o = o.write_string(out);
-              out = "";
               o = gnu.error_out(o, gnu.quotef(name) + ": " + gnu.io_error_text(e));
               ok = false;
               read_ok = false;
@@ -375,8 +368,8 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
           p = run_end;
         } else {
           var cut: i32 = break_before(buf, start, p + room as i32, break_spaces);
-          out = out + slice_unchecked(buf, start, cut);
-          out = out + "\n";
+          buf_push_range(h, buf, start, cut);
+          buf_push_byte(h, 10);
           start = cut;
           if (cut > p) {
             p = cut;
@@ -389,9 +382,8 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
               m = m + 1;
             }
           }
-          if (out.len() >= block_size()) {
-            o = o.write_string(out);
-            out = "";
+          if (buf_len(h) >= block_size()) {
+            o = o.flush();
           }
         }
       }
@@ -407,8 +399,8 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
       } else {
         var cut: i32 = break_before(buf, start, p, break_spaces);
         if (cut > start) {
-          out = out + slice_unchecked(buf, start, cut);
-          out = out + "\n";
+          buf_push_range(h, buf, start, cut);
+          buf_push_byte(h, 10);
           start = cut;
           column = 0 as u64;
           var m: i32 = cut;
@@ -416,9 +408,8 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
             column = advance(column, buf[m] as i32, count_bytes);
             m = m + 1;
           }
-          if (out.len() >= block_size()) {
-            o = o.write_string(out);
-            out = "";
+          if (buf_len(h) >= block_size()) {
+            o = o.flush();
           }
         } else {
           // It does not fit an empty line either, so it goes out alone.
@@ -436,18 +427,16 @@ function run(files: string[], width: u64, count_bytes: boolean, break_spaces: bo
     }
     // Whatever is left of the line, with the terminator it came with —
     // a file's last line keeps its missing newline missing.
-    out = out + slice_unchecked(buf, start, hi);
+    buf_push_range(h, buf, start, hi);
 
     if (specat >= 0 && specat < pos) {
       specat = special_at(chunk, pos);
     }
-    if (out.len() >= block_size()) {
-      o = o.write_string(out);
-      out = "";
+    if (buf_len(h) >= block_size()) {
+      o = o.flush();
     }
   }
 
-  o = o.write_string(out);
   gnu.finish(o);
   if (!ok) {
     return 1;
