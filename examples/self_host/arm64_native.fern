@@ -4857,16 +4857,18 @@ function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm6
 
 // arm64_gas_is_bcond reports whether `mnem` is a conditional branch, in
 // either GAS spelling: the dotted `b.lt` form or the no-dot `blt` alias.
-// arm64_gas_bcond_suffix returns the condition part of such a mnemonic.
+// arm64_gas_bcond_suffix returns the condition part of such a mnemonic. It
+// copies rather than handing back a window of `mnem`, whose bytes the caller
+// owns and may outlive the result (docs/STR-VIEW-CONTRACT.md).
 function arm64_gas_is_bcond(mnem: string): boolean {
     if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') { return true; }
     return mnem.len() == 3 && mnem[0] == b'b' && arm64_gas_is_cond(slice_unchecked(mnem, 1, 3));
 }
-function arm64_gas_bcond_suffix(mnem: string): str {
+function arm64_gas_bcond_suffix(mnem: string): string {
     if (mnem.len() >= 3 && mnem[0] == b'b' && mnem[1] == b'.') {
-        return slice_unchecked(mnem, 2, mnem.len());
+        return slice_unchecked(mnem, 2, mnem.len()) + "";
     }
-    return slice_unchecked(mnem, 1, 3);
+    return slice_unchecked(mnem, 1, 3) + "";
 }
 
 // arm64_gas_emit assembles one mnemonic + operand list into a.code (or
@@ -6264,7 +6266,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 var doff: i32 = p.data.len();
                 p = arm64_gas_dlabel(p, before, doff);
             } else if (section == 2) {
-                p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
+                p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before + "") };
                 p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
             } else if (arm64_gas_is_digits(before + "")) {
                 var nv: i32 = arm64_gas_atoi(before + "");

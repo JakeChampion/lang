@@ -1,8 +1,9 @@
 name: CI
 
 # The one workflow a pull request launches, and the one that runs the gate
-# lanes on a push to main or a manual dispatch (check-sources.yml, pages.yml
-# and auto-rebase-prs.yml keep push triggers of their own, outside the lock).
+# lanes on a push to main or a manual dispatch (check-sources.yml and pages.yml
+# keep push triggers of their own, outside the lock; auto-rebase-prs.yml is
+# dispatched by hand).
 # Every lane under .github/workflows is a `workflow_call` this file calls, and
 # that is what lets ONE concurrency group serialise pull requests as
 # whole suites: at most one pull request has its CI running at a time, and the

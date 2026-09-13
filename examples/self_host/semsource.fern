@@ -36,16 +36,24 @@ struct State {
     loops: Loop[],
     // Every module function's declared contract, and the ones this body calls.
     contracts: ssasem.Contract[],
-    calls: ssasem.Contract[]
+    calls: ssasem.Contract[],
+    // This declaration spells type VARIABLES, so a bare type-variable name in
+    // a type the checker could not resolve is the erased word rather than an
+    // unresolved spelling.
+    generic: boolean
 }
 
 struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
 function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false }; }
+function t_u32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false }; }
+function t_u64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false }; }
 function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
+function t_str(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
+function t_f64(): typeinfo.Type { return typeinfo.TypeFloat { width: 64, polymorphic: false }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
 function is_i32(t: typeinfo.Type): boolean { return semtypes.equal(t, t_i32()); }
 function is_bool(t: typeinfo.Type): boolean { return semtypes.equal(t, t_bool()); }
@@ -158,9 +166,89 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
     return State { ...s, vals: vals };
 }
 
+// ---- erasure ----------------------------------------------------------------
+
+// A declaration that spells type variables. The parser keeps only the BOUNDED
+// names in `type_params` and counts the rest, so either field marks one — and
+// a HOISTED closure body marks neither: the lift copies the type-variable
+// spellings of the generic it came out of and declares no type parameter of
+// its own, because the arity-keyed indirect-call table fixes that body's ABI
+// and a widened one is an `indirect call type mismatch`. The spelling is a
+// type variable either way, so the slot is one erased word either way.
+function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
+    if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return true; }
+    if (bare_typevar(fd.ret_type, scope)) { return true; }
+    for p in fd.params { if (bare_typevar(p.type_name, scope)) { return true; } }
+    return false;
+}
+
+// A type variable reaches the checker as an UNKNOWN naming it: a promoted
+// parameter as "type parameter T", an unpromoted one as the unresolved
+// spelling itself, since parse_func_decl drops an unbounded parameter's name
+// from the declaration. This reads the name back out of either reason.
+function typevar_reason_name(reason: string): string {
+    var promoted: string = "type parameter ";
+    if (reason.len() > promoted.len() && slice_unchecked(reason, 0, promoted.len()) == promoted) {
+        return slice_unchecked(reason, promoted.len(), reason.len()) + "";
+    }
+    var unresolved: string = "unrecognised type name: ";
+    if (reason.len() > unresolved.len() && slice_unchecked(reason, 0, unresolved.len()) == unresolved) {
+        return slice_unchecked(reason, unresolved.len(), reason.len()) + "";
+    }
+    return "";
+}
+
+// Inside a generic declaration a bare type-variable letter no struct or enum
+// declares IS that variable — the rule irlower's own erasure keys on
+// (`is_erased_typevar`), and the one `type_from_name_erasing_tparams` applies
+// when the parser kept the name.
+function bare_typevar(name: string, scope: checker.Scope): boolean {
+    if (name.len() != 1 || name[0] < b'A' || name[0] > b'Z') { return false; }
+    if (checker.struct_sig(scope, name).name.len() > 0) { return false; }
+    return checker.union_sig(scope, name).name.len() == 0;
+}
+
+// erase resolves the checker's unresolved type variables to the erased word,
+// structurally, so a function-typed parameter's own erased slots resolve with
+// it. Every other unknown is left alone and refuses where it stands: this
+// makes the erased word a type of its own rather than a relaxed check.
+function erase(t: typeinfo.Type, generic: boolean, scope: checker.Scope): typeinfo.Type {
+    if (!generic) { return t; }
+    if let typeinfo.TypeUnknown(u) = t {
+        var name: string = typevar_reason_name(u.reason);
+        if (bare_typevar(name, scope)) { return typeinfo.TypeErased { name: name }; }
+        return t;
+    }
+    return erase_within(t, scope);
+}
+
+function erase_within(t: typeinfo.Type, scope: checker.Scope): typeinfo.Type {
+    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: erase(a.elem, true, scope) }; }
+    if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: erase_list(tup.elements, scope) }; }
+    if let typeinfo.TypeFunc(fn) = t {
+        return typeinfo.TypeFunc { ...fn, param_types: erase_list(fn.param_types, scope), ret_type: erase(fn.ret_type, true, scope) };
+    }
+    if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: erase(m.key, true, scope), value: erase(m.value, true, scope) }; }
+    if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: erase_list(r.args, scope) }; }
+    if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { ...u, args: erase_list(u.args, scope) }; }
+    return t;
+}
+
+function erase_list(ts: typeinfo.Type[], scope: checker.Scope): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for t in ts { out = out.append(erase(t, true, scope)); }
+    return out;
+}
+
+function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type {
+    return erase(checker.scope_type(scope, name), s.generic, scope);
+}
+
 // ---- expressions ------------------------------------------------------------
 
-function checked(e: ast.Expr, s: State): typeinfo.Type { return checker.expr_type(e, s.scope); }
+function checked(e: ast.Expr, s: State): typeinfo.Type {
+    return erase(checker.expr_type(e, s.scope), s.generic, s.scope);
+}
 
 function decimal(text: string): boolean {
     if (text.len() == 0) { return false; }
@@ -198,10 +286,12 @@ function integer_literal(text: string): boolean {
 
 // A literal's width is the suffix the lexer read, which a byte literal
 // (`b'x'`) carries as much as a written `7u8` does. An unsuffixed decimal is
-// an i32; the unsigned and pointer widths have no constant form here yet.
+// an i32; the pointer width has no constant form here yet.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
+    if (suffix == "u32") { return t_u32(); }
     if (suffix == "i64") { return t_i64(); }
+    if (suffix == "u64") { return t_u64(); }
     if (suffix == "" || suffix == "i32") { return t_i32(); }
     return typeinfo.unchecked();
 }
@@ -211,15 +301,29 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
-// A 64-bit literal does not fit the instruction's i32 immediate, so it carries
-// its SOURCE TEXT instead — which is also how the AST lowering hands the same
-// literal to the backends, rather than through a parse and re-format.
+// A literal with no i32 immediate to ride — either 64-bit width, or a u32,
+// whose range reaches past the immediate's sign bit — carries its SOURCE TEXT
+// instead, which is also how the AST lowering hands the same literal to the
+// backends, rather than through a parse and re-format.
+// A float literal is an f64 unless something names the narrower width: the
+// checker types it polymorphic and settles it where it lands, and this
+// vocabulary has one float width, so the only question is whether the source
+// asked for the other. It carries its text the way a wide integer does.
+function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
+    var narrow: boolean = n.suffix == "f32";
+    if let typeinfo.TypeFloat(fl) = expected { if (fl.width == 32) { narrow = true; } }
+    if (narrow) { return refused(s, "unsupported literal width"); }
+    return define(s, 1, [], 0, n.text, t_f64());
+}
+
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
-    if (parser.is_unit_literal(n) || n.is_float || !integer_literal(n.text)) { return refused(s, "unsupported literal"); }
+    if (parser.is_unit_literal(n)) { return refused(s, "unsupported literal"); }
+    if (n.is_float) { return float_number(n, s, expected); }
+    if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
-    if (ssasem.is_i64(ty)) { return define(s, 1, [], 0, n.text, ty); }
+    if (ssasem.text_constant(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
 
@@ -228,12 +332,26 @@ function boolean_value(b: boolean): i32 {
     return 0;
 }
 
-function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
+// A bare name that is no binding is a unit variant of the expected enum, or a
+// module-level constant: the parser desugars `const` to a zero-parameter
+// function and the AST lowering calls one on a bare reference, so it is a call
+// here too. A name at a FUNCTION-typed destination is the bare address of a
+// declaration, which is not what a function value holds here: the lambda lift
+// wraps one into an environment box (`__mkclo$<name>$wrapN()`) before this
+// boundary reads the tree, and a call through a value dispatches through that
+// box.
+function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type): Value {
     var value: i32 = lookup(s, id.name);
     if (value >= 0) { return Value { s: s, id: value }; }
-    var owner: string = union_name(checked(e, s));
-    if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
-    return refused(s, "unbound name is not a semantic value");
+    var ty: typeinfo.Type = checked(e, s);
+    if (ssasem.is_func(ty)) { return refused(s, "function address is not a closure value"); }
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (names_variant(s, whole, id.name)) { return variant(id.name, whole, [], s); }
+    var at: i32 = ssasem.find_contract(s.contracts, id.name);
+    if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value"); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (ssasem.find_contract(s.calls, id.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), [], 0, id.name, contract.result);
 }
 
 function union_name(t: typeinfo.Type): string {
@@ -241,15 +359,27 @@ function union_name(t: typeinfo.Type): string {
     return "";
 }
 
+// The variant names of a union: a written enum or struct-union takes them from
+// its declaration, an INJECTED enum (IoError, JsonValue) from the struct
+// table's enum owner, since the front end injects those variants with no enum
+// declaration to list them.
+function union_variants(s: State, name: string): string[] {
+    var sig: checker.UnionSig = checker.union_sig(s.scope, name);
+    if (sig.name.len() > 0 && sig.variants.len() > 0) { return sig.variants; }
+    return checker.owned_variant_names(s.scope, name);
+}
+
 // A union's layout, read from the declarations rather than from any use: an
 // enum owns its variant declarations, a struct-union names structs declared on
-// their own. A union that mixes the two has no layout here.
+// their own, and the two generic unions the front end supplies own neither —
+// their box is a tag and one payload word. A union that mixes the first two
+// has no layout here.
 function union_layout(s: State, name: string): i32 {
-    var sig: checker.UnionSig = checker.union_sig(s.scope, name);
-    if (sig.name.len() == 0 || sig.variants.len() == 0) { return 0; }
+    var variants: string[] = union_variants(s, name);
+    if (variants.len() == 0) { return builtin_union_layout(name); }
     var owned: i32 = 0;
     var plain: i32 = 0;
-    for v in sig.variants {
+    for v in variants {
         var vs: checker.StructSig = checker.variant_shape_sig(s.scope, v, name);
         if (vs.name.len() == 0) { return 0; }
         if (vs.enum_owner == name) { owned = owned + 1; } else { plain = plain + 1; }
@@ -257,6 +387,82 @@ function union_layout(s: State, name: string): i32 {
     if (plain == 0) { return semrecords.layout_variant(); }
     if (owned == 0) { return semrecords.layout_member(); }
     return 0;
+}
+
+function builtin_union_layout(name: string): i32 {
+    if (name == "Option" || name == "Result") { return semrecords.layout_option(); }
+    return 0;
+}
+
+// Option and Result carry their payload types as type ARGUMENTS rather than in
+// a declaration, so a value of one is only as well defined as its
+// instantiation: `Option[string]` owns a string where `Option[i32]` owns
+// nothing. Every variant shape here is read off those arguments, and a
+// name-only `Option` names no shape at all. The order is the box's tag —
+// Some / Ok is 0, None / Err is 1 — which is why it is fixed here rather
+// than looked up.
+function builtin_variants(t: typeinfo.Type): semrecords.Variant[] {
+    if let typeinfo.TypeUnion(u) = t {
+        if (u.name == "Option" && u.args.len() == 1) {
+            return [payload_variant("Some", u.args[0]), semrecords.Variant { name: "None", fields: [] }];
+        }
+        if (u.name == "Result" && u.args.len() == 2) {
+            return [payload_variant("Ok", u.args[0]), payload_variant("Err", u.args[1])];
+        }
+    }
+    return [];
+}
+
+function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
+    return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
+}
+
+// The payload types one variant declares, and whether the union has such a
+// variant at all.
+struct Payloads { found: boolean, types: typeinfo.Type[] }
+
+function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
+    for v in builtin_variants(whole) {
+        if (v.name == name) {
+            var types: typeinfo.Type[] = [];
+            for field in v.fields { types = types.append(field.ty); }
+            return Payloads { found: true, types: types };
+        }
+    }
+    return Payloads { found: false, types: [] };
+}
+
+// A pattern reaches a member of either kind of declared union; a literal only
+// ever names a variant its enum owns.
+function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
+    if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
+    var sig: checker.StructSig = checker.variant_shape_sig(s.scope, name, union_name(whole));
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+}
+
+function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
+    if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
+    var sig: checker.StructSig = checker.variant_sig(s.scope, name, union_name(whole));
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+}
+
+// The union a variant literal builds. The checker types a declared enum's
+// literal outright, but it types `Some(x)` by the enum alone — no
+// instantiation — so a builtin union's literal takes its type arguments from
+// the destination it is written against, which is where they are known.
+function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
+    var ty: typeinfo.Type = checked(e, s);
+    if (builtin_union_layout(union_name(ty)) == 0) { return ty; }
+    if (union_name(expected) == union_name(ty)) { return expected; }
+    return ty;
+}
+
+// A name is a variant literal when the union it is written against has a
+// variant of that name.
+function names_variant(s: State, whole: typeinfo.Type, name: string): boolean {
+    var owner: string = union_name(whole);
+    if (owner == "") { return false; }
+    return literal_payloads(s, whole, name, union_layout(s, owner)).found;
 }
 
 function struct_name(t: typeinfo.Type): string {
@@ -276,9 +482,16 @@ function tuple_element_type(t: typeinfo.Type, at: i32): typeinfo.Type {
 
 // An empty literal has no element to name its type; the binding or
 // enclosing container it initializes supplies the checked type.
+// A literal takes the destination's type when the destination names one:
+// a member element widens to the union the destination declares, which the
+// checker types the literal by its elements and lets the assignment widen.
+function destination_type(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
+    if (semtypes.concrete(expected, false)) { return expected; }
+    return checked(e, s);
+}
+
 function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type): Value {
-    var ty: typeinfo.Type = checked(e, s);
-    if (!semtypes.concrete(ty, false)) { ty = expected; }
+    var ty: typeinfo.Type = destination_type(e, s, expected);
     if (!semtypes.concrete(ty, false)) { return refused(s, "unresolved array literal type"); }
     var elem: typeinfo.Type = element_type(ty);
     var ids: i32[] = [];
@@ -286,6 +499,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         var v: Value = expr(e, s, elem);
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+        if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type"); }
         ids = ids.append(v.id);
     }
@@ -293,8 +507,8 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
 }
 
 function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type): Value {
-    var ty: typeinfo.Type = checked(e, s);
-    if (!semtypes.concrete(ty, false)) { ty = expected; }
+    var ty: typeinfo.Type = destination_type(e, s, expected);
+    if (tuple_arity(ty) != t.elements.len()) { ty = checked(e, s); }
     var ids: i32[] = [];
     var types: typeinfo.Type[] = [];
     var at: i32 = 0;
@@ -320,7 +534,7 @@ function index(ix: ast.ExprIndex, s: State): Value {
     // A string's element is one byte, typed u8 the way the checker types it.
     // Nothing is borrowed, so this is a read of the source rather than a
     // projection of it.
-    if (ssasem.is_string(s.values[container.id])) {
+    if (ssasem.is_text(s.values[container.id])) {
         return define(s, ssasem.str_index(), [container.id, at.id], 0, "", t_u8());
     }
     var elem: typeinfo.Type = element_type(s.values[container.id]);
@@ -469,22 +683,22 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
 
 // A variant literal supplies its payload fields in declaration order; the
 // value is its enum.
-function variant(e: ast.Expr, name: string, owner: string, args: ast.Expr[], s: State): Value {
-    if (union_layout(s, owner) != semrecords.layout_variant()) { return refused(s, "unsupported variant literal"); }
-    var ty: typeinfo.Type = checked(e, s);
-    var sig: checker.StructSig = checker.variant_sig(s.scope, name, owner);
-    if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || args.len() != sig.field_types.len()) { return refused(s, "unsupported variant literal"); }
+function variant(name: string, whole: typeinfo.Type, args: ast.Expr[], s: State): Value {
+    var layout: i32 = union_layout(s, union_name(whole));
+    if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) { return refused(s, "unsupported variant literal"); }
+    var shape: Payloads = literal_payloads(s, whole, name, layout);
+    if (!shape.found || !semtypes.concrete(whole, false) || args.len() != shape.types.len()) { return refused(s, "unsupported variant literal"); }
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < args.len()) {
-        var v: Value = expr(args[i], s, sig.field_types[i]);
+        var v: Value = expr(args[i], s, shape.types[i]);
         s = v.s;
         if (!s.ok) { return v; }
-        if (!semtypes.equal(s.values[v.id], sig.field_types[i])) { return refused(s, "variant field type"); }
+        if (!semtypes.equal(s.values[v.id], shape.types[i])) { return refused(s, "variant field type"); }
         ids = ids.append(v.id);
         i = i + 1;
     }
-    return define(s, ssasem.variant_new(), ids, 0, name, ty);
+    return define(s, ssasem.variant_new(), ids, 0, name, whole);
 }
 
 // An unsuffixed integer literal names no width of its own, so it cannot be the
@@ -497,34 +711,51 @@ function width_bearing(e: ast.Expr): boolean {
     return true;
 }
 
+// A type an operator can run at: one integer type, or the f64.
+function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) || ssasem.is_f64(t); }
+
 // The width an operator runs at, decided before either operand is produced so
-// that a literal on EITHER side takes it. An arithmetic result is that width,
-// which the checker's type for the whole expression names; a comparison's is
-// not, so it comes from whichever operand names one.
-function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State): typeinfo.Type {
+// that a literal on EITHER side takes it. A tree of unsuffixed literals
+// (`0 - 1`) is read at the destination's width, as the checker settles it,
+// since the checker types the tree alone at the default width. Otherwise an
+// arithmetic result is the width the checker's type for the whole expression
+// names; a comparison's is not, so it comes from whichever operand names one.
+function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): typeinfo.Type {
+    if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) { return expected; }
     var whole: typeinfo.Type = checked(e, s);
-    if (ssasem.is_integer(whole)) { return whole; }
+    if (operand_type(whole)) { return whole; }
     if (width_bearing(b.left)) {
         var l: typeinfo.Type = checked(b.left, s);
-        if (ssasem.is_integer(l)) { return l; }
+        if (operand_type(l)) { return l; }
     }
     if (width_bearing(b.right)) {
         var r: typeinfo.Type = checked(b.right, s);
-        if (ssasem.is_integer(r)) { return r; }
+        if (operand_type(r)) { return r; }
     }
     return typeinfo.unchecked();
 }
 
-function binary(e: ast.Expr, b: ast.ExprBinary, s: State): Value {
+function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): Value {
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
-    var want: typeinfo.Type = operand_width(e, b, s);
+    var want: typeinfo.Type = operand_width(e, b, s, expected);
     var left: Value = expr(b.left, s, want);
     var right: Value = expr(b.right, left.s, want);
     s = right.s;
     if (!s.ok) { return right; }
+    right = shift_count(b.op, right, s.values[left.id]);
+    s = right.s;
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract"); }
     return define(s, 9, [left.id, right.id], 0, b.op, ty);
+}
+
+// A shift count is masked to the value's width, so a count of another integer
+// width reaches the operator through the conversion the source never writes.
+function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
+    if (op != "<<" && op != ">>") { return count; }
+    var t: typeinfo.Type = count.s.values[count.id];
+    if (!ssasem.is_integer(t) || !ssasem.is_integer(value) || semtypes.equal(t, value)) { return count; }
+    return define(count.s, ssasem.cast(), [count.id], 0, "", value);
 }
 
 // Negation keeps its operand's type, so a destination width reaches the
@@ -550,7 +781,7 @@ function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     s = operand.s;
     if (!s.ok) { return operand; }
     var ty: typeinfo.Type = checked(e, s);
-    if (!ssasem.is_integer(ty) || !ssasem.is_integer(s.values[operand.id])) { return refused(s, "cast contract"); }
+    if (!ssasem.cast_admits(s.values[operand.id], ty)) { return refused(s, "cast contract"); }
     return define(s, ssasem.cast(), [operand.id], 0, "", ty);
 }
 
@@ -583,7 +814,7 @@ function logical(b: ast.ExprBinary, s: State): Value {
 // nothing.
 function builtin_length(recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
-    var sized: boolean = ssasem.is_string(t);
+    var sized: boolean = ssasem.is_text(t);
     if let typeinfo.TypeArray(_) = t { sized = true; }
     if (!sized) { return refused(s, "unsupported call target"); }
     return define(s, ssasem.length(), [recv.id], 0, "", t_i32());
@@ -591,7 +822,10 @@ function builtin_length(recv: Value, s: State): Value {
 
 // `.append` hands the receiver's own unit to the runtime and takes back one:
 // the same box when the push fits, a fresh one when it grew. The element is a
-// value the new array holds.
+// value the new array holds — so it cannot be a view, whose bytes belong to a
+// source the array may outlive. The checker's borrowed-argument carve-out lets
+// one through today (docs/STR-VIEW-CONTRACT.md, the escaping positions #8635
+// closes); this boundary refuses it, as it does an array literal's.
 function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     var elem: typeinfo.Type = element_type(t);
@@ -599,8 +833,28 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     var v: Value = expr(c.args[0], s, elem);
     s = v.s;
     if (!s.ok) { return v; }
+    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
     return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
+}
+
+// `.with` hands the receiver's own unit over the way `.append` does and takes
+// back the array holding the value at the index; the value is held by that
+// array, so a view is refused as an append's is.
+function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
+    var t: typeinfo.Type = s.values[recv.id];
+    var elem: typeinfo.Type = element_type(t);
+    if (!semtypes.concrete(elem, false)) { return refused(s, "unsupported call target"); }
+    var at: Value = expr(c.args[0], s, t_i32());
+    s = at.s;
+    if (!s.ok) { return at; }
+    if (!semtypes.equal(s.values[at.id], t_i32())) { return refused(s, "with index type"); }
+    var v: Value = expr(c.args[1], s, elem);
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
+    if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "with element type"); }
+    return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
 // The builtin methods with a contract here. Every other builtin, and every
@@ -609,6 +863,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
+    if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
     return refused(s, "unsupported call target");
 }
 
@@ -624,19 +879,24 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     var owner: string = struct_name(s.values[recv.id]);
     if (owner == "") { owner = union_name(s.values[recv.id]); }
     // A builtin's receiver names no declaration this boundary can hold a
-    // contract for, so it is matched by shape instead.
-    if (owner == "") { return builtin_call(c, fa, recv, s); }
+    // contract for, so it is matched by shape instead. A string's methods are
+    // declared in the standard library on a `string` receiver, and a view
+    // reaches them as a lent box; the two builtins every text has come first.
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s); }
+    if (owner == "") { owner = "string"; }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
-    if (at < 0) { return refused(s, "call target has no semantic contract"); }
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + key); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    recv = lend(recv, contract.params[0], contract.modes[0]);
+    s = recv.s;
     if (!semtypes.equal(s.values[recv.id], contract.params[0])) { return refused(s, "call receiver type"); }
     var ids: i32[] = [recv.id];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = expr(c.args[i], s, contract.params[i + 1]);
+        var v: Value = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1]);
         s = v.s;
         if (!s.ok) { return v; }
         if (!semtypes.equal(s.values[v.id], contract.params[i + 1])) { return refused(s, "call argument type"); }
@@ -649,12 +909,13 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
 
 // `slice_unchecked(s, start, end)` reads a window of a string's bytes. The box
 // it hands back is this function's to release; the bytes stay the source's, so
-// the result is anchored to it and the source must outlive the view.
+// the result is anchored to it and the source must outlive the view. It is a
+// view, as the checker types it, whether the source is owned or a view itself.
 function string_slice(c: ast.ExprCall, s: State): Value {
     var src: Value = expr(c.args[0], s, typeinfo.unchecked());
     s = src.s;
     if (!s.ok) { return src; }
-    if (!ssasem.is_string(s.values[src.id])) { return refused(s, "unsupported call target"); }
+    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported call target"); }
     var lo: Value = expr(c.args[1], s, t_i32());
     s = lo.s;
     if (!s.ok) { return lo; }
@@ -662,45 +923,258 @@ function string_slice(c: ast.ExprCall, s: State): Value {
     s = hi.s;
     if (!s.ok) { return hi; }
     if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) { return refused(s, "slice bound type"); }
-    return define(s, ssasem.slice(), [src.id, lo.id, hi.id], 0, "", typeinfo.TypeString { tag: 0 });
+    return define(s, ssasem.slice(), [src.id, lo.id, hi.id], 0, "", t_str());
 }
 
-function call(e: ast.Expr, c: ast.ExprCall, s: State): Value {
-    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
-    var name: string = "";
-    if let ast.ExprIdent(id) = c.callee { name = id.name; }
-    if (name == "" || lookup(s, name) >= 0) { return refused(s, "unsupported call target"); }
-    if (name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0) { return string_slice(c, s); }
-    var at: i32 = ssasem.find_contract(s.contracts, name);
-    if (at < 0) {
-        var owner: string = union_name(checked(e, s));
-        if (owner != "" && checker.variant_sig(s.scope, name, owner).name.len() > 0) { return variant(e, name, owner, c.args, s); }
-        return refused(s, "call target has no semantic contract");
-    }
-    var contract: ssasem.Contract = s.contracts[at];
-    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
-    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
-    var ids: i32[] = [];
+// A view where a BORROWED `string` parameter is declared: the callee reads
+// the box and hands it back, so the view's bytes are lent the way any
+// borrowed argument's are (the checker's str_arg_borrow). A counted parameter
+// would take the box as its own, which a view's box is not, so the retag is
+// not offered there and the exact-type rule refuses the call.
+function lend(v: Value, param: typeinfo.Type, m: i32): Value {
+    var s: State = v.s;
+    if (!s.ok || m != ssaunits.borrow_mode()) { return v; }
+    if (!ssasem.is_view(s.values[v.id]) || !ssasem.is_string(param)) { return v; }
+    return define(s, ssasem.str_as(), [v.id], 0, "", param);
+}
+
+// A call of a bound name whose value is a function: the callee is the closure
+// box that name holds and its TYPE is the whole contract, since no declaration
+// is in hand. Every reference argument is lent — a function type spells no
+// `own`, so an indirect callee only reads what it is handed — EXCEPT at a slot
+// the type spells with an erased type variable, which is consuming: the caller
+// hands over a unit there and takes back the one the call returns, the rule
+// that lets a generic body release nothing (docs/ERASED-GENERICS-RC.md). The
+// result is a unit of this function's own, the way a direct call's is, and the
+// box itself is lent: it is the environment the body reads its captures out of.
+function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
+    var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
+    var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
+    if (c.type_argc > 0 || c.args.len() != params.len()) { return refused(s, "call arity"); }
+    if (is_void(result)) { return refused(s, "unsupported void call"); }
+    var ids: i32[] = [callee];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = expr(c.args[i], s, contract.params[i]);
+        var v: Value = lend(expr(c.args[i], s, params[i]), params[i], ssaunits.borrow_mode());
         s = v.s;
         if (!s.ok) { return v; }
-        if (!semtypes.equal(s.values[v.id], contract.params[i])) { return refused(s, "call argument type"); }
+        if (!semtypes.equal(s.values[v.id], params[i])) { return refused(s, "call argument type"); }
         ids = ids.append(v.id);
         i = i + 1;
     }
-    if (ssasem.find_contract(s.calls, name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.call(), ids, 0, name, contract.result);
+    return define(s, ssasem.call_value(), ids, 0, "", result);
 }
 
-// A union-typed destination accepts any of its members. The widening is a
-// verified operation, not an implicit reinterpretation: the value carries
-// exactly the type the destination declared, and every obligation site keeps
-// its exact-type rule.
+// A name bound in this body holds a VALUE, not a declaration: a function value
+// is called through the address it holds, and nothing else is a callee.
+function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
+    if (ssasem.is_func(s.values[bound])) { return indirect_call(c, bound, s); }
+    return refused(s, "unsupported call target");
+}
+
+// ---- value blocks -----------------------------------------------------------
+
+// A value-position `{ … }` block is a zero-argument call of a zero-parameter
+// lambda the parser marks with an origin, and every backend INLINES it rather
+// than calling one: the statements run in the enclosing function and only the
+// last is the block's value (irlower.lower_value_block). The shape the parser
+// desugars an if-EXPRESSION to is one `if` whose arms each `return` that value,
+// so it is produced here as a branch whose arms join at a phi rather than at a
+// terminator. Every other block origin — a general `{ … }` body, a
+// match-expression, a comprehension — is refused: its value comes from a tail
+// this form has no join for.
+function value_block(e: ast.Expr, c: ast.ExprCall, s: State): Value {
+    var ty: typeinfo.Type = checked(e, s);
+    var body: ast.Stmt[] = parser.vb_body(c);
+    if (body.len() != 1 || !semtypes.concrete(ty, false)) { return refused(s, "unsupported value block"); }
+    if let ast.StmtIf(f) = body[0] { return value_if(f, s, ty); }
+    return refused(s, "unsupported value block");
+}
+
+struct VArm { s: State, end: i32, env: i32[], value: i32 }
+
+// The statement that carries an arm's value: its own `return`, or the nested
+// if-expression an `else if` chain leaves there.
+function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
+    if let ast.StmtIf(f) = st { return value_if(f, s, ty); }
+    if let ast.StmtReturn(r) = st {
+        if (bare_return(r.value)) { return refused(s, "value block arm has no value"); }
+        var v: Value = expr(r.value, s, ty);
+        if (!v.s.ok) { return v; }
+        if (!semtypes.equal(v.s.values[v.id], ty)) { return refused(v.s, "value block arm type"); }
+        return v;
+    }
+    return refused(s, "value block arm has no value");
+}
+
+// One arm of an if-expression. Its leading statements run in the arm's own
+// block, where a `return` of the ENCLOSING function is what the inlined form
+// means it to be; the last statement is the arm's value. An arm the leading
+// statements leave with no live edge reaches the join with nothing to hand it,
+// so it is refused rather than producing a value in a block nothing enters.
+function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): VArm {
+    s = open(State { ...s, vals: entry }, id, [pred]);
+    var none: VArm = VArm { s: s, end: 0, env: [], value: 0 - 1 };
+    if (body.len() == 0) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
+    var i: i32 = 0;
+    while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
+    if (!s.ok) { return VArm { ...none, s: s }; }
+    if (!s.live) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
+    var v: Value = arm_value(body[body.len() - 1], s, ty);
+    s = v.s;
+    if (!s.ok) { return VArm { ...none, s: s }; }
+    var end: i32 = s.cur.id;
+    var env: i32[] = prefix(s.vals, count);
+    s = terminate(s, t_br(join));
+    return VArm { s: leave(s, count, scope), end: end, env: env, value: v.id };
+}
+
+// The if-expression itself: the two arms are produced the way a branch's are —
+// each from the environment at the test, never from its sibling's — and the
+// join merges the bindings and then the value. The value phi is a unit of this
+// function's own, supplied on each incoming edge, exactly as a binding's phi is.
+function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
+    var cond: Value = expr(f.cond, s, t_bool());
+    s = cond.s;
+    if (!s.ok) { return cond; }
+    if (!is_bool(s.values[cond.id])) { return refused(s, "condition type"); }
+    var pred: i32 = s.cur.id;
+    var then_id: i32 = s.next_block;
+    var else_id: i32 = then_id + 1;
+    var join: i32 = then_id + 2;
+    s = State { ...s, next_block: join + 1 };
+    var count: i32 = s.names.len();
+    var entry: i32[] = s.vals;
+    var scope: checker.Scope = s.scope;
+    s = terminate(s, t_brif(cond.id, then_id, else_id));
+    var t: VArm = value_arm(f.then_body, s, entry, then_id, pred, join, count, scope, ty);
+    if (!t.s.ok) { return Value { s: t.s, id: 0 - 1 }; }
+    var el: VArm = value_arm(f.else_body, t.s, entry, else_id, pred, join, count, scope, ty);
+    if (!el.s.ok) { return Value { s: el.s, id: 0 - 1 }; }
+    s = merge_env(open(el.s, join, [t.end, el.end]), [t.env, el.env], count);
+    return define(s, 8, [t.value, el.value], 0, "", ty);
+}
+
+function is_slice_call(name: string, c: ast.ExprCall): boolean {
+    return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
+}
+
+// A closure VALUE: the environment box the lift builds, holding the hoisted
+// body's address and the captures that body reads back out of it. The body is
+// a declaration like any other, so the box hands out its contract minus the
+// environment parameter, and it joins the call table — a refused body refuses
+// its constructor the way a refused callee refuses its caller.
+//
+// The box is a fresh unit of this function's own, and its release is one
+// decrement with no walk of its slots: a function type names no capture for a
+// drop helper to be derived from, so a reference in a slot would be a unit
+// nothing owns. Every capture is therefore a VALUE. A counted parameter is
+// refused for the reason an indirect call lends every reference it is handed:
+// a function type cannot spell `own` — but it CAN spell an erased type
+// variable, and that slot is the one consuming position it has.
+function closure(body: string, c: ast.ExprCall, s: State): Value {
+    var at: i32 = ssasem.find_contract(s.contracts, body);
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + body); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (!ssasem.closure_env(contract)) { return refused(s, "closure environment parameter"); }
+    var mi: i32 = 0;
+    while (mi < contract.modes.len()) {
+        // An ERASED slot is the one a function type CAN spell as consuming.
+        if (contract.modes[mi] == ssaunits.counted_mode() && !semtypes.erased(contract.params[mi])) {
+            return refused(s, "function value consumes an argument");
+        }
+        mi = mi + 1;
+    }
+    var ids: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var v: Value = expr(c.args[i], s, typeinfo.unchecked());
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (reference(s.values[v.id])) { return refused(s, "closure capture is a reference"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    if (ssasem.find_contract(s.calls, body) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.closure_new(), ids, 0, body, ssasem.closure_type(contract));
+}
+
+// A name with no contract may still be a variant constructor of the enum the
+// call is written against.
+function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
+    return refused(s, "call target has no semantic contract: " + name);
+}
+
+function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean): Value {
+    if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
+    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
+    return invoke(c.args, contract, s);
+}
+
+// A call in statement position may return nothing: its value is void and
+// no name binds it. In expression position a void result is refused, since
+// the checker types nothing by it.
+function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+    if (parser.is_value_block(c)) { return value_block(e, c, s); }
+    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
+    var name: string = "";
+    if let ast.ExprIdent(id) = c.callee { name = id.name; }
+    var bound: i32 = lookup(s, name);
+    if (bound >= 0) { return bound_call(c, bound, s); }
+    if (name == "") { return refused(s, "unsupported call target"); }
+    if (is_slice_call(name, c)) { return string_slice(c, s); }
+    // The lambda lift's closure constructor names no declaration of its own:
+    // it is the marker left where a capturing inline lambda — or a bare
+    // function name at a function-typed argument — was written, carrying the
+    // body the lift hoisted.
+    var body: string = parser.mkclo_body(name);
+    if (body.len() > 0) { return closure(body, c, s); }
+    var at: i32 = ssasem.find_contract(s.contracts, name);
+    if (at < 0) { return variant_call(e, name, c, s, expected); }
+    return direct_call(c, s.contracts[at], s, statement);
+}
+
+// Each argument is produced at the parameter's type and lent by the
+// parameter's mode; the callee's contract joins the function's call table
+// the first time it is called.
+//
+// A contract carrying an ERASED position is a template, and this call site is
+// what instantiates it: each argument binds the variables its parameter
+// spells, left to right, so a later parameter — a function value's own erased
+// slots among them — is produced and compared at the type already bound. The
+// same binding names the result.
+function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
+    var ids: i32[] = [];
+    var bound: ssasem.Binding = ssasem.unbound();
+    var i: i32 = 0;
+    while (i < args.len()) {
+        var want: typeinfo.Type = ssasem.substitute(contract.params[i], bound);
+        var v: Value = lend(expr(args[i], s, want), want, contract.modes[i]);
+        s = v.s;
+        if (!s.ok) { return v; }
+        bound = ssasem.bind_type(bound, contract.params[i], s.values[v.id]);
+        if (!bound.ok) { return refused(s, bound.why); }
+        if (!semtypes.equal(ssasem.substitute(contract.params[i], bound), s.values[v.id])) { return refused(s, "call argument type"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    var why: string = ssasem.instantiation_error(bound);
+    if (why != "") { return refused(s, why); }
+    if (ssasem.find_contract(s.calls, contract.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), ids, 0, contract.name, ssasem.substitute(contract.result, bound));
+}
+
+// A union-typed destination accepts any of its members, and a view-typed one
+// accepts an owned string, whose box it borrows. Each widening is a verified
+// operation, not an implicit reinterpretation: the value carries exactly the
+// type the destination declared, and every obligation site keeps its
+// exact-type rule.
 function widen(v: Value, expected: typeinfo.Type): Value {
     var s: State = v.s;
     if (semtypes.equal(s.values[v.id], expected)) { return v; }
+    if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) { return define(s, ssasem.str_as(), [v.id], 0, "", expected); }
     var owner: string = union_name(expected);
     if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) { return v; }
     var member: string = struct_name(s.values[v.id]);
@@ -720,15 +1194,15 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprNumber(n) => { return number(n, s, expected); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
         ast.ExprString(st) => { return define(s, 5, [], 0, st.value, t_string()); },
-        ast.ExprIdent(id) => { return ident(e, id, s); },
+        ast.ExprIdent(id) => { return ident(e, id, s, expected); },
         ast.ExprStructLit(sl) => { return record(e, sl, s); },
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
-        ast.ExprBinary(b) => { return binary(e, b, s); },
+        ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
-        ast.ExprCall(c) => { return call(e, c, s); },
+        ast.ExprCall(c) => { return call(e, c, s, false, expected); },
         _ => { return refused(s, "unsupported expression"); }
     }
 }
@@ -744,13 +1218,72 @@ function destructures(v: ast.StmtVar): boolean {
     return parser.is_destr_marker(v.type_name);
 }
 
+// A tuple destructure binds each name to a projection of the one initializer
+// value, which stays live under those borrows as any container does. The
+// checker's post-declaration scope types each binding, and it must be the
+// tuple's element exactly; a discard is a binding no read follows. A nested
+// position, the struct form and the `@` binder are refused.
+function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
+    var names: string[] = flat_names(v);
+    var ty: typeinfo.Type = checked(v.init, s);
+    if (names.len() == 0 || tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    var after: checker.Scope = checker.bind_stmt(st, s.scope);
+    var whole: Value = expr(v.init, s, ty);
+    s = whole.s;
+    if (!s.ok) { return s; }
+    if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, "binding type does not match its semantic value"); }
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var elem: typeinfo.Type = bound_type(s, names[i], after);
+        if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved binding type"); }
+        if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, "binding type does not match its semantic value"); }
+        var part: Value = define(s, ssasem.tuple_get(), [whole.id], i, "", elem);
+        s = bind(part.s, names[i], part.id);
+        i = i + 1;
+    }
+    return State { ...s, scope: after };
+}
+
+// The names of a flat tuple pattern, and none for the struct form, the `@`
+// binder or a nested position.
+function flat_names(v: ast.StmtVar): string[] {
+    if (parser.is_destr_marker(v.type_name)) { return []; }
+    var names: string[] = pattern_names(v.name);
+    for name in names { if (name.len() == 0 || name[0] == b'(') { return []; } }
+    return names;
+}
+
+function tuple_arity(t: typeinfo.Type): i32 {
+    if let typeinfo.TypeTuple(tup) = t { return tup.elements.len(); }
+    return 0 - 1;
+}
+
+// The parser joins a pattern's names with commas and keeps a nested position
+// in its own parentheses, so only a top-level comma separates two names.
+function pattern_names(encoded: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < encoded.len()) {
+        if (encoded[i] == b'(') { depth = depth + 1; }
+        if (encoded[i] == b')') { depth = depth - 1; }
+        if (encoded[i] == b',' && depth == 0) {
+            out = out.append(slice_unchecked(encoded, start, i) + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out.append(slice_unchecked(encoded, start, encoded.len()) + "");
+}
+
 // The checker's post-declaration scope names the binding's type; the
 // initializer's semantic value must carry exactly that type.
 function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-    if (destructures(v)) { return fail(s, "unsupported destructuring declaration"); }
+    if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
-    var ty: typeinfo.Type = checker.scope_type(after, v.name);
-    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved binding type"); }
+    var ty: typeinfo.Type = bound_type(s, v.name, after);
+    if (!semtypes.word(ty, false)) { return fail(s, "unresolved binding type"); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
@@ -768,8 +1301,15 @@ function assign(a: ast.StmtAssign, s: State): State {
     return replace(s, a.target, value.id);
 }
 
+// A bare `return;` carries the parser's `punct:;` sentinel in place of a
+// value, as the checker reads it; the unit literal is the other spelling.
+function bare_return(e: ast.Expr): boolean {
+    if let ast.ExprUnknown(u) = e { return u.kind == "punct:;"; }
+    return parser.is_unit_expr(e);
+}
+
 function ret(r: ast.StmtReturn, s: State): State {
-    if (parser.is_unit_expr(r.value)) {
+    if (bare_return(r.value)) {
         if (!is_void(s.result)) { return fail(s, "missing return value"); }
         return terminate(s, t_ret(0 - 1));
     }
@@ -849,11 +1389,11 @@ function pattern_shape_error(pv: ast.PatVariant): string {
     return "";
 }
 
-function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructSig, layout: i32): string {
+function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, layout: i32): string {
     if (a.has_guard || a.alt_cont) { return "unsupported match guard"; }
     var why: string = pattern_shape_error(pv);
     if (why != "") { return why; }
-    if (sig.name.len() == 0) { return "unknown variant"; }
+    if (!shape.found) { return "unknown variant"; }
     // A struct-union member's box IS the value, so its arm binds one name
     // whatever the member's field count; an enum variant binds one name per
     // payload position.
@@ -861,7 +1401,7 @@ function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructS
         if (pv.extra_bindings.len() > 0) { return "pattern arity"; }
         return "";
     }
-    if (pv.binding != "" && 1 + pv.extra_bindings.len() != sig.field_types.len()) { return "pattern arity"; }
+    if (pv.binding != "" && 1 + pv.extra_bindings.len() != shape.types.len()) { return "pattern arity"; }
     return "";
 }
 
@@ -892,23 +1432,40 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
-function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     var s: State = arms.s;
     var layout: i32 = union_layout(s, owner);
-    var sig: checker.StructSig = checker.variant_shape_sig(s.scope, pv.type_name, owner);
-    var why: string = pattern_error(a, pv, sig, layout);
+    var shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
+    var why: string = pattern_error(a, pv, shape, layout);
     if (why != "") { return Arms { ...arms, s: fail(s, why) }; }
+    if (closing) { return closing_arm(a, pv, scrut, shape, arms, entry, join, count, scope, layout); }
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     var next: i32 = id + 1;
     s = State { ...s, next_block: next + 1 };
     var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
     s = terminate(test.s, t_brif(test.id, id, next));
-    var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]), layout);
+    var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
     var done: Arm = finish_arm(a.body, opened, join, count, scope);
     done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
     return collect(arms, done);
+}
+
+// A CLOSING arm is the last of a TOTAL match: every other variant is named by
+// an arm before it, so the value is this one and a test of it would be
+// constant. Nothing leaves the match but the arms themselves, which is what
+// makes a body whose every arm returns a body that does not fall through.
+// `ssasem.analyze` verifies this arm's payload projections against the same
+// exhaustion the omitted test rests on.
+function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32): Arms {
+    var s: State = arms.s;
+    var pred: i32 = s.cur.id;
+    var id: i32 = s.next_block;
+    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
+    opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
+    return collect(arms, finish_arm(a.body, opened, join, count, scope));
 }
 
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
@@ -919,23 +1476,57 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
     return collect(arms, arm(a.body, s, entry, id, pred, join, count, scope));
 }
 
-function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     match (a.pattern) {
         ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope); },
-        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope); }
+        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope, closing); }
     }
     return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
+// The variant names a union declares: a builtin union's are its instantiation's
+// two, a declared one's come from the declarations.
+function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
+    if (layout != semrecords.layout_option()) { return union_variants(s, union_name(whole)); }
+    var out: string[] = [];
+    for v in builtin_variants(whole) { out = out.append(v.name); }
+    return out;
+}
+
+function arm_variant_name(a: ast.MatchArm): string {
+    if (a.has_guard || a.alt_cont) { return ""; }
+    if let ast.PatVariant(pv) = a.pattern { return pv.type_name; }
+    return "";
+}
+
+// A match is TOTAL when its arms are unguarded variant patterns naming
+// distinct variants of the scrutinee's union, as many as the union declares.
+// Nothing can then reach the fall-through, so the last arm needs no test.
+function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i32): boolean {
+    var declared: string[] = variant_names(s, whole, layout);
+    if (declared.len() == 0 || m.arms.len() != declared.len()) { return false; }
+    var named: string[] = [];
+    for a in m.arms {
+        var name: string = arm_variant_name(a);
+        if (util.index_of_str(declared, name) < 0) { return false; }
+        if (util.index_of_str(named, name) >= 0) { return false; }
+        named = named.append(name);
+    }
+    return true;
+}
+
 // Arms are tested in order; each test's false edge enters the next test.
-// An arm after a wildcard is unreachable and is not produced. Without a
-// wildcard, a scrutinee no arm matches falls through to the join.
+// An arm after a wildcard is unreachable and is not produced. A total match's
+// last arm closes the chain, so only an incomplete one falls through to the
+// join, and only that one leaves the match live.
 function match_stmt(m: ast.StmtMatch, s: State): State {
     var scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
     s = scrut.s;
     if (!s.ok) { return s; }
     var owner: string = union_name(s.values[scrut.id]);
     if (owner == "" || union_layout(s, owner) == 0) { return fail(s, "unsupported match scrutinee"); }
+    var closes: i32 = 0 - 1;
+    if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) { closes = m.arms.len() - 1; }
     var join: i32 = s.next_block;
     s = State { ...s, next_block: join + 1 };
     var count: i32 = s.names.len();
@@ -944,7 +1535,7 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
     var arms: Arms = Arms { s: s, preds: [], envs: [] };
     var i: i32 = 0;
     while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope);
+        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes);
         i = i + 1;
     }
     s = arms.s;
@@ -1054,7 +1645,9 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var it: Value = expr(fo.iter, s, typeinfo.unchecked());
     s = it.s;
     if (!s.ok) { return s; }
+    var text: boolean = ssasem.is_text(s.values[it.id]);
     var elem: typeinfo.Type = element_type(s.values[it.id]);
+    if (text) { elem = t_u8(); }
     if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable"); }
     var before: i32 = s.names.len();
     var outer: checker.Scope = s.scope;
@@ -1089,7 +1682,12 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
 
     var opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
     var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 0, "", elem);
-    var latch: Arm = finish_arm(fo.body, bind(item.s, fo.var_name, item.id), header, count, scope);
+    // A string's element is one byte, read rather than projected.
+    if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 0, "", elem); }
+    // The element is a checker binding for the body's span as well: every type
+    // this boundary reads from the checker is read in s.scope.
+    var body_state: State = State { ...bind(item.s, fo.var_name, item.id), scope: checker.for_body_scope(fo, scope) };
+    var latch: Arm = finish_arm(fo.body, body_state, header, count, scope);
     s = latch.s;
     if (!s.ok) { return s; }
     var l: Loop = current_loop(s);
@@ -1115,7 +1713,7 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 // releases it at the call.
 function discard(e: ast.Expr, s: State): State {
     match (e) {
-        ast.ExprCall(c) => { return call(e, c, s).s; },
+        ast.ExprCall(c) => { return call(e, c, s, true, t_void()).s; },
         _ => { return fail(s, "unsupported statement"); }
     }
     return s;
@@ -1229,8 +1827,15 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 
 // ---- functions --------------------------------------------------------------
 
-function unsupported_declaration(fd: parser.FuncDecl): string {
-    if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return "unsupported generic function"; }
+// A generic declaration is admitted through ERASURE: each of its type
+// variables is one machine word wherever the signature and the body name it,
+// and every position that needs more than a word — an array element, a field,
+// an operand — refuses on its own account, because the erased word is not a
+// concrete type. A generic METHOD is refused outright: its receiver spelling
+// is what the monomorphiser resolves, and the erasure rules here are written
+// for a free function, as irlower's own are.
+function unsupported_declaration(fd: parser.FuncDecl, scope: checker.Scope): string {
+    if (generic_decl(fd, scope) && fd.receiver_type.len() > 0) { return "unsupported generic method"; }
     if (fd.import_iface.len() > 0 || fd.async) { return "unsupported external or async function"; }
     for p in fd.params { if (p.has_default) { return "unsupported default argument"; } }
     return "";
@@ -1238,7 +1843,13 @@ function unsupported_declaration(fd: parser.FuncDecl): string {
 
 function reference(t: typeinfo.Type): boolean { return semtypes.needs_anchor(t); }
 
+// An ERASED position is CONSUMING: the caller hands over its unit at the call
+// and takes back the one the call returns, which is what lets a body that
+// cannot tell a pointer instantiation from a scalar one release nothing
+// (docs/ERASED-GENERICS-RC.md, option 1). Consuming and producing are both
+// no-ops at a scalar instantiation, so the one mode serves every one.
 function mode(p: ast.ParamDecl, t: typeinfo.Type): i32 {
+    if (semtypes.erased(t)) { return ssaunits.counted_mode(); }
     if (!reference(t)) { return ssaunits.value_mode(); }
     if (p.own) { return ssaunits.counted_mode(); }
     return ssaunits.borrow_mode();
@@ -1261,6 +1872,7 @@ function decl_param_names(fd: parser.FuncDecl): string[] {
 function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
     if (fd.receiver_name.len() == 0) { return mode(fd.params[at], t); }
     if (at > 0) { return mode(fd.params[at - 1], t); }
+    if (semtypes.erased(t)) { return ssaunits.counted_mode(); }
     if (!reference(t)) { return ssaunits.value_mode(); }
     return ssaunits.borrow_mode();
 }
@@ -1275,15 +1887,15 @@ function decl_key(fd: parser.FuncDecl): string {
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope): typeinfo.Type {
     if (fd.ret_type.len() == 0) { return t_void(); }
-    return scope.ret_type;
+    return erase(scope.ret_type, generic_decl(fd, scope), scope);
 }
 
 function parameters(fd: parser.FuncDecl, s: State): State {
     var names: string[] = decl_param_names(fd);
     var at: i32 = 0;
     while (at < names.len()) {
-        var ty: typeinfo.Type = checker.scope_type(s.scope, names[at]);
-        if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved parameter type"); }
+        var ty: typeinfo.Type = bound_type(s, names[at], s.scope);
+        if (!semtypes.word(ty, false)) { return fail(s, "unresolved parameter type"); }
         var p: Value = define(s, 6, [], at, "", ty);
         s = bind(p.s, names[at], p.id);
         at = at + 1;
@@ -1299,7 +1911,8 @@ function refuse(why: string): Produced {
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
-        names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [], contracts: contracts, calls: [] };
+        names: [], vals: [], scope: scope, result: result_type(fd, scope), loops: [], contracts: contracts, calls: [],
+        generic: generic_decl(fd, scope) };
 }
 
 // ---- record schemas ---------------------------------------------------------
@@ -1349,6 +1962,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         }
         return out;
     }
+    if (semtypes.is_cell(t)) { return schema_of(semtypes.cell_elem(t), s, out); }
     if let typeinfo.TypeStruct(r) = t {
         if (semrecords.find(out.records, t) >= 0) { return out; }
         return record_entry(t, r, s, out);
@@ -1386,11 +2000,12 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
 // members are declared on their own. The layout says which, and a mixture has
 // no layout this boundary can give.
 function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Schemas): Schemas {
-    var sig: checker.UnionSig = checker.union_sig(s.scope, u.name);
     var layout: i32 = union_layout(s, u.name);
-    if (sig.name.len() == 0 || u.args.len() > 0 || layout == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+    if (layout == semrecords.layout_option()) { return builtin_enum_entry(t, s, out); }
+    var names: string[] = union_variants(s, u.name);
+    if (names.len() == 0 || u.args.len() > 0 || layout == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
     var variants: semrecords.Variant[] = [];
-    for name in sig.variants {
+    for name in names {
         var vs: checker.StructSig = checker.variant_shape_sig(s.scope, name, u.name);
         if (!fields_resolved(vs)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
         variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
@@ -1399,11 +2014,27 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
     if (layout != semrecords.layout_member()) { return table; }
     // A member's box is read through its own record, so the table must carry
     // one whether or not any value in this function has the member's type.
-    for name in sig.variants {
+    for name in names {
         table = schema_of(typeinfo.TypeStruct { name: name, args: [] }, s, table);
         if (!table.ok) { return table; }
     }
     return table;
+}
+
+// A builtin union is its instantiation: `Option` with no argument names no
+// payload and so has no schema, and a payload wider than one word has no slot
+// in the two-word box, which is the rule an array or tuple element follows for
+// the same reason.
+function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
+    var variants: semrecords.Variant[] = builtin_variants(t);
+    if (variants.len() == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+    for v in variants {
+        for field in v.fields {
+            if (!semtypes.concrete(field.ty, false)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
+            if (ssasem.is_wide(field.ty) || ssasem.is_f64(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
+        }
+    }
+    return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
 }
 
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
@@ -1445,10 +2076,12 @@ function complete(fd: parser.FuncDecl, s: State): Produced {
 // declaration, the checker's function scope and the module's call contracts.
 // Unsupported constructs are explicit refusals, never a partial graph.
 pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): Produced {
-    var why: string = unsupported_declaration(fd);
+    var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
     var s: State = initial(fd, scope, contracts);
-    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
+    if (!semtypes.word(s.result, true)) { return refuse("unresolved result type"); }
+    if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
+    if (ssasem.is_func(s.result)) { return refuse("function value result"); }
     s = parameters(fd, s);
     s = stmts(fd.body, s);
     return complete(fd, s);
@@ -1459,16 +2092,20 @@ pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.
 // this boundary cannot produce has no contract, so no call may target it.
 function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     var none: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
-    if (unsupported_declaration(fd) != "") { return none; }
+    if (unsupported_declaration(fd, scope) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope);
-    if (!semtypes.concrete(result, true)) { return none; }
+    if (!semtypes.word(result, true) || ssasem.is_view(result)) { return none; }
+    // A caller of a fn-returning declaration reads an env box out of it, which
+    // is not the bare address this vocabulary has; so it has no contract here.
+    if (ssasem.is_func(result)) { return none; }
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);
+    var generic: boolean = generic_decl(fd, scope);
     var at: i32 = 0;
     while (at < names.len()) {
-        var ty: typeinfo.Type = checker.scope_type(scope, names[at]);
-        if (!semtypes.concrete(ty, false)) { return none; }
+        var ty: typeinfo.Type = erase(checker.scope_type(scope, names[at]), generic, scope);
+        if (!semtypes.word(ty, false)) { return none; }
         params = params.append(ty);
         modes = modes.append(decl_param_mode(fd, at, ty));
         at = at + 1;
@@ -1484,7 +2121,89 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
         if (c.name != "" && ssasem.find_contract(out, c.name) < 0) { out = out.append(c); }
         i = i + 1;
     }
+    for b in builtin_contracts() { if (ssasem.find_contract(out, b.name) < 0) { out = out.append(b); } }
     return out;
+}
+
+function t_option(payload: typeinfo.Type): typeinfo.Type {
+    return typeinfo.TypeUnion { name: "Option", args: [payload] };
+}
+
+function t_io_result(ok: typeinfo.Type): typeinfo.Type {
+    return typeinfo.TypeUnion { name: "Result", args: [ok, typeinfo.TypeUnion { name: "IoError", args: [] }] };
+}
+
+// The record `stat` fills in. It is declared in the injected builtin module,
+// so its schema is read from the checker's scope the way any record's is.
+function t_file_stat(): typeinfo.Type {
+    return typeinfo.TypeStruct { name: "FileStat", args: [] };
+}
+
+// The runtime builtins with a contract here, each a stack IR op of its own
+// rather than a call. What each hands back is the op's own value; a void one
+// pushes the dummy every statement op pushes.
+function builtin_contracts(): ssasem.Contract[] {
+    var out: ssasem.Contract[] = union_result_contracts();
+    for c in value_contracts() { out = out.append(c); }
+    for c in string_contracts() { out = out.append(c); }
+    return out;
+}
+
+// The builtins whose result is one of the front end's generic unions. Each
+// contract names the INSTANTIATION, because that is what says what the caller
+// owns: each reads the string it is lent and copies whatever it keeps, so the
+// box owns every part of itself — `env`'s value, `read_line`'s line,
+// `read_file`'s contents, `read_file_bytes`'s buffer, `read_dir`'s names,
+// `stat`'s record, and the IoError an error arm carries. Nothing here is
+// generic: each builtin has exactly one instantiation, so the erased type
+// variable a declared generic would carry never arises.
+function union_result_contracts(): ssasem.Contract[] {
+    var path: i32[] = [ssaunits.borrow_mode()];
+    return [
+        ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
+        ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
+        ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
+        ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8() }) },
+        ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string() }) },
+        ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
+        ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) }
+    ];
+}
+
+// The builtins whose result owns nothing: the process arguments are a fresh
+// array of this function's own, the byte write and the bit reinterpret are
+// values, and the over-release counter and the two shared-append totals are
+// reads of a runtime word.
+function value_contracts(): ssasem.Contract[] {
+    var value: i32[] = [ssaunits.value_mode()];
+    return [
+        ssasem.Contract { name: "args", params: [], modes: [], result: typeinfo.TypeArray { elem: t_string() } },
+        ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
+        ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f64() },
+        ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: t_i64() }
+    ];
+}
+
+// The two writers and the string builder's append copy the bytes of a string
+// they only read, the builder's reset and take own no argument, and the byte
+// search reads its string.
+function string_contracts(): ssasem.Contract[] {
+    var writer: i32[] = [ssaunits.borrow_mode()];
+    return [
+        ssasem.Contract { name: "print", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "eprint", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "strbuf_append", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "strbuf_reset", params: [], modes: [], result: t_void() },
+        ssasem.Contract { name: "strbuf_take", params: [], modes: [], result: t_string() },
+        ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_i32() },
+        ssasem.Contract { name: "write", params: [t_string()], modes: writer, result: t_void() },
+        ssasem.Contract { name: "exit", params: [t_i32()], modes: [ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "string_from_bytes_unchecked", params: [typeinfo.TypeArray { elem: t_u8() }], modes: writer, result: t_string() },
+        ssasem.Contract { name: "f64_bits", params: [t_f64()], modes: [ssaunits.value_mode()], result: t_i64() },
+        ssasem.Contract { name: "f64_from_bits", params: [t_i64()], modes: [ssaunits.value_mode()], result: t_f64() }
+    ];
 }
 
 // A produced function's callees must be produced too: a contract is only

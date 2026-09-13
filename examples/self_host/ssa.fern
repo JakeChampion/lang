@@ -196,18 +196,19 @@ function semantic_kind_name(id: i32): string {
     var names: string[] = ["array_new", "tuple_new", "array_get", "tuple_get",
         "record_new", "record_get", "call", "variant_new", "variant_is",
         "variant_get", "variant_up", "variant_as", "length", "append", "slice",
-        "str_index", "cast"];
+        "str_index", "cast", "str_as", "with", "closure_new", "call_value"];
     var at: i32 = 0 - id - 1;
     if (at < 0 || at >= names.len()) { return "invalid"; }
     return names[at];
 }
 
 // The semantic operations whose str names something: a call names its callee,
-// a variant operation names its variant. `length` names nothing, so the set is
-// listed rather than taken as a range over the tags below call's.
+// a variant operation names its variant, and a closure names the body whose
+// address its box holds. `length` names nothing, so the set is listed rather
+// than taken as a range over the tags below call's.
 function semantic_names_symbol(id: i32): boolean {
     return id == 0 - 7 || id == 0 - 8 || id == 0 - 9 || id == 0 - 10
-        || id == 0 - 11 || id == 0 - 12;
+        || id == 0 - 11 || id == 0 - 12 || id == 0 - 20;
 }
 
 // term_count is the number of registered STerm kinds (ids 1..term_count()).
@@ -3011,7 +3012,8 @@ pub function print_func(f: SFunc): string {
             out = out + "\n";
             k = k + 1;
         }
-        if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
+        if (blk.term.kind_tag == 1 && blk.term.value < 0) { out = out + "    ret\n"; }
+        else if (blk.term.kind_tag == 1) { out = out + "    ret v" + util.i32_to_string(blk.term.value) + "\n"; }
         else if (blk.term.kind_tag == 2) { out = out + "    br b" + util.i32_to_string(blk.term.target) + "\n"; }
         else if (blk.term.kind_tag == 3) { out = out + "    brif v" + util.i32_to_string(blk.term.cond) + " b" + util.i32_to_string(blk.term.t) + " b" + util.i32_to_string(blk.term.f) + "\n"; }
         bi = bi + 1;

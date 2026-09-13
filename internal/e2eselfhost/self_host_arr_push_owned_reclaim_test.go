@@ -103,3 +103,141 @@ function main(): i32 { return build() - 4943; }`
 		t.Errorf("self-append reclaim exited %d, want 7 (sum 0..99 = 4950) — reclaim corrupted the live buffer?\n--- WAT ---\n%s", code, ws)
 	}
 }
+
+// The 8-byte element widths take the same sole-owner reclaim: an i64[] or f64[]
+// grown by self-append lowers to arr_push_owned_i64 / arr_push_owned_f64, which
+// the register backends route through __fern_arr_push_owned (every slot is 8
+// bytes there) and wasm through a wide wrapper of its own. Correctness under
+// the grow is the check, as above, plus the dispatch in the emitted text.
+const wideOwnedPushProg = `function build_i64(): i64 {
+    var a: i64[] = [];
+    var i: i32 = 0;
+    while (i < 100) { a = a.append((i as i64) * 3000000000i64); i = i + 1; }
+    var sum: i64 = 0i64;
+    var j: i32 = 0;
+    while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
+    return sum;
+}
+function build_f64(): f64 {
+    var a: f64[] = [];
+    var i: i32 = 0;
+    while (i < 100) { a = a.append((i as f64) * 0.5); i = i + 1; }
+    var sum: f64 = 0.0;
+    var j: i32 = 0;
+    while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
+    return sum;
+}
+function main(): i32 { return ((build_i64() / 3000000000i64) as i32) - 4943 + ((build_f64() * 2.0) as i32) - 4950; }`
+
+func TestSelfHostArrPushOwnedWideReclaimArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(wideOwnedPushProg), "-target", "arm64-linux")
+	if len(asm) == 0 {
+		t.Fatal("self-host arm64 compiler emitted 0 bytes")
+	}
+	if strings.Count(string(asm), "bl __fern_arr_push_owned") < 2 {
+		t.Error("the i64[] and f64[] self-appends did not both lower to the owned push on arm64")
+	}
+	bin := buildBinArm64(t, arm64gcc, dir, "arr_push_owned_wide_arm64", string(asm))
+	cmd := runArm64Bin(qemu, bin)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("wide self-append reclaim exited %d, want 7 — reclaim corrupted a live buffer?", code)
+	}
+}
+
+func TestSelfHostArrPushOwnedWideReclaimWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm wide arr_push_owned reclaim e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	wat := runCapture(t, gcc, runner, driverBin, []byte(wideOwnedPushProg))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes")
+	}
+	ws := string(wat)
+	for _, want := range []string{"call $__fern_arr_push_owned_i64", "call $__fern_arr_push_owned_f64", "(func $__fern_arr_push_owned_i64", "(func $__fern_arr_push_owned_f64"} {
+		if !strings.Contains(ws, want) {
+			t.Errorf("%q not found in WAT", want)
+		}
+	}
+	watPath := filepath.Join(dir, "arr_push_owned_wide.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+	_, _ = cmd.Output()
+	if code := cmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("wide self-append reclaim exited %d, want 7 — reclaim corrupted a live buffer?\n--- WAT ---\n%s", code, ws)
+	}
+}
+
+// A struct local that is BOTH loop-carried and returned supersedes a box at
+// every rebind, and only the final binding escapes. The credit for those
+// rebinds was withheld for the whole local because it is returned, so each
+// superseded box leaked — 100 of this program's 101 allocations, where the
+// native build reclaims them. The release is guarded by __fern_rc_is_unique on
+// the old box, so a counted share is left to whichever owner reaches rc 1, and
+// by the cow guard, so a self-store keeps the box it hands straight back.
+const returnedRebindProg = `struct V { a: i32, b: u64, c: boolean }
+function step(v: V, k: i32): V {
+    return V { a: v.a + k, b: v.b + (k as u64), c: !v.c };
+}
+function run(n: i32): V {
+    var v: V = V { a: 0, b: 0 as u64, c: false };
+    var i: i32 = 0;
+    while (i < n) { v = step(v, i); i = i + 1; }
+    return v;
+}
+function main(): i32 { return run(100).a - 4943; }`
+
+func TestSelfHostReturnedRebindReclaimArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(returnedRebindProg), "-target", "arm64-linux")
+	if len(asm) == 0 {
+		t.Fatal("self-host arm64 compiler emitted 0 bytes")
+	}
+	if !strings.Contains(string(asm), "__fern_rc_is_unique") {
+		t.Error("the returned local's rebind emitted no unique-gated release")
+	}
+	bin := buildBinArm64(t, arm64gcc, dir, "returned_rebind_arm64", string(asm))
+	cmd := runArm64Bin(qemu, bin)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("returned-rebind reclaim exited %d, want 7 — the release freed a live box?", code)
+	}
+}
+
+func TestSelfHostReturnedRebindReclaimWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm returned-rebind reclaim e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	wat := runCapture(t, gcc, runner, driverBin, []byte(returnedRebindProg))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes")
+	}
+	watPath := filepath.Join(dir, "returned_rebind.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+	_, _ = cmd.Output()
+	if code := cmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("returned-rebind reclaim exited %d, want 7 — the release freed a live box?", code)
+	}
+}

@@ -94,10 +94,47 @@ pub struct TypeVoid { tag: i32 }
 
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown;
+// A type VARIABLE of an erased generic, carrying the name it is written with.
+// Fern erases generics on the per-module emit path, so the variable is one
+// machine word — pointer-shaped or i32 — and nothing at run time tells the two
+// apart. It is therefore a value, a parameter, a result and a function-signature
+// slot, and never an element, a field or an operand: each of those needs a
+// store width or a drop the variable does not name. Distinct from TypeUnknown,
+// which means the checker could not work a type out at all.
+pub struct TypeErased { name: string }
+
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown | TypeErased;
 
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
+}
+
+// A code point rides an i32 slot and dispatches its own method surface, so it
+// spells itself only at the one width and signedness that slot has.
+function char_spelling(i: TypeI32): string {
+  if (i.width == 32 && !i.unsigned) { return "char"; }
+  return "";
+}
+
+function unsigned_spelling(i: TypeI32): string {
+  if (i.width == 8) { return "u8"; }
+  if (i.width == 32) { return "u32"; }
+  if (i.width == 64) { return "u64"; }
+  return "";
+}
+
+function signed_spelling(i: TypeI32): string {
+  if (i.width == 32) { return "i32"; }
+  if (i.width == 64) { return "i64"; }
+  return "";
+}
+
+// Every integer-shaped scalar. A width this vocabulary does not name has no
+// usable declaration spelling.
+function integer_spelling(i: TypeI32): string {
+  if (i.is_char) { return char_spelling(i); }
+  if (i.unsigned) { return unsigned_spelling(i); }
+  return signed_spelling(i);
 }
 
 // Exact source-type spelling for interfaces that still consume declarations.
@@ -108,21 +145,7 @@ pub function unchecked(): Type {
 // the semantic Type remains on the AST and retains that polymorphism metadata.
 pub function spelling(t: Type): string {
   match (t) {
-    TypeI32(i) => {
-      if (i.is_char) {
-        if (i.width == 32 && !i.unsigned) { return "char"; }
-        return "";
-      }
-      if (i.unsigned) {
-        if (i.width == 8) { return "u8"; }
-        if (i.width == 32) { return "u32"; }
-        if (i.width == 64) { return "u64"; }
-      } else {
-        if (i.width == 32) { return "i32"; }
-        if (i.width == 64) { return "i64"; }
-      }
-      return "";
-    },
+    TypeI32(i) => { return integer_spelling(i); },
     TypeBool(_) => { return "boolean"; },
     TypeString(s) => {
       if (s.tag == 0) { return "string"; }
@@ -168,7 +191,8 @@ pub function spelling(t: Type): string {
       return "dyn " + d.traits;
     },
     TypeVoid(_) => { return "void"; },
-    TypeUnknown(_) => { return ""; }
+    TypeUnknown(_) => { return ""; },
+    TypeErased(_) => { return ""; }
   }
   return "";
 }

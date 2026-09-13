@@ -300,6 +300,10 @@ pub function op_arr_push_i64(): Op { return op0("arr_push_i64"); }
 // the operand stack is typed, so it lowers to the 8-byte-stride
 // $__fern_arr_push_f64. Lowered from `a = a.append(v)` on an f64[].
 pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
+// The sole-owner forms of the 8-byte pushes: the grow reclaims the superseded
+// buffer, as arr_push_owned does for a 4-byte-slot array.
+pub function op_arr_push_owned_i64(): Op { return op0("arr_push_owned_i64"); }
+pub function op_arr_push_owned_f64(): Op { return op0("arr_push_owned_f64"); }
 // `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
 // __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin). Contents are NOT
 // zeroed (a reused freelist block keeps stale bytes — callers zero explicitly).
@@ -2271,6 +2275,8 @@ function kind_id_len18(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'w' && name == "wasm_pollable_drop") { return 190; }
     if (c == b's' && name == "signal_disposition") { return 279; }
+    if (c == b'a' && name == "arr_push_owned_i64") { return 302; }
+    if (c == b'a' && name == "arr_push_owned_f64") { return 303; }
     return 0;
 }
 
@@ -2579,6 +2585,8 @@ function kind_name_4(id: i32): string {
     if (id == 299) { return "fd_fsync"; }
     if (id == 300) { return "fd_fdatasync"; }
     if (id == 301) { return "fd_syncfs"; }
+    if (id == 302) { return "arr_push_owned_i64"; }
+    if (id == 303) { return "arr_push_owned_f64"; }
     return "invalid";
 }
 
@@ -2721,7 +2729,7 @@ function pops2_mem(t: i32): boolean {
         || t == 78                                                       // free (ptr, size)
         || t == 83 || t == 85 || t == 86 || t == 223                     // raw_load8, raw_load_ptr, raw_string, raw_addr
         || t == 88                                                       // arr_get
-        || t == 92 || t == 93 || t == 94 || t == 95                      // arr_push*
+        || t == 92 || t == 93 || t == 94 || t == 95 || t == 302 || t == 303  // arr_push*
         || t == 98 || t == 99 || t == 100 || t == 101                    // str_concat, str_eq, str_cmp, str_index
         || t == 105 || t == 108                                          // str_split, str_repeat
         || t == 114 || t == 115 || t == 116 || t == 227                  // str_starts_with/ends_with/index_of, ascii_run

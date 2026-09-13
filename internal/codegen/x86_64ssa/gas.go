@@ -1933,6 +1933,14 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_concat":                  emitStrConcatHelper,
 	"__fern_str_dec":                emitStrDecHelper,
 	"__fern_drop_arr_str":           emitDropArrStrHelper,
+	"buf_new":                       emitBufNewHelper,
+	"__fern_buf_reserve":            emitBufReserveHelper,
+	"buf_push":                      emitBufPushHelper,
+	"buf_push_range":                emitBufPushRangeHelper,
+	"buf_push_byte":                 emitBufPushByteHelper,
+	"buf_len":                       emitBufLenHelper,
+	"buf_take":                      emitBufTakeHelper,
+	"buf_free":                      emitBufFreeHelper,
 	"__alloc_reuse":                 emitAllocReuseHelper,
 	"print":                         emitPrintHelper("print", 1),
 	"remove_dir_all":                emitRemoveDirAllHelper,
@@ -1953,6 +1961,9 @@ var heapUsingHelpers = map[string]bool{
 	"__alloc_reuse":          true,
 	"remove_dir_all":         true,
 	"__fern_io_error":        true,
+	"buf_new":                true,
+	"__fern_buf_reserve":     true,
+	"buf_take":               true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1969,6 +1980,11 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
 	"remove_dir_all":                {"__fern_io_error"},
+	"__fern_buf_reserve":            {"__fern_box_free"},
+	"buf_push":                      {"__fern_buf_reserve"},
+	"buf_push_range":                {"__fern_buf_reserve"},
+	"buf_push_byte":                 {"__fern_buf_reserve"},
+	"buf_free":                      {"__fern_box_free"},
 }
 
 // emitRuntimeHelpers writes the named helper bodies, each at a 16-byte
@@ -2333,6 +2349,9 @@ var bcopyUsingHelpers = map[string]bool{
 	"__str_slice":                 true,
 	"__fern_arr_push_grow":        true,
 	"__fern_arr_cow_inplace":      true,
+	"__fern_buf_reserve":          true,
+	"buf_push":                    true,
+	"buf_push_range":              true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
@@ -3189,6 +3208,285 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_strdec_ret:")
 	rcPassThroughRet(w)
+}
+
+// The capacity-carrying string builder (#8773), laid out word for word as the
+// flat backend's emitStrBuilderRuntime lays it out. A handle addresses a
+// 32-byte control block, itself rc-headed: data at +0, length at +8, capacity
+// at +16, and the reserve a take re-arms from at +24. The buffer is a string
+// block — rc=1@base, its payload size at base+4 until buf_take stamps the
+// length there, data at base+8 — sized cap+1 for the trailing NUL, which is
+// what makes buf_take zero-copy: it stamps the length and the NUL and hands the
+// same pointer back.
+//
+// Growth doubles from the current capacity, or from the reserve once a take has
+// unarmed the builder, from a floor of 64. Blocks go back through
+// __fern_box_free at the size they were requested at, the handoff the flat
+// backend's freelist reads, so nothing here changes once this heap reclaims.
+
+// emitBufStrBlock writes the allocation of a buffer holding n payload bytes —
+// n in nReg, with n32 its 32-bit spelling — and leaves the data pointer in
+// dataReg. Clobbers r10 and r11 besides dataReg, so nReg must be neither.
+func emitBufStrBlock(w func(string, ...any), nReg, n32, dataReg string) {
+	w("\tlea r10, [%s + 8]", nReg)
+	ssaBumpAlloc(w, dataReg, "r10")
+	w("\tmov dword ptr [%s], 1", dataReg) // rc = 1
+	w("\tmov [%s + 4], %s", dataReg, n32) // payload size, until buf_take stamps the length
+	w("\tadd %s, 8", dataReg)
+}
+
+// emitBufNewHelper writes buf_new(cap) -> handle: allocate the control block
+// and a buffer of at least 16 bytes, and publish both capacities.
+func emitBufNewHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_new"))
+	w("\tcmp rdi, 16") // a floor, so the doubling has something to double
+	w("\tjae .Lssa_bufnew_cap")
+	w("\tmov edi, 16")
+	w(".Lssa_bufnew_cap:")
+	ssaBumpAlloc(w, "rax", "40")       // rc header + the four words
+	w("\tmov dword ptr [rax], 1")      // rc = 1
+	w("\tmov dword ptr [rax + 4], 32") // payload size
+	w("\tadd rax, 8")                  // H
+	w("\tlea rsi, [rdi + 1]")          // cap + NUL
+	emitBufStrBlock(w, "rsi", "esi", "rcx")
+	w("\tmov [rax], rcx")
+	w("\tmov qword ptr [rax + 8], 0")
+	w("\tmov [rax + 16], rdi")
+	w("\tmov [rax + 24], rdi")
+	w("\tret")
+}
+
+// emitBufReserveHelper writes __fern_buf_reserve(H, need): replace the buffer
+// with one of at least `need` bytes, doubling from the current capacity (or
+// from the reserve, when a take left the builder unarmed), carry the live bytes
+// across and give the old block back. Internal; the three pushes reach it.
+func emitBufReserveHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_buf_reserve"))
+	// Three callee-saved pushes plus the return address leave rsp 16-aligned
+	// for the calls below.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tmov rbx, rdi") // H
+	w("\tmov r12, [rbx + 16]")
+	w("\ttest r12, r12")
+	w("\tjnz .Lssa_bufres_dbl")
+	w("\tmov r12, [rbx + 24]")
+	w("\ttest r12, r12")
+	w("\tjnz .Lssa_bufres_dbl")
+	w("\tmov r12d, 64")
+	w(".Lssa_bufres_dbl:")
+	w("\tcmp r12, rsi")
+	w("\tjae .Lssa_bufres_alloc")
+	w("\tadd r12, r12")
+	w("\tjmp .Lssa_bufres_dbl")
+	w(".Lssa_bufres_alloc:")
+	w("\tlea r8, [r12 + 1]") // cap + NUL
+	emitBufStrBlock(w, "r8", "r8d", "r13")
+	w("\tmov rdx, [rbx + 8]") // len
+	w("\ttest rdx, rdx")
+	w("\tjz .Lssa_bufres_nocopy")
+	w("\tmov rsi, [rbx]")
+	emitBcopyCall(w, "r13", "rsi", "rdx")
+	w(".Lssa_bufres_nocopy:")
+	w("\tmov rdi, [rbx]")
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_bufres_store")
+	w("\tmov rsi, [rbx + 16]")
+	w("\tadd rsi, 1")
+	w("\tcall %s", fnLabel("__fern_box_free"))
+	w(".Lssa_bufres_store:")
+	w("\tmov [rbx], r13")
+	w("\tmov [rbx + 16], r12")
+	w("\txor eax, eax")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tret")
+}
+
+// emitBufPushHelper writes buf_push(H, s): copy the single-word string's bytes
+// (length at [s-4]) onto the builder's tail, growing it first when they do not
+// fit. The fitting path needs no frame: __ssa_bcopy clobbers only its argument
+// registers, so H rides in r8 across it. Unused return is 0.
+func emitBufPushHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push"))
+	w("\tmov edx, %s", memRef("rsi", -4)) // n (a 32-bit load zero-extends)
+	w("\ttest edx, edx")
+	w("\tjz .Lssa_bufpush_none")
+	w("\tmov rax, [rdi + 8]")
+	w("\tadd rax, rdx") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_bufpush_grow")
+	w(".Lssa_bufpush_fits:")
+	w("\tmov r8, rdi")
+	w("\tmov rdi, [r8]")
+	w("\tadd rdi, [r8 + 8]") // dst = data + len
+	w("\tadd [r8 + 8], rdx") // len += n
+	emitBcopyCall(w, "rdi", "rsi", "rdx")
+	w(".Lssa_bufpush_none:")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_bufpush_grow:")
+	// Two callee-saved pushes plus the return address leave rsp 8 mod 16; the
+	// extra 8 realigns it for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tsub rsp, 8")
+	w("\tmov rbx, rdi")
+	w("\tmov r12, rsi")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r12")
+	w("\tmov edx, %s", memRef("rsi", -4))
+	w("\tadd rsp, 8")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_bufpush_fits")
+}
+
+// emitBufPushRangeHelper writes buf_push_range(H, s, lo, hi): the same, for a
+// byte range of s with no intermediate string. An empty or inverted range is a
+// no-op; the bounds are the caller's, as with slice_unchecked. lo/hi arrive as
+// i32 and are sign-extended.
+func emitBufPushRangeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_range"))
+	w("\tmovsxd rdx, edx") // lo
+	w("\tmovsxd rcx, ecx") // hi
+	w("\tsub rcx, rdx")    // n = hi - lo
+	w("\tjle .Lssa_bufrange_none")
+	w("\tadd rsi, rdx") // src = s + lo
+	w("\tmov rdx, rcx")
+	w("\tmov rax, [rdi + 8]")
+	w("\tadd rax, rdx") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_bufrange_grow")
+	w(".Lssa_bufrange_fits:")
+	w("\tmov r8, rdi")
+	w("\tmov rdi, [r8]")
+	w("\tadd rdi, [r8 + 8]") // dst = data + len
+	w("\tadd [r8 + 8], rdx") // len += n
+	emitBcopyCall(w, "rdi", "rsi", "rdx")
+	w(".Lssa_bufrange_none:")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_bufrange_grow:")
+	// Three callee-saved pushes plus the return address leave rsp 16-aligned
+	// for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tmov rbx, rdi")
+	w("\tmov r12, rsi")
+	w("\tmov r13, rdx")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r12")
+	w("\tmov rdx, r13")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_bufrange_fits")
+}
+
+// emitBufPushByteHelper writes buf_push_byte(H, x): append the low byte of x.
+func emitBufPushByteHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_byte"))
+	w("\tmov rax, [rdi + 8]")
+	w("\tadd rax, 1") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_bufbyte_grow")
+	w(".Lssa_bufbyte_fits:")
+	w("\tmov rcx, [rdi]")
+	w("\tadd rcx, [rdi + 8]")
+	w("\tmov byte ptr [rcx], sil")
+	w("\tadd qword ptr [rdi + 8], 1")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_bufbyte_grow:")
+	// Two callee-saved pushes plus the return address leave rsp 8 mod 16; the
+	// extra 8 realigns it for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tsub rsp, 8")
+	w("\tmov rbx, rdi")
+	w("\tmov r12d, esi")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov esi, r12d")
+	w("\tadd rsp, 8")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_bufbyte_fits")
+}
+
+// emitBufLenHelper writes buf_len(H) -> count. Leaf.
+func emitBufLenHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_len"))
+	w("\tmov rax, [rdi + 8]")
+	w("\tret")
+}
+
+// emitBufTakeHelper writes buf_take(H) -> string: stamp the length prefix and
+// the NUL into the buffer's own block and hand the pointer over, leaving the
+// builder empty and still usable. An empty build allocates a zero-length string
+// rather than giving the buffer away, so the reserve survives.
+func emitBufTakeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_take"))
+	w("\tmov rax, [rdi + 8]") // len
+	w("\ttest rax, rax")
+	w("\tjz .Lssa_buftake_empty")
+	w("\tmov rdx, [rdi]") // data
+	w("\tmov [rdx - 4], eax")
+	w("\tmov byte ptr [rdx + rax], 0") // NUL
+	w("\tmov qword ptr [rdi], 0")
+	w("\tmov qword ptr [rdi + 8], 0")
+	w("\tmov qword ptr [rdi + 16], 0")
+	w("\tmov rax, rdx")
+	w("\tret")
+	w(".Lssa_buftake_empty:")
+	w("\tmov esi, 1") // the NUL
+	emitBufStrBlock(w, "rsi", "esi", "rax")
+	w("\tmov dword ptr [rax - 4], 0") // len
+	w("\tmov byte ptr [rax], 0")
+	w("\tret")
+}
+
+// emitBufFreeHelper writes buf_free(H): give the buffer back when the builder
+// still owns one, then the control block.
+func emitBufFreeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_free"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_buffree_ret")
+	// One callee-saved push plus the return address leave rsp 16-aligned for
+	// the calls below.
+	w("\tpush rbx")
+	w("\tmov rbx, rdi")
+	w("\tmov rdi, [rbx]")
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_buffree_ctl")
+	w("\tmov rsi, [rbx + 16]")
+	w("\tadd rsi, 1")
+	w("\tcall %s", fnLabel("__fern_box_free"))
+	w(".Lssa_buffree_ctl:")
+	w("\tmov rdi, rbx")
+	w("\tmov esi, 32")
+	w("\tcall %s", fnLabel("__fern_box_free"))
+	w("\tpop rbx")
+	w(".Lssa_buffree_ret:")
+	w("\txor eax, eax")
+	w("\tret")
 }
 
 // emitPrintHelper writes print(s) / eprint(s): the string's bytes to the fd,

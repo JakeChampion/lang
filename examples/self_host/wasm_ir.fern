@@ -253,6 +253,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "arr_push_f64")) { out = out.append("arr_push_f64"); }
     if (module_emits_op_cached(cache, "arr_push_i64")) { out = out.append("arr_push_i64"); }
     if (module_emits_op_cached(cache, "arr_push_owned")) { out = out.append("arr_push_owned"); }
+    if (module_emits_op_cached(cache, "arr_push_owned_i64")) { out = out.append("arr_push_owned_i64"); }
+    if (module_emits_op_cached(cache, "arr_push_owned_f64")) { out = out.append("arr_push_owned_f64"); }
     if (module_emits_op_cached(cache, "env")) { out = out.append("env"); }
     if (module_emits_op_cached(cache, "environ")) { out = out.append("environ"); }
     if (module_emits_op_cached(cache, "eprint_str")) { out = out.append("eprint_str"); }
@@ -1056,7 +1058,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
             if (irlower.is_struct_array_field_type(structs, fft)) {
                 var felem: str = slice_unchecked(fft, 0, fft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, felem) && util.index_of_str(out, felem) < 0) {
-                    out = out.append(felem);
+                    out = out.append(felem + "");
                 }
             }
             // A DIRECT nested-struct field, for the same reason: the reclaim
@@ -1095,7 +1097,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
             if (irlower.is_struct_array_field_type(structs, ft)) {
                 var aelem: str = slice_unchecked(ft, 0, ft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, aelem)) {
-                    if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem); }
+                    if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem + ""); }
                 }
             }
             k = k + 1;
@@ -1132,7 +1134,7 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
             if (irlower.is_struct_array_field_type(structs, ft)) {
                 var elem: str = slice_unchecked(ft, 0, ft.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
-                    out = out.append(elem);
+                    out = out.append(elem + "");
                 }
             }
             k = k + 1;
@@ -1907,7 +1909,8 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // `Err(e)` here matches like one from any other target (#5795).
         if (io && (n == "read_file" || n == "read_file_bytes" || n == "write_file")) { i = i + 1; continue; }
         if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
-            || n == "arr_push_f64" || n == "map_iter" || n == "str_split"
+            || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
+            || n == "map_iter" || n == "str_split"
             || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
             || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") { i = i + 1; continue; }
         return false;
@@ -4205,6 +4208,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // stack: arr, f64 val -> the 8-byte-stride push for an f64[] (its own
         // helper takes an f64-typed value, mirroring f64.store in arr_set).
         parts = parts.append("    call $__fern_arr_push_f64\n");
+    } else if (o.kind_tag == 302) {  // arr_push_owned_i64
+        // The sole-owner 8-byte push: the wide push, then the superseded
+        // buffer freed the way $__fern_arr_push_owned frees it.
+        parts = parts.append("    call $__fern_arr_push_owned_i64\n");
+    } else if (o.kind_tag == 303) {  // arr_push_owned_f64
+        parts = parts.append("    call $__fern_arr_push_owned_f64\n");
     } else if (o.kind_tag == 103) {  // str_from_bytes
         // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
         parts = parts.append("    call $__fern_string_from_bytes\n");
@@ -4643,6 +4652,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): strin
 function produced_result_wat(r: irlower.LowerResult): string {
     if (r.result_kind == irlower.result_i32()) { return " (result i32)\n"; }
     if (r.result_kind == irlower.result_i64()) { return " (result i64)\n"; }
+    if (r.result_kind == irlower.result_f64()) { return " (result f64)\n"; }
     eprint("error: produced body " + r.name + " carries no result kind\n");
     exit(3);
     return "";
@@ -9393,7 +9403,7 @@ pub function wat_escape(s: string): string {
     while (i < s.len()) {
         var b: i32 = s[i] as i32;
         if (b >= 32 && b <= 126 && b != 34 && b != 92) {
-            parts = parts.append(slice_unchecked(s, i, i + 1));
+            parts = parts.append(slice_unchecked(s, i, i + 1) + "");
         } else {
             parts = parts.append("\\" + hex_digit(b / 16) + hex_digit(b % 16));
         }
@@ -9457,6 +9467,21 @@ function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab):
 // $__fern_arr_push. Depends only on $__fern_arr_box (module_allocates).
 pub function arr_push_i64_helper(): string {
     return arr_push_wide("i64", "i64");
+}
+// arr_push_owned_wide_helper emits $__fern_arr_push_owned_<vty>, the sole-owner
+// form of the 8-byte push: the wide push, then the superseded buffer released
+// on the same rc == 1 gate arr_push_owned_helper applies.
+pub function arr_push_owned_wide_helper(vty: string, heap_base: i32): string {
+    var hb: string = util.i32_to_string(heap_base);
+    var o: string = "";
+    o = o + "  (func $__fern_arr_push_owned_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
+    o = o + "    (local $na i32)\n";
+    o = o + "    (local.set $na (call $__fern_arr_push_" + vty + " (local.get $a) (local.get $v)))\n";
+    o = o + "    (if (i32.and (i32.ne (local.get $na) (local.get $a)) (i32.and (i32.ge_u (local.get $a) (i32.const " + hb + ")) (i32.eqz (i32.and (local.get $a) (i32.const 1))))) (then\n";
+    o = o + "      (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "        (drop (call $__fern_arr_dec (local.get $a)))))))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
 }
 // arr_push_f64_helper emits $__fern_arr_push_f64 — the f64[] companion to
 // arr_push_i64_helper. Same 8-byte-slot geometric-growth push, but the value
@@ -10141,8 +10166,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // intermediate buffers are reclaimed, so a split/lines module needs the
     // wrapper even with no self-reassign append of its own.
     if (need(needs, "arr_push_owned") || split_emits_push) { parts = parts.append(arr_push_owned_helper(heap_base_for_strs(sv, cv))); }
-    if (need(needs, "arr_push_i64")) { parts = parts.append(arr_push_i64_helper()); }
-    if (need(needs, "arr_push_f64")) { parts = parts.append(arr_push_f64_helper()); }
+    if (need(needs, "arr_push_i64") || need(needs, "arr_push_owned_i64")) { parts = parts.append(arr_push_i64_helper()); }
+    if (need(needs, "arr_push_f64") || need(needs, "arr_push_owned_f64")) { parts = parts.append(arr_push_f64_helper()); }
+    if (need(needs, "arr_push_owned_i64")) { parts = parts.append(arr_push_owned_wide_helper("i64", heap_base_for_strs(sv, cv))); }
+    if (need(needs, "arr_push_owned_f64")) { parts = parts.append(arr_push_owned_wide_helper("f64", heap_base_for_strs(sv, cv))); }
     if (need(needs, "@uses_maps")) { parts = parts.append(map_helpers()); }
     // $__fern_map_set_w64 / $__fern_map_get_or_w64: the i64/u64-VALUED map runtime
     // (#5253), over the map_helpers primitives above. Emitted when a module

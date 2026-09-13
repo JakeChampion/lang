@@ -88,9 +88,9 @@ detects it. The mutation applies only to generated test output.
 The same fixture bundle runs with both a Go-built lowering driver and an
 ARM64 driver compiled by the actual self-host CLI. Each emits programs for
 ARM64, x86-64 and Wasm. Rejection cases exercise failed/corrupt plans, a valid
-cyclic graph, an abstractly valid wide-array parameter contract, a record
-instance with type arguments and a schema with a wide field; a plain record
-with an array field lowers.
+cyclic graph, a record instance with type arguments and a wide TUPLE element;
+a plain record with an array field, a schema with a wide field and an array of
+a wide element all lower.
 
 The result-type and opcode checks are defensive guards for future semantic
 extensions. Semantic verification makes each return type equal to a value type

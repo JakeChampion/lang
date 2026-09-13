@@ -87,7 +87,7 @@ function main(): i32 {
     var f = fixture();
     var modes: i32[] = MODES;
     var p = ssaunits.plan(f, modes);
-    var lowered = ssarc.lower(f, modes, p);
+    var lowered = ssarc.lower(f, modes, p, irlower.struct_tab_empty());
     if (!lowered.ok) { eprint(lowered.why); return 1; }
     var options = args();
     if (options.len() > 3 && options[3] == "omit-retains") {
@@ -178,6 +178,24 @@ func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
 function refused(r: irlower.LowerResult, why: string): boolean {
     return !r.ok && r.why == why && r.ops.len() == 0 && r.n_locals == 0 && r.n_params == 0;
 }
+function has_sub(all: string, needle: string): boolean {
+    var i: i32 = 0;
+    while (i + needle.len() <= all.len()) {
+        if (slice_unchecked(all, i, i + needle.len()) == needle) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+// Whether the array construction one lowered graph emits stores eight-byte
+// elements, in the integer form wasm loads an i64 with when asked for it and
+// the float form otherwise. The register backends give every element eight
+// bytes and read neither flag.
+function made_wide(r: irlower.LowerResult, integer: boolean): boolean {
+    for o in r.ops {
+        if (o.kind_tag == ir.kind_id("arr_make")) { return o.width == 64 && o.unsigned == integer; }
+    }
+    return false;
+}
 // The width conversions one lowered graph emits, concatenated — "" when it
 // emits none. A contract the planner refuses comes back as its reason instead,
 // so one helper covers both what an operation is allowed to be and what it
@@ -200,7 +218,7 @@ function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): stri
         records: [], enums: [], calls: [] };
     var p = ssaunits.plan(f, [1, 1]);
     if (!p.ok) { return "plan:" + p.why; }
-    return masks(ssarc.lower(f, [1, 1], p));
+    return masks(ssarc.lower(f, [1, 1], p, irlower.struct_tab_empty()));
 }
 function wide_binary(t: typeinfo.Type, result: typeinfo.Type, op: string): ssasem.Func {
     var g = ssa.SFunc { name: "wbin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
@@ -217,13 +235,13 @@ function cast_masks(from: typeinfo.Type, to: typeinfo.Type): string {
         records: [], enums: [], calls: [] };
     var p = ssaunits.plan(f, [1]);
     if (!p.ok) { return "plan:" + p.why; }
-    return masks(ssarc.lower(f, [1], p));
+    return masks(ssarc.lower(f, [1], p, irlower.struct_tab_empty()));
 }
 function main(): i32 {
     var f = fixture();
     var p = ssaunits.plan(f, []);
-    if (!refused(ssarc.lower(f, [], ssaunits.Plan { ...p, ok: false }), "missing successful unit plan")) { return 1; }
-    if (!refused(ssarc.lower(f, [], ssaunits.Plan { ...p, steps: [] }), "missing or duplicate entry step")) { return 2; }
+    if (!refused(ssarc.lower(f, [], ssaunits.Plan { ...p, ok: false }, irlower.struct_tab_empty()), "missing successful unit plan")) { return 1; }
+    if (!refused(ssarc.lower(f, [], ssaunits.Plan { ...p, steps: [] }, irlower.struct_tab_empty()), "missing or duplicate entry step")) { return 2; }
     var b = f.graph.blocks[0];
     var first = ssa.SBlock { ...b, insts: b.insts.append(inst(2, 5, [], 0)), term: ssa.STerm { kind_tag: 2, target: 27, value: 0, cond: 0, t: 0, f: 0 } };
     // Two blocks entering each other with neither dominating: a cycle no
@@ -236,15 +254,16 @@ function main(): i32 {
     var cfg = ssasem.Func { ...f, graph: graph, values: f.values.append(typeinfo.TypeBool { tag: 0 }) };
     var cp = ssaunits.plan(cfg, []);
     if (!cp.ok) { eprint(cp.why); return 3; }
-    if (!refused(ssarc.lower(cfg, [], cp), "physical RC needs reducible graph")) { return 4; }
-    // A wide array has no stack representation here; a string does now.
+    if (!refused(ssarc.lower(cfg, [], cp, irlower.struct_tab_empty()), "physical RC needs reducible graph")) { return 4; }
+    // An array of a 64-bit element: its ops carry the eight-byte stride, so it
+    // is a value here like any other array.
     var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } };
     var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
     var typed = ssasem.Func { graph: g, values: [wide], params: [wide], result: wide, records: [], enums: [], calls: [] };
     var plan = ssaunits.plan(typed, [2]);
     if (!plan.ok) { eprint(plan.why); return 5; }
-    if (!refused(ssarc.lower(typed, [2], plan), "unsupported physical RC value type")) { return 6; }
+    if (!ssarc.lower(typed, [2], plan, irlower.struct_tab_empty()).ok) { return 6; }
     // A record instance with type arguments is named by more than its
     // declaration, and a schema field this vocabulary cannot WALK refuses the
     // whole schema; a plain record with an array field lowers.
@@ -257,21 +276,20 @@ function main(): i32 {
     var genericFunc = ssasem.Func { graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: [wideSchema], enums: [], calls: [] };
     var genericPlan = ssaunits.plan(genericFunc, [2]);
     if (!genericPlan.ok) { eprint(genericPlan.why); return 7; }
-    if (!refused(ssarc.lower(genericFunc, [2], genericPlan), "unsupported physical RC value type")) { return 8; }
+    if (!refused(ssarc.lower(genericFunc, [2], genericPlan, irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 8; }
     // A wide array is not such a field. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
-    // own box released and nothing more — even though a wide array VALUE stays
-    // out, as the pin above holds.
+    // own box released and nothing more.
     var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
         semrecords.Field { name: "ns", ty: wide }] };
     var wideFieldFunc = ssasem.Func { graph: g, values: [recordType], params: [recordType], result: recordType, records: [wideField], enums: [], calls: [] };
     var wideFieldPlan = ssaunits.plan(wideFieldFunc, [2]);
     if (!wideFieldPlan.ok) { eprint(wideFieldPlan.why); return 9; }
-    if (!ssarc.lower(wideFieldFunc, [2], wideFieldPlan).ok) { return 10; }
+    if (!ssarc.lower(wideFieldFunc, [2], wideFieldPlan, irlower.struct_tab_empty()).ok) { return 10; }
     var recordFunc = ssasem.Func { graph: recordGraph, values: [f.result, recordType], params: [f.result], result: recordType, records: [schema], enums: [], calls: [] };
     var recordPlan = ssaunits.plan(recordFunc, [2]);
     if (!recordPlan.ok) { eprint(recordPlan.why); return 11; }
-    if (!ssarc.lower(recordFunc, [2], recordPlan).ok) { return 12; }
+    if (!ssarc.lower(recordFunc, [2], recordPlan, irlower.struct_tab_empty()).ok) { return 12; }
     // A variant field this vocabulary cannot walk refuses the enum, and it
     // refuses on ANY variant, not only the one this graph builds; a wide
     // payload is walkable for the same reason a wide record field is.
@@ -283,16 +301,16 @@ function main(): i32 {
     var wideEnumFunc = ssasem.Func { graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [wideSchema], enums: [wideEnum], calls: [] };
     var wideEnumPlan = ssaunits.plan(wideEnumFunc, [2]);
     if (!wideEnumPlan.ok) { eprint(wideEnumPlan.why); return 13; }
-    if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan), "unsupported physical RC variant field type")) { return 14; }
+    if (!refused(ssarc.lower(wideEnumFunc, [2], wideEnumPlan, irlower.struct_tab_empty()), "unsupported physical RC variant field type")) { return 14; }
     var walkableEnum = semrecords.Enum { ...wideEnum, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
         semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wide }] }] };
     var walkableEnumFunc = ssasem.Func { ...wideEnumFunc, enums: [walkableEnum] };
-    if (!ssarc.lower(walkableEnumFunc, [2], ssaunits.plan(walkableEnumFunc, [2])).ok) { return 59; }
+    if (!ssarc.lower(walkableEnumFunc, [2], ssaunits.plan(walkableEnumFunc, [2]), irlower.struct_tab_empty()).ok) { return 59; }
     var arrayEnum = semrecords.Enum { ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] }], layout: semrecords.layout_variant() };
     var enumFunc = ssasem.Func { graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: [], enums: [arrayEnum], calls: [] };
     var enumPlan = ssaunits.plan(enumFunc, [2]);
     if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
-    if (!ssarc.lower(enumFunc, [2], enumPlan).ok) { return 16; }
+    if (!ssarc.lower(enumFunc, [2], enumPlan, irlower.struct_tab_empty()).ok) { return 16; }
     // A type that reaches itself has no finite INLINE expansion, so its
     // children are released by a per-type helper the walk calls. The call is
     // what makes the descent finite, so the helper's own body must contain it.
@@ -303,7 +321,7 @@ function main(): i32 {
     var selfFunc = ssasem.Func { graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: [selfSchema], enums: [], calls: [] };
     var selfPlan = ssaunits.plan(selfFunc, [2]);
     if (!selfPlan.ok) { eprint(selfPlan.why); return 17; }
-    var selfLowered = ssarc.lower(selfFunc, [2], selfPlan);
+    var selfLowered = ssarc.lower(selfFunc, [2], selfPlan, irlower.struct_tab_empty());
     if (!selfLowered.ok) { eprint(selfLowered.why); return 18; }
     var selfHelpers = ssarc.drop_helpers(selfFunc);
     if (selfHelpers.len() != 1) { return 19; }
@@ -342,13 +360,25 @@ function main(): i32 {
     var boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
     var boxOnlySchema = semrecords.Record { ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
     var boxOnlyFunc = ssasem.Func { graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc, [3]).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
     // A reference field is exactly what makes that sweep dangerous, so the same
     // shape one field over gets nothing and keeps the leak floor.
     var withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
     var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var withKidsFunc = ssasem.Func { graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [3]).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    // The parameter rows come from the contract, not the syntax: a borrowed
+    // reference parameter is the retained-keep row and never the bare one,
+    // and a counted or scalar parameter has neither.
+    var rowSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 3]);
+    var rowAll: string = "";
+    for bucket in rowSigs.borrowable_params { rowAll = rowAll + bucket; }
+    if (!has_sub(rowAll, "CNT:mk|100\n") || has_sub("\n" + rowAll, "\nmk|")) { return 130; }
+    if (util.index_of_str(rowSigs.param_counted, "PCNT:mk|100") < 0 || rowSigs.param_counted.len() != 1) { return 132; }
+    var rowNone = ssarc.caller_sigs(irlower.FnSigs { ...rowSigs, borrowable_params: irlower.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, "mk", withKidsFunc, [3]);
+    rowAll = "";
+    for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
+    if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -357,7 +387,7 @@ function main(): i32 {
     var arrLen = ssasem.Func { graph: lenGraph, values: [f.result, i32ty], params: [f.result], result: i32ty, records: [], enums: [], calls: [] };
     var arrLenPlan = ssaunits.plan(arrLen, [2]);
     if (!arrLenPlan.ok) { eprint(arrLenPlan.why); return 32; }
-    var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan);
+    var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irlower.struct_tab_empty());
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
     var sawArrLen: boolean = false;
     for o in arrLenLowered.ops { if (ir.render_op(o) == "arr_len") { sawArrLen = true; } }
@@ -366,7 +396,7 @@ function main(): i32 {
     var strLen = ssasem.Func { graph: lenGraph, values: [strTy, i32ty], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
     var strLenPlan = ssaunits.plan(strLen, [2]);
     if (!strLenPlan.ok) { eprint(strLenPlan.why); return 35; }
-    var strLenLowered = ssarc.lower(strLen, [2], strLenPlan);
+    var strLenLowered = ssarc.lower(strLen, [2], strLenPlan, irlower.struct_tab_empty());
     if (!strLenLowered.ok) { eprint(strLenLowered.why); return 36; }
     var sawStrLen: boolean = false;
     for o in strLenLowered.ops { if (ir.render_op(o) == "str_len") { sawStrLen = true; } }
@@ -375,9 +405,11 @@ function main(): i32 {
     if (ssaunits.plan(badRecv, [2]).why != "length container type") { return 38; }
     var badResult = ssasem.Func { graph: lenGraph, values: [f.result, f.result], params: [f.result], result: f.result, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badResult, [2]).why != "length result type") { return 39; }
-    // An append takes the receiver's unit and hands one back, so it is admitted
-    // only where that unit is MOVED. A counted receiver dead after the push is;
-    // a borrowed one is not, and is refused rather than lowered.
+    // An append takes the receiver's unit and hands one back. The runtime's push
+    // gives the unit back only when the receiver's box is the only one its count
+    // names, so the count test that chooses between the in-place grow and the
+    // copy is emitted here rather than left to the shared helper. A counted
+    // receiver dead after the push moves its unit into it.
     var appendGraph = ssa.SFunc { name: "append", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
@@ -385,14 +417,76 @@ function main(): i32 {
         params: [f.result, i32ty], result: f.result, records: [], enums: [], calls: [] };
     var appendPlan = ssaunits.plan(appendFunc, [3, 1]);
     if (!appendPlan.ok) { eprint(appendPlan.why); return 40; }
-    var appendLowered = ssarc.lower(appendFunc, [3, 1], appendPlan);
+    var appendLowered = ssarc.lower(appendFunc, [3, 1], appendPlan, irlower.struct_tab_empty());
     if (!appendLowered.ok) { eprint(appendLowered.why); return 41; }
     var sawPush: boolean = false;
-    for o in appendLowered.ops { if (ir.render_op(o) == "arr_push_owned") { sawPush = true; } }
-    if (!sawPush) { return 42; }
-    // The same graph with a BORROWED receiver: its unit is not this function's
-    // to hand over, so the plan refuses instead of aliasing the result onto it.
-    if (ssaunits.plan(appendFunc, [2, 1]).why != "append receiver is not consumed") { return 43; }
+    var sawPushUnique: boolean = false;
+    for o in appendLowered.ops {
+        if (ir.render_op(o) == "arr_push_owned") { sawPush = true; }
+        if (o.str == "__fern_rc_is_unique") { sawPushUnique = true; }
+    }
+    if (!sawPush || !sawPushUnique) { return 42; }
+    // The same graph with a BORROWED receiver: no unit of this function's to
+    // move, so the plan RETAINS one at the push. The count then names two boxes,
+    // the copy runs, and the result is a box nobody else holds rather than an
+    // alias of the caller's.
+    var borrowAppendPlan = ssaunits.plan(appendFunc, [2, 1]);
+    if (!borrowAppendPlan.ok) { eprint(borrowAppendPlan.why); return 43; }
+    var borrowAppendLowered = ssarc.lower(appendFunc, [2, 1], borrowAppendPlan, irlower.struct_tab_empty());
+    if (!borrowAppendLowered.ok) { eprint(borrowAppendLowered.why); return 104; }
+    var sawRetain: boolean = false;
+    var sawBorrowUnique: boolean = false;
+    for o in borrowAppendLowered.ops {
+        if (o.str == "__fern_rc_inc") { sawRetain = true; }
+        if (o.str == "__fern_rc_is_unique") { sawBorrowUnique = true; }
+    }
+    if (!sawRetain || !sawBorrowUnique) { return 105; }
+    // One element replaced hands the receiver's unit over the same way, and
+    // lowers to the count test that chooses the in-place store or the copy;
+    // a scalar element retains nothing, a counted one retains the copy's
+    // elements and releases the element the store replaces.
+    var withGraph = ssa.SFunc { name: "with", nparams: 3, nvals: 4, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+            ssa.SInst { kind_tag: ssasem.with(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+    var withFunc = ssasem.Func { graph: withGraph, values: [f.result, i32ty, i32ty, f.result],
+        params: [f.result, i32ty, i32ty], result: f.result, records: [], enums: [], calls: [] };
+    var withPlan = ssaunits.plan(withFunc, [3, 1, 1]);
+    if (!withPlan.ok) { eprint(withPlan.why); return 121; }
+    var withLowered = ssarc.lower(withFunc, [3, 1, 1], withPlan, irlower.struct_tab_empty());
+    if (!withLowered.ok) { eprint(withLowered.why); return 122; }
+    var sawUnique: boolean = false;
+    var sawSet: boolean = false;
+    var sawIncElems: boolean = false;
+    for o in withLowered.ops {
+        if (o.str == "__fern_rc_is_unique") { sawUnique = true; }
+        if (ir.render_op(o) == "arr_set") { sawSet = true; }
+        if (o.str == "__fern_arr_inc_elems") { sawIncElems = true; }
+    }
+    if (!sawUnique || !sawSet || sawIncElems) { return 123; }
+    var borrowWithPlan = ssaunits.plan(withFunc, [2, 1, 1]);
+    if (!borrowWithPlan.ok) { eprint(borrowWithPlan.why); return 124; }
+    var borrowWithLowered = ssarc.lower(withFunc, [2, 1, 1], borrowWithPlan, irlower.struct_tab_empty());
+    if (!borrowWithLowered.ok) { eprint(borrowWithLowered.why); return 106; }
+    sawRetain = false;
+    for o in borrowWithLowered.ops { if (o.str == "__fern_rc_inc") { sawRetain = true; } }
+    if (!sawRetain) { return 107; }
+    var badIndex = ssasem.Func { ...withFunc, values: [f.result, strTy, i32ty, f.result], params: [f.result, strTy, i32ty] };
+    if (ssaunits.plan(badIndex, [3, 2, 1]).why != "with index type") { return 125; }
+    var badWithElem = ssasem.Func { ...withFunc, values: [f.result, i32ty, strTy, f.result], params: [f.result, i32ty, strTy] };
+    if (ssaunits.plan(badWithElem, [3, 1, 2]).why != "with element type") { return 126; }
+    var strArr: typeinfo.Type = typeinfo.TypeArray { elem: strTy };
+    var strWith = ssasem.Func { ...withFunc, values: [strArr, i32ty, strTy, strArr], params: [strArr, i32ty, strTy], result: strArr };
+    var strWithPlan = ssaunits.plan(strWith, [3, 1, 3]);
+    if (!strWithPlan.ok) { eprint(strWithPlan.why); return 127; }
+    var strWithLowered = ssarc.lower(strWith, [3, 1, 3], strWithPlan, irlower.struct_tab_empty());
+    if (!strWithLowered.ok) { eprint(strWithLowered.why); return 128; }
+    var sawStrFree: boolean = false;
+    sawIncElems = false;
+    for o in strWithLowered.ops {
+        if (o.str == "__fern_arr_inc_elems") { sawIncElems = true; }
+        if (o.str == "__fern_str_free") { sawStrFree = true; }
+    }
+    if (!sawIncElems || !sawStrFree) { return 129; }
     // An element that is not the array's own type, and a result that is not the
     // receiver's, are contract errors rather than lowering ones.
     var badElem = ssasem.Func { ...appendFunc, values: [f.result, strTy, f.result], params: [f.result, strTy] };
@@ -400,19 +494,24 @@ function main(): i32 {
     var badRecvAppend = ssasem.Func { graph: appendGraph, values: [strTy, i32ty, strTy],
         params: [strTy, i32ty], result: strTy, records: [], enums: [], calls: [] };
     if (ssaunits.plan(badRecvAppend, [3, 1]).why != "append container type") { return 45; }
-    // A slice owns its box and borrows the source's bytes, so it is released by
-    // the view helper rather than the ordinary string free — which would skip
-    // the immortal rc sentinel and leak the box on the register backends.
-    // The slice must DIE here, not be returned: a returned value is handed to
-    // the caller, so it has no drop site and would emit no release at all.
+    // A slice is a VIEW: it owns its box and borrows the source's bytes, so it
+    // is released by the view helper rather than the ordinary string free —
+    // which would skip the immortal rc sentinel and leak the box on the
+    // register backends. Its type says so, and a slice typed as an owned
+    // string is refused. The slice must DIE here, not be returned: a returned
+    // value is handed to the caller, so it has no drop site and would emit no
+    // release at all.
+    var viewTy: typeinfo.Type = typeinfo.TypeString { tag: 1 };
     var sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.slice(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(1) }] };
-    var sliceFunc = ssasem.Func { graph: sliceGraph, values: [strTy, i32ty, i32ty, strTy],
+    var sliceFunc = ssasem.Func { graph: sliceGraph, values: [strTy, i32ty, i32ty, viewTy],
         params: [strTy, i32ty, i32ty], result: i32ty, records: [], enums: [], calls: [] };
+    var ownedSlice = ssasem.Func { ...sliceFunc, values: [strTy, i32ty, i32ty, strTy] };
+    if (ssaunits.plan(ownedSlice, [2, 1, 1]).why != "slice container type") { return 103; }
     var slicePlan = ssaunits.plan(sliceFunc, [2, 1, 1]);
     if (!slicePlan.ok) { eprint(slicePlan.why); return 46; }
-    var sliceLowered = ssarc.lower(sliceFunc, [2, 1, 1], slicePlan);
+    var sliceLowered = ssarc.lower(sliceFunc, [2, 1, 1], slicePlan, irlower.struct_tab_empty());
     if (!sliceLowered.ok) { eprint(sliceLowered.why); return 47; }
     var sawSlice: boolean = false;
     var sawViewFree: boolean = false;
@@ -433,11 +532,11 @@ function main(): i32 {
         records: [], enums: [], calls: [] };
     var plainPlan = ssaunits.plan(plainFunc, [3]);
     if (!plainPlan.ok) { eprint(plainPlan.why); return 51; }
-    for o in ssarc.lower(plainFunc, [3], plainPlan).ops {
+    for o in ssarc.lower(plainFunc, [3], plainPlan, irlower.struct_tab_empty()).ops {
         if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { return 52; }
     }
     // The bounds are i32 and the receiver is a string; neither is negotiable.
-    var badBound = ssasem.Func { ...sliceFunc, values: [strTy, strTy, i32ty, strTy], params: [strTy, strTy, i32ty], result: i32ty };
+    var badBound = ssasem.Func { ...sliceFunc, values: [strTy, strTy, i32ty, viewTy], params: [strTy, strTy, i32ty], result: i32ty };
     if (ssaunits.plan(badBound, [2, 2, 1]).why != "slice bound type") { return 53; }
     // A schema field the walk never reads only has to LAY OUT, not lower. A
     // wide scalar ahead of a reference field shifts nothing, because every
@@ -453,7 +552,7 @@ function main(): i32 {
         records: [wideRecSchema], enums: [], calls: [] };
     var widePlan = ssaunits.plan(wideFunc, [3]);
     if (!widePlan.ok) { eprint(widePlan.why); return 54; }
-    var wideLowered = ssarc.lower(wideFunc, [3], widePlan);
+    var wideLowered = ssarc.lower(wideFunc, [3], widePlan, irlower.struct_tab_empty());
     if (!wideLowered.ok) { eprint(wideLowered.why); return 55; }
     var sawField1: boolean = false;
     var sawField0: boolean = false;
@@ -465,15 +564,35 @@ function main(): i32 {
     }
     if (!sawField1) { return 56; }
     if (sawField0) { return 57; }
-    // A VALUE of that width stays out. Only a construction needs the per-field
-    // store width, and this boundary withholds it (declaration index -1), so
-    // admitting one would store a double through an i32 slot on wasm.
+    // A VALUE of that width lowers, in a slot of its own the way an i64 does;
+    // only a RECORD construction needs the per-field store width, which this
+    // boundary withholds (declaration index -1). The narrower float has no
+    // representation here at all.
     var wideVal = ssasem.Func { graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
         records: [], enums: [], calls: [] };
     var wideValPlan = ssaunits.plan(wideVal, [1]);
     if (!wideValPlan.ok) { eprint(wideValPlan.why); return 58; }
-    var wideValWhy: string = ssarc.lower(wideVal, [1], wideValPlan).why;
-    if (wideValWhy != "unsupported physical RC value type") { eprint(wideValWhy); return 60; }
+    var wideValLowered = ssarc.lower(wideVal, [1], wideValPlan, irlower.struct_tab_empty());
+    if (!wideValLowered.ok) { eprint(wideValLowered.why); return 60; }
+    if (wideValLowered.f64_slots.len() != 1 || wideValLowered.f64_slots[0] != 0) { return 110; }
+    var f32ty: typeinfo.Type = typeinfo.TypeFloat { width: 32, polymorphic: false };
+    var narrowVal = ssasem.Func { ...wideVal, values: [f32ty, i32ty], params: [f32ty] };
+    if (!refused(ssarc.lower(narrowVal, [1], ssaunits.plan(narrowVal, [1]), irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 111; }
+    var floatElem = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
+        values: [f64ty, typeinfo.TypeArray { elem: f64ty }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty }, records: [], enums: [], calls: [] };
+    // An ARRAY element of that width does lower: every element op carries its
+    // own slot width, so the construction stores eight bytes and wasm reads
+    // back the float form. The i64 shares the stride and takes the integer
+    // form, which is what the op's unsigned flag selects.
+    var floatElemLowered = ssarc.lower(floatElem, [1], ssaunits.plan(floatElem, [1]), irlower.struct_tab_empty());
+    if (!floatElemLowered.ok) { eprint(floatElemLowered.why); return 112; }
+    if (!made_wide(floatElemLowered, false)) { return 133; }
+    // A float constant carries its text, as a wide integer does.
+    var floatK = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nparams: 0, nvals: 1,
+            blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] },
+        values: [f64ty], params: [], result: f64ty, records: [], enums: [], calls: [] };
+    if (ssaunits.plan(floatK, []).why != "float constant needs its literal text") { return 113; }
     // A string index reads its receiver and hands back a scalar. The source
     // DIES at the read here and the result is returned past it, which a
     // projection could never do — the planner would refuse the borrow. That it
@@ -487,7 +606,7 @@ function main(): i32 {
         params: [strTy, i32ty], result: u8ty, records: [], enums: [], calls: [] };
     var idxPlan = ssaunits.plan(idxFunc, [3, 1]);
     if (!idxPlan.ok) { eprint(idxPlan.why); return 61; }
-    var idxLowered = ssarc.lower(idxFunc, [3, 1], idxPlan);
+    var idxLowered = ssarc.lower(idxFunc, [3, 1], idxPlan, irlower.struct_tab_empty());
     if (!idxLowered.ok) { eprint(idxLowered.why); return 62; }
     var sawIndex: boolean = false;
     for o in idxLowered.ops { if (ir.render_op(o) == "str_index") { sawIndex = true; } }
@@ -512,7 +631,7 @@ function main(): i32 {
             ssa.SInst { kind_tag: 10, result: 1, args: [0], imm: 0, str: "-" }], term: ret(1) }] };
     var negFunc = ssasem.Func { graph: negGraph, values: [i32ty, i32ty], params: [i32ty], result: i32ty,
         records: [], enums: [], calls: [] };
-    if (masks(ssarc.lower(negFunc, [1], ssaunits.plan(negFunc, [1]))) != "i32") { return 70; }
+    if (masks(ssarc.lower(negFunc, [1], ssaunits.plan(negFunc, [1]), irlower.struct_tab_empty())) != "i32") { return 70; }
     // The byte is the type the checker gives a string index, so it is not
     // negotiable either: an i32 result is a contract error, not a free widening.
     var idxWide = ssasem.Func { ...idxFunc, values: [strTy, i32ty, i32ty], result: i32ty };
@@ -530,12 +649,14 @@ function main(): i32 {
     if (cast_masks(u8ty, i32ty) != "") { return 77; }
     if (cast_masks(u8ty, u8ty) != "") { return 78; }
     if (cast_masks(i32ty, i32ty) != "") { return 79; }
-    // Both ends are integers. A cast is a reinterpretation of one slot, which
-    // a float or a reference is not.
+    // Into and out of the f64 is a real conversion and never a mask; a
+    // reference is not a cast operand at all, and neither is the byte for the
+    // float, whose convert has no opcode at that width.
     var f64ty2: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
-    if (cast_masks(i32ty, f64ty2) != "plan:cast result type") { return 80; }
-    if (cast_masks(f64ty2, i32ty) != "plan:cast operand type") { return 81; }
+    if (cast_masks(i32ty, f64ty2) != "") { return 80; }
+    if (cast_masks(f64ty2, i32ty) != "") { return 81; }
     if (cast_masks(strTy, i32ty) != "plan:cast operand type") { return 82; }
+    if (cast_masks(u8ty, f64ty2) != "plan:cast operand type") { return 114; }
     // A byte's constant is pushed with no mask, so it has to be in range here.
     var kGraph = ssa.SFunc { name: "k", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 255)], term: ret(0) }] };
@@ -559,25 +680,34 @@ function main(): i32 {
     if (cast_masks(i64ty, i64ty) != "") { return 92; }
     // The width-64 operator selection is what a compare at that width needs,
     // so it is read off the OPERANDS rather than off a boolean result.
-    var wideBin = ssarc.lower(wide_binary(i64ty, bt, "<"), [1, 1], ssaunits.plan(wide_binary(i64ty, bt, "<"), [1, 1]));
+    var wideBin = ssarc.lower(wide_binary(i64ty, bt, "<"), [1, 1], ssaunits.plan(wide_binary(i64ty, bt, "<"), [1, 1]), irlower.struct_tab_empty());
     if (!wideBin.ok) { eprint(wideBin.why); return 93; }
     var sawWide: boolean = false;
     for o in wideBin.ops { if (o.kind_tag == ir.kind_id("lt_s") && o.width == 64) { sawWide = true; } }
     if (!sawWide) { return 94; }
-    // A wide value is a VALUE here and never a container ELEMENT: every
-    // container this boundary builds stores one i32-shaped word per slot, so a
-    // 64-bit element would be written through a narrow store on wasm.
+    // A wide value is an array element and a VALUE, and the array that holds
+    // it is one box like any other.
     var wideArr: typeinfo.Type = typeinfo.TypeArray { elem: i64ty };
     var wideArrFunc = ssasem.Func { graph: g, values: [wideArr], params: [wideArr], result: wideArr,
         records: [], enums: [], calls: [] };
-    if (!refused(ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2])), "unsupported physical RC value type")) { return 95; }
+    var wideArrLowered = ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2]), irlower.struct_tab_empty());
+    if (!wideArrLowered.ok) { eprint(wideArrLowered.why); return 95; }
+    if (wideArrLowered.arr_slots.len() != 1 || wideArrLowered.arr_slots[0] != 0) { return 134; }
+    var wideElem = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [],
+            insts: [inst(6, 0, [], 0), inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
+        values: [i64ty, wideArr], params: [i64ty], result: wideArr, records: [], enums: [], calls: [] };
+    var wideElemLowered = ssarc.lower(wideElem, [1], ssaunits.plan(wideElem, [1]), irlower.struct_tab_empty());
+    if (!wideElemLowered.ok) { eprint(wideElemLowered.why); return 135; }
+    if (!made_wide(wideElemLowered, true)) { return 136; }
+    // A TUPLE element of that width still has none: op_tuple_make spells no
+    // element kinds here, so there is no store width to write it at.
     var buildGraph = ssa.SFunc { name: "build", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.tuple_new(), 1, [0, 0], 0)], term: ret(1) }] };
     var wideTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i64ty, i64ty] };
     var buildFunc = ssasem.Func { graph: buildGraph, values: [i64ty, wideTup], params: [i64ty], result: wideTup,
         records: [], enums: [], calls: [] };
-    if (!refused(ssarc.lower(buildFunc, [1], ssaunits.plan(buildFunc, [1])), "unsupported physical RC value type")) { return 96; }
+    if (!refused(ssarc.lower(buildFunc, [1], ssaunits.plan(buildFunc, [1]), irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 96; }
     // The same rule where the container's own type says nothing about it. A
     // record is named by its declaration, so a wide FIELD is invisible to the
     // type check above and to the drop walk, which never reads a scalar field
@@ -595,9 +725,36 @@ function main(): i32 {
         records: [wide64Schema], enums: [], calls: [] };
     var wide64Plan = ssaunits.plan(wide64Func, [1]);
     if (!wide64Plan.ok) { eprint(wide64Plan.why); return 101; }
-    if (!refused(ssarc.lower(wide64Func, [1], wide64Plan), "unsupported physical RC construction element")) { return 102; }
-    // A wide constant cannot fit the instruction's immediate, so it carries the
-    // literal's text; a narrow one carries none, and neither may carry both.
+    // A wide field stores at the width its declaration names, which the
+    // construction carries as the declaration's index; with no declaration in
+    // the table there is no width to carry, so the construction is refused
+    // rather than built through a narrow store.
+    if (!refused(ssarc.lower(wide64Func, [1], wide64Plan, irlower.struct_tab_empty()), "unsupported physical RC construction without declaration")) { return 102; }
+    var declTab = irlower.struct_tab(parser.parse_module(lexer.tokenize("enum Pair { W(i32) } struct Wide64 { n: i64 } enum Span { W(i64) }")).structs);
+    var wide64Lowered = ssarc.lower(wide64Func, [1], wide64Plan, declTab);
+    if (!wide64Lowered.ok) { eprint(wide64Lowered.why); return 115; }
+    var wide64Decl: i32 = 0 - 1;
+    for o in wide64Lowered.ops { if (o.str == "Wide64") { wide64Decl = o.decl; } }
+    if (irlower.decl_at_field_type(declTab, wide64Decl, 0) != "i64") { return 116; }
+    // A variant resolves within its own enum: two enums declare W here, and
+    // the by-name answer is the first-declared one's, whose payload is narrow.
+    var spanTy: typeinfo.Type = typeinfo.TypeUnion { name: "Span", args: [] };
+    var spanEnum = semrecords.Enum { ty: spanTy, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: i64ty }] }], layout: semrecords.layout_variant() };
+    var spanGraph = ssa.SFunc { name: "mkspan", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
+    var spanFunc = ssasem.Func { graph: spanGraph, values: [i64ty, spanTy], params: [i64ty], result: spanTy,
+        records: [], enums: [spanEnum], calls: [] };
+    var spanPlan = ssaunits.plan(spanFunc, [1]);
+    if (!spanPlan.ok) { eprint(spanPlan.why); return 117; }
+    if (!refused(ssarc.lower(spanFunc, [1], spanPlan, irlower.struct_tab_empty()), "unsupported physical RC construction without declaration")) { return 118; }
+    var spanLowered = ssarc.lower(spanFunc, [1], spanPlan, declTab);
+    if (!spanLowered.ok) { eprint(spanLowered.why); return 119; }
+    var spanDecl: i32 = 0 - 1;
+    for o in spanLowered.ops { if (o.str == "W") { spanDecl = o.decl; } }
+    if (irlower.decl_at_field_type(declTab, spanDecl, 0) != "i64") { return 120; }
+    // A constant with no signed i32 immediate to ride carries the literal's
+    // text instead; a narrow signed one carries none, and neither may carry both.
     var wideK = ssa.SFunc { name: "wk", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
     var wideKFunc = ssasem.Func { graph: wideK, values: [i64ty], params: [], result: i64ty,
@@ -605,10 +762,18 @@ function main(): i32 {
     if (!ssaunits.plan(wideKFunc, []).ok) { eprint(ssaunits.plan(wideKFunc, []).why); return 98; }
     var noText = ssasem.Func { ...wideKFunc, graph: ssa.SFunc { ...wideK,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] } };
-    if (ssaunits.plan(noText, []).why != "wide constant needs its literal text") { return 99; }
+    if (ssaunits.plan(noText, []).why != "constant needs its literal text") { return 99; }
     var narrowText = ssasem.Func { graph: wideK, values: [i32ty], params: [], result: i32ty,
         records: [], enums: [], calls: [] };
     if (ssaunits.plan(narrowText, []).why != "narrow constant carries text") { return 100; }
+    // A u32 rides the i32's slot but reaches past the immediate's sign bit, so
+    // it takes the text form at every value rather than at some of them.
+    var u32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
+    var u32Text = ssasem.Func { ...wideKFunc, values: [u32ty], result: u32ty };
+    if (!ssaunits.plan(u32Text, []).ok) { eprint(ssaunits.plan(u32Text, []).why); return 101; }
+    var u32Imm = ssasem.Func { ...u32Text, graph: ssa.SFunc { ...wideK,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 7)], term: ret(0) }] } };
+    if (ssaunits.plan(u32Imm, []).why != "constant needs its literal text") { return 102; }
     return 0;
 }
 `

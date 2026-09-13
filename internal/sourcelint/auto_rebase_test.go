@@ -230,7 +230,9 @@ func TestAutoRebaseUsesTheLiveBase(t *testing.T) {
 // The workflow must not run on pull_request. It force-pushes branches and
 // comments on PRs with `contents: write` + `pull-requests: write`; a
 // pull_request trigger would hand that to any fork PR, and it would rebase
-// every open branch on every push to every branch.
+// every open branch on every push to every branch. A push trigger, when the
+// workflow has one, is scoped to main for the same reason; a manual-only
+// workflow has no push to scope.
 func TestAutoRebaseRunsOnlyOnTheDefaultBranch(t *testing.T) {
 	src := autoRebaseSource(t)
 	on, ok := onBlock(src)
@@ -241,7 +243,7 @@ func TestAutoRebaseRunsOnlyOnTheDefaultBranch(t *testing.T) {
 		t.Errorf("%s triggers on pull_request: a write-scoped rebase loop must "+
 			"not be reachable from a pull request", autoRebaseFile)
 	}
-	if !strings.Contains(on, "branches: [main]") {
+	if strings.Contains(on, "push") && !strings.Contains(on, "branches: [main]") {
 		t.Errorf("%s is not scoped to main — every branch push would rebase "+
 			"every open pull request onto that branch", autoRebaseFile)
 	}

@@ -1,0 +1,16 @@
+import "std/i32";
+// A u64[] read off a struct field into a local keeps its 8-byte element
+// representation: the `.with` store and the reads around it must all move
+// whole elements. The self-host wasm backend stored the i64 value through a
+// 4-byte slot here and wasmtime refused the module.
+struct Mag { mag: u64[] }
+function halve_first(a: Mag): i32 {
+    var cur: u64[] = a.mag;
+    var two: u64 = 2 as u64;
+    cur = cur.with(0, cur[1] / two);
+    return ((cur[0] >> (32 as u64)) as i32) + ((cur[1] & (255 as u64)) as i32);
+}
+function main(): i32 {
+    print(halve_first(Mag { mag: [1 as u64, 17179869191 as u64] }).to_string());
+    return 0;
+}

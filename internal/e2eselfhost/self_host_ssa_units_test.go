@@ -170,7 +170,7 @@ bad = ssaunits.plan(f, [1, 1]);
 if (bad.ok || bad.steps.len() != 0 || bad.why != "reference parameter mode") { return 32; }
 bad = ssaunits.plan(f, [3, 3]);
 if (bad.ok || bad.steps.len() != 0 || bad.why != "scalar parameter mode") { return 33; }
-var opaque_types: typeinfo.Type[] = [view, typeinfo.TypeStruct { name: "Box", args: [] }];
+var opaque_types: typeinfo.Type[] = [typeinfo.TypeStruct { name: "Box", args: [] }];
 for opaque in opaque_types {
     var g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }

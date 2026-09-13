@@ -1726,7 +1726,7 @@ function split_commas(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || csv[i] == b',') {
-            out = out.append(slice_unchecked(csv, start, i));
+            out = out.append(slice_unchecked(csv, start, i) + "");
             start = i + 1;
         }
         i = i + 1;
@@ -3588,12 +3588,12 @@ function diff_split_lines(s: string): string[] {
     var i: i32 = 0;
     while (i < s.len()) {
         if (s[i] == b'\n') {
-            out = out.append(slice_unchecked(s, start, i + 1));
+            out = out.append(slice_unchecked(s, start, i + 1) + "");
             start = i + 1;
         }
         i = i + 1;
     }
-    if (start < s.len()) { out = out.append(slice_unchecked(s, start, s.len())); }
+    if (start < s.len()) { out = out.append(slice_unchecked(s, start, s.len()) + ""); }
     return out;
 }
 

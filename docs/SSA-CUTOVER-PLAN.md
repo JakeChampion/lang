@@ -87,7 +87,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 215/340 compared, 0 divergences; 105 refused — every one for the runtime-helper table, in groups rather than one symbol |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 219/347 compared, 0 divergences; 108 refused — every one for the runtime-helper table, in groups rather than one symbol |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -199,8 +199,16 @@ Two concrete blockers, and only two:
    was refused, and invisible on arm64, whose `MovImm` never masks. The lift
    stamps Width 64 on it now.
 
-   **Where the wall is now**, over the 105 still refused: every one names a
-   helper with no emitter, and no single symbol unlocks more than three.
+   **2026-09-13: the string builder** (`buf_new` … `buf_free` and the internal
+   `__fern_buf_reserve`, #8773) got emitters, laid out word for word as the
+   flat backend's so a take is the same zero-copy handoff. Every stdlib path
+   through a builder — `std/strings`, `std/csv`, `std/table`, `std/textwrap`
+   — had been refused for those seven names together. The leg is at **219 of
+   347 comparable, 0 divergences; 108 refused**.
+
+   **Where the wall was on 2026-09-06**, over the 105 then refused: every one
+   names a helper with no emitter, and no single symbol unlocks more than
+   three.
 
    | | refused for it | refused for it ALONE |
    |---|---|---|

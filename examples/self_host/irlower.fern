@@ -1452,13 +1452,12 @@ pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
     return s.slot_of(ownflag_name(s.locals[slot].slot_name));
 }
 
-// Bind a scalar-array projection as a borrow, releasing an owned replacement
-// from the previous loop iteration first. The projected value is on the stack.
-// Stores and consuming calls reuse the same dynamic ownership protocol as a
-// borrowed parameter. No alias or last-use inference is needed at this bind.
-function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): LowerState {
-    var st: LowerState = s.mark_arr(slot, true).mark_borrowed_arr(slot, true);
-    // Keep the projection's declared element representation with its binding.
+// mark_scalar_array_elems stamps a slot with the element representation its
+// declared scalar-array type names, so every read and store through the slot
+// picks the element's width: the 8-byte integer and float strides, the
+// unsigned overlays, the packed byte and the boolean and char dispatch.
+function mark_scalar_array_elems(s: LowerState, slot: i32, ty: string): LowerState {
+    var st: LowerState = s;
     if (ty == "i64[]" || ty == "u64[]") { st = st.mark_i64arr(slot, true); }
     if (ty == "u64[]") { st = st.mark_u64(slot, true); }
     if (ty == "f64[]" || ty == "f32[]") { st = st.mark_f64arr(slot, true); }
@@ -1467,6 +1466,15 @@ function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): 
     if (ty == "boolean[]") { st = st.mark_boolarr(slot, true); }
     if (ty == "u8[]") { st = st.mark_subword(slot, "u8"); }
     if (ty == "char[]") { st = st.mark_struct_type(slot, "char"); }
+    return st;
+}
+
+// Bind a scalar-array projection as a borrow, releasing an owned replacement
+// from the previous loop iteration first. The projected value is on the stack.
+// Stores and consuming calls reuse the same dynamic ownership protocol as a
+// borrowed parameter. No alias or last-use inference is needed at this bind.
+function emit_borrowed_scalar_array_bind(s: LowerState, slot: i32, ty: string): LowerState {
+    var st: LowerState = mark_scalar_array_elems(s.mark_arr(slot, true).mark_borrowed_arr(slot, true), slot, ty);
     var flag: i32 = st.ownflag_slot_of(slot);
     if (flag < 0) {
         flag = st.locals.len();
@@ -1890,7 +1898,7 @@ function split_type_list(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || (csv[i] == b',' && depth == 0)) {
-            out = out.append(slice_unchecked(csv, start, i));
+            out = out.append(slice_unchecked(csv, start, i) + "");
             start = i + 1;
         } else if (csv[i] == b'(' || csv[i] == b'[') {
             depth = depth + 1;
@@ -5884,6 +5892,18 @@ pub function variant_pattern_qualifier(type_name: string): string {
     return q;
 }
 
+// variant_arm_owner is the enum an arm's payload is read through: the pattern's
+// own `Enum.` qualifier when it names the variant's enum, else the scrutinee's
+// type. An ABSENT qualifier is the empty string, and no enum is named "", so it
+// is not an owner to TEST — `variant_decl_index` asked for "" matches any plain
+// struct of the bare name, and a struct may share a variant's spelling
+// (`struct Boxed` beside `enum Held { Boxed(…) }`), whose fields are not the
+// variant's payload.
+function variant_arm_owner(structs: StructTab, bare: string, qualifier: string, scrut_enum: string): string {
+    if (qualifier != "" && variant_decl_index(structs, bare, qualifier) >= 0) { return qualifier; }
+    return scrut_enum;
+}
+
 // variant_arm_decl_index resolves the decl a variant ARM reads its payload
 // through, given the scrutinee's struct/enum type name (expr_struct_type of the
 // match's scrutinee, "" when unrecoverable). The pattern's own qualifier wins
@@ -5891,8 +5911,7 @@ pub function variant_pattern_qualifier(type_name: string): string {
 // through to the scrutinee.
 pub function variant_arm_decl_index(pv: ast.PatVariant, scrut_enum: string, s: LowerState): i32 {
     var bare: string = variant_pattern_bare_name(pv.type_name);
-    var owner: string = variant_pattern_qualifier(pv.type_name);
-    if (variant_decl_index(s.frame.structs, bare, owner) < 0) { owner = scrut_enum; }
+    var owner: string = variant_arm_owner(s.frame.structs, bare, variant_pattern_qualifier(pv.type_name), scrut_enum);
     return variant_pattern_decl_index(s.frame.structs, bare, owner);
 }
 
@@ -7899,8 +7918,9 @@ function str_local_binding_is_fresh(init: ast.Expr): boolean {
             }
         },
         ast.ExprBinary(b) => {
-            // A CONCAT (fresh when it is a string; int-add is filtered by is_str).
-            return b.op == "+";
+            // A concat allocates a fresh box. The checker's tag tells it from an
+            // integer add; an unannotated tree keeps the structural answer.
+            return b.op == "+" && (b.ty == "" || b.ty == "string");
         },
         _ => { return false; },
     }
@@ -20661,7 +20681,7 @@ function split_commas(csv: string): string[] {
     var i: i32 = 0;
     while (i <= csv.len()) {
         if (i == csv.len() || csv[i] == b',') {
-            out = out.append(slice_unchecked(csv, start, i));
+            out = out.append(slice_unchecked(csv, start, i) + "");
             start = i + 1;
         }
         i = i + 1;
@@ -21970,15 +21990,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         var vfb: LowerState = vfs.add_local(v.name);
         vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var vfslot: i32 = vfb.slot_of(v.name);
-        vfb = vfb.mark_arr(vfslot, true);
-        if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); if (vfft == "f32[]") { vfb = vfb.mark_f32arr(vfslot, true); } }
-        else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
-        // The dispatch-only boolean[] overlay (#6117). This branch RETURNS
-        // before the VarTypes classification, so the element kind has to be
-        // stamped here too — and it is the branch that matters for a field
-        // receiver, because `b.flags.to_json()` snapshots into exactly this
-        // shape of hidden `var` before the serialiser's loop indexes it.
-        else if (vfft == "boolean[]") { vfb = vfb.mark_boolarr(vfslot, true); }
+        // This branch RETURNS before the VarTypes classification, so the
+        // element representation is stamped here, from the field's declared
+        // type — the same stamp a borrowed projection gets.
+        vfb = mark_scalar_array_elems(vfb.mark_arr(vfslot, true), vfslot, vfft);
         return vfb.emit(ir.op_store_local(vfslot));
     }
     // Binding an ARRAY-OF-STRUCT field (`var ps: P[] = obj.params`,
@@ -23427,7 +23442,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     var ddepth: i32 = 0;
     while (dp <= v.name.len()) {
         if (dp == v.name.len() || (v.name[dp] == b',' && ddepth == 0)) {
-            dnames = dnames.append(slice_unchecked(v.name, dstart, dp));
+            dnames = dnames.append(slice_unchecked(v.name, dstart, dp) + "");
             dstart = dp + 1;
         } else if (v.name[dp] == b'(') { ddepth = ddepth + 1; }
         else if (v.name[dp] == b')') { ddepth = ddepth - 1; }
@@ -23699,6 +23714,17 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 // tripped the exit-137 alloc trap on its own; oversized functions also
 // miscompile — cf. #2720). Body moved verbatim; the trailing s.fail()
 // preserves lower_stmt's own post-match fallback for any fall-through.
+// The 8-byte-element push: the sole-owner form reclaims the superseded buffer
+// on a grow, as arr_push_owned does for a 4-byte-slot array.
+function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
+    if (is_f64) {
+        if (sole_owner) { return ir.op_arr_push_owned_f64(); }
+        return ir.op_arr_push_f64();
+    }
+    if (sole_owner) { return ir.op_arr_push_owned_i64(); }
+    return ir.op_arr_push_i64();
+}
+
 function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     var slot: i32 = s.slot_of(a.target);
     if (slot < 0) { return s.fail(); }
@@ -23783,7 +23809,11 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
-                                return emit_arr_store(wcl, slot, false, false);
+                                // The clone supersedes the buffer the slot held, so the
+                                // store releases the reference this frame owns of it —
+                                // where that release is a bare box dec, which is what
+                                // arr_slot_shallow_release_ok answers.
+                                return emit_arr_store(wcl, slot, false, arr_slot_shallow_release_ok(wcl, slot));
                             }
                             // A reclaimable string[] (#6407): the slot owns
                             // every element box, so overwriting one must
@@ -23834,11 +23864,15 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // Parallels the i64[] path below; on the register
                             // backends both reuse __fern_arr_push, wasm uses its
                             // f64-typed $__fern_arr_push_f64.
+                            // A sole-owner target takes the reclaim-on-grow push at
+                            // every element width; an aliased target or a parameter
+                            // keeps the plain one (the i32 branch below says why).
+                            var sole_owner: boolean = !s.is_aliased_name(a.target) && slot >= s.frame.n_params;
                             if (s.is_f64arr_slot(slot)) {
                                 var apf: LowerState = s.emit(ir.op_load_local(slot));
                                 apf = lower_expr(wc.args[0], apf);
                                 if (!apf.ok) { return apf; }
-                                apf = apf.emit(ir.op_arr_push_f64());
+                                apf = apf.emit(wide_push_op(sole_owner, true));
                                 return emit_arr_store(apf, slot, false, false);
                             }
                             // i64[] / u64[] (8-byte element): lower the value as
@@ -23849,7 +23883,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 var ap8: LowerState = s.emit(ir.op_load_local(slot));
                                 ap8 = lower_i64(wc.args[0], ap8);
                                 if (!ap8.ok) { return ap8; }
-                                ap8 = ap8.emit(ir.op_arr_push_i64());
+                                ap8 = ap8.emit(wide_push_op(sole_owner, false));
                                 return emit_arr_store(ap8, slot, false, false);
                             }
                             var aps: LowerState = s.emit(ir.op_load_local(slot));
@@ -24375,6 +24409,17 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     }
     if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !nofld && s.struct_routes_field_reclaim(asty)) {
         return emit_field_reclaim_store(se, slot, asty, snls);
+    }
+    // A struct local the frame RETURNS ("RETRE:", slot_reassign_reclaims_struct)
+    // still supersedes a box at every rebind, and that box is dead the moment
+    // this store lands: only the FINAL binding escapes. The release runs under
+    // __fern_rc_is_unique on the old box, so a counted share is left to whichever
+    // owner reaches rc 1 — the field-reclaim helper carries that guard and the
+    // cow guard itself, and a type routing no field reclaim takes the box-only
+    // sibling.
+    if (!target_is_arr && slot_reassign_reclaims_struct(s, slot)) {
+        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls); }
+        return emit_unique_reclaim_store(se, slot);
     }
     // A reclaimable rc-TUPLE local REBIND (`p = (i, "hi")` / `p = (i, [i, i+1])`,
     // #6127): deep-drop the superseded chain — the fresh rc children then the box —
@@ -25667,8 +25712,8 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                 // the pattern's `Enum.` qualifier when it has one, else the
                 // scrutinee's type; everything below reads through the decl
                 // that names.
-                var vowner: string = variant_pattern_qualifier(pv.type_name);
-                if (variant_decl_index(ms.frame.structs, vname, vowner) < 0) { vowner = expr_struct_type(m.scrutinee, ms); }
+                var vowner: string = variant_arm_owner(ms.frame.structs, vname,
+                    variant_pattern_qualifier(pv.type_name), expr_struct_type(m.scrutinee, ms));
                 var vdecl: i32 = variant_pattern_decl_index(ms.frame.structs, vname, vowner);
                 if (vdecl < 0) { return s.fail(); }
                 if (!decl_at_is_leaksafe(ms.frame.structs, vdecl)) { return s.fail(); }
@@ -27669,6 +27714,25 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
     return st;
 }
 
+// arr_slot_shallow_release_ok: this array LOCAL holds a counted reference whose
+// whole release is one __fern_rc_dec — the exit sweep's own condition, slot fact
+// for slot fact, so a store that supersedes the slot's value may release it
+// exactly where the sweep would have. False for a borrowed binding (no count to
+// give back), for a slot whose count was moved out, and for every deep-credit
+// class, whose release walks elements a superseding clone shares. Params are
+// false here: their release is the ownflag store's, ahead of this question.
+function arr_slot_shallow_release_ok(s: LowerState, slot: i32): boolean {
+    if (slot < s.frame.n_params) { return false; }
+    if (!s.is_arr_slot(slot) || s.is_borrowed_arr_slot(slot)) { return false; }
+    if (slot_list_has(s.frame.moved_elided, slot)) { return false; }
+    if (slot_is_reclaimable_arrtup(s, slot) || slot_is_reclaimable_arrstruct(s, slot)
+        || slot_is_reclaimable_arrenum(s, slot) || slot_is_reclaimable_arrarr(s, slot)
+        || slot_is_reclaimable_optaarr(s, slot) || slot_is_reclaimable_cloarr(s, slot)
+        || slot_is_reclaimable_structarr(s, slot) || slot_is_reclaimable_strarr(s, slot)) { return false; }
+    if (darr_kinds_of(s, s.reclaim_site_key(slot)).len() > 0) { return false; }
+    return !reclaim_has(s.frame.reclaimable_names, "ENVCAP:", s.reclaim_site_key(slot));
+}
+
 pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean): LowerState {
     return emit_arr_store_from(se, slot, alias_inc, do_dec, false);
 }
@@ -28372,6 +28436,41 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
         st = st.emit(ir.op_bin("ne", 0, false));
         st = st.emit(ir.op_bin("and", 0, false));
     }
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));                         // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// emit_unique_reclaim_store stores `new` (already on the operand stack) into a
+// struct slot whose REBIND releases the box it supersedes even though the local
+// itself escapes by being RETURNED ("RETRE:", slot_reassign_reclaims_struct).
+// The box-only sibling of emit_field_reclaim_store, for a slot whose type routes
+// no field reclaim: a shallow __fern_rc_dec IS that box's whole release.
+//
+// Two guards, both load-bearing. __fern_rc_is_unique refuses a box a counted
+// share still holds — a construction retain leaves the count above 1, and
+// freeing under it is a use-after-free rather than a leak — and is null-safe, so
+// the zeroed slot the first rebind supersedes is a no-op. The cow guard
+// (`old != new`) keeps the box a self-store hands straight back, the same
+// identity emit_arr_store's release is guarded against. A SHARED old box is left
+// alone rather than dec'd: this class hands out no counted reference of its own,
+// so there is no count here to give back.
+function emit_unique_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$urs" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));                        // stash new
+    st = st.emit(ir.op_load_local(slot));                        // old
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));   // sole owner (and null-safe)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));                     // old != new (cow guard)
     st = st.emit(ir.op_if(0));
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -32396,7 +32495,7 @@ function xblock_scan_body(body: ast.Stmt[], b_stmts: ast.Stmt[], k: i32, structs
                                 var xbar: i32 = 0;
                                 while (xbar < donor.len() && donor[xbar] != b'|') { xbar = xbar + 1; }
                                 pairs = pairs.append(reclaim_site_key_of(rv.name, rv.line, rv.col) + "|" + donor);
-                                cons = cons.append(slice_unchecked(donor, 0, xbar));
+                                cons = cons.append(slice_unchecked(donor, 0, xbar) + "");
                             }
                         }
                     },
@@ -32877,12 +32976,13 @@ pub struct LowerResult {
 }
 
 // result_from_decl marks a body whose return type is read from its
-// parser.FuncDecl. The produced shapes are the two integer slot classes the
+// parser.FuncDecl. The produced shapes are the three scalar slot classes the
 // physical RC boundary admits; a backend refuses any other value rather than
 // assuming one, so a new shape cannot be forgotten.
 pub function result_from_decl(): i32 { return 0; }
 pub function result_i32(): i32 { return 1; }
 pub function result_i64(): i32 { return 2; }
+pub function result_f64(): i32 { return 3; }
 
 // lower_failed builds a signature-refusal LowerResult carrying `why`. The
 // signature gates run before any lowering, so the ops / slot lists are all empty
@@ -36551,6 +36651,9 @@ function collect_fresh_string_names(stmts: ast.Stmt[], acc: string[]): string[] 
 function collect_fresh_string_in_stmt(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
+            // A binding declared at a scalar type holds no box whatever its
+            // initializer's shape.
+            if (v.type_name != "" && v.type_name != "string") { return acc; }
             if (str_local_binding_is_fresh(v.init)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
@@ -47125,6 +47228,23 @@ function slot_struct_credit_at(s: LowerState, i: i32): boolean {
     return util.index_of_str(s.frame.reclaimable_names, site) >= 0;
 }
 
+// slot_reassign_reclaims_struct: slot i holds a struct local whose REBIND may
+// release the box it supersedes even though the local escapes later by being
+// RETURNED ("RETRE:"). Only lower_stmt_assign reads it. The escaping binding is
+// the LAST one — every box a later store supersedes is dead at that store — so
+// the exit sweep, the deep field drops and the alias retains all stay refused
+// and slot_is_reclaimable_struct stays false for these slots.
+function slot_reassign_reclaims_struct(s: LowerState, i: i32): boolean {
+    if (i < s.frame.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    // struct_type_of_slot is a type-NAME carrier, not a struct test — it is also
+    // set for enum names, dyn tags and element types — so the decl lookup is what
+    // says the slot really holds a struct box (#7368).
+    if (!decl_is_struct(s.frame.structs, s.struct_type_of_slot(i))) { return false; }
+    if (slot_name_retired(s.locals[i].slot_name)) { return false; }
+    return slot_credit_at(s, i, "RETRE:");
+}
+
 // slot_is_reclaimable_struct_scoped: slot_is_reclaimable_struct WITHOUT its
 // retirement refusal (#6127). retire_locals renames a block-scoped local on block
 // exit, and the sibling above still declines a renamed slot, so a struct declared
@@ -55506,8 +55626,8 @@ function cross_reuse_sites(body: ast.Stmt[], structs: StructTab, fresh_ret: stri
                                     var dbar: i32 = 0;
                                     while (dbar < donor.len() && donor[dbar] != b'|') { dbar = dbar + 1; }
                                     idxs = idxs.append(k);
-                                    donors = donors.append(slice_unchecked(donor, 0, dbar));
-                                    dtypes = dtypes.append(slice_unchecked(donor, dbar + 1, donor.len()));
+                                    donors = donors.append(slice_unchecked(donor, 0, dbar) + "");
+                                    dtypes = dtypes.append(slice_unchecked(donor, dbar + 1, donor.len()) + "");
                                 }
                             }
                         },
@@ -65256,7 +65376,7 @@ function param_match_binding_escapes_stmt(st: ast.Stmt, name: string): boolean {
 // A prime count keeps unrelated hash strides from aliasing onto the same bucket.
 function borrow_reg_buckets(): i32 { return 251; }
 
-function borrow_reg_new(): string[] {
+pub function borrow_reg_new(): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     var n: i32 = borrow_reg_buckets();
@@ -65273,6 +65393,33 @@ function borrow_reg_put(own reg: string[], key: string, flags: string): string[]
     var b: i32 = util.hash_bucket(key, reg.len());
     reg = reg.with(b, reg[b] + borrow_reg_record(key, flags));
     return reg;
+}
+
+// borrow_reg_set replaces the record for `key` — the lookup takes the first
+// record of a name in its bucket, so the old one is dropped rather than
+// shadowed — and an empty `flags` leaves the key with no record, which the
+// lookup reads as nothing borrowable. An empty registry is given its buckets.
+// `reg` stays borrowed, as borrow_reg_with_counted's does: copied once, and
+// the copy own-threaded through the one store.
+pub function borrow_reg_set(reg: string[], key: string, flags: string): string[] {
+    var out: string[] = [];
+    if (reg.len() == 0) { out = borrow_reg_new(); }
+    var c: i32 = 0;
+    while (c < reg.len()) { out = out.append(reg[c]); c = c + 1; }
+    var b: i32 = util.hash_bucket(key, out.len());
+    var bucket: string = out[b];
+    var kept: string = "";
+    var p: i32 = 0;
+    while (p < bucket.len()) {
+        var end: i32 = p;
+        while (end < bucket.len() && bucket[end] != b'\n') { end = end + 1; }
+        var bar: i32 = p;
+        while (bar < end && bucket[bar] != b'|') { bar = bar + 1; }
+        if (slice_unchecked(bucket, p, bar) != key) { kept = kept + slice_unchecked(bucket, p, end) + "\n"; }
+        p = end + 1;
+    }
+    if (flags.len() > 0) { kept = kept + borrow_reg_record(key, flags); }
+    return out.with(b, kept);
 }
 function borrow_reg_record(key: string, flags: string): string {
     return key + "|" + flags + "\n";
@@ -65311,7 +65458,7 @@ function copying_builtin_flags(key: string): string {
 // intact, so a lookup by method name reaches every "<Type>.<method>" row
 // without walking the registry. Sized from the row count, unlike the
 // registry itself.
-function borrow_reg_bare_index(reg: string[]): string[] {
+pub function borrow_reg_bare_index(reg: string[]): string[] {
     var nrows: i32 = 0;
     var bi: i32 = 0;
     while (bi < reg.len()) {
@@ -68094,7 +68241,7 @@ function rc_fe_split_csv(s: string): string[] {
             while (a < piece.len() && piece[a] == b' ') { a = a + 1; }
             var b: i32 = piece.len();
             while (b > a && piece[b - 1] == b' ') { b = b - 1; }
-            if (b > a) { out = out.append(slice_unchecked(piece, a, b)); }
+            if (b > a) { out = out.append(slice_unchecked(piece, a, b) + ""); }
             start = i + 1;
         }
         i = i + 1;
@@ -72247,6 +72394,14 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
                 // Function-value calls borrow their arguments. The trampoline
                 // acquires the counted scalar-array argument at its direct call
                 // to the consuming target, using the ordinary call protocol.
+                //
+                // An ERASED position is the one slot a function type spells as
+                // CONSUMING (docs/ERASED-GENERICS-RC.md, option 1), so the unit
+                // must pass straight through to the target rather than being
+                // re-acquired here. It already does: the strip is keyed on a
+                // leak-safe ARRAY spelling, which a bare type variable is not,
+                // so an erased parameter reaches the trampoline with whatever
+                // mode the target declared. Keep the key that way.
                 var p: ast.ParamDecl = tgt.params[pj];
                 if (p.own && is_leaksafe_array_field(p.type_name)) { p = ast.ParamDecl { ...p, own: false }; }
                 ps = ps.append(p);
@@ -78981,6 +79136,30 @@ while (dai < darrs.len()) {
     return out;
 }
 
+// reclaimable_returned_rebind credits "RETRE:" — the REBIND half of the struct
+// credit, for a fresh struct local that passes every escape gate except the one
+// the class exists for: the frame RETURNS it. Only the LAST binding leaves; each
+// box a later `v = f(v, …)` supersedes is dead the moment that store lands, so
+// withholding the whole credit left one leaked box per iteration of every
+// loop-carried-and-returned struct (the dominant self-host leak, and the shape
+// `pow10` and the bigint limb loops are written in).
+//
+// The rebind release is guarded by __fern_rc_is_unique on the OLD box
+// (emit_unique_reclaim_store / emit_field_reclaim_store), so a counted share
+// leaves the box to whichever owner reaches rc 1. The two refusals here are the
+// UNCOUNTED shares that guard cannot see: a plain `w = v` assignment and a
+// `var w = v` alias bind both leave a second reference the count never learned
+// about, and neither takes the #7282 bind retain, which is credit-keyed on
+// slot_is_reclaimable_struct and so never fires for this class.
+//
+// No sweep, no deep drop and no alias credit ride along: "RETRE:" is read by
+// lower_stmt_assign alone.
+function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string, out: string[]): string[] {
+    if (struct_bare_assigned_src(body, fnm)) { return out; }
+    if (bare_alias_bind_sites_of(body, fnm, false, []).len() > 0) { return out; }
+    return out.append("RETRE:" + site);
+}
+
 function reclaimable_fresh_struct(asrows: string[], body: ast.Stmt[], borrowable: string[], fresh: string[], handback: string[], msites: string[], plan_fe: string[], plan_on: boolean, recv_borrow: string[], structs: StructTab, out: string[]): string[] {
 var i: i32 = 0;
 while (i < fresh.len()) {
@@ -79052,13 +79231,20 @@ while (i < fresh.len()) {
     // carries it, keyed on the "ALIASSRC:" row this branch emits.
     var bas_ok: boolean = !struct_bare_assigned_src(body, fnm)
         || bare_assign_targets_all_fresh(body, fnm, fresh);
-    if (st_esc_ok && !reassigned_from_alias(body, fnm)
+    // Every gate but the RETURN. A returned name still fails the credit below —
+    // the caller's fresh-ret release and this slot's would be two claims on the
+    // final box — but the boxes its REBINDS supersede are a separate question,
+    // which reclaimable_returned_rebind answers from this same verdict.
+    var gates_ok: boolean = st_esc_ok && !reassigned_from_alias(body, fnm)
         && bas_ok
-        && !struct_returned_bare(body, fnm)
         && (!struct_arg_to_handback(body, fnm, handback)
             || handback_is_self_rebind_only(body, fnm, handback))
         && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
-        && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
+        && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable);
+    if (gates_ok && struct_returned_bare(body, fnm)) {
+        out = reclaimable_returned_rebind(body, fnm, fresh[i], out);
+    }
+    if (gates_ok && !struct_returned_bare(body, fnm)) {
         out = out.append(fresh[i]);
         // THE ALIAS TAKES A BOX-ONLY RELEASE, NEVER THE DEEP ONE. A struct's
         // release is a DEEP FIELD DROP plus a box dec, and only the box was

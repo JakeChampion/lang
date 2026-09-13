@@ -347,6 +347,68 @@ function t_unknown(reason: string): typeinfo.Type {
   return typeinfo.TypeUnknown { reason: reason };
 }
 
+// Cell[T] is the reserved builtin struct over one mutable slot; its single
+// instantiation arg is the element. An argless `Cell` — what `cell_new(v)`
+// yields, since the destination names T — has no element to give.
+function is_cell_type(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(s) = t { return s.name == "Cell"; }
+  return false;
+}
+
+function cell_elem_type(t: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeStruct(s) = t {
+    if (s.args.len() == 1) { return s.args[0]; }
+  }
+  return t_unknown("cell element");
+}
+
+// `Cell[T]` resolves to the reserved builtin struct CARRYING its element, the
+// shape native's builtinStructDecls registers. The element is what a cell-typed
+// field's reclamation reads, so it survives rather than being erased the way a
+// user generic's args are.
+function is_cell_ref(r: parser.TypeRef): boolean {
+  return r.base == "Cell" && r.args.len() == 1;
+}
+
+// `Map[K, V]`, and the never-emitted 3+ arg form whose value is everything
+// after the first comma.
+function is_map_ref(r: parser.TypeRef): boolean {
+  return r.base == "Map" && r.args.len() == 2;
+}
+
+function is_wide_map_ref(r: parser.TypeRef): boolean {
+  return r.base == "Map" && r.args.len() > 2;
+}
+
+// Cell[T]'s two methods (docs/CELL-TYPE-PLAN.md): `get` reads the slot and
+// `set` writes it in place, yielding nothing so `c.set(v);` is a statement
+// rather than an E055 discard.
+function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinfo.Type {
+  if (!is_cell_type(recv)) { return t_unknown("not a cell method call"); }
+  if (name == "get" && argc == 0) { return cell_elem_type(recv); }
+  if (name == "set" && argc == 1) { return t_void(); }
+  return t_unknown("not a cell method");
+}
+
+// The free builtins whose RESULT the expression written around the call needs:
+// the byte-array string constructor and the two f64 bit reinterpretations,
+// typed as native's FuncSigs type them. Left unknown they collapsed the struct
+// literal, array or operator holding the call.
+function free_builtin_result(name: string, argc: i32): typeinfo.Type {
+  if (argc != 1) { return t_unknown("not a typed free builtin"); }
+  if (name == "string_from_bytes_unchecked") { return t_string(); }
+  if (name == "f64_bits") { return t_i64(); }
+  if (name == "f64_from_bits") { return t_float(); }
+  return t_unknown("not a typed free builtin");
+}
+
+// The builtin results a call carries ahead of the user tables. Unknown for
+// every other receiver or name, which is the caller's signal to keep resolving.
+function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32): typeinfo.Type {
+  if (is_method) { return cell_method_type(recv, name, argc); }
+  return free_builtin_result(name, argc);
+}
+
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
 // analogue of asmcore's ty_tag. Recursive over the composite variants so the
 // full decoded shape (array element, tuple elements, map key/value, and the
@@ -403,6 +465,9 @@ pub function type_debug(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnknown(uk) => {
       return "unknown(" + uk.reason + ")";
+    },
+    typeinfo.TypeErased(e) => {
+      return "erased(" + e.name + ")";
     }
   }
   return "?";
@@ -643,6 +708,13 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
       }
     },
     typeinfo.TypeUnknown(_) => {
+      return false;
+    },
+    // The erased type VARIABLE of a generic. This checker never resolves an
+    // annotation to one — it is the semantic phase's reading of a type
+    // parameter — so the rule here is identity alone.
+    typeinfo.TypeErased(ae) => {
+      if let typeinfo.TypeErased(be) = b { return ae.name == be.name; }
       return false;
     }
   }
@@ -2829,6 +2901,47 @@ function ret_typevar_arg_type(sig: FuncSig, c: ast.ExprCall, s: Scope): (typeinf
   return (rt, bound);
 }
 
+// A call of a name with no declaration of its own. `__mkclo$<body>(captures)`
+// is the lambda lift's closure constructor: the environment box holds <body>'s
+// address and the captures that body reads back out of its first parameter, so
+// the box's type is what <body> promises MINUS that parameter. No source
+// identifier may hold a `$`, so only a lifted tree reaches this — and without
+// it the box types to unknown and collapses whatever expression holds it.
+function undeclared_call_type(name: string, s: Scope): typeinfo.Type {
+  var body: string = parser.mkclo_body(name);
+  if (body.len() == 0 || !s.has_sig(body)) {
+    return t_unknown("undefined function: " + name);
+  }
+  var sig: FuncSig = s.lookup_sig(body);
+  if (!closure_env_param(sig)) {
+    return t_unknown("undefined function: " + name);
+  }
+  return t_func_after_env(sig);
+}
+
+// A hoisted closure body reads its captures through a leading `__env` array of
+// machine words; a declaration without one is not a body a box was built for.
+function closure_env_param(sig: FuncSig): boolean {
+  if (sig.param_types.len() == 0) {
+    return false;
+  }
+  if let typeinfo.TypeArray(a) = sig.param_types[0] {
+    if let typeinfo.TypeI32(_) = a.elem { return true; }
+  }
+  return false;
+}
+
+// The type the box hands out: the body's signature without its environment.
+function t_func_after_env(sig: FuncSig): typeinfo.Type {
+  var params: typeinfo.Type[] = [];
+  var i: i32 = 1;
+  while (i < sig.param_types.len()) {
+    params = params.append(sig.param_types[i]);
+    i = i + 1;
+  }
+  return typeinfo.TypeFunc { param_types: params, ret_type: sig.ret_type, params_known: true };
+}
+
 // check_call_expr types an ExprCall (plain / closure / method call).
 // Extracted verbatim from check_expr's ExprCall arm to keep check_expr
 // under the self-host oversized-function compile threshold (#2720); the
@@ -3061,6 +3174,10 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     return t_unknown("slice_unchecked: first argument must be a string");
   }
+  var builtin_typed: typeinfo.Type = builtin_result_type(recv_ty, name, is_method, c.args.len());
+  if (!is_unknown(builtin_typed)) {
+    return builtin_typed;
+  }
   // `s.len()` — the method spelling of the `len(s)` builtin above. It
   // resolves through the user MethodSig table, which has no entry for a
   // primitive receiver, so the statement types unknown. An unknown
@@ -3258,7 +3375,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_union(ctor_enum);
   }
   if (!s.has_sig(name)) {
-    return t_unknown("undefined function: " + name);
+    return undeclared_call_type(name, s);
   }
   var sig: FuncSig = s.lookup_sig(name);
   if (c.args.len() != sig.param_types.len()) {
@@ -4456,13 +4573,15 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
       }
       return t_tuple(elems);
     }
-  } else if (r.base == "Map" && r.args.len() == 2) {
+  } else if (is_map_ref(r)) {
     // `Map[K, V]` → TypeMap. (The recursively-resolved key/value are passed
     // straight into t_map's return-position wrap — an intermediate
     // `var: Type = <recursive call>` doesn't reliably trigger the struct→union
     // wrap here; see the t_i32 note.)
     return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names));
-  } else if (r.base == "Map" && r.args.len() > 2) {
+  } else if (is_cell_ref(r)) {
+    return t_struct_g("Cell", [type_from_ref_names(r.args[0], struct_names, union_names)]);
+  } else if (is_wide_map_ref(r)) {
     // A (never-emitted) 3+ arg `Map[K, A, B]`: the value is "everything after
     // the first comma" — the trailing args re-joined and resolved as one name
     // (→ unknown).
@@ -4873,7 +4992,7 @@ function split_fn_param_spellings(csv: string): string[] {
   var i: i32 = 0;
   while (i <= csv.len()) {
     if (i == csv.len() || (csv[i] == b',' && depth == 0)) {
-      out = out.append(slice_unchecked(csv, start, i));
+      out = out.append(slice_unchecked(csv, start, i) + "");
       start = i + 1;
     } else if (csv[i] == b'(' || csv[i] == b'[') {
       depth = depth + 1;
@@ -5037,6 +5156,9 @@ function type_label(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnknown(_) => {
       return "unknown";
+    },
+    typeinfo.TypeErased(e) => {
+      return e.name;
     }
   }
   return "unknown";
@@ -9759,7 +9881,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                           // through, so it does NOT count toward
                           // exhaustiveness (#4344).
                           if (!elem.has_guard) {
-                            covered = covered.append(cbare);
+                            covered = covered.append(cbare + "");
                           }
                           if (!util.has_str(usig.variants, cbare)) {
                             out = out.append(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, elem.line, elem.col));
@@ -13556,14 +13678,14 @@ function e060_split_traits(set: string): string[] {
   var i: i32 = 0;
   while (i + 3 <= set.len()) {
     if (slice_unchecked(set, i, i + 3) == " + ") {
-      out = out.append(slice_unchecked(set, start, i));
+      out = out.append(slice_unchecked(set, start, i) + "");
       start = i + 3;
       i = i + 3;
     } else {
       i = i + 1;
     }
   }
-  return out.append(slice_unchecked(set, start, set.len()));
+  return out.append(slice_unchecked(set, start, set.len()) + "");
 }
 
 // e060_trait_known: the trait appears in trait_reqs (declared in the merged
@@ -14312,6 +14434,19 @@ pub function variant_sig(s: Scope, name: string, owner: string): StructSig {
 
 pub function union_sig(s: Scope, name: string): UnionSig {
   return s.lookup_union(name);
+}
+
+// owned_variant_names lists the variants `owner` owns, in declaration order,
+// read off the struct table rather than off an enum declaration. The front end
+// INJECTS IoError and JsonValue as variant structs with no enum declaration to
+// list them (parser.inject_builtin_enums), so there is no UnionSig to ask.
+pub function owned_variant_names(s: Scope, owner: string): string[] {
+  var out: string[] = [];
+  if (owner.len() == 0) { return out; }
+  for sig in s.structs.structs {
+    if (sig.enum_owner == owner) { out = out.append(sig.name); }
+  }
+  return out;
 }
 
 // variant_shape_sig is the declared field shape of `name` as a member of union
@@ -15400,7 +15535,10 @@ function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
   return s.bind(name, ty);
 }
 
-function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
+// for_body_scope is the scope a `for` body sees: `s` plus the loop's element
+// binding, typed as check_stmt types it. Public as the read-only view a
+// checked-source consumer walking a loop body needs, beside arm_scope.
+pub function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
   return for_binding(fr, s).scope;
 }
 

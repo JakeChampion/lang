@@ -4867,9 +4867,10 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // value); only wasm needs a distinct 8-byte-stride push.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push\n    pushq %rax\n");
             s = s.mark_arr_push();
-        } else if (o.kind_tag == 93) {  // arr_push_owned
+        } else if (o.kind_tag == 93 || o.kind_tag == 302 || o.kind_tag == 303) {  // arr_push_owned, arr_push_owned_i64, arr_push_owned_f64
             // Sole-owner self-append (irlower's !aliased `a = a.append(v)`):
             // __fern_arr_push_owned reclaims the old buffer on a grow-realloc.
+            // The 8-byte element rides the same helper, as arr_push_i64 does.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push_owned\n    pushq %rax\n");
             s = s.mark_arr_push(); s = s.need("arr_push_owned");
         } else if (o.kind_tag == 77) {  // alloc_u8
