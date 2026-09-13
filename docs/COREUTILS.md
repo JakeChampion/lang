@@ -513,6 +513,129 @@ Darwin.
 
 ## Performance
 
+**Whole catalogue, 2026-09-13**, Linux x86-64 (a 4-core container; GNU
+coreutils 9.4; uutils 0.0.24 as the Debian multi-call binary). Every
+utility's workloads file ran once through `scripts/coreutils-bench` with
+other work on the same cores — 438 rows over 81 utilities — to rank the
+losses, and the utilities changed in #9176 and #9188 were re-run alone
+afterwards; those rows are the table below. `test` and `uptime` have no
+GNU binary at `/usr/bin` on this host and are unmeasured.
+
+Where Fern wins outright (every row at or above 1x): `basename`,
+`csplit`, `df`, `dirname`, `echo`, `false`, `fold`, `hostid`, `id`,
+`mkdir`, `mknod`, `mktemp`, `nproc`, `pwd`, `readlink`, `rm`, `rmdir`,
+`runcon`, `sleep`, `tee`, `true`, `tsort`, `uname`, `uniq`, `users`, `wc`,
+`whoami`, `yes`; `seq` on every row; `od` on every row but `-t f8`. The
+startup-bound utilities the loaded survey put under 1x — `arch`, `groups`,
+`tty`, `link`, `unlink`, `ln`, `mv`, `mkfifo`, `truncate`, `realpath`, the
+`chmod`/`chown`/`chgrp`/`chcon` tree rows within 10% — retire a fortieth of
+GNU's instructions under callgrind (`arch` 6,132 against 282,938) with
+fewer syscalls, so those rows are load noise on sub-millisecond runs and
+not losses.
+
+Where Fern loses, by cause:
+
+- **The backend's byte loop and call floor** — an indexed byte loop is ~40
+  retired instructions a byte and a helper call ~60, against C's 1–3:
+  the digests (`b2sum`, `md5sum`, `sha*sum`, `cksum` 0.08–0.5x), `base32` /
+  `base64` / `basenc` (0.1–0.5x), `sum` (0.3–0.6x), `tr` (0.14–0.24x),
+  `cat -A` (0.23x), `tac` (0.2–0.6x), `nl` (0.2–0.4x), `sort` (0.06–0.5x:
+  the comparison and, under `-n`, the digit walk), `fmt` (0.22x: the
+  break chooser's inner turn), `factor`'s semiprimes, `numfmt`'s remaining
+  2.5x, `expr`'s class-anchored regexp, `shuf`'s generator, `od -t f8`
+  (0.04x: the long-double library's per-value formatting), and what is
+  left of `join` (0.34x) and `cat -n` (0.49x). Each has had its per-line
+  copies removed; the rest is codegen.
+- **The fd-relative filesystem primitive (#9074)** — `du` (0.5–0.9x), whose
+  full-path `stat` costs 9 µs a call against 4.
+- **Within noise or a single row** — `head -n 10` from a pipe, `tail -n
+  4000000`, `split -n r/8`, `cut -s`, `comm -12` (0.77x), `uniq -f1 -c`
+  (0.61x: the field walk and the key copy on the non-plain path), `env`
+  with 60 assignments, `printf` cycling floats, `dircolors` on a 200k-entry
+  config (0.70x).
+
+The utilities this branch changed, re-run alone (mean ± σ, ≥20 runs;
+ratios above 1 mean Fern is faster):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `join` | join two 1M-line files | 397.41 ± 37.88 | 136.91 ± 10.26 | 210.20 ± 16.59 | 0.34× | 0.53× |
+| `join` | join with half unpairable | 335.84 ± 23.82 | 105.67 ± 12.75 | 171.60 ± 16.92 | 0.31× | 0.51× |
+| `join` | join -a1 -a2 two 1M-line files | 398.26 ± 41.65 | 137.91 ± 12.72 | 185.18 ± 18.97 | 0.35× | 0.46× |
+| `join` | join -o 0,1.2,2.3 two 1M-line files | 355.95 ± 33.53 | 121.36 ± 6.83 | 197.28 ± 14.92 | 0.34× | 0.55× |
+| `join` | join -v1 two 1M-line files | 297.17 ± 27.11 | 101.77 ± 9.00 | 171.51 ± 12.74 | 0.34× | 0.58× |
+| `dircolors` | dircolors | 0.42 ± 0.20 | 1.15 ± 0.25 | 2.07 ± 0.49 | 2.71× | 4.88× |
+| `dircolors` | dircolors -p | 0.68 ± 0.18 | 1.03 ± 0.20 | 1.92 ± 0.27 | 1.51× | 2.82× |
+| `dircolors` | dircolors --print-ls-colors | 0.20 ± 0.17 | 0.94 ± 0.27 | 1.78 ± 0.25 | 4.69× | 8.88× |
+| `dircolors` | dircolors a 200k-entry config | 44.05 ± 3.54 | 30.64 ± 2.75 | 76.76 ± 6.45 | 0.70× | 1.74× |
+| `dircolors` | dircolors --print-ls-colors a 200k-entry config | 35.76 ± 3.45 | 42.93 ± 4.21 | 77.86 ± 7.30 | 1.20× | 2.18× |
+| `fmt` | fmt (default) of a 40 MiB file | 1545.29 ± 130.25 | 346.33 ± 28.27 | 347.86 ± 40.59 | 0.22× | 0.23× |
+| `fmt` | fmt -w 40 of a 40 MiB file | 1411.18 ± 115.52 | 333.05 ± 30.26 | 410.99 ± 38.79 | 0.24× | 0.29× |
+| `fmt` | fmt -s -w 40 of a 40 MiB file | 1441.18 ± 119.43 | 324.57 ± 28.94 | 409.41 ± 33.43 | 0.23× | 0.28× |
+| `fmt` | fmt -u -w 40 of a 40 MiB file | 1417.59 ± 89.06 | 335.06 ± 24.88 | 394.13 ± 39.16 | 0.24× | 0.28× |
+| `fmt` | fmt (default) of a 38 MiB wrapped file | 1652.32 ± 126.15 | 398.69 ± 44.32 | 451.48 ± 42.33 | 0.24× | 0.27× |
+| `fmt` | fmt -c -w 60 of a 38 MiB wrapped file | 1656.90 ± 126.76 | 376.52 ± 39.26 | 455.49 ± 47.37 | 0.23× | 0.27× |
+| `fmt` | fmt -p "" -w 40 of a 38 MiB wrapped file | 1441.17 ± 140.03 | 338.21 ± 36.86 | 504.93 ± 52.79 | 0.23× | 0.35× |
+| `fmt` | fmt (default) from a pipe | 1507.29 ± 138.82 | 462.22 ± 35.61 | 405.87 ± 35.66 | 0.31× | 0.27× |
+| `comm` | comm over 2M + 1M sorted lines | 134.70 ± 13.16 | 124.04 ± 6.94 | 372.69 ± 32.99 | 0.92× | 2.77× |
+| `comm` | comm -12 over 2M + 1M sorted lines | 129.05 ± 9.26 | 98.97 ± 8.25 | 220.63 ± 21.94 | 0.77× | 1.71× |
+| `comm` | comm --total over 2M + 1M sorted lines | 134.65 ± 10.66 | 125.81 ± 10.59 | 366.40 ± 27.06 | 0.93× | 2.72× |
+| `comm` | comm of a 2M-line file with itself | 116.77 ± 16.05 | 141.19 ± 12.88 | 401.61 ± 29.65 | 1.21× | 3.44× |
+| `comm` | comm -123 of a 2M-line file with itself | 102.54 ± 9.51 | 111.04 ± 12.30 | 83.96 ± 5.53 | 1.08× | 0.82× |
+| `uniq` | uniq over 4M lines in groups of 4 | 94.72 ± 8.07 | 103.17 ± 7.43 | 396.04 ± 26.53 | 1.09× | 4.18× |
+| `uniq` | uniq -c over 4M lines in groups of 4 | 111.44 ± 11.63 | 138.20 ± 9.65 | 509.87 ± 36.26 | 1.24× | 4.58× |
+| `uniq` | uniq -d over 4M lines in groups of 4 | 98.72 ± 7.35 | 100.26 ± 9.43 | 408.85 ± 29.34 | 1.02× | 4.14× |
+| `uniq` | uniq over 4M distinct lines | 84.05 ± 8.70 | 96.98 ± 10.31 | 757.30 ± 53.77 | 1.15× | 9.01× |
+| `uniq` | uniq -u over 4M distinct lines | 88.17 ± 10.09 | 104.93 ± 8.99 | 764.49 ± 58.78 | 1.19× | 8.67× |
+| `uniq` | uniq over 2M 44-byte distinct lines | 82.02 ± 7.79 | 162.35 ± 11.83 | 512.42 ± 47.69 | 1.98× | 6.25× |
+| `uniq` | uniq -f1 -c over 4M lines | 242.23 ± 18.91 | 148.18 ± 17.49 | 517.11 ± 50.48 | 0.61× | 2.13× |
+| `uniq` | uniq from a pipe | 118.00 ± 28.58 | 189.33 ± 17.06 | 450.21 ± 40.84 | 1.60× | 3.82× |
+| `seq` | seq 1 1000000 | 3.51 ± 0.64 | 6.67 ± 0.71 | 336.48 ± 34.63 | 1.90× | 95.90× |
+| `seq` | seq -s, 1 1000000 | 3.50 ± 0.39 | 6.92 ± 0.75 | 210.05 ± 21.86 | 1.98× | 60.00× |
+| `seq` | seq -w 1 1000000 | 3.41 ± 0.39 | 176.59 ± 14.92 | 331.21 ± 32.32 | 51.77× | 97.10× |
+| `seq` | seq 0 0.001 1000 | 3.41 ± 0.44 | 160.17 ± 23.75 | 385.06 ± 45.50 | 46.95× | 112.87× |
+| `seq` | seq -f %.3f 0 0.001 1000 | 3.42 ± 0.42 | 156.36 ± 18.44 | 399.18 ± 29.50 | 45.74× | 116.77× |
+| `seq` | seq 1 2 1000000 | 1.99 ± 0.25 | 4.26 ± 0.47 | 174.93 ± 14.47 | 2.15× | 88.03× |
+| `seq` | seq 1000000 -1 1 | 34.97 ± 3.46 | 171.54 ± 17.52 | 343.40 ± 30.99 | 4.90× | 9.82× |
+| `cat` | cat a 62 MiB file | 8.86 ± 0.83 | 8.08 ± 0.68 | 3.87 ± 0.46 | 0.91× | 0.44× |
+| `cat` | cat two 62 MiB files | 16.61 ± 1.52 | 14.73 ± 1.33 | 5.96 ± 0.72 | 0.89× | 0.36× |
+| `cat` | cat from a pipe | 72.69 ± 59.73 | 54.20 ± 28.93 | 46.82 ± 22.23 | 0.75× | 0.64× |
+| `cat` | cat -n a 62 MiB file | 273.44 ± 28.84 | 133.50 ± 10.93 | 1284.66 ± 114.08 | 0.49× | 4.70× |
+| `cat` | cat -s a 62 MiB file | 76.33 ± 4.95 | 62.57 ± 5.19 | 1046.02 ± 86.18 | 0.82× | 13.70× |
+| `cat` | cat -A a 62 MiB file | 314.90 ± 21.88 | 71.42 ± 11.01 | 1589.55 ± 111.92 | 0.23× | 5.05× |
+| `od` | od default of a 62 MiB file | 911.84 ± 90.13 | 3043.46 ± 255.42 | 3216.49 ± 240.71 | 3.34× | 3.53× |
+| `od` | od -t x1 of a 62 MiB file | 738.01 ± 68.89 | 4893.52 ± 291.30 | 4818.93 ± 377.70 | 6.63× | 6.53× |
+| `od` | od -t x1 -w64 of a 62 MiB file | 537.57 ± 58.94 | 5063.93 ± 393.13 | 3798.88 ± 266.05 | 9.42× | 7.07× |
+| `od` | od -t x8 of a 62 MiB file | 638.72 ± 73.25 | 848.13 ± 77.89 | 1578.92 ± 151.42 | 1.33× | 2.47× |
+| `od` | od -c of a 62 MiB file | 960.55 ± 94.26 | 5821.26 ± 304.58 | 4661.49 ± 371.57 | 6.06× | 4.85× |
+| `od` | od -A n -t x1 of a 62 MiB file | 639.94 ± 39.63 | 5019.29 ± 321.12 | 4898.72 ± 298.22 | 7.84× | 7.65× |
+| `od` | od -S 4 of a 62 MiB file | 201.90 ± 20.51 | 476.61 ± 51.47 | 3181.82 ± 269.38 | 2.36× | 15.76× |
+| `od` | od -t f8 of a 1 MiB file | 3133.23 ± 278.43 | 136.62 ± 13.11 | 55.41 ± 6.33 | 0.04× | 0.02× |
+| `du` | 4000 files in one directory | 7.36 ± 0.85 | 4.68 ± 0.49 | 8.95 ± 1.04 | 0.64× | 1.22× |
+| `du` | -a over 4000 files | 8.19 ± 0.87 | 5.55 ± 0.66 | 24.23 ± 5.78 | 0.68× | 2.96× |
+| `du` | a 60-deep tree | 4.07 ± 0.53 | 2.49 ± 0.31 | 25.91 ± 6.36 | 0.61× | 6.37× |
+| `du` | -a over a 60-deep tree | 4.36 ± 0.47 | 2.72 ± 0.32 | 34.48 ± 6.69 | 0.62× | 7.90× |
+| `du` | --apparent-size of the whole tree | 11.37 ± 1.39 | 5.89 ± 0.64 | 29.30 ± 5.38 | 0.52× | 2.58× |
+| `du` | -h -c of two trees | 10.56 ± 1.36 | 6.12 ± 0.67 | 30.27 ± 5.54 | 0.58× | 2.86× |
+| `du` | --inodes of the whole tree | 10.41 ± 1.13 | 5.93 ± 0.58 | 30.84 ± 5.61 | 0.57× | 2.96× |
+| `du` | -l (no seen set) over 4000 files | 5.46 ± 1.43 | 4.93 ± 0.73 | 9.00 ± 0.93 | 0.90× | 1.65× |
+| `du` | du of one small directory | 4.00 ± 0.39 | 2.45 ± 0.38 | 8.18 ± 0.98 | 0.61× | 2.04× |
+| `sort` | sort 500k lines | 290.97 ± 30.07 | 85.51 ± 4.22 | 80.06 ± 5.17 | 0.29× | 0.28× |
+| `sort` | sort -n 500k numbers | 867.89 ± 79.16 | 124.04 ± 5.10 | 176.78 ± 7.93 | 0.14× | 0.20× |
+| `sort` | sort -k2,2n 500k lines | 1973.43 ± 168.38 | 123.40 ± 5.11 | 176.67 ± 11.72 | 0.06× | 0.09× |
+| `sort` | sort -k1,1 500k lines | 774.39 ± 62.41 | 98.45 ± 4.66 | 124.61 ± 7.79 | 0.13× | 0.16× |
+| `sort` | sort -u 500k lines | 309.36 ± 33.95 | 108.49 ± 6.80 | 98.09 ± 5.38 | 0.35× | 0.32× |
+| `sort` | sort -r 500k lines | 285.06 ± 25.97 | 86.14 ± 2.35 | 76.98 ± 4.35 | 0.30× | 0.27× |
+| `sort` | sort -s 500k lines | 302.86 ± 29.11 | 88.63 ± 3.52 | 86.04 ± 4.89 | 0.29× | 0.28× |
+| `sort` | sort 500k lines from a pipe | 309.56 ± 27.98 | 153.65 ± 15.98 | 92.62 ± 13.98 | 0.50× | 0.30× |
+| `sort` | sort a sorted 500k-line file | 135.28 ± 13.77 | 34.42 ± 2.87 | 30.34 ± 3.08 | 0.25× | 0.22× |
+| `sort` | sort -c a sorted 500k-line file | 21.07 ± 2.48 | 7.73 ± 1.03 | 14.75 ± 1.43 | 0.37× | 0.70× |
+| `sort` | sort -m two sorted files | 102.46 ± 8.16 | 30.01 ± 1.84 | 95.87 ± 9.29 | 0.29× | 0.94× |
+
+Before this branch those rows read `join` 0.10x, `dircolors` 0.29x, `fmt`
+0.12x, `comm` 0.26x, `uniq` 0.55–0.86x, `seq 1 2 1000000` 0.88x (the
+builder take leak, #9179), `cat -n` 0.22x, `od -t x8` 0.18x.
+
 `shuf`, 2026-09-11, Linux x86-64 (GNU coreutils 9.4; uutils 0.0.24 as the
 Debian multi-call binary), a 62 MiB / 8 000 000-line file. Best of three
 wall-clock runs rather than mean plus sigma: the hyperfine run took longer
