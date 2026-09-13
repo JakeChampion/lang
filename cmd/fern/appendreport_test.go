@@ -83,3 +83,30 @@ func TestAppendReportNoSites(t *testing.T) {
 		t.Errorf("want an explicit empty-report line, got %q", got)
 	}
 }
+
+// A program calling a method — every real one does — lowers through the
+// same monomorph and shake passes a build runs; without them the report
+// died on the first method call with "indirect call from non-identifier
+// expression" and no coreutil could be reported on at all.
+func TestAppendReportCLIProgramWithMethodCalls(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(`import "std/i32";
+function grow(n: i32): string {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return xs.len().to_string();
+}
+function main(): i32 { print(grow(3)); return 0; }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runAppendReport(src, &out); err != nil {
+		t.Fatalf("runAppendReport: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "grow:5:35") || !strings.Contains(got, "in place") {
+		t.Errorf("report does not name grow's in-place append:\n%s", got)
+	}
+}
