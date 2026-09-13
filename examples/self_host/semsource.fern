@@ -243,12 +243,23 @@ function boolean_value(b: boolean): i32 {
     return 0;
 }
 
+// A bare name that is no binding is a unit variant of the expected enum, or a
+// module-level constant: the parser desugars `const` to a zero-parameter
+// function and the AST lowering calls one on a bare reference, so it is a
+// call here too. The checker types a reference to a function VALUE as a
+// function, never as the result its contract names, which keeps one from
+// being called.
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
     var value: i32 = lookup(s, id.name);
     if (value >= 0) { return Value { s: s, id: value }; }
-    var owner: string = union_name(checked(e, s));
+    var ty: typeinfo.Type = checked(e, s);
+    var owner: string = union_name(ty);
     if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
-    return refused(s, "unbound name is not a semantic value");
+    var at: i32 = ssasem.find_contract(s.contracts, id.name);
+    if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value"); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (ssasem.find_contract(s.calls, id.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), [], 0, id.name, contract.result);
 }
 
 function union_name(t: typeinfo.Type): string {
