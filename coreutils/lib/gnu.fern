@@ -1324,31 +1324,33 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
   if (g.cluster.len() > 0) {
     return short_option(g);
   }
-  var s: Getopt = g;
-  while (s.i < s.argv.len()) {
-    var a: string = s.argv[s.i];
+  while (g.i < g.argv.len()) {
+    var a: string = g.argv[g.i];
     if (a == "--") {
-      s = Getopt { ...s, i: s.i + 1 };
-      return (None, take_rest(s));
+      g = Getopt { ...g, i: g.i + 1 };
+      return (None, take_rest(g));
     }
     if (!is_option(a)) {
-      if (s.report_operands) {
-        return (Some(OptMatch { id: operand_id(), value: a, has_value: true, long_form: false }), Getopt { ...s, i: s.i + 1 });
+      if (g.report_operands) {
+        return (Some(OptMatch { id: operand_id(), value: a, has_value: true, long_form: false }), Getopt { ...g, i: g.i + 1 });
       }
-      if (s.in_order) {
-        return (None, take_rest(s));
+      if (g.in_order) {
+        return (None, take_rest(g));
       }
-      s = Getopt { ...s, i: s.i + 1, operands: s.operands.append(a) };
+      // Appended through the parameter itself so the operand list grows
+      // in place; a copy of the cursor as the root copies the list on
+      // every operand, which is quadratic in argv.
+      g = Getopt { ...g, i: g.i + 1, operands: g.operands.append(a) };
       continue;
     }
-    s = Getopt { ...s, i: s.i + 1 };
+    g = Getopt { ...g, i: g.i + 1 };
     if (a.starts_with("--")) {
-      return long_option(s, a);
+      return long_option(g, a);
     }
-    s = Getopt { ...s, cluster: slice_unchecked(a, 1, a.len()) + "" };
-    return short_option(s);
+    g = Getopt { ...g, cluster: slice_unchecked(a, 1, a.len()) + "" };
+    return short_option(g);
   }
-  return (None, s);
+  return (None, g);
 }
 
 // `(g).operands()` — every operand, in argv order, once `next()` has
