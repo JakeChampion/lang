@@ -558,16 +558,18 @@ That was worth +3 lowered, which is the measurement and not the histogram:
 the fn-value leaf is almost entirely the `astwalk` folds, and those are
 refused for a reason a form for the ADDRESS does not touch.
 
-**The `astwalk` fold family stays refused, and the reason is not
-vocabulary.** It is the largest single leaf — 547 functions between
-`fold_stmt_nodes` (224), `fold_stmt_spine` (142), `fold_expr_pruned` (119),
-`fold_stmt` (40), `fold_stmt_pruned` (12), `fold_expr_nodes` (7) and two more
-— and every one of them threads an accumulator typed by an ERASED type
-variable, for which this boundary has no sound unit rule:
+**The `astwalk` fold family stays refused, and the reason is not vocabulary.**
+`docs/ERASED-GENERICS-RC.md` states the three candidate unit rules for an
+erased accumulator and what each costs; the summary is here. It is the largest
+single leaf — 547 functions between `fold_stmt_nodes` (224), `fold_stmt_spine`
+(142), `fold_expr_pruned` (119), `fold_stmt` (40), `fold_stmt_pruned` (12),
+`fold_expr_nodes` (7) and two more — and every one of them threads an
+accumulator typed by an ERASED type variable, for which this boundary has no
+sound unit rule:
 
-- Fern does not monomorphise, so one body serves every instantiation and can
-  emit no retain and no release on the erased word: `__fern_rc_dec` on a `T`
-  bound to i32 would decrement an integer.
+- The per-module emit path runs no monomorphiser, so one body serves every
+  instantiation and can emit no retain and no release on the erased word:
+  `__fern_rc_dec` on a `T` bound to i32 would decrement an integer.
 - A fold REPLACES that accumulator once per visited node
   (`acc = visit(st, acc)`). Under the function-value convention the visitor
   lends its accumulator and hands back a unit of the caller's own, so every

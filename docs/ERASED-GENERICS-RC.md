@@ -24,9 +24,11 @@ and every one of its callers threads the accumulator by REPLACEMENT:
 
 Two facts about that line decide everything below.
 
-**An erased `T` is a raw machine word.** The self-hosted compiler's
-per-module emit path runs no monomorphiser (`astwalk.fern`, `map_expr_acc`),
-so one body serves every instantiation. `erased_passthrough_safe` and
+**An erased `T` is a raw machine word.** `internal/monomorph` clones a
+generic per instantiation on the native pipeline, but the self-hosted
+compiler's per-module emit path runs no monomorphiser at all
+(`astwalk.fern`, `map_expr_acc`), so there one body serves every
+instantiation. `erased_passthrough_safe` and
 `erased_widenable` in `irlower.fern` are the whole of what the backends will
 do with such a word, and both admit only a value that is PASSED THROUGH to
 `return` — never one the body uses. The accompanying invariant is that an
