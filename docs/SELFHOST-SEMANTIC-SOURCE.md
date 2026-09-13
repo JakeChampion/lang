@@ -383,7 +383,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,756 of its 7,713
+Measured against the whole loaded self-hosted compiler, 5,797 of its 7,713
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -434,7 +434,10 @@ The literal tree, the destination-typed literal and the string loop were
 worth +62 together: the iterable leaf (67) closed outright and the two
 literal mismatches with it. What remains of the binding-mismatch leaf is the
 lifted lambda body reading its captures out of the untyped `__env` word
-array — a closure shape, not a literal one.
+array — a closure shape, not a literal one. A shift whose count is another
+integer width — `n << k` with `n: i64` and `k: i32` — was the operator leaf
+(52); the count now reaches the operator through a `cast` to the value's
+width, which is the masking the runtime does anyway, worth +41.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,

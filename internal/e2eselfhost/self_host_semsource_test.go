@@ -265,6 +265,10 @@ function leaves(n: i32): Node[] {
     var xs: Node[] = [Leaf { n: n }, Twig { xs: [n] }];
     return xs;
 }
+
+// A shift count of another integer width is converted to the value's width
+// before the operator, the way the runtime masks it.
+function shift_wide(n: i64, k: i32): i64 { return (n << k) + (n >> 3); }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -1051,6 +1055,7 @@ function leaves_size(n: i32): i32 {
     var xs: Node[] = leaves(n);
     return xs.len() + node_size(xs[1]);
 }
+function shift_wide(n: i64, k: i32): i32 { return ((n << k) + (n >> 3)) as i32; }
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -1168,6 +1173,7 @@ function main(): i32 {
     print_int(wide_literal_tree(5000000000i64)); print(""); print_int(wide_literal_tree(0 - 9)); print("");
     print_int(count_byte("banana", 97 as u8)); print(""); print_int(count_byte("", 97 as u8)); print("");
     print_int(leaf_pair_size(3)); print(""); print_int(leaves_size(6)); print("");
+    print_int(shift_wide(3 as i64, 4)); print(""); print_int(shift_wide(1024 as i64, 2)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1205,7 +1211,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";

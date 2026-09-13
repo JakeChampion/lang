@@ -562,9 +562,20 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     var right: Value = expr(b.right, left.s, want);
     s = right.s;
     if (!s.ok) { return right; }
+    right = shift_count(b.op, right, s.values[left.id]);
+    s = right.s;
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract"); }
     return define(s, 9, [left.id, right.id], 0, b.op, ty);
+}
+
+// A shift count is masked to the value's width, so a count of another integer
+// width reaches the operator through the conversion the source never writes.
+function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
+    if (op != "<<" && op != ">>") { return count; }
+    var t: typeinfo.Type = count.s.values[count.id];
+    if (!ssasem.is_integer(t) || !ssasem.is_integer(value) || semtypes.equal(t, value)) { return count; }
+    return define(count.s, ssasem.cast(), [count.id], 0, "", value);
 }
 
 // Negation keeps its operand's type, so a destination width reaches the

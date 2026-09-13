@@ -913,3 +913,17 @@ func leaves {
     ret v6
 }
 
+modes 1 1 result i64
+v0:i64 v1:i32 v2:i64 v3:i64 v4:i64 v5:i64 v6:i64
+func shift_wide {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v1
+    v3 = binary << v0 v2
+    v4 = const_int 3
+    v5 = binary >> v0 v4
+    v6 = binary + v3 v5
+    ret v6
+}
+
