@@ -748,6 +748,11 @@ function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult 
     if (ins.str == "strbuf_reset") { return emit(r, ir.op_strbuf_reset()); }
     if (ins.str == "strbuf_take") { return emit(r, ir.op_strbuf_take()); }
     if (ins.str == "__memchr") { return emit(r, ir.op_memchr()); }
+    if (ins.str == "write") { return emit(r, ir.op_print_str()); }
+    if (ins.str == "exit") { return emit(r, ir.op_exit()); }
+    if (ins.str == "string_from_bytes_unchecked") { return emit(r, ir.op_str_from_bytes()); }
+    if (ins.str == "f64_bits") { return emit(r, ir.op_f64_bits()); }
+    if (ins.str == "f64_from_bits") { return emit(r, ir.op_f64_from_bits()); }
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 

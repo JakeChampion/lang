@@ -383,7 +383,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,797 of its 7,713
+Measured against the whole loaded self-hosted compiler, 5,875 of its 7,713
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -438,6 +438,16 @@ array — a closure shape, not a literal one. A shift whose count is another
 integer width — `n << k` with `n: i64` and `k: i32` — was the operator leaf
 (52); the count now reaches the operator through a `cast` to the value's
 width, which is the masking the runtime does anyway, worth +41.
+
+The no-contract refusal names its callee now, so the census splits that
+leaf by builtin on its own: the `astwalk` folds that take a function value
+(some 530 functions between them), `env` (145), `read_file` (26), and a
+tail of runtime builtins. Five of the tail took contracts for +78 —
+`write` and `exit` as void calls, `string_from_bytes_unchecked` handing
+back a fresh string, `f64_bits` and `f64_from_bits` as values — each
+lowered to the stack IR op the AST lowering already emits for it. What
+the folds and `env` need is a form for a function value and for the
+builtin `Option`, which are shapes, not vocabulary.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,

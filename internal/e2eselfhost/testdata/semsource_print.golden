@@ -927,3 +927,41 @@ func shift_wide {
     ret v6
 }
 
+modes 1 result i32
+v0:i32 v1:i32 v2:boolean v3:string v4:void v5:void
+func bail {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = binary > v0 v1
+    brif v2 b1 b2
+  b1:
+    v3 = const_str
+    v4 = call write v3
+    v5 = call exit v0
+    br b3
+  b2:
+    br b3
+  b3:
+    ret v0
+}
+
+modes 2 result string
+v0:u8[] v1:string
+func bytes_text {
+  b0:
+    v0 = param 0
+    v1 = call string_from_bytes_unchecked v0
+    ret v1
+}
+
+modes 1 result f64
+v0:f64 v1:i64 v2:f64
+func bit_round {
+  b0:
+    v0 = param 0
+    v1 = call f64_bits v0
+    v2 = call f64_from_bits v1
+    ret v2
+}
+
