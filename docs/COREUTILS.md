@@ -1979,7 +1979,9 @@ groups are the order of work. Each sub-issue names its group.
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
   `install` `touch` `truncate` (#9142) `mkfifo` (done) `mknod` (done)
-  `sync` (rename,
+  `sync` (done, on `sync()` and the fsync / fdatasync / syncfs handle
+  methods from #9181; a FIFO operand is answered from its stat because no
+  Fern open is non-blocking — see `sync.fern`'s header) (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
   with #9059; `rename`, `chmod` and `set_file_times` have since reached
