@@ -27,8 +27,10 @@ Unsupported constructs refuse the whole function with a reason.
 - i32 and boolean literals; locals typed by the checker's post-declaration
   scope, with the initializer's semantic value required to carry exactly that
   type; replacement; shadowing across nested scopes.
-- Array and tuple literals as `array_new` / `tuple_new`. An empty literal takes
-  its type from the binding or enclosing container it initializes.
+- Array and tuple literals as `array_new` / `tuple_new`. A literal takes its
+  type from the binding or enclosing container it initializes when that names
+  one, so a member widens to the union the tuple or array declares; an empty
+  literal has nothing else to name it.
 - Index and tuple-field projections as `array_get` / `tuple_get`.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
@@ -51,7 +53,9 @@ Unsupported constructs refuse the whole function with a reason.
   concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
   beside the scalar rules. A string constant and a concatenation are units
   of the function's own, released when dead; a literal's static box is
-  immortal to the runtime, so its release is a no-op.
+  immortal to the runtime, so its release is a no-op. `for c in s` over a
+  string is one `str_index` read per step, the byte typed u8 as the checker
+  types it, with the text borrowed for the loop's span.
 - The integer operators — arithmetic, division and remainder, the bitwise
   three, and both shifts — plus integer comparisons, boolean `==` / `!=`, unary
   `-` and `!`. These are new semantic kinds (the SSA `binary` / `unary` tags)
@@ -86,7 +90,11 @@ Unsupported constructs refuse the whole function with a reason.
   subtraction's two sides disagree. A 64-bit literal does not fit the semantic
   constant's i32 immediate at all, so it carries the literal's SOURCE TEXT
   instead — the form the backends splice straight into a 64-bit immediate, and
-  the one the AST lowering already uses for the same literal.
+  the one the AST lowering already uses for the same literal. An integer
+  literal TREE — `0 - 1`, `1 << 40` — is the width of its destination, or of
+  the operand beside it, before either side is produced, the way the checker
+  settles it; without that a 32-bit `0 - 1` fails the exact-type rule at an
+  i64 binding.
 
   It is a VALUE here and a record or variant FIELD, never an array or tuple
   ELEMENT. An array or tuple stores one i32-shaped word per slot —
@@ -375,7 +383,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,694 of its 7,713
+Measured against the whole loaded self-hosted compiler, 5,756 of its 7,713
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -391,9 +399,9 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (1,037), record
-literals (159), a binding whose type is not its value's (113) and a variant
-field whose type is unresolved (97). The string view was worth +355 once the sites that stored
+The leaves are now led by callees with no semantic contract (1,069), record
+literals (219), a variant field whose type is unresolved (97) and a binding
+whose type is not its value's (75). The string view was worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, as usual, against a
 leaf histogram that had ranked them differently. The declared field width
 was worth the 81 it was measured at — every construction with a wide field,
@@ -422,6 +430,11 @@ folds and the closures behind them — and the builtins whose result is an
 enum (`env`, `read_file`) or whose vocabulary is not here yet. The
 record-literal leaf is the same leaf in disguise: a probe keyed by the
 checker's reason showed every one a field whose value is such a call.
+The literal tree, the destination-typed literal and the string loop were
+worth +62 together: the iterable leaf (67) closed outright and the two
+literal mismatches with it. What remains of the binding-mismatch leaf is the
+lifted lambda body reading its captures out of the untyped `__env` word
+array — a closure shape, not a literal one.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,

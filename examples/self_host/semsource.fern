@@ -302,9 +302,16 @@ function tuple_element_type(t: typeinfo.Type, at: i32): typeinfo.Type {
 
 // An empty literal has no element to name its type; the binding or
 // enclosing container it initializes supplies the checked type.
+// A literal takes the destination's type when the destination names one:
+// a member element widens to the union the destination declares, which the
+// checker types the literal by its elements and lets the assignment widen.
+function destination_type(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
+    if (semtypes.concrete(expected, false)) { return expected; }
+    return checked(e, s);
+}
+
 function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type): Value {
-    var ty: typeinfo.Type = checked(e, s);
-    if (!semtypes.concrete(ty, false)) { ty = expected; }
+    var ty: typeinfo.Type = destination_type(e, s, expected);
     if (!semtypes.concrete(ty, false)) { return refused(s, "unresolved array literal type"); }
     var elem: typeinfo.Type = element_type(ty);
     var ids: i32[] = [];
@@ -320,8 +327,8 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
 }
 
 function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type): Value {
-    var ty: typeinfo.Type = checked(e, s);
-    if (!semtypes.concrete(ty, false)) { ty = expected; }
+    var ty: typeinfo.Type = destination_type(e, s, expected);
+    if (tuple_arity(ty) != t.elements.len()) { ty = checked(e, s); }
     var ids: i32[] = [];
     var types: typeinfo.Type[] = [];
     var at: i32 = 0;
@@ -528,10 +535,13 @@ function width_bearing(e: ast.Expr): boolean {
 function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) || ssasem.is_f64(t); }
 
 // The width an operator runs at, decided before either operand is produced so
-// that a literal on EITHER side takes it. An arithmetic result is that width,
-// which the checker's type for the whole expression names; a comparison's is
-// not, so it comes from whichever operand names one.
-function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State): typeinfo.Type {
+// that a literal on EITHER side takes it. A tree of unsuffixed literals
+// (`0 - 1`) is read at the destination's width, as the checker settles it,
+// since the checker types the tree alone at the default width. Otherwise an
+// arithmetic result is the width the checker's type for the whole expression
+// names; a comparison's is not, so it comes from whichever operand names one.
+function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): typeinfo.Type {
+    if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) { return expected; }
     var whole: typeinfo.Type = checked(e, s);
     if (operand_type(whole)) { return whole; }
     if (width_bearing(b.left)) {
@@ -545,9 +555,9 @@ function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State): typeinfo.Type 
     return typeinfo.unchecked();
 }
 
-function binary(e: ast.Expr, b: ast.ExprBinary, s: State): Value {
+function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): Value {
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
-    var want: typeinfo.Type = operand_width(e, b, s);
+    var want: typeinfo.Type = operand_width(e, b, s, expected);
     var left: Value = expr(b.left, s, want);
     var right: Value = expr(b.right, left.s, want);
     s = right.s;
@@ -810,7 +820,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
-        ast.ExprBinary(b) => { return binary(e, b, s); },
+        ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
         ast.ExprCall(c) => { return call(e, c, s, false); },
         _ => { return refused(s, "unsupported expression"); }
@@ -1204,7 +1214,9 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var it: Value = expr(fo.iter, s, typeinfo.unchecked());
     s = it.s;
     if (!s.ok) { return s; }
+    var text: boolean = ssasem.is_text(s.values[it.id]);
     var elem: typeinfo.Type = element_type(s.values[it.id]);
+    if (text) { elem = t_u8(); }
     if (!semtypes.concrete(elem, false)) { return fail(s, "unsupported iterable"); }
     var before: i32 = s.names.len();
     var outer: checker.Scope = s.scope;
@@ -1239,6 +1251,8 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
 
     var opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
     var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 0, "", elem);
+    // A string's element is one byte, read rather than projected.
+    if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 0, "", elem); }
     var latch: Arm = finish_arm(fo.body, bind(item.s, fo.var_name, item.id), header, count, scope);
     s = latch.s;
     if (!s.ok) { return s; }

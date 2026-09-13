@@ -236,6 +236,35 @@ function refused_view_element(s: string): i32 {
 // is, and the value is held by the array handed back, so a view is refused.
 function replace_at(own xs: i32[], i: i32, v: i32): i32[] { return xs.with(i, v); }
 function refused_with_view(own vs: string[], s: string): string[] { return vs.with(0, slice_unchecked(s, 0, 1)); }
+
+// An integer literal tree is the width of its destination: a subtraction
+// from zero binds an i64 with no conversion, and a literal beside a wide
+// operand is that operand's width.
+function wide_literal_tree(n: i64): i64 {
+    var x: i64 = 0 - 1;
+    var y: i64 = n + 1;
+    if (y < 0 - 2) { return x * 2; }
+    return y;
+}
+
+// A byte loop over a string: each step reads one u8 of the borrowed text.
+function count_byte(s: string, b: u8): i32 {
+    var n: i32 = 0;
+    for c in s { if (c == b) { n = n + 1; } }
+    return n;
+}
+
+// A literal takes the destination's type, so a member widens to the union
+// the tuple or array declares rather than the literal being typed by its
+// elements and refused at the binding.
+function leaf_pair(n: i32): (Node, i32) {
+    var p: (Node, i32) = (Leaf { n: n }, n);
+    return p;
+}
+function leaves(n: i32): Node[] {
+    var xs: Node[] = [Leaf { n: n }, Twig { xs: [n] }];
+    return xs;
+}
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
@@ -995,6 +1024,33 @@ enum Span { Empty, Wide(f64, string) }
     }
     return 0 - 1;
 }
+function wide_literal_tree(n: i64): i32 {
+    var x: i64 = 0 - 1;
+    var y: i64 = n + 1;
+    if (y < 0 - 2) { return (x * 2) as i32; }
+    return (y - 4999999990i64) as i32;
+}
+function count_byte(s: string, b: u8): i32 {
+    var n: i32 = 0;
+    for c in s { if (c == b) { n = n + 1; } }
+    return n;
+}
+function leaf_pair(n: i32): (Node, i32) {
+    var p: (Node, i32) = (Leaf { n: n }, n);
+    return p;
+}
+function leaves(n: i32): Node[] {
+    var xs: Node[] = [Leaf { n: n }, Twig { xs: [n, n + 1] }];
+    return xs;
+}
+function leaf_pair_size(n: i32): i32 {
+    var p: (Node, i32) = leaf_pair(n);
+    return node_size(p.0) + p.1;
+}
+function leaves_size(n: i32): i32 {
+    var xs: Node[] = leaves(n);
+    return xs.len() + node_size(xs[1]);
+}
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -1109,6 +1165,9 @@ function main(): i32 {
     print_int(unpack(3)); print(""); print_int(unpack_discard(2)); print(""); print_int(unpack_words("abc")); print("");
     print_int(based(2)); print(""); print_int(tagged(1)); print("");
     print_int(ticked(1)); print(""); print_int(ticked(0)); print(""); print_int(built("cde")); print(""); print_int(find_byte("abcabc", 99)); print("");
+    print_int(wide_literal_tree(5000000000i64)); print(""); print_int(wide_literal_tree(0 - 9)); print("");
+    print_int(count_byte("banana", 97 as u8)); print(""); print_int(count_byte("", 97 as u8)); print("");
+    print_int(leaf_pair_size(3)); print(""); print_int(leaves_size(6)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1146,7 +1205,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
