@@ -298,32 +298,47 @@ function line_each(ns: i32[]): i32 {
     return t;
 }
 
-// A function VALUE is a declaration's address in one word; a call through one
-// dispatches on that address. A function type spells no own, so an indirect
-// callee only lends the references it is handed and its result is a unit of
-// the caller's own. Refused: the address of a declaration that CONSUMES an
-// argument, a signature with a slot wider than the word the untagged indirect
-// call describes, a function value as a result, and one as an element.
+// A function VALUE is the environment box the lambda lift builds: the hoisted
+// body's address in slot 0, then the captures. A call through one is
+// environment-first, so the box is lent to the body as the environment it
+// reads its captures out of, and the result is a unit of the caller's own.
+// Refused: a capture that is a reference, a signature with a slot wider than
+// the word the untagged indirect call describes, a function value as a
+// result, and one as an element.
 function twice_it(x: i32): i32 { return x * 2; }
 function apply_int(f: (i32) => i32, x: i32): i32 { return f(x); }
 function use_apply(n: i32): i32 { return apply_int(twice_it, n); }
+function shift_by(k: i32, n: i32): i32 { return apply_int((x: i32): i32 => { return x + k; }, n); }
 function bound_fn(n: i32): i32 { var g: (i32) => i32 = twice_it; return g(n) + g(1); }
 function head_of_arr(xs: i32[]): i32 { return xs[0]; }
 function apply_arr(f: (i32[]) => i32, xs: i32[]): i32 { return f(xs) + f([9, 8]); }
 function lend_array(n: i32): i32 { var a: i32[] = [n, n + 1]; return apply_arr(head_of_arr, a); }
-function eat_len(own xs: i32[]): i32 { return xs.len(); }
-function refused_own_value(n: i32): i32 { return apply_arr(eat_len, [n]); }
+function pick_shift(k: i32, n: i32): i32 {
+    var g: (i32) => i32 = (x: i32): i32 => { return x + k; };
+    if (n > 2) { g = (x: i32): i32 => { return x - k; }; }
+    return g(n) + g(0);
+}
+function shift_loop(k: i32, n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + apply_int((x: i32): i32 => { return x * k; }, i); i = i + 1; }
+    return t;
+}
+function eat_text(own w: string): i32 { return w.len(); }
+function apply_text(f: (string) => i32, s: string): i32 { return f(s); }
+function refused_own_value(s: string): i32 { return apply_text(eat_text, s); }
+function refused_text_capture(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
 function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function refused_fn_result(): (i32) => i32 { return twice_it; }
 function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
-import "./parser"; import "./lexer"; import "./util";
+import "./parser"; import "./lexer"; import "./util"; import "./irlower";
 function main(): i32 {
     var src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var mod = parser.parse_module(lexer.tokenize(src));
+    var mod = irlower.lift_lambdas(parser.parse_module(lexer.tokenize(src)));
     for p in semsource.build_module(mod) {
         if (!p.ok) { print("refused " + p.why); continue; }
         var out: string = "";
@@ -1198,10 +1213,15 @@ function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
     }
     return t;
 }
-// Function values and the calls through them: an address handed to a produced
-// callee, a scalar and a reference argument lent across one, an indirect call
-// whose counted result the caller owns and one whose result it discards, and
-// an address carried through a branch join.
+// Function values and the calls through them. A value is the environment box
+// the lambda lift builds: a bare name reaches its callee through a trampoline
+// that ignores the box, a capturing lambda through one carrying its captures
+// in the slots after the address. The box is a unit of the constructing
+// function's own, so these cover where it dies — after the call that lent it,
+// once per step when a loop builds one, at the rebinding that replaces it, and
+// on the arm a branch join did not take. Also a scalar and a reference
+// argument lent across an indirect call, one whose counted result the caller
+// owns and one whose result it discards.
 @noinline function dbl(x: i32): i32 { return x * 2; }
 @noinline function negate(x: i32): i32 { return 0 - x; }
 @noinline function apply_int(f: (i32) => i32, x: i32): i32 { return f(x); }
@@ -1220,6 +1240,18 @@ function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
     var g: (i32) => i32 = dbl;
     if (n > 2) { g = negate; }
     return g(n);
+}
+@noinline function shift_by(k: i32, n: i32): i32 { return apply_int((x: i32): i32 => { return x + k; }, n); }
+@noinline function shift_loop(k: i32, n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + apply_int((x: i32): i32 => { return x * k; }, i); i = i + 1; }
+    return t;
+}
+@noinline function pick_shift(k: i32, n: i32): i32 {
+    var g: (i32) => i32 = (x: i32): i32 => { return x + k; };
+    if (n > 2) { g = (x: i32): i32 => { return x - k; }; }
+    return g(n) + g(0);
 }
 function main(): i32 {
     var a: i32[] = pick(0);
@@ -1346,6 +1378,8 @@ function main(): i32 {
     print_int(call_twice(3)); print(""); print_int(lend_array(2)); print("");
     print_int(lend_text(1)); print(""); print_int(box_via(4)); print("");
     print_int(pick_fn(3)); print(""); print_int(pick_fn(1)); print("");
+    print_int(shift_by(4, 5)); print(""); print_int(shift_loop(3, 4)); print("");
+    print_int(pick_shift(2, 3)); print(""); print_int(pick_shift(2, 1)); print("");
     var bxs: i32[] = fill(2);
     var bp: P = P { n: 1, xs: [1, 2] };
     print_int(sum_all(push_borrowed(bxs, 9))); print(""); print_int(bxs.len()); print("");
@@ -1396,7 +1430,10 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n"
+// shift_by(4, 5) adds the captured 4 to 5 for 9; shift_loop(3, 4) builds one
+// box per step and sums 3 * (0+1+2+3) = 18; pick_shift(2, 3) takes the second
+// arm for (3-2) + (0-2) = -1 and pick_shift(2, 1) the first for 3 + 2 = 5.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1405,7 +1442,7 @@ function main(): i32 {
     var av = args();
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var mod = checker.annotate_module(parser.parse_module(lexer.tokenize(src)));
+    var mod = irlower.lift_lambdas(checker.annotate_module(parser.parse_module(lexer.tokenize(src))));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var produced = semsource.build_module(mod);
@@ -1481,7 +1518,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
