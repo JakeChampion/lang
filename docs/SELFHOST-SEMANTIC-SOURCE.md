@@ -359,13 +359,20 @@ Unsupported constructs refuse the whole function with a reason.
   it trampolines — and the result is a unit of the caller's own the way a
   direct call's is. The box itself is lent too, never consumed.
 
-  A body with a COUNTED parameter is refused ("function value consumes an
-  argument"): it promises the opposite of that convention, and a function type
-  has no way to say so. An `own string` parameter reaches it, because the
-  trampoline un-owns only the leak-safe array. The AST path takes the shape
-  and leaks it — `apply(eat, a)` for `eat(own xs: i32[])` frees nothing —
-  which is a checker hole this boundary declines to inherit rather than a rule
-  it invents.
+  The ONE consuming position a function type has is a slot it spells with an
+  erased type variable. A generic body cannot release such a word, so the
+  caller of one hands its unit over and takes back the one the call returns
+  (`docs/ERASED-GENERICS-RC.md`), and the indirect call at that slot supplies
+  a move rather than a read.
+
+  A body with a COUNTED parameter at any OTHER slot is refused ("function
+  value consumes an argument"): it promises the opposite of that convention,
+  and a function type has no way to say so. An `own string` parameter reaches
+  it, because the trampoline un-owns only the leak-safe array. The AST path
+  takes the shape and leaks it — `apply(eat, a)` for `eat(own xs: i32[])`
+  frees nothing — which is a checker hole this boundary declines to inherit
+  rather than a rule it invents, and the same hole is why the erased slot's
+  own consuming convention cannot be given to a concrete visitor yet.
 
   A BARE name at a function-typed destination is a declaration's address,
   which is not what a value holds here, and is refused. The lift wraps one
@@ -396,12 +403,30 @@ Unsupported constructs refuse the whole function with a reason.
   a produced function receives, stores, projects and drops cells but never
   makes or reads one.
 
+- An ERASED type variable, as `typeinfo.TypeErased` — a type of its own,
+  distinct from the unknown a checker failure produces. It is ONE MACHINE WORD
+  and nothing at run time tells a pointer instantiation from a scalar one, so
+  a body holding one emits neither retain nor release on it: every erased
+  position is a MOVE and the caller of a generic hands over its unit and takes
+  back the one the call returns (`docs/ERASED-GENERICS-RC.md`). The word is a
+  value, a parameter, a result and a function-signature slot, and never an
+  element, a field or an operand — each of those needs a store width or an
+  element drop the variable does not name, so `T[]` and `(ast.Expr, T, boolean)`
+  refuse. A contract carrying one is a TEMPLATE the call site instantiates,
+  structurally and left to right, one type per variable. The move is PROVED,
+  not assumed: `ssaunits.erased_move_error` refuses a function where the
+  planner chose a retain for an erased value — one still live at its own
+  consumption, read after being passed or passed to two calls — or a drop for
+  one abandoned unconsumed. A REFERENCE instantiation is refused ("erased
+  instantiation carries a unit"), because the unit would reach a function value
+  that lends every argument it is given and nothing would release it.
+
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, the 32-bit float, the pointer integer width,
 unsigned negation, generic records, the struct,
 nested and `@`-bound destructuring forms, labelled loops, match guards and
 the pattern shapes above,
-`defer`, receiver methods, generics, external and async functions,
+`defer`, receiver methods, generic methods, external and async functions,
 and a value-returning body that falls through.
 
 ## Calls
@@ -493,6 +518,18 @@ census measures.
   borrowed or owned holder, bound, matched and dropped, with the holder handed
   in as an `own` parameter so the cell's release is produced code's.
 
+The erased-generic fixtures are where the move rule executes: a fold whose
+accumulator is replaced once per call, one nested through a SECOND generic so
+a variable binds a variable, and one carried through a loop phi — each at a
+scalar instantiation, with a heap value held ACROSS the fold and read back
+after churn so an over-release answers a sentinel rather than a length. The
+print golden pins the other direction, which no execution can reach: a fold
+that reads its accumulator after passing it ("erased value is live across its
+consumption"), one that abandons an erased word unconsumed ("erased value is
+abandoned unconsumed"), and a call whose variable binds a reference ("erased
+instantiation carries a unit") beside the `$wrapN` trampoline whose borrowed
+accumulator is the reason for that last one.
+
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
 thirty-two, a narrowing cast and a widening one, and a byte read out of a
@@ -554,10 +591,11 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the pointer integer width, the 32-bit float,
-the remaining builtins, the struct and nested destructuring forms, a closure
-capturing a reference, or generics, so no production consumer is switched and
-no AST ownership analysis is deleted.
+The producer does not yet admit the pointer integer width, the
+32-bit float, the remaining builtins, the struct and nested destructuring
+forms, a closure capturing a reference, or a generic whose erased variable
+instantiates to a reference, so no production consumer is switched and no AST
+ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -587,7 +625,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,563 of its 7,759
+Measured against the whole loaded self-hosted compiler, 6,588 of its 7,763
 functions produce, plan and physically lower. The three stages now report the
 same number: neither the unit planner nor physical RC refuses anything a
 producer admitted, so every remaining refusal is a producer's.
@@ -605,10 +643,11 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (739, of which
-the `astwalk` fold family is 695), a closure capturing a reference (246), a
-binding whose type is not its value's (75), a destructuring declaration (62)
-and a call target (49). The string view was
+The leaves are now led by an erased instantiation that carries a unit (659), a
+closure capturing a reference (266), a binding whose type is not its value's
+(75), a destructuring declaration (68) and a call target (49). Callees with no
+semantic contract, which led at 739 while the `astwalk` fold family sat behind
+a blanket refusal of every generic declaration, are 44. The string view was
 worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, against a leaf
 histogram that had ranked them differently. The declared field width was worth
@@ -695,9 +734,10 @@ was probed before building and neither is what its reason reads as:
   untyped word, which is a reinterpretation Fern has no operator for. The
   declared type is the truth and the READ is the lie, so the fix is a typed
   env representation — a per-closure schema the box is built and read
-  through — and not a relaxed check at this boundary. That is the same
-  function-value ABI decision the fold family waits on.
-- The 59 `unsupported destructuring declaration` are not a pattern shape at
+  through — and not a relaxed check at this boundary. It is NOT the erased
+  accumulator's decision, measured: admitting the erased word left this leaf
+  at exactly 75.
+- The 67 `unsupported destructuring declaration` are not a pattern shape at
   all. A probe keyed by the pattern text, the destructuring marker and the
   initializer's type found every one a FLAT tuple pattern — no nested
   position, no struct form, no `@` binder, no discard — refused only because
@@ -706,10 +746,11 @@ was probed before building and neither is what its reason reads as:
   marker the lift substitutes for a bare function name, and a marker is no
   declaration, so `check_expr` answers `undefined function` and the unknown
   collapses the whole call. Settling it would MOVE the leaf rather than
-  close it: all 59 call a generic `astwalk` walker (`scoped_stmts_reads`,
-  `map_expr_acc`, `map_stmt_acc`, `map_stmts_acc`) whose accumulator is an
-  erased type variable, which is the fold family's own refusal one leaf
-  further in.
+  close it: every one calls a generic `astwalk` walker (`scoped_stmts_reads`,
+  `map_expr_acc`, `map_stmt_acc`, `map_stmts_acc`) whose RESULT is a tuple
+  holding the erased accumulator — and that is refused for the reason an
+  erased array element is, not for the accumulator's unit rule, so the
+  consuming rule left this leaf where it was.
 
 The two small leaves beside them are the instantiated builtin union. The
 match scrutinee (8) is `Option` alone and the unresolved result type (3) is
@@ -854,45 +895,39 @@ executed it. One function type carries one ABI; the box is the one the only
 program this boundary reads has. The address form went with it, measured at
 zero.
 
-**The `astwalk` fold family stays refused, and the reason is not vocabulary.**
-`docs/ERASED-GENERICS-RC.md` states the three candidate unit rules for an
-erased accumulator and what each costs; the summary is here. It is the largest
-single leaf — 564 functions between `fold_stmt_nodes` (229),
-`fold_stmt_spine` (148), `fold_expr_pruned` (121), `fold_stmt` (41),
-`fold_stmt_pruned` (12), `fold_expr_nodes` (7) and two more — and
-every one of them threads an accumulator typed by an ERASED type variable, for
-which this boundary has no sound unit rule:
+**The `astwalk` fold family produces, plans and lowers.** All nine members —
+`fold_expr`, `fold_stmt`, `fold_expr_pruned`, `fold_stmt_pruned`,
+`fold_expr_nodes`, `fold_stmt_nodes`, `fold_stmt_spine`, `fold_stmt_own`,
+`fold_stmt_own_pruned` — and the `$wrapN` trampolines the lift builds inside
+them, under the consuming-accumulator rule `docs/ERASED-GENERICS-RC.md`
+states: an erased position is a MOVE, so one body is correct at every
+instantiation without knowing which it has, and the unit planner proves the
+move rather than assuming it.
 
-- The per-module emit path runs no monomorphiser, so one body serves every
-  instantiation and can emit no retain and no release on the erased word:
-  `__fern_rc_dec` on a `T` bound to i32 would decrement an integer.
-- A fold REPLACES that accumulator once per visited node
-  (`acc = visit(st, acc)`). Under the function-value convention the visitor
-  lends its accumulator and hands back a unit of the caller's own, so every
-  step creates one erased unit and abandons the previous one. Only the fold
-  sees those intermediates, and the fold is the one body that cannot release
-  them. Calling the erased result no unit instead leaks it at the caller;
-  calling it a unit makes the fold release a word it does not own at every
-  scalar instantiation.
+The leaf of 685 the family led is gone and the wall is one leaf further in:
+658 functions refuse at **erased instantiation carries a unit**, their own
+call of a fold whose `T` binds to a `string[]`, a `util.Diag[]` or a record.
+The rule hands a unit to a function value, and a function value LENDS every
+argument it is given — the concrete visitor and the `$wrapN` trampoline around
+a bare function name are both compiled with a borrowed accumulator, which the
+print golden pins — so the handed-over unit would be released by nobody and
+the call would leak one unit per visited node. Closing it needs the consuming
+convention in the AST lowering's own function-value path too, and the two
+halves cannot land one at a time: an `own` accumulator under a still-lending
+fold frees a unit the caller never handed over.
 
-So an erased word is soundly expressible only where it is PASSED THROUGH and
-never replaced, which no fold is, and a contract with an erased parameter
-needs a call-site instantiation this boundary also does not have. Two further
-facts sit underneath. The visitors the compiler
-actually passes do not agree with each other — a lifted `(s, a) => a` hands
-back the argument it was lent, where `fwd_scan_stmt` hands back a fresh box —
-so there is no one convention to write down even for the concrete callees.
-And the checker erases `T` for only half the family: only a PROMOTED
-generic's variables land in `FuncDecl.type_params`, and
-`type_from_name_erasing_tparams` has nothing to erase against without them,
-so `fold_expr`, `fold_stmt`, `fold_expr_pruned`, `fold_stmt_pruned` and
-`fold_stmt_own` reach this boundary with an unresolved `T` where
-`fold_expr_nodes`, `fold_stmt_nodes`, `fold_stmt_spine` and
-`fold_stmt_own_pruned` reach it erased. Admitting the family needs what a
-generic's erased result owns settled first, which is a language decision, not
-a vocabulary one. The other half of that question — whether an indirect
-callee may consume a reference — the closure form answers: it may not, and a
-body declaring an `own` parameter is refused rather than boxed.
+What the admission was worth, measured: +25 lowered, of which +21 is the
+erased word and +4 the helpers a complexity split added to `typeinfo`. That is
+the measurement and not the histogram — the family's 685 was never the
+payable number, because the accumulator of nearly every consumer is a
+reference.
+
+Two erased shapes stay refused for a reason the rule does not reach, and both
+are the same one: an erased word under a CONTAINER. `util.append_all[T]`'s
+`T[]` result and `astwalk.map_expr_acc`'s `(ast.Expr, T, boolean)` are refused
+as an unresolved result type, because releasing an array or a tuple walks its
+slots and an erased slot names no drop. That is the question Option 2's
+uniform boxing answers, not one the move rule can.
 
 The builtins whose result is an instantiated builtin union were worth +82
 lowered, against a leaf of 215 that ranked them at twice that. A probe —
@@ -907,12 +942,16 @@ of them. `env`, `read_line`, `read_file`, `read_dir`, `args`, `putchar`,
 `f32_from_bits`, `__rc_underflow_count` and `Some` all closed outright, and
 so did the match-scrutinee refusal.
 
-Next, by measured leaf: a closure capturing a reference (246), which is
-the hoisted body's untyped `__env` read and not a closure form, and the
-`astwalk` fold family (685 across its members) — one question, not two.
-The binding mismatch (75), the destructuring declaration (62) and the call
-target (49) are NOT next: all three are the closure env box, so they land
-behind the same function-value ABI decision and none is worth building against
-until it is taken. Then a production consumer that lowers produced functions
-through this pipeline and feeds `caller_sigs` to the remaining AST callers — a
-union result being the position that fixture measured a leak at.
+Next, by measured leaf: the erased instantiation that carries a unit (659),
+which is the function-value ABI question above and is a decision rather than a
+form; then a closure capturing a reference (266), which is the hoisted body's
+untyped `__env` read and not a closure form. The binding mismatch (75), the
+destructuring declaration (68) and the call target (49) are the same env box,
+so all three land behind that one decision and none is worth building against
+until it is taken — measured: admitting the erased word moved none of them,
+which is the probe those two notes predicted. Those four are 1,068 of the
+1,175 still refused; what is left beyond them is 44 callees with no contract,
+led by the 32-bit float. Then a production consumer that
+lowers produced functions through this pipeline and feeds `caller_sigs` to the
+remaining AST callers — a union result being the position that fixture
+measured a leak at.

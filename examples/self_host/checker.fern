@@ -465,6 +465,9 @@ pub function type_debug(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnknown(uk) => {
       return "unknown(" + uk.reason + ")";
+    },
+    typeinfo.TypeErased(e) => {
+      return "erased(" + e.name + ")";
     }
   }
   return "?";
@@ -705,6 +708,13 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
       }
     },
     typeinfo.TypeUnknown(_) => {
+      return false;
+    },
+    // The erased type VARIABLE of a generic. This checker never resolves an
+    // annotation to one — it is the semantic phase's reading of a type
+    // parameter — so the rule here is identity alone.
+    typeinfo.TypeErased(ae) => {
+      if let typeinfo.TypeErased(be) = b { return ae.name == be.name; }
       return false;
     }
   }
@@ -5105,6 +5115,9 @@ function type_label(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnknown(_) => {
       return "unknown";
+    },
+    typeinfo.TypeErased(e) => {
+      return e.name;
     }
   }
   return "unknown";

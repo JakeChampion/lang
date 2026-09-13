@@ -25,14 +25,14 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	}
 	// Preserve the existing discriminants and complete recursive field types.
 	// An intentional model extension must update this contract and its consumers.
-	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeVoid", "TypeUnknown"}
+	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeVoid", "TypeUnknown", "TypeErased"}
 	wantFields := [][]string{
 		{"is_char:boolean", "width:i32", "unsigned:boolean"},
 		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"elem:Type"},
 		{"name:string", "args:Type[]"}, {"elements:Type[]"},
 		{"param_types:Type[]", "ret_type:Type", "params_known:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},
-		{"traits:string"}, {"tag:i32"}, {"reason:string"},
+		{"traits:string"}, {"tag:i32"}, {"reason:string"}, {"name:string"},
 	}
 	if len(p.Structs) != len(wantNames) || len(p.Unions) != 1 || p.Unions[0].Name != "Type" {
 		t.Fatal("semantic type declarations changed; audit all semantic consumers")

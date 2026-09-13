@@ -134,6 +134,34 @@ function refused_string_method(s: string): string { return s.trim(); }
 // one: the golden pins the contract's INSTANTIATION as the value type, the
 // exhausted match's last arm with no test of its own, and the refusal of a
 // payload too wide for the box's one word.
+// ---- erased type variables (docs/ERASED-GENERICS-RC.md, option 1) --------
+// An erased type variable is ONE MACHINE WORD, and nothing at run time tells a
+// pointer instantiation from a scalar one, so a generic body emits neither
+// retain nor release on one: every erased position is a MOVE. The accumulator
+// is threaded by REPLACEMENT, the astwalk fold shape, so exactly one unit is
+// live at every point and the body releases nothing.
+function fold_two[T](a: T, visit: (i32, T) => T): T {
+    var acc: T = visit(1, a);
+    acc = visit(2, acc);
+    return acc;
+}
+function add_at(n: i32, a: i32): i32 { return a + n; }
+function folded(): i32 { return fold_two(10, add_at); }
+// READING the accumulator after passing it needs a retain this body cannot
+// emit: the runtime increment on an erased word touches a refcount at one
+// instantiation and an integer at another. The unit planner refuses it.
+function refused_reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
+    return join(visit(1, a), a);
+}
+// An erased word abandoned UNCONSUMED needs a release this body cannot emit
+// either, so the planner refuses that direction too.
+function refused_abandon[T](a: T, b: T): T { return b; }
+// A REFERENCE instantiation hands a unit to a function value, and a function
+// value LENDS every argument it is given — so the accumulator each step
+// abandons would leak one unit per step. Refused rather than admitted under a
+// rule that is wrong at that instantiation.
+function add_word(n: i32, a: string[]): string[] { return a.append("x"); }
+function refused_ref_acc(): i32 { var w: string[] = []; return fold_two(w, add_word).len(); }
 function opt_len(name: string): i32 {
     var n: i32 = 0;
     match (env(name)) {
@@ -407,6 +435,12 @@ function refused_cell_new(n: i32): i32 { var c: Cell[i32] = cell_new(n); return 
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
 import "./parser"; import "./lexer"; import "./util"; import "./irlower";
+// An erased type variable has no declaration spelling, so it is shown by the
+// name it is written with, bracketed to keep it apart from a concrete one.
+function shown(t: typeinfo.Type): string {
+    if let typeinfo.TypeErased(e) = t { return "[" + e.name + "]"; }
+    return typeinfo.spelling(t);
+}
 function main(): i32 {
     var src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
@@ -421,12 +455,12 @@ function main(): i32 {
         var i: i32 = 0;
         while (i < p.func.values.len()) {
             if (i > 0) { out = out + " "; }
-            out = out + "v" + util.i32_to_string(i) + ":" + typeinfo.spelling(p.func.values[i]);
+            out = out + "v" + util.i32_to_string(i) + ":" + shown(p.func.values[i]);
             i = i + 1;
         }
         var modes: string = "";
         for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
-        print("modes" + modes + " result " + typeinfo.spelling(p.func.result));
+        print("modes" + modes + " result " + shown(p.func.result));
         print(out);
         var plan = ssaunits.plan(p.func, p.modes);
         if (!plan.ok) { print("plan " + plan.why); }
@@ -1657,6 +1691,50 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
     if (seen < 0) { return 1; }
     return 0;
 }
+// ---- erased type variables (docs/ERASED-GENERICS-RC.md, option 1) --------
+// An erased type variable is ONE MACHINE WORD and nothing at run time tells a
+// pointer instantiation from a scalar one, so these bodies emit neither retain
+// nor release on the accumulator: every erased position is a MOVE, which
+// ssaunits proves rather than assumes. Consuming and producing are both no-ops
+// at the scalar instantiations run here, which is what makes ONE body correct
+// at every instantiation.
+@noinline function add_at(n: i32, a: i32): i32 { return a + n; }
+@noinline function or_over(n: i32, a: boolean): boolean { return a || n > 1; }
+@noinline function fold_acc[T](a: T, visit: (i32, T) => T): T {
+    var acc: T = visit(1, a);
+    acc = visit(2, acc);
+    return acc;
+}
+// The erased word handed on to a SECOND generic: a variable binds a variable,
+// which is one word at every instantiation.
+@noinline function fold_twice[T](a: T, visit: (i32, T) => T): T {
+    return fold_acc(fold_acc(a, visit), visit);
+}
+// The accumulator carried through a loop PHI, replaced once per step.
+@noinline function fold_loop[T](a: T, n: i32, visit: (i32, T) => T): T {
+    var acc: T = a;
+    var i: i32 = 0;
+    while (i < n) { acc = visit(i, acc); i = i + 1; }
+    return acc;
+}
+@noinline function folded_sum(): i32 { return fold_acc(10, add_at); }
+@noinline function folded_twice(): i32 { return fold_twice(0, add_at); }
+@noinline function folded_loop(n: i32): i32 { return fold_loop(0, n, add_at); }
+@noinline function folded_flag(): i32 { if (fold_acc(false, or_over)) { return 1; } return 0; }
+// A heap value HELD ACROSS an erased fold and read back after churn has had
+// every chance to reuse a box freed too early. An over-release reads a short
+// array and answers the sentinel rather than the length, so a wrong ANSWER —
+// not a balanced allocation count — is what a mistake here shows as.
+@noinline function held_across(n: i32): i32 {
+    var xs: string[] = ["alpha", "beta", "gamma"];
+    var t: i32 = fold_loop(n, 4, add_at);
+    var churn: string[] = [];
+    var i: i32 = 0;
+    while (i < 12) { churn = churn.append("junk"); i = i + 1; }
+    if (xs.len() != 3) { return 0 - 1; }
+    if (xs[2].len() != 5) { return 0 - 2; }
+    return t + churn.len();
+}
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -1822,6 +1900,9 @@ function main(): i32 {
     print_int(ord_bits("ab", "b")); print(""); print_int(ord_bits("b", "ab")); print("");
     print_int(ord_bits("ab", "ab")); print(""); print_int(ord_view("ab")); print("");
     print_int(ord_view("ba")); print(""); print_int(ord_temp("ab")); print("");
+    print_int(folded_sum()); print(""); print_int(folded_twice()); print("");
+    print_int(folded_loop(4)); print(""); print_int(folded_flag()); print("");
+    print_int(held_across(5)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1910,7 +1991,7 @@ function main(): i32 {
 // (4 + 8 = 12), and a string is under-or-equal and over-or-equal itself
 // (2 + 8 = 10). Two views of one string order by the bytes they point at, and
 // a concatenation this function owns orders before it is released.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1996,7 +2077,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

@@ -545,17 +545,130 @@ function is_variant_op(kind: i32): boolean {
 // is that variant.
 function needs_guard(kind: i32): boolean { return kind == variant_get() || kind == variant_as(); }
 
+// A contract carrying an erased position is a TEMPLATE, and the call site is
+// what instantiates it. Binding runs left to right over the arguments and is
+// structural, so a function-typed parameter's own erased slots bind through
+// it; one variable binds one type for the whole contract, and a second
+// position naming it must carry that same type.
+pub struct Binding { ok: boolean, why: string, names: string[], types: typeinfo.Type[] }
+
+pub function unbound(): Binding { return Binding { ok: true, why: "", names: [], types: [] }; }
+function unbindable(why: string): Binding { return Binding { ok: false, why: why, names: [], types: [] }; }
+
+function bound_at(b: Binding, name: string): i32 {
+    var i: i32 = 0;
+    while (i < b.names.len()) { if (b.names[i] == name) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+
+// What an erased variable may bind to: ONE machine word. A wide scalar has no
+// erased slot to ride in — the invariant `astwalk` states for its accumulator
+// and the wasm erased widening enforces — and a void binds nothing at all.
+// An erased argument binds an erased variable: that is a generic body handing
+// its own word on to another generic, which stays a word at every
+// instantiation.
+function instantiable(t: typeinfo.Type): boolean {
+    return semtypes.erased(t) || narrow_word(t);
+}
+
+pub function bind_type(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
+    if (semtypes.erased(want)) { return bind_variable(b, erased_name(want), got); }
+    if (semtypes.erased(got)) { return unbindable("erased argument at a concrete parameter"); }
+    return bind_within(b, want, got);
+}
+
+function erased_name(t: typeinfo.Type): string {
+    if let typeinfo.TypeErased(e) = t { return e.name; }
+    return "";
+}
+
+function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
+    if (!instantiable(got)) { return unbindable("erased instantiation is not one word"); }
+    var at: i32 = bound_at(b, name);
+    if (at >= 0) {
+        if (!semtypes.equal(b.types[at], got)) { return unbindable("erased variable binds two types"); }
+        return b;
+    }
+    return Binding { ...b, names: b.names.append(name), types: b.types.append(got) };
+}
+
+function bind_within(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
+    if let typeinfo.TypeFunc(x) = want {
+        if let typeinfo.TypeFunc(y) = got {
+            if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) { return unbindable("call argument type"); }
+            var i: i32 = 0;
+            while (i < x.param_types.len()) {
+                b = bind_type(b, x.param_types[i], y.param_types[i]);
+                if (!b.ok) { return b; }
+                i = i + 1;
+            }
+            return bind_type(b, x.ret_type, y.ret_type);
+        }
+        return unbindable("call argument type");
+    }
+    if (!semtypes.equal(want, got)) { return unbindable("call argument type"); }
+    return b;
+}
+
+pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
+    if (semtypes.erased(t)) {
+        var at: i32 = bound_at(b, erased_name(t));
+        if (at >= 0) { return b.types[at]; }
+        return t;
+    }
+    if let typeinfo.TypeFunc(fn) = t {
+        var params: typeinfo.Type[] = [];
+        for p in fn.param_types { params = params.append(substitute(p, b)); }
+        return typeinfo.TypeFunc { ...fn, param_types: params, ret_type: substitute(fn.ret_type, b) };
+    }
+    return t;
+}
+
+// An erased position is CONSUMING: the caller hands over a unit and takes back
+// the one the call returns. What it is handed to must release what it consumed
+// — and at a REFERENCE instantiation that is a real release, which a function
+// value does not perform: every other reference argument of one is LENT, and a
+// body declaring otherwise is refused where it is boxed. So a reference
+// instantiation is refused here rather than admitted under a rule that leaks
+// one unit per step; a SCALAR one is the case where consuming and producing
+// are both no-ops, and an ERASED one is a generic passing its own word on.
+pub function instantiation_error(b: Binding): string {
+    var i: i32 = 0;
+    while (i < b.types.len()) {
+        if (semtypes.needs_anchor(b.types[i]) && !semtypes.erased(b.types[i])) { return "erased instantiation carries a unit"; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
+    var b: Binding = unbound();
+    var i: i32 = 0;
+    while (i < args.len()) {
+        b = bind_type(b, c.params[i], args[i]);
+        if (!b.ok) { return b; }
+        i = i + 1;
+    }
+    var why: string = instantiation_error(b);
+    if (why != "") { return unbindable(why); }
+    return b;
+}
+
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var at: i32 = find_contract(f.calls, ins.str);
     if (at < 0) { return "missing call contract"; }
     var c: Contract = f.calls[at];
     if (ins.args.len() != c.params.len()) { return "call arity"; }
+    var args: typeinfo.Type[] = [];
+    for arg in ins.args { args = args.append(f.values[arg]); }
+    var b: Binding = instantiate(c, args);
+    if (!b.ok) { return b.why; }
     var i: i32 = 0;
-    while (i < ins.args.len()) {
-        if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) { return "call argument type"; }
+    while (i < args.len()) {
+        if (!semtypes.equal(substitute(c.params[i], b), args[i])) { return "call argument type"; }
         i = i + 1;
     }
-    if (!semtypes.equal(c.result, result)) { return "call result type"; }
+    if (!semtypes.equal(substitute(c.result, b), result)) { return "call result type"; }
     return "";
 }
 
@@ -722,7 +835,7 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
 
 function narrow_word(t: typeinfo.Type): boolean {
     if (is_func(t) || is_wide(t) || is_f64(t) || nests_func(t)) { return false; }
-    return semtypes.concrete(t, false);
+    return semtypes.word(t, false);
 }
 
 // A function value is a value and a parameter, never an element or a field:
@@ -784,12 +897,12 @@ function schema_error(f: Func): string {
     if (why != "") { return why; }
     why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
     if (why != "") { return why; }
-    if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
+    if (!semtypes.word(f.result, true)) { return "unresolved result type"; }
     // A void value is what a call to a void contract defines, and nothing
     // reads it: every operator and container contract asks for a concrete
     // operand, so a read refuses there.
-    for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
-    for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
+    for t in f.values { if (!semtypes.word(t, true)) { return "unresolved value type"; } }
+    for t in f.params { if (!semtypes.word(t, false)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }
     why = placement_error(f);
@@ -806,8 +919,8 @@ function contracts_error(calls: Contract[]): string {
         if (c.name == "") { return "empty call contract name"; }
         if (find_contract(calls, c.name) != i) { return "duplicate call contract"; }
         if (c.modes.len() != c.params.len()) { return "call contract mode dimensions"; }
-        for t in c.params { if (!semtypes.concrete(t, false)) { return "unresolved call parameter type"; } }
-        if (!semtypes.concrete(c.result, true)) { return "unresolved call result type"; }
+        for t in c.params { if (!semtypes.word(t, false)) { return "unresolved call parameter type"; } }
+        if (!semtypes.word(c.result, true)) { return "unresolved call result type"; }
         i = i + 1;
     }
     return "";
