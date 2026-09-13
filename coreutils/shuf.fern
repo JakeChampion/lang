@@ -110,12 +110,6 @@ function read_size(): i32 {
   return 262144;
 }
 
-// The block a line-by-line output is accumulated in before it is handed
-// to the writer, which has a block of its own (`gnu.block_bytes`).
-function out_block(): i32 {
-  return 16384;
-}
-
 // An input LARGER than this is sampled by the reservoir rather than
 // read whole, when -n asked for a head count and -r did not ask for
 // repeats. Exactly 8 MiB, and exactly `>`.
@@ -740,36 +734,32 @@ function terminator(a: Args): string {
 // missing one is supplied as.
 function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head: u64): void {
   var o: io_buffered.BufWriter = o0;
+  var h: usize = o.handle();
   var term: string = terminator(a);
   var i: i32 = 0;
+  // Every line is pushed straight into stdout's builder: the number or
+  // the line's range out of the held text, then the terminator.
   if (a.range) {
     while (i as u64 < head) {
-      o = o.write_u64(a.lo + perm[i]);
-      o = gnu.put(o, term);
+      gnu.push_u64(h, a.lo + perm[i]);
+      buf_push(h, term);
+      o = gnu.settle(o);
       i = i + 1;
     }
   } else if (src.boxed) {
     while (i as u64 < head) {
-      o = gnu.put(o, src.held[perm[i] as i32] + term);
+      buf_push(h, src.held[perm[i] as i32]);
+      buf_push(h, term);
+      o = gnu.settle(o);
       i = i + 1;
     }
   } else {
-    // The block is grown inline in a local, which is the only shape a
-    // string append grows in place (#8785), and the range append is
-    // fused rather than materialising each line first (#8784).
-    var buf: string = "";
     while (i as u64 < head) {
       var v: i64 = src.spans[perm[i] as i32];
-      buf = buf + slice_unchecked(src.text, line_start(v), line_start(v) + line_len(v));
-      buf = buf + term;
-      if (buf.len() >= out_block()) {
-        o = gnu.put(o, buf);
-        buf = "";
-      }
+      buf_push_range(h, src.text, line_start(v), line_start(v) + line_len(v));
+      buf_push(h, term);
+      o = gnu.settle(o);
       i = i + 1;
-    }
-    if (buf.len() > 0) {
-      o = gnu.put(o, buf);
     }
   }
   gnu.finish(o);
@@ -781,6 +771,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
 function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): void {
   var o: io_buffered.BufWriter = o0;
   var rs: Rand = rs0;
+  var h: usize = o.handle();
   var written: u64 = 0 as u64;
   var term: string = terminator(a);
   while (a.count == count_cap() || written < a.count) {
@@ -792,14 +783,15 @@ function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): 
     }
     var j: u64 = got.0;
     if (a.range) {
-      o = o.write_u64(a.lo + j);
-      o = gnu.put(o, term);
+      gnu.push_u64(h, a.lo + j);
     } else if (src.boxed) {
-      o = gnu.put(o, src.held[j as i32] + term);
+      buf_push(h, src.held[j as i32]);
     } else {
       var v: i64 = src.spans[j as i32];
-      o = gnu.put(o, slice_unchecked(src.text, line_start(v), line_start(v) + line_len(v)) + term);
+      buf_push_range(h, src.text, line_start(v), line_start(v) + line_len(v));
     }
+    buf_push(h, term);
+    o = gnu.settle(o);
     written = written + 1 as u64;
   }
   gnu.finish(o);
