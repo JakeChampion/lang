@@ -50,8 +50,10 @@ Unsupported constructs refuse the whole function with a reason.
   many fields as the schema declares, each naming a distinct slot, covers
   every slot exactly once.
 - String literals as the SSA `const_str` constant, string `+` as a fresh
-  concatenation and string `==` / `!=`, typed by `ssasem.binary_result`
-  beside the scalar rules. A string constant and a concatenation are units
+  concatenation, and every string comparison, typed by `ssasem.binary_result`
+  beside the scalar rules. Equality is the runtime's `str_eq`; an ordering is
+  its `str_cmp` — a signed i32 under, at or over zero — against a zero
+  constant, the same shape the AST lowering emits. A string constant and a concatenation are units
   of the function's own, released when dead; a literal's static box is
   immortal to the runtime, so its release is a no-op. `for c in s` over a
   string is one `str_index` read per step, the byte typed u8 as the checker
@@ -264,7 +266,7 @@ Unsupported constructs refuse the whole function with a reason.
 - The string view, `str` (`typeinfo.TypeString` tag 1). A slice IS one, as the
   checker types it, of an owned string or of another view; a `str` parameter
   is a borrowed reference like any other; a `str` binding holds one. Every
-  read — the length, a byte, a window, `==` / `!=` and `+` — is blind to which
+  read — the length, a byte, a window, a comparison and `+` — is blind to which
   string type holds the bytes (`ssasem.is_text`), and `+`'s result is owned.
   Physically a view is a box over the source's bytes carrying the immortal rc
   sentinel, so `ssarc` releases a view-typed unit through
@@ -370,7 +372,7 @@ Unsupported constructs refuse the whole function with a reason.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, the 32-bit float, the unsigned and
-pointer integer widths, string ordering, generic records, the struct,
+pointer integer widths, generic records, the struct,
 nested and `@`-bound destructuring forms, labelled loops, match guards and
 the pattern shapes above,
 `defer`, receiver methods, generics, external and async functions,

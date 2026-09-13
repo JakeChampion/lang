@@ -141,7 +141,7 @@ func semanticCases() []struct{ name, change, want string } {
 		{"string-constant-type", `graph = change(graph, 9, ssa.SInst { kind_tag: 5, result: 9, args: [], imm: 0, str: "a" });`, "string constant type"},
 		{"string-concat", `graph = change(graph, 5, ssa.SInst { kind_tag: 9, result: 5, args: [4, 4], imm: 0, str: "+" });`, ""},
 		{"string-equality", `graph = change(graph, 7, ssa.SInst { kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "==" });`, ""},
-		{"string-ordering", `graph = change(graph, 7, ssa.SInst { kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "<" });`, "binary operator contract"},
+		{"string-ordering", `graph = change(graph, 7, ssa.SInst { kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "<" });`, ""},
 		{"string-concat-type", `graph = change(graph, 9, ssa.SInst { kind_tag: 9, result: 9, args: [4, 4], imm: 0, str: "+" });`, "binary operator contract"},
 		{"physical-allocation", "graph = change(graph, 6, inst(14, 6, [5], 0));", "unsupported semantic operation"},
 		{"physical-load", "graph = change(graph, 4, inst(15, 4, [3, 1], 32));", "unsupported semantic operation"},

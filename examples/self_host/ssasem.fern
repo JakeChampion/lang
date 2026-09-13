@@ -550,10 +550,10 @@ function float_op(op: string): boolean {
 }
 
 // The integer operators and orderings at one width, equality on booleans;
-// string concatenation, a fresh string, and string equality. An operator
-// whose operands carry different integer types has no contract here: the
-// conversion is a cast the source has to write. String ordering and operator
-// overloads have none either.
+// string concatenation, a fresh string, and the string comparisons. An
+// operator whose operands carry different integer types has no contract here:
+// the conversion is a cast the source has to write. Operator overloads have
+// none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
     if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
     if (is_f64(left) && is_f64(right)) { return float_result(op, left); }
@@ -574,9 +574,12 @@ function float_result(op: string, t: typeinfo.Type): typeinfo.Type {
     return typeinfo.unchecked();
 }
 
+// A string `+` is concatenation; every comparison is the runtime's byte-order
+// compare, which orders the two boxes' bytes and is blind to which box holds
+// them.
 function string_result(op: string): typeinfo.Type {
     if (op == "+") { return typeinfo.TypeString { tag: 0 }; }
-    if (op == "==" || op == "!=") { return typeinfo.TypeBool { tag: 0 }; }
+    if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
 

@@ -619,11 +619,6 @@ function wrap_kind(t: typeinfo.Type): string {
     return "i32";
 }
 
-// Scalar operators are verified integer/boolean contracts; negation is the
-// stack IR's zero-minus form. A string `+` is the runtime's concatenation,
-// a fresh box; string equality reads both operands. The verifier admits no
-// other string operator (ssasem.string_result), so a string binary that is
-// not `+` is `==` or `!=`.
 // The width the operator RUNS at, which a comparison's boolean result does not
 // name — its operands do.
 function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
@@ -631,11 +626,17 @@ function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
     return 0;
 }
 
-// A string `+` is the runtime's concatenation, a fresh box; string equality
-// reads both operands. The verifier admits no other string operator
-// (ssasem.string_result), so a string binary that is not `+` is `==` or `!=`.
+// A string `+` is the runtime's concatenation, a fresh box; equality reads
+// both operands, and an ordering is `str_cmp` — which hands back a signed i32
+// under, at or over zero — against a zero constant. The verifier admits no
+// other string operator (ssasem.string_result).
 function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     if (ins.str == "+") { return emit(r, ir.op_str_concat()); }
+    if (ins.str != "==" && ins.str != "!=") {
+        r = emit(r, ir.op_str_cmp());
+        r = emit(r, ir.op_const_i32(0));
+        return emit(r, ir.op_bin(binary_kind(ins.str), 0, false));
+    }
     r = emit(r, ir.op_str_eq());
     if (ins.str == "!=") { return emit(r, ir.op_bin("not", 0, false)); }
     return r;
