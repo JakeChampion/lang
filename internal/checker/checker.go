@@ -3681,10 +3681,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			continue
 		}
 		params := make([]ast.Type, len(fn.Params))
+		owns := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
 			params[i] = p.Type
+			owns[i] = p.Own
 		}
-		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, Result: fn.ReturnType}
+		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
 		if len(fn.TypeParams) > 0 {
 			// Track generic decls so the call-site inference path
 			// can spot them and the monomorphisation pass knows
@@ -4240,6 +4242,30 @@ func methodTypeName(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) 
 // trait, because the flat name doubles as the Info.FuncSigs key and two
 // traits offering the same method for one type would otherwise collide
 // there as well.
+// paramSig is the function TYPE of a declared parameter list: the declared
+// types, and the `own` flags that say which slots the callee consumes.
+// definitelyScalar reports whether t is a value with no reference identity —
+// so no refcount, and nothing for an ownership transfer to move. An unknown
+// or parametric type is NOT one: it may stand for a reference at some
+// instantiation.
+func definitelyScalar(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.CharType, ast.VoidType:
+		return true
+	}
+	return false
+}
+
+func paramSig(params []ast.Param, result ast.Type) *ast.FuncType {
+	types := make([]ast.Type, len(params))
+	owns := make([]bool, len(params))
+	for i, p := range params {
+		types[i] = p.Type
+		owns[i] = p.Own
+	}
+	return &ast.FuncType{Params: types, ParamOwn: ast.OwnFlags(owns, len(types)), Result: result}
+}
+
 func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string {
 	key := typeName + "." + name
 	if trait != "" {
@@ -6687,6 +6713,14 @@ type checker struct {
 	// E051) can require that arguments passed to an `own` parameter are owned
 	// values the caller can transfer.
 	ownFuncs map[string][]bool
+	// callOwnFlags is the consuming-parameter mask at each CALL, resolved
+	// from the callee's type — the only source a call through a function
+	// value has. Read by the call-site ownership guard, which runs after
+	// the body is checked.
+	callOwnFlags map[*ast.Call][]bool
+	// scalarArgs names the argument expressions whose checked type carries
+	// no reference, so a consuming position takes nothing from the caller.
+	scalarArgs map[ast.Expr]bool
 
 	// shadowedGenericCalls records the Call nodes whose callee name
 	// matches a module-level generic function but resolves to a value
@@ -7914,7 +7948,7 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProj(x.Result)}
+		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProj(p))
 		}
@@ -7965,7 +7999,7 @@ func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings)}
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
 		}
@@ -8141,7 +8175,7 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substByName(x.Result, sub)}
+		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substByName(p, sub))
 		}
@@ -8436,7 +8470,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substituteType(x.Result, sub)}
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
@@ -11485,15 +11519,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	selfMoveArgs := map[ast.Expr]bool{}
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
+		if c.scalarArgs[e] {
+			return true
+		}
 		switch x := e.(type) {
 		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit:
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
 		case *ast.Ident:
-			return owned[x.Name] || selfMoveArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.FieldAccess:
-			return selfMoveArgs[e]
+			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
@@ -11539,13 +11576,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
 	// callees are conservatively skipped here — a later slice widens the guard.
 	guardCallArgs := func(x *ast.Call) {
-		id, ok := x.Callee.(*ast.Ident)
-		if !ok {
-			return
-		}
-		flags, isOwn := c.ownFuncs[id.Name]
+		flags, isOwn := c.callOwnFlags[x]
 		if !isOwn {
-			return
+			id, idOK := x.Callee.(*ast.Ident)
+			if !idOK {
+				return
+			}
+			if flags, isOwn = c.ownFuncs[id.Name]; !isOwn {
+				return
+			}
 		}
 		for i := 0; i < len(x.Args) && i < len(flags); i++ {
 			if flags[i] && !isOwnedExpr(x.Args[i]) {
@@ -11987,11 +12026,7 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
 		for _, fn := range localFns {
 			if c.mutualRecSiblings[fn.Name] {
-				sig := &ast.FuncType{Result: fn.ReturnType}
-				for _, p := range fn.Params {
-					sig.Params = append(sig.Params, p.Type)
-				}
-				s.names[fn.Name] = sig
+				s.names[fn.Name] = paramSig(fn.Params, fn.ReturnType)
 			}
 		}
 	} else {
@@ -14569,10 +14604,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	}
 	// Bind the function's name in the outer scope so subsequent code
 	// can call it.
-	sig := &ast.FuncType{Result: fn.ReturnType}
-	for _, p := range fn.Params {
-		sig.Params = append(sig.Params, p.Type)
-	}
+	sig := paramSig(fn.Params, fn.ReturnType)
 	outer.names[fn.Name] = sig
 
 	// Body scope: fresh root with the function's own params.
@@ -15867,8 +15899,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						substitutedParams[i] = substituteType(p, sub)
 					}
 					ft = &ast.FuncType{
-						Params: substitutedParams,
-						Result: substituteType(ft.Result, sub),
+						Params:   substitutedParams,
+						ParamOwn: ft.ParamOwn,
+						Result:   substituteType(ft.Result, sub),
 					}
 					methodSubResult = ft.Result
 				}
@@ -15937,6 +15970,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if cid, ok := n.Callee.(*ast.Ident); ok {
 			calleeOwnFlags = c.info.OwnFuncs[cid.Name]
 		}
+		// A call through a function VALUE has no declaration to read them
+		// from; the function type carries them (`(own T) => T`).
+		if len(calleeOwnFlags) == 0 && ft != nil {
+			calleeOwnFlags = ft.ParamOwn
+		}
+		// Record them for the call-site ownership guard, which runs after
+		// the body is checked and has no callee type of its own. A
+		// dispatch-rewritten method call is excluded: its receiver rides in
+		// Args[0] and the guard has never covered that shape.
+		if len(calleeOwnFlags) > 0 && !recvIsArg0 && n.Method == nil {
+			if c.callOwnFlags == nil {
+				c.callOwnFlags = map[*ast.Call][]bool{}
+			}
+			c.callOwnFlags[n] = calleeOwnFlags
+		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				c.setElemHintFor(n.Args[i], ft.Params[i])
@@ -15960,6 +16008,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.expectedType = nil
 			}
 			c.elemHint = nil
+			// A scalar argument carries no reference, so handing it to a
+			// consuming parameter transfers nothing and the ownership guard
+			// has nothing to check. Recorded here, where the argument's
+			// checked type is in hand.
+			if definitelyScalar(at) {
+				if c.scalarArgs == nil {
+					c.scalarArgs = map[ast.Expr]bool{}
+				}
+				c.scalarArgs[n.Args[i]] = true
+			}
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
 				// If the expected param is a bare type parameter that an
@@ -16751,11 +16809,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, name := range captureOrder {
 			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
 		}
-		ft := &ast.FuncType{Result: n.ReturnType}
-		for _, p := range n.Params {
-			ft.Params = append(ft.Params, p.Type)
-		}
-		return ft
+		return paramSig(n.Params, n.ReturnType)
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:

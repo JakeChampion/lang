@@ -11835,9 +11835,12 @@ func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
 	switch x := e.(type) {
 	case *ast.Lambda:
 		ft := &ast.FuncType{Result: x.ReturnType}
+		owns := make([]bool, 0, len(x.Params))
 		for _, p := range x.Params {
 			ft.Params = append(ft.Params, p.Type)
+			owns = append(owns, p.Own)
 		}
+		ft.ParamOwn = ast.OwnFlags(owns, len(ft.Params))
 		return ft
 	case *ast.MakeClosure:
 		sig, ok := b.info.FuncSigs[x.FuncName]
@@ -11847,6 +11850,7 @@ func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
 		ft := &ast.FuncType{Result: sig.Result}
 		if len(sig.Params) > 0 {
 			ft.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
+			ft.ParamOwn = ast.OwnFlags(sig.ParamOwn, len(ft.Params))
 		}
 		return ft
 	}
@@ -14159,7 +14163,7 @@ func (b *builder) call(n *ast.Call) error {
 	// pair pointer and dispatches through OpCallIndirect like any other
 	// function-typed value.
 	if ft := b.closureLiteralType(n.Callee); ft != nil {
-		slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
+		slots, types, err := b.emitIndirectCallArgs(n.Args, ft)
 		if err != nil {
 			return err
 		}
@@ -15790,6 +15794,18 @@ func (b *builder) callBody(n *ast.Call) error {
 	// stage-(b) post-call dec at those positions (else the temp is freed twice).
 	ownArgFlags := b.info.OwnFuncs[id.Name]
 	calleeSig := b.info.FuncSigs[id.Name]
+	// A call through a function-typed LOCAL has no declaration to read the
+	// consuming positions from; the function TYPE carries them instead
+	// (`(own i32[]) => i32`). Without this the caller reclaimed a fresh temp
+	// the callee had already freed — a double free on every such call.
+	if len(ownArgFlags) == 0 {
+		if _, isLocal := b.locals[id.Name]; isLocal {
+			if lt, err := b.localFuncType(id.Name); err == nil && lt.AnyOwn() {
+				ownArgFlags = lt.ParamOwn
+				calleeSig = lt
+			}
+		}
+	}
 	// ownedByCallee: the callee reclaims this argument — either an explicit `own`
 	// param or (Slice 2) an owned-by-default one. Both suppress the stage-(b)
 	// caller-side reclaim (the callee frees it) and, for owned-by-default, the
@@ -16025,11 +16041,25 @@ func (b *builder) callBody(n *ast.Call) error {
 // reclaimIndirectArgTemps: the result cannot be or contain the argument, a
 // closure cannot retain it in a capture (E049), and a function VALUE has no
 // `own` position for the callee to reclaim it through.
-func (b *builder) emitIndirectCallArgs(args []ast.Expr, resultType ast.Type) ([]int32, []ast.Type, error) {
-	reclaim := ast.RcFreeEnabled && resultCannotAliasArg(resultType)
+func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]int32, []ast.Type, error) {
+	reclaim := ast.RcFreeEnabled && resultCannotAliasArg(sig.Result)
 	var slots []int32
 	var types []ast.Type
-	for _, a := range args {
+	for ai, a := range args {
+		// A slot the function type spells `own` is CONSUMING: the argument
+		// is the callee's to release, so the caller neither stashes it for
+		// a post-call drop nor keeps a reference of its own.
+		if sig.OwnAt(ai) {
+			if err := b.expr(a); err != nil {
+				return nil, nil, err
+			}
+			if b.ownArgNeedsRetain(a) {
+				b.emitAliasInc(a)
+			} else {
+				b.emitBorrowedArrayOwnArgRetain(a)
+			}
+			continue
+		}
 		if reclaim {
 			slot, tt, ok, err := b.stashOwnedArgTemp(a)
 			if err != nil {
