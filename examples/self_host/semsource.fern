@@ -1305,10 +1305,7 @@ function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
 
 function arm_variant_name(a: ast.MatchArm): string {
     if (a.has_guard || a.alt_cont) { return ""; }
-    match (a.pattern) {
-        ast.PatVariant(pv) => { return pv.type_name; },
-        _ => { return ""; }
-    }
+    if let ast.PatVariant(pv) = a.pattern { return pv.type_name; }
     return "";
 }
 
