@@ -453,34 +453,36 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
 
 // The operations that write a value into a container's slot.
 function builds(k: i32): boolean {
-    return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
-        || k == ssasem.variant_new() || k == ssasem.append() || k == ssasem.with();
+    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(), ssasem.append(), ssasem.with()], k);
+}
+
+function kind_in(kinds: i32[], k: i32): boolean {
+    for kind in kinds { if (kind == k) { return true; } }
+    return false;
 }
 
 // Everything that is not a container operation: the constants, a parameter, a
 // copy, a phi, the scalar operators and a call.
 function value_op(k: i32): boolean {
-    return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8
-        || ssasem.scalar_op(k) || k == ssasem.call();
+    return kind_in([1, 2, 5, 6, 7, 8, ssasem.call()], k) || ssasem.scalar_op(k);
 }
 
 function container_op(k: i32): boolean {
-    return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new()
-        || k == ssasem.array_get() || k == ssasem.tuple_get() || k == ssasem.record_get()
-        || k == ssasem.length() || k == ssasem.append() || k == ssasem.with()
-        || k == ssasem.slice() || k == ssasem.str_index() || variant_op(k);
+    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
+        ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
+        ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index()], k)
+        || variant_op(k);
 }
 
 function variant_op(k: i32): boolean {
-    return k == ssasem.variant_new() || k == ssasem.variant_is() || k == ssasem.variant_get()
-        || identity_op(k);
+    return kind_in([ssasem.variant_new(), ssasem.variant_is(), ssasem.variant_get()], k) || identity_op(k);
 }
 
 // A struct-union's member is its own box, and a view and the string it
 // borrows are one box, so widening, narrowing and a string retag move no
 // bytes: the operand is already on the stack and the store below takes it.
 function identity_op(k: i32): boolean {
-    return k == ssasem.variant_up() || k == ssasem.variant_as() || k == ssasem.str_as();
+    return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as()], k);
 }
 
 function supported_op(k: i32): boolean { return value_op(k) || container_op(k); }

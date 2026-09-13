@@ -824,11 +824,9 @@ function destructures(v: ast.StmtVar): boolean {
 // tuple's element exactly; a discard is a binding no read follows. A nested
 // position, the struct form and the `@` binder are refused.
 function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-    if (parser.is_destr_marker(v.type_name)) { return fail(s, "unsupported destructuring declaration"); }
-    var names: string[] = pattern_names(v.name);
-    for name in names { if (name.len() == 0 || name[0] == b'(') { return fail(s, "unsupported destructuring declaration"); } }
+    var names: string[] = flat_names(v);
     var ty: typeinfo.Type = checked(v.init, s);
-    if (tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    if (names.len() == 0 || tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var whole: Value = expr(v.init, s, ty);
     s = whole.s;
@@ -844,6 +842,15 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
         i = i + 1;
     }
     return State { ...s, scope: after };
+}
+
+// The names of a flat tuple pattern, and none for the struct form, the `@`
+// binder or a nested position.
+function flat_names(v: ast.StmtVar): string[] {
+    if (parser.is_destr_marker(v.type_name)) { return []; }
+    var names: string[] = pattern_names(v.name);
+    for name in names { if (name.len() == 0 || name[0] == b'(') { return []; } }
+    return names;
 }
 
 function tuple_arity(t: typeinfo.Type): i32 {
