@@ -737,10 +737,11 @@ pub struct LowerFrame {
     // (aliased_array_names_of) and threaded read-only. The in-place self-reassign
     // `a = a.with(i, v)` (an arr_set on the assumption `a` is the sole owner) is
     // UNSOUND when `a` is aliased — the in-place write mutates the buffer the
-    // alias still reads (#3599). When the target is in this set we instead lower
-    // the `.with` as a value-producing CLONE (lower_arr_with_value) and store it
-    // back, leaving the aliased buffer untouched (correct, if leak-y, ahead of
-    // the full Perceus refcount-guarded reuse). Return-position aliases
+    // alias still reads (#3599). A scalar-element local reads its count at run
+    // time instead (lower_counted_arr_with); for the element kinds that path
+    // does not admit, a target in this set lowers the `.with` as a
+    // value-producing CLONE (lower_arr_with_value) stored back, leaving the
+    // aliased buffer untouched. Return-position aliases
     // (`return EvalOut { heap: heap }`) are deliberately NOT counted: the value
     // moves out at function exit, after all in-place mutations, so it creates no
     // observable shared-buffer hazard — and counting it would wrongly disable the
@@ -8924,6 +8925,20 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
     rs = rs.emit(ir.op_br(0));   // back-edge to header (re-advances)
     rs = rs.emit(ir.op_end());
     return rs.emit(ir.op_end()).exit_loop();
+}
+
+// foreach_reads_snapshot: the single-variable `for x in <EXPR>` iterates a
+// hidden local holding the iterable's entry value rather than reading the
+// iterable per iteration. True for any non-ident iterable, and for an array
+// LOCAL the body assigns: the bare-ident path reads the slot on every
+// iteration, so `for x in a { a = a.with(…) }` would iterate the body's own
+// rebinding, where the loop reads the value `a` held at entry.
+function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma: boolean, s: LowerState): boolean {
+    if (var_comma) { return false; }
+    if (!iter_ident) { return true; }
+    var fslot: i32 = s.slot_of(bare_ident_name(fr.iter));
+    if (fslot < 0 || !s.is_arr_slot(fslot) || s.map_type_of(fslot).len() > 0) { return false; }
+    return util.index_of_str(body_assign_targets(fr.body), bare_ident_name(fr.iter)) >= 0;
 }
 
 // lower_foreach_snapshot lowers `for x in <EXPR>` where the iterable is not a
@@ -23795,8 +23810,9 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             _ => {}
                         }
                         if (self_recv && wfa.field == "with" && wc.args.len() == 2) {
-                            if (owned_scalar_array_slot(s, slot)) {
-                                return lower_owned_arr_with(wfa.obj, wc.args[0], wc.args[1], slot, s);
+                            var wkind: i32 = with_count_kind(s, slot);
+                            if (wkind > 0) {
+                                return lower_with_by_count(wkind, wfa.obj, wc.args[0], wc.args[1], slot, s);
                             }
                             // ALIASED target (#3599): `a` has a lasting local
                             // alias (`var b = a`, `H { xs: a }`, …), so an
@@ -23804,8 +23820,9 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // alias still reads. Lower as a value-producing
                             // CLONE (lower_arr_with_value: copy then arr_set
                             // into the sole-owned clone) and store it back —
-                            // the aliased buffer is left untouched. Sole-owner
-                            // (unaliased) slots keep the in-place arr_set below.
+                            // the aliased buffer is left untouched. Reached only
+                            // by element kinds the counted paths above do not
+                            // admit; sole-owner slots keep the in-place arr_set.
                             if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
@@ -23837,26 +23854,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     return emit_arrstruct_with_store(wc.args[0], wc.args[1], slot, awsty, s);
                                 }
                             }
-                            var ws: LowerState = s.emit(ir.op_load_local(slot));
-                            ws = lower_expr(wc.args[0], ws);
-                            if (!ws.ok) { return ws; }
-                            // i64[] / u64[]: 8-byte element store (u64 rides
-                            // the i64 width; the raw store is signedness-
-                            // agnostic). arr_set is 8-byte-slot on the register
-                            // backends and arr_set_i64 picks i64.store on wasm.
-                            if (s.is_i64arr_slot(slot) || (s.is_arr_slot(slot) && s.is_u64_slot(slot))) {
-                                ws = lower_i64(wc.args[1], ws);
-                                if (!ws.ok) { return ws; }
-                                return ws.emit(ir.op_arr_set_i64());
-                            }
-                            if (s.is_f64arr_slot(slot)) {
-                                ws = lower_expr(wc.args[1], ws);
-                                if (!ws.ok) { return ws; }
-                                return ws.emit(ir.op_arr_set(64));
-                            }
-                            ws = lower_expr(wc.args[1], ws);
-                            if (!ws.ok) { return ws; }
-                            return ws.emit(ir.op_arr_set(32));
+                            return lower_plain_arr_with_store(wc.args[0], wc.args[1], slot, s);
                         }
                         if (self_recv && wfa.field == "append" && wc.args.len() == 1) {
                             // f64[] (8-byte float element): lower the value as an
@@ -24795,7 +24793,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
             return lf.emit(ir.op_end()).exit_loop();
         }
     }
-    if (!for_iter_ident && !for_var_comma) {
+    if (foreach_reads_snapshot(fr, for_iter_ident, for_var_comma, s)) {
         return lower_foreach_snapshot(fr.var_name, fr.iter, fr.body, s);
     }
     // `for k, v in m` over a map LOCAL → snapshot keys()/values() into
@@ -26034,6 +26032,65 @@ function arr_elem_kind(obj: ast.Expr, s: LowerState): string {
     return "i32";
 }
 
+// with_count_kind names the count-reading lowering `a = a.with(i, v)` takes
+// for the target slot: 1 an `own` scalar-array parameter, 2 a local holding one
+// counted reference to a scalar buffer, 3 a scalar slot whose ownership is the
+// hidden "$ownflag" (a borrowed parameter or projection the body rebinds), 0
+// none — the element kinds these do not admit keep their own arms.
+function with_count_kind(s: LowerState, slot: i32): i32 {
+    if (owned_scalar_array_slot(s, slot)) { return 1; }
+    if (!slot_holds_scalar_elems(s, slot)) { return 0; }
+    if (arr_slot_shallow_release_ok(s, slot)) { return 2; }
+    if (s.ownflag_slot_of(slot) >= 0) { return 3; }
+    return 0;
+}
+
+function lower_with_by_count(kind: i32, obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slot: i32, s: LowerState): LowerState {
+    if (kind == 1) { return lower_owned_arr_with(obj, idx, val, slot, s); }
+    if (kind == 2) { return lower_counted_arr_with(obj, idx, val, slot, s); }
+    return lower_flagged_arr_with(obj, idx, val, slot, s.ownflag_slot_of(slot), s);
+}
+
+// lower_plain_arr_with_store is the in-place `arr_set` behind `a = a.with(i, v)`
+// on a slot no counted path admits: the store assumes the slot is the sole
+// owner. i64[] / u64[] take the 8-byte element store (u64 rides the i64 width;
+// the raw store is signedness-agnostic), f64[] the 8-byte float one.
+function lower_plain_arr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: LowerState): LowerState {
+    var ws: LowerState = s.emit(ir.op_load_local(slot));
+    ws = lower_expr(idx, ws);
+    if (!ws.ok) { return ws; }
+    if (s.is_i64arr_slot(slot) || (s.is_arr_slot(slot) && s.is_u64_slot(slot))) {
+        ws = lower_i64(val, ws);
+        if (!ws.ok) { return ws; }
+        return ws.emit(ir.op_arr_set_i64());
+    }
+    if (s.is_f64arr_slot(slot)) {
+        ws = lower_expr(val, ws);
+        if (!ws.ok) { return ws; }
+        return ws.emit(ir.op_arr_set(64));
+    }
+    ws = lower_expr(val, ws);
+    if (!ws.ok) { return ws; }
+    // A bare array local stored as a ROW of a nested array is held by the
+    // container too, so the container takes a count of it — the `.with` twin of
+    // the append arm's retain. Without it the local's exit release frees a row
+    // the container still reads, and an in-place update of the local rewrites
+    // the row.
+    if (s.is_arrarr_slot(slot) && s.is_arr_slot(s.slot_of(bare_ident_name(val)))) {
+        ws = ws.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    }
+    return ws.emit(ir.op_arr_set(32));
+}
+
+// bare_ident_name returns the name a bare identifier expression spells, or "".
+function bare_ident_name(e: ast.Expr): string {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // Own scalar-array updates retain the evaluated receiver while index/value
 // effects run. Releasing the destination afterwards leaves the receiver's
 // counted unit available for a runtime uniqueness test. Scratch ownership is
@@ -26094,6 +26151,120 @@ function lower_owned_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slot:
     st = st.emit(ir.op_store_local(slot));
     st = st.emit(ir.op_const_i32(0));
     return st.emit(ir.op_store_local(base));
+}
+
+// lower_counted_arr_with lowers `a = a.with(i, v)` for a LOCAL scalar-element
+// array whose slot holds one counted reference (arr_slot_shallow_release_ok):
+// the rc-guarded copy-on-write native's `__fern_arr_cow_inplace` performs. The
+// index and value are evaluated once, in source order, then the slot's count is
+// read: a sole owner stores in place; a shared buffer is copied (a fresh rc 1
+// clone), the slot's reference to the original given back, and the clone bound
+// in its place, so every later update of the same slot finds it unique. The
+// static alias scan cannot separate the first iteration of a loop from the
+// rest, which is why a static gate cloned on every one.
+function lower_counted_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slot: i32, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var iname: string = "$cwi" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(iname);
+    var index: i32 = st.slot_of(iname);
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(index));
+
+    var vname: string = "$cwv" + util.i32_to_string(st.locals.len());
+    st = st.add_local(vname);
+    var value: i32 = st.slot_of(vname);
+    if (kind == "i64") {
+        st = st.mark_i64(value, true);
+        st = lower_i64(val, st);
+    } else {
+        if (kind == "f64") { st = st.mark_f64(value, true); }
+        st = lower_expr(val, st);
+    }
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(value));
+
+    var width: i32 = 32;
+    if (kind != "i32") { width = 64; }
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_else());
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_arr_slice(width));
+    st = emit_arr_store(st, slot, false, true);
+    st = st.emit(ir.op_end());
+
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(index));
+    st = st.emit(ir.op_load_local(value));
+    if (kind == "i64") { return st.emit(ir.op_arr_set_i64()); }
+    return st.emit(ir.op_arr_set(width));
+}
+
+// lower_flagged_arr_with is lower_counted_arr_with for a slot whose ownership is
+// the runtime "$ownflag" bit — a borrowed array parameter or a foreach / match
+// scalar-array projection the body rebinds. The slot's count is read only when
+// the flag says this frame owns the reference; a borrow (flag 0) is copied
+// whatever its count reads, since the owner's sole reference is not ours to
+// write through. The store is the flag's own (emit_consumed_param_store): it
+// releases an owned predecessor and sets the flag, so the next update finds a
+// buffer this frame holds alone.
+function lower_flagged_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slot: i32, flag: i32, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var iname: string = "$fwi" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(iname);
+    var index: i32 = st.slot_of(iname);
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(index));
+
+    var vname: string = "$fwv" + util.i32_to_string(st.locals.len());
+    st = st.add_local(vname);
+    var value: i32 = st.slot_of(vname);
+    if (kind == "i64") {
+        st = st.mark_i64(value, true);
+        st = lower_i64(val, st);
+    } else {
+        if (kind == "f64") { st = st.mark_f64(value, true); }
+        st = lower_expr(val, st);
+    }
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(value));
+
+    var uname: string = "$fwu" + util.i32_to_string(st.locals.len());
+    st = st.add_local(uname);
+    var uniq: i32 = st.slot_of(uname);
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(uniq));
+    st = st.emit(ir.op_load_local(flag));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(uniq));
+    st = st.emit(ir.op_end());
+
+    var width: i32 = 32;
+    if (kind != "i32") { width = 64; }
+    st = st.emit(ir.op_load_local(uniq));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_else());
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_arr_slice(width));
+    st = emit_arr_store(st, slot, false, true);
+    st = st.emit(ir.op_end());
+
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(index));
+    st = st.emit(ir.op_load_local(value));
+    if (kind == "i64") { return st.emit(ir.op_arr_set_i64()); }
+    return st.emit(ir.op_arr_set(width));
 }
 
 // lower_arr_with_value lowers `obj.with(idx, val)` as a VALUE-PRODUCING
@@ -27703,7 +27874,8 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
         var fl: i32 = st.ownflag_slot_of(i);
         if (fl >= 0 && has_ret && !named) { ret_names = astwalk.collect_idents_expr(ret, []); named = true; }
         if (fl >= 0 && (util.index_of_str(ret_names, st.locals[i].slot_name) < 0
-            || (has_ret && rebind_call_same_dec(ret, st.locals[i].slot_name, st)))) {
+            || (has_ret && rebind_call_same_dec(ret, st.locals[i].slot_name, st))
+            || ret_type_cannot_hold_buffer(st.frame.cur_ret))) {
             st = st.emit(ir.op_load_local(fl));
             st = st.emit(ir.op_if(0));
             st = st.release(i, "__fern_rc_dec", "consumed-param-exit");
@@ -27712,6 +27884,14 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
         i = i + 1;
     }
     return st;
+}
+
+// ret_type_cannot_hold_buffer: a value of the declared return type `t` is
+// never an array buffer nor anything that can reach one, so a parameter named
+// in the returned expression (`return p[0] + p[1]`) is read there, not handed
+// back.
+function ret_type_cannot_hold_buffer(t: string): boolean {
+    return t == "" || t == "void" || t == "string" || t == "u8" || t == "char" || is_scalar_type_name(t) || t == "f32";
 }
 
 // arr_slot_shallow_release_ok: this array LOCAL holds a counted reference whose
@@ -27731,6 +27911,20 @@ function arr_slot_shallow_release_ok(s: LowerState, slot: i32): boolean {
         || slot_is_reclaimable_structarr(s, slot) || slot_is_reclaimable_strarr(s, slot)) { return false; }
     if (darr_kinds_of(s, s.reclaim_site_key(slot)).len() > 0) { return false; }
     return !reclaim_has(s.frame.reclaimable_names, "ENVCAP:", s.reclaim_site_key(slot));
+}
+
+// slot_holds_scalar_elems: the array in slot `i` stores by-value elements, so a
+// copy of its buffer duplicates no reference and an overwritten element owes no
+// release. `char[]` records "char" as its element type and is one. A capture
+// cell (`$cell$x`, the one-element box a closure and its owner share) is not:
+// every write to it must reach the other holder, so it never copies.
+function slot_holds_scalar_elems(s: LowerState, i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    var li: LocalInfo = s.locals[i];
+    if (li.is_cell || is_mcap_cell_name(li.slot_name)) { return false; }
+    if (!li.is_arr || li.is_strarr || li.is_arrarr || li.is_closurearr || li.is_fnarr) { return false; }
+    var tags: string = li.opt_type + li.arrarr_elem + li.fnarr_elem + li.map_type;
+    return tags.len() == 0 && (li.struct_type.len() == 0 || li.struct_type == "char");
 }
 
 pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean): LowerState {
@@ -33542,7 +33736,8 @@ function alias_names_in_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
 // it: `arm64_write_word(own buf: i32[], …)` consumes its buffer precisely so
 // the rc check sees a unique owner, and E051 makes that annotation trustworthy
 // at every call site. So the rule is ownership, not syntax — an `own` param
-// keeps the fast path, a borrowed one clones.
+// keeps the fast path, a borrowed one copies (once, for a scalar-element array
+// whose rebinds carry the ownership flag; on every update otherwise).
 //
 // The `own`-param + field-clear idiom (`var code = a.code; a = A { ...a, code:
 // [] };` — arm64_asm_resolve's three quadratic patch loops, #6011) stays
