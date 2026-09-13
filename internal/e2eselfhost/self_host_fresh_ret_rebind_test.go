@@ -31,18 +31,20 @@ import (
 // so its `rebind` scope exercises only the clean spelling. A row added there
 // would not have caught it either.
 //
-// THREE SHAPES STAY REFUSED, and each is an escape the credit must not reach —
-// they keep their pre-existing leak deliberately, so they assert their exit code
-// only, never balance. If one starts balancing, a gate that declines it has
-// stopped firing:
+// TWO SHAPES STAY REFUSED, and each holds a live ALIAS of the box the rebind
+// orphans, so the credit must not reach it. They keep their leak and assert
+// their exit code only, never balance. If one starts balancing, a gate that
+// declines it has stopped firing:
 //
 //   - `alias_into_container`: the old value is appended to a live `S[]` before
 //     the rebind, so releasing at the rebind would free a box the container
 //     still points at.
 //   - `field_moved_out`: `var held: string = s.name` carries a field out of the
 //     box the rebind orphans; the deep drop would free a live buffer.
-//   - `rebind_then_return`: the final value escapes, so the frame owns neither
-//     end of the chain.
+//
+// A `return` is not such an alias, so `rebind_then_return` balances: nothing
+// reads the orphaned box after the rebind, and the returned one is the
+// caller's to release.
 //
 // Every `want` was measured against the NATIVE x86-64 backend, never read off
 // the self-host run under test. The U-shaped rows are wrong-ANSWER probes as
@@ -86,8 +88,8 @@ type freshRetRebindCase struct {
 	src  string
 	want int
 	// balance: the run must end at live_bytes 0 with allocs == frees. False for
-	// the three escape shapes the credit is refused for — they keep their
-	// pre-existing leak, and asserting balance would pin the wrong behaviour.
+	// the two aliasing shapes the credit is refused for — they keep their
+	// leak, and asserting balance would pin the wrong behaviour.
 	balance bool
 }
 
@@ -203,8 +205,10 @@ function round(i: i32): i32 {
 			want: 56,
 		},
 		{
-			// REFUSED: the final value escapes, so body_unsafe_for declines the
-			// whole chain — the frame owns neither end of it.
+			// The local escapes, but the box the rebind orphans is dead at that
+			// point and the returned one belongs to the caller, so the chain
+			// balances. The readback is what separates that from an
+			// over-release, since both read allocs == frees.
 			name: "rebind_then_return",
 			src: freshRetRebindDecl + `function build(i: i32): S {
     var s: S = mk(i);
@@ -217,13 +221,13 @@ function round(i: i32): i32 {
     if (p.name.len() != 31) { return 0 - 1; }
     return (p.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
-			want: 56,
+			want: 56, balance: true,
 		},
 	}
 }
 
 // TestSelfHostFreshRetRebindX86_64 — a fresh-ret-call struct local keeps its
-// reclaim credit across a rebind, with the three escape shapes still refused.
+// reclaim credit across a rebind, with the two aliasing shapes still refused.
 func TestSelfHostFreshRetRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -255,8 +259,8 @@ func TestSelfHostFreshRetRebindX86_64(t *testing.T) {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 			if !tc.balance && allocs == frees && live == 0 {
-				t.Errorf("%s: %s — this shape ESCAPES and is deliberately refused the "+
-					"credit; balancing means the gate that declines it stopped firing", tc.name, summary)
+				t.Errorf("%s: %s — this shape holds a live ALIAS of the orphaned box and is "+
+					"refused the credit; balancing means the gate that declines it stopped firing", tc.name, summary)
 			}
 		})
 	}
