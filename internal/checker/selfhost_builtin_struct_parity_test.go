@@ -96,11 +96,13 @@ func parseFernStructDecls(t *testing.T, src string) map[string]string {
 }
 
 // parseInjectedStructDecls reads parser.fern's table injections: an
-// `if (!struct_declared(structs, "N"))` block whose body appends one
+// `if (!name_declared(structs, "N"))` block whose body appends one
 // StructFieldDecl per field, in order.
 func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
 	t.Helper()
-	block := regexp.MustCompile(`if \(!struct_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{([\s\S]*?)\n    \}`)
+	// The guard is `name_declared`, which answers for an enum of that name
+	// as well as a struct; `struct_declared` is the struct-only half it calls.
+	block := regexp.MustCompile(`if \(!(?:name|struct)_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{([\s\S]*?)\n    \}`)
 	field := regexp.MustCompile(`StructFieldDecl \{ name: "([^"]*)", type_name: "([^"]*)"`)
 	out := map[string]string{}
 	for _, m := range block.FindAllStringSubmatch(src, -1) {
