@@ -1124,7 +1124,10 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
-function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+// A CLOSING arm is the last of a total match: every other variant of the enum
+// is named by an arm before it, so the value is this one and a test of it
+// would be constant. Nothing leaves the match but the arms themselves.
+function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     var s: State = arms.s;
     var layout: i32 = union_layout(s, owner);
     var sig: checker.StructSig = checker.variant_shape_sig(s.scope, pv.type_name, owner);
@@ -1133,12 +1136,17 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     var next: i32 = id + 1;
-    s = State { ...s, next_block: next + 1 };
-    var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
-    s = terminate(test.s, t_brif(test.id, id, next));
+    if (closing) {
+        s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    } else {
+        s = State { ...s, next_block: next + 1 };
+        var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
+        s = terminate(test.s, t_brif(test.id, id, next));
+    }
     var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
     var done: Arm = finish_arm(a.body, opened, join, count, scope);
+    if (closing) { return collect(arms, done); }
     done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
     return collect(arms, done);
 }
@@ -1151,23 +1159,42 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
     return collect(arms, arm(a.body, s, entry, id, pred, join, count, scope));
 }
 
-function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     match (a.pattern) {
         ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope); },
-        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope); }
+        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope, closing); }
     }
     return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
+// A match is TOTAL when its arms name every variant the enum declares: the
+// scrutinee is one of them, so nothing reaches a test past the last arm.
+// Read off the declarations rather than taken on the checker's word.
+function total_arms(m: ast.StmtMatch, owner: string, s: State): boolean {
+    var named: string[] = [];
+    for a in m.arms {
+        if let ast.PatVariant(pv) = a.pattern {
+            if (!a.has_guard && !a.alt_cont) { named = named.append(pv.type_name); }
+        }
+    }
+    var sig: checker.UnionSig = checker.union_sig(s.scope, owner);
+    if (sig.variants.len() == 0) { return false; }
+    for v in sig.variants { if (!util.has_str(named, v)) { return false; } }
+    return true;
+}
+
 // Arms are tested in order; each test's false edge enters the next test.
-// An arm after a wildcard is unreachable and is not produced. Without a
-// wildcard, a scrutinee no arm matches falls through to the join.
+// An arm after a wildcard is unreachable and is not produced. A total match's
+// last arm closes the chain, so only an incomplete one falls through to the
+// join, and only that one leaves the match live.
 function match_stmt(m: ast.StmtMatch, s: State): State {
     var scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
     s = scrut.s;
     if (!s.ok) { return s; }
     var owner: string = union_name(s.values[scrut.id]);
     if (owner == "" || union_layout(s, owner) == 0) { return fail(s, "unsupported match scrutinee"); }
+    var closes: i32 = 0 - 1;
+    if (total_arms(m, owner, s)) { closes = m.arms.len() - 1; }
     var join: i32 = s.next_block;
     s = State { ...s, next_block: join + 1 };
     var count: i32 = s.names.len();
@@ -1176,7 +1203,7 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
     var arms: Arms = Arms { s: s, preds: [], envs: [] };
     var i: i32 = 0;
     while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope);
+        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes);
         i = i + 1;
     }
     s = arms.s;

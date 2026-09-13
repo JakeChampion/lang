@@ -782,52 +782,91 @@ function operations_error(f: Func): string {
     return guard_error(f);
 }
 
-function defining(f: Func, value: i32): ssa.SInst {
+// Every value's defining instruction, indexed by value id; a value no
+// instruction defines keeps the empty sentinel.
+function definitions(f: Func): ssa.SInst[] {
+    var none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    var out: ssa.SInst[] = [];
+    var i: i32 = 0;
+    while (i < f.values.len()) { out = out.append(none); i = i + 1; }
     for b in f.graph.blocks {
-        for ins in b.insts { if (ins.result == value) { return ins; } }
+        for ins in b.insts { if (ins.result >= 0 && ins.result < out.len()) { out = out.with(ins.result, ins); } }
     }
-    return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    return out;
 }
 
-// The block a test's true edge enters, when that edge is its only way in.
-function sole_true_successor(f: Func, b: ssa.SBlock): i32 {
-    if (b.term.kind_tag != 3 || b.term.t == b.term.f) { return 0 - 1; }
-    var ti: i32 = 0;
-    while (ti < f.graph.blocks.len() && f.graph.blocks[ti].id != b.term.t) { ti = ti + 1; }
-    if (ti == f.graph.blocks.len()) { return 0 - 1; }
-    var succ: ssa.SBlock = f.graph.blocks[ti];
-    if (succ.preds.len() != 1 || succ.preds[0] != b.id) { return 0 - 1; }
-    return ti;
+// The index of the block `target` names, when the edge from `from` is its
+// only way in.
+function sole_successor(f: Func, target: i32, from: i32): i32 {
+    var i: i32 = 0;
+    while (i < f.graph.blocks.len() && f.graph.blocks[i].id != target) { i = i + 1; }
+    if (i == f.graph.blocks.len()) { return 0 - 1; }
+    var succ: ssa.SBlock = f.graph.blocks[i];
+    if (succ.preds.len() != 1 || succ.preds[0] != from) { return 0 - 1; }
+    return i;
 }
 
-function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[]): boolean {
+// held: the variants a test proved the value IS on every way into the block.
+// gone: those a test proved it is NOT.
+struct Known { held: string[], gone: string[] }
+
+// What the tests of `value` have settled on every way into block `bi`. An
+// edge settles nothing unless it is its successor's only way in, and unless
+// that successor dominates `bi`.
+function settled(f: Func, value: i32, bi: i32, dom: boolean[], defs: ssa.SInst[]): Known {
+    var held: string[] = [];
+    var gone: string[] = [];
     var n: i32 = f.graph.blocks.len();
     var pi: i32 = 0;
     while (pi < n) {
         var b: ssa.SBlock = f.graph.blocks[pi];
-        var ti: i32 = sole_true_successor(f, b);
-        if (ti >= 0 && dom[bi * n + ti]) {
-            var test: ssa.SInst = defining(f, b.term.cond);
-            if (test.kind_tag == variant_is() && test.args[0] == ins.args[0] && test.str == ins.str) { return true; }
+        if (b.term.kind_tag == 3 && b.term.t != b.term.f && b.term.cond >= 0 && b.term.cond < defs.len()) {
+            var test: ssa.SInst = defs[b.term.cond];
+            if (test.kind_tag == variant_is() && test.args[0] == value) {
+                var ti: i32 = sole_successor(f, b.term.t, b.id);
+                if (ti >= 0 && dom[bi * n + ti]) { held = held.append(test.str); }
+                var fi: i32 = sole_successor(f, b.term.f, b.id);
+                if (fi >= 0 && dom[bi * n + fi]) { gone = gone.append(test.str); }
+            }
         }
         pi = pi + 1;
     }
+    return Known { held: held, gone: gone };
+}
+
+function names_has(names: string[], name: string): boolean {
+    for n in names { if (n == name) { return true; } }
     return false;
 }
 
+// A variant is known outright when a test held for it, and by exclusion when
+// every OTHER variant its enum declares has been refuted, since a value is
+// one of them. The second is what a total match's last arm rests on: it
+// carries no test of its own.
+function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: boolean[], defs: ssa.SInst[]): boolean {
+    var value: i32 = ins.args[0];
+    var known: Known = settled(f, value, bi, dom, defs);
+    if (names_has(known.held, ins.str)) { return true; }
+    var at: i32 = semrecords.find_enum(f.enums, f.values[value]);
+    if (at < 0) { return false; }
+    for v in f.enums[at].variants {
+        if (v.name != ins.str && !names_has(known.gone, v.name)) { return false; }
+    }
+    return true;
+}
+
 // A variant's field exists only while the value is that variant, so a
-// projection must sit where a test of the same value for the same variant has
-// held: in a block dominated by the test's true successor, which the true
-// edge alone enters. A value never changes variant, so the test holds for
-// every later use of the value.
+// projection must sit where that is known. A value never changes variant, so
+// what a test settled holds for every later use of the value.
 function guard_error(f: Func): string {
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
     var dom: boolean[] = ssadeps.dominates(f.graph);
+    var defs: ssa.SInst[] = definitions(f);
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
         if (reachable[bi]) {
             for ins in f.graph.blocks[bi].insts {
-                if (needs_guard(ins.kind_tag) && !guarded(f, ins, bi, dom)) { return "unguarded variant projection"; }
+                if (needs_guard(ins.kind_tag) && !guarded(f, ins, bi, dom, defs)) { return "unguarded variant projection"; }
             }
         }
         bi = bi + 1;

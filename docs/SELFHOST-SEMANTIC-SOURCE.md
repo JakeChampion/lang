@@ -164,10 +164,24 @@ Unsupported constructs refuse the whole function with a reason.
   (`semrecords.Enum`) is its union identity and every variant's field shape,
   entered into the function's schema table beside the record schemas. Arms
   are tested in declaration order and each test's false edge enters the next,
-  so an arm after a wildcard is unreachable and is not produced; a scrutinee
-  no arm matches falls through to the join. A guard, a qualified pattern
-  (`Shape.Dot`), a nested, tuple, struct-field, literal or `@` pattern, and a
-  non-enum scrutinee are refused.
+  so an arm after a wildcard is unreachable and is not produced. A guard, a
+  qualified pattern (`Shape.Dot`), a nested, tuple, struct-field, literal or
+  `@` pattern, and a non-enum scrutinee are refused.
+
+  A match whose arms NAME every variant the enum declares is TOTAL: a value
+  is one of them, so the last arm is entered unconditionally and carries no
+  test of its own, and nothing falls through to the join. Coverage is read
+  off the declarations here rather than taken on the checker's word, though
+  the checker proves the same thing (E030). A value-returning body whose last
+  statement is a total match therefore needs no `return` after it, which is
+  what the AST lowering and every other Fern backend already assume.
+
+  `ssasem.analyze` carries the matching rule, because the closing arm
+  projects its payload with no test above it. A variant projection is
+  guarded when a dominating test HELD for that variant — the sole-true-edge
+  rule — or when every OTHER variant of the enum was REFUTED on the way in,
+  each by a dominating test's sole false edge. A value never changes
+  variant, so either settles it for every later use.
 
 - `for` over an array as an index loop whose advance runs at the TOP of the
   header with the index starting one before the first element, because
@@ -331,22 +345,26 @@ one by hand.
   and calls between produced functions: borrowed and counted array
   arguments, a counted argument retained across a call and moved at its
   last use, a temporary result moved into a counted parameter, a discarded
-  result, a returned parameter, recursion, a call result carried into a
-  loop header, the AST-lowered `main` binding, discarding and projecting
-  tuple and array results under `ssarc.caller_sigs`, the byte and cast shapes
-  below, the enum shapes above, every receiver the planner does not move
-  (a borrowed parameter's box, a record field's, an element of a borrowed
-  array of arrays, an `own` parameter's read again after the push, the field
-  receiver appended to in a loop, and a `string[]` through both builtins, each
-  asserting the source keeps its length and its elements), the loop header
-  whose first step pushes on the caller's own box, and the view shapes: a scanning loop binding
-  a slice per iteration and comparing, measuring, indexing and lending it to
-  a `str` and to a borrowed `string` parameter; an owned string lent to `str`
-  bindings and re-lent; a view of a view; a view whose source is a temporary
-  whose only use is the slice; and a view receiver on a `string` method. The
-  float shapes: a quotient sign-flipped and scaled, the three comparison
-  answers, a loop-carried accumulator, an f64 crossing a produced-to-produced
-  call as a parameter and a result, and an i64 converted to f64 and back. The
+  result, a returned parameter, recursion, a call result carried into a loop
+  header, the AST-lowered `main` binding, discarding and projecting tuple and
+  array results under `ssarc.caller_sigs`, the byte and cast shapes below, the
+  enum shapes above, the total-match shapes (a value-returning body closed by
+  a match over a four-variant enum, over the same enum as an `own` parameter
+  consumed arm by arm, and over a struct-union narrowed to its member, each
+  called from a produced caller and again per step of a loop), every receiver
+  the planner does not move (a borrowed parameter's box, a record field's, an
+  element of a borrowed array of arrays, an `own` parameter's read again after
+  the push, the field receiver appended to in a loop, and a `string[]` through
+  both builtins, each asserting the source keeps its length and its elements),
+  the loop header whose first step pushes on the caller's own box, and the
+  view shapes: a scanning loop binding a slice per iteration and comparing,
+  measuring, indexing and lending it to a `str` and to a borrowed `string`
+  parameter; an owned string lent to `str` bindings and re-lent; a view of a
+  view; a view whose source is a temporary whose only use is the slice; and a
+  view receiver on a `string` method. The float shapes: a quotient
+  sign-flipped and scaled, the three comparison answers, a loop-carried
+  accumulator, an f64 crossing a produced-to-produced call as a parameter and
+  a result, and an i64 converted to f64 and back. The
   function-value shapes: an address handed to a produced callee and called
   there, a scalar and a reference argument lent across an indirect call, a
   temporary array literal lent to one, an indirect call whose counted result
@@ -432,8 +450,12 @@ parameter, a record with an enum field, and a struct-union widened from both
 members, matched, and carried across a loop as a phi; balanced on every
 target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
-results, still rely on the AST caller's own syntactic rows. So does a borrowed
-record PARAMETER, and that one is measured: when a produced callee RETAINS a
+results, still rely on the AST caller's own syntactic rows, and the union one
+is measured too: an AST-lowered `main` handing a produced callee's ENUM
+result straight to another produced callee leaks both boxes — 80 bytes for a
+`Pair(3, [3])` — so the executable fixture calls those shapes from a produced
+caller, which balances. So does a borrowed record PARAMETER, and that one is
+measured: when a produced callee RETAINS a
 counted-element array field of one, the AST-lowered caller's release of the
 record frees its box and leaves the field's buffer — 40 bytes for a
 two-element `string[]`, 56 for a four-element one. Retaining the field into a
@@ -445,7 +467,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,299 of its 7,738
+Measured against the whole loaded self-hosted compiler, 6,309 of its 7,738
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -461,13 +483,14 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (1,016), a variant
+The leaves are now led by callees with no semantic contract (1,018), a variant
 field whose type is unresolved (98), a binding whose type is not its value's
-(75) and record literals (74). The string view was worth +355 once the sites
-that stored one were made to copy, and the f64 +273 — each measured, against a
-leaf histogram that had ranked them differently. The declared field width was
-worth the 81 it was measured at — every construction with a wide field,
-`ir.Op`'s f64 and i64 among them, resolved its declaration — and `.with` +233:
+(75), record literals (74) and destructuring declarations (59). The string
+view was worth +355 once the sites that stored one were made to copy, and the
+f64 +273 — each measured, against a leaf histogram that had ranked them
+differently. The declared field width was worth the 81 it was measured at —
+every construction with a wide field, `ir.Op`'s f64 and i64 among them,
+resolved its declaration — and `.with` +233:
 the builtin-call leaf was 453 functions of which 439 were a `.with`, which a
 probe keyed by callee showed and the bare leaf histogram could not. The callee
 leaf is the same shape: keyed by name it is a handful of runtime builtins
@@ -493,16 +516,69 @@ the same leaf in disguise: a probe keyed by the checker's reason showed every
 one a field whose value is such a call. The literal tree, the
 destination-typed literal and the string loop were worth +62 together: the
 iterable leaf (67) closed outright and the two literal mismatches with it.
-What remains of the binding-mismatch leaf is the lifted lambda body reading
-its captures out of the untyped `__env` word array — a closure shape, not a
-literal one. A shift whose count is another integer width — `n << k` with `n:
-i64` and `k: i32` — was the operator leaf (52); the count now reaches the
+A shift whose count is another integer width — `n << k` with `n: i64` and
+`k: i32` — was the operator leaf (52); the count now reaches the
 operator through a `cast` to the value's width, which is the masking the
 runtime does anyway, worth +41.
 
+The total match was worth +10 lowered and closed the fall-through leaf (12)
+outright, the other two moving one leaf further in to a closure callee. It is
+a TERMINATOR rule rather than an admission of new vocabulary: all twelve were
+a body whose last statement is a match covering every variant of its enum
+with every arm returning, which needs no `return` after it because the value
+is one of the variants. `ssasem.analyze` needed the matching rule in the same
+move, since the closing arm projects its payload with no test above it — a
+variant is now settled by a held test OR by every other variant of the enum
+having been refuted. The verifier's cost is a third of the census's run time
+(1m44 to 2m18), paid on the exclusion scan.
+
+The refusal stays, because the rule does not cover a body native's E052
+treats as non-falling for a reason this boundary does not model. One such
+shape is measured: a `while (true)` no `break` leaves, which E052 accepts
+and which still gets a live exit block here, the constant condition being
+unfolded. No function in the compiler's own sources has it, so folding the
+condition is worth a measured zero and was not built.
+
+**Both binding-shape leaves are the closure ABI, not a binding rule.** Each
+was probed before building and neither is what its reason reads as:
+
+- The 75 `binding type does not match its semantic value` are every one an
+  `ExprIndex` initializer whose declared type is a reference and whose value
+  is i32, and the binding NAME is the CAPTURE's (`$binding$1$name`,
+  `$binding$5$mfuncs`), never `__env`. `irlower.make_clo_func` writes
+  `var cap: T = __env[1 + i]` with `__env: i32[]`: the declaration carries
+  the capture's real type over a box slot the AST lowering treats as an
+  untyped word, which is a reinterpretation Fern has no operator for. The
+  declared type is the truth and the READ is the lie, so the fix is a typed
+  env representation — a per-closure schema the box is built and read
+  through — and not a relaxed check at this boundary. That is the same
+  function-value ABI decision the fold family waits on.
+- The 59 `unsupported destructuring declaration` are not a pattern shape at
+  all. A probe keyed by the pattern text, the destructuring marker and the
+  initializer's type found every one a FLAT tuple pattern — no nested
+  position, no struct form, no `@` binder, no discard — refused only because
+  `tuple_arity` of an unknown is -1. The checker cannot settle the
+  initializer because the call's fn-valued argument is a `__mkclo$…` env-box
+  marker the lift substitutes for a bare function name, and a marker is no
+  declaration, so `check_expr` answers `undefined function` and the unknown
+  collapses the whole call. Settling it would MOVE the leaf rather than
+  close it: all 59 call a generic `astwalk` walker (`scoped_stmts_reads`,
+  `map_expr_acc`, `map_stmt_acc`, `map_stmts_acc`) whose accumulator is an
+  erased type variable, which is the fold family's own refusal one leaf
+  further in.
+
+The two small leaves beside them are the instantiated builtin union. The
+match scrutinee (8) is `Option` alone and the unresolved result type (3) is
+one `Result` and two erased `T`s: `Option` and `Result` are injected without
+declarations — `Some` / `Ok` / `None` / `Err` are special-cased in the
+emitter — so there is no `UnionSig` to read a layout or a variant's field
+shape from, and a payload is the scrutinee's type ARGUMENT rather than a
+declared field. That is the same vocabulary `env` (158) and `read_file` (26)
+need.
+
 The no-contract refusal names its callee now, so the census splits that
 leaf by builtin on its own: the `astwalk` folds that take a function value
-(some 530 functions between them), `env` (145), `read_file` (26), and a
+(some 549 functions between them), `env` (158), `read_file` (26), and a
 tail of runtime builtins. Five of the tail took contracts for +78 —
 `write` and `exit` as void calls, `string_from_bytes_unchecked` handing
 back a fresh string, `f64_bits` and `f64_from_bits` as values — each
@@ -597,9 +673,13 @@ function-value ABI settled first — whether an indirect callee may consume a
 reference, and what a generic's erased result owns — which is a language
 decision, not a vocabulary one.
 
-Next, by measured leaf: the unresolved variant field type (98), the binding
-whose declared type is not its value's (75), the record literal (74) and the
-builtins whose result is an instantiated builtin union, `env` (158) and
-`read_file` (26); all shapes rather than vocabulary. Then a production
-consumer that lowers produced functions through this pipeline and feeds
-`caller_sigs` to the remaining AST callers.
+Next, by measured leaf: the instantiated builtin union, which is one piece
+carrying four leaves — `env` (158), `read_file` (26), the `Option` scrutinee
+(8) and the `Result` result type (3) — and then the unresolved variant field
+type (98) and the record literal (74). The binding mismatch (75) and the
+destructuring declaration (59) are NOT next: both are the closure env box,
+so they land with the fold family behind the same function-value ABI
+decision, and neither is worth building against until it is taken. Then a
+production consumer that lowers produced functions through this pipeline and
+feeds `caller_sigs` to the remaining AST callers — a union result being the
+position that fixture measured a leak at.
