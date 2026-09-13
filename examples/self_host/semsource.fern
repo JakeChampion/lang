@@ -1264,7 +1264,10 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var item: Value = define(opened, ssasem.array_get(), [it.id, step.id], 0, "", elem);
     // A string's element is one byte, read rather than projected.
     if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 0, "", elem); }
-    var latch: Arm = finish_arm(fo.body, bind(item.s, fo.var_name, item.id), header, count, scope);
+    // The element is a checker binding for the body's span as well: every type
+    // this boundary reads from the checker is read in s.scope.
+    var body_state: State = State { ...bind(item.s, fo.var_name, item.id), scope: checker.for_body_scope(fo, scope) };
+    var latch: Arm = finish_arm(fo.body, body_state, header, count, scope);
     s = latch.s;
     if (!s.ok) { return s; }
     var l: Loop = current_loop(s);

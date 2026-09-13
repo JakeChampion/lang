@@ -173,7 +173,14 @@ Unsupported constructs refuse the whole function with a reason.
   header with the index starting one before the first element, because
   `continue` branches to the header and a bottom advance would be skipped
   (#2788). The element is an `array_get`, so it is already a borrow anchored
-  to its container and needs no new ownership rule.
+  to its container and needs no new ownership rule. It is also a checker
+  BINDING for the body's span — `checker.for_body_scope`, the loop's analogue
+  of `arm_scope`, typed the way `check_stmt` types it — because every type
+  this boundary takes from the checker is read in the scope it carries: a
+  literal's own type, an unannotated binding's, an operator's width. Without
+  the binding an expression naming the element is an undefined identifier,
+  which collapses the literal or binding AROUND it to unknown and refuses the
+  whole function for a construct it supports.
 - A call in statement position may return nothing: its value is void, no
   name binds it, and the physical call stores the dummy every void callee
   pushes for a statement-level drop. In expression position a void result
@@ -383,7 +390,12 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,875 of its 7,713
+Constructions over a loop element cross too (`bump_each`, `line_each`,
+`word_recs`): a functional update and a variant literal built from the
+element, an unannotated binding inferred from it, and a string element
+retained into a record whose own unit dies at the end of the step.
+
+Measured against the whole loaded self-hosted compiler, 5,990 of its 7,735
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -399,10 +411,10 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (1,069), record
-literals (219), a variant field whose type is unresolved (97) and a binding
-whose type is not its value's (75). The string view was worth +355 once the sites that stored
-one were made to copy, and the f64 +273 — each measured, as usual, against a
+The leaves are now led by callees with no semantic contract (1,016), a variant
+field whose type is unresolved (98), a binding whose type is not its value's
+(75) and record literals (74). The string view was worth +355 once the sites
+that stored one were made to copy, and the f64 +273 — each measured, against a
 leaf histogram that had ranked them differently. The declared field width
 was worth the 81 it was measured at — every construction with a wide field,
 `ir.Op`'s f64 and i64 among them, resolved its declaration — and `.with`
@@ -411,9 +423,9 @@ which a probe keyed by callee showed and the bare leaf histogram could not.
 The callee leaf is the same shape: keyed by name it is a handful of runtime
 builtins (`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the
 `astwalk` folds that take a function value, each with its closures behind
-it. A further 226 functions produce and plan but are refused by the unit
+it. A further 259 functions produce and plan but are refused by the unit
 planner for an `.append` whose receiver is not moved, 44 for a `.with` under
-the same rule, and 5 by physical RC lowering for an unsupported value type.
+the same rule, and 7 by physical RC lowering for an unsupported value type.
 The flat tuple destructure was worth +19 lowered against a leaf of 321: a
 probe keyed by pattern shape showed the leaf was entirely the flat tuple
 form, and nearly every function holding one refuses again one leaf further
@@ -449,12 +461,27 @@ lowered to the stack IR op the AST lowering already emits for it. What
 the folds and `env` need is a form for a function value and for the
 builtin `Option`, which are shapes, not vocabulary.
 
+The loop element's checker binding closed the record-literal leaf from 226 to
+74, +93 lowered. A probe naming the checker's reason at every refused literal
+showed its 41 direct sites were all a field value the checker could not type,
+and all but three of those an expression naming a `for` element the scope had
+never bound. The same binding closed the unresolved-binding-type leaf outright
+and carried every other construct whose type the checker settles inside a loop
+body with it — array, tuple and variant literals, an unannotated binding, an
+operator's width. What remains of the record-literal leaf is three sites and
+no record shape: two are a field whose value calls a runtime builtin the
+self-host CHECKER has no signature for (`string_from_bytes_unchecked`,
+`f64_bits`), so `check_expr` hands back the unknown that collapses the
+literal, and one is a field whose value is a call taking function values. A
+builtin signature table for `check_expr` would move the first two, but it
+retypes every builtin call in the twelve diagnostic walkers with it, so it is
+its own change rather than a record one.
+
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,
 and the function value, which is a shape this boundary has no form for yet;
-the record literal is the next measured leaf and is a shape rather than
-vocabulary. The `.append` receiver gate
-stays deferred: it needs a clone form for a receiver
+the unresolved variant field type is the next measured leaf. The `.append`
+receiver gate stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the
 dominant refused shape is a borrowed-parameter accumulator in a loop, where a

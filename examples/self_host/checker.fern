@@ -15400,7 +15400,10 @@ function bind_for_element(s: Scope, name: string, ty: typeinfo.Type): Scope {
   return s.bind(name, ty);
 }
 
-function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
+// for_body_scope is the scope a `for` body sees: `s` plus the loop's element
+// binding, typed as check_stmt types it. Public as the read-only view a
+// checked-source consumer walking a loop body needs, beside arm_scope.
+pub function for_body_scope(fr: ast.StmtFor, s: Scope): Scope {
   return for_binding(fr, s).scope;
 }
 
