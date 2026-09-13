@@ -251,13 +251,13 @@ function boolean_value(b: boolean): i32 {
 // wraps one into an environment box (`__mkclo$<name>$wrapN()`) before this
 // boundary reads the tree, and a call through a value dispatches through that
 // box.
-function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
+function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type): Value {
     var value: i32 = lookup(s, id.name);
     if (value >= 0) { return Value { s: s, id: value }; }
     var ty: typeinfo.Type = checked(e, s);
     if (ssasem.is_func(ty)) { return refused(s, "function address is not a closure value"); }
-    var owner: string = union_name(ty);
-    if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (names_variant(s, whole, id.name)) { return variant(id.name, whole, [], s); }
     var at: i32 = ssasem.find_contract(s.contracts, id.name);
     if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value"); }
     var contract: ssasem.Contract = s.contracts[at];
@@ -270,15 +270,27 @@ function union_name(t: typeinfo.Type): string {
     return "";
 }
 
+// The variant names of a union: a written enum or struct-union takes them from
+// its declaration, an INJECTED enum (IoError, JsonValue) from the struct
+// table's enum owner, since the front end injects those variants with no enum
+// declaration to list them.
+function union_variants(s: State, name: string): string[] {
+    var sig: checker.UnionSig = checker.union_sig(s.scope, name);
+    if (sig.name.len() > 0 && sig.variants.len() > 0) { return sig.variants; }
+    return checker.owned_variant_names(s.scope, name);
+}
+
 // A union's layout, read from the declarations rather than from any use: an
 // enum owns its variant declarations, a struct-union names structs declared on
-// their own. A union that mixes the two has no layout here.
+// their own, and the two generic unions the front end supplies own neither —
+// their box is a tag and one payload word. A union that mixes the first two
+// has no layout here.
 function union_layout(s: State, name: string): i32 {
-    var sig: checker.UnionSig = checker.union_sig(s.scope, name);
-    if (sig.name.len() == 0 || sig.variants.len() == 0) { return 0; }
+    var variants: string[] = union_variants(s, name);
+    if (variants.len() == 0) { return builtin_union_layout(name); }
     var owned: i32 = 0;
     var plain: i32 = 0;
-    for v in sig.variants {
+    for v in variants {
         var vs: checker.StructSig = checker.variant_shape_sig(s.scope, v, name);
         if (vs.name.len() == 0) { return 0; }
         if (vs.enum_owner == name) { owned = owned + 1; } else { plain = plain + 1; }
@@ -286,6 +298,82 @@ function union_layout(s: State, name: string): i32 {
     if (plain == 0) { return semrecords.layout_variant(); }
     if (owned == 0) { return semrecords.layout_member(); }
     return 0;
+}
+
+function builtin_union_layout(name: string): i32 {
+    if (name == "Option" || name == "Result") { return semrecords.layout_option(); }
+    return 0;
+}
+
+// Option and Result carry their payload types as type ARGUMENTS rather than in
+// a declaration, so a value of one is only as well defined as its
+// instantiation: `Option[string]` owns a string where `Option[i32]` owns
+// nothing. Every variant shape here is read off those arguments, and a
+// name-only `Option` names no shape at all. The order is the box's tag —
+// Some / Ok is 0, None / Err is 1 — which is why it is fixed here rather
+// than looked up.
+function builtin_variants(t: typeinfo.Type): semrecords.Variant[] {
+    if let typeinfo.TypeUnion(u) = t {
+        if (u.name == "Option" && u.args.len() == 1) {
+            return [payload_variant("Some", u.args[0]), semrecords.Variant { name: "None", fields: [] }];
+        }
+        if (u.name == "Result" && u.args.len() == 2) {
+            return [payload_variant("Ok", u.args[0]), payload_variant("Err", u.args[1])];
+        }
+    }
+    return [];
+}
+
+function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
+    return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
+}
+
+// The payload types one variant declares, and whether the union has such a
+// variant at all.
+struct Payloads { found: boolean, types: typeinfo.Type[] }
+
+function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
+    for v in builtin_variants(whole) {
+        if (v.name == name) {
+            var types: typeinfo.Type[] = [];
+            for field in v.fields { types = types.append(field.ty); }
+            return Payloads { found: true, types: types };
+        }
+    }
+    return Payloads { found: false, types: [] };
+}
+
+// A pattern reaches a member of either kind of declared union; a literal only
+// ever names a variant its enum owns.
+function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
+    if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
+    var sig: checker.StructSig = checker.variant_shape_sig(s.scope, name, union_name(whole));
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+}
+
+function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
+    if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
+    var sig: checker.StructSig = checker.variant_sig(s.scope, name, union_name(whole));
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+}
+
+// The union a variant literal builds. The checker types a declared enum's
+// literal outright, but it types `Some(x)` by the enum alone — no
+// instantiation — so a builtin union's literal takes its type arguments from
+// the destination it is written against, which is where they are known.
+function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
+    var ty: typeinfo.Type = checked(e, s);
+    if (builtin_union_layout(union_name(ty)) == 0) { return ty; }
+    if (union_name(expected) == union_name(ty)) { return expected; }
+    return ty;
+}
+
+// A name is a variant literal when the union it is written against has a
+// variant of that name.
+function names_variant(s: State, whole: typeinfo.Type, name: string): boolean {
+    var owner: string = union_name(whole);
+    if (owner == "") { return false; }
+    return literal_payloads(s, whole, name, union_layout(s, owner)).found;
 }
 
 function struct_name(t: typeinfo.Type): string {
@@ -506,22 +594,22 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
 
 // A variant literal supplies its payload fields in declaration order; the
 // value is its enum.
-function variant(e: ast.Expr, name: string, owner: string, args: ast.Expr[], s: State): Value {
-    if (union_layout(s, owner) != semrecords.layout_variant()) { return refused(s, "unsupported variant literal"); }
-    var ty: typeinfo.Type = checked(e, s);
-    var sig: checker.StructSig = checker.variant_sig(s.scope, name, owner);
-    if (sig.name.len() == 0 || !semtypes.concrete(ty, false) || args.len() != sig.field_types.len()) { return refused(s, "unsupported variant literal"); }
+function variant(name: string, whole: typeinfo.Type, args: ast.Expr[], s: State): Value {
+    var layout: i32 = union_layout(s, union_name(whole));
+    if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) { return refused(s, "unsupported variant literal"); }
+    var shape: Payloads = literal_payloads(s, whole, name, layout);
+    if (!shape.found || !semtypes.concrete(whole, false) || args.len() != shape.types.len()) { return refused(s, "unsupported variant literal"); }
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < args.len()) {
-        var v: Value = expr(args[i], s, sig.field_types[i]);
+        var v: Value = expr(args[i], s, shape.types[i]);
         s = v.s;
         if (!s.ok) { return v; }
-        if (!semtypes.equal(s.values[v.id], sig.field_types[i])) { return refused(s, "variant field type"); }
+        if (!semtypes.equal(s.values[v.id], shape.types[i])) { return refused(s, "variant field type"); }
         ids = ids.append(v.id);
         i = i + 1;
     }
-    return define(s, ssasem.variant_new(), ids, 0, name, ty);
+    return define(s, ssasem.variant_new(), ids, 0, name, whole);
 }
 
 // An unsuffixed integer literal names no width of its own, so it cannot be the
@@ -840,9 +928,9 @@ function closure(body: string, c: ast.ExprCall, s: State): Value {
 
 // A name with no contract may still be a variant constructor of the enum the
 // call is written against.
-function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State): Value {
-    var owner: string = union_name(checked(e, s));
-    if (owner != "" && checker.variant_sig(s.scope, name, owner).name.len() > 0) { return variant(e, name, owner, c.args, s); }
+function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
     return refused(s, "call target has no semantic contract: " + name);
 }
 
@@ -855,7 +943,7 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // A call in statement position may return nothing: its value is void and
 // no name binds it. In expression position a void result is refused, since
 // the checker types nothing by it.
-function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value {
+function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
@@ -866,7 +954,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value
     var body: string = closure_body(name);
     if (body.len() > 0) { return closure(body, c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
-    if (at < 0) { return variant_call(e, name, c, s); }
+    if (at < 0) { return variant_call(e, name, c, s, expected); }
     return direct_call(c, s.contracts[at], s, statement);
 }
 
@@ -916,7 +1004,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprNumber(n) => { return number(n, s, expected); },
         ast.ExprBool(b) => { return define(s, 2, [], boolean_value(b.value), "", t_bool()); },
         ast.ExprString(st) => { return define(s, 5, [], 0, st.value, t_string()); },
-        ast.ExprIdent(id) => { return ident(e, id, s); },
+        ast.ExprIdent(id) => { return ident(e, id, s, expected); },
         ast.ExprStructLit(sl) => { return record(e, sl, s); },
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
@@ -924,7 +1012,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprFieldAccess(fa) => { return field(fa, s); },
         ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
-        ast.ExprCall(c) => { return call(e, c, s, false); },
+        ast.ExprCall(c) => { return call(e, c, s, false, expected); },
         _ => { return refused(s, "unsupported expression"); }
     }
 }
@@ -1111,11 +1199,11 @@ function pattern_shape_error(pv: ast.PatVariant): string {
     return "";
 }
 
-function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructSig, layout: i32): string {
+function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, layout: i32): string {
     if (a.has_guard || a.alt_cont) { return "unsupported match guard"; }
     var why: string = pattern_shape_error(pv);
     if (why != "") { return why; }
-    if (sig.name.len() == 0) { return "unknown variant"; }
+    if (!shape.found) { return "unknown variant"; }
     // A struct-union member's box IS the value, so its arm binds one name
     // whatever the member's field count; an enum variant binds one name per
     // payload position.
@@ -1123,7 +1211,7 @@ function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, sig: checker.StructS
         if (pv.extra_bindings.len() > 0) { return "pattern arity"; }
         return "";
     }
-    if (pv.binding != "" && 1 + pv.extra_bindings.len() != sig.field_types.len()) { return "pattern arity"; }
+    if (pv.binding != "" && 1 + pv.extra_bindings.len() != shape.types.len()) { return "pattern arity"; }
     return "";
 }
 
@@ -1154,31 +1242,40 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
-// A CLOSING arm is the last of a total match: every other variant of the enum
-// is named by an arm before it, so the value is this one and a test of it
-// would be constant. Nothing leaves the match but the arms themselves.
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     var s: State = arms.s;
     var layout: i32 = union_layout(s, owner);
-    var sig: checker.StructSig = checker.variant_shape_sig(s.scope, pv.type_name, owner);
-    var why: string = pattern_error(a, pv, sig, layout);
+    var shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
+    var why: string = pattern_error(a, pv, shape, layout);
     if (why != "") { return Arms { ...arms, s: fail(s, why) }; }
+    if (closing) { return closing_arm(a, pv, scrut, shape, arms, entry, join, count, scope, layout); }
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     var next: i32 = id + 1;
-    if (closing) {
-        s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
-    } else {
-        s = State { ...s, next_block: next + 1 };
-        var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
-        s = terminate(test.s, t_brif(test.id, id, next));
-    }
-    var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]), layout);
+    s = State { ...s, next_block: next + 1 };
+    var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
+    s = terminate(test.s, t_brif(test.id, id, next));
+    var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
     var done: Arm = finish_arm(a.body, opened, join, count, scope);
-    if (closing) { return collect(arms, done); }
     done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
     return collect(arms, done);
+}
+
+// A CLOSING arm is the last of a TOTAL match: every other variant is named by
+// an arm before it, so the value is this one and a test of it would be
+// constant. Nothing leaves the match but the arms themselves, which is what
+// makes a body whose every arm returns a body that does not fall through.
+// `ssasem.analyze` verifies this arm's payload projections against the same
+// exhaustion the omitted test rests on.
+function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32): Arms {
+    var s: State = arms.s;
+    var pred: i32 = s.cur.id;
+    var id: i32 = s.next_block;
+    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
+    opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
+    return collect(arms, finish_arm(a.body, opened, join, count, scope));
 }
 
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
@@ -1197,19 +1294,37 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry
     return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
-// A match is TOTAL when its arms name every variant the enum declares: the
-// scrutinee is one of them, so nothing reaches a test past the last arm.
-// Read off the declarations rather than taken on the checker's word.
-function total_arms(m: ast.StmtMatch, owner: string, s: State): boolean {
+// The variant names a union declares: a builtin union's are its instantiation's
+// two, a declared one's come from the declarations.
+function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
+    if (layout != semrecords.layout_option()) { return union_variants(s, union_name(whole)); }
+    var out: string[] = [];
+    for v in builtin_variants(whole) { out = out.append(v.name); }
+    return out;
+}
+
+function arm_variant_name(a: ast.MatchArm): string {
+    if (a.has_guard || a.alt_cont) { return ""; }
+    match (a.pattern) {
+        ast.PatVariant(pv) => { return pv.type_name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// A match is TOTAL when its arms are unguarded variant patterns naming
+// distinct variants of the scrutinee's union, as many as the union declares.
+// Nothing can then reach the fall-through, so the last arm needs no test.
+function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i32): boolean {
+    var declared: string[] = variant_names(s, whole, layout);
+    if (declared.len() == 0 || m.arms.len() != declared.len()) { return false; }
     var named: string[] = [];
     for a in m.arms {
-        if let ast.PatVariant(pv) = a.pattern {
-            if (!a.has_guard && !a.alt_cont) { named = named.append(pv.type_name); }
-        }
+        var name: string = arm_variant_name(a);
+        if (util.index_of_str(declared, name) < 0) { return false; }
+        if (util.index_of_str(named, name) >= 0) { return false; }
+        named = named.append(name);
     }
-    var sig: checker.UnionSig = checker.union_sig(s.scope, owner);
-    if (sig.variants.len() == 0) { return false; }
-    for v in sig.variants { if (!util.has_str(named, v)) { return false; } }
     return true;
 }
 
@@ -1224,7 +1339,7 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
     var owner: string = union_name(s.values[scrut.id]);
     if (owner == "" || union_layout(s, owner) == 0) { return fail(s, "unsupported match scrutinee"); }
     var closes: i32 = 0 - 1;
-    if (total_arms(m, owner, s)) { closes = m.arms.len() - 1; }
+    if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) { closes = m.arms.len() - 1; }
     var join: i32 = s.next_block;
     s = State { ...s, next_block: join + 1 };
     var count: i32 = s.names.len();
@@ -1411,7 +1526,7 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 // releases it at the call.
 function discard(e: ast.Expr, s: State): State {
     match (e) {
-        ast.ExprCall(c) => { return call(e, c, s, true).s; },
+        ast.ExprCall(c) => { return call(e, c, s, true, t_void()).s; },
         _ => { return fail(s, "unsupported statement"); }
     }
     return s;
@@ -1682,11 +1797,12 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
 // members are declared on their own. The layout says which, and a mixture has
 // no layout this boundary can give.
 function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Schemas): Schemas {
-    var sig: checker.UnionSig = checker.union_sig(s.scope, u.name);
     var layout: i32 = union_layout(s, u.name);
-    if (sig.name.len() == 0 || u.args.len() > 0 || layout == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+    if (layout == semrecords.layout_option()) { return builtin_enum_entry(t, s, out); }
+    var names: string[] = union_variants(s, u.name);
+    if (names.len() == 0 || u.args.len() > 0 || layout == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
     var variants: semrecords.Variant[] = [];
-    for name in sig.variants {
+    for name in names {
         var vs: checker.StructSig = checker.variant_shape_sig(s.scope, name, u.name);
         if (!fields_resolved(vs)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
         variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
@@ -1695,11 +1811,27 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
     if (layout != semrecords.layout_member()) { return table; }
     // A member's box is read through its own record, so the table must carry
     // one whether or not any value in this function has the member's type.
-    for name in sig.variants {
+    for name in names {
         table = schema_of(typeinfo.TypeStruct { name: name, args: [] }, s, table);
         if (!table.ok) { return table; }
     }
     return table;
+}
+
+// A builtin union is its instantiation: `Option` with no argument names no
+// payload and so has no schema, and a payload wider than one word has no slot
+// in the two-word box, which is the rule an array or tuple element follows for
+// the same reason.
+function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
+    var variants: semrecords.Variant[] = builtin_variants(t);
+    if (variants.len() == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
+    for v in variants {
+        for field in v.fields {
+            if (!semtypes.concrete(field.ty, false)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
+            if (ssasem.is_i64(field.ty) || ssasem.is_f64(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
+        }
+    }
+    return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
 }
 
 function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
@@ -1789,12 +1921,59 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
     return out;
 }
 
+function t_option(payload: typeinfo.Type): typeinfo.Type {
+    return typeinfo.TypeUnion { name: "Option", args: [payload] };
+}
+
+function t_io_result(ok: typeinfo.Type): typeinfo.Type {
+    return typeinfo.TypeUnion { name: "Result", args: [ok, typeinfo.TypeUnion { name: "IoError", args: [] }] };
+}
+
 // The runtime builtins with a contract here, each a stack IR op of its own
-// rather than a call: the two writers and the string builder's append copy
-// the bytes of a string they only read, the builder's reset and take own no
-// argument, and the byte search reads its string. What each hands back is
-// the op's own value; a void one pushes the dummy every statement op pushes.
+// rather than a call. What each hands back is the op's own value; a void one
+// pushes the dummy every statement op pushes.
 function builtin_contracts(): ssasem.Contract[] {
+    var out: ssasem.Contract[] = union_result_contracts();
+    for c in value_contracts() { out = out.append(c); }
+    for c in string_contracts() { out = out.append(c); }
+    return out;
+}
+
+// The builtins whose result is one of the front end's generic unions. Each
+// contract names the INSTANTIATION, because that is what says what the caller
+// owns: each reads the string it is lent and copies whatever it keeps, so the
+// box owns every part of itself — `env`'s value, `read_line`'s line,
+// `read_file`'s contents, `read_dir`'s names, and the IoError an error arm
+// carries. Nothing here is generic: each builtin has exactly one
+// instantiation, so the erased type variable a declared generic would carry
+// never arises.
+function union_result_contracts(): ssasem.Contract[] {
+    var path: i32[] = [ssaunits.borrow_mode()];
+    return [
+        ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
+        ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
+        ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
+        ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string() }) }
+    ];
+}
+
+// The builtins whose result owns nothing: the process arguments are a fresh
+// array of this function's own, the byte write and the bit reinterpret are
+// values, and the over-release counter is a read.
+function value_contracts(): ssasem.Contract[] {
+    var value: i32[] = [ssaunits.value_mode()];
+    return [
+        ssasem.Contract { name: "args", params: [], modes: [], result: typeinfo.TypeArray { elem: t_string() } },
+        ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
+        ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f64() },
+        ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() }
+    ];
+}
+
+// The two writers and the string builder's append copy the bytes of a string
+// they only read, the builder's reset and take own no argument, and the byte
+// search reads its string.
+function string_contracts(): ssasem.Contract[] {
     var writer: i32[] = [ssaunits.borrow_mode()];
     return [
         ssasem.Contract { name: "print", params: [t_string()], modes: writer, result: t_void() },

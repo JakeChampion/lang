@@ -111,6 +111,20 @@ function out_of_order(n: i32): P { return P { xs: [n, n + 1], n: n }; }
 function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; return g.v; }
 function string_length(s: string): i32 { return s.len(); }
 function refused_string_method(s: string): string { return s.trim(); }
+// The builtins whose result is an instantiated builtin union, and a literal of
+// one: the golden pins the contract's INSTANTIATION as the value type, the
+// exhausted match's last arm with no test of its own, and the refusal of a
+// payload too wide for the box's one word.
+function opt_len(name: string): i32 {
+    var n: i32 = 0;
+    match (env(name)) {
+        Some(v) => { n = v.len(); },
+        None => { n = 0; }
+    }
+    return n;
+}
+function wrap_opt(s: string): Option[string] { return Some(s + "!"); }
+function refused_wide_opt(n: i64): Option[i64] { return Some(n); }
 enum Shape { Dot, Line(i32), Full(i32[]), Pair(i32, i32[]) }
 function shape(n: i32): Shape {
     if (n == 0) { return Dot; }
@@ -349,7 +363,11 @@ import "./parser"; import "./lexer"; import "./util"; import "./irlower";
 function main(): i32 {
     var src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var mod = irlower.lift_lambdas(parser.parse_module(lexer.tokenize(src)));
+    var parsed = parser.parse_module(lexer.tokenize(src));
+    // The production pipeline injects the front end's own enum variants
+    // (IoError, JsonValue) as declarations before the lambda lift runs;
+    // without them a Result's error arm names a union nothing declares.
+    var mod = irlower.lift_lambdas(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) });
     for p in semsource.build_module(mod) {
         if (!p.ok) { print("refused " + p.why); continue; }
         var out: string = "";
@@ -1298,6 +1316,93 @@ function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
     if (n > 2) { g = (x: i32): i32 => { return x - k; }; }
     return g(n) + g(0);
 }
+// The builtins whose result is one of the front end's generic unions. The box
+// the caller receives owns every part of itself, so an arm binding a payload
+// only borrows it and the box's own release walks whatever no arm took.
+@noinline function env_len(name: string): i32 {
+    var n: i32 = 0 - 1;
+    match (env(name)) {
+        Some(v) => { n = v.len(); },
+        None => { n = 0; }
+    }
+    return n;
+}
+@noinline function touch_env(name: string): i32 { env(name); return name.len(); }
+@noinline function line_len(): i32 {
+    var n: i32 = 0 - 1;
+    match (read_line()) {
+        Some(l) => { n = l.len(); },
+        None => { n = 0; }
+    }
+    return n;
+}
+@noinline function read_len(path: string): i32 {
+    var n: i32 = 0 - 1;
+    match (read_file(path)) {
+        Ok(text) => { n = text.len(); },
+        Err(e) => { n = 0; }
+    }
+    return n;
+}
+@noinline function dir_count(path: string): i32 {
+    var n: i32 = 0 - 1;
+    match (read_dir(path)) {
+        Ok(names) => { n = names.len(); },
+        Err(e) => { n = 0; }
+    }
+    return n;
+}
+// An Option built here rather than received: the payload is a string this
+// function owns, so the box takes that unit and gives it back when it dies.
+// The second one is never read at all, so only the box's release frees it.
+@noinline function wrapped_len(s: string): i32 {
+    var o: Option[string] = Some(s + "!");
+    var n: i32 = 0;
+    match (o) {
+        Some(v) => { n = v.len(); },
+        None => { n = 0; }
+    }
+    return n;
+}
+@noinline function drop_opt(s: string): i32 {
+    var o: Option[string] = Some(s + "!");
+    return s.len();
+}
+// Replaced once per step, so every superseded box is released before the
+// header phi takes the next one.
+@noinline function pick_opt(n: i32): i32 {
+    var o: Option[string] = None;
+    var i: i32 = 0;
+    while (i < n) { o = Some("ab"); i = i + 1; }
+    var len: i32 = 0 - 1;
+    match (o) {
+        Some(v) => { len = v.len(); },
+        None => { len = 0; }
+    }
+    return len;
+}
+// A Result whose error arm carries an enum the FRONT END injects: the box owns
+// the IoError, which owns a string of its own, and the branch that replaces
+// the Ok box releases it.
+@noinline function mk_result(n: i32, path: string): i32 {
+    var r: Result[string, IoError] = Ok(path + "!");
+    if (n == 0) { r = Err(NotFound(path + "?")); }
+    var len: i32 = 0;
+    match (r) {
+        Ok(t) => { len = t.len(); },
+        Err(e) => { len = 0 - 1; }
+    }
+    return len;
+}
+// The builtins whose result owns nothing but the argument array.
+@noinline function has_args(): i32 {
+    var av: string[] = args();
+    if (av.len() > 0) { return 1; }
+    return 0;
+}
+@noinline function emit_byte(c: i32): i32 { putchar(c); return c + 1; }
+@noinline function bits_to_int(b: i32): i32 { return (f32_from_bits(b) * 2.0) as i32; }
+@noinline function underflow_now(): i32 { return __rc_underflow_count(); }
 function main(): i32 {
     var a: i32[] = pick(0);
     var b: i32[] = pick(1);
@@ -1433,6 +1538,13 @@ function main(): i32 {
     print_int(elem_push(9)); print(""); print_int(push_kept(fill(1), 9)); print("");
     print_int(build_rows(4)); print(""); print_int(word_lens(0)); print(""); print_int(word_set(0)); print("");
     print_int(tag_probe(0)); print(""); print_int(shape_codes(4)); print("");
+    print_int(env_len("FERN_ABSENT_VAR")); print(""); print_int(touch_env("FERN_ABSENT_VAR")); print("");
+    print_int(line_len()); print(""); print_int(read_len("/nonexistent/fern/semsource")); print("");
+    print_int(dir_count("/nonexistent/fern/semsource")); print(""); print_int(wrapped_len("abc")); print("");
+    print_int(drop_opt("abcd")); print(""); print_int(pick_opt(3)); print(""); print_int(pick_opt(0)); print("");
+    print_int(mk_result(1, "ab")); print(""); print_int(mk_result(0, "ab")); print("");
+    print_int(has_args()); print(""); print_int(emit_byte(65)); print("");
+    print_int(bits_to_int(1065353216)); print(""); print_int(underflow_now()); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -1488,7 +1600,7 @@ function main(): i32 {
 // shift_by(4, 5) adds the captured 4 to 5 for 9; shift_loop(3, 4) builds one
 // box per step and sums 3 * (0+1+2+3) = 18; pick_shift(2, 3) takes the second
 // arm for (3-2) + (0-2) = -1 and pick_shift(2, 1) the first for 3 + 2 = 5.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1497,7 +1609,8 @@ function main(): i32 {
     var av = args();
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var mod = irlower.lift_lambdas(checker.annotate_module(parser.parse_module(lexer.tokenize(src))));
+    var parsed = parser.parse_module(lexer.tokenize(src));
+    var mod = irlower.lift_lambdas(checker.annotate_module(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var produced = semsource.build_module(mod);
@@ -1573,7 +1686,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

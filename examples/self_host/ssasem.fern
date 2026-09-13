@@ -152,11 +152,6 @@ pub function func_result(t: typeinfo.Type): typeinfo.Type {
     return typeinfo.unchecked();
 }
 
-// The function type a declared contract has as a value.
-pub function contract_type(c: Contract): typeinfo.Type {
-    return typeinfo.TypeFunc { param_types: c.params, ret_type: c.result, params_known: true };
-}
-
 // A closure body's first parameter is the environment it reads its captures
 // out of: the box itself, an array of i32-shaped words.
 pub function closure_env(c: Contract): boolean {

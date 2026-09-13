@@ -63,7 +63,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
-    if let typeinfo.TypeUnion(u) = t { return u.args.len() == 0 && semrecords.find_enum(f.enums, t) >= 0; }
+    if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
     return false;
 }
 
@@ -161,10 +161,37 @@ function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch
     return helper(r, slot, release_name(t));
 }
 
+// A builtin union's box carries no shape pointer, so the walk selects its one
+// payload by the tag the box stores rather than by a variant shape.
+function drop_payload(r: irlower.LowerResult, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    var child: i32 = scratch;
+    r = reserve(r, child + 1);
+    var tag: i32 = 0;
+    while (tag < e.variants.len()) {
+        var fields: semrecords.Field[] = e.variants[tag].fields;
+        if (fields.len() == 1 && reference(fields[0].ty)) {
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_opt_tag());
+            r = emit(r, ir.op_const_i32(tag));
+            r = emit(r, ir.op_bin("eq", 0, false));
+            r = emit(r, ir.op_if(0));
+            r = emit(r, ir.op_load_local(slot));
+            r = emit(r, ir.op_opt_payload());
+            r = emit(r, ir.op_store_local(child));
+            r = drop_value(r, child, fields[0].ty, child + 1, f);
+            r = emit(r, ir.op_end());
+        }
+        tag = tag + 1;
+    }
+    return r;
+}
+
 // A variant box carries only its own variant's fields, so the walk selects
 // them by the box's runtime variant.
-function drop_variant_fields(r: irlower.LowerResult, slot: i32, variants: semrecords.Variant[], scratch: i32, f: ssasem.Func): irlower.LowerResult {
-    for v in variants {
+function drop_variant_fields(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+    if (e.layout == semrecords.layout_option()) { return drop_payload(r, slot, e, scratch, f); }
+    for v in e.variants {
         if (fields_have_children(v.fields)) {
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_variant_is(v.name));
@@ -360,7 +387,35 @@ function named(t: typeinfo.Type): string {
 //
 // Distinct from the AST path's __struct_drop_<T>, which guards each nested
 // field itself and hands back the box. The two are not interchangeable.
-pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + named(t); }
+pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + type_key(t); }
+
+// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
+// nominal name: `Option[string]` releases a string where `Option[i32]`
+// releases nothing, so the two cannot share a drop helper. `$` separates the
+// arguments, as it does in a lifted lambda's symbol.
+function type_key(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
+    if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
+    if let typeinfo.TypeArray(a) = t { return "arr$" + type_key(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { return key_args("tup", tup.elements); }
+    return leaf_key(t);
+}
+
+function key_args(name: string, args: typeinfo.Type[]): string {
+    var out: string = name;
+    for a in args { out = out + "$" + type_key(a); }
+    return out;
+}
+
+function leaf_key(t: typeinfo.Type): string {
+    if (ssasem.is_view(t)) { return "str"; }
+    if (ssasem.is_string(t)) { return "string"; }
+    if (ssasem.is_i64(t)) { return "i64"; }
+    if (ssasem.is_u8(t)) { return "u8"; }
+    if (ssasem.is_f64(t)) { return "f64"; }
+    if (ssasem.is_integer(t)) { return "i32"; }
+    return "bool";
+}
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
@@ -369,7 +424,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
     if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f); }
-    if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, 0, variants_of(t, f), 1, f); }
+    if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, 0, t, 1, f); }
     // The one value the caller's `drop` after the call discards.
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_return());
@@ -659,9 +714,47 @@ function field_get(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlo
 
 function variant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (identity_op(ins.kind_tag)) { return r; }
+    var whole: typeinfo.Type = variant_union(f, ins);
+    if (enum_layout(f, whole) == semrecords.layout_option()) { return option_site(r, f, ins, whole); }
     if (ins.kind_tag == ssasem.variant_new()) { return emit(r, ir.op_struct_make(ins.str, ins.args.len(), decl_of(f, ins, structs))); }
     if (ins.kind_tag == ssasem.variant_is()) { return emit(r, ir.op_variant_is(ins.str)); }
     return field_get(r, f, ins);
+}
+
+// The union a variant instruction works on: a construction produces one, and
+// a test or a projection reads one.
+function variant_union(f: ssasem.Func, ins: ssa.SInst): typeinfo.Type {
+    if (ins.kind_tag == ssasem.variant_new()) { return f.values[ins.result]; }
+    return f.values[ins.args[0]];
+}
+
+function enum_layout(f: ssasem.Func, t: typeinfo.Type): i32 {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    if (at < 0) { return 0; }
+    return f.enums[at].layout;
+}
+
+function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
+    return semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, t)], name);
+}
+
+// A builtin union's box is a tag word and one payload word: the tag IS the
+// variant's position in the schema, so a test compares it and a projection
+// reads the single payload without a field index. The payloadless variant is
+// the one at position 1 — `op_opt_none` writes that tag itself — because
+// neither Some nor Ok is ever built without a payload.
+function option_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irlower.LowerResult {
+    var tag: i32 = variant_tag(f, whole, ins.str);
+    if (ins.kind_tag == ssasem.variant_new()) {
+        if (ins.args.len() == 0) { return emit(r, ir.op_opt_none()); }
+        return emit(r, ir.op_opt_make(tag));
+    }
+    if (ins.kind_tag == ssasem.variant_is()) {
+        r = emit(r, ir.op_opt_tag());
+        r = emit(r, ir.op_const_i32(tag));
+        return emit(r, ir.op_bin("eq", 0, false));
+    }
+    return emit(r, ir.op_opt_payload());
 }
 
 // Zero at a given width: a 64-bit literal reaches the backends as source text,
@@ -815,6 +908,23 @@ function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult 
     if (ins.str == "string_from_bytes_unchecked") { return emit(r, ir.op_str_from_bytes()); }
     if (ins.str == "f64_bits") { return emit(r, ir.op_f64_bits()); }
     if (ins.str == "f64_from_bits") { return emit(r, ir.op_f64_from_bits()); }
+    return builtin_site(r, ins);
+}
+
+// The builtins whose result is an instantiated builtin union, and the three
+// whose result owns nothing: each is the stack IR op the AST lowering emits
+// for the same call. `read_line` reads a FD operand and the bare builtin
+// names none, so its lowering pushes the zero the AST path pushes; the
+// over-release counter is a runtime call rather than an op.
+function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.str == "env") { return emit(r, ir.op_env()); }
+    if (ins.str == "read_file") { return emit(r, ir.op_read_file()); }
+    if (ins.str == "read_dir") { return emit(r, ir.op_read_dir()); }
+    if (ins.str == "read_line") { return emit(emit(r, ir.op_const_i32(0)), ir.op_read_line()); }
+    if (ins.str == "args") { return emit(r, ir.op_args()); }
+    if (ins.str == "putchar") { return emit(r, ir.op_putchar()); }
+    if (ins.str == "f32_from_bits") { return emit(r, ir.op_f32_from_bits()); }
+    if (ins.str == "__rc_underflow_count") { return emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)); }
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 

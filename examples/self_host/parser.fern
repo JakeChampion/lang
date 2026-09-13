@@ -8006,6 +8006,16 @@ function struct_declared(structs: StructDecl[], name: string): boolean {
     return false;
 }
 
+// A name the module already uses for an ENUM is taken too: an enum desugars to
+// its variant structs, which carry the owner's name rather than declaring one,
+// so struct_declared alone does not see it and a builtin struct of that name
+// would shadow the enum at every annotation.
+function name_declared(structs: StructDecl[], name: string): boolean {
+    if (struct_declared(structs, name)) { return true; }
+    for sd in structs { if (sd.enum_owner == name) { return true; } }
+    return false;
+}
+
 // add_builtin_variant appends a synthesized enum-variant struct (a
 // payload variant carries the marker field "__ev"; a no-payload variant
 // has zero fields — same lowering as parse_enum_decl) unless a struct of
@@ -8154,7 +8164,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // Other carries TWO payloads (path, message) like native's declaration
     // (#4370) — open-coded because add_builtin_variant takes one payload.
     // Field naming matches the user-enum desugar: `__ev`, `__ev1`.
-    if (!struct_declared(structs, "Other")) {
+    if (!name_declared(structs, "Other")) {
         var otf: StructFieldDecl[] = [];
         otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string", fn_ret: "", fn_param_types: "" });
         otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string", fn_ret: "", fn_param_types: "" });
@@ -8167,7 +8177,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // name, matching the arm that field access emits. The field list
     // mirrors native's checker declaration entry for entry, which
     // TestSelfHostBuiltinStructsMatchChecker pins.
-    if (!struct_declared(structs, "FileStat")) {
+    if (!name_declared(structs, "FileStat")) {
         var fsf: StructFieldDecl[] = [];
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "", fn_param_types: "" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "", fn_param_types: "" });
@@ -8195,7 +8205,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // struct whose shape pointer is the interned "FsStat" name, and the emitter
     // resolves `fs.blocks_avail` to a slot offset from this decl. Every field is
     // an i64, so the layout is the same on every target.
-    if (!struct_declared(structs, "FsStat")) {
+    if (!name_declared(structs, "FsStat")) {
         var fvf: StructFieldDecl[] = [];
         fvf = fvf.append(StructFieldDecl { name: "block_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
         fvf = fvf.append(StructFieldDecl { name: "blocks", type_name: "i64", fn_ret: "", fn_param_types: "" });
@@ -8210,7 +8220,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // WinSize: the builtin struct returned by window_size(fd) — how many rows
     // and columns the terminal on the other end of it has. Same injection
     // pattern and the same reason as FsStat above.
-    if (!struct_declared(structs, "WinSize")) {
+    if (!name_declared(structs, "WinSize")) {
         var wsf: StructFieldDecl[] = [];
         wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "" });
         wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "" });
@@ -8222,7 +8232,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // interned "ProcessResult" name, and the emitter resolves
     // `r.stdout` / `r.stderr` / `r.exit_code` to slot offsets from
     // this decl.
-    if (!struct_declared(structs, "ProcessResult")) {
+    if (!name_declared(structs, "ProcessResult")) {
         var prf: StructFieldDecl[] = [];
         prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "", fn_param_types: "" });
         prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "", fn_param_types: "" });
@@ -8239,7 +8249,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // as fields" mode (so e.g. `h.get_all(…)` no longer resolves to
     // the receiver method). Inject them at the self-host's table
     // instead so the Go side stays untouched.
-    if (!struct_declared(structs, "HeaderMap")) {
+    if (!name_declared(structs, "HeaderMap")) {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "", fn_param_types: "" });
         hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "", fn_param_types: "" });
@@ -8248,13 +8258,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // Stream backs HttpRequest.body, so it has to be in this table for
     // `req.body.data` to resolve its inner field: without it `body` has no
     // struct shape here and the chained access bails out of the IR path.
-    if (!struct_declared(structs, "Stream")) {
+    if (!name_declared(structs, "Stream")) {
         var stf: StructFieldDecl[] = [];
         stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
         stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
-    if (!struct_declared(structs, "HttpRequest")) {
+    if (!name_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
         hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
@@ -8262,7 +8272,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
-    if (!struct_declared(structs, "HttpResponse")) {
+    if (!name_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "" });
         hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "", fn_param_types: "" });
@@ -8280,7 +8290,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
     // version, `mode` + `sink` the mock seam (Rec §6) — a recording bag is
     // mode 1 over a cell std/platform's capability methods append to.
-    if (!struct_declared(structs, "Platform")) {
+    if (!name_declared(structs, "Platform")) {
         var pltf: StructFieldDecl[] = [];
         pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "", fn_param_types: "" });
         pltf = pltf.append(StructFieldDecl { name: "mode", type_name: "i32", fn_ret: "", fn_param_types: "" });
@@ -8299,14 +8309,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     structs = add_builtin_struct2(structs, "TimeZone", "name", "string", "offset_seconds", "i32");
     structs = add_builtin_struct2(structs, "DateTime", "date", "Date", "time", "Time");
     structs = add_builtin_struct2(structs, "Zoned", "instant", "Instant", "zone", "TimeZone");
-    if (!struct_declared(structs, "Date")) {
+    if (!name_declared(structs, "Date")) {
         var df: StructFieldDecl[] = [];
         df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "", fn_param_types: "" });
         df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "", fn_param_types: "" });
         df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
-    if (!struct_declared(structs, "Time")) {
+    if (!name_declared(structs, "Time")) {
         var tf: StructFieldDecl[] = [];
         tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32", fn_ret: "", fn_param_types: "" });
         tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "", fn_param_types: "" });
@@ -8314,7 +8324,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
-    if (!struct_declared(structs, "Span")) {
+    if (!name_declared(structs, "Span")) {
         var spf: StructFieldDecl[] = [];
         spf = spf.append(StructFieldDecl { name: "years", type_name: "i32", fn_ret: "", fn_param_types: "" });
         spf = spf.append(StructFieldDecl { name: "months", type_name: "i32", fn_ret: "", fn_param_types: "" });
@@ -8340,12 +8350,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // strings (leaf-safe).
     structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
     structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
-    if (!struct_declared(structs, "BytesWriter")) {
+    if (!name_declared(structs, "BytesWriter")) {
         var bwf: StructFieldDecl[] = [];
         bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
-    if (!struct_declared(structs, "MockPlatform")) {
+    if (!name_declared(structs, "MockPlatform")) {
         var mpf: StructFieldDecl[] = [];
         mpf = mpf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
@@ -8356,7 +8366,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // BytesWriter / the time types. Fields mirror internal/checker/checker.go
     // exactly; all scalar/string, so leaf-safe (url_parse's Url-spread builder
     // and `Option[Url]` return lower).
-    if (!struct_declared(structs, "Url")) {
+    if (!name_declared(structs, "Url")) {
         var urlf: StructFieldDecl[] = [];
         urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string", fn_ret: "", fn_param_types: "" });
         urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string", fn_ret: "", fn_param_types: "" });
