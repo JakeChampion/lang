@@ -13,8 +13,9 @@ servers — and is broadening out from there into a language you can reach
 for generally, including long-running programs (its own self-hosted
 compiler among them). Targets so far:
 
-- **ARM64 / aarch64** Linux ELF — the **default** target (Raspberry Pi 4+,
-  AWS Graviton, Android, qemu-aarch64). Assembled and linked **in-process**
+- **ARM64 / aarch64** Linux ELF — the **default** target (AWS Graviton 2+,
+  Android, qemu-aarch64), ARMv8.2-A baseline with the cryptographic
+  extensions. Assembled and linked **in-process**
   by the pure-Go native backend — no external toolchain needed. Pass `-cc
   aarch64-linux-gnu-gcc` to opt out to an external assembler/linker.
 - **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs. Assembled,
