@@ -65279,7 +65279,7 @@ function param_match_binding_escapes_stmt(st: ast.Stmt, name: string): boolean {
 // A prime count keeps unrelated hash strides from aliasing onto the same bucket.
 function borrow_reg_buckets(): i32 { return 251; }
 
-function borrow_reg_new(): string[] {
+pub function borrow_reg_new(): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     var n: i32 = borrow_reg_buckets();
@@ -65296,6 +65296,33 @@ function borrow_reg_put(own reg: string[], key: string, flags: string): string[]
     var b: i32 = util.hash_bucket(key, reg.len());
     reg = reg.with(b, reg[b] + borrow_reg_record(key, flags));
     return reg;
+}
+
+// borrow_reg_set replaces the record for `key` — the lookup takes the first
+// record of a name in its bucket, so the old one is dropped rather than
+// shadowed — and an empty `flags` leaves the key with no record, which the
+// lookup reads as nothing borrowable. An empty registry is given its buckets.
+// `reg` stays borrowed, as borrow_reg_with_counted's does: copied once, and
+// the copy own-threaded through the one store.
+pub function borrow_reg_set(reg: string[], key: string, flags: string): string[] {
+    var out: string[] = [];
+    if (reg.len() == 0) { out = borrow_reg_new(); }
+    var c: i32 = 0;
+    while (c < reg.len()) { out = out.append(reg[c]); c = c + 1; }
+    var b: i32 = util.hash_bucket(key, out.len());
+    var bucket: string = out[b];
+    var kept: string = "";
+    var p: i32 = 0;
+    while (p < bucket.len()) {
+        var end: i32 = p;
+        while (end < bucket.len() && bucket[end] != b'\n') { end = end + 1; }
+        var bar: i32 = p;
+        while (bar < end && bucket[bar] != b'|') { bar = bar + 1; }
+        if (slice_unchecked(bucket, p, bar) != key) { kept = kept + slice_unchecked(bucket, p, end) + "\n"; }
+        p = end + 1;
+    }
+    if (flags.len() > 0) { kept = kept + borrow_reg_record(key, flags); }
+    return out.with(b, kept);
 }
 function borrow_reg_record(key: string, flags: string): string {
     return key + "|" + flags + "\n";
@@ -65334,7 +65361,7 @@ function copying_builtin_flags(key: string): string {
 // intact, so a lookup by method name reaches every "<Type>.<method>" row
 // without walking the registry. Sized from the row count, unlike the
 // registry itself.
-function borrow_reg_bare_index(reg: string[]): string[] {
+pub function borrow_reg_bare_index(reg: string[]): string[] {
     var nrows: i32 = 0;
     var bi: i32 = 0;
     while (bi < reg.len()) {

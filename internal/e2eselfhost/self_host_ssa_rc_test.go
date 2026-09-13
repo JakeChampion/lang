@@ -178,6 +178,14 @@ func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
 function refused(r: irlower.LowerResult, why: string): boolean {
     return !r.ok && r.why == why && r.ops.len() == 0 && r.n_locals == 0 && r.n_params == 0;
 }
+function has_sub(all: string, needle: string): boolean {
+    var i: i32 = 0;
+    while (i + needle.len() <= all.len()) {
+        if (slice_unchecked(all, i, i + needle.len()) == needle) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
 // The width conversions one lowered graph emits, concatenated — "" when it
 // emits none. A contract the planner refuses comes back as its reason instead,
 // so one helper covers both what an operation is allowed to be and what it
@@ -342,13 +350,25 @@ function main(): i32 {
     var boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
     var boxOnlySchema = semrecords.Record { ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
     var boxOnlyFunc = ssasem.Func { graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc, [3]).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
     // A reference field is exactly what makes that sweep dangerous, so the same
     // shape one field over gets nothing and keeps the leak floor.
     var withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
     var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var withKidsFunc = ssasem.Func { graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [3]).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    // The parameter rows come from the contract, not the syntax: a borrowed
+    // reference parameter is the retained-keep row and never the bare one,
+    // and a counted or scalar parameter has neither.
+    var rowSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 3]);
+    var rowAll: string = "";
+    for bucket in rowSigs.borrowable_params { rowAll = rowAll + bucket; }
+    if (!has_sub(rowAll, "CNT:mk|100\n") || has_sub("\n" + rowAll, "\nmk|")) { return 130; }
+    if (util.index_of_str(rowSigs.param_counted, "PCNT:mk|100") < 0 || rowSigs.param_counted.len() != 1) { return 132; }
+    var rowNone = ssarc.caller_sigs(irlower.FnSigs { ...rowSigs, borrowable_params: irlower.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, "mk", withKidsFunc, [3]);
+    rowAll = "";
+    for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
+    if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -393,6 +413,46 @@ function main(): i32 {
     // The same graph with a BORROWED receiver: its unit is not this function's
     // to hand over, so the plan refuses instead of aliasing the result onto it.
     if (ssaunits.plan(appendFunc, [2, 1]).why != "append receiver is not consumed") { return 43; }
+    // One element replaced hands the receiver's unit over the same way, and
+    // lowers to the count test that chooses the in-place store or the copy;
+    // a scalar element retains nothing, a counted one retains the copy's
+    // elements and releases the element the store replaces.
+    var withGraph = ssa.SFunc { name: "with", nparams: 3, nvals: 4, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+            ssa.SInst { kind_tag: ssasem.with(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+    var withFunc = ssasem.Func { graph: withGraph, values: [f.result, i32ty, i32ty, f.result],
+        params: [f.result, i32ty, i32ty], result: f.result, records: [], enums: [], calls: [] };
+    var withPlan = ssaunits.plan(withFunc, [3, 1, 1]);
+    if (!withPlan.ok) { eprint(withPlan.why); return 121; }
+    var withLowered = ssarc.lower(withFunc, [3, 1, 1], withPlan, irlower.struct_tab_empty());
+    if (!withLowered.ok) { eprint(withLowered.why); return 122; }
+    var sawUnique: boolean = false;
+    var sawSet: boolean = false;
+    var sawIncElems: boolean = false;
+    for o in withLowered.ops {
+        if (o.str == "__fern_rc_is_unique") { sawUnique = true; }
+        if (ir.render_op(o) == "arr_set") { sawSet = true; }
+        if (o.str == "__fern_arr_inc_elems") { sawIncElems = true; }
+    }
+    if (!sawUnique || !sawSet || sawIncElems) { return 123; }
+    if (ssaunits.plan(withFunc, [2, 1, 1]).why != "with receiver is not consumed") { return 124; }
+    var badIndex = ssasem.Func { ...withFunc, values: [f.result, strTy, i32ty, f.result], params: [f.result, strTy, i32ty] };
+    if (ssaunits.plan(badIndex, [3, 2, 1]).why != "with index type") { return 125; }
+    var badWithElem = ssasem.Func { ...withFunc, values: [f.result, i32ty, strTy, f.result], params: [f.result, i32ty, strTy] };
+    if (ssaunits.plan(badWithElem, [3, 1, 2]).why != "with element type") { return 126; }
+    var strArr: typeinfo.Type = typeinfo.TypeArray { elem: strTy };
+    var strWith = ssasem.Func { ...withFunc, values: [strArr, i32ty, strTy, strArr], params: [strArr, i32ty, strTy], result: strArr };
+    var strWithPlan = ssaunits.plan(strWith, [3, 1, 3]);
+    if (!strWithPlan.ok) { eprint(strWithPlan.why); return 127; }
+    var strWithLowered = ssarc.lower(strWith, [3, 1, 3], strWithPlan, irlower.struct_tab_empty());
+    if (!strWithLowered.ok) { eprint(strWithLowered.why); return 128; }
+    var sawStrFree: boolean = false;
+    sawIncElems = false;
+    for o in strWithLowered.ops {
+        if (o.str == "__fern_arr_inc_elems") { sawIncElems = true; }
+        if (o.str == "__fern_str_free") { sawStrFree = true; }
+    }
+    if (!sawIncElems || !sawStrFree) { return 129; }
     // An element that is not the array's own type, and a result that is not the
     // receiver's, are contract errors rather than lowering ones.
     var badElem = ssasem.Func { ...appendFunc, values: [f.result, strTy, f.result], params: [f.result, strTy] };

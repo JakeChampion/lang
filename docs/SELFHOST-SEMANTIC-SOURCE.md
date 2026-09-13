@@ -166,8 +166,13 @@ Unsupported constructs refuse the whole function with a reason.
   `continue` branches to the header and a bottom advance would be skipped
   (#2788). The element is an `array_get`, so it is already a borrow anchored
   to its container and needs no new ownership rule.
-- The array and string builtins `.len()` and `.append()`, and
-  `slice_unchecked` on a string. A slice owns its box and borrows the
+- The array and string builtins `.len()`, `.append()` and `.with()`, and
+  `slice_unchecked` on a string. `.with` hands the receiver's unit over as
+  `.append` does, so its receiver must be moved too; physically it is the
+  count test that chooses between the in-place store and the copy, the AST
+  lowering's two forms chosen at run time rather than by the receiver's
+  syntax, and a counted element type retains the copy's elements and
+  releases the one the store replaces. A slice owns its box and borrows the
   source's bytes, so it is a projection anchored to its source and is
   released by the view helper rather than the ordinary string free.
 - Indexing a string, as one byte handed back in a u8 — the type the checker
@@ -324,6 +329,20 @@ actually lowered here, since the contract needs both sides. The executable
 fixture's `main` now receives the three #9004 shapes and balances; removing
 the contract feed leaks five blocks on the same program.
 
+The parameter rows are rewritten the same way. The AST readers take them
+from the callee's syntax, where a borrowed parameter handed on to a counted
+one reads as consumed, and an argument the rows call neither borrowed nor
+counted is taken to be the callee's, so a temporary the caller built for it
+is never released — `copy_set(xs: i32[])` passing `xs` to an `own`
+parameter leaked the caller's literal. The contract says what a parameter
+is: a borrowed reference parameter is only ever read or retained, which is
+the counted-tier row (`ACNT:` / `SCNT:` / `PCNT:` / `ECNT:` / `TCNT:` /
+`DCNT:` by the parameter's type, and the merged `CNT:` row) — every
+reference the callee keeps was retained, so exactly one release stays with
+the caller — and never the bare borrowable row, which promises the callee
+keeps no reference at all. A counted parameter takes the one count the
+caller hands over, which is the row-less reading already.
+
 ## Remaining
 
 The producer does not yet admit string views, integer widths other than i32
@@ -344,7 +363,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 5,163 of its 7,712
+Measured against the whole loaded self-hosted compiler, 5,396 of its 7,712
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -360,20 +379,29 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (900), calls of
-a builtin with no contract here (453), names that are not semantic values
-(298) and destructuring (264). The string view was worth +355 once the sites
-that stored one were made to copy, and the f64 +273 — each measured, as
-usual, against a leaf histogram that had ranked them differently. The
-declared field width was worth the 81 it was measured at — every
-construction with a wide field, `ir.Op`'s f64 and i64 among them, resolved
-its declaration. A further 209 functions produce and plan but are refused by
-the unit planner for an `.append` whose receiver is not moved, and 2 by
-physical RC lowering for an unsupported value type.
+The leaves are now led by callees with no semantic contract (961),
+destructuring (321), names that are not semantic values (309) and record
+literals (108). The string view was worth +355 once the sites that stored
+one were made to copy, and the f64 +273 — each measured, as usual, against a
+leaf histogram that had ranked them differently. The declared field width
+was worth the 81 it was measured at — every construction with a wide field,
+`ir.Op`'s f64 and i64 among them, resolved its declaration — and `.with`
++233: the builtin-call leaf was 453 functions of which 439 were a `.with`,
+which a probe keyed by callee showed and the bare leaf histogram could not.
+The callee leaf is the same shape: keyed by name it is a handful of runtime
+builtins (`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the
+`astwalk` folds that take a function value, each with its closures behind
+it. A further 226 functions produce and plan but are refused by the unit
+planner for an `.append` whose receiver is not moved, 44 for a `.with` under
+the same rule, and 5 by physical RC lowering for an unsupported value type.
 
-Next, by measured leaf: behind the two largest leaves stands the same thing,
-a contract for the builtins a body calls, which is a vocabulary question and
-not a leaf. The `.append` receiver gate stays deferred: it needs a clone form for a receiver
+Next, by measured leaf: the callee leaf is two things, a contract for the
+runtime builtins a body calls, which is a vocabulary question and not a leaf,
+and the function value, which is a shape this boundary has no form for yet;
+destructuring and the module-level constant (nearly every unbound name is a
+`parser__ORIGIN_*` or a backend's `PK_*` constant) are the next two measured
+leaves and are shapes rather than vocabulary. The `.append` receiver gate
+stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the
 dominant refused shape is a borrowed-parameter accumulator in a loop, where a

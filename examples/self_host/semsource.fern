@@ -626,12 +626,32 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
 }
 
+// `.with` hands the receiver's own unit over the way `.append` does and takes
+// back the array holding the value at the index; the value is held by that
+// array, so a view is refused as an append's is.
+function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
+    var t: typeinfo.Type = s.values[recv.id];
+    var elem: typeinfo.Type = element_type(t);
+    if (!semtypes.concrete(elem, false)) { return refused(s, "unsupported call target"); }
+    var at: Value = expr(c.args[0], s, t_i32());
+    s = at.s;
+    if (!s.ok) { return at; }
+    if (!semtypes.equal(s.values[at.id], t_i32())) { return refused(s, "with index type"); }
+    var v: Value = expr(c.args[1], s, elem);
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
+    if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "with element type"); }
+    return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
+}
+
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
 function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
+    if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
     return refused(s, "unsupported call target");
 }
 

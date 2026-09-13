@@ -59,6 +59,7 @@ pub function slice(): i32 { return 0 - 15; }
 pub function str_index(): i32 { return 0 - 16; }
 pub function cast(): i32 { return 0 - 17; }
 pub function str_as(): i32 { return 0 - 18; }
+pub function with(): i32 { return 0 - 19; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -246,6 +247,22 @@ function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "append container type";
 }
 
+// One element of a counted array replaced. The array handed back is the
+// receiver's own box when its unit was the only one and a fresh copy
+// otherwise, so the receiver's unit is handed over as an append's is; the
+// index is read, and the value is held by the array handed back.
+function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "with arity"; }
+    var recv: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.equal(recv, result)) { return "with result type"; }
+    if (!is_i32(f.values[ins.args[1]])) { return "with index type"; }
+    if let typeinfo.TypeArray(a) = recv {
+        if (!semtypes.equal(a.elem, f.values[ins.args[2]])) { return "with element type"; }
+        return "";
+    }
+    return "with container type";
+}
+
 // A counted container's element count. The receiver is read, not consumed,
 // and the i32 it hands back anchors nothing.
 function length_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -391,15 +408,17 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 }
 
 // The builtins this vocabulary admits: a container's length, one element
-// pushed onto an array, a window onto a string, and one of its bytes.
+// pushed onto an array or replaced in it, a window onto a string, and one of
+// its bytes.
 function is_builtin_op(kind: i32): boolean {
-    return kind == length() || kind == append() || kind == slice() || kind == str_index();
+    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index();
 }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
+    if (ins.kind_tag == with()) { return with_error(ins, f, result); }
     return append_error(ins, f, result);
 }
 
