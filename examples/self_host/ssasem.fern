@@ -92,6 +92,13 @@ pub function is_i64(t: typeinfo.Type): boolean {
     return false;
 }
 
+// The 64-bit float. Like the i64 it rides a slot of its own that only wasm
+// spells out; its operators are the float opcodes, which never wrap.
+pub function is_f64(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeFloat(fl) = t { return fl.width == 64 && !fl.polymorphic; }
+    return false;
+}
+
 // The integer types this vocabulary admits. An operator is written for one of
 // them at a time: both operands carry the same type and so does the result.
 // The checker auto-widens the narrower side of a mixed-width operator, but the
@@ -154,8 +161,16 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     return "";
 }
 
+// A float constant is a literal the backends splice as its source text, so
+// like a wide integer it carries the text and no immediate.
+function float_constant_error(ins: ssa.SInst): string {
+    if (ins.str == "" || ins.imm != 0) { return "float constant needs its literal text"; }
+    return "";
+}
+
 function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (ins.args.len() != 0) { return "constant arity"; }
+    if (ins.kind_tag == 1 && is_f64(result)) { return float_constant_error(ins); }
     if (ins.kind_tag == 1) { return integer_constant_error(ins, result); }
     if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
     if (ins.kind_tag == 5 && !is_string(result)) { return "string constant type"; }
@@ -425,6 +440,12 @@ function integer_op(op: string): boolean {
 function comparison(op: string): boolean {
     return op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=";
 }
+// The float operators: IEEE arithmetic, which never wraps and never traps.
+// `%` has no float opcode in the stack IR, and the bitwise three and the shifts
+// have no float meaning.
+function float_op(op: string): boolean {
+    return op == "+" || op == "-" || op == "*" || op == "/";
+}
 
 // The integer operators and orderings at one width, equality on booleans;
 // string concatenation, a fresh string, and string equality. An operator
@@ -434,6 +455,10 @@ function comparison(op: string): boolean {
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
     if (is_integer(left) && semtypes.equal(left, right)) {
         if (integer_op(op)) { return left; }
+        if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
+    }
+    if (is_f64(left) && is_f64(right)) {
+        if (float_op(op)) { return left; }
         if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
@@ -451,7 +476,7 @@ function string_result(op: string): typeinfo.Type {
 // negation here: the result of one leaves the range the type names, and what
 // the source would mean by it is not the wrap this boundary would emit.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-    if (op == "-" && (is_i32(operand) || is_i64(operand))) { return operand; }
+    if (op == "-" && (is_i32(operand) || is_i64(operand) || is_f64(operand))) { return operand; }
     if (op == "!" && is_bool(operand)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
@@ -463,15 +488,24 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// A conversion between the integer types. Every narrowing site keeps its value
-// in range, so the operand of a widening already holds the value the wider type
-// names and the conversion moves no bits; a narrowing masks. Both ends are
-// integers, which is what makes that true — a float or a pointer would not be a
-// reinterpretation of the same slot.
+// A conversion between the integer types, or between one of the two signed
+// widths and the f64. Every narrowing site keeps its value in range, so the
+// operand of an integer widening already holds the value the wider type names
+// and the conversion moves no bits; a narrowing masks. A float conversion is a
+// real instruction either way — a convert into the float, a truncation toward
+// zero out of it — so it is not a reinterpretation of the slot, and only the
+// widths the backends have an opcode for are admitted.
+pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    if (is_integer(from) && is_integer(to)) { return true; }
+    if (is_f64(to)) { return is_i32(from) || is_i64(from); }
+    if (is_f64(from)) { return is_i32(to) || is_i64(to); }
+    return false;
+}
+
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!is_integer(result)) { return "cast result type"; }
-    if (!is_integer(f.values[ins.args[0]])) { return "cast operand type"; }
+    if (!is_integer(result) && !is_f64(result)) { return "cast result type"; }
+    if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }
 

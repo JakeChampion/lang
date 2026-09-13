@@ -100,14 +100,31 @@ Unsupported constructs refuse the whole function with a reason.
   u64 and usize are not admitted: they select the unsigned operators, which is
   a second signedness rule and not just a second width.
 
-- A cast between the integer types, as the semantic `cast` kind. `e as T`
-  reaches the producer as a unary whose operator names T, and the destination
-  is the checker's type for the whole expression rather than the spelling.
-  Crossing the 64-bit boundary is an explicit extend or wrap; inside the i32
-  domain a narrowing masks and a widening emits nothing, because the narrower
-  type's own producing sites keep its value in range. A cast to or from
-  anything that is not one of these integers — a float, a string, the `as?`
-  downcast — is refused.
+- A cast between the integer types, or between one of the two signed widths
+  and the f64, as the semantic `cast` kind. `e as T` reaches the producer as
+  a unary whose operator names T, and the destination is the checker's type
+  for the whole expression rather than the spelling. Crossing the 64-bit
+  boundary is an explicit extend or wrap; inside the i32 domain a narrowing
+  masks and a widening emits nothing, because the narrower type's own
+  producing sites keep its value in range. Into the f64 is the signed convert
+  at the operand's width and out of it the truncation toward zero at the
+  result's — real instructions, which is why the byte, whose convert has no
+  opcode at that width, is not offered them. A cast to or from anything else
+  — a string, the `as?` downcast — is refused.
+
+- The f64, as a VALUE and never a container element, for the same reason the
+  i64 is one (`narrow_slot`): it gets a slot of its own that only wasm spells
+  out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
+  literal is an f64 — the checker types it polymorphic and settles it where it
+  lands, and this vocabulary has one float width, so only a `f32` suffix or
+  an f32 destination refuses it — and it carries its source text the way a
+  wide integer does, for the backends to splice. The four arithmetic
+  operators are the stack IR's own float opcodes and never wrap, a comparison
+  is a boolean, negation is the sign flip; `%` has no float opcode and the
+  bitwise operators no float meaning, so both refuse. An operator decides its
+  width the way the integer ones do — from the checker's type for the whole
+  expression, or from whichever operand bears one — so a literal on either
+  side takes it. The 32-bit float has no representation here.
 
 - Integer literals in both bases the lexer writes, decimal and hexadecimal.
   A suffix names the type outright, which is how a byte literal (`b'x'`)
@@ -189,7 +206,7 @@ Unsupported constructs refuse the whole function with a reason.
   checker rule will demand of them.
 
 Refused, each with its own reason: calls of the remaining builtins, local
-function values and void functions, floats in expressions, the unsigned and
+function values and void functions, the 32-bit float, the unsigned and
 pointer integer widths, string ordering, generic records,
 destructuring, labelled loops, match guards and the pattern shapes above,
 `defer`, closures, receiver methods, generics, external and async functions,
@@ -251,7 +268,10 @@ one by hand.
   a slice per iteration and comparing, measuring, indexing and lending it to
   a `str` and to a borrowed `string` parameter; an owned string lent to `str`
   bindings and re-lent; a view of a view; a view whose source is a temporary
-  whose only use is the slice; and a view receiver on a `string` method.
+  whose only use is the slice; and a view receiver on a `string` method. The
+  float shapes: a quotient sign-flipped and scaled, the three comparison
+  answers, a loop-carried accumulator, an f64 crossing a produced-to-produced
+  call as a parameter and a result, and an i64 converted to f64 and back.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -318,7 +338,7 @@ target). The AST-lowered `main` receives tuple and array results by contract.
 String and record positions of a received tuple, and record, enum and union
 results, still rely on the AST caller's own syntactic rows.
 
-Measured against the whole loaded self-hosted compiler, 4,809 of its 7,711
+Measured against the whole loaded self-hosted compiler, 5,082 of its 7,712
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -335,21 +355,22 @@ lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
 The leaves are now led by callees with no semantic contract (900), calls of
-a builtin with no contract here (430), FLOAT literals (407, most of them one
-record's `f64` field, `ir.Op`'s), names that are not semantic values (264)
-and destructuring (263). The string view was worth +355 once the sites that
-stored one were made to copy — measured, as usual, against a leaf histogram
-that had put it second. A further 209 functions produce and plan but are
-refused by the unit planner for an `.append` whose receiver is not moved,
-and 7 by physical RC lowering, for an `i64` element and an unsupported value
-type.
+a builtin with no contract here (453), names that are not semantic values
+(298) and destructuring (264). The string view was worth +355 once the sites
+that stored one were made to copy, and the f64 +273 — each measured, as
+usual, against a leaf histogram that had ranked them differently. A further
+209 functions produce and plan but are refused by the unit planner for an
+`.append` whose receiver is not moved, and 83 by physical RC lowering: 81 of
+them constructions with a wide field, `ir.Op`'s f64 and i64 among them, and
+2 for an unsupported value type.
 
-Next, by measured leaf: f64, which `ir.Op` waits behind along with i64 — and
-beyond it the per-field store width a construction withholds today (the -1
-declaration index), because a wide field built through a narrow slot is a wasm
-miscompile rather than a refusal, which is why i64 is a value here and not an
-element. Behind the two largest leaves stands the same thing: a contract for
-the builtins a body calls, which is a vocabulary question and not a leaf. The
+Next, by measured leaf: the per-field store width a construction withholds
+today (the -1 declaration index), which is what stands between `ir.Op` and
+the boundary now that both of its wide scalars are values — a wide field
+built through a narrow slot is a wasm miscompile rather than a refusal, which
+is why i64 and f64 are values here and not elements. Behind the two largest
+leaves stands the same thing: a contract for the builtins a body calls, which
+is a vocabulary question and not a leaf. The
 `.append` receiver gate stays deferred: it needs a clone form for a receiver
 the planner does not move (the `op_arr_slice` shape
 `irlower.lower_arr_append_value` already uses) and carries a real cost — the

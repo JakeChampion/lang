@@ -47,6 +47,7 @@ function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned:
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_str(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
+function t_f64(): typeinfo.Type { return typeinfo.TypeFloat { width: 64, polymorphic: false }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
 function is_i32(t: typeinfo.Type): boolean { return semtypes.equal(t, t_i32()); }
 function is_bool(t: typeinfo.Type): boolean { return semtypes.equal(t, t_bool()); }
@@ -215,8 +216,21 @@ function literal_type(suffix: string): typeinfo.Type {
 // A 64-bit literal does not fit the instruction's i32 immediate, so it carries
 // its SOURCE TEXT instead — which is also how the AST lowering hands the same
 // literal to the backends, rather than through a parse and re-format.
+// A float literal is an f64 unless something names the narrower width: the
+// checker types it polymorphic and settles it where it lands, and this
+// vocabulary has one float width, so the only question is whether the source
+// asked for the other. It carries its text the way a wide integer does.
+function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
+    var narrow: boolean = n.suffix == "f32";
+    if let typeinfo.TypeFloat(fl) = expected { if (fl.width == 32) { narrow = true; } }
+    if (narrow) { return refused(s, "unsupported literal width"); }
+    return define(s, 1, [], 0, n.text, t_f64());
+}
+
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
-    if (parser.is_unit_literal(n) || n.is_float || !integer_literal(n.text)) { return refused(s, "unsupported literal"); }
+    if (parser.is_unit_literal(n)) { return refused(s, "unsupported literal"); }
+    if (n.is_float) { return float_number(n, s, expected); }
+    if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
@@ -499,20 +513,23 @@ function width_bearing(e: ast.Expr): boolean {
     return true;
 }
 
+// A type an operator can run at: one integer type, or the f64.
+function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) || ssasem.is_f64(t); }
+
 // The width an operator runs at, decided before either operand is produced so
 // that a literal on EITHER side takes it. An arithmetic result is that width,
 // which the checker's type for the whole expression names; a comparison's is
 // not, so it comes from whichever operand names one.
 function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State): typeinfo.Type {
     var whole: typeinfo.Type = checked(e, s);
-    if (ssasem.is_integer(whole)) { return whole; }
+    if (operand_type(whole)) { return whole; }
     if (width_bearing(b.left)) {
         var l: typeinfo.Type = checked(b.left, s);
-        if (ssasem.is_integer(l)) { return l; }
+        if (operand_type(l)) { return l; }
     }
     if (width_bearing(b.right)) {
         var r: typeinfo.Type = checked(b.right, s);
-        if (ssasem.is_integer(r)) { return r; }
+        if (operand_type(r)) { return r; }
     }
     return typeinfo.unchecked();
 }
@@ -552,7 +569,7 @@ function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     s = operand.s;
     if (!s.ok) { return operand; }
     var ty: typeinfo.Type = checked(e, s);
-    if (!ssasem.is_integer(ty) || !ssasem.is_integer(s.values[operand.id])) { return refused(s, "cast contract"); }
+    if (!ssasem.cast_admits(s.values[operand.id], ty)) { return refused(s, "cast contract"); }
     return define(s, ssasem.cast(), [operand.id], 0, "", ty);
 }
 

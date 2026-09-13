@@ -49,7 +49,7 @@ function nested(rows: i32[][]): (i32, i32[]) {
 }
 function view(s: string): string { return s; }
 function refused_call(n: i32): i32 { return abs(n); }
-function refused_literal(): f64 { return 1.5; }
+function float_literal(): f64 { return 1.5; }
 function refused_width(n: u64): u64 { return n + 1; }
 function refused_fallthrough(n: i32): i32 { if (n > 0) { return 1; } }
 function refused_destructure(): i32 { var (a, b) = (1, 2); return a + b; }
@@ -185,8 +185,21 @@ function wide_ops(n: i32): i32 {
     return (0i64 - big) as i32;
 }
 
-function refused_float_cast(n: i32): f64 { return n as f64; }
+function float_cast(n: i32): f64 { return n as f64; }
 function refused_mixed_width(b: u8, n: i32): i32 { return b + n; }
+
+// The f64 is a value: literals carry their text, the float operators are the
+// stack IR's own and never wrap, a comparison is a boolean, and a conversion
+// to or from a signed integer is a real instruction. The remainder has no
+// float form, and the narrower float no representation here.
+function float_ops(x: f64, n: i32): i32 {
+    var y: f64 = x * 2.5 + (n as f64);
+    if (y > 10.0 || -y == x) { return (y / 2.0) as i32; }
+    var w: i64 = (y - x) as i64;
+    return (w as f64 + 0.5) as i32;
+}
+function refused_float_rem(x: f64): f64 { return x % 2.0; }
+function refused_narrow_float(x: f32): f32 { return x + 1.0; }
 
 // A string view: a slice is one; an owned string bound or passed where a view
 // is declared is lent (a retag that borrows the box); a view passed to a
@@ -782,6 +795,48 @@ enum Chain { End, Link(i32, Chain) }
 // other way. Every read is blind to which box holds the bytes.
 @noinline function view_len(v: str): i32 { return v.len(); }
 @noinline function (s: string) copied(): string { return s + ""; }
+// The f64: literals, the four operators and the comparisons, negation, the
+// conversions from and to both signed widths, a loop-carried float and a float
+// crossing produced-to-produced calls as a parameter and a result. Every
+// answer leaves as an i32 through a truncation.
+@noinline function scale(x: f64, n: i32): f64 { return x * (n as f64) + 0.5; }
+@noinline function ratio(a: i32, b: i32): i32 {
+    var q: f64 = (a as f64) / (b as f64);
+    if (q < 0.0) { q = -q; }
+    return (q * 100.0) as i32;
+}
+@noinline function float_cmp(x: f64, y: f64): i32 {
+    if (x == y) { return 0; }
+    if (x < y) { return 0 - 1; }
+    return 1;
+}
+@noinline function float_loop(n: i32): i32 {
+    var acc: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < n) { acc = acc + 0.25; i = i + 1; }
+    return (acc * 4.0) as i32;
+}
+@noinline function float_call(n: i32): i32 { return (scale(1.5, n) * 2.0) as i32; }
+@noinline function wide_float(n: i64): i32 {
+    var d: f64 = n as f64;
+    if ((d as i64) != n) { return 0 - 1; }
+    return (d / 1000000.0) as i32;
+}
+// A wide FIELD is read at its own width: the box is built by the AST-lowered
+// main and every slot is 8 bytes, so only wasm's typed load can tell an f64
+// or i64 field from a pointer in the low half of its slot.
+struct WideRec { d: f64, n: i64, s: string }
+@noinline function wide_fields(own w: WideRec): i32 {
+    var d: f64 = w.d;
+    return (d * 2.0) as i32 + (w.n >> 32) as i32 + w.s.len();
+}
+@noinline function span_wide(own sp: Span): i32 {
+    match (sp) {
+        Wide(d, s) => { return (d * 4.0) as i32 + s.len(); },
+        Empty => { return 0; }
+    }
+    return 0 - 1;
+}
 @noinline function scan_views(s: string): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
@@ -946,6 +1001,10 @@ function main(): i32 {
     print_int(wide_call(5)); print(""); print_int(wide_call(0)); print("");
     print_int(scan_views("abcdef")); print(""); print_int(lent_views(1)); print(""); print_int(lent_views(0)); print("");
     print_int(view_of_temp(2)); print(""); print_int(view_of_temp(0)); print("");
+    print_int(ratio(1, 4)); print(""); print_int(ratio(0 - 3, 2)); print("");
+    print_int(float_cmp(1.5, 1.5)); print(""); print_int(float_cmp(1.0, 2.0)); print(""); print_int(float_cmp(3.0, 2.0)); print("");
+    print_int(float_loop(10)); print(""); print_int(float_call(3)); print(""); print_int(wide_float(5000000000i64)); print("");
+    print_int(wide_fields(WideRec { d: 1.25, n: 8589934592i64, s: "ab" })); print(""); print_int(span_wide(Wide(1.5, "abc"))); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -983,7 +1042,7 @@ function main(): i32 {
 // nested_for(3) walks [0,1,2], [1,2,3], [2,3,4] skipping every 1 and breaking
 // at the 4: 2 + (2+3) + (2+3) = 12. copy_words(2) is 2 words of 2 bytes = 4,
 // and an empty array iterates zero times.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1068,7 +1127,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

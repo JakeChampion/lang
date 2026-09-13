@@ -470,15 +470,29 @@ function main(): i32 {
     }
     if (!sawField1) { return 56; }
     if (sawField0) { return 57; }
-    // A VALUE of that width stays out. Only a construction needs the per-field
-    // store width, and this boundary withholds it (declaration index -1), so
-    // admitting one would store a double through an i32 slot on wasm.
+    // A VALUE of that width lowers, in a slot of its own the way an i64 does;
+    // only a construction needs the per-field store width, which this boundary
+    // withholds (declaration index -1), so an f64 is never an element. The
+    // narrower float has no representation here at all.
     var wideVal = ssasem.Func { graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
         records: [], enums: [], calls: [] };
     var wideValPlan = ssaunits.plan(wideVal, [1]);
     if (!wideValPlan.ok) { eprint(wideValPlan.why); return 58; }
-    var wideValWhy: string = ssarc.lower(wideVal, [1], wideValPlan).why;
-    if (wideValWhy != "unsupported physical RC value type") { eprint(wideValWhy); return 60; }
+    var wideValLowered = ssarc.lower(wideVal, [1], wideValPlan);
+    if (!wideValLowered.ok) { eprint(wideValLowered.why); return 60; }
+    if (wideValLowered.f64_slots.len() != 1 || wideValLowered.f64_slots[0] != 0) { return 110; }
+    var f32ty: typeinfo.Type = typeinfo.TypeFloat { width: 32, polymorphic: false };
+    var narrowVal = ssasem.Func { ...wideVal, values: [f32ty, i32ty], params: [f32ty] };
+    if (!refused(ssarc.lower(narrowVal, [1], ssaunits.plan(narrowVal, [1])), "unsupported physical RC value type")) { return 111; }
+    var floatElem = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
+        values: [f64ty, typeinfo.TypeArray { elem: f64ty }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty }, records: [], enums: [], calls: [] };
+    if (!refused(ssarc.lower(floatElem, [1], ssaunits.plan(floatElem, [1])), "unsupported physical RC value type")) { return 112; }
+    // A float constant carries its text, as a wide integer does.
+    var floatK = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nparams: 0, nvals: 1,
+            blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] },
+        values: [f64ty], params: [], result: f64ty, records: [], enums: [], calls: [] };
+    if (ssaunits.plan(floatK, []).why != "float constant needs its literal text") { return 113; }
     // A string index reads its receiver and hands back a scalar. The source
     // DIES at the read here and the result is returned past it, which a
     // projection could never do — the planner would refuse the borrow. That it
@@ -535,12 +549,14 @@ function main(): i32 {
     if (cast_masks(u8ty, i32ty) != "") { return 77; }
     if (cast_masks(u8ty, u8ty) != "") { return 78; }
     if (cast_masks(i32ty, i32ty) != "") { return 79; }
-    // Both ends are integers. A cast is a reinterpretation of one slot, which
-    // a float or a reference is not.
+    // Into and out of the f64 is a real conversion and never a mask; a
+    // reference is not a cast operand at all, and neither is the byte for the
+    // float, whose convert has no opcode at that width.
     var f64ty2: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
-    if (cast_masks(i32ty, f64ty2) != "plan:cast result type") { return 80; }
-    if (cast_masks(f64ty2, i32ty) != "plan:cast operand type") { return 81; }
+    if (cast_masks(i32ty, f64ty2) != "") { return 80; }
+    if (cast_masks(f64ty2, i32ty) != "") { return 81; }
     if (cast_masks(strTy, i32ty) != "plan:cast operand type") { return 82; }
+    if (cast_masks(u8ty, f64ty2) != "plan:cast operand type") { return 114; }
     // A byte's constant is pushed with no mask, so it has to be in range here.
     var kGraph = ssa.SFunc { name: "k", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 255)], term: ret(0) }] };

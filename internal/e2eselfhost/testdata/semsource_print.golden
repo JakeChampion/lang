@@ -142,7 +142,14 @@ func view {
 }
 
 refused call target has no semantic contract
-refused unsupported literal
+modes result f64
+v0:f64
+func float_literal {
+  b0:
+    v0 = const_int 1.5
+    ret v0
+}
+
 refused operator contract
 refused value-returning body falls through
 refused unsupported destructuring declaration
@@ -595,7 +602,57 @@ func wide_ops {
     ret v11
 }
 
-refused cast contract
+modes 1 result f64
+v0:i32 v1:f64
+func float_cast {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+refused operator contract
+modes 1 1 result i32
+v0:f64 v1:i32 v2:f64 v3:f64 v4:f64 v5:f64 v6:f64 v7:boolean v8:f64 v9:boolean v10:boolean v11:boolean v12:f64 v13:f64 v14:i32 v15:f64 v16:i64 v17:f64 v18:f64 v19:f64 v20:i32
+func float_ops {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = const_int 2.5
+    v3 = binary * v0 v2
+    v4 = cast v1
+    v5 = binary + v3 v4
+    v6 = const_int 10.0
+    v7 = binary > v5 v6
+    brif v7 b2 b1
+  b1:
+    v8 = unary - v5
+    v9 = binary == v8 v0
+    br b3
+  b2:
+    v10 = const_bool 1
+    br b3
+  b3:
+    v11 = phi v9 v10
+    brif v11 b4 b5
+  b4:
+    v12 = const_int 2.0
+    v13 = binary / v5 v12
+    v14 = cast v13
+    ret v14
+  b5:
+    br b6
+  b6:
+    v15 = binary - v5 v0
+    v16 = cast v15
+    v17 = cast v16
+    v18 = const_int 0.5
+    v19 = binary + v17 v18
+    v20 = cast v19
+    ret v20
+}
+
+refused operator contract
 refused operator contract
 modes 2 result i32
 v0:str v1:i32
