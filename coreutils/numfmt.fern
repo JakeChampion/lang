@@ -921,6 +921,12 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   var f: ld.Format = o.ldbl;
   if (o.to == scale_none()) {
     var p: i32 = effective_prec(o, prec) as i32;
+    // A precision that fills the buffer on its own is refused before
+    // anything that long is built: the text is at least one digit, the
+    // point and the precision.
+    if (p > 0 && p as i64 + 2 as i64 >= out_buf_len() as i64) {
+      return refused_human(f, val0);
+    }
     var rounded: ld.LD = scale_none_value(val0, p, o);
     var plain: string = f.to_fixed(rounded, p);
     if (human_width(plain, 0, o) >= out_buf_len() as i64) {
@@ -968,6 +974,9 @@ function to_human(val0: ld.LD, prec: i32, o: Opts): Human {
   }
   if (o.fmt.prec >= 0 as i64) {
     out_prec = o.fmt.prec as i32;
+  }
+  if (out_prec > 0 && out_prec as i64 + 2 as i64 >= scaled_buf_len()) {
+    return refused_human(f, val);
   }
   var text: string = f.to_fixed(val, out_prec);
   if (human_width(text, power, o) >= scaled_buf_len()) {

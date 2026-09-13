@@ -193,23 +193,23 @@ function shl_hi(hi: u64, lo: u64, k: i32): u64 {
     return 0 as u64;
   }
   if (k >= 64) {
-    return lo << ((k - 64) as u64);
+    return lo << (k - 64) as u64;
   }
-  return (hi << (k as u64)) | (lo >> ((64 - k) as u64));
+  return hi << k as u64 | lo >> (64 - k) as u64;
 }
 
 function shl_lo(lo: u64, k: i32): u64 {
   if (k >= 64) {
     return 0 as u64;
   }
-  return lo << (k as u64);
+  return lo << k as u64;
 }
 
 function shr_hi(hi: u64, k: i32): u64 {
   if (k >= 64) {
     return 0 as u64;
   }
-  return hi >> (k as u64);
+  return hi >> k as u64;
 }
 
 function shr_lo(hi: u64, lo: u64, k: i32): u64 {
@@ -220,14 +220,14 @@ function shr_lo(hi: u64, lo: u64, k: i32): u64 {
     return 0 as u64;
   }
   if (k >= 64) {
-    return hi >> ((k - 64) as u64);
+    return hi >> (k - 64) as u64;
   }
-  return (lo >> (k as u64)) | (hi << ((64 - k) as u64));
+  return lo >> k as u64 | hi << (64 - k) as u64;
 }
 
 // The low `k` bits set, for k in [0, 64).
 function low_mask(k: i32): u64 {
-  return (1 as u64 << (k as u64)) - 1 as u64;
+  return (1 as u64 << k as u64) - 1 as u64;
 }
 
 // Whether any of the low `k` bits is set.
@@ -337,9 +337,9 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
       return LD { neg: neg, kind: 0, hi: hi, lo: lo, e: at };
     }
     if (k >= 64) {
-      return LD { neg: neg, kind: 0, hi: lo << ((k - 64) as u64), lo: 0 as u64, e: at };
+      return LD { neg: neg, kind: 0, hi: lo << (k - 64) as u64, lo: 0 as u64, e: at };
     }
-    return LD { neg: neg, kind: 0, hi: (hi << (k as u64)) | (lo >> ((64 - k) as u64)), lo: lo << (k as u64), e: at };
+    return LD { neg: neg, kind: 0, hi: hi << k as u64 | lo >> (64 - k) as u64, lo: lo << k as u64, e: at };
   }
   // Rounding: `shift` is in [1, bl], so at most 128. `mh:ml` is the
   // kept part, `round` the first bit below it and `below` whether any
@@ -349,22 +349,22 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
   var round: boolean = false;
   var below: boolean = sticky;
   if (shift < 64) {
-    mh = hi >> (shift as u64);
-    ml = (lo >> (shift as u64)) | (hi << ((64 - shift) as u64));
-    round = ((lo >> ((shift - 1) as u64)) & 1 as u64) == 1 as u64;
-    below = below || (lo & ((1 as u64 << ((shift - 1) as u64)) - 1 as u64)) != 0 as u64;
+    mh = hi >> shift as u64;
+    ml = lo >> shift as u64 | hi << (64 - shift) as u64;
+    round = (lo >> (shift - 1) as u64 & 1 as u64) == 1 as u64;
+    below = below || (lo & (1 as u64 << (shift - 1) as u64) - 1 as u64) != 0 as u64;
   } else if (shift == 64) {
     ml = hi;
-    round = (lo >> 63 as u64) == 1 as u64;
-    below = below || (lo << 1 as u64) != 0 as u64;
+    round = lo >> 63 as u64 == 1 as u64;
+    below = below || lo << 1 as u64 != 0 as u64;
   } else if (shift < 128) {
     var t: i32 = shift - 64;
-    ml = hi >> (t as u64);
-    round = ((hi >> ((t - 1) as u64)) & 1 as u64) == 1 as u64;
-    below = below || lo != 0 as u64 || (hi & ((1 as u64 << ((t - 1) as u64)) - 1 as u64)) != 0 as u64;
+    ml = hi >> t as u64;
+    round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
+    below = below || lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
   } else {
-    round = (hi >> 63 as u64) == 1 as u64;
-    below = below || lo != 0 as u64 || (hi << 1 as u64) != 0 as u64;
+    round = hi >> 63 as u64 == 1 as u64;
+    below = below || lo != 0 as u64 || hi << 1 as u64 != 0 as u64;
   }
   if (round && (below || (ml & 1 as u64) == 1 as u64)) {
     ml = ml + 1 as u64;
@@ -380,7 +380,7 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
       wide = 64 - __clz64(ml) > f.mant;
     }
     if (wide) {
-      ml = (ml >> 1 as u64) | (mh << 63 as u64);
+      ml = ml >> 1 as u64 | mh << 63 as u64;
       mh = mh >> 1 as u64;
       at = at + 1;
     }
@@ -950,8 +950,8 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
   if (a.hi == 0 as u64 && b.hi == 0 as u64) {
     var ta: i32 = __ctz64(a.lo);
     var tb: i32 = __ctz64(b.lo);
-    var xa: u64 = a.lo >> (ta as u64);
-    var yb: u64 = b.lo >> (tb as u64);
+    var xa: u64 = a.lo >> ta as u64;
+    var yb: u64 = b.lo >> tb as u64;
     return round128(f, mul_hi64(xa, yb), xa * yb, a.e + ta + b.e + tb, false, neg);
   }
   if (fits_word(a) && fits_word(b)) {
@@ -979,13 +979,13 @@ function fits_word(v: LD): boolean {
 // The significand of a value `fits_word` accepted, as that word.
 function reduced(v: LD): u64 {
   if (v.hi == 0 as u64) {
-    return v.lo >> (__ctz64(v.lo) as u64);
+    return v.lo >> __ctz64(v.lo) as u64;
   }
   if (v.lo == 0 as u64) {
-    return v.hi >> (__ctz64(v.hi) as u64);
+    return v.hi >> __ctz64(v.hi) as u64;
   }
   var t: i32 = __ctz64(v.lo);
-  return (v.lo >> (t as u64)) | (v.hi << ((64 - t) as u64));
+  return v.lo >> t as u64 | v.hi << (64 - t) as u64;
 }
 
 // `div(f, a, b)` — a / b rounded once to the format. The quotient is
@@ -1021,10 +1021,10 @@ pub function (f: Format) div(a: LD, b: LD): LD {
   }
   if (a.hi == 0 as u64 && b.hi == 0 as u64) {
     var tb: i32 = __ctz64(b.lo);
-    var d1: u64 = b.lo >> (tb as u64);
+    var d1: u64 = b.lo >> tb as u64;
     if (d1 <= 4294967295 as u64) {
       var ta: i32 = __ctz64(a.lo);
-      return div_small(f, a.lo >> (ta as u64), a.e + ta, d1, b.e + tb, neg);
+      return div_small(f, a.lo >> ta as u64, a.e + ta, d1, b.e + tb, neg);
     }
   } else if (fits_word(a) && fits_word(b)) {
     var d: u64 = reduced(b);
@@ -1062,15 +1062,15 @@ function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): L
     var from: i32 = pos - width - s;
     var chunk: u64 = 0 as u64;
     if (from >= 0) {
-      chunk = (x >> (from as u64)) & ((1 as u64 << (width as u64)) - 1 as u64);
+      chunk = x >> from as u64 & (1 as u64 << width as u64) - 1 as u64;
     } else if (from + width > 0) {
-      chunk = (x << ((0 - from) as u64)) & ((1 as u64 << (width as u64)) - 1 as u64);
+      chunk = x << (0 - from) as u64 & (1 as u64 << width as u64) - 1 as u64;
     }
-    var cur: u64 = (rem << 32 as u64) | chunk;
+    var cur: u64 = rem << 32 as u64 | chunk;
     var q: u64 = cur / d;
     rem = cur % d;
-    qh = (qh << (width as u64)) | (ql >> ((64 - width) as u64));
-    ql = (ql << (width as u64)) | q;
+    qh = qh << width as u64 | ql >> (64 - width) as u64;
+    ql = ql << width as u64 | q;
     pos = pos - width;
     width = 32;
   }
@@ -1210,11 +1210,11 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   var wh: u64 = 0 as u64;
   var wl: u64 = 0 as u64;
   if (drop < 64) {
-    if ((v.lo & ((1 as u64 << (drop as u64)) - 1 as u64)) == 0 as u64) {
+    if ((v.lo & (1 as u64 << drop as u64) - 1 as u64) == 0 as u64) {
       return v;
     }
-    wh = v.hi >> (drop as u64);
-    wl = (v.lo >> (drop as u64)) | (v.hi << ((64 - drop) as u64));
+    wh = v.hi >> drop as u64;
+    wl = v.lo >> drop as u64 | v.hi << (64 - drop) as u64;
   } else {
     if (!low_bits_set(v.hi, v.lo, drop)) {
       return v;
@@ -1241,9 +1241,9 @@ function plus_half(f: Format, v: LD): LD {
     var sh: u64 = v.hi;
     var sl: u64 = v.lo;
     if (k >= 64) {
-      sh = sh + (1 as u64 << ((k - 64) as u64));
+      sh = sh + (1 as u64 << (k - 64) as u64);
     } else {
-      sl = sl + (1 as u64 << (k as u64));
+      sl = sl + (1 as u64 << k as u64);
       if (sl < v.lo) {
         sh = sh + 1 as u64;
       }
@@ -1299,7 +1299,7 @@ pub function (v: LD) dec(): Dec {
   var e: i32 = v.e + tz;
   if (e >= 0) {
     if (hi == 0 as u64 && 64 - __clz64(lo) + e <= 64) {
-      var w: string = (lo << (e as u64)).to_string();
+      var w: string = (lo << e as u64).to_string();
       return Dec { digits: w, dp: w.len() };
     }
     var s: string = to_big(hi, lo).shl(e).to_string();
@@ -1320,7 +1320,7 @@ function pow5_u64(k: i32): u64 {
   var p: u64 = 1 as u64;
   var i: i32 = 0;
   while (i < k) {
-    p = p * 5 as u64;
+    p = p * (5 as u64);
     i = i + 1;
   }
   return p;
@@ -1614,7 +1614,7 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
     }
     if (v.hi == 0 as u64) {
       var tz: i32 = __ctz64(v.lo);
-      var q1: u64 = scaled_u64(v.lo >> (tz as u64), v.e + tz, prec);
+      var q1: u64 = scaled_u64(v.lo >> tz as u64, v.e + tz, prec);
       if (q1 != 18446744073709551615 as u64) {
         return fixed_u64(q1, prec, v.neg);
       }
@@ -1637,34 +1637,34 @@ function scaled_u64(m: u64, e: i32, prec: i32): u64 {
   var lo: u64 = m * p;
   var none: u64 = 18446744073709551615 as u64;
   if (e >= 0) {
-    if (hi != 0 as u64 || e >= 64 || (e > 0 && (lo >> ((64 - e) as u64)) != 0 as u64)) {
+    if (hi != 0 as u64 || e >= 64 || e > 0 && lo >> (64 - e) as u64 != 0 as u64) {
       return none;
     }
-    return lo << (e as u64);
+    return lo << e as u64;
   }
   var shift: i32 = 0 - e;
   var q: u64 = 0 as u64;
   var round: boolean = false;
   var below: boolean = false;
   if (shift < 64) {
-    if ((hi >> (shift as u64)) != 0 as u64) {
+    if (hi >> shift as u64 != 0 as u64) {
       return none;
     }
-    q = (lo >> (shift as u64)) | (hi << ((64 - shift) as u64));
-    round = ((lo >> ((shift - 1) as u64)) & 1 as u64) == 1 as u64;
-    below = (lo & ((1 as u64 << ((shift - 1) as u64)) - 1 as u64)) != 0 as u64;
+    q = lo >> shift as u64 | hi << (64 - shift) as u64;
+    round = (lo >> (shift - 1) as u64 & 1 as u64) == 1 as u64;
+    below = (lo & (1 as u64 << (shift - 1) as u64) - 1 as u64) != 0 as u64;
   } else if (shift == 64) {
     q = hi;
-    round = (lo >> 63 as u64) == 1 as u64;
-    below = (lo << 1 as u64) != 0 as u64;
+    round = lo >> 63 as u64 == 1 as u64;
+    below = lo << 1 as u64 != 0 as u64;
   } else if (shift < 128) {
     var t: i32 = shift - 64;
-    q = hi >> (t as u64);
-    round = ((hi >> ((t - 1) as u64)) & 1 as u64) == 1 as u64;
-    below = lo != 0 as u64 || (hi & ((1 as u64 << ((t - 1) as u64)) - 1 as u64)) != 0 as u64;
+    q = hi >> t as u64;
+    round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
+    below = lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
   } else if (shift == 128) {
-    round = (hi >> 63 as u64) == 1 as u64;
-    below = lo != 0 as u64 || (hi << 1 as u64) != 0 as u64;
+    round = hi >> 63 as u64 == 1 as u64;
+    below = lo != 0 as u64 || hi << 1 as u64 != 0 as u64;
   }
   if (round && (below || (q & 1 as u64) == 1 as u64)) {
     if (q == none) {
@@ -1680,7 +1680,7 @@ function pow10_u64(k: i32): u64 {
   var p: u64 = 1 as u64;
   var i: i32 = 0;
   while (i < k) {
-    p = p * 10 as u64;
+    p = p * (10 as u64);
     i = i + 1;
   }
   return p;
@@ -1690,10 +1690,10 @@ function pow10_u64(k: i32): u64 {
 // to at least one digit before it, and a sign in front.
 function fixed_u64(q: u64, prec: i32, neg: boolean): string {
   var digits: i32 = 1;
-  var t: u64 = q / 10 as u64;
+  var t: u64 = q / (10 as u64);
   while (t > 0 as u64) {
     digits = digits + 1;
-    t = t / 10 as u64;
+    t = t / (10 as u64);
   }
   var whole: i32 = digits - prec;
   if (whole < 1) {
@@ -1715,8 +1715,8 @@ function fixed_u64(q: u64, prec: i32, neg: boolean): string {
   var rest: u64 = q;
   var k: i32 = 0;
   while (k < prec) {
-    out = out.with(i, ((rest % 10 as u64) as i32 + 48) as u8);
-    rest = rest / 10 as u64;
+    out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
+    rest = rest / (10 as u64);
     i = i - 1;
     k = k + 1;
   }
@@ -1725,8 +1725,8 @@ function fixed_u64(q: u64, prec: i32, neg: boolean): string {
     i = i - 1;
   }
   while (i >= start) {
-    out = out.with(i, ((rest % 10 as u64) as i32 + 48) as u8);
-    rest = rest / 10 as u64;
+    out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
+    rest = rest / (10 as u64);
     i = i - 1;
   }
   return string_from_bytes_unchecked(out);

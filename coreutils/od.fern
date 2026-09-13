@@ -774,9 +774,9 @@ function decode_ieee(f: ld.Format, lo: u64, hi: u64, size: i32): ld.LD {
   }
   // The implied leading one goes in above the fraction.
   if (frac_bits < 64) {
-    mlo = mlo | (1 as u64 << frac_bits as u64);
+    mlo = mlo | 1 as u64 << frac_bits as u64;
   } else {
-    mhi = mhi | (1 as u64 << (frac_bits - 64) as u64);
+    mhi = mhi | 1 as u64 << (frac_bits - 64) as u64;
   }
   return ld.LD { neg: neg, kind: 0, hi: mhi, lo: mlo, e: exp - f.emax - frac_bits };
 }
