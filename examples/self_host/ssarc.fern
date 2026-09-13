@@ -623,9 +623,6 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
         if (ssasem.is_text(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
         return emit(r, ir.op_arr_len());
     }
-    // The unit planner admits an append only where the receiver's unit is
-    // moved, which is exactly the sole-ownership the reclaim-on-grow form needs.
-    if (ins.kind_tag == ssasem.append()) { return emit(r, ir.op_arr_push_owned()); }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, ir.op_arr_get(32)); }
@@ -675,6 +672,7 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
     // own sign-flip opcode and pushes nothing.
     if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_f64(f.values[ins.args[0]])) { r = emit(r, zero(f.values[ins.args[0]])); }
     if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.append()) { return emit(append_push(r, f, ins), ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (ins.kind_tag == 1 || ins.kind_tag == 2 || ins.kind_tag == 5) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
@@ -688,21 +686,20 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
     return emit(r, ir.op_store_local(ins.result));
 }
 
-// One element replaced in place when the received unit is the box's only one
-// and in a fresh copy otherwise — the AST lowering's two forms, chosen here by
-// the count at run time rather than by the receiver's syntax. Copying releases
-// the received unit, which was not the only one, so the release is a
-// decrement and the source stays whole for its other owners; the copy
-// duplicated every element pointer, so a counted element type retains them
-// all. The box is sole-owned after that either way, and the element the store
-// replaces gives back the one count it held.
-function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    var base: i32 = ins.args[0];
+// The received unit's box when it is the only one and a fresh sole-owned copy
+// otherwise, left in `scratch`. The copy releases the received unit, which was
+// not the only one, so the release is a decrement and the source stays whole
+// for its other owners; the copy duplicated every element pointer, so a
+// counted element type retains them all. Either way exactly one unit goes in
+// and `scratch` holds one nobody else shares.
+function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
     var elem: typeinfo.Type = typeinfo.unchecked();
     if let typeinfo.TypeArray(a) = f.values[base] { elem = a.elem; }
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(base));
+    r = emit(r, ir.op_store_local(scratch));
     r = emit(r, ir.op_else());
     r = helper(r, base, release_name(f.values[base]));
     r = emit(r, ir.op_load_local(base));
@@ -711,22 +708,52 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     r = emit(r, ir.op_arr_len());
     r = emit(r, ir.op_arr_slice(32));
     if (reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
-    r = emit(r, ir.op_store_local(base));
-    r = emit(r, ir.op_end());
-    if (reference(elem)) {
-        var old: i32 = f.graph.nvals;
-        r = reserve(r, old + 1);
-        r = emit(r, ir.op_load_local(base));
-        r = emit(r, ir.op_load_local(ins.args[1]));
-        r = emit(r, ir.op_arr_get(32));
-        r = emit(r, ir.op_store_local(old));
-        r = drop_value(r, old, elem, old + 1, f);
-    }
-    r = emit(r, ir.op_load_local(base));
+    r = emit(r, ir.op_store_local(scratch));
+    return emit(r, ir.op_end());
+}
+
+// One element pushed onto the sole-owned box above, so the push grows a buffer
+// no one else can read and the reclaim-on-grow form may reuse it. The runtime's
+// push consumes the receiver's unit only when it is the box's only one — it
+// leaves a shared receiver's count alone and hands back an un-share copy — so
+// the release that makes the operation take exactly one unit at every count
+// belongs here rather than in the shared helper the AST lowering also calls.
+function append_push(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var scratch: i32 = f.graph.nvals;
+    r = reserve(r, scratch + 1);
+    r = sole_owned_base(r, f, ins.args[0], scratch);
+    r = emit(r, ir.op_load_local(scratch));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    return emit(r, ir.op_arr_push_owned());
+}
+
+// The element the store replaces gives back the one count it held.
+function drop_replaced(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, elem: typeinfo.Type): irlower.LowerResult {
+    var old: i32 = scratch + 1;
+    r = reserve(r, old + 1);
+    r = emit(r, ir.op_load_local(scratch));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_arr_get(32));
+    r = emit(r, ir.op_store_local(old));
+    return drop_value(r, old, elem, old + 1, f);
+}
+
+// One element replaced in the sole-owned box above: in place when the received
+// unit was the box's only one and in a fresh copy otherwise, the AST lowering's
+// two forms chosen here by the count at run time rather than by the receiver's
+// syntax.
+function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = typeinfo.unchecked();
+    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] { elem = a.elem; }
+    var scratch: i32 = f.graph.nvals;
+    r = reserve(r, scratch + 1);
+    r = sole_owned_base(r, f, ins.args[0], scratch);
+    if (reference(elem)) { r = drop_replaced(r, f, ins, scratch, elem); }
+    r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
     r = emit(r, ir.op_arr_set(32));
-    return emit(r, ir.op_load_local(base));
+    return emit(r, ir.op_load_local(scratch));
 }
 
 function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {

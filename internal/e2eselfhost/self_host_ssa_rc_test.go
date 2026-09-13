@@ -397,7 +397,10 @@ function main(): i32 {
     if (ssaunits.plan(badResult, [2]).why != "length result type") { return 39; }
     // An append takes the receiver's unit and hands one back, so it is admitted
     // only where that unit is MOVED. A counted receiver dead after the push is;
-    // a borrowed one is not, and is refused rather than lowered.
+    // a borrowed one is not, and is refused rather than lowered. The runtime's
+    // push gives the unit back only when the receiver's box is the only one its
+    // count names, so the count test that chooses between the in-place grow and
+    // the copy is emitted here rather than left to the shared helper.
     var appendGraph = ssa.SFunc { name: "append", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
@@ -408,8 +411,12 @@ function main(): i32 {
     var appendLowered = ssarc.lower(appendFunc, [3, 1], appendPlan, irlower.struct_tab_empty());
     if (!appendLowered.ok) { eprint(appendLowered.why); return 41; }
     var sawPush: boolean = false;
-    for o in appendLowered.ops { if (ir.render_op(o) == "arr_push_owned") { sawPush = true; } }
-    if (!sawPush) { return 42; }
+    var sawPushUnique: boolean = false;
+    for o in appendLowered.ops {
+        if (ir.render_op(o) == "arr_push_owned") { sawPush = true; }
+        if (o.str == "__fern_rc_is_unique") { sawPushUnique = true; }
+    }
+    if (!sawPush || !sawPushUnique) { return 42; }
     // The same graph with a BORROWED receiver: its unit is not this function's
     // to hand over, so the plan refuses instead of aliasing the result onto it.
     if (ssaunits.plan(appendFunc, [2, 1]).why != "append receiver is not consumed") { return 43; }
