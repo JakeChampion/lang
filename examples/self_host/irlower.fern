@@ -7489,6 +7489,9 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // strbuf_take() snapshots the global string-builder into a fresh
                     // string box (so `return strbuf_take()` str-tracks the result).
                     if (cid.name == "strbuf_take" && c.args.len() == 0) { return true; }
+                    // buf_take(h) hands the builder's own buffer over as a
+                    // string box without copying it.
+                    if (cid.name == "buf_take" && c.args.len() == 1) { return true; }
                     // An erased-generic fn whose return mirrors argument i
                     // (`idg[T](x: T): T`, the "name|$arg<i>" registry entry):
                     // the call is a string exactly when THAT argument is.
@@ -11082,6 +11085,44 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 }
 
 // lower_expr emits ops that leave the value of `e` on the operand stack.
+// The capacity-carrying string builder (#8773) — the same accumulator with the
+// handle made explicit, so any number are live at once and they nest.
+// buf_builtin_arity is how many arguments one of its calls takes, or -1 when
+// the name is not one of them; a mismatch therefore falls through to the
+// ordinary call path exactly as a wrong-arity `strbuf_append` does.
+function buf_builtin_arity(name: string): i32 {
+    if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") { return 1; }
+    if (name == "buf_push" || name == "buf_push_byte") { return 2; }
+    if (name == "buf_push_range") { return 4; }
+    return 0 - 1;
+}
+
+// buf_builtin_op is the op one of those calls lowers to.
+function buf_builtin_op(name: string): ir.Op {
+    if (name == "buf_new") { return ir.op_buf_new(); }
+    if (name == "buf_push") { return ir.op_buf_push(); }
+    if (name == "buf_push_range") { return ir.op_buf_push_range(); }
+    if (name == "buf_push_byte") { return ir.op_buf_push_byte(); }
+    if (name == "buf_len") { return ir.op_buf_len(); }
+    if (name == "buf_take") { return ir.op_buf_take(); }
+    return ir.op_buf_free();
+}
+
+// lower_call_buf lowers the arguments left to right and emits the op.
+// `buf_push` / `buf_push_range` / `buf_push_byte` / `buf_free` are statement
+// ops (they push a dummy the statement-level drop takes); `buf_new` /
+// `buf_len` / `buf_take` are value ops, and buf_take is str-tracked in
+// expr_is_str.
+function lower_call_buf(name: string, c: ast.ExprCall, s: LowerState): LowerState {
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        s = lower_expr(c.args[i], s);
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s.emit(buf_builtin_op(name));
+}
+
 // lower_call_named lowers a call whose callee is a bare NAME — a user
 // function, a `const`, a builtin, or one of the closure / marker forms.
 // `e` is this same call as an Expr, for the two type queries that take one.
@@ -12123,6 +12164,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     }
     if (cid.name == "strbuf_take" && c.args.len() == 0) {
         return s.emit(ir.op_strbuf_take());
+    }
+    if (buf_builtin_arity(cid.name) == c.args.len()) {
+        return lower_call_buf(cid.name, c, s);
     }
     // Built-in `i32_to_string(n)` — the free-function spelling of
     // `n.to_string()` on an i32: route to the __fern_i32_to_string
@@ -65208,19 +65252,21 @@ function borrow_reg_record(key: string, flags: string): string {
 // The method key is seeded only while no user receiver method is named `write`:
 // the escape walks see no receiver type, so the name alone must settle it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch"];
     for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
     return keys.append("Writer.write");
 }
 
 // copying_builtin_flags: the per-parameter borrowability flag string for one
-// copying-builtin key. Every key but __mismatch copies a single string at
-// position 0; __mismatch reads TWO ranges and retains neither, so positions 0
-// and 2 both carry the credit (native's copyingBuiltinArgs["__mismatch"] is
-// {0, 2}). A position past the string's end reads as not borrowable, which is
-// what the i32 parameters want.
+// copying-builtin key. Most keys copy a single string at position 0;
+// __mismatch reads TWO ranges and retains neither, so positions 0 and 2 both
+// carry the credit (native's copyingBuiltinArgs["__mismatch"] is {0, 2}), and
+// the two buf_push forms take the builder handle at position 0, so the string
+// they copy is at position 1. A position past the string's end reads as not
+// borrowable, which is what the i32 parameters want.
 function copying_builtin_flags(key: string): string {
     if (key == "__mismatch") { return "10100"; }
+    if (key == "buf_push" || key == "buf_push_range") { return "01"; }
     return "1";
 }
 
