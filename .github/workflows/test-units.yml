@@ -239,9 +239,18 @@ jobs:
         # test file and no lane ran it.
         #
         # `go list` cannot go stale, so the fifth round does not happen.
+        #
+        # -timeout is set EXPLICITLY because internal/coreutils is a
+        # ten-minute test binary in a lane whose other packages are seconds:
+        # it compiles all ~70 utilities twice — once with the native compiler,
+        # once with the self-host one — and runs both corpora. go test's
+        # default timeout is also ten minutes, and a binary that default kills
+        # reports whichever cases were in flight as failures with no output
+        # and an unknown elapsed, so the lane names tests that did not fail
+        # and never names the wall it hit.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
-          gotestsum --format pkgname-and-test-fails -- \
+          gotestsum --format pkgname-and-test-fails -- -timeout 25m \
             $(scripts/unit-test-packages)
       # PUBLISH the cache every other job restores. Main only: a save per PR
       # job would be ~85 multi-gigabyte writes per push against a 10 GB
