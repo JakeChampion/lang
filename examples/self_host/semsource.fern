@@ -43,6 +43,8 @@ struct Value { s: State, id: i32 }
 
 function t_i32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
 function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false }; }
+function t_u32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false }; }
+function t_u64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false }; }
 function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
@@ -200,10 +202,12 @@ function integer_literal(text: string): boolean {
 
 // A literal's width is the suffix the lexer read, which a byte literal
 // (`b'x'`) carries as much as a written `7u8` does. An unsuffixed decimal is
-// an i32; the unsigned and pointer widths have no constant form here yet.
+// an i32; the pointer width has no constant form here yet.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
+    if (suffix == "u32") { return t_u32(); }
     if (suffix == "i64") { return t_i64(); }
+    if (suffix == "u64") { return t_u64(); }
     if (suffix == "" || suffix == "i32") { return t_i32(); }
     return typeinfo.unchecked();
 }
@@ -213,9 +217,10 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
-// A 64-bit literal does not fit the instruction's i32 immediate, so it carries
-// its SOURCE TEXT instead — which is also how the AST lowering hands the same
-// literal to the backends, rather than through a parse and re-format.
+// A literal with no i32 immediate to ride — either 64-bit width, or a u32,
+// whose range reaches past the immediate's sign bit — carries its SOURCE TEXT
+// instead, which is also how the AST lowering hands the same literal to the
+// backends, rather than through a parse and re-format.
 // A float literal is an f64 unless something names the narrower width: the
 // checker types it polymorphic and settles it where it lands, and this
 // vocabulary has one float width, so the only question is whether the source
@@ -234,7 +239,7 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
-    if (ssasem.is_i64(ty)) { return define(s, 1, [], 0, n.text, ty); }
+    if (ssasem.text_constant(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
 
@@ -1826,7 +1831,7 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     for v in variants {
         for field in v.fields {
             if (!semtypes.concrete(field.ty, false)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
-            if (ssasem.is_i64(field.ty) || ssasem.is_f64(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
+            if (ssasem.is_wide(field.ty) || ssasem.is_f64(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
         }
     }
     return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };

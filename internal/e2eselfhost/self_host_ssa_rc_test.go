@@ -728,8 +728,8 @@ function main(): i32 {
     var spanDecl: i32 = 0 - 1;
     for o in spanLowered.ops { if (o.str == "W") { spanDecl = o.decl; } }
     if (irlower.decl_at_field_type(declTab, spanDecl, 0) != "i64") { return 120; }
-    // A wide constant cannot fit the instruction's immediate, so it carries the
-    // literal's text; a narrow one carries none, and neither may carry both.
+    // A constant with no signed i32 immediate to ride carries the literal's
+    // text instead; a narrow signed one carries none, and neither may carry both.
     var wideK = ssa.SFunc { name: "wk", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
     var wideKFunc = ssasem.Func { graph: wideK, values: [i64ty], params: [], result: i64ty,
@@ -737,10 +737,18 @@ function main(): i32 {
     if (!ssaunits.plan(wideKFunc, []).ok) { eprint(ssaunits.plan(wideKFunc, []).why); return 98; }
     var noText = ssasem.Func { ...wideKFunc, graph: ssa.SFunc { ...wideK,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] } };
-    if (ssaunits.plan(noText, []).why != "wide constant needs its literal text") { return 99; }
+    if (ssaunits.plan(noText, []).why != "constant needs its literal text") { return 99; }
     var narrowText = ssasem.Func { graph: wideK, values: [i32ty], params: [], result: i32ty,
         records: [], enums: [], calls: [] };
     if (ssaunits.plan(narrowText, []).why != "narrow constant carries text") { return 100; }
+    // A u32 rides the i32's slot but reaches past the immediate's sign bit, so
+    // it takes the text form at every value rather than at some of them.
+    var u32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
+    var u32Text = ssasem.Func { ...wideKFunc, values: [u32ty], result: u32ty };
+    if (!ssaunits.plan(u32Text, []).ok) { eprint(ssaunits.plan(u32Text, []).why); return 101; }
+    var u32Imm = ssasem.Func { ...u32Text, graph: ssa.SFunc { ...wideK,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 7)], term: ret(0) }] } };
+    if (ssaunits.plan(u32Imm, []).why != "constant needs its literal text") { return 102; }
     return 0;
 }
 `

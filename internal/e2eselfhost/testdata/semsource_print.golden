@@ -150,7 +150,49 @@ func float_literal {
     ret v0
 }
 
-refused unsupported literal width
+modes 1 result u64
+v0:u64 v1:u64 v2:u64
+func wide_unsigned {
+  b0:
+    v0 = param 0
+    v1 = const_int 1
+    v2 = binary + v0 v1
+    ret v2
+}
+
+modes 1 result u32
+v0:u32 v1:u32 v2:u32 v3:u32 v4:u32
+func half_unsigned {
+  b0:
+    v0 = param 0
+    v1 = const_int 2147483648
+    v2 = binary / v1 v0
+    v3 = const_int 1
+    v4 = binary >> v2 v3
+    ret v4
+}
+
+modes 1 result i32
+v0:i32 v1:u32 v2:u64 v3:i32
+func unsigned_widths {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    v2 = cast v1
+    v3 = cast v2
+    ret v3
+}
+
+modes 1 result f64
+v0:u32 v1:f64
+func unsigned_float {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+refused operator contract
 modes 2 2 result boolean
 v0:string v1:string v2:boolean
 func sorted {
