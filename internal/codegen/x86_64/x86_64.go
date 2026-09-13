@@ -11129,9 +11129,12 @@ func (g *generator) emitStrBufRuntime() {
 // The buffer is allocated through __fern_alloc_rc1(cap + 1), so it is
 // laid out exactly as a heap string already is — rc at [data-8], the
 // length slot at [data-4], data at `data`, room for the trailing NUL.
-// That is what makes __fern_buf_take ZERO-COPY: it stamps the length
-// and the NUL and hands the same pointer back as a string. The rc is
-// already 1 from the allocation and nothing in between disturbs it.
+// A take copies the accumulated bytes into a string sized exactly to
+// them and keeps the buffer on the builder, so every block returns to
+// the size class it was bumped at: handing the buffer itself over freed
+// it at the string's LENGTH class, which filed the builder's growth on
+// a freelist its next growth never read, and a stream that straddled
+// the flush threshold bumped fresh memory on every cycle (#9179).
 //
 // The capacity is the point. An append is a compare against [H+16], a
 // memcpy and a length store: no refcount check (a builder's buffer is
@@ -11139,12 +11142,6 @@ func (g *generator) emitStrBufRuntime() {
 // is what __fern_str_append re-derives from the class on every call.
 // Growth doubles, which also closes the prefix re-copy the allocator's
 // class step only softened.
-//
-// The block a take hands over is freed later at its LENGTH rather than
-// its capacity, so it returns to a smaller freelist class than it was
-// bumped at. That is bounded internal fragmentation, not unsoundness —
-// a block on a class's freelist is only ever reused as that class. The
-// leak census is corrected at the handoff, where both numbers are known.
 func (g *generator) emitStrBuilderRuntime() {
 	// __fern_buf_new(cap) -> handle
 	g.line("")
@@ -11358,10 +11355,10 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_buf_len, .-__fern_buf_len")
 
-	// __fern_buf_take(H) -> string: hand the accumulated bytes over as a
-	// string without copying them, and leave the builder empty but still
-	// usable — the reserve survives, so the next push allocates once at
-	// full width rather than growing back up.
+	// __fern_buf_take(H) -> string: the accumulated bytes copied into a
+	// fresh string of their own length; the builder keeps its buffer at
+	// full width with nothing in it. An empty build answers the inline
+	// empty string.
 	g.line("")
 	g.line(".globl __fern_buf_take")
 	g.line(".type __fern_buf_take, @function")
@@ -11370,37 +11367,29 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14") // alignment padding for the calls
 	g.emit("mov rbx, rdi")
 	g.emit("mov r12, qword ptr [rbx + 8]")
 	g.emit("test r12, r12")
 	g.emit("jz .Lbuftake_empty")
-	if ast.LeakCheckEnabled {
-		// The block was charged at the capacity's class and __fern_free
-		// will charge it back at the length's; settle the difference here,
-		// where both are still known.
-		g.emit("mov r9, qword ptr [rbx + 16]")
-		g.emit("add r9, 24")
-		g.emit("and r9, -16")
-		g.emitSizeClassCap("r9", "rax", "rdx")
-		g.emit("mov r10, r12")
-		g.emit("add r10, 24")
-		g.emit("and r10, -16")
-		g.emitSizeClassCap("r10", "rax", "rdx")
-		g.emit("sub r9, r10")
-		g.emit("sub qword ptr [rip + __fern_lc_alloc_bytes], r9")
-	}
-	g.emit("mov rdi, qword ptr [rbx]")
-	g.emitStrLenStore("r12d", "rdi")
-	g.emit("lea rax, [rdi + r12]")
-	g.emit("mov byte ptr [rax], 0")
-	g.emit("mov qword ptr [rbx], 0")
+	g.emit("lea rdi, [r12 + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r13, rax")
+	g.emit("mov rdi, r13")
+	g.emit("mov rsi, qword ptr [rbx]")
+	g.emit("mov rdx, r12")
+	g.emit("call __fern_memcpy")
+	g.emitStrLenStore("r12d", "r13")
+	g.emit("mov byte ptr [r13 + r12], 0")
 	g.emit("mov qword ptr [rbx + 8], 0")
-	g.emit("mov qword ptr [rbx + 16], 0")
-	g.emit("mov rax, rdi")
+	g.emit("mov rax, r13")
 	g.emit("jmp .Lbuftake_ret")
 	g.label(".Lbuftake_empty")
 	g.emitStrEmpty("rax")
 	g.label(".Lbuftake_ret")
+	g.emit("pop r14")
+	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")

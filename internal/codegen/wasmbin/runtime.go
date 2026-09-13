@@ -1133,6 +1133,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
 	"strbuf_take":            {"__fern_alloc_rc1"},
 	"buf_new":                {"__fern_alloc_rc1"},
+	"buf_take":               {"__fern_alloc_rc1"},
 	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
@@ -1992,7 +1993,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildBufLenBody,
 	},
 	"buf_take": {
-		// (h) → (data, len). The buffer itself, handed over uncopied.
+		// (h) → (data, len): a copy of the accumulated bytes.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildBufTakeBody,
@@ -4618,16 +4619,13 @@ func buildStrbufTakeBody(idxs map[string]uint32) []byte {
 //	[H +  8] cap      — bytes the buffer holds before it must grow
 //	[H + 12] reserve  — the capacity a re-arm after a take starts from
 //
-// Both blocks come from __fern_alloc_rc1, so the buffer is laid out exactly
-// as a heap string already is and `buf_take` hands it over with no copy: it
-// answers (data, len) and drops its own pointer. The rc is already 1 from
-// the allocation and nothing in between disturbs it.
-//
-// The block a take hands over is freed later at its LENGTH rather than its
-// capacity, so it returns to a smaller freelist class than it was bumped at.
-// That is bounded internal fragmentation, not unsoundness — a block on a
-// class's freelist is only ever reused as that class. The leak census is
-// settled at the handoff, where both numbers are still known.
+// Both blocks come from __fern_alloc_rc1. A take copies the accumulated
+// bytes into a string of exactly their length and keeps the buffer on the
+// builder, so every block returns to the class it was bumped at: handing
+// the buffer itself over freed it at the string's LENGTH class, which
+// filed the builder's growth on a freelist its next growth never read,
+// and a stream that straddled the flush threshold bumped fresh memory on
+// every cycle (#9179).
 
 // bufReserveCall emits `__fern_buf_reserve(h, need)` from a builder helper.
 func bufReserveCall(body []byte, reserve, hLocal, needLocal uint32) []byte {
@@ -4917,14 +4915,13 @@ func buildBufLenBody(_ map[string]uint32) []byte {
 
 // buildBufTakeBody assembles wasm bytes for buf_take.
 //
-// Signature: (h i32) → (data, len). Locals: $len (1), $data (2), $cap (3),
-// then the six the census arithmetic needs.
+// Signature: (h i32) → (data, len). Locals: $len (1), $data (2).
 //
-// The builder is left empty and still usable: the reserve survives, so the
-// next push allocates once at full width rather than growing back up. An
-// empty build answers the canonical inline empty and keeps its buffer, so a
-// flush that finds nothing costs no allocation.
-func buildBufTakeBody(_ map[string]uint32) []byte {
+// The accumulated bytes are copied into a fresh __fern_alloc_rc1 block of
+// their own length; the builder keeps its buffer at full width with nothing
+// in it. An empty build answers the canonical inline empty.
+func buildBufTakeBody(idxs map[string]uint32) []byte {
+	allocRc1 := idxs["__fern_alloc_rc1"]
 	var body []byte
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 4)
@@ -4936,42 +4933,20 @@ func buildBufTakeBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, int32(-0x80000000))
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 2)
-	if ast.LeakCheckEnabled {
-		// The block was charged at the capacity's class and __free will
-		// charge it back at the length's; settle the difference here.
-		// mem[lcAllocBytesAddr] -= cap(capacity) - cap(length).
-		body = inst.InstLocalGet(body, 0)
-		body = memory.InstI32Load(body, 2, 8)
-		body = inst.InstLocalSet(body, 3)
-		body = strRoundedSize(body, 3, 4)
-		body = emitFreelistBin(body, 4, 5, 6, 7)
-		body = strRoundedSize(body, 1, 8)
-		body = emitFreelistBin(body, 8, 9, 6, 7)
-		body = inst.InstI32Const(body, lcAllocBytesAddr)
-		body = inst.InstI32Const(body, lcAllocBytesAddr)
-		body = memory.InstI64Load(body, 3, 0)
-		body = inst.InstLocalGet(body, 5)
-		body = inst.InstLocalGet(body, 9)
-		body = numeric.InstI32Sub(body)
-		body = convert.InstI64ExtendI32U(body)
-		body = numeric.InstI64Sub(body)
-		body = memory.InstI64Store(body, 3, 0)
-	}
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstMemoryCopy(body)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 4)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 8)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 1)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
 }
 
 // buildBufFreeBody assembles wasm bytes for buf_free.

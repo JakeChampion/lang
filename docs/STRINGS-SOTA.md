@@ -401,9 +401,13 @@ buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
 buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_free(b)
 ```
 
-`buf_take` is **zero-copy**: the buffer is allocated string-shaped, so the
-take stamps the length and hands the same pointer over, leaving the builder
-empty and still usable with its reserve intact. A builder is not
+`buf_take` copies the accumulated bytes into a string of exactly their
+length and keeps the buffer on the builder, emptied and still at full
+width. Handing the buffer itself over was zero-copy but freed it at the
+string's length class, which filed every grown block on a freelist the
+builder's next growth never read, so a stream that straddled its flush
+threshold bumped fresh memory per flush (#9179); the copy is a memcpy per
+flush against a write syscall. A builder is not
 refcounted and has no drop — a handle that is never freed leaks, exactly as
 an fd that is never closed does — so programs want `std/io_buffered`'s
 writers rather than these directly.
