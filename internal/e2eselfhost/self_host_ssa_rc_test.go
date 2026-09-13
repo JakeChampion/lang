@@ -186,6 +186,16 @@ function has_sub(all: string, needle: string): boolean {
     }
     return false;
 }
+// Whether the array construction one lowered graph emits stores eight-byte
+// elements, in the integer form wasm loads an i64 with when asked for it and
+// the float form otherwise. The register backends give every element eight
+// bytes and read neither flag.
+function made_wide(r: irlower.LowerResult, integer: boolean): boolean {
+    for o in r.ops {
+        if (o.kind_tag == ir.kind_id("arr_make")) { return o.width == 64 && o.unsigned == integer; }
+    }
+    return false;
+}
 // The width conversions one lowered graph emits, concatenated — "" when it
 // emits none. A contract the planner refuses comes back as its reason instead,
 // so one helper covers both what an operation is allowed to be and what it
@@ -245,14 +255,15 @@ function main(): i32 {
     var cp = ssaunits.plan(cfg, []);
     if (!cp.ok) { eprint(cp.why); return 3; }
     if (!refused(ssarc.lower(cfg, [], cp, irlower.struct_tab_empty()), "physical RC needs reducible graph")) { return 4; }
-    // A wide array has no stack representation here; a string does now.
+    // An array of a 64-bit element: its ops carry the eight-byte stride, so it
+    // is a value here like any other array.
     var wide: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false } };
     var g = ssa.SFunc { name: "unsupported", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
     var typed = ssasem.Func { graph: g, values: [wide], params: [wide], result: wide, records: [], enums: [], calls: [] };
     var plan = ssaunits.plan(typed, [2]);
     if (!plan.ok) { eprint(plan.why); return 5; }
-    if (!refused(ssarc.lower(typed, [2], plan, irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 6; }
+    if (!ssarc.lower(typed, [2], plan, irlower.struct_tab_empty()).ok) { return 6; }
     // A record instance with type arguments is named by more than its
     // declaration, and a schema field this vocabulary cannot WALK refuses the
     // whole schema; a plain record with an array field lowers.
@@ -268,8 +279,7 @@ function main(): i32 {
     if (!refused(ssarc.lower(genericFunc, [2], genericPlan, irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 8; }
     // A wide array is not such a field. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
-    // own box released and nothing more — even though a wide array VALUE stays
-    // out, as the pin above holds.
+    // own box released and nothing more.
     var wideField = semrecords.Record { ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
         semrecords.Field { name: "ns", ty: wide }] };
     var wideFieldFunc = ssasem.Func { graph: g, values: [recordType], params: [recordType], result: recordType, records: [wideField], enums: [], calls: [] };
@@ -555,9 +565,9 @@ function main(): i32 {
     if (!sawField1) { return 56; }
     if (sawField0) { return 57; }
     // A VALUE of that width lowers, in a slot of its own the way an i64 does;
-    // only a construction needs the per-field store width, which this boundary
-    // withholds (declaration index -1), so an f64 is never an element. The
-    // narrower float has no representation here at all.
+    // only a RECORD construction needs the per-field store width, which this
+    // boundary withholds (declaration index -1). The narrower float has no
+    // representation here at all.
     var wideVal = ssasem.Func { graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
         records: [], enums: [], calls: [] };
     var wideValPlan = ssaunits.plan(wideVal, [1]);
@@ -571,7 +581,13 @@ function main(): i32 {
     var floatElem = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
         values: [f64ty, typeinfo.TypeArray { elem: f64ty }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty }, records: [], enums: [], calls: [] };
-    if (!refused(ssarc.lower(floatElem, [1], ssaunits.plan(floatElem, [1]), irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 112; }
+    // An ARRAY element of that width does lower: every element op carries its
+    // own slot width, so the construction stores eight bytes and wasm reads
+    // back the float form. The i64 shares the stride and takes the integer
+    // form, which is what the op's unsigned flag selects.
+    var floatElemLowered = ssarc.lower(floatElem, [1], ssaunits.plan(floatElem, [1]), irlower.struct_tab_empty());
+    if (!floatElemLowered.ok) { eprint(floatElemLowered.why); return 112; }
+    if (!made_wide(floatElemLowered, false)) { return 133; }
     // A float constant carries its text, as a wide integer does.
     var floatK = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nparams: 0, nvals: 1,
             blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 0)], term: ret(0) }] },
@@ -669,13 +685,22 @@ function main(): i32 {
     var sawWide: boolean = false;
     for o in wideBin.ops { if (o.kind_tag == ir.kind_id("lt_s") && o.width == 64) { sawWide = true; } }
     if (!sawWide) { return 94; }
-    // A wide value is a VALUE here and never a container ELEMENT: every
-    // container this boundary builds stores one i32-shaped word per slot, so a
-    // 64-bit element would be written through a narrow store on wasm.
+    // A wide value is an array element and a VALUE, and the array that holds
+    // it is one box like any other.
     var wideArr: typeinfo.Type = typeinfo.TypeArray { elem: i64ty };
     var wideArrFunc = ssasem.Func { graph: g, values: [wideArr], params: [wideArr], result: wideArr,
         records: [], enums: [], calls: [] };
-    if (!refused(ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2]), irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 95; }
+    var wideArrLowered = ssarc.lower(wideArrFunc, [2], ssaunits.plan(wideArrFunc, [2]), irlower.struct_tab_empty());
+    if (!wideArrLowered.ok) { eprint(wideArrLowered.why); return 95; }
+    if (wideArrLowered.arr_slots.len() != 1 || wideArrLowered.arr_slots[0] != 0) { return 134; }
+    var wideElem = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [],
+            insts: [inst(6, 0, [], 0), inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
+        values: [i64ty, wideArr], params: [i64ty], result: wideArr, records: [], enums: [], calls: [] };
+    var wideElemLowered = ssarc.lower(wideElem, [1], ssaunits.plan(wideElem, [1]), irlower.struct_tab_empty());
+    if (!wideElemLowered.ok) { eprint(wideElemLowered.why); return 135; }
+    if (!made_wide(wideElemLowered, true)) { return 136; }
+    // A TUPLE element of that width still has none: op_tuple_make spells no
+    // element kinds here, so there is no store width to write it at.
     var buildGraph = ssa.SFunc { name: "build", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.tuple_new(), 1, [0, 0], 0)], term: ret(1) }] };
