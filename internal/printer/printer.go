@@ -608,6 +608,9 @@ func printType(t ast.Type) string {
 			if i > 0 {
 				out += ", "
 			}
+			if x.OwnAt(i) {
+				out += "own "
+			}
 			out += printType(p)
 		}
 		return out + ") => " + printType(x.Result)

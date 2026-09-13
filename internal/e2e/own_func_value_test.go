@@ -62,6 +62,37 @@ function main(): i32 {
     return 0;
 }`
 
+// ownBoxedCellRebind: a local that a nested function CAPTURES and that is also
+// rebound from a consuming call. closureconv boxes such a local into a
+// one-element cell so the closure and the outer scope alias it, and the cell
+// store released the element it superseded — but the call had already consumed
+// that element, so the box was freed twice. The plain-local form of the rebind
+// (`x = f(…, x, …)`) is suppressed by name; the cell read closureconv rewrote
+// the name into is the same rebind and needs the same suppression.
+const ownBoxedCellRebind = `function eat(own xs: string[], s: string): string[] { return xs.append(s); }
+function has(xs: string[], s: string): boolean {
+    for x in xs { if (x == s) { return true; } }
+    return false;
+}
+function run(names: string[]): i32 {
+    var acc: string[] = [];
+    for n in names { acc = eat(acc, n); }
+    function seen(s: string): boolean { return has(acc, s); }
+    var hits: i32 = 0;
+    for n in names { if (seen(n)) { hits = hits + 1; } }
+    return hits + acc.len();
+}
+function main(): i32 {
+    var held: string[] = ["alpha", "beta"];
+    var k: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) { k = k + run(["a", "b", "c"]); i = i + 1; }
+    if (k != 120) { return 1; }
+    if (held[0] != "alpha") { return 2; }
+    if (held[1] != "beta") { return 3; }
+    return 0;
+}`
+
 func wantBalancedRun(t *testing.T, name, stdout, stderr string, code int) {
 	t.Helper()
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
@@ -77,6 +108,7 @@ func TestOwnFuncValueX86_64(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"fresh-arg", ownFuncValueFreshArg},
 		{"fold", ownFuncValueFold},
+		{"boxed-cell-rebind", ownBoxedCellRebind},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, code := runLeakCheckX86_64(t, tc.src)
@@ -89,6 +121,7 @@ func TestOwnFuncValueArm64(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"fresh-arg", ownFuncValueFreshArg},
 		{"fold", ownFuncValueFold},
+		{"boxed-cell-rebind", ownBoxedCellRebind},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, code := runLeakCheckArm64(t, tc.src)

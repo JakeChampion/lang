@@ -11341,6 +11341,26 @@ func traitSelfIsOwn(m ast.TraitMethod) bool {
 // suppresses, checker rejects a shape that then re-lands via another
 // path) or a leak/UAF (checker admits, rc still exit-decs) follows.
 func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, isID := call.Callee.(*ast.Ident)
+	if !isID {
+		return nil
+	}
+	return selfReassignOwnMoveArgWith(asn, ownFuncs[cid.Name])
+}
+
+// selfReassignOwnMoveArgWith is SelfReassignOwnMoveArg with the callee's
+// consuming mask already resolved, so a call through a function VALUE — whose
+// only declaration is its type — recognises the same shape a named callee
+// does. The IR's half of the agreement is callConsumesIdent, which reads that
+// mask through the same accessor.
+func selfReassignOwnMoveArgWith(asn *ast.Assign, flags []bool) *ast.Ident {
+	if len(flags) == 0 {
+		return nil
+	}
 	tid, ok := asn.Target.(*ast.Ident)
 	if !ok {
 		return nil
@@ -11351,10 +11371,6 @@ func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Id
 	}
 	cid, ok := call.Callee.(*ast.Ident)
 	if !ok {
-		return nil
-	}
-	flags, isOwn := ownFuncs[cid.Name]
-	if !isOwn {
 		return nil
 	}
 	// Count every occurrence of the target name in the RHS, excluding
@@ -11378,6 +11394,21 @@ func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Id
 		}
 	}
 	return nil
+}
+
+// selfReassignOwnMoveArg is SelfReassignOwnMoveArg with the consuming mask
+// resolved the way every other rule resolves it: from the declaration for a
+// named callee, and from the function TYPE for a call through a function
+// value.
+func (c *checker) selfReassignOwnMoveArg(asn *ast.Assign) *ast.Ident {
+	if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+		return arg
+	}
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	return selfReassignOwnMoveArgWith(asn, c.callOwnFlags[call])
 }
 
 // SupersededFieldOwnMoveArgs recognizes the #8186 field-move shape on a
@@ -11891,7 +11922,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				// (see selfMoveArgs). Checked before recordExprUses so
 				// guardCallArgs sees the admission.
 				if id, ok := asn.Target.(*ast.Ident); ok && !owned[id.Name] {
-					if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+					if arg := c.selfReassignOwnMoveArg(asn); arg != nil {
 						selfMoveArgs[arg] = true
 					}
 				}

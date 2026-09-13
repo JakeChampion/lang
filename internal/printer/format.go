@@ -2291,6 +2291,12 @@ func formatType(t ast.Type) string {
 			if i > 0 {
 				out += ", "
 			}
+			// A consuming slot spells its `own`: it is part of the type, so a
+			// reformatted signature that dropped it would say the opposite of
+			// what the source said.
+			if x.OwnAt(i) {
+				out += "own "
+			}
 			out += formatType(p)
 		}
 		return out + ") => " + formatType(x.Result)

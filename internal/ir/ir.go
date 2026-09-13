@@ -21686,6 +21686,38 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 // `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
 // without re-entering a closure release, so `g = f` supersedes an element on
 // a cyclic graph without the recursion #8637 traced.
+// callConsumesCellElem reports whether `e` is a call that hands the element of
+// the boxcapture cell `cellName` to a CONSUMING parameter — the cell-read form
+// of callConsumesIdent, reading the same mask through the same accessor so a
+// direct call and one through a function value cannot disagree.
+func (b *builder) callConsumesCellElem(e ast.Expr, cellName string) bool {
+	if cellName == "" {
+		return false
+	}
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	flags := b.calleeOwnFlags(id.Name)
+	for i, a := range call.Args {
+		if i >= len(flags) || !flags[i] {
+			continue
+		}
+		idx, isIdx := a.(*ast.Index)
+		if !isIdx || idx.IsSlice {
+			continue
+		}
+		if arr, isID := idx.Array.(*ast.Ident); isID && arr.Name == cellName {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind, storeWidth int, idxHelper string) error {
 	elem := t.ElemType
 	counted := elem != nil && ast.RcFreeEnabled && ast.IsPointerType(elem)
@@ -21753,8 +21785,14 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 	// Release the superseded element through the same ladder a container
-	// slot's replacement takes.
-	if !guarded {
+	// slot's replacement takes — unless the value expression CONSUMED it. A
+	// boxcapture cell holds the binding's one reference, so handing `cell[0]`
+	// to a consuming parameter gives that reference away and the callee
+	// releases it; releasing here as well frees the box twice. The plain-local
+	// form of the same rebind (`x = f(…, x, …)`) is suppressed by
+	// callConsumesIdent, which cannot see the cell read closureconv rewrote
+	// the name into.
+	if !guarded && !b.callConsumesCellElem(n.Value, cellName) {
 		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 		b.emit(payloadLoadOpFor(elem, b.ptrW))
 		b.dropStructField(elem)
