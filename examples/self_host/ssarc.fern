@@ -23,29 +23,69 @@ function empty(why: string): irlower.LowerResult {
 // ownership: the 32-bit float, and a record with no schema or with type
 // arguments (its box is named by the bare declaration). The byte rides the
 // same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
-// integer and the f64 each get a slot of their own, which is a VALUE here and
-// a declared field but never an array or tuple element (narrow_slot). A
-// string view is a value here and never an element either: a container's
-// drop frees its elements with the owned string's helper, which is not a
-// view's.
+// integer and the f64 each get a slot of their own, which is a VALUE here, a
+// declared field and an array element, but never a tuple element
+// (narrow_slot). A string view is a value here and never an element either: a
+// container's drop frees its elements with the owned string's helper, which is
+// not a view's.
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-    for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
+    for elem in tup.elements { if (!tuple_element_supported(elem, f)) { return false; } }
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
     return i.width == 32 || (i.width == 8 && i.unsigned) || (i.width == 64 && !i.unsigned);
 }
 
-// A value that fits the ONE i32-shaped word an array or tuple stores per
-// element: `op_arr_make` and `op_arr_get` are emitted at width 32, so a 64-bit
-// element would be written through a 32-bit slot on wasm. A 64-bit scalar,
-// integer or float, is therefore a value here and not an array or tuple
-// element; a record or variant field stores at the width its declaration
-// names.
+// A value that fits the ONE i32-shaped word a tuple stores per element:
+// `op_tuple_make` spells no element kinds here, so a 64-bit tuple element has
+// no store width to be written at. An array's element ops each carry their
+// own width, and a record or variant field stores at the width its
+// declaration names, so neither has to narrow.
 function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_i64(t) && !ssasem.is_f64(t); }
 
+function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
+    return narrow_slot(t) && element_supported(t, f);
+}
+
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return narrow_slot(t) && !ssasem.is_view(t) && supported(t, f);
+    return !ssasem.is_view(t) && supported(t, f);
+}
+
+// The slot width an array's element ops carry: eight bytes for a 64-bit
+// scalar, one i32-shaped word for everything else. Only wasm packs the narrow
+// slot; the register backends give every element eight bytes and ignore the
+// width. The i64 and the f64 share the width and differ in the load and store
+// wasm selects, which the `_i64` forms carry instead.
+function elem_width(t: typeinfo.Type): i32 {
+    if (ssasem.is_i64(t) || ssasem.is_f64(t)) { return 64; }
+    return 32;
+}
+
+function elem_type(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeArray(a) = t { return a.elem; }
+    return typeinfo.unchecked();
+}
+
+function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
+    if (ssasem.is_i64(elem)) { return ir.op_arr_make_i64(n); }
+    return ir.op_arr_make(n, elem_width(elem));
+}
+
+function arr_get_op(elem: typeinfo.Type): ir.Op {
+    if (ssasem.is_i64(elem)) { return ir.op_arr_get_i64(); }
+    return ir.op_arr_get(elem_width(elem));
+}
+
+function arr_set_op(elem: typeinfo.Type): ir.Op {
+    if (ssasem.is_i64(elem)) { return ir.op_arr_set_i64(); }
+    return ir.op_arr_set(elem_width(elem));
+}
+
+// The sole-owner push, which reclaims the superseded buffer when it grows.
+function arr_push_op(elem: typeinfo.Type): ir.Op {
+    if (ssasem.is_i64(elem)) { return ir.op_arr_push_owned_i64(); }
+    if (ssasem.is_f64(elem)) { return ir.op_arr_push_owned_f64(); }
+    return ir.op_arr_push_owned();
 }
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void ride one word, a string is its own box, and a function
@@ -332,19 +372,26 @@ function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
 // here at all, and an array or tuple of scalars needs only its own box
 // released. Asking `supported` of every field instead refuses a function for
 // a field it never reads.
-// An array or tuple construction writes one word per operand, so an operand
-// that needs a wider store has no form there. A record or variant stores each
-// field at the width its declaration names, which is what `op_struct_make`
-// carries as the declaration index; a wide field of a construction whose
-// declaration is not in the table has no store width to carry.
+// An array's element store carries its own width, so a 64-bit element has a
+// form there. A tuple construction and a closure box write one i32-shaped word
+// per operand and have none. A record or variant stores each field at the
+// width its declaration names, which is what `op_struct_make` carries as the
+// declaration index; a wide field of a construction whose declaration is not
+// in the table has no store width to carry.
 function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): string {
     var declared: boolean = ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
     for arg in ins.args {
         if (narrow_slot(f.values[arg])) { continue; }
-        if (!declared) { return "unsupported physical RC construction element"; }
-        if (decl_of(f, ins, structs) < 0) { return "unsupported physical RC construction without declaration"; }
+        if (!declared) { if (!wide_element_site(ins.kind_tag)) { return "unsupported physical RC construction element"; } }
+        else if (decl_of(f, ins, structs) < 0) { return "unsupported physical RC construction without declaration"; }
     }
     return "";
+}
+
+// The undeclared constructions whose wide operand is an ARRAY element, written
+// at the width its op carries.
+function wide_element_site(k: i32): boolean {
+    return kind_in([ssasem.array_new(), ssasem.append(), ssasem.with()], k);
 }
 
 // The declaration a record or variant construction stores its fields
@@ -694,7 +741,7 @@ function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.L
 // the field index alone.
 function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
-    if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_arr_make(ins.args.len(), 32)); }
+    if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make(ins.args.len())); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), decl_of(f, ins, structs))); }
     if (ins.kind_tag == ssasem.length()) {
@@ -703,7 +750,7 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
-    if (ins.kind_tag == ssasem.array_get()) { return emit(r, ir.op_arr_get(32)); }
+    if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_i64(f.values[ins.result]))); }
     return field_get(r, f, ins);
 }
@@ -817,8 +864,7 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
 // counted element type retains them all. Either way exactly one unit goes in
 // and `scratch` holds one nobody else shares.
 function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
-    var elem: typeinfo.Type = typeinfo.unchecked();
-    if let typeinfo.TypeArray(a) = f.values[base] { elem = a.elem; }
+    var elem: typeinfo.Type = elem_type(f.values[base]);
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
@@ -830,7 +876,7 @@ function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scra
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_arr_len());
-    r = emit(r, ir.op_arr_slice(32));
+    r = emit(r, ir.op_arr_slice(elem_width(elem)));
     if (reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
     r = emit(r, ir.op_store_local(scratch));
     return emit(r, ir.op_end());
@@ -848,7 +894,7 @@ function append_push(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     r = sole_owned_base(r, f, ins.args[0], scratch);
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
-    return emit(r, ir.op_arr_push_owned());
+    return emit(r, arr_push_op(elem_type(f.values[ins.args[0]])));
 }
 
 // The element the store replaces gives back the one count it held.
@@ -857,7 +903,7 @@ function drop_replaced(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
     r = reserve(r, old + 1);
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
-    r = emit(r, ir.op_arr_get(32));
+    r = emit(r, arr_get_op(elem));
     r = emit(r, ir.op_store_local(old));
     return drop_value(r, old, elem, old + 1, f);
 }
@@ -867,8 +913,7 @@ function drop_replaced(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
 // two forms chosen here by the count at run time rather than by the receiver's
 // syntax.
 function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    var elem: typeinfo.Type = typeinfo.unchecked();
-    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] { elem = a.elem; }
+    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
     var scratch: i32 = f.graph.nvals;
     r = reserve(r, scratch + 1);
     r = sole_owned_base(r, f, ins.args[0], scratch);
@@ -876,7 +921,7 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_load_local(ins.args[2]));
-    r = emit(r, ir.op_arr_set(32));
+    r = emit(r, arr_set_op(elem));
     return emit(r, ir.op_load_local(scratch));
 }
 

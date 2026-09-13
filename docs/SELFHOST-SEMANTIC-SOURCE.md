@@ -596,8 +596,12 @@ probe keyed by callee showed and the bare leaf histogram could not. The callee
 leaf is the same shape: keyed by name it is a handful of runtime builtins
 (`strbuf_append`, `__memchr`, `eprint`, `env`, `read_file`) and the `astwalk`
 folds that take a function value, each with its closures behind it. The unit
-planner refuses nothing now; what produces and plans but does not lower is 14
-functions with a value type physical RC does not carry. The flat tuple
+planner refuses nothing now, and neither does the physical lowering: the last
+14 functions that produced and planned but did not lower all carried an
+`i64[]`, and an array's element ops each name their own slot width, so the
+64-bit element rides the eight-byte stride wasm needs rather than being refused
+for want of one. A tuple element stays narrow — `op_tuple_make` spells no
+element kinds here — as does a closure capture. The flat tuple
 destructure was worth +19 lowered against a leaf of 321: a probe keyed by
 pattern shape showed the leaf was entirely the flat tuple form, and nearly
 every function holding one refuses again one leaf further in, which is what

@@ -1111,6 +1111,58 @@ struct WideRec { d: f64, n: i64, s: string }
     var sp: Span = Wide(d, "abc");
     return span_wide(sp);
 }
+// A 64-bit ARRAY element. Each element op carries its own slot width, so what
+// a literal, a push or a replacement writes is what a read hands back: on wasm
+// an i32[] packs four-byte slots and these do not, so a width lost anywhere on
+// that path reads back half a value or its neighbour's. The i64 and the f64
+// share the eight-byte stride and differ in the load and the store.
+@noinline function wide_lit(n: i64): i64[] { return [n, n * 3i64, n + 1i64]; }
+@noinline function wide_sum(own xs: i64[]): i64 {
+    var total: i64 = 0i64;
+    var i: i32 = 0;
+    while (i < xs.len()) { total = total + xs[i]; i = i + 1; }
+    return total;
+}
+@noinline function wide_lit_sum(n: i64): i32 { return (wide_sum(wide_lit(n)) >> 32) as i32; }
+// The pushes cross the capacity doublings, so the un-share copy and the
+// reclaim-on-grow both run at the stride these ops choose. The element written
+// first is read back after the last grow: a buffer released early reads back
+// as something other than what went into it, which a balanced allocation count
+// alone would not report.
+@noinline function wide_grow(n: i64, k: i32): i32 {
+    var xs: i64[] = [];
+    var i: i32 = 0;
+    while (i < k) { xs = xs.append(n + (i as i64)); i = i + 1; }
+    if (xs.len() != k) { return 0 - 1; }
+    if (k > 0 && xs[0] != n) { return 0 - 2; }
+    return (wide_sum(xs) >> 32) as i32;
+}
+@noinline function wide_set(own xs: i64[], i: i32, v: i64): i64[] { return xs.with(i, v); }
+// The donor is shared, so the replacement forks a copy at the same stride and
+// the donor keeps the element it had.
+@noinline function wide_copy_set(xs: i64[], v: i64): i32 {
+    var ys: i64[] = wide_set(xs, 1, v);
+    if (ys[1] != v) { return 0 - 1; }
+    if (xs[1] == v) { return 0 - 2; }
+    return ((ys[1] + xs[1]) >> 32) as i32;
+}
+@noinline function float_arr(x: f64): f64[] { return [x, x * 2.0, x + 1.0]; }
+@noinline function float_sum(own ds: f64[]): f64 {
+    var total: f64 = 0.0;
+    var i: i32 = 0;
+    while (i < ds.len()) { total = total + ds[i]; i = i + 1; }
+    return total;
+}
+@noinline function float_lit_sum(x: f64): i32 { return (float_sum(float_arr(x)) * 10.0) as i32; }
+@noinline function float_grow(x: f64, k: i32): i32 {
+    var ds: f64[] = [];
+    var i: i32 = 0;
+    while (i < k) { ds = ds.append(x + (i as f64)); i = i + 1; }
+    if (ds.len() != k) { return 0 - 1; }
+    if (ds[0] != x) { return 0 - 2; }
+    ds = ds.with(0, x * 4.0);
+    return (float_sum(ds) * 2.0) as i32;
+}
 // One element replaced: in place when the received unit is the box's only
 // one and in a copy otherwise, chosen by the count at run time. A counted
 // element type retains the copy's elements and releases the one replaced.
@@ -1594,6 +1646,9 @@ function main(): i32 {
     print_int(float_loop(10)); print(""); print_int(float_call(3)); print(""); print_int(wide_float(5000000000i64)); print("");
     print_int(wide_fields(WideRec { d: 1.25, n: 8589934592i64, s: "ab" })); print(""); print_int(span_wide(Wide(1.5, "abc"))); print("");
     print_int(mk_wide(2.5, 4294967296i64, "abcd")); print(""); print_int(mk_span(0.25)); print("");
+    print_int(wide_lit_sum(5000000000i64)); print(""); print_int(wide_grow(4294967296i64, 6)); print("");
+    print_int(wide_grow(1i64, 0)); print(""); print_int(wide_copy_set([1i64, 4294967296i64, 3i64], 8589934592i64)); print("");
+    print_int(float_lit_sum(1.5)); print(""); print_int(float_grow(0.5, 5)); print(""); print_int(float_grow(2.0, 1)); print("");
     print_int(fill_squares(5)); print(""); print_int(copy_set([1, 2])); print(""); print_int(word_swap(1)); print("");
     print_int(shared_word(1)); print("");
     print_int(set_p([P { n: 1, xs: [] }], P { n: 4, xs: [1, 2] })); print("");
@@ -1693,7 +1748,13 @@ function main(): i32 {
 // shift_by(4, 5) adds the captured 4 to 5 for 9; shift_loop(3, 4) builds one
 // box per step and sums 3 * (0+1+2+3) = 18; pick_shift(2, 3) takes the second
 // arm for (3-2) + (0-2) = -1 and pick_shift(2, 1) the first for 3 + 2 = 5.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n"
+// The wide elements answer in units of 2^32: wide_lit_sum(5e9) sums 25000000001
+// for 5, wide_grow(2^32, 6) sums six steps from 2^32 for 6 and wide_grow(_, 0)
+// is 0, and wide_copy_set replaces element 1 of a shared [1, 2^32, 3] with 2^33
+// for (2^33 + 2^32) >> 32 = 3. The float elements: float_lit_sum(1.5) sums
+// [1.5, 3.0, 2.5] for 70, float_grow(0.5, 5) replaces the 0.5 with 2.0 and
+// doubles 14.0 for 28, and float_grow(2.0, 1) doubles the replaced 8.0 for 16.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -1779,7 +1840,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
