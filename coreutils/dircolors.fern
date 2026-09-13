@@ -657,15 +657,16 @@ function lookup(kw: string): (i32, string) {
 //
 // A NUL byte ends the line for parsing but not for counting: the line
 // it sits on is still one line.
-struct Line { kind: i32, kw: string, arg: string }
-
 function is_space(c: i32): boolean {
   return c == 32 || c == 9 || c == 11 || c == 12 || c == 13;
 }
 
+struct Line { kind: i32, ks: i32, ke: i32, as0: i32, ae: i32 }
+
 // kind 0 nothing here, 1 a keyword and its argument, 2 the argument is
-// missing. The line is `raw[lo, end)` rather than a string of its own:
-// a config of any size arrives as one buffer, and cutting a copy out of
+// missing. The line is `raw[lo, end)` rather than a string of its own,
+// and so are the keyword `[ks, ke)` and the argument `[as0, ae)`: a
+// config of any size arrives as one buffer, and cutting a copy out of
 // it per line costs more than the parse does. `end` is already cut at a
 // NUL by the caller.
 function scan_line(raw: string, lo: i32, end: i32): Line {
@@ -674,18 +675,18 @@ function scan_line(raw: string, lo: i32, end: i32): Line {
     i = i + 1;
   }
   if (i >= end || raw[i] as i32 == 35) {
-    return Line { kind: 0, kw: "", arg: "" };
+    return Line { kind: 0, ks: i, ke: i, as0: i, ae: i };
   }
   var ks: i32 = i;
   while (i < end && !is_space(raw[i] as i32)) {
     i = i + 1;
   }
-  var kw: string = slice_unchecked(raw, ks, i) + "";
+  var ke: i32 = i;
   while (i < end && is_space(raw[i] as i32)) {
     i = i + 1;
   }
   if (i >= end || raw[i] as i32 == 35) {
-    return Line { kind: 2, kw: kw, arg: "" };
+    return Line { kind: 2, ks: ks, ke: ke, as0: i, ae: i };
   }
   var as0: i32 = i;
   while (i < end && raw[i] as i32 != 35) {
@@ -695,11 +696,15 @@ function scan_line(raw: string, lo: i32, end: i32): Line {
   while (ae > as0 && is_space(raw[ae - 1] as i32)) {
     ae = ae - 1;
   }
-  return Line { kind: 1, kw: kw, arg: slice_unchecked(raw, as0, ae) + "" };
+  return Line { kind: 1, ks: ks, ke: ke, as0: as0, ae: ae };
 }
 
 // ---- the parse -------------------------------------------------------------
-struct Entry { item: string, arg: string }
+//
+// The body is escaped straight out of the input buffer into one builder
+// as the lines are read, so the config is never cut into a string per
+// entry; a parse that fails hands back no body at all.
+struct Parse { body: string, ok: boolean }
 
 // The four states of the TERM / COLORTERM filter.
 function st_global(): i32 {
@@ -718,10 +723,46 @@ function st_termyes(): i32 {
   return 3;
 }
 
-struct Parse { entries: Entry[], ok: boolean }
+// `entry_push(h, text, item_lo, item_hi, star, code, arg_lo, arg_hi, ls)`
+// — one entry of the body: the item is `text[item_lo, item_hi)` with a
+// `*` in front when `star`, or the two-letter `code` when that is not
+// empty. `ls` picks the `--print-ls-colors` line over the LS_COLORS
+// piece.
+function entry_push(h: usize, text: string, item_lo: i32, item_hi: i32, star: boolean, code: string, arg_lo: i32, arg_hi: i32, ls: boolean): void {
+  if (ls) {
+    buf_push(h, "\x1b[");
+    buf_push_range(h, text, arg_lo, arg_hi);
+    buf_push_byte(h, 109);
+    if (code.len() > 0) {
+      buf_push(h, code);
+    } else {
+      if (star) {
+        buf_push_byte(h, 42);
+      }
+      buf_push_range(h, text, item_lo, item_hi);
+    }
+    buf_push_byte(h, 9);
+    buf_push_range(h, text, arg_lo, arg_hi);
+    buf_push(h, "\x1b[0m\n");
+    return;
+  }
+  if (code.len() > 0) {
+    buf_push(h, code);
+  } else {
+    // A leading `*` is written through by the escaper and leaves its
+    // toggle where it started, so it goes in ahead of the keyword as is.
+    if (star) {
+      buf_push_byte(h, 42);
+    }
+    escape_push(h, text, item_lo, item_hi);
+  }
+  buf_push_byte(h, 61);
+  escape_push(h, text, arg_lo, arg_hi);
+  buf_push_byte(h, 58);
+}
 
-function parse(text: string, name: string, term: string, colorterm: string): Parse {
-  var entries: Entry[] = [];
+function parse(text: string, name: string, term: string, colorterm: string, ls: boolean): Parse {
+  var h: usize = buf_new(text.len() + 16);
   var ok: boolean = true;
   var state: i32 = st_global();
   var pos: i32 = 0;
@@ -745,42 +786,49 @@ function parse(text: string, name: string, term: string, colorterm: string): Par
       cut = nul;
     }
     var line: Line = scan_line(text, pos, cut);
-    if (line.kind == 2) {
+    var kind: i32 = line.kind;
+    var ks: i32 = line.ks;
+    var ke: i32 = line.ke;
+    var as0: i32 = line.as0;
+    var ae: i32 = line.ae;
+    if (kind == 2) {
       gnu.error(name + ":" + lineno.to_string() + ": invalid line;  missing second token");
       ok = false;
-    } else if (line.kind == 1) {
-      var lead: i32 = line.kw[0] as i32;
+    } else if (kind == 1) {
+      var lead: i32 = text[ks] as i32;
       var extension: boolean = lead == 46 || lead == 42;
-      if (!extension && (eq_fold(line.kw, "TERM") || eq_fold(line.kw, "COLORTERM"))) {
-        var value: string = colorterm;
-        if (eq_fold(line.kw, "TERM")) {
-          value = term;
-        }
-        if (state != st_termsure()) {
-          state = st_termno();
-        }
-        if (fnmatch(line.arg, value)) {
-          state = st_termsure();
-        }
-      } else {
+      if (extension) {
         if (state == st_termsure()) {
           state = st_termyes();
         }
         if (state != st_termno()) {
-          if (extension) {
-            var item: string = line.kw;
-            if (lead == 46) {
-              item = "*" + line.kw;
-            }
-            entries = entries.append(Entry { item: item, arg: line.arg });
-          } else {
-            var hit: (i32, string) = lookup(line.kw);
+          entry_push(h, text, ks, ke, lead == 46, "", as0, ae, ls);
+        }
+      } else {
+        var kw: string = slice_unchecked(text, ks, ke) + "";
+        if (eq_fold(kw, "TERM") || eq_fold(kw, "COLORTERM")) {
+          var value: string = colorterm;
+          if (eq_fold(kw, "TERM")) {
+            value = term;
+          }
+          if (state != st_termsure()) {
+            state = st_termno();
+          }
+          if (fnmatch(slice_unchecked(text, as0, ae) + "", value)) {
+            state = st_termsure();
+          }
+        } else {
+          if (state == st_termsure()) {
+            state = st_termyes();
+          }
+          if (state != st_termno()) {
+            var hit: (i32, string) = lookup(kw);
             if (hit.0 == 1) {
-              entries = entries.append(Entry { item: hit.1, arg: line.arg });
+              entry_push(h, text, ks, ke, false, hit.1, as0, ae, ls);
             } else if (hit.0 == 0 && state == st_termyes()) {
               // Outside a matching section an unknown keyword is passed
               // over in silence; inside one it is fatal.
-              gnu.error(name + ":" + lineno.to_string() + ": unrecognized keyword " + line.kw);
+              gnu.error(name + ":" + lineno.to_string() + ": unrecognized keyword " + kw);
               ok = false;
             }
           }
@@ -792,7 +840,12 @@ function parse(text: string, name: string, term: string, colorterm: string): Par
     }
     pos = nl + 1;
   }
-  return Parse { entries: entries, ok: ok };
+  var body: string = "";
+  if (ok) {
+    body = buf_take(h);
+  }
+  buf_free(h);
+  return Parse { body: body, ok: ok };
 }
 
 // ---- the shell escaper -----------------------------------------------------
@@ -803,30 +856,28 @@ function parse(text: string, name: string, term: string, colorterm: string): Par
 // flag is set; a `'` becomes `'\''`; every other byte sets the flag.
 // So `a\:b` comes back unchanged, `a^^:b` gains a backslash and
 // `a^:b` does not.
-function escape_append(out: string, s: string): string {
-  var acc: string = out;
+function escape_push(h: usize, s: string, lo: i32, hi: i32): void {
   var need: boolean = true;
-  var n: i32 = s.len();
-  var i: i32 = 0;
-  var run: i32 = 0;
-  while (i < n) {
+  var i: i32 = lo;
+  var run: i32 = lo;
+  while (i < hi) {
     var c: i32 = s[i] as i32;
     if (c == 58 || c == 61 || c == 92 || c == 94 || c == 39) {
       if (i > run) {
-        acc = acc + slice_unchecked(s, run, i);
+        buf_push_range(h, s, run, i);
         need = true;
       }
       if (c == 39) {
-        acc = acc + "'\\''";
+        buf_push(h, "'\\''");
         need = true;
       } else if (c == 92 || c == 94) {
-        acc = acc + slice_unchecked(s, i, i + 1);
+        buf_push_byte(h, c);
         need = !need;
       } else {
         if (need) {
-          acc = acc + "\\";
+          buf_push_byte(h, 92);
         }
-        acc = acc + slice_unchecked(s, i, i + 1);
+        buf_push_byte(h, c);
         need = true;
       }
       i = i + 1;
@@ -836,9 +887,8 @@ function escape_append(out: string, s: string): string {
     }
   }
   if (i > run) {
-    acc = acc + slice_unchecked(s, run, i);
+    buf_push_range(h, s, run, hi);
   }
-  return acc;
 }
 
 // ---- input -----------------------------------------------------------------
@@ -1066,7 +1116,7 @@ function main(): i32 {
 
   // An unset or empty TERM is the literal string `none`; an unset
   // COLORTERM is the empty string, which `?*` never matches.
-  var p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""));
+  var p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""), print_ls);
   if (!p.ok) {
     return 1;
   }
@@ -1078,31 +1128,12 @@ function main(): i32 {
   // errno, where `--print-ls-colors` writes one piece and nothing is
   // pending, so the same failure is a bare `write error`.
   var o: gnu.Stdio = gnu.stdio_new();
-  // One piece per entry, joined once. Folding them into a single local
-  // with `body = body + piece` is quadratic wherever the append does not
-  // grow the string in place — which the self-host compiler does not yet
-  // do (#9077) — and is the same reason `std/io`'s read_all_stdin
-  // collects chunks rather than folding them.
-  var parts: string[] = [];
-  var i: i32 = 0;
   if (print_ls) {
-    while (i < p.entries.len()) {
-      var e: Entry = p.entries[i];
-      parts = parts.append("\x1b[" + e.arg + "m" + e.item + "\t" + e.arg + "\x1b[0m\n");
-      i = i + 1;
-    }
-    o = o.fwrite(parts.join(""));
+    o = o.fwrite(p.body);
     o.close_stdout();
     return 0;
   }
-  while (i < p.entries.len()) {
-    var en: Entry = p.entries[i];
-    var piece: string = escape_append("", en.item) + "=";
-    piece = escape_append(piece, en.arg) + ":";
-    parts = parts.append(piece);
-    i = i + 1;
-  }
-  var body: string = parts.join("");
+  var body: string = p.body;
   if (syntax == 2) {
     o = o.fwrite("setenv LS_COLORS '");
     o = o.fwrite(body);
