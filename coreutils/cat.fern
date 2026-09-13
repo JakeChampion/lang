@@ -177,29 +177,30 @@ function state_new(): State {
 
 // `next_num(num)` — GNU's next_line_num: carry from the last digit
 // leftwards, a blank becoming `1`, a new digit in front past 999999.
-function next_num(num: u8[]): u8[] {
+function next_num(own num: u8[]): u8[] {
   var i: i32 = num.len() - 2;
   while (i >= 0 && num[i] as i32 == 57) {
     num = num.with(i, 48 as u8);
     i = i - 1;
   }
-  if (i >= 0) {
-    var c: i32 = num[i] as i32;
-    if (c == 32) {
-      c = 49;
-    } else {
-      c = c + 1;
+  if (i < 0) {
+    var wider: u8[] = [];
+    wider = wider.append(49 as u8);
+    var j: i32 = 0;
+    while (j < num.len()) {
+      wider = wider.append(num[j]);
+      j = j + 1;
     }
-    return num.with(i, c as u8);
+    return wider;
   }
-  var wider: u8[] = [];
-  wider = wider.append(49 as u8);
-  var j: i32 = 0;
-  while (j < num.len()) {
-    wider = wider.append(num[j]);
-    j = j + 1;
+  var c: i32 = num[i] as i32;
+  if (c == 32) {
+    c = 49;
+  } else {
+    c = c + 1;
   }
-  return wider;
+  // The store is the last use of `num`, so it lands in place.
+  return num.with(i, c as u8);
 }
 
 // `drain(s)` — get what is buffered out to the fd, so a diagnostic on
