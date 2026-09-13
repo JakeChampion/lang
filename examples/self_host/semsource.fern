@@ -880,18 +880,91 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
     return refused(s, "unsupported call target");
 }
 
-function is_slice_call(name: string, c: ast.ExprCall): boolean {
-    return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
+// ---- value blocks -----------------------------------------------------------
+
+// A value-position `{ … }` block is a zero-argument call of a zero-parameter
+// lambda the parser marks with an origin, and every backend INLINES it rather
+// than calling one: the statements run in the enclosing function and only the
+// last is the block's value (irlower.lower_value_block). The shape the parser
+// desugars an if-EXPRESSION to is one `if` whose arms each `return` that value,
+// so it is produced here as a branch whose arms join at a phi rather than at a
+// terminator. Every other block origin — a general `{ … }` body, a
+// match-expression, a comprehension — is refused: its value comes from a tail
+// this form has no join for.
+function value_block(e: ast.Expr, c: ast.ExprCall, s: State): Value {
+    var ty: typeinfo.Type = checked(e, s);
+    var body: ast.Stmt[] = parser.vb_body(c);
+    if (body.len() != 1 || !semtypes.concrete(ty, false)) { return refused(s, "unsupported value block"); }
+    if let ast.StmtIf(f) = body[0] { return value_if(f, s, ty); }
+    return refused(s, "unsupported value block");
 }
 
-// The lambda lift's closure constructor names no declaration of its own: it
-// is the marker `irlower.lift_inline_closures` leaves where a capturing inline
-// lambda — or a bare function name at a function-typed argument — was written.
-// The name it carries is the body the lift hoisted; "" is no marker.
-function closure_body(name: string): string {
-    var marker: string = "__mkclo$";
-    if (name.len() <= marker.len() || slice_unchecked(name, 0, marker.len()) != marker) { return ""; }
-    return slice_unchecked(name, marker.len(), name.len()) + "";
+struct VArm { s: State, end: i32, env: i32[], value: i32 }
+
+// The statement that carries an arm's value: its own `return`, or the nested
+// if-expression an `else if` chain leaves there.
+function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
+    if let ast.StmtIf(f) = st { return value_if(f, s, ty); }
+    if let ast.StmtReturn(r) = st {
+        if (bare_return(r.value)) { return refused(s, "value block arm has no value"); }
+        var v: Value = expr(r.value, s, ty);
+        if (!v.s.ok) { return v; }
+        if (!semtypes.equal(v.s.values[v.id], ty)) { return refused(v.s, "value block arm type"); }
+        return v;
+    }
+    return refused(s, "value block arm has no value");
+}
+
+// One arm of an if-expression. Its leading statements run in the arm's own
+// block, where a `return` of the ENCLOSING function is what the inlined form
+// means it to be; the last statement is the arm's value. An arm the leading
+// statements leave with no live edge reaches the join with nothing to hand it,
+// so it is refused rather than producing a value in a block nothing enters.
+function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): VArm {
+    s = open(State { ...s, vals: entry }, id, [pred]);
+    var none: VArm = VArm { s: s, end: 0, env: [], value: 0 - 1 };
+    if (body.len() == 0) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
+    var i: i32 = 0;
+    while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
+    if (!s.ok) { return VArm { ...none, s: s }; }
+    if (!s.live) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
+    var v: Value = arm_value(body[body.len() - 1], s, ty);
+    s = v.s;
+    if (!s.ok) { return VArm { ...none, s: s }; }
+    var end: i32 = s.cur.id;
+    var env: i32[] = prefix(s.vals, count);
+    s = terminate(s, t_br(join));
+    return VArm { s: leave(s, count, scope), end: end, env: env, value: v.id };
+}
+
+// The if-expression itself: the two arms are produced the way a branch's are —
+// each from the environment at the test, never from its sibling's — and the
+// join merges the bindings and then the value. The value phi is a unit of this
+// function's own, supplied on each incoming edge, exactly as a binding's phi is.
+function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
+    var cond: Value = expr(f.cond, s, t_bool());
+    s = cond.s;
+    if (!s.ok) { return cond; }
+    if (!is_bool(s.values[cond.id])) { return refused(s, "condition type"); }
+    var pred: i32 = s.cur.id;
+    var then_id: i32 = s.next_block;
+    var else_id: i32 = then_id + 1;
+    var join: i32 = then_id + 2;
+    s = State { ...s, next_block: join + 1 };
+    var count: i32 = s.names.len();
+    var entry: i32[] = s.vals;
+    var scope: checker.Scope = s.scope;
+    s = terminate(s, t_brif(cond.id, then_id, else_id));
+    var t: VArm = value_arm(f.then_body, s, entry, then_id, pred, join, count, scope, ty);
+    if (!t.s.ok) { return Value { s: t.s, id: 0 - 1 }; }
+    var el: VArm = value_arm(f.else_body, t.s, entry, else_id, pred, join, count, scope, ty);
+    if (!el.s.ok) { return Value { s: el.s, id: 0 - 1 }; }
+    s = merge_env(open(el.s, join, [t.end, el.end]), [t.env, el.env], count);
+    return define(s, 8, [t.value, el.value], 0, "", ty);
+}
+
+function is_slice_call(name: string, c: ast.ExprCall): boolean {
+    return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
 }
 
 // A closure VALUE: the environment box the lift builds, holding the hoisted
@@ -944,6 +1017,7 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // no name binds it. In expression position a void result is refused, since
 // the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+    if (parser.is_value_block(c)) { return value_block(e, c, s); }
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
@@ -951,7 +1025,11 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
     if (is_slice_call(name, c)) { return string_slice(c, s); }
-    var body: string = closure_body(name);
+    // The lambda lift's closure constructor names no declaration of its own:
+    // it is the marker left where a capturing inline lambda — or a bare
+    // function name at a function-typed argument — was written, carrying the
+    // body the lift hoisted.
+    var body: string = parser.mkclo_body(name);
     if (body.len() > 0) { return closure(body, c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
     if (at < 0) { return variant_call(e, name, c, s, expected); }

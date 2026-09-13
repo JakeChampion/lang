@@ -389,6 +389,13 @@ construction operand (retained, or moved at the argument's last use), a
 borrowed parameter as a read, and a reference result as a fresh unit of the
 caller's own. A discarded call result is released at the call.
 
+A value-position block is not a call at all. `parser.is_value_block` names the
+zero-argument call of a zero-parameter lambda the parser desugars an
+if-expression, a match-expression, a comprehension or a `{ … }` body to, and
+this boundary INLINES it the way every backend does. Only the if-expression
+shape is produced: one `if` whose arms each `return` the block's value, joined
+at a phi.
+
 The module is closed: a produced function whose callee was refused is refused
 in turn, transitively, because a contract is only honoured by a body verified
 against it. The AST-lowered `main` still calls produced functions with scalar
@@ -463,7 +470,10 @@ census measures.
   The cell shapes: a record and a variant payload each holding a `Cell[i32]`, a
   record holding a `Cell[string]`, every one constructed from a field read of a
   borrowed or owned holder, bound, matched and dropped, with the holder handed
-  in as an `own` parameter so the cell's release is produced code's.
+  in as an `own` parameter so the cell's release is produced code's. The
+  if-expression value blocks: a fresh array from either arm, a string from a
+  produced caller, an `own` parameter handed to the join from the first arm and
+  from the second, and a chained `else if`.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -559,7 +569,7 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,531 of its 7,759
+Measured against the whole loaded self-hosted compiler, 6,539 of its 7,763
 functions produce, plan and physically lower.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
@@ -575,9 +585,9 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by callees with no semantic contract (819), a closure
-capturing a reference (225), a binding whose type is not its value's (75), a
-destructuring declaration (61) and a call target (49). The string view was
+The leaves are now led by callees with no semantic contract (798), a closure
+capturing a reference (282), a binding whose type is not its value's (75) and
+a cast contract (18). The string view was
 worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, against a leaf
 histogram that had ranked them differently. The declared field width was worth
@@ -648,19 +658,16 @@ was probed before building and neither is what its reason reads as:
   env representation — a per-closure schema the box is built and read
   through — and not a relaxed check at this boundary. That is the same
   function-value ABI decision the fold family waits on.
-- The 59 `unsupported destructuring declaration` are not a pattern shape at
-  all. A probe keyed by the pattern text, the destructuring marker and the
-  initializer's type found every one a FLAT tuple pattern — no nested
+- The `unsupported destructuring declaration` leaf (61) was not a pattern
+  shape at all. A probe keyed by the pattern text, the destructuring marker
+  and the initializer's type found every one a FLAT tuple pattern — no nested
   position, no struct form, no `@` binder, no discard — refused only because
-  `tuple_arity` of an unknown is -1. The checker cannot settle the
-  initializer because the call's fn-valued argument is a `__mkclo$…` env-box
-  marker the lift substitutes for a bare function name, and a marker is no
-  declaration, so `check_expr` answers `undefined function` and the unknown
-  collapses the whole call. Settling it would MOVE the leaf rather than
-  close it: all 59 call a generic `astwalk` walker (`scoped_stmts_reads`,
-  `map_expr_acc`, `map_stmt_acc`, `map_stmts_acc`) whose accumulator is an
-  erased type variable, which is the fold family's own refusal one leaf
-  further in.
+  `tuple_arity` of an unknown is -1, the unknown coming from a call whose
+  fn-valued argument is a `__mkclo$…` env-box marker. The checker types that
+  marker now (below) and the leaf closed, MOVING as predicted rather than
+  paying: all of it calls a generic `astwalk` walker (`map_expr_acc`,
+  `map_stmt_acc`, `map_stmts_acc`) whose accumulator is an erased type
+  variable, which is the fold family's own refusal one leaf further in.
 
 The two small leaves beside them are the instantiated builtin union. The
 match scrutinee (8) is `Option` alone and the unresolved result type (3) is
@@ -858,12 +865,62 @@ of them. `env`, `read_line`, `read_file`, `read_dir`, `args`, `putchar`,
 `f32_from_bits`, `__rc_underflow_count` and `Some` all closed outright, and
 so did the match-scrutinee refusal.
 
-Next, by measured leaf: a closure capturing a reference (246), which is
+**The call-target leaf was the value-position block, and the histogram said
+nothing about it.** A probe keyed by the SHAPE of the refused target put all 49
+on two causes and neither was the closure env box the note here had guessed:
+34 were a callee that is a LAMBDA — every one a `vb:if_expr` value block with
+one statement and two arm returns — and 15 were `Cell` and `Map` methods
+(`.get`, `.set`, `.insert`, `.has`), which are the vocabulary question the
+`map_new` / `cell_new` callees are. Not one was a bound name holding a
+non-function, a `.len` on an unsized receiver, a slice of a non-text source or
+a builtin with type arguments, the six other sites that produce that reason.
+
+A value-position block is a zero-argument call of a zero-parameter lambda the
+parser marks with an origin, and every backend INLINES it
+(`irlower.lower_value_block`): the statements run in the enclosing function and
+only the last is the block's value. The if-EXPRESSION desugar puts one `if`
+there whose arms each `return` that value, so this boundary produces it as a
+branch whose arms join at a PHI rather than at a terminator — the arm's leading
+statements run in the arm's own block, where a `return` is the enclosing
+function's as the inlined form means it to be, and an `else if` nests one arm
+inside another. The value phi is a unit of this function's own, supplied on each
+incoming edge exactly as a binding's phi is. It was worth +34 produced, of which
+the leaf histogram could see none; nearly all of them refuse again at the
+reference capture, which is why the lowered delta is smaller. Every other block
+origin — a general body, a comprehension — stays refused, and the checker
+resolves the type of none of them either.
+
+The checker now types the lift's closure constructor. `__mkclo$<body>(caps)` is
+the box holding `<body>`'s address and the captures that body reads back out of
+its first parameter, so the value's type is what `<body>` promises MINUS that
+parameter; `parser.mkclo_body` holds the spelling for the checker, this boundary
+and the lift's own readers. Without it the box types to unknown and collapses
+whatever expression holds it: that was the whole record-literal leaf (2, a
+`FuncDecl` update whose `body` field calls `astwalk.splice_stmts_with_lambda`
+with two lifted arguments) and the whole destructuring leaf (61). The marker can
+only appear in a tree the lift has already walked, which no production checker
+run sees, so nothing else reaches the rule.
+
+The one `view result escapes its source` was a real escape and the source now
+copies. `arm64_gas_bcond_suffix` returned a window of its own `string`
+parameter, whose bytes the caller owns and may outlive the result; it returns an
+owned copy, which is `docs/STR-VIEW-CONTRACT.md` §5's decision for every view
+producer. That closed its four callers' no-contract leaf with it.
+
+What is left of the leaves this pass took: the remaining `unresolved parameter
+type` (4), `unresolved result type` (1 of 4) and `unresolved binding type` (1)
+are all `usize`, which the self-host checker deliberately resolves to unknown
+(a pointer-width integer is a target-dependent width decision, not a boundary
+one); one result is `Result[void, IoError]`, a union instantiated at `void`,
+which the builtin-contract leaf needs anyway; and two are `$wrap0` trampolines
+of the `astwalk` folds, which stay refused for the reason below.
+
+Next, by measured leaf: a closure capturing a reference (282), which is
 the hoisted body's untyped `__env` read and not a closure form, and the
-`astwalk` fold family (685 across its members) — one question, not two.
-The binding mismatch (75), the destructuring declaration (61) and the call
-target (49) are NOT next: all three are the closure env box, so they land
-behind the same function-value ABI decision and none is worth building against
-until it is taken. Then a production consumer that lowers produced functions
-through this pipeline and feeds `caller_sigs` to the remaining AST callers — a
-union result being the position that fixture measured a leak at.
+`astwalk` fold family (783 across its members, the moved destructuring leaf
+included) — one question, not two. The binding mismatch (75) is the same
+closure env box, so it lands behind the same function-value ABI decision and is
+not worth building against until it is taken. Then a production consumer that
+lowers produced functions through this pipeline and feeds `caller_sigs` to the
+remaining AST callers — a union result being the position that fixture measured
+a leak at.

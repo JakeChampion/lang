@@ -13092,6 +13092,16 @@ pub function is_value_block(c: ast.ExprCall): boolean {
     return false;
 }
 
+// mkclo_body names the hoisted body a lambda-lift closure marker carries, or
+// "" for any other name. irlower.lift_inline_closures writes the marker as a
+// call of `__mkclo$<body>`; the checker types the box it builds and the
+// semantic source boundary produces it, so the spelling lives in one place.
+pub function mkclo_body(name: string): string {
+    var marker: string = "__mkclo$";
+    if (name.len() <= marker.len() || slice_unchecked(name, 0, marker.len()) != marker) { return ""; }
+    return slice_unchecked(name, marker.len(), name.len()) + "";
+}
+
 // is_value_block_origin reports whether `origin` names one of the desugars that
 // produce an inlined value block. Every pass that rebuilds an ExprLambda does so
 // by spread, so the marker survives to the consumers that need it.
