@@ -178,3 +178,66 @@ func TestSelfHostArrPushOwnedWideReclaimWasm(t *testing.T) {
 		t.Errorf("wide self-append reclaim exited %d, want 7 — reclaim corrupted a live buffer?\n--- WAT ---\n%s", code, ws)
 	}
 }
+
+// A struct local that is BOTH loop-carried and returned supersedes a box at
+// every rebind, and only the final binding escapes. The credit for those
+// rebinds was withheld for the whole local because it is returned, so each
+// superseded box leaked — 100 of this program's 101 allocations, where the
+// native build reclaims them. The release is guarded by __fern_rc_is_unique on
+// the old box, so a counted share is left to whichever owner reaches rc 1, and
+// by the cow guard, so a self-store keeps the box it hands straight back.
+const returnedRebindProg = `struct V { a: i32, b: u64, c: boolean }
+function step(v: V, k: i32): V {
+    return V { a: v.a + k, b: v.b + (k as u64), c: !v.c };
+}
+function run(n: i32): V {
+    var v: V = V { a: 0, b: 0 as u64, c: false };
+    var i: i32 = 0;
+    while (i < n) { v = step(v, i); i = i + 1; }
+    return v;
+}
+function main(): i32 { return run(100).a - 4943; }`
+
+func TestSelfHostReturnedRebindReclaimArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(returnedRebindProg), "-target", "arm64-linux")
+	if len(asm) == 0 {
+		t.Fatal("self-host arm64 compiler emitted 0 bytes")
+	}
+	if !strings.Contains(string(asm), "__fern_rc_is_unique") {
+		t.Error("the returned local's rebind emitted no unique-gated release")
+	}
+	bin := buildBinArm64(t, arm64gcc, dir, "returned_rebind_arm64", string(asm))
+	cmd := runArm64Bin(qemu, bin)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("returned-rebind reclaim exited %d, want 7 — the release freed a live box?", code)
+	}
+}
+
+func TestSelfHostReturnedRebindReclaimWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm returned-rebind reclaim e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	wat := runCapture(t, gcc, runner, driverBin, []byte(returnedRebindProg))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes")
+	}
+	watPath := filepath.Join(dir, "returned_rebind.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+	_, _ = cmd.Output()
+	if code := cmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("returned-rebind reclaim exited %d, want 7 — the release freed a live box?", code)
+	}
+}

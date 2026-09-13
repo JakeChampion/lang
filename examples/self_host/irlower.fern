@@ -24395,6 +24395,17 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !nofld && s.struct_routes_field_reclaim(asty)) {
         return emit_field_reclaim_store(se, slot, asty, snls);
     }
+    // A struct local the frame RETURNS ("RETRE:", slot_reassign_reclaims_struct)
+    // still supersedes a box at every rebind, and that box is dead the moment
+    // this store lands: only the FINAL binding escapes. The release runs under
+    // __fern_rc_is_unique on the old box, so a counted share is left to whichever
+    // owner reaches rc 1 — the field-reclaim helper carries that guard and the
+    // cow guard itself, and a type routing no field reclaim takes the box-only
+    // sibling.
+    if (!target_is_arr && slot_reassign_reclaims_struct(s, slot)) {
+        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls); }
+        return emit_unique_reclaim_store(se, slot);
+    }
     // A reclaimable rc-TUPLE local REBIND (`p = (i, "hi")` / `p = (i, [i, i+1])`,
     // #6127): deep-drop the superseded chain — the fresh rc children then the box —
     // before storing. This is the ASSIGN sibling of the StmtVar re-declaration path,
@@ -28391,6 +28402,41 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
         st = st.emit(ir.op_bin("ne", 0, false));
         st = st.emit(ir.op_bin("and", 0, false));
     }
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));                         // new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// emit_unique_reclaim_store stores `new` (already on the operand stack) into a
+// struct slot whose REBIND releases the box it supersedes even though the local
+// itself escapes by being RETURNED ("RETRE:", slot_reassign_reclaims_struct).
+// The box-only sibling of emit_field_reclaim_store, for a slot whose type routes
+// no field reclaim: a shallow __fern_rc_dec IS that box's whole release.
+//
+// Two guards, both load-bearing. __fern_rc_is_unique refuses a box a counted
+// share still holds — a construction retain leaves the count above 1, and
+// freeing under it is a use-after-free rather than a leak — and is null-safe, so
+// the zeroed slot the first rebind supersedes is a no-op. The cow guard
+// (`old != new`) keeps the box a self-store hands straight back, the same
+// identity emit_arr_store's release is guarded against. A SHARED old box is left
+// alone rather than dec'd: this class hands out no counted reference of its own,
+// so there is no count here to give back.
+function emit_unique_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$urs" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));                        // stash new
+    st = st.emit(ir.op_load_local(slot));                        // old
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));   // sole owner (and null-safe)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));                     // old != new (cow guard)
     st = st.emit(ir.op_if(0));
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -47146,6 +47192,23 @@ function slot_struct_credit_at(s: LowerState, i: i32): boolean {
     var site: string = s.reclaim_site_key(i);
     if (site.len() == 0) { return false; }
     return util.index_of_str(s.frame.reclaimable_names, site) >= 0;
+}
+
+// slot_reassign_reclaims_struct: slot i holds a struct local whose REBIND may
+// release the box it supersedes even though the local escapes later by being
+// RETURNED ("RETRE:"). Only lower_stmt_assign reads it. The escaping binding is
+// the LAST one — every box a later store supersedes is dead at that store — so
+// the exit sweep, the deep field drops and the alias retains all stay refused
+// and slot_is_reclaimable_struct stays false for these slots.
+function slot_reassign_reclaims_struct(s: LowerState, i: i32): boolean {
+    if (i < s.frame.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    // struct_type_of_slot is a type-NAME carrier, not a struct test — it is also
+    // set for enum names, dyn tags and element types — so the decl lookup is what
+    // says the slot really holds a struct box (#7368).
+    if (!decl_is_struct(s.frame.structs, s.struct_type_of_slot(i))) { return false; }
+    if (slot_name_retired(s.locals[i].slot_name)) { return false; }
+    return slot_credit_at(s, i, "RETRE:");
 }
 
 // slot_is_reclaimable_struct_scoped: slot_is_reclaimable_struct WITHOUT its
@@ -79031,6 +79094,30 @@ while (dai < darrs.len()) {
     return out;
 }
 
+// reclaimable_returned_rebind credits "RETRE:" — the REBIND half of the struct
+// credit, for a fresh struct local that passes every escape gate except the one
+// the class exists for: the frame RETURNS it. Only the LAST binding leaves; each
+// box a later `v = f(v, …)` supersedes is dead the moment that store lands, so
+// withholding the whole credit left one leaked box per iteration of every
+// loop-carried-and-returned struct (the dominant self-host leak, and the shape
+// `pow10` and the bigint limb loops are written in).
+//
+// The rebind release is guarded by __fern_rc_is_unique on the OLD box
+// (emit_unique_reclaim_store / emit_field_reclaim_store), so a counted share
+// leaves the box to whichever owner reaches rc 1. The two refusals here are the
+// UNCOUNTED shares that guard cannot see: a plain `w = v` assignment and a
+// `var w = v` alias bind both leave a second reference the count never learned
+// about, and neither takes the #7282 bind retain, which is credit-keyed on
+// slot_is_reclaimable_struct and so never fires for this class.
+//
+// No sweep, no deep drop and no alias credit ride along: "RETRE:" is read by
+// lower_stmt_assign alone.
+function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string, out: string[]): string[] {
+    if (struct_bare_assigned_src(body, fnm)) { return out; }
+    if (bare_alias_bind_sites_of(body, fnm, false, []).len() > 0) { return out; }
+    return out.append("RETRE:" + site);
+}
+
 function reclaimable_fresh_struct(asrows: string[], body: ast.Stmt[], borrowable: string[], fresh: string[], handback: string[], msites: string[], plan_fe: string[], plan_on: boolean, recv_borrow: string[], structs: StructTab, out: string[]): string[] {
 var i: i32 = 0;
 while (i < fresh.len()) {
@@ -79102,13 +79189,20 @@ while (i < fresh.len()) {
     // carries it, keyed on the "ALIASSRC:" row this branch emits.
     var bas_ok: boolean = !struct_bare_assigned_src(body, fnm)
         || bare_assign_targets_all_fresh(body, fnm, fresh);
-    if (st_esc_ok && !reassigned_from_alias(body, fnm)
+    // Every gate but the RETURN. A returned name still fails the credit below —
+    // the caller's fresh-ret release and this slot's would be two claims on the
+    // final box — but the boxes its REBINDS supersede are a separate question,
+    // which reclaimable_returned_rebind answers from this same verdict.
+    var gates_ok: boolean = st_esc_ok && !reassigned_from_alias(body, fnm)
         && bas_ok
-        && !struct_returned_bare(body, fnm)
         && (!struct_arg_to_handback(body, fnm, handback)
             || handback_is_self_rebind_only(body, fnm, handback))
         && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
-        && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
+        && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable);
+    if (gates_ok && struct_returned_bare(body, fnm)) {
+        out = reclaimable_returned_rebind(body, fnm, fresh[i], out);
+    }
+    if (gates_ok && !struct_returned_bare(body, fnm)) {
         out = out.append(fresh[i]);
         // THE ALIAS TAKES A BOX-ONLY RELEASE, NEVER THE DEEP ONE. A struct's
         // release is a DEEP FIELD DROP plus a box dec, and only the box was
