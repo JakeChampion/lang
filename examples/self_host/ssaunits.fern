@@ -52,16 +52,15 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeTuple(_) = t { return true; }
     if let typeinfo.TypeStruct(_) = t { return true; }
     if let typeinfo.TypeUnion(_) = t { return true; }
+    if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
 }
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
 }
-// The types this pass plans no unit for: every scalar, and the code address a
-// function value is.
+// The types this pass plans no unit for: the scalars.
 function unit_free(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
@@ -71,6 +70,7 @@ function unit_free(t: typeinfo.Type): boolean {
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
+    if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     // A cell holds one unit of its own and one slot; no declaration names it.
@@ -110,12 +110,11 @@ function schema_fields_error(f: ssasem.Func): string {
     }
     return "";
 }
-// A function VALUE is an address a caller dispatches through with no
-// declaration in hand, so the units its arguments carry cannot be read from
-// one: an indirect call lends every reference it is handed. A contract with a
-// counted parameter promises the opposite, and its address is therefore not a
-// value this pass will hand out.
-function func_value_error(f: ssasem.Func, ins: ssa.SInst): string {
+// A closure is dispatched through with no declaration in hand, so the units
+// its arguments carry cannot be read from one: an indirect call lends every
+// reference it is handed. A contract with a counted parameter promises the
+// opposite, and a body declaring one is therefore not one this pass will box.
+function closure_body_error(f: ssasem.Func, ins: ssa.SInst): string {
     var c: ssasem.Contract = f.calls[ssasem.find_contract(f.calls, ins.str)];
     for m in c.modes { if (m == counted_mode()) { return "function value consumes an argument"; } }
     return "";
@@ -124,8 +123,8 @@ function func_value_error(f: ssasem.Func, ins: ssa.SInst): string {
 function function_ops_error(f: ssasem.Func): string {
     for b in f.graph.blocks {
         for ins in b.insts {
-            if (ins.kind_tag == ssasem.func_value()) {
-                var why: string = func_value_error(f, ins);
+            if (ins.kind_tag == ssasem.closure_new()) {
+                var why: string = closure_body_error(f, ins);
                 if (why != "") { return why; }
             }
         }
@@ -147,16 +146,16 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
     if (why != "") { return why; }
     return mode_error(f.params, modes);
 }
-// A construction, a call result, a phi, a string constant and a binary
-// operator's result are fresh; only a reference-typed one is a unit of this
-// function's own (a string concatenation), so a scalar operator's result is
-// never owned. A projection or a copy borrows its source.
+// A construction, a closure box, a call result, a phi, a string constant and a
+// binary operator's result are fresh; only a reference-typed one is a unit of
+// this function's own (a string concatenation), so a scalar operator's result
+// is never owned. A projection or a copy borrows its source.
 function construction(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new();
 }
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call()
-        || kind == ssasem.call_value()
+        || kind == ssasem.call_value() || kind == ssasem.closure_new()
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {

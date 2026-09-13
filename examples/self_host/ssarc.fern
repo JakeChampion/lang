@@ -49,7 +49,7 @@ function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void ride one word, a string is its own box, and a function
-// value is one i32-shaped word holding a declaration's address.
+// value is the env box its captures ride in.
 function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
@@ -81,6 +81,7 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeTuple(_) = t { return true; }
     if let typeinfo.TypeStruct(_) = t { return true; }
     if let typeinfo.TypeUnion(_) = t { return true; }
+    if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
 }
 
@@ -470,9 +471,11 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
     return "";
 }
 
-// The operations that write a value into a container's slot.
+// The operations that write a value into a container's slot. A closure box is
+// one: its captures ride the same i32-shaped words an array element does.
 function builds(k: i32): boolean {
-    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(), ssasem.append(), ssasem.with()], k);
+    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(),
+        ssasem.append(), ssasem.with(), ssasem.closure_new()], k);
 }
 
 function kind_in(kinds: i32[], k: i32): boolean {
@@ -481,7 +484,7 @@ function kind_in(kinds: i32[], k: i32): boolean {
 }
 
 // Everything that is not a container operation: the constants, a parameter, a
-// copy, a phi, the scalar operators, a call, a function value and the call
+// copy, a phi, the scalar operators, a call, a closure value and the call
 // through one.
 function value_op(k: i32): boolean {
     return kind_in([1, 2, 5, 6, 7, 8, ssasem.call()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
@@ -784,20 +787,25 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     return emit(r, ir.op_load_local(scratch));
 }
 
-// A function value and the call through one. The value is a declaration's
-// address and takes no operand; the call pushes its arguments and then the
-// address, which is the order call_indirect pops them in. Every slot of the
-// signature is one i32-shaped word — the semantic verifier refuses a wide one
-// — so the call needs no funcref signature tag.
+// A closure value and the call through one. The value is the env box the
+// lambda lift builds: the body's address in slot 0, then the captures, which
+// is the layout `irlower.lower_call_named` gives the same `__mkclo$` marker.
+// The call is environment-first — the box, the written arguments, then the
+// address out of slot 0, which is the order call_indirect pops them in — so a
+// body reaches its captures through the parameter it was hoisted with. Every
+// slot of the signature is one i32-shaped word, the semantic verifier refuses
+// a wide one, so the call needs no funcref signature tag.
 function function_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
-    if (ins.kind_tag == ssasem.func_value()) { return emit(r, ir.op_const_func(0, ins.str)); }
-    var i: i32 = 1;
-    while (i < ins.args.len()) {
-        r = emit(r, ir.op_load_local(ins.args[i]));
-        i = i + 1;
+    if (ins.kind_tag == ssasem.closure_new()) {
+        r = emit(r, ir.op_const_func(0, ins.str));
+        for capture in ins.args { r = emit(r, ir.op_load_local(capture)); }
+        return emit(r, ir.op_arr_make(ins.args.len() + 1, 32));
     }
+    for operand in ins.args { r = emit(r, ir.op_load_local(operand)); }
     r = emit(r, ir.op_load_local(ins.args[0]));
-    return emit(r, ir.op_call_indirect(ins.args.len() - 1));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_arr_get(32));
+    return emit(r, ir.op_call_indirect(ins.args.len()));
 }
 
 function call_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {

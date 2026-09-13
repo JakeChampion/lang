@@ -370,12 +370,21 @@ function is_cell_ref(r: parser.TypeRef): boolean {
   return r.base == "Cell" && r.args.len() == 1;
 }
 
+// `Map[K, V]`, and the never-emitted 3+ arg form whose value is everything
+// after the first comma.
+function is_map_ref(r: parser.TypeRef): boolean {
+  return r.base == "Map" && r.args.len() == 2;
+}
+
+function is_wide_map_ref(r: parser.TypeRef): boolean {
+  return r.base == "Map" && r.args.len() > 2;
+}
+
 // Cell[T]'s two methods (docs/CELL-TYPE-PLAN.md): `get` reads the slot and
 // `set` writes it in place, yielding nothing so `c.set(v);` is a statement
-// rather than an E055 discard. Unknown for every other receiver or name, which
-// is the caller's signal to keep resolving.
-function cell_method_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32): typeinfo.Type {
-  if (!is_method || !is_cell_type(recv)) { return t_unknown("not a cell method call"); }
+// rather than an E055 discard.
+function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinfo.Type {
+  if (!is_cell_type(recv)) { return t_unknown("not a cell method call"); }
   if (name == "get" && argc == 0) { return cell_elem_type(recv); }
   if (name == "set" && argc == 1) { return t_void(); }
   return t_unknown("not a cell method");
@@ -385,12 +394,19 @@ function cell_method_type(recv: typeinfo.Type, name: string, is_method: boolean,
 // the byte-array string constructor and the two f64 bit reinterpretations,
 // typed as native's FuncSigs type them. Left unknown they collapsed the struct
 // literal, array or operator holding the call.
-function free_builtin_result(name: string, is_method: boolean, argc: i32): typeinfo.Type {
-  if (is_method || argc != 1) { return t_unknown("not a typed free builtin"); }
+function free_builtin_result(name: string, argc: i32): typeinfo.Type {
+  if (argc != 1) { return t_unknown("not a typed free builtin"); }
   if (name == "string_from_bytes_unchecked") { return t_string(); }
   if (name == "f64_bits") { return t_i64(); }
   if (name == "f64_from_bits") { return t_float(); }
   return t_unknown("not a typed free builtin");
+}
+
+// The builtin results a call carries ahead of the user tables. Unknown for
+// every other receiver or name, which is the caller's signal to keep resolving.
+function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32): typeinfo.Type {
+  if (is_method) { return cell_method_type(recv, name, argc); }
+  return free_builtin_result(name, argc);
 }
 
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
@@ -3107,9 +3123,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     return t_unknown("slice_unchecked: first argument must be a string");
   }
-  var free_builtin: typeinfo.Type = free_builtin_result(name, is_method, c.args.len());
-  if (!is_unknown(free_builtin)) {
-    return free_builtin;
+  var builtin_typed: typeinfo.Type = builtin_result_type(recv_ty, name, is_method, c.args.len());
+  if (!is_unknown(builtin_typed)) {
+    return builtin_typed;
   }
   // `s.len()` — the method spelling of the `len(s)` builtin above. It
   // resolves through the user MethodSig table, which has no entry for a
@@ -3132,10 +3148,6 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       typeinfo.TypeString(_) => { return t_array(t_u8()); },
       _ => {}
     }
-  }
-  var cell_method: typeinfo.Type = cell_method_type(recv_ty, name, is_method, c.args.len());
-  if (!is_unknown(cell_method)) {
-    return cell_method;
   }
   // Built-in VMap method dispatch — handled ahead of
   // the user MethodSig lookup.
@@ -4510,7 +4522,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
       }
       return t_tuple(elems);
     }
-  } else if (r.base == "Map" && r.args.len() == 2) {
+  } else if (is_map_ref(r)) {
     // `Map[K, V]` → TypeMap. (The recursively-resolved key/value are passed
     // straight into t_map's return-position wrap — an intermediate
     // `var: Type = <recursive call>` doesn't reliably trigger the struct→union
@@ -4518,7 +4530,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names));
   } else if (is_cell_ref(r)) {
     return t_struct_g("Cell", [type_from_ref_names(r.args[0], struct_names, union_names)]);
-  } else if (r.base == "Map" && r.args.len() > 2) {
+  } else if (is_wide_map_ref(r)) {
     // A (never-emitted) 3+ arg `Map[K, A, B]`: the value is "everything after
     // the first comma" — the trailing args re-joined and resolved as one name
     // (→ unknown).

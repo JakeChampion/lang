@@ -243,34 +243,19 @@ function boolean_value(b: boolean): i32 {
     return 0;
 }
 
-// A bare name at a function-typed destination is a declaration's ADDRESS, not
-// a call of it. The signature the address promises is the contract this
-// boundary derived for that declaration, so the value joins the call table and
-// a refused declaration refuses its referrer exactly as a call does. A counted
-// parameter is refused: an indirect callee only ever lends what it is handed,
-// so an address that promises to consume an argument is not one this
-// vocabulary can hand out.
-function func_ref(name: string, ty: typeinfo.Type, s: State): Value {
-    var at: i32 = ssasem.find_contract(s.contracts, name);
-    if (at < 0) { return refused(s, "call target has no semantic contract: " + name); }
-    var contract: ssasem.Contract = s.contracts[at];
-    if (!semtypes.equal(ssasem.contract_type(contract), ty)) { return refused(s, "function value signature"); }
-    for m in contract.modes { if (m == ssaunits.counted_mode()) { return refused(s, "function value consumes an argument"); } }
-    if (ssasem.find_contract(s.calls, name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.func_value(), [], 0, name, ty);
-}
-
-// A bare name that is no binding is a declaration's address where a function
-// is expected, a unit variant of the expected enum, or a module-level
-// constant: the parser desugars `const` to a zero-parameter function and the
-// AST lowering calls one on a bare reference, so it is a call here too. The
-// checker types a reference to a function VALUE as a function, never as the
-// result its contract names, which is what separates the two.
+// A bare name that is no binding is a unit variant of the expected enum, or a
+// module-level constant: the parser desugars `const` to a zero-parameter
+// function and the AST lowering calls one on a bare reference, so it is a call
+// here too. A name at a FUNCTION-typed destination is the bare address of a
+// declaration, which is not what a function value holds here: the lambda lift
+// wraps one into an environment box (`__mkclo$<name>$wrapN()`) before this
+// boundary reads the tree, and a call through a value dispatches through that
+// box.
 function ident(e: ast.Expr, id: ast.ExprIdent, s: State): Value {
     var value: i32 = lookup(s, id.name);
     if (value >= 0) { return Value { s: s, id: value }; }
     var ty: typeinfo.Type = checked(e, s);
-    if (ssasem.is_func(ty)) { return func_ref(id.name, ty, s); }
+    if (ssasem.is_func(ty)) { return refused(s, "function address is not a closure value"); }
     var owner: string = union_name(ty);
     if (owner != "" && checker.variant_sig(s.scope, id.name, owner).name.len() > 0) { return variant(e, id.name, owner, [], s); }
     var at: i32 = ssasem.find_contract(s.contracts, id.name);
@@ -776,11 +761,12 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
     return define(s, ssasem.str_as(), [v.id], 0, "", param);
 }
 
-// A call of a bound name whose value is a function: the callee is the address
-// that name holds and its TYPE is the whole contract, since no declaration is
-// in hand. Every reference argument is lent — a function type spells no `own`,
-// so an indirect callee only reads what it is handed — and the result is a
-// unit of this function's own, the way a direct call's is.
+// A call of a bound name whose value is a function: the callee is the closure
+// box that name holds and its TYPE is the whole contract, since no declaration
+// is in hand. Every reference argument is lent — a function type spells no
+// `own`, so an indirect callee only reads what it is handed — and the result
+// is a unit of this function's own, the way a direct call's is. The box itself
+// is lent too: it is the environment the body reads its captures out of.
 function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
@@ -810,6 +796,48 @@ function is_slice_call(name: string, c: ast.ExprCall): boolean {
     return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
 }
 
+// The lambda lift's closure constructor names no declaration of its own: it
+// is the marker `irlower.lift_inline_closures` leaves where a capturing inline
+// lambda — or a bare function name at a function-typed argument — was written.
+// The name it carries is the body the lift hoisted; "" is no marker.
+function closure_body(name: string): string {
+    var marker: string = "__mkclo$";
+    if (name.len() <= marker.len() || slice_unchecked(name, 0, marker.len()) != marker) { return ""; }
+    return slice_unchecked(name, marker.len(), name.len()) + "";
+}
+
+// A closure VALUE: the environment box the lift builds, holding the hoisted
+// body's address and the captures that body reads back out of it. The body is
+// a declaration like any other, so the box hands out its contract minus the
+// environment parameter, and it joins the call table — a refused body refuses
+// its constructor the way a refused callee refuses its caller.
+//
+// The box is a fresh unit of this function's own, and its release is one
+// decrement with no walk of its slots: a function type names no capture for a
+// drop helper to be derived from, so a reference in a slot would be a unit
+// nothing owns. Every capture is therefore a VALUE. A counted parameter is
+// refused for the reason an indirect call lends every reference it is handed:
+// a function type cannot spell `own`.
+function closure(body: string, c: ast.ExprCall, s: State): Value {
+    var at: i32 = ssasem.find_contract(s.contracts, body);
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + body); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (!ssasem.closure_env(contract)) { return refused(s, "closure environment parameter"); }
+    for m in contract.modes { if (m == ssaunits.counted_mode()) { return refused(s, "function value consumes an argument"); } }
+    var ids: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var v: Value = expr(c.args[i], s, typeinfo.unchecked());
+        s = v.s;
+        if (!s.ok) { return v; }
+        if (reference(s.values[v.id])) { return refused(s, "closure capture is a reference"); }
+        ids = ids.append(v.id);
+        i = i + 1;
+    }
+    if (ssasem.find_contract(s.calls, body) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.closure_new(), ids, 0, body, ssasem.closure_type(contract));
+}
+
 // A name with no contract may still be a variant constructor of the enum the
 // call is written against.
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State): Value {
@@ -835,6 +863,8 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
     if (is_slice_call(name, c)) { return string_slice(c, s); }
+    var body: string = closure_body(name);
+    if (body.len() > 0) { return closure(body, c, s); }
     var at: i32 = ssasem.find_contract(s.contracts, name);
     if (at < 0) { return variant_call(e, name, c, s); }
     return direct_call(c, s.contracts[at], s, statement);
@@ -1124,7 +1154,10 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
-function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+// A CLOSING arm is the last of a total match: every other variant of the enum
+// is named by an arm before it, so the value is this one and a test of it
+// would be constant. Nothing leaves the match but the arms themselves.
+function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     var s: State = arms.s;
     var layout: i32 = union_layout(s, owner);
     var sig: checker.StructSig = checker.variant_shape_sig(s.scope, pv.type_name, owner);
@@ -1133,12 +1166,17 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     var next: i32 = id + 1;
-    s = State { ...s, next_block: next + 1 };
-    var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
-    s = terminate(test.s, t_brif(test.id, id, next));
+    if (closing) {
+        s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    } else {
+        s = State { ...s, next_block: next + 1 };
+        var test: Value = define(s, ssasem.variant_is(), [scrut], 0, pv.type_name, t_bool());
+        s = terminate(test.s, t_brif(test.id, id, next));
+    }
     var opened: State = payloads(pv, scrut, sig.field_types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
     var done: Arm = finish_arm(a.body, opened, join, count, scope);
+    if (closing) { return collect(arms, done); }
     done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
     return collect(arms, done);
 }
@@ -1151,23 +1189,42 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
     return collect(arms, arm(a.body, s, entry, id, pred, join, count, scope));
 }
 
-function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
     match (a.pattern) {
         ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope); },
-        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope); }
+        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope, closing); }
     }
     return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
+// A match is TOTAL when its arms name every variant the enum declares: the
+// scrutinee is one of them, so nothing reaches a test past the last arm.
+// Read off the declarations rather than taken on the checker's word.
+function total_arms(m: ast.StmtMatch, owner: string, s: State): boolean {
+    var named: string[] = [];
+    for a in m.arms {
+        if let ast.PatVariant(pv) = a.pattern {
+            if (!a.has_guard && !a.alt_cont) { named = named.append(pv.type_name); }
+        }
+    }
+    var sig: checker.UnionSig = checker.union_sig(s.scope, owner);
+    if (sig.variants.len() == 0) { return false; }
+    for v in sig.variants { if (!util.has_str(named, v)) { return false; } }
+    return true;
+}
+
 // Arms are tested in order; each test's false edge enters the next test.
-// An arm after a wildcard is unreachable and is not produced. Without a
-// wildcard, a scrutinee no arm matches falls through to the join.
+// An arm after a wildcard is unreachable and is not produced. A total match's
+// last arm closes the chain, so only an incomplete one falls through to the
+// join, and only that one leaves the match live.
 function match_stmt(m: ast.StmtMatch, s: State): State {
     var scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
     s = scrut.s;
     if (!s.ok) { return s; }
     var owner: string = union_name(s.values[scrut.id]);
     if (owner == "" || union_layout(s, owner) == 0) { return fail(s, "unsupported match scrutinee"); }
+    var closes: i32 = 0 - 1;
+    if (total_arms(m, owner, s)) { closes = m.arms.len() - 1; }
     var join: i32 = s.next_block;
     s = State { ...s, next_block: join + 1 };
     var count: i32 = s.names.len();
@@ -1176,7 +1233,7 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
     var arms: Arms = Arms { s: s, preds: [], envs: [] };
     var i: i32 = 0;
     while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope);
+        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes);
         i = i + 1;
     }
     s = arms.s;

@@ -2459,6 +2459,95 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     return v_err("undefined method `" + name + "` on `" + recv_type + "`");
 }
 
+// The capacity-carrying string builder (#8773) — `buf_new` reserves a
+// buffer and hands back its handle, the three pushes append to it,
+// `buf_len` reports what has accumulated, `buf_take` hands the bytes over
+// as a string and leaves the builder armed at its reserve, and `buf_free`
+// releases it. std/array's `join` and every std/io_buffered writer bottom
+// out here, so a stdlib-importing program reaches them constantly.
+//
+// The builder is the HOST's, the way `print` and `slice_unchecked` are the
+// host's: a handle is the address of a control block, which the boxed value
+// plane has no shape for, and an append MUTATES the buffer two copies of a
+// handle share, which it has no expression for either.
+//
+// The handle rides as an unsigned 64-bit value, so a pointer-width one
+// survives the round trip out through the interpreted program's `usize`
+// variables and back in as an argument.
+// That makes a handle an ADDRESS rather than a key into a table of live
+// builders, so a handle used after its free is a wild pointer here, not the
+// error internal/interp answers one with.
+function is_buf_builtin(name: string): boolean {
+    if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") { return true; }
+    return name == "buf_push_byte" || name == "buf_len" || name == "buf_take" || name == "buf_free";
+}
+function v_buf_handle(h: usize): Value { return v_wide(h as i64, true); }
+function buf_handle_of(v: Value): usize { return vint_as_i64(v) as usize; }
+// int_arg_i32 reads any integer carrier's low 32 bits, so a `usize` count
+// and a compact VInt reach a builtin's i32 parameter the same way.
+function int_arg_i32(v: Value): i32 { return vint_as_i64(v) as i32; }
+
+function call_buf_new(args: Value[]): Value {
+    if (args.len() != 1 || !is_int_like(args[0])) { return v_err("buf_new: expected 1 arg (cap)"); }
+    var reserve: i32 = int_arg_i32(args[0]);
+    if (reserve < 0) { reserve = 0; }
+    return v_buf_handle(buf_new(reserve));
+}
+
+// `buf_push_range(b, s, lo, hi)` appends `s[lo:hi]`. The bounds are the
+// same contract slice_unchecked's are: out of range is an error here, the
+// interp's stand-in for the trap the codegen does not emit.
+function call_buf_push_range(h: usize, args: Value[]): Value {
+    if (args.len() != 4) { return v_err("buf_push_range: expected 4 args (b, s, lo, hi)"); }
+    if (!is_string_arg(args[1])) { return v_err("buf_push_range: expected string arg"); }
+    if (!is_int_like(args[2]) || !is_int_like(args[3])) { return v_err("buf_push_range: bounds must be integers"); }
+    var s: string = vstr_of(args[1]);
+    var lo: i32 = int_arg_i32(args[2]);
+    var hi: i32 = int_arg_i32(args[3]);
+    if (lo < 0 || hi > s.len() || lo > hi) {
+        return v_err("buf_push_range [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(s.len()));
+    }
+    buf_push_range(h, s, lo, hi);
+    return v_void();
+}
+
+// The two whole-argument appends: a string's bytes, or the low byte of a
+// number.
+function call_buf_append(name: string, h: usize, args: Value[]): Value {
+    if (name == "buf_push") {
+        if (args.len() != 2) { return v_err("buf_push: expected 2 args (b, s)"); }
+        if (!is_string_arg(args[1])) { return v_err("buf_push: expected string arg"); }
+        buf_push(h, vstr_of(args[1]));
+        return v_void();
+    }
+    if (name != "buf_push_byte") { return v_err(name + ": not a builder append"); }
+    if (args.len() != 2) { return v_err("buf_push_byte: expected 2 args (b, x)"); }
+    if (!is_int_like(args[1])) { return v_err("buf_push_byte: expected number byte"); }
+    buf_push_byte(h, int_arg_i32(args[1]) & 255);
+    return v_void();
+}
+
+// The three handle-only builtins: the accumulated length, the take that
+// hands the bytes over and leaves the builder armed at its reserve, and the
+// free that releases it.
+function call_buf_read(name: string, h: usize, args: Value[]): Value {
+    if (args.len() != 1) { return v_err(name + ": expected 1 arg (b)"); }
+    if (name == "buf_len") { return v_int(buf_len(h)); }
+    if (name == "buf_take") { return v_string(buf_take(h)); }
+    if (name != "buf_free") { return v_err(name + ": not a builder read"); }
+    buf_free(h);
+    return v_void();
+}
+
+function call_buf_builtin(name: string, args: Value[]): Value {
+    if (name == "buf_new") { return call_buf_new(args); }
+    if (args.len() == 0 || !is_int_like(args[0])) { return v_err(name + ": expected a builder handle"); }
+    var h: usize = buf_handle_of(args[0]);
+    if (name == "buf_push_range") { return call_buf_push_range(h, args); }
+    if (name == "buf_push" || name == "buf_push_byte") { return call_buf_append(name, h, args); }
+    return call_buf_read(name, h, args);
+}
+
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
     // Builtin: `len(a)` on an array → i32. Special-cased here
     // because the parser doesn't model builtins separately and
@@ -2593,6 +2682,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             _ => { return v_err("slice_unchecked: arg must be a string"); }
         }
     }
+    if (is_buf_builtin(name)) { return call_buf_builtin(name, args); }
     // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
     // kernels the compiled backends vectorise, and the byte-search floor
     // under std/string's find family. `from` clamps (negative behaves as 0)
