@@ -4129,6 +4129,22 @@ function main(): i32 {
 }`,
 	},
 	{
+		// A receiver read inside the `.with`'s own value argument
+		// (`a.with(0, a[0] + 1)`) is evaluated before the store, so an owned
+		// receiver takes the in-place path; a receiver read AFTER the call
+		// (`b`) must still copy. (6-6) + (2-2) + (1-1) + (8-8) = 0.
+		name: "with_receiver_read_in_own_args",
+		src: `
+function bump(own a: i32[]): i32[] { return a.with(0, a[0] + 1); }
+function main(): i32 {
+    var a: i32[] = [5, 2];
+    a = bump(a);
+    var b: i32[] = [7, 1];
+    var c: i32[] = b.with(1, b[0] + b[1]);
+    return (a[0] - 6) + (a[1] - 2) + (b[1] - 1) + (c[1] - 8) + __rc_underflow_count();
+}`,
+	},
+	{
 		// `.with` on an array MATCH-BOUND from a borrowed enum: the arm binds
 		// the payload with no retain, so the array sits at the box's rc==1 and
 		// an in-place cow rewrote the payload of the enum `snap` still held,
