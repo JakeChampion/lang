@@ -11568,6 +11568,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // isatty / access / geteuid / getegid — see lower_call_os_query, which is
     // split out so this dispatch does not grow four more arms.
     if (is_os_query_call(cid.name, c.args.len())) { return lower_call_os_query(c, cid, s); }
+    // sync() -> void: sync(2), write-back of every dirty buffer on the machine.
+    // No arguments and no result, so the op is the whole lowering.
+    if (cid.name == "sync" && c.args.len() == 0) { return s.emit(ir.op_sync()); }
     // signal_ignore / signal_default — see lower_call_signal, split out for the
     // same reason lower_call_os_query is.
     if (is_signal_call(cid.name, c.args.len())) { return lower_call_signal(c, cid, s); }
@@ -13985,6 +13988,27 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
     }
     return umm.emit(ir.op_call_direct(ummkey, 1 + c.args.len()));
 }
+// The write-back trio is one shape on either handle: no arguments, the bare
+// fd in, Option[IoError] back. `fd_sync_op` is the field's op; the two are
+// split so the method dispatch asks once rather than thrice.
+function is_fd_sync_method(field: string): boolean {
+    return field == "fsync" || field == "fdatasync" || field == "syncfs";
+}
+
+function fd_sync_op(field: string): ir.Op {
+    if (field == "fsync") { return ir.op_fd_fsync(); }
+    if (field == "fdatasync") { return ir.op_fd_fdatasync(); }
+    return ir.op_fd_syncfs();
+}
+
+// is_fd_sync_ret is the same trio keyed the way builtin_opt_ret_type keys its
+// table: "<handle type>.<method>", both types answering the one shape.
+function is_fd_sync_ret(name: string): boolean {
+    return name == "Reader.fsync" || name == "Writer.fsync"
+        || name == "Reader.fdatasync" || name == "Writer.fdatasync"
+        || name == "Reader.syncfs" || name == "Writer.syncfs";
+}
+
 
 // lower_call_method lowers a call whose callee is a FIELD ACCESS: a receiver
 // method call `recv.m(args)`, a call through a closure-valued field, and the
@@ -14002,7 +14026,8 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // backend intercepts unconditionally; this is strictly safer). No
     // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
     if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
-            || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate")
+            || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
+            || is_fd_sync_method(fa.field))
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
         // Reader.read_line() (#4369) -> Option[string] (Some(line incl.
@@ -14034,6 +14059,13 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             var fst: LowerState = lower_expr(fa.obj, s);
             if (!fst.ok) { return fst; }
             return fst.emit(ir.op_fd_stat());
+        }
+        // r.fsync() / w.fsync() -> Option[IoError], and the fdatasync and
+        // syncfs twins: write-back asked of the bare fd, like stat and close.
+        if (is_fd_sync_method(fa.field) && c.args.len() == 0) {
+            var fsy: LowerState = lower_expr(fa.obj, s);
+            if (!fsy.ok) { return fsy; }
+            return fsy.emit(fd_sync_op(fa.field));
         }
         if (fa.field == "seek" && c.args.len() == 2) {
             var sks: LowerState = lower_expr(fa.obj, s);
@@ -17360,7 +17392,8 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
 function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): string {
     if (decl_is_struct(s.frame.structs, expr_struct_type(obj, s)) || expr_enum_type(obj, s) != ""
         || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
-    if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek") {
+    if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
+        || is_fd_sync_method(field)) {
         return s.opt_ret_type("Reader." + field);
     }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
@@ -70879,6 +70912,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.seek") { return "Result[i64, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
         || name == "Writer.truncate") { return "Option[IoError]"; }
+    if (is_fd_sync_ret(name)) { return "Option[IoError]"; }
     return "";
 }
 

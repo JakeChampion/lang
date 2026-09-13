@@ -77,6 +77,7 @@ function main(): i32 {
         "process_alive", "rlimit_nofile", "truncate", "mknod",
         "chown_at", "window_size", "chdir", "signal_mask",
         "signal_disposition", "proc_exec_as", "signal_send", "sum_bytes",
+        "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs",
         "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
         "buf_len", "buf_take", "buf_free"
     ];
@@ -187,7 +188,8 @@ function main(): i32 {
         ir.op_process_alive(), ir.op_rlimit_nofile(), ir.op_truncate(),
         ir.op_mknod(), ir.op_chown_at(), ir.op_window_size(), ir.op_chdir(),
         ir.op_signal_mask(), ir.op_signal_disposition(), ir.op_proc_exec_as(),
-        ir.op_signal_send(), ir.op_sum_bytes(),
+        ir.op_signal_send(), ir.op_sum_bytes(), ir.op_sync(),
+        ir.op_fd_fsync(), ir.op_fd_fdatasync(), ir.op_fd_syncfs(),
         ir.op_buf_new(), ir.op_buf_push(), ir.op_buf_push_range(),
         ir.op_buf_push_byte(), ir.op_buf_len(), ir.op_buf_take(),
         ir.op_buf_free()
@@ -213,6 +215,7 @@ function main(): i32 {
         "process_alive", "rlimit_nofile", "truncate", "mknod",
         "chown_at", "window_size", "chdir", "signal_mask",
         "signal_disposition", "proc_exec_as", "signal_send", "sum_bytes",
+        "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs",
         "buf_new", "buf_push", "buf_push_range",
         "buf_push_byte", "buf_len", "buf_take",
         "buf_free"

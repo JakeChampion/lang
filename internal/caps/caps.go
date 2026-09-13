@@ -82,6 +82,12 @@ var BuiltinCaps = map[string]string{
 	// package question has none of the target question's subtlety here:
 	// it is filesystem reach.
 	"mknod": "fs",
+	// Flushing the machine's dirty buffers writes to every filesystem
+	// mounted on it. The package question is the same one the rest of
+	// this group asks — may this package reach the filesystem at all —
+	// so it needs no capability of its own here, unlike the TARGET
+	// question, where no wasm world can do it.
+	"sync": "fs",
 	// Setting an entry's owner or group rewrites who may reach it, and
 	// the entry is a filesystem one. For the PACKAGE question the only
 	// thing that matters is whether filesystem reach should be visible,

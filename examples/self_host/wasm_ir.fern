@@ -281,6 +281,9 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     }
     if (module_emits_op_cached(cache, "read_chunk")) { out = out.append("read_chunk"); }
     if (module_emits_op_cached(cache, "fd_stat")) { out = out.append("fd_stat"); }
+    if (module_emits_op_cached(cache, "fd_fsync")) { out = out.append("fd_fsync"); }
+    if (module_emits_op_cached(cache, "fd_fdatasync")) { out = out.append("fd_fdatasync"); }
+    if (module_emits_op_cached(cache, "fd_syncfs")) { out = out.append("fd_syncfs"); }
     if (module_emits_op_cached(cache, "reader_seek")) { out = out.append("reader_seek"); }
     if (module_emits_op_cached(cache, "writer_truncate")) { out = out.append("writer_truncate"); }
     if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
@@ -4081,6 +4084,15 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // r.stat() -> Result[FileStat, IoError]: fd on the stack, then the
         // FileStat type id the struct box needs, as the stat op pushes it.
         parts = parts.append(tid_get("FileStat") + "    call $__fern_fd_stat\n");
+    } else if (o.kind_tag == 299) {  // fd_fsync
+        // r.fsync() -> Option[IoError]: the fd is already on the stack.
+        parts = parts.append("    call $__fern_fd_fsync\n");
+    } else if (o.kind_tag == 300) {  // fd_fdatasync
+        parts = parts.append("    call $__fern_fd_fdatasync\n");
+    } else if (o.kind_tag == 301) {  // fd_syncfs
+        // Neither preview has a per-filesystem flush, so this one drops the
+        // fd and answers Unsupported rather than importing anything.
+        parts = parts.append("    call $__fern_fd_syncfs\n");
     } else if (o.kind_tag == 242) {  // reader_seek
         // r.seek(offset, whence) -> Result[i64, IoError]: fd, i64 offset and
         // whence are on the stack in param order.
@@ -4868,10 +4880,17 @@ function io_err_field_off(i: i32, slot: i32): string {
     return util.i32_to_string(slot * (1 + i));
 }
 
+// needs_fd_sync reports whether the module reached any of the per-handle
+// write-back ops. Two gates ask it, and neither wants three `need` calls
+// spelled out.
+function needs_fd_sync(needs: string[]): boolean {
+    return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs");
+}
+
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate");
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -5515,6 +5534,66 @@ pub function fd_stat_func(): string {
     o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
     o = o + "      (return (local.get $res))))\n";
     o = o + filestat_project_wat();
+    return o;
+}
+
+// fd_sync_funcs is the bodies of whichever write-back helpers the module
+// reached, concatenated — empty when it reached none.
+pub function fd_sync_funcs(needs: string[]): string {
+    var o: string = "";
+    if (need(needs, "fd_fsync")) { o = o + fd_sync_func("fsync", "fd_sync"); }
+    if (need(needs, "fd_fdatasync")) { o = o + fd_sync_func("fdatasync", "fd_datasync"); }
+    if (need(needs, "fd_syncfs")) { o = o + fd_syncfs_func(); }
+    return o;
+}
+
+// fd_sync_import emits the preview1 imports behind $__fern_fd_fsync and
+// $__fern_fd_fdatasync. There is no syncfs import to emit: neither preview has
+// a per-filesystem flush.
+pub function fd_sync_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"fd_sync\" (func $fd_sync (param i32) (result i32)))\n";
+}
+pub function fd_datasync_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"fd_datasync\" (func $fd_datasync (param i32) (result i32)))\n";
+}
+
+// fd_sync_func emits $__fern_fd_fsync / $__fern_fd_fdatasync(fd) ->
+// Option[IoError] box: one write-back import, None once it is scheduled. A
+// handle carries no path, so the error is classified against a fresh empty
+// string, as fd_stat's is.
+pub function fd_sync_func(name: string, imp: string): string {
+    var o: string = "";
+    o = o + "  (func $__fern_fd_" + name + " (param $fd i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $err (call $" + imp + " (local.get $fd)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
+// fd_syncfs_func emits $__fern_fd_syncfs(fd) -> Option[IoError]: always
+// Some(Unsupported). Neither preview has a whole-filesystem flush — preview 1's
+// fd_sync is one descriptor's and a preopen is a capability handle rather than
+// a mount — so ENOTSUP (58) goes through the same errno table every other
+// refusal here uses, rather than a success the caller never got.
+pub function fd_syncfs_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_fd_syncfs (param $fd i32) (result i32)\n";
+    o = o + "    (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 58) (local.get $path)))\n";
+    o = o + "    (local.get $res))\n";
     return o;
 }
 
@@ -9496,6 +9575,8 @@ function preview1_imports(needs: string[]): string {
     // function section), emitted when the module stats a file.
     if (need(needs, "stat") || need(needs, "lstat")) { parts = parts.append(stat_import()); }
     if (need(needs, "fd_stat")) { parts = parts.append(fd_stat_import()); }
+    if (need(needs, "fd_fsync")) { parts = parts.append(fd_sync_import()); }
+    if (need(needs, "fd_fdatasync")) { parts = parts.append(fd_datasync_import()); }
     if (need(needs, "reader_seek")) { parts = parts.append(fd_seek_import()); }
     // remove_file / remove_dir_all use the preview1 path_unlink_file import
     // (remove_dir_all unlinks the regular files it finds) — emit it once across
@@ -9785,7 +9866,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need(needs, "open_file") || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -9990,6 +10071,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "read_chunk")) { parts = parts.append(reader_read_chunk_func()); }
     if (need(needs, "reader_close")) { parts = parts.append(reader_close_func()); }
     if (need(needs, "fd_stat")) { parts = parts.append(fd_stat_func()); }
+    parts = parts.append(fd_sync_funcs(needs));
     if (need(needs, "reader_seek")) { parts = parts.append(reader_seek_func()); }
     if (need(needs, "writer_truncate")) { parts = parts.append(writer_truncate_func()); }
     // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.

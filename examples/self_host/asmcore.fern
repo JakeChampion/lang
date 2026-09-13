@@ -472,6 +472,10 @@ pub function sysno(t: string, name: string): string {
         if (name == "fchmodat") { return "268"; }
         if (name == "truncate") { return "76"; }
         if (name == "ftruncate") { return "77"; }
+        if (name == "fsync") { return "74"; }
+        if (name == "fdatasync") { return "75"; }
+        if (name == "sync") { return "162"; }
+        if (name == "syncfs") { return "306"; }
         if (name == "mknodat") { return "259"; }
         if (name == "fchownat") { return "260"; }
         if (name == "utimensat") { return "280"; }
@@ -525,6 +529,11 @@ pub function sysno(t: string, name: string): string {
         if (name == "fchmodat") { return "467"; }
         if (name == "truncate") { return "200"; }
         if (name == "ftruncate") { return "201"; }
+        if (name == "fsync") { return "95"; }
+        if (name == "fdatasync") { return "187"; }
+        if (name == "sync") { return "36"; }
+        // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
+        // branches on the target rather than issuing a number that is not one.
         // XNU has no mknodat — this is mknod(2), which takes no directory
         // descriptor. The row keeps the Linux spelling so the two tables
         // pair up (selfhost_sysno_parity_test); rt_src_mknod branches on
@@ -612,6 +621,10 @@ pub function sysno(t: string, name: string): string {
     if (name == "fchmodat") { return "53"; }
     if (name == "truncate") { return "45"; }
     if (name == "ftruncate") { return "46"; }
+    if (name == "fsync") { return "82"; }
+    if (name == "fdatasync") { return "83"; }
+    if (name == "sync") { return "81"; }
+    if (name == "syncfs") { return "267"; }
     if (name == "mknodat") { return "33"; }
     if (name == "fchownat") { return "54"; }
     if (name == "renameat") { return "38"; }
@@ -2241,6 +2254,50 @@ function stat_project_src(t: string): string {
 // empty one, as a failed read is.
 pub function rt_src_fd_stat(t: string): string {
     return "function __fern_fd_stat(fd: i32): Result[FileStat, IoError] { var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(" + sysno(t, "fstat") + ", fd, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + stat_project_src(t) + " }";
+}
+
+// rt_src_fd_sync backs `r.fsync()` / `w.fsync()` and the fdatasync twin ->
+// Option[IoError]: one write-back call on the handle's fd, None once it is
+// scheduled. A handle carries no path, so the errno is classified against an
+// empty one, as fd_stat's is.
+pub function rt_src_fd_sync(t: string, name: string, call: string): string {
+    return "function __fern_fd_" + name + "(fd: i32): Option[IoError] { var rc: i32 = __syscall3(" + sysno(t, call) + ", fd, 0, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
+// rt_src_fd_syncfs backs `r.syncfs()` / `w.syncfs()` -> Option[IoError]:
+// syncfs(2), the whole filesystem the handle lives on.
+//
+// XNU has no syncfs at all, so on Darwin the descriptor is checked with
+// fcntl(F_GETFD) — which answers EBADF for one that is not open and needs no
+// stat buffer — and the flush is the whole-machine sync(2). That covers the
+// filesystem the descriptor lives on, so the guarantee holds; it simply
+// flushes more than was asked.
+pub function rt_src_fd_syncfs(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_fd_syncfs(fd: i32): Option[IoError] { var ck: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd, 1, 0); if (ck < 0) { return Some(__fern_io_error(0 - ck, \"\")); } __syscall3(" + sysno(t, "sync") + ", 0, 0, 0); return None; }";
+    }
+    return "function __fern_fd_syncfs(fd: i32): Option[IoError] { var rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd, 0, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
+// rt_src_sync backs `sync()` -> void: sync(2) over every mounted filesystem.
+// It cannot fail on either host, so the caller has nothing to inspect; the
+// syscall's own return is handed back so the statement-position drop has a
+// defined word to pop, which is the same ABI native's `__fern_sync` leaves in
+// the result register.
+pub function rt_src_sync(t: string): string {
+    return "function __fern_sync(): i32 { return __syscall3(" + sysno(t, "sync") + ", 0, 0, 0); }";
+}
+
+// rt_src_sync_family gathers whichever of the four write-back helpers the
+// module actually reached. Both native backends select them identically, so
+// the four `has_need` tests live here once rather than in each emitter.
+pub function rt_src_sync_family(s: EmitState, t: string): string {
+    var out: string = "";
+    if (s.has_need("fd_fsync")) { out = out + " " + rt_src_fd_sync(t, "fsync", "fsync"); }
+    if (s.has_need("fd_fdatasync")) { out = out + " " + rt_src_fd_sync(t, "fdatasync", "fdatasync"); }
+    if (s.has_need("fd_syncfs")) { out = out + " " + rt_src_fd_syncfs(t); }
+    if (s.has_need("sync")) { out = out + " " + rt_src_sync(t); }
+    return out;
 }
 
 // rt_src_reader_seek backs `r.seek(offset, whence)` -> Result[i64, IoError]:
@@ -4292,6 +4349,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "chmod") { return ty_option(ty_unknown()); }
     if (id.name == "signal_send") { return ty_option(ty_unknown()); }
     if (id.name == "truncate") { return ty_option(ty_unknown()); }
+    if (id.name == "sync") { return ty_unknown(); }
     if (id.name == "mknod") { return ty_option(ty_unknown()); }
     if (id.name == "chown_at") { return ty_option(ty_unknown()); }
     if (id.name == "set_file_times") { return ty_option(ty_unknown()); }

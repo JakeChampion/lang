@@ -237,6 +237,24 @@ var importSpecs = map[string]importSpec{
 		},
 		results: nil,
 	},
+	"wasi_descriptor_sync_p2": {
+		// Preview-2: wasi:filesystem/types@0.2.0::
+		//   [method]descriptor.sync lowered to
+		//   (self: i32, retptr: i32) -> (). retptr holds
+		//   result<_, error-code>, the same layout set-size's uses.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.sync",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_descriptor_sync_data_p2": {
+		// Preview-2: [method]descriptor.sync-data — the data-only half
+		// of the pair above, same lowered shape.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.sync-data",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_descriptor_set_size_p2": {
 		// Preview-2: wasi:filesystem/types@0.2.0::
 		//   [method]descriptor.set-size lowered to
@@ -632,6 +650,23 @@ var importSpecs = map[string]importSpec{
 		module:  "wasi_snapshot_preview1",
 		name:    "fd_filestat_set_size",
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_sync": {
+		// (fd) -> errno. Flushes the descriptor's data AND metadata.
+		// Preview 1's whole write-back surface for a handle; there is
+		// no per-filesystem form beside it.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_sync",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_datasync": {
+		// (fd) -> errno. Data only, skipping the metadata a later read
+		// does not need.
+		module:  "wasi_snapshot_preview1",
+		name:    "fd_datasync",
+		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
 	"wasi_fd_close": {
@@ -2205,6 +2240,20 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_filestat_get")
 		}
 	}
+	if helpers.set["__fern_fd_fsync"] {
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_sync_p2")
+		} else {
+			in.add("wasi_fd_sync")
+		}
+	}
+	if helpers.set["__fern_fd_fdatasync"] {
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_sync_data_p2")
+		} else {
+			in.add("wasi_fd_datasync")
+		}
+	}
 	if helpers.set["__fern_reader_seek"] {
 		if opts.Preview2WASI {
 			// SEEK_END needs the size, and the seek itself is a fresh
@@ -2749,6 +2798,9 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
 	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
 	"__fern_fd_stat":             buildFdStatBodyP2,
+	"__fern_fd_fsync":            buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
+	"__fern_fd_fdatasync":        buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
+	"__fern_fd_syncfs":           buildFdSyncfsBody,
 	"__fern_reader_seek":         buildReaderSeekBodyP2,
 	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,

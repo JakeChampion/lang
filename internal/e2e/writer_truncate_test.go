@@ -34,7 +34,10 @@ import (
 // working directory when `dir` is "" (the wasm leg, which runs inside its
 // preopen). `perms` drops the mode property for a target that has no modes.
 // The exit code names the step that failed.
-func writerTruncateSource(dir string, perms bool) string {
+// `closed` drops the closed-handle property on wasm: `close` there drops the
+// preview-2 descriptor resource, and a dropped handle traps rather than
+// answering EBADF.
+func writerTruncateSource(dir string, perms bool, closed bool) string {
 	at := func(name string) string {
 		if dir == "" {
 			return `"` + name + `"`
@@ -54,6 +57,24 @@ func writerTruncateSource(dir string, perms bool) string {
             w.close();
         },
         Err(e) => { return 12; }
+    }
+`
+	}
+	shut := ""
+	if closed {
+		// ftruncate(2) of a descriptor that is no longer open is EBADF on
+		// every kernel, so the compiled backends get this from the kernel
+		// for free. The interpreter has no kernel to ask — it resolves the
+		// fd through its own handle table — so this arm is what holds that
+		// table to the same answer instead of aborting the program, the way
+		// stat / seek / the sync family already are.
+		shut = `    match (open_writer(` + at("closed.txt") + `)) {
+        Ok(w) => {
+            match (w.write("abc")) { Some(e) => { return 13; }, None => {} }
+            w.close();
+            match (w.truncate(0 as i64)) { Some(e) => { }, None => { return 14; } }
+        },
+        Err(e) => { return 15; }
     }
 `
 	}
@@ -77,12 +98,12 @@ func writerTruncateSource(dir string, perms bool) string {
         },
         Err(e) => { return 8; }
     }
-` + locked + `    return 0;
+` + locked + shut + `    return 0;
 }
 `
 }
 
-func writerTruncateCheckTree(t *testing.T, dir string, perms bool) {
+func writerTruncateCheckTree(t *testing.T, dir string, perms bool, closed bool) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "grow.txt"))
 	if err != nil {
@@ -98,6 +119,15 @@ func writerTruncateCheckTree(t *testing.T, dir string, perms bool) {
 	if fi.Size() != 0 {
 		t.Errorf("neg.txt is %d bytes — a refused resize changed the file", fi.Size())
 	}
+	if closed {
+		shut, err := os.ReadFile(filepath.Join(dir, "closed.txt"))
+		if err != nil {
+			t.Fatalf("read closed.txt: %v", err)
+		}
+		if string(shut) != "abc" {
+			t.Errorf("closed.txt = %q, want %q — the resize on a closed handle went through", shut, "abc")
+		}
+	}
 	if !perms {
 		return
 	}
@@ -112,46 +142,46 @@ func writerTruncateCheckTree(t *testing.T, dir string, perms bool) {
 
 func TestX86_64WriterTruncate(t *testing.T) {
 	dir := t.TempDir()
-	code, _ := compileRunX86_64WithSetup(t, writerTruncateSource(dir, true), nil)
+	code, _ := compileRunX86_64WithSetup(t, writerTruncateSource(dir, true, true), nil)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see writerTruncateSource)", code)
 	}
-	writerTruncateCheckTree(t, dir, true)
+	writerTruncateCheckTree(t, dir, true, true)
 }
 
 func TestArm64WriterTruncate(t *testing.T) {
 	dir := t.TempDir()
-	out, code := compileAndRunArm64(t, writerTruncateSource(dir, true))
+	out, code := compileAndRunArm64(t, writerTruncateSource(dir, true, true))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see writerTruncateSource)\n%s", code, out)
 	}
-	writerTruncateCheckTree(t, dir, true)
+	writerTruncateCheckTree(t, dir, true, true)
 }
 
 func TestArm64SSAWriterTruncate(t *testing.T) {
 	fern := buildFernForArm64SSA(t)
 	qemu := arm64QemuOrEmpty(t)
 	dir := t.TempDir()
-	bin := compileArm64SSA(t, fern, writerTruncateSource(dir, true), os.Environ())
+	bin := compileArm64SSA(t, fern, writerTruncateSource(dir, true, true), os.Environ())
 	code, stderr := runArm64SSABin(t, qemu, bin, dir, os.Environ())
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see writerTruncateSource)\n%s", code, stderr)
 	}
-	writerTruncateCheckTree(t, dir, true)
+	writerTruncateCheckTree(t, dir, true, true)
 }
 
 func TestInterpWriterTruncate(t *testing.T) {
 	dir := t.TempDir()
-	if code := runInterpExit(t, writerTruncateSource(dir, true)); code != 0 {
+	if code := runInterpExit(t, writerTruncateSource(dir, true, true)); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see writerTruncateSource)", code)
 	}
-	writerTruncateCheckTree(t, dir, true)
+	writerTruncateCheckTree(t, dir, true, true)
 }
 
 // The wasm leg runs under the component's preopen, so its paths are relative
 // and main's return reaches us on stdout rather than as the exit status.
 func TestWASMWriterTruncate(t *testing.T) {
-	p := buildComponent(t, writerTruncateSource("", false))
+	p := buildComponent(t, writerTruncateSource("", false, false))
 	dir := t.TempDir()
 	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
 	if ec != 0 {
@@ -161,5 +191,5 @@ func TestWASMWriterTruncate(t *testing.T) {
 		t.Fatalf("main = %d, want 0 — the code names the step (see writerTruncateSource)\nstdout:\n%s\nstderr:\n%s",
 			got, stdout, stderr)
 	}
-	writerTruncateCheckTree(t, dir, false)
+	writerTruncateCheckTree(t, dir, false, false)
 }

@@ -84,6 +84,8 @@ const (
 	composeRenameAtName   = "[method]descriptor.rename-at"
 	composeSetTimesAtName = "[method]descriptor.set-times-at"
 	composeSetSizeName    = "[method]descriptor.set-size"
+	composeSyncName       = "[method]descriptor.sync"
+	composeSyncDataName   = "[method]descriptor.sync-data"
 )
 
 type p2composer struct {

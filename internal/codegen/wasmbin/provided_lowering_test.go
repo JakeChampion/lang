@@ -64,6 +64,12 @@ var providedRefusedByPlatform = map[string]bool{
 	// `fs` is the files on it. Neither preview has a volume interface,
 	// and a preopen is a capability handle rather than a mount.
 	"statfs": true,
+	// `fssync` — write-back of every dirty buffer on the MACHINE. A
+	// preopen is a capability handle rather than a mount, so there is no
+	// set of filesystems to flush; preview 1's fd_sync is one
+	// descriptor's, which is what `fsync` already is. A no-op would be a
+	// flush the caller asked for and never got.
+	"sync": true,
 	// `rlimit` — a kernel-enforced ceiling on a process resource.
 	// Neither WASI preview has one, and every constant that could stand
 	// in would be a measurement a component never took.

@@ -2923,6 +2923,53 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// targets rather than refused.
 	registerStructMethod("Writer", "truncate",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, optionIoErr)
+	// Write-back of a handle's own data, on the handle rather than on a
+	// path, for the same reason `stat` is: the descriptor is the thing
+	// being flushed, and on wasi preview 2 it is not a number the
+	// caller could pass.
+	//
+	// A path-based form was measured against `sync(1)` and cannot
+	// express it. GNU reports the open and the flush with two different
+	// words — `sync: error opening 'f': ...` against `sync: error
+	// syncing 'f': Invalid argument`, which is what `fsync` on a FIFO
+	// answers on Linux — so a builtin that opened AND flushed would
+	// have one error where the utility needs two, and no honest way to
+	// tell which stage failed.
+	//
+	// On both Reader and Writer because a descriptor is a descriptor:
+	// `sync(1)` flushes files it opened read-only, and a program that
+	// has just written wants the same call on the handle it wrote
+	// through.
+	//
+	// fsync flushes data AND metadata; fdatasync omits metadata not
+	// needed to read the data back, which is a real saving on a file
+	// whose size did not change. Both are `Err(Other(…, "Invalid
+	// argument"))` on a handle whose kind cannot be flushed — a pipe,
+	// a FIFO, a character device — rather than silently succeeding.
+	registerStructMethod("Reader", "fsync", nil, optionIoErr)
+	registerStructMethod("Writer", "fsync", nil, optionIoErr)
+	registerStructMethod("Reader", "fdatasync", nil, optionIoErr)
+	registerStructMethod("Writer", "fdatasync", nil, optionIoErr)
+	// syncfs flushes the whole filesystem the handle lives on, not the
+	// handle's own file. Neither WASI preview has it — preview 1's
+	// `fd_sync` is per-descriptor and a preopen is a capability handle
+	// rather than a mount — so it answers `Err(Unsupported)` there, the
+	// way `stat` answers it for a preview-2 stdio handle (#8713).
+	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
+	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
+	// sync(): void — `sync(2)`, which schedules write-back of every
+	// dirty buffer on the machine. It returns nothing and cannot fail
+	// on either Linux or Darwin, so there is no Result to unwrap.
+	//
+	// Whole-machine rather than per-handle, which is why it is a free
+	// builtin and not a method, and why it is gated by a target
+	// capability of its own: no wasm profile has anything to flush a
+	// whole machine with, and E066 refuses it there rather than
+	// answering with a no-op nobody asked for.
+	c.info.FuncSigs["sync"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.VoidType{},
+	}
 
 	// Map[K, V] — generic IndexMap-shaped associative
 	// container per PR 4 of docs/LANGUAGE-DIRECTION.md. The

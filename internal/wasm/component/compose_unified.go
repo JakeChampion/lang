@@ -314,6 +314,12 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		if req.File.SetSize {
 			g.add(gImport{iface: fsTypes, name: composeSetSizeName, kind: gMem, params: composeSetSizeParams})
 		}
+		if req.File.Sync {
+			g.add(gImport{iface: fsTypes, name: composeSyncName, kind: gMem, params: composeSelfRetParams})
+		}
+		if req.File.SyncData {
+			g.add(gImport{iface: fsTypes, name: composeSyncDataName, kind: gMem, params: composeSelfRetParams})
+		}
 		if req.File.Stat {
 			g.add(gImport{iface: fsTypes, name: composeStatAtName, kind: gMem, params: composeStatAtParams})
 		}
