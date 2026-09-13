@@ -102,10 +102,12 @@ Unsupported constructs refuse the whole function with a reason.
   side is produced, the way the checker settles it; without that a 32-bit
   `0 - 1` fails the exact-type rule at an i64 binding.
 
-  It is a VALUE here and a record or variant FIELD, never an array or tuple
-  ELEMENT. An array or tuple stores one i32-shaped word per slot —
-  `op_arr_make` and `op_arr_get` are emitted at width 32 — so a wide element
-  would be written through a narrow store on wasm, and an array or tuple TYPE
+  It is a VALUE here, a record or variant FIELD and an array ELEMENT, never a
+  TUPLE element. An array's element ops each carry their own width, so a wide
+  element rides the eight-byte stride wasm needs (`op_arr_make_i64` and its
+  get/set/push siblings, which name the SLOT rather than the sign, so a u64
+  takes the ones an i64 does). `op_tuple_make` spells no element kinds, so a
+  wide tuple element has no store width to be written at and a tuple TYPE
   carrying one is refused. A record or variant stores each field at the width
   its declaration names: the construction carries its declaration's index
   (`op_struct_make`), a record's resolved by name and a variant's by name
@@ -143,9 +145,9 @@ Unsupported constructs refuse the whole function with a reason.
   writes. A cast to or from anything else — a string, the `as?` downcast — is
   refused.
 
-- The f64, as a VALUE and a declared field but never an array or tuple element,
-  for the same reason the i64 is one (`narrow_slot`): it gets a slot of its
-  own that only wasm spells
+- The f64, as a VALUE, a declared field and an array element but never a tuple
+  element, for the same reason the i64 is one (`narrow_slot`): it gets a slot
+  of its own that only wasm spells
   out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
   literal is an f64 — the checker types it polymorphic and settles it where it
   lands, and this vocabulary has one float width, so only a `f32` suffix or
@@ -344,9 +346,10 @@ Unsupported constructs refuse the whole function with a reason.
   refused ("closure capture is a reference"), which is where the payoff stops
   anyway: a body capturing one reads it back out of the `i32[]` environment at
   a type that is not the slot's and refuses on its own account. A wide capture
-  is refused at the physical layer for the reason a wide array element is —
-  the box stores each slot through `op_arr_make` at width 32 — and the lift
-  declines one before that.
+  is refused at the physical layer for the reason a wide TUPLE element is —
+  the env box stores each slot through `op_arr_make` at width 32, the one
+  array construction here that is not written at its element's own width —
+  and the lift declines one before that.
 
   Calling a bound name that holds one is `call_indirect`, environment-FIRST:
   the box, the written arguments, then the address out of slot 0. That is the
