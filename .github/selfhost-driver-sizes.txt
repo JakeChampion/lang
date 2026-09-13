@@ -315,6 +315,12 @@
 # Measured after lexical capture contracts and removal of inert null cleanup.
 # Attribution: docs/SELFHOST-LEXICAL-CAPTURE-SIZE.md. Partial drivers now link
 # checked capture resolution; the whole compiler shrinks against its PR parent.
+# 2026-09-13 — irlower_run alone, +5.0%, from the semantic source boundary's
+# own growth: the erased type variable, the unsigned widths, the array element
+# slot widths and the value-position block all add emitted code to the modules
+# these drivers share. The other fourteen moved +0.1-5.0% inside the band and
+# keep their numbers; asm_load_run and ssa_lift_scan_run sit nearest the edge.
+# Number pasted from driver-sizes' own corrected-baseline block.
 fern.fern 11540956
 asm_load_run.fern 8325836
 asm_modload_run.fern 8340668
@@ -326,7 +332,7 @@ wasm_runio_run.fern 7318652
 asm_pathprobe_run.fern 6592252
 ssa_lift_scan_run.fern 6410596
 asm_ir_elig_run.fern 5645052
-irlower_run.fern 6405084
+irlower_run.fern 6726324
 checker_modload_run.fern 2281060
 ssa_emit_run.fern 1723500
 ssa_run.fern 1545404
