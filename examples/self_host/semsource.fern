@@ -936,9 +936,12 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
 // A call of a bound name whose value is a function: the callee is the closure
 // box that name holds and its TYPE is the whole contract, since no declaration
 // is in hand. Every reference argument is lent — a function type spells no
-// `own`, so an indirect callee only reads what it is handed — and the result
-// is a unit of this function's own, the way a direct call's is. The box itself
-// is lent too: it is the environment the body reads its captures out of.
+// `own`, so an indirect callee only reads what it is handed — EXCEPT at a slot
+// the type spells with an erased type variable, which is consuming: the caller
+// hands over a unit there and takes back the one the call returns, the rule
+// that lets a generic body release nothing (docs/ERASED-GENERICS-RC.md). The
+// result is a unit of this function's own, the way a direct call's is, and the
+// box itself is lent: it is the environment the body reads its captures out of.
 function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
@@ -989,7 +992,8 @@ function closure_body(name: string): string {
 // drop helper to be derived from, so a reference in a slot would be a unit
 // nothing owns. Every capture is therefore a VALUE. A counted parameter is
 // refused for the reason an indirect call lends every reference it is handed:
-// a function type cannot spell `own`.
+// a function type cannot spell `own` — but it CAN spell an erased type
+// variable, and that slot is the one consuming position it has.
 function closure(body: string, c: ast.ExprCall, s: State): Value {
     var at: i32 = ssasem.find_contract(s.contracts, body);
     if (at < 0) { return refused(s, "call target has no semantic contract: " + body); }

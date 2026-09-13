@@ -331,13 +331,20 @@ Unsupported constructs refuse the whole function with a reason.
   it trampolines — and the result is a unit of the caller's own the way a
   direct call's is. The box itself is lent too, never consumed.
 
-  A body with a COUNTED parameter is refused ("function value consumes an
-  argument"): it promises the opposite of that convention, and a function type
-  has no way to say so. An `own string` parameter reaches it, because the
-  trampoline un-owns only the leak-safe array. The AST path takes the shape
-  and leaks it — `apply(eat, a)` for `eat(own xs: i32[])` frees nothing —
-  which is a checker hole this boundary declines to inherit rather than a rule
-  it invents.
+  The ONE consuming position a function type has is a slot it spells with an
+  erased type variable. A generic body cannot release such a word, so the
+  caller of one hands its unit over and takes back the one the call returns
+  (`docs/ERASED-GENERICS-RC.md`), and the indirect call at that slot supplies
+  a move rather than a read.
+
+  A body with a COUNTED parameter at any OTHER slot is refused ("function
+  value consumes an argument"): it promises the opposite of that convention,
+  and a function type has no way to say so. An `own string` parameter reaches
+  it, because the trampoline un-owns only the leak-safe array. The AST path
+  takes the shape and leaks it — `apply(eat, a)` for `eat(own xs: i32[])`
+  frees nothing — which is a checker hole this boundary declines to inherit
+  rather than a rule it invents, and the same hole is why the erased slot's
+  own consuming convention cannot be given to a concrete visitor yet.
 
   A BARE name at a function-typed destination is a declaration's address,
   which is not what a value holds here, and is refused. The lift wraps one
@@ -482,6 +489,18 @@ census measures.
   record holding a `Cell[string]`, every one constructed from a field read of a
   borrowed or owned holder, bound, matched and dropped, with the holder handed
   in as an `own` parameter so the cell's release is produced code's.
+
+The erased-generic fixtures are where the move rule executes: a fold whose
+accumulator is replaced once per call, one nested through a SECOND generic so
+a variable binds a variable, and one carried through a loop phi — each at a
+scalar instantiation, with a heap value held ACROSS the fold and read back
+after churn so an over-release answers a sentinel rather than a length. The
+print golden pins the other direction, which no execution can reach: a fold
+that reads its accumulator after passing it ("erased value is live across its
+consumption"), one that abandons an erased word unconsumed ("erased value is
+abandoned unconsumed"), and a call whose variable binds a reference ("erased
+instantiation carries a unit") beside the `$wrapN` trampoline whose borrowed
+accumulator is the reason for that last one.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at

@@ -610,7 +610,7 @@ pub function instantiation_error(b: Binding): string {
     return "";
 }
 
-pub function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
+function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
     var b: Binding = unbound();
     var i: i32 = 0;
     while (i < args.len()) {
