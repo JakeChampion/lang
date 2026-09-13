@@ -111,6 +111,28 @@ Native reads 14,955 on the 300-byte `od`. Live bytes are unchanged in every
 row (363,848 on the 300-byte `od`): the residue the predecessor entry left is
 not this shape.
 
+## Size
+
+Same-source linked bytes, the fifteen stock drivers built by
+`TestSelfHostWarmStockDriver` under the parent commit's sources and under
+this change, one toolchain (the container's gcc/ld), so the two columns are
+comparable where a comparison against `.github/selfhost-driver-sizes.txt` is
+not — that baseline was linked on the CI image, and every driver here reads
+4.4–5.1% above it before and after alike.
+
+| driver | parent | this change |
+| --- | --- | --- |
+| fern.fern | 12,044,684 | 12,048,860 (+4,176) |
+| asm_load_run.fern | 8,739,004 | 8,747,276 (+8,272) |
+| asm_run.fern | 7,675,892 | 7,684,164 (+8,272) |
+| asm_ir_elig_run.fern | 5,798,164 | 5,806,436 (+8,272) |
+| asm_ir_run / asm_modload / asm_pathprobe / irlower_run / ssa_lift_scan / wasm_ir_run / wasm_run / wasm_runio_run | | each +4,176 |
+| checker_modload_run / ssa_emit_run / ssa_run | | unchanged |
+
+At most +0.14%: the sites in the compiler's own sources that now carry the
+gate are few, and the drivers that link no `.with` self-reassign are
+byte-identical.
+
 ## Gates
 
 `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}` (`self_host_with_cow_ir_test.go`):
@@ -119,6 +141,16 @@ the probe set as a table, each case interpreter-checked under
 allocation bound — a hundred-update loop that allocated a hundred times fails
 the bound, and an in-place write under a wrong uniqueness answer fails the
 exit code. Cases whose holder is a leak-only class pin the exit code only.
+Against the parent commit's lowering 27 of the 30 cases fail; the three that
+pass are the controls (a sole owner, the call-scrutinee Option projection,
+and the string[] exclusion).
+
+Also green on this change: `TestSelfHost(WithAliasIR|WithCloneReclaim|
+OwnArrayLifetimeNativeOracle|BorrowedWithInPlace|IRVerify)` — the first
+round of which caught the capture cell, `$cell$x`, which must write through
+to the closure sharing it and is excluded from both count-reading paths —
+`TestSelfHostCoreutilsParity/(od|printf)` against GNU 9.4, the complexity
+ratchet, `make check-sources` and `make fmt-check`.
 
 ## Found and not fixed here
 
