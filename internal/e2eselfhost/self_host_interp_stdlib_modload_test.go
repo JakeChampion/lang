@@ -48,6 +48,14 @@ var interpStdlibModloadCases = []struct {
 	// negative one reads from 0, and an `n` past either range answers the
 	// shorter length so a caller's `== n` equality test correctly fails.
 	{"mismatch", "function main(): i32 {\n  if (__mismatch(\"hello\", 0, \"hello\", 0, 5) != 5) { return 1; }\n  if (__mismatch(\"abc\", 0, \"abd\", 0, 3) != 2) { return 2; }\n  if (__mismatch(\"zzabc\", 2, \"qqqabd\", 3, 3) != 2) { return 3; }\n  if (__mismatch(\"ab\", 0, \"abcdef\", 0, 6) != 2) { return 4; }\n  if (__mismatch(\"abc\", 0 - 4, \"abc\", 0, 3) != 3) { return 5; }\n  if (__mismatch(\"abc\", 99, \"abc\", 0, 3) != 0) { return 6; }\n  return 7;\n}\n"},
+	// The capacity-carrying string builder, the whole family in one pass:
+	// the reserve, the three pushes, the length, the take that RE-ARMS the
+	// builder rather than closing it, and the free. std/array's `join` and
+	// every std/io_buffered writer bottom out here, and a handle kept in a
+	// struct field is the shape BufWriter is made of — two copies of the
+	// struct share one buffer, so a push through one shows through the
+	// other.
+	{"buf-builder", "struct Acc { h: usize }\nfunction push_twice(a: Acc, s: string): Acc { buf_push(a.h, s); buf_push(a.h, s); return a; }\nfunction main(): i32 {\n  var b: usize = buf_new(4);\n  if (buf_len(b) != 0) { return 1; }\n  buf_push(b, \"ab\");\n  buf_push_byte(b, 99);\n  buf_push_range(b, \"xdefy\", 1, 4);\n  if (buf_len(b) != 6) { return 2; }\n  if (buf_take(b) != \"abcdef\") { return 3; }\n  if (buf_len(b) != 0) { return 4; }\n  var acc: Acc = Acc { h: b };\n  var copied: Acc = push_twice(acc, \"z\");\n  if (buf_len(acc.h) != 2) { return 5; }\n  if (buf_take(copied.h) != \"zz\") { return 6; }\n  buf_push_byte(b, 321);\n  if (buf_take(b) != \"A\") { return 8; }\n  buf_free(b);\n  return 7;\n}\n"},
 	{"float-bits-roundtrip", "function main(): i32 {\n  if (f64_from_bits(f64_bits(1.5)) != 1.5) { return 1; }\n  if (f32_from_bits(f32_bits(0.5 as f32)) != (0.5 as f32)) { return 2; }\n  return 7;\n}\n"},
 	// `var (a, b) = tuple` is one StmtVar carrying a comma-joined name; the
 	// interpreter used to bind that name whole, so std/json's parser (which
