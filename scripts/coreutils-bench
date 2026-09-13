@@ -87,15 +87,18 @@ fi
 # and Ubuntu, and benchmarking against it would compare two different
 # programs.
 gnu_bin() {
-  local u=$1 d
+  local u=$1 d probe=$1
+  # `test --version` is an expression to test(1), so the bracket form, the
+  # same program, answers for it.
+  [ "$u" = test ] && probe='['
   IFS=: read -r -a _dirs <<< "$gnu_dirs"
   for d in "${_dirs[@]}" "$gnu"; do
     # `false --version` prints its version and exits 1, which under pipefail
     # would fail the whole pipeline; the exit status is not the question.
-    if [ -x "$d/$u" ] && { "$d/$u" --version 2>/dev/null || true; } | head -1 | grep -q '(GNU coreutils)'; then
+    if [ -x "$d/$u" ] && [ -x "$d/$probe" ] && { "$d/$probe" --version 2>/dev/null || true; } | head -1 | grep -q '(GNU coreutils)'; then
       # The header names the version of the directory holding the bulk, so
       # a utility answered from elsewhere says which version it really was.
-      [ "$d" = "$gnu" ] || echo "coreutils-bench: $u oracle: $({ "$d/$u" --version || true; } | head -1) ($d)" >&2
+      [ "$d" = "$gnu" ] || echo "coreutils-bench: $u oracle: $({ "$d/$probe" --version || true; } | head -1) ($d)" >&2
       printf '%s' "$d/$u"; return 0
     fi
   done
