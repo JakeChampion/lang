@@ -755,18 +755,25 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean): Value
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
+    return invoke(c.args, contract, s);
+}
+
+// Each argument is produced at the parameter's type and lent by the
+// parameter's mode; the callee's contract joins the function's call table
+// the first time it is called.
+function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
     var ids: i32[] = [];
     var i: i32 = 0;
-    while (i < c.args.len()) {
-        var v: Value = lend(expr(c.args[i], s, contract.params[i]), contract.params[i], contract.modes[i]);
+    while (i < args.len()) {
+        var v: Value = lend(expr(args[i], s, contract.params[i]), contract.params[i], contract.modes[i]);
         s = v.s;
         if (!s.ok) { return v; }
         if (!semtypes.equal(s.values[v.id], contract.params[i])) { return refused(s, "call argument type"); }
         ids = ids.append(v.id);
         i = i + 1;
     }
-    if (ssasem.find_contract(s.calls, name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.call(), ids, 0, name, contract.result);
+    if (ssasem.find_contract(s.calls, contract.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
+    return define(s, ssasem.call(), ids, 0, contract.name, contract.result);
 }
 
 // A union-typed destination accepts any of its members, and a view-typed one
