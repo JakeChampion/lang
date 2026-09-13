@@ -392,6 +392,26 @@ pub function (a: BigInt) mul_pow10(k: i32): BigInt {
     return __bi_make(a.neg, mag);
 }
 
+// mul_pow5 multiplies by 5^k, chunked by 5^13 — the largest power of five
+// below 2^32 — the way `mul_pow10` chunks by 10^9. It is what an exact
+// decimal expansion of a binary fraction needs: m × 2^-k is m × 5^k with
+// the point moved k places.
+pub function (a: BigInt) mul_pow5(k: i32): BigInt {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    var left: i32 = k;
+    while (left > 0) {
+        var step: i32 = left;
+        if (step > 13) { step = 13; }
+        var scale: u64 = 1 as u64;
+        var i: i32 = 0;
+        while (i < step) { scale = scale * (5 as u64); i = i + 1; }
+        mag = __bi_mul_small(mag, scale);
+        left = left - step;
+    }
+    return __bi_make(a.neg, mag);
+}
+
 // shl multiplies by 2^k.
 pub function (a: BigInt) shl(k: i32): BigInt {
     if (k <= 0 || __bi_is_zero_mag(a.mag)) { return a; }
@@ -426,9 +446,31 @@ pub function from_u64(v: u64): BigInt {
 // low_u64 is the low 64 bits of the magnitude — the whole value when
 // `bit_length()` is at most 64.
 pub function (a: BigInt) low_u64(): u64 {
-    var v: u64 = a.mag[0];
-    if (a.mag.len() > 1) { v = v | (a.mag[1] << __bi_sh32()); }
+    return a.word64(0);
+}
+
+// word64 is 64-bit word `i` of the magnitude, counting from the low end;
+// words past the top are zero.
+pub function (a: BigInt) word64(i: i32): u64 {
+    var lo: i32 = 2 * i;
+    var v: u64 = 0 as u64;
+    if (lo < a.mag.len()) { v = a.mag[lo]; }
+    if (lo + 1 < a.mag.len()) { v = v | (a.mag[lo + 1] << __bi_sh32()); }
     return v;
+}
+
+// has_low_bits reports whether any of the low `k` bits of the magnitude
+// is set — whether `shr(k)` would drop anything.
+pub function (a: BigInt) has_low_bits(k: i32): boolean {
+    var limbs: i32 = k / 32;
+    var i: i32 = 0;
+    while (i < limbs && i < a.mag.len()) {
+        if (a.mag[i] != (0 as u64)) { return true; }
+        i = i + 1;
+    }
+    if (limbs >= a.mag.len() || k % 32 == 0) { return false; }
+    var mask: u64 = ((1 as u64) << ((k % 32) as u64)) - (1 as u64);
+    return (a.mag[limbs] & mask) != (0 as u64);
 }
 
 // bit reads bit `i` of the magnitude; bits past the top are zero.

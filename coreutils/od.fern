@@ -37,7 +37,6 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
-import "core/bigint";
 import "./lib/gnu";
 import "./lib/ld";
 
@@ -723,8 +722,7 @@ function is_printable(c: i32): boolean {
 
 // ---- floating point --------------------------------------------------------
 //
-// The unit's bytes as the exact value the format holds. A significand is
-// assembled as a bigint because binary128 carries 113 bits of it.
+// The unit's bytes as the exact value the format holds.
 function decode_float(block: string, at: i32, size: i32, big: boolean): ld.LD {
   var f: ld.Format = float_format(size);
   var lo: u64 = 0 as u64;
@@ -748,7 +746,13 @@ function decode_float(block: string, at: i32, size: i32, big: boolean): ld.LD {
 // significand whose leading bit is implied for a normal value.
 function decode_ieee(f: ld.Format, lo: u64, hi: u64, size: i32): ld.LD {
   var frac_bits: i32 = f.mant - 1;
-  var m: bigint.BigInt = significand(lo, hi, frac_bits);
+  var mlo: u64 = lo;
+  var mhi: u64 = 0 as u64;
+  if (frac_bits < 64) {
+    mlo = lo & (1 as u64 << frac_bits as u64) - 1 as u64;
+  } else if (frac_bits > 64) {
+    mhi = hi & (1 as u64 << (frac_bits - 64) as u64) - 1 as u64;
+  }
   var shifted: u64 = 0 as u64;
   if (frac_bits >= 64) {
     shifted = hi >> (frac_bits - 64) as u64;
@@ -760,15 +764,21 @@ function decode_ieee(f: ld.Format, lo: u64, hi: u64, size: i32): ld.LD {
   var neg: boolean = (shifted >> exp_bits as u64 & 1 as u64) != 0 as u64;
   var max_exp: i32 = (1 << exp_bits) - 1;
   if (exp == max_exp) {
-    if (m.is_zero()) {
+    if (mhi == 0 as u64 && mlo == 0 as u64) {
       return ld.inf(neg);
     }
     return ld.nan(neg);
   }
   if (exp == 0) {
-    return ld.LD { neg: neg, kind: 0, m: m, e: f.min_exp() };
+    return ld.LD { neg: neg, kind: 0, hi: mhi, lo: mlo, e: f.min_exp() };
   }
-  return ld.LD { neg: neg, kind: 0, m: m.add(bigint.from_i64(1 as i64).shl(frac_bits)), e: exp - f.emax - frac_bits };
+  // The implied leading one goes in above the fraction.
+  if (frac_bits < 64) {
+    mlo = mlo | (1 as u64 << frac_bits as u64);
+  } else {
+    mhi = mhi | (1 as u64 << (frac_bits - 64) as u64);
+  }
+  return ld.LD { neg: neg, kind: 0, hi: mhi, lo: mlo, e: exp - f.emax - frac_bits };
 }
 
 // x87's 80-bit extended: the integer bit is STORED, so the significand
@@ -778,7 +788,6 @@ function decode_x87(f: ld.Format, lo: u64, hi: u64): ld.LD {
   var neg: boolean = (hi >> 15 as u64 & 1 as u64) != 0 as u64;
   var exp: i32 = (hi & 32767 as u64) as i32;
   var integer_bit: boolean = lo >> 63 as u64 != 0 as u64;
-  var m: bigint.BigInt = bigint.from_u64(lo);
   if (exp == 32767) {
     if (!integer_bit) {
       return ld.nan(neg);
@@ -803,24 +812,11 @@ function decode_x87(f: ld.Format, lo: u64, hi: u64): ld.LD {
     // one has nothing to normalise and keeps the value it had.
     var frac: u64 = lo & 9223372036854775807 as u64;
     if (frac != 0 as u64) {
-      return ld.LD { neg: neg, kind: 0, m: bigint.from_u64(frac), e: f.min_exp() };
+      return ld.LD { neg: neg, kind: 0, hi: 0 as u64, lo: frac, e: f.min_exp() };
     }
-    return ld.LD { neg: neg, kind: 0, m: m, e: f.min_exp() };
+    return ld.LD { neg: neg, kind: 0, hi: 0 as u64, lo: lo, e: f.min_exp() };
   }
-  return ld.LD { neg: neg, kind: 0, m: m, e: exp - f.emax - (f.mant - 1) };
-}
-
-// The low `bits` bits of the two words as one bigint.
-function significand(lo: u64, hi: u64, bits: i32): bigint.BigInt {
-  if (bits <= 64) {
-    var mask: u64 = 18446744073709551615 as u64;
-    if (bits < 64) {
-      mask = (1 as u64 << bits as u64) - 1 as u64;
-    }
-    return bigint.from_u64(lo & mask);
-  }
-  var top: u64 = hi & (1 as u64 << (bits - 64) as u64) - 1 as u64;
-  return bigint.from_u64(top).shl(64).add(bigint.from_u64(lo));
+  return ld.LD { neg: neg, kind: 0, hi: 0 as u64, lo: lo, e: exp - f.emax - (f.mant - 1) };
 }
 
 // `ftoa(f, v)` — gnulib's ftoastr: `%.*g` at rising precision until the
@@ -846,7 +842,7 @@ function ftoa(f: ld.Format, v: ld.LD): string {
   }
   var d: ld.Dec = v.dec();
   var prec: i32 = f.dig();
-  if (subnormal(f, v)) {
+  if (f.is_subnormal(v)) {
     prec = 1;
   }
   var bound: i32 = prec_bound(f);
@@ -859,13 +855,6 @@ function ftoa(f: ld.Format, v: ld.LD): string {
     prec = prec + 1;
   }
   return s;
-}
-
-function subnormal(f: ld.Format, v: ld.LD): boolean {
-  if (v.m.is_zero()) {
-    return true;
-  }
-  return v.e + v.m.bit_length() - 1 < f.emin();
 }
 
 // ---- one field -------------------------------------------------------------
