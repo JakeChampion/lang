@@ -1456,7 +1456,7 @@ function scaled(arg: string, p: i32, limit: u64): Option[i64] {
 // it instead — the scaled one has no way to pad or to sign.
 //
 // The zero flag is the exception, because that IS the derived
-// equal-width format, whose padding `push_fixed` writes.
+// equal-width format, whose padding `emit_fixed` and the block template write.
 //
 // The precision cap is the format's LDBL_DIG — 18 in x87, 33 in
 // binary128, 15 in binary64 — because a decimal wider than that does not
