@@ -512,22 +512,16 @@ function frame(f: ssasem.Func): irlower.LowerResult {
     return r;
 }
 
+// The stack IR's name for each integer operator, the signed form where the
+// IR distinguishes one.
 function binary_kind(op: string): string {
-    if (op == "+") { return "add"; }
-    if (op == "/") { return "div_s"; }
-    if (op == "%") { return "rem_s"; }
-    if (op == "&") { return "and"; }
-    if (op == "|") { return "or"; }
-    if (op == "^") { return "xor"; }
-    if (op == "<<") { return "shl"; }
-    if (op == ">>") { return "shr_s"; }
-    if (op == "-") { return "sub"; }
-    if (op == "*") { return "mul"; }
-    if (op == "<") { return "lt_s"; }
-    if (op == "<=") { return "le_s"; }
-    if (op == ">") { return "gt_s"; }
-    if (op == ">=") { return "ge_s"; }
-    if (op == "==") { return "eq"; }
+    var ops: string[] = ["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=", "=="];
+    var kinds: string[] = ["add", "sub", "mul", "div_s", "rem_s", "and", "or", "xor", "shl", "shr_s", "lt_s", "le_s", "gt_s", "ge_s", "eq"];
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (ops[i] == op) { return kinds[i]; }
+        i = i + 1;
+    }
     return "ne";
 }
 
