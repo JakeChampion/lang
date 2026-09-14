@@ -77,7 +77,7 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		"z.txt":     []byte("ZZZ"),
 		"a.txt":     []byte("AAA"),
 		"sub/b.txt": []byte("BB"),
-		// The load-bearing asset, and the reason this bundle is written as
+		// The essential asset, and the reason this bundle is written as
 		// bytes: an interior NUL and a byte past 0x7f, which is what an image,
 		// a font or a wasm module looks like. Fern's `read_file` validates
 		// UTF-8 and refuses this file outright, so a walk built on it embeds
@@ -103,7 +103,7 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 	// draws the line in the same place, with os.Stat on the root and WalkDir's
 	// lstat below it; the self-host needed `lstat` (#7982) to draw it at all.
 	//
-	// The link that escapes the root is the load-bearing one: a walk that
+	// The link that escapes the root is the essential one: a walk that
 	// followed it would embed a file the user never put in the bundle.
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	if err := os.WriteFile(outside, []byte("SECRET"), 0o644); err != nil {

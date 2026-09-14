@@ -2,7 +2,7 @@ package constfold
 
 // Edge-case coverage for the constant-folding pass, complementing the
 // basics in constfold_test.go. These exercise the deeper reaches of
-// evalConst / foldBinary / foldUnary that the headline tests skip:
+// evalConst / foldBinary / foldUnary that the main tests skip:
 //
 //   - multi-level const chains (A -> B -> C) collapsing to one literal,
 //   - the full comparison-operator set producing BoolLits,

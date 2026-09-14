@@ -105,7 +105,7 @@ func TestGenIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestGenEmitsAtLeastOneFunction — the load-bearing claim of v1 is
+// TestGenEmitsAtLeastOneFunction — the essential claim of v1 is
 // "non-empty, well-typed program". Tighten the guarantee here.
 func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 	for seed := uint64(0); seed < 16; seed++ {
@@ -216,7 +216,7 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestGenFeatureCoverage — the load-bearing observation that
+// TestGenFeatureCoverage — the essential observation that
 // language features added to the generator actually show up in
 // practice. Without this, regressions like "the call production
 // stopped firing because the flip bias drifted" would only

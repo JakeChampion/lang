@@ -217,7 +217,7 @@ function main(): i32 {
 }
 
 // TestSelfHostOwnBorrowedParamArgX86_64 — the production x86-64 IR path against
-// the interpreter oracle. The three fork rows dissent before the fix.
+// the interpreter oracle. The three fork rows disagree before the fix.
 func TestSelfHostOwnBorrowedParamArgX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -282,7 +282,7 @@ func TestSelfHostOwnBorrowedParamArgArm64(t *testing.T) {
 }
 
 // TestSelfHostOwnBorrowedParamArgWasmIR — the wasm-IR leg, named in the issue as
-// dissenting with the x86-64 one. It emits its own call-argument sequence.
+// disagreeing with the x86-64 one. It emits its own call-argument sequence.
 func TestSelfHostOwnBorrowedParamArgWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")

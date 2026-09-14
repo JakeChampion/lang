@@ -7,7 +7,7 @@
 // this package deliberately knows nothing about codegen.
 //
 // Asset bytes are arbitrary: the emitted literal carries an explicit byte
-// length at data-4, so the `.asciz` NUL terminator is never load-bearing and
+// length at data-4, so the `.asciz` NUL terminator is never required and
 // binary assets (images, fonts, wasm) round-trip unchanged.
 //
 // # Cost of the string-literal route

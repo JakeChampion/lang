@@ -12,7 +12,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExternImportCustomProvider is the headline bring-your-own-WIT gate
+// TestExternImportCustomProvider is the main bring-your-own-WIT gate
 // (docs/WIT-BRING-YOUR-OWN.md): a Fern program `@import`s a *fully custom*
 // (non-WASI) interface, and the import is satisfied at link time by a separate
 // provider component — proving the whole premise end to end without any

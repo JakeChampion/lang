@@ -9921,10 +9921,10 @@ function main(): i32 {
 		// bytes on arm64), so lookup with the same key
 		// (FNV-1a hash + byte-wise string compare) finds
 		// the entry even when the heap is above 4 GiB. The
-		// returned i32 value rides x0 untruncated.
+		// returned i32 value is held in x0 untruncated.
 		// Map[i32, string] — string values. get_or returns
 		// the entry's pointer-width V slot via __load_ptr;
-		// the i32-typed return rides x0 as a full 64-bit
+		// the i32-typed return is held in x0 as a full 64-bit
 		// pointer, and len(s) reads s's length prefix at
 		// the correct (high-bit-preserved) address.
 		// Map[string, string] — both key and value are

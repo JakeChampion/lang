@@ -76,7 +76,7 @@ var boundsElideCases = []struct {
     return s;
 }`},
 	// The loop index shadowed by a match arm's `@` whole-value binder → NOT
-	// elided: the binder guard rides the shared collector, which sees `@`
+	// elided: the binder guard uses the shared collector, which sees `@`
 	// binders where the hand-written walk matched only the payload slots.
 	// 2t then +xs[i] per round: 1, 4, 11, 26.
 	{"at_binder_shadow_not_elided", `enum W { One(i32), Two(i32) }

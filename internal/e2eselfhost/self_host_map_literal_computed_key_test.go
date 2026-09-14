@@ -275,7 +275,7 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 }
 
 // TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus.
-// Not a duplicate of the x86-64 one: the key kind rides op_map_new as well as
+// Not a duplicate of the x86-64 one: the key kind goes through op_map_new as well as
 // op_map_set, and on wasm that op picks between two DIFFERENT map
 // representations ($__fern_map_new vs $__fern_map_new_str), where the register
 // backends share one constructor and read the kind only at the compare. A

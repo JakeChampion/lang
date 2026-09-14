@@ -26,7 +26,7 @@ var dynFnIndirectCoerceCases = []struct {
 	name string
 	main string
 }{
-	// The #5276 headline repro: `f(7)` boxes the i32 literal at the indirect
+	// The #5276 main repro: `f(7)` boxes the i32 literal at the indirect
 	// call. 7 + 100 = 107 (was SIGSEGV).
 	{"prim-literal-at-indirect-call", `trait Speak { function say(self: Self): i32; }
 impl Speak for i32 { function say(self: Self): i32 { return self + 100; } }

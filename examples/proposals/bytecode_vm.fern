@@ -71,7 +71,7 @@ function op_name(op: i32): string {
 
 // Every instruction carries one i32 operand; the ones that do not need it
 // (arithmetic, Pop, Halt) ignore it. A uniform shape keeps the code array a
-// plain array and the jump arithmetic honest — an instruction index IS an
+// plain array and the jump arithmetic correct — an instruction index IS an
 // array index, with no variable-width decoding to get wrong.
 enum Instr {
     Push(i32),

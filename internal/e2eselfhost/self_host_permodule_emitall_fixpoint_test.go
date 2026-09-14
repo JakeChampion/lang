@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// TestSelfHostPerModuleEmitAllFixpointX86_64 is the payoff proof for the
+// TestSelfHostPerModuleEmitAllFixpointX86_64 is the proof for the
 // `-assume-eligible` memory fix (#5668): a gen0 → link → gen1 → gen1-emit-all
 // byte-identity fixpoint on the whole compiler, running gen1's emit-all in
 // batches of 8 units per process — the exact configuration that OOM'd (exit 137)
@@ -31,7 +31,7 @@ import (
 // "~12 min" this comment used to claim predates the param_is_borrowable no-alloc
 // fix, which cut the per-unit emit peak ~3x and the wall with it.
 //
-// batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM config, and it
+// batch=8 is essential — it IS the pre-`-assume-eligible` OOM config, and it
 // is the batch `emit_per_module_spawned` uses for the driver's own default build
 // — so it is the only batch size worth a standing gate. It runs UNGATED, in its
 // own CI job (emitall-fixpoint-x86_64).

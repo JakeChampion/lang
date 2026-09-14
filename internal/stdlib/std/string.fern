@@ -2216,7 +2216,7 @@ function __fill_lead_len(b: i32): i32 {
 // wrote three copies of 0xC3 and handed back a `string` that was not
 // valid UTF-8 (#5634). A fill that does not divide `need` now leaves
 // the remainder unfilled instead — the result can be up to one
-// character short of `n`, which is the honest answer when the field
+// character short of `n`, which is the correct answer when the field
 // width is counted in bytes and the fill is not one byte wide.
 // Single-byte fills, which is every caller in this repo, are
 // unchanged: the character length is 1 and `need` is filled exactly.
@@ -2856,7 +2856,7 @@ pub function (s: string) count_matches(sub: string): i32 {
 // the adoption is total rather than a tier: unlike its three siblings there is
 // no cursor to clamp and no needle length to test, so there is no shape the
 // intrinsic answers differently. A byte outside 0..255 counts 0 in both, which
-// is the honest answer rather than a sentinel, so the guard the intrinsic
+// is the correct answer rather than a sentinel, so the guard the intrinsic
 // keeps for direct callers is unreachable from here.
 pub function (s: string) count_byte(b: i32): i32 {
     return __count_byte(s, b);

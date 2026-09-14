@@ -107,7 +107,7 @@ func TestReleasesBoundPayloadDiscriminates(t *testing.T) {
 	}
 }
 
-// The load-bearing case: the binding is only ever read through (`a[0]`), so
+// The essential case: the binding is only ever read through (`a[0]`), so
 // the payload cannot outlive the arm and the arm releases it.
 func TestPairFormPayloadReleasedWhenConfined(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`

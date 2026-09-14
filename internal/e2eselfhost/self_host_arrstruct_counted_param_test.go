@@ -98,7 +98,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			want: 9,
 		},
 		{
-			// What makes the element guard load-bearing rather than decorative:
+			// What makes the element guard essential rather than decorative:
 			// the callee stores an ELEMENT, not the array. That store IS counted
 			// for the element, so a tier asking only "is this a counted store?"
 			// would admit it and the caller's walk would free a box the holder

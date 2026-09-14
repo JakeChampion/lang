@@ -417,7 +417,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// the Linux values cannot work: 65536 is also the getdents read buffer's
 	// size, which is target-independent and legitimately present, and 16384
 	// turns up elsewhere too. Nothing lexical separates "an open flag" from "a
-	// buffer size" once both are just an operand push, so the honest coverage
+	// buffer size" once both are just an operand push, so the real coverage
 	// for the wrong-flag case is the arm64 runtime leg (dirs-fern under qemu) —
 	// which is in fact what caught the 16384 bug, after this emission test had
 	// been green on it.

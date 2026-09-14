@@ -30,7 +30,7 @@ import (
 // callee under an EMPTY registry (registry-independent, so the interproc
 // fixpoint cannot oscillate).
 //
-// `element_handed_out` is what proves that stronger question load-bearing.
+// `element_handed_out` is what proves that stronger question necessary.
 // Dropping the element check and keeping the box flag puts it at self-host
 // exit 99 — an rc underflow — while native and interp both exit 25, at a flat
 // 1400 allocs / 1400 frees, live_bytes 0. The census reads perfect. Note the

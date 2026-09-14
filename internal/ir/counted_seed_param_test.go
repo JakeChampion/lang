@@ -49,7 +49,7 @@ function walk(n: i32, s: Scope): i32 {
 	}
 }
 
-// The two conditions are countedSeed's, and both are load-bearing.
+// The two conditions are countedSeed's, and both are essential.
 //
 // A binding that is NEVER reassigned gets no transfer inc — it holds the
 // borrow and nothing else — so crediting it would let the caller free a

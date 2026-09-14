@@ -177,7 +177,7 @@ pub function codepoint_count(s: string): i32 {
 // and this is the readable place for them.
 //
 // The skip runs only when `b0` is already ASCII, and that condition is
-// load-bearing rather than defensive. Called unconditionally, dense
+// essential rather than defensive. Called unconditionally, dense
 // non-ASCII input (every codepoint multi-byte, so the skip finds a hit
 // immediately and never clears a block) pays a call per codepoint where
 // the old code paid none — measured 15% SLOWER on a 43 KB CJK body.

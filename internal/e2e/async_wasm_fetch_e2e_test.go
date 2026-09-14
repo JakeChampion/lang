@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The full PR5-wasm payoff (docs/ASYNC-FUTURE-UNIFICATION.md): two
+// The full PR5-wasm benefit (docs/ASYNC-FUTURE-UNIFICATION.md): two
 // parallel OUTBOUND fetches returning their response BODIES, on wasm,
 // through the unified `std/async` surface — `fetch.fetch_future` fanned
 // out via `async.gather`. The same edge-handler fan-out as the native

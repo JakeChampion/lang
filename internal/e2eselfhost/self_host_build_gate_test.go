@@ -183,7 +183,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
-			// The load-bearing negative control. A "fn"-coarsened struct FIELD
+			// The essential negative control. A "fn"-coarsened struct FIELD
 			// carries no param spellings, so its TypeFunc's empty param list is
 			// unrecorded rather than arity 0 (TypeFunc.params_known). Without
 			// that distinction the rule above reads it as arity 0 and rejects
@@ -284,7 +284,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
-			// #8461's headline. E041 exists because array `==` is not
+			// #8461's main case. E041 exists because array `==` is not
 			// structural equality; exempted from the gate, the comparison
 			// lowered to a POINTER compare and two equal arrays reported
 			// unequal — a plausible wrong answer where both checkers knew the

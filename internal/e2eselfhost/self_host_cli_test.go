@@ -737,7 +737,7 @@ function main(): i32 {
 			4, "call __fn___fern_str_concat")
 	})
 
-	// A match arm's GUARD rides the ARM, not the statement's own expressions,
+	// A match arm's GUARD is stored on the ARM, not the statement's own expressions,
 	// so a rewrite that rebuilt arms field by field had to remember it —
 	// constfold's did not, and copied every guard through unfolded until it was
 	// routed through astwalk's map fold.
@@ -849,7 +849,7 @@ function main(): i32 {
 			"}\n", 1, 5)
 	})
 
-	// Through MONOMORPHISATION. The marker rides StmtIf.origin, and the passes
+	// Through MONOMORPHISATION. The marker is stored in StmtIf.origin, and the passes
 	// between the parser and the elision rebuild statements field by field —
 	// a copy site that omits `origin` drops it silently and only for cloned
 	// generics, which is the same shape as the async-function case above.
@@ -2407,7 +2407,7 @@ function main(): i32 {
 			stdout string
 		}{
 			// 0xbc-0xbf reinterprets + 0xb6 demote / 0xbb promote. The f32
-			// forms ride a demote/promote pair, since an f32 travels in an
+			// forms use a demote/promote pair, since an f32 travels in an
 			// f64 slot on wasm.
 			{"reinterpret-bits", `function main(): i32 {
     var x: f32 = 1.0 as f32;

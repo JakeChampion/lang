@@ -22,7 +22,7 @@ var binderScopeCases = []struct {
 	src  string
 }{
 	// A lambda inside an `n @ Tag(x)` arm reading the @-binding. The whole-value
-	// binder rides the PATTERN and lower_stmt_match only materialises it as a
+	// binder is carried on the PATTERN and lower_stmt_match only materialises it as a
 	// `var` later, so every AST-level capture pass ran before it existed:
 	// collect_bound_stmt did not report `n` as bound, the free-variable filter
 	// then declined to treat it as an enclosing local, and the lambda took the

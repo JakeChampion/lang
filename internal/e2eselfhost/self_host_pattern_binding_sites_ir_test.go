@@ -12,7 +12,7 @@ import (
 //
 // On the self-host a pattern-shaped `for` header desugars to the plain foreach
 // plus a destructure of the element (parse_for_stmt), which is the shape
-// irlower already builds for `for (a, b) in xs`; the `@` binding rides on that
+// irlower already builds for `for (a, b) in xs`; the `@` binding uses that
 // destructure's marker channel and names the temp holding the whole value.
 // These build the self-host x86-64 IR driver and assert the compiled binary
 // agrees with the interpreter oracle — so a divergence between the self-host's

@@ -27,7 +27,7 @@ import (
 //
 // The blocker was that the oracle rejected the emitter's numeric local labels
 // (`1:`), so it could not read whole-program output at all. #6075 fixed that,
-// and this test is the payoff. On its first run it found cset assembling as its
+// and this test is the result. On its first run it found cset assembling as its
 // 64-bit sibling 73 times — behaviourally invisible, so no execution test could
 // ever have caught it, and not a form anyone had added a snippet row for.
 //

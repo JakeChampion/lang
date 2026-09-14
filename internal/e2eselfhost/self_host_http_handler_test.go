@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// httpHandlerSrc is the flagship edge-handler program: std/http + std/tcp + a
+// httpHandlerSrc is the full edge-handler program: std/http + std/tcp + a
 // `handle` function. Its merged stdlib closure is ~925 functions, so it is the
 // canonical over-budget program — the shape the per-module IR rescue exists for.
 //
@@ -29,7 +29,7 @@ function main(): i32 {
 `
 
 // TestSelfHostHttpHandlerRoutesIRX86_64 pins the routing and the LINKABILITY of
-// the flagship program through the file-based self-host driver.
+// the edge-handler program through the file-based self-host driver.
 //
 // Before this change it compiled to assembly carrying a dozen dangling `__fn_`
 // symbols — `tcp_listen`, `tcp_send`, `poll`, `tcp_pollable`, … — and failed at
@@ -210,7 +210,7 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostHttpHandlerServesX86_64 is the final step for the flagship
+// TestSelfHostHttpHandlerServesX86_64 is the final step for the edge-handler
 // program: compiled by the SELF-HOSTED compiler, it answers real HTTP.
 //
 // It is the whole edge-handler stack at once — std/tcp's accept/recv/deadline

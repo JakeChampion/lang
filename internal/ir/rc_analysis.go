@@ -3064,7 +3064,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// the source buffer must stay live — freeing it at scope exit would
 			// reclaim memory the raw pointer still uses. Taint the cast source
 			// (escape unwraps any projection to the root local). This is the
-			// load-bearing guard that lets the scalar-arg untaint below stay
+			// essential guard that lets the scalar-arg untaint below stay
 			// safe: without it, untainting a literal / scalar-binary size arg
 			// would make an `__alloc_u8(...) as usize` buffer eligible and
 			// over-release it. Pointer→pointer casts keep rc tracking and are
@@ -5446,7 +5446,7 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 	// drops after a simple top-level use. That extension is
 	// only enabled for PRIMITIVE-element arrays (i32[] / f64[] / …): a
 	// dead `int[]` freed early is the clean peak-memory win (the
-	// headline two-KiB-array case) with no per-element rc to balance.
+	// main two-KiB-array case) with no per-element rc to balance.
 	//
 	// A pointer-element array (string[] / struct[] / T[][] / tuple[])
 	// is EXCLUDED from this nested placement: its deep drop dec's each
@@ -9285,7 +9285,7 @@ func (b *builder) ctorRetainedOperands(n ast.Node, f func(ast.Expr)) {
 }
 
 // retainsCtorAliasedSource reports whether `e` is a container construction that
-// RETAINS a ctorAliasInced local — the shape whose drop order is load-bearing.
+// RETAINS a ctorAliasInced local — the shape whose drop order matters.
 //
 // Such a source cannot free itself. Being ineligible for the deep free, its own
 // release is the flat `__fern_rc_dec` in emitVarReinitDropOld and in the exit

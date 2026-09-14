@@ -34,7 +34,7 @@ func TestSelfHostErasedWideTupleWasm(t *testing.T) {
 		src  string
 		want int
 	}{
-		// i64 first element: t.0 rides the full-width i64 slot; t.1 (i32) reads the
+		// i64 first element: t.0 occupies the full-width i64 slot; t.1 (i32) reads the
 		// low word at the same 8-byte stride. 5e9/1e9 + 3 = 5 + 3 = 8.
 		{"i64-elem", pair + ` function main(): i32 { var t = pair(5000000000 as i64, 3); return (t.0 / 1000000000) as i32 + t.1; }`, 8},
 		// f64 first element: reinterpreted into the i64 slot at the call, read back

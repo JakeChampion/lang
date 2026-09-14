@@ -108,7 +108,7 @@ var VecInt2Misc = VecTable{
 var VecFP3 = VecTable{
 	FernFn: "arm64_vfp3_entry",
 	Aux:    "szHi",
-	Doc: "// arm64_vfp3_entry: three-register lane-wise FP. The szHi bit rides in the\n" +
+	Doc: "// arm64_vfp3_entry: three-register lane-wise FP. The szHi bit is stored in the\n" +
 		"// size-mask slot, which is free here because the arrangement set is fixed.\n",
 	Ops: []VecOp{
 		{"fadd", false, 0x1A, 0}, {"fsub", false, 0x1A, 1}, {"fmul", true, 0x1B, 0},

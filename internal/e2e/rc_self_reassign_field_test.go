@@ -208,7 +208,7 @@ func TestWASMSelfReassignFieldBounded(t *testing.T) {
 		t.Errorf("string-field accumulator: got %d, want 0 (UAF regression guard)", got)
 	}
 	// String-fielded LOCAL accumulator reclaims O(N) (typeSelfDropSafe string
-	// admission, #3425) — two-word strings ride __fern_str_inc / the
+	// admission, #3425) — two-word strings use __fern_str_inc / the
 	// WidthString str_dec arm of __drop_struct_.
 	sn1 := runWasm(t, selfReassignStringFieldBumpSrc("200"))
 	sn2 := runWasm(t, selfReassignStringFieldBumpSrc("400"))

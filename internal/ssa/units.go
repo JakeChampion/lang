@@ -71,7 +71,7 @@ const (
 	// UnitUnknown: an address from a call whose result nothing
 	// classifies.
 	//
-	// This is the honest name for the gap #7786 left open.
+	// This is the accurate name for the gap #7786 left open.
 	// `internal/ir/rcsigs.go` models what a callee does to its
 	// ARGUMENTS and says in its own header that "whether the RESULT
 	// carries a unit is not modelled"; `ssa.Signature` proves a return

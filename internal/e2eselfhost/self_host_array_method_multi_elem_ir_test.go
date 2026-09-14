@@ -107,7 +107,7 @@ function main(): i32 {
 
 	// A chained pipeline per element type — the surface #2663 asks for. Only
 	// `map` clones per element here: `filter`'s receiver is a call expression
-	// rather than a bare local, so it rides the erased uniform-width path on
+	// rather than a bare local, so it takes the erased uniform-width path on
 	// one shared clone. That is correct for a callback-driven verb (the body
 	// never names the element type) and the oracle check is what pins it.
 	{"chained-pipeline", `import "std/array";

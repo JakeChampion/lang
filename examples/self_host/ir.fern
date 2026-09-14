@@ -169,7 +169,7 @@ pub function op_funary(kind: string): Op {
 
 // f64 <-> i32 conversions. i32_to_f64 widens a signed i32 to f64 (cvtsi2sd /
 // scvtf / f64.convert_i32_s); f64_to_i32 truncates an f64 toward zero to a
-// signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value rides the stack
+// signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value is held on the stack
 // as bits on the register backends; wasm's typed stack flips i32<->f64 here.
 pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
 // int_to_f64 is op_i32_to_f64 carrying the operand's WIDTH and SIGNEDNESS, the
@@ -178,7 +178,7 @@ pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
 // an unsigned 32-bit value converted as signed (#5992), and a 64-bit one hit
 // `f64.convert_i32_s` on an i64 operand and did not even validate. The register
 // backends have only the SIGNED conversion of a 64-bit slot (cvtsi2sd %rax /
-// scvtf d0, x0), which covers i32 / u32 / i64 — the 32-bit cases ride the slot
+// scvtf d0, x0), which covers i32 / u32 / i64 — the 32-bit cases occupy the slot
 // correctly extended — but reads a u64 >= 2^63 as negative, so u64::MAX
 // converted to -1.0 (#6051). Mirrors op_f64_to_u32 / op_f64_to_u64, which have
 // carried `unsigned` since #4332.
@@ -302,7 +302,7 @@ pub function op_arr_push_i64(): Op { return op0("arr_push_i64"); }
 
 // `arr_push_f64` is `arr_push` for an f64[] (8-byte float element): the value
 // is an f64 (f64.store / 8-byte slot). On the register backends every array
-// slot is already 8 bytes and the f64 value rides the value stack as raw 8
+// slot is already 8 bytes and the f64 value is held on the value stack as raw 8
 // bytes, so this reuses __fern_arr_push exactly like arr_push_i64; on wasm32
 // the operand stack is typed, so it lowers to the 8-byte-stride
 // $__fern_arr_push_f64. Lowered from `a = a.append(v)` on an f64[].
@@ -358,7 +358,7 @@ pub function op_store_ptr(): Op { return op0("store_ptr"); }
 // `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
 // `as u8` (and 255), `as i32` (sign-extend low 32 — movslq), `as u32`
 // (zero-extend low 32 — movl).
-// The target type name rides `str`. Mirrors the retired x86 AST emitter's `as_<ty>` int→int masking.
+// The target type name is in `str`. Mirrors the retired x86 AST emitter's `as_<ty>` int→int masking.
 pub function op_int_cast(ty: string): Op { return Op { decl: 0 - 1, kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
 // `u32_wrap` reduces a value on the operand stack to its u32 range (zero-extend
 // low 32 bits). Emitted after a u32 arithmetic op (add/sub/mul/shl) on the
@@ -516,7 +516,7 @@ pub function op_rmemchr(): Op { return op0("rmemchr"); }
 // clearest case of §4's "the vector length is the input" rule.
 //
 // No cursor, so no clamp — the one thing its three siblings each get wrong in
-// a different way is simply absent here. Both degenerate answers are honest
+// a different way is simply absent here. Both degenerate answers are real
 // counts rather than sentinels: a byte outside 0..255 counts 0 because
 // nothing can equal it, and an empty string counts 0 because it has no bytes.
 pub function op_count_byte(): Op { return op0("count_byte"); }
@@ -773,7 +773,7 @@ pub function op_process_alive(): Op { return op0("process_alive"); }
 // kernel as written - negatives and zero name process GROUPS, which is what a
 // sender means by them - so unlike the liveness query nothing is filtered out
 // first. ESRCH, EPERM and EINVAL each arrive as Other("", strerror), the empty
-// path being honest: the op never saw the text its caller parsed the pid from.
+// path being accurate: the op never saw the text its caller parsed the pid from.
 // Native only: neither WASI preview has a process table to name a target in.
 pub function op_signal_send(): Op { return op0("signal_send"); }
 // `rlimit_nofile` takes no operands and pushes an i64: the SOFT RLIMIT_NOFILE
@@ -783,7 +783,7 @@ pub function op_signal_send(): Op { return op0("signal_send"); }
 // WASI preview has resource limits (#8819).
 pub function op_rlimit_nofile(): Op { return op0("rlimit_nofile"); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
-// is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
+// is -1 (no pollable; deadlines use poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
 pub function op_wasm_timer_pollable(): Op { return op0("wasm_timer_pollable"); }
 // `wasm_pollable_drop` takes one operand [p] and pushes an i32 (0 on native — a
@@ -792,12 +792,12 @@ pub function op_wasm_pollable_drop(): Op { return op0("wasm_pollable_drop"); }
 // `wasm_block` takes one operand [p] and pushes an i32 (always 0). On wasm it
 // synchronously waits until the pollable is ready (wasi:io/poll
 // [method]pollable.block), the primitive that makes wasm_timer_pollable
-// observably block; on native there is no pollable (deadlines ride poll(2)), so
+// observably block; on native there is no pollable (deadlines use poll(2)), so
 // it is a 0 no-op. Portability shim for the wasm reactor's with_deadline.
 pub function op_wasm_block(): Op { return op0("wasm_block"); }
 // `wasm_poll` takes one operand [pollables array ptr] and pushes an i32: the
 // index of the first ready pollable, or -1 if none. On native there are no real
-// pollables (readiness rides poll(2) directly), so it is -1; on wasm it is the
+// pollables (readiness uses poll(2) directly), so it is -1; on wasm it is the
 // real wasi:io/poll.poll(list<pollable>) readiness multiplexer. The wasm
 // reactor's poll — the pollable-array analog of the native poll(fds).
 pub function op_wasm_poll(): Op { return op0("wasm_poll"); }
@@ -1447,7 +1447,7 @@ pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): O
 // STATIC DATA and push its address instead of allocating and storing a box per
 // evaluation (#6149 — the checker's nullary type constructors were ~21% of the
 // compiler's own allocations, one leaked box per call). Nothing is on the
-// operand stack: the values ride in `str` as
+// operand stack: the values are stored in `str` as
 // `<type_name>|<v0>,<v1>,…` (i32-width field values in decl order, the same
 // pipe-then-comma packing the reuse-site registries use), and `i32_imm` is the
 // field count so a reader that only needs the arity never parses.
@@ -1571,7 +1571,7 @@ pub function op_tuple_get(idx: i32): Op {
 // donor box in place. Tuples are otherwise immutable, so this is the sole writer.
 // Width 0 is the i32 / pointer (string / struct / array / Option / …) case:
 // wasm i32.store; the register backends use a uniform 8-byte movq / str slot for
-// EVERY element kind (element values ride the operand stack as 8 bytes), so they
+// EVERY element kind (element values are 8 bytes on the operand stack), so they
 // ignore width — only wasm distinguishes it.
 pub function op_tuple_set(idx: i32): Op {
     return Op { decl: 0 - 1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
@@ -1692,7 +1692,7 @@ pub function op_call_indirect(argc: i32): Op {
 // then the result char). wasm needs it because a funcref type is structural:
 // the arity alone cannot distinguish `(i64) => boolean` from `(i32) => i32`,
 // and dispatching the first through the second is a module that will not load
-// (#6282). The register backends read only `i32_imm`, so the tag rides the
+// (#6282). The register backends read only `i32_imm`, so the tag is stored in the
 // otherwise-unused `str` and costs them nothing. An empty `sig` is exactly
 // op_call_indirect — every all-i32 and every erased-generic call site keeps
 // its previous op, byte for byte.
@@ -2948,7 +2948,7 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 // constant folding at all; this one is a pure op-list rewrite with no source
 // shape to preserve, so there is nothing for a diagnostic to lose by it.
 //
-// Width and signedness ride from the BINARY op, not the operands: a folded
+// Width and signedness come from the BINARY op, not the operands: a folded
 // `const` inherits the width the binary was going to produce. Only i32-width
 // signed arithmetic folds — is_foldable_binary_kind excludes the float ops and
 // the unsigned compares, and const_i32_readable admits a source-text operand
@@ -4036,7 +4036,7 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32): boolean[] {
 //
 // Deliberately NOT taken from native: a slot both arms of an if bind to the SAME
 // constant survives there and dies here, because agreeing on the value needs the
-// two snapshots this rule exists to avoid. It is the rarer half of the payoff.
+// two snapshots this rule exists to avoid. It is the rarer half of the benefit.
 //
 // SCALARS ONLY, via the SHARED `const_i32_readable` predicate — so this pass
 // admits exactly what the fold and strength peepholes admit, by construction

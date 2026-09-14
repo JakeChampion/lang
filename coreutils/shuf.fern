@@ -174,7 +174,7 @@ function rand_fill(s0: Rand): Rand {
 // A uniform value in [0, n), n >= 1. Drawing one of one value reads
 // nothing, which is why a one-line input never touches the source.
 //
-// The state rides in locals rather than in the struct: a shuffle draws
+// The state is held in locals rather than in the struct: a shuffle draws
 // millions of times and rebuilding a nine-field record per BYTE is most
 // of what that costs.
 function rand_choose(s0: Rand, n: u64): (u64, Rand) {

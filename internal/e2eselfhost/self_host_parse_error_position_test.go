@@ -143,7 +143,7 @@ func stageParseProbeTree(t *testing.T) string {
 // folded onto astwalk (#6993), so the fold is held to reproducing the exact
 // sequence rather than to whatever it happens to print.
 //
-// The load-bearing rows are the punct:; pair. A bare `return;` parses to the
+// The essential rows are the punct:; pair. A bare `return;` parses to the
 // sentinel ExprUnknown("punct:;") in the return's value slot and is exempt
 // there — and ONLY there: `var x: i32 = ;` plants the SAME sentinel in an
 // init slot and must stay diagnosed, and `return 1 + ;` plants it nested

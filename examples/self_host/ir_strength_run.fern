@@ -594,7 +594,7 @@ function main(): i32 {
                              ir.op_call_direct("__fern_rc_is_unique", 1)];
     out = out + "zg_frame_write_refused: " + render(ir.prune_zero_slot_guards(zg_frame, 0)) + "\n";
 
-    // 18f. The payoff, through optimize_ops: this pass removes nothing on its own,
+    // 18f. The benefit, through optimize_ops: this pass removes nothing on its own,
     //      it only produces the constant the fold's decided-`if` rule then deletes
     //      the whole drop body with. Running it before the leading fold is what puts
     //      that deletion in the same call.

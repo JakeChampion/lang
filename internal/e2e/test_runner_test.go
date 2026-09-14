@@ -943,7 +943,7 @@ func TestRunnerUuidExamplePasses(t *testing.T) {
 // known-answer vectors (empty / "abc" / pangram, raw-digest length, an
 // HMAC vector), plus the constant-time consteq / hmac_verify / hmac_verify_hex
 // MAC-comparison helpers (#4384). This is the interp oracle; std/crypto also
-// rides the self-host IR differential now (selfHostStdTestCases). Passing
+// runs in the self-host IR differential now (selfHostStdTestCases). Passing
 // suite → exit 0.
 func TestRunnerCryptoExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -965,7 +965,7 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 // of 1000 bytes, and as 7-byte view slices — so the pending-block logic, not
 // just the round function, is what the vectors prove. `hash_checksums_test`
 // does the same for std/hash's cksum(1) CRC and the sum(1) checksums against
-// GNU coreutils' values. Interp oracle here; all of them also ride the
+// GNU coreutils' values. Interp oracle here; all of them also run in the
 // self-host IR differential (selfHostStdTestCases).
 func runnerSuitePasses(t *testing.T, file, suite string, n int) {
 	t.Helper()
@@ -1024,7 +1024,7 @@ func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 // forms, boolean flags, positional operands, the `--` terminator, the
 // value_or default, the error paths (unknown option / missing value /
 // value on a bool), auto-usage, subcommands, the completion generators,
-// and the roff man page. This is the interp oracle; std/cli also rides the
+// and the roff man page. This is the interp oracle; std/cli also runs in the
 // self-host IR differential (selfHostStdTestCases).
 func TestRunnerCliExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4096,7 +4096,7 @@ func TestRunnerQuietModeExample(t *testing.T) {
 // `examples/tests/set_test.fern` covers std/set — the generic,
 // value-semantic Set[T] (membership, dedup, union/intersect/
 // difference, subset/equals) over both i32 and string elements. The
-// load-bearing case is `add is pure` (test 4): the value-semantics
+// essential case is `add is pure` (test 4): the value-semantics
 // contract that an operation never mutates its receiver. Passing
 // suite → exit 0; the TAP plan line is `1..12`.
 func TestRunnerSetExamplePasses(t *testing.T) {

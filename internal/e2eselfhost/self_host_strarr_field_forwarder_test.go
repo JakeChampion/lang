@@ -49,7 +49,7 @@ type strArrFwdCase struct {
 func strArrFwdCases() []strArrFwdCase {
 	return []strArrFwdCase{
 		{
-			// The headline shape. `keep.get().len()` is a whole-array borrow
+			// The main shape. `keep.get().len()` is a whole-array borrow
 			// one step further out than `keep.xs.len()`, and it now reads as
 			// one. Base: 800/100, 288 B/round unbounded.
 			name: "forwarder_called_len",

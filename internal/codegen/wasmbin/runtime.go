@@ -375,7 +375,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// preview-2 body heap-allocates a 1-byte buffer and
 					// a result area, and releases both (the preview-1
 					// body uses fixed scratch and allocates nothing), so
-					// the pair rides on Preview2WASI rather than on an
+					// the pair is gated on Preview2WASI rather than on an
 					// unconditional edge.
 					if opts.Preview2WASI {
 						needs.add("__fern_alloc")
@@ -5515,7 +5515,7 @@ func buildSumBytesBody(idxs map[string]uint32) []byte {
 // iteration rather than hoisted, to avoid a v128 local and the v128 valtype in
 // the locals vector.
 //
-// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// No cursor, so no clamp. Both degenerate answers are genuine counts rather
 // than sentinels: an out-of-range byte counts 0, an empty string counts 0.
 //
 // Locals after the three params: $n (3), $i (4), $c (5).
@@ -9533,7 +9533,7 @@ func instTrigReduceAndPolys(body []byte) []byte {
 		body = inst.InstI64Const(body, 63)
 		body = numeric.InstI64And(body)
 		body = inst.InstLocalSet(body, off)
-		// addr = (e>>6)*8; the segment base rides in the load offsets.
+		// addr = (e>>6)*8; the segment base is carried in the load offsets.
 		body = inst.InstLocalGet(body, e)
 		body = inst.InstI64Const(body, 6)
 		body = numeric.InstI64ShrU(body)

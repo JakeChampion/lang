@@ -11,7 +11,7 @@
 //
 // A watcher is a poller, and polling is a `diff` between two snapshots. That
 // makes the interesting half pure: `diff(before, after)` sorts every file into
-// exactly one of created / modified / deleted, and the load-bearing test is
+// exactly one of created / modified / deleted, and the essential test is
 // that APPLYING the result to `before` reconstructs `after` exactly. A diff
 // that drops a file, double-counts one, or calls a rename a modification fails
 // that and passes every hand-picked example.

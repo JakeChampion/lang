@@ -100,7 +100,7 @@ func structLitArgCases() []arrenumShareCase {
 			want: 3,
 		},
 		{
-			// REFUSED, and the case that proves the gate load-bearing: without it
+			// REFUSED, and the case that proves the gate essential: without it
 			// this is exit 99 at a flat 300/300.
 			name: "callee_wraps_param",
 			src: structLitArgDecl + `function wrap(p: A, i: i32): Box { return Box { a: p, n: i }; }` +

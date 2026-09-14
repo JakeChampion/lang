@@ -126,7 +126,7 @@ const nestedIifeGateSrc = `function main(): i32 {
 // The answer is asserted too, so a module that lowers to the wrong thing still
 // fails.
 //
-// Asserting the hoist rather than "the module lowers" is what keeps this honest
+// Asserting the hoist rather than "the module lowers" is what keeps this meaningful
 // when an unrelated bail moves: whether some other defect refuses this shape
 // varies, but whether the gate held is a property of the gate alone.
 func TestSelfHostNestedIifeStaysWholeX86_64(t *testing.T) {

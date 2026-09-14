@@ -3,7 +3,7 @@
 // The slot binds a temp and the arm's inner match is a tuple match — the same
 // group-by-variant merge that a variant sub-pattern (`Some(Ok(n))`) uses, so
 // the form cost the native parser five lines. The self-host needed more: its
-// `Pattern` has no tuple case, so the elements ride on `PatVariant` and the
+// `Pattern` has no tuple case, so the elements are carried on `PatVariant` and the
 // merge routes them through `build_tuple_match` instead of a variant inner
 // match.
 //

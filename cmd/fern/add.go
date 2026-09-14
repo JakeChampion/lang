@@ -18,7 +18,7 @@ import (
 //	                                          { url = "…", hash = "sha256:…" }
 //	workspace                               → { workspace = true }
 //
-// The url form is the ergonomic payoff: the user never hand-computes a
+// The url form is the ergonomic benefit: the user never hand-computes a
 // hash — `add` downloads the archive, records the hash it observed (the
 // Zig "write url, tool tells you the hash" flow), and leaves it verified
 // in the content-addressed store. The manifest is edited textually so

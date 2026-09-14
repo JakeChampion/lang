@@ -6,7 +6,7 @@ import "std/float" as float;
 // Go-side TestFloatCbrt and TestFloatHypot3 pin these across the native
 // backends (cbrt's wasmbin leg skips libm pow, hypot3 covers all four); this is
 // the migration-shaped companion. cbrt / hypot3 lower on the self-host asm_ir
-// path, so this rides both self-host gates too.
+// path, so this runs in both self-host gates too.
 
 function test_cbrt_perfect(): test.TestOutcome {
     if (!float_near((27.0).cbrt(), 3.0)) { return test.fail("cbrt 27"); }

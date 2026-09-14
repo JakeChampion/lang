@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// std/async is the blessed structured-concurrency surface
+// std/async is the supported structured-concurrency surface
 // (docs/ASYNC-REDESIGN.md): `gather` / `race` / `with_deadline` over a
 // portable `Future[T]`, replacing the `concurrent`/`await`/`race`
 // keyword surface. These two tests pin (1) the combinators are portable
@@ -63,7 +63,7 @@ function main(): i32 {
 // `Pending` futures and driven through `async.gather` (await-all) and
 // `async.race` (first-wins) over real sockets. The combinator surface
 // overlapping real descriptors on one thread — the edge-handler
-// fan-out, now through the redesign's blessed API rather than the
+// fan-out, now through the redesign's supported API rather than the
 // hand-rolled reactor. A Go upstream answers both connections; exit 42
 // iff the combinator returned the expected result(s).
 func TestAsyncCombinatorsRealFd(t *testing.T) {

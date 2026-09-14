@@ -98,7 +98,7 @@ function main(): i32 {
 }
 
 // A type that really is unknown still has to be reported. The pre-pass
-// rewrites names it recognises; it must not launder an undeclared one into
+// rewrites names it recognises; it must not turn an undeclared one into
 // something that silently type-checks.
 func TestLambdaParamUnknownTypeStillReported(t *testing.T) {
 	const src = `function main(): i32 {

@@ -73,7 +73,7 @@ function main(): i32 {
 }`, 0},
 	// Swapped paths: the local declared and returned inside the if-arm (its
 	// slot is block-scoped and entry-zeroed on the literal path — the sweep's
-	// null guards are load-bearing here).
+	// null guards are required here).
 	{"tupown-early-local-late-lit", `function mk(i: i32): (i32, i32[]) {
     if (i % 7 != 0) { var t: (i32, i32[]) = (i, [i, i + 1]); return t; }
     return (0, [0]);

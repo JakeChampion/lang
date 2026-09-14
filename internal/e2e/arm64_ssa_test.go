@@ -132,7 +132,7 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			// lifted to a use its def does not dominate and SIGSEGV'd here
 			// while every other backend ran the program (#5903).
 			//
-			// `return v` is load-bearing in all three of these. A version
+			// `return v` is essential in all three of these. A version
 			// returning something DERIVED from the container
 			// (`return Some(arr[0])`) compiles and runs fine even with the fix
 			// reverted — the later reads consume the abandoned value harmlessly
@@ -704,7 +704,7 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// wasm_poll is -1 on native (no real pollables; readiness rides poll(2)),
+			// wasm_poll is -1 on native (no real pollables; readiness uses poll(2)),
 			// ignoring its array arg. On wasm it's the real wasi:io/poll.poll.
 			name: "wasm_poll_stub",
 			src:  `function main(): i32 { var ps: i32[] = [3, 7]; var i = wasm_poll(ps); return if (i == -1) { 5 } else { 0 }; }`,

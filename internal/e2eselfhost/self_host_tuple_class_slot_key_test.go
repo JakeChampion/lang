@@ -159,7 +159,7 @@ func leakSummaryLine(stderr string) string {
 // TestSelfHostTupleClassSlotKeyX86_64 — each binding resolves its own class, so no
 // box is released twice and none is left unreleased.
 //
-// The exit code is the load-bearing assertion here and the byte count is the
+// The exit code is the essential assertion here and the byte count is the
 // secondary guard. An over-release does not move `live_bytes` — the block returns to
 // the freelist — so only `__rc_underflow()` separates a correct compiler from the
 // broken one. `allocs == frees` is what catches the opposite failure: a site key

@@ -12,7 +12,7 @@ import (
 // .len() / .append() path that depends on the Map value-type inference. Exit
 // codes cross-checked vs the Go backend.
 //
-// `-no-treeshake` is load-bearing, and it is what keeps these cases meaning
+// `-no-treeshake` is essential, and it is what keeps these cases meaning
 // what their name says. asm_load_run prunes to what `main` reaches by default,
 // which for a main that only calls `url_parse` is 21 functions and NONE of
 // url's real ones — `query_parse` and `query_encode` both pruned away. The

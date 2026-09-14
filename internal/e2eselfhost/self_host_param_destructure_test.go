@@ -12,7 +12,7 @@ import (
 // `function f((a, b): (T, U))` on the self-host compiler. The parser
 // desugars the pattern into a synthetic `__ptuple_<line>_<col>` param
 // plus a leading `var (a, b) = <synth>;` destructure (mirroring the
-// native parser), so these ride the same proven destructure lowering
+// native parser), so these use the same proven destructure lowering
 // the tupleDestructureIRCases pin — each case carries the same fresh
 // struct temp whose IR-only reclaim free (`call __fn___fern_arr_dec`)
 // proves the module took the IR path, and `t.x - t.y` pads 0 into the

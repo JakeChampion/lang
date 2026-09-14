@@ -20,7 +20,7 @@ enum Out { P(In, In), Q(i32) }
 
 enum One { W(In) }
 
-// THE headline. Both `P` arms match at slot 0 and differ at slot 1, so
+// THE main case. Both `P` arms match at slot 0 and differ at slot 1, so
 // `P(Ok2 _, Er2 _)` must run arm 2 — not the outer `_`. Under the merge arm 2
 // had been folded into arm 1's inner match, whose wildcard was that `_`.
 function fall_through(v: Out): i32 {

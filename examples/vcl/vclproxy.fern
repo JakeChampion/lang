@@ -14,7 +14,7 @@
 // The policy is parsed and CHECKED once at startup, exactly as `varnishd`
 // loads VCL: a policy with a scoping error never reaches the accept loop.
 //
-// Two honest gaps, both from the runtime rather than the design:
+// Two known gaps, both from the runtime rather than the design:
 //
 //   * `tcp_serve` does not surface the peer address, so `client.ip` comes
 //     from `X-Forwarded-For` when the request carries one and is

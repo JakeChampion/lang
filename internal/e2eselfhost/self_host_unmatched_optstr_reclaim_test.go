@@ -24,7 +24,7 @@ import (
 // instead of widening `"OPTARR:"` — a string box carries a separate data buffer
 // and a different block class, so the array dec would free it wrongly.
 //
-// FRESHNESS IS LOAD-BEARING HERE IN A WAY IT IS NOT FOR THE ARRAY SIBLING. That
+// FRESHNESS IS ESSENTIAL HERE IN A WAY IT IS NOT FOR THE ARRAY SIBLING. That
 // one leans on the caller-side escape analysis reading an argument as an escape,
 // so an aliased buffer carries no second credit to collide with. A string gets no
 // such cover: `op_opt_make` stores its payload uncounted and a string assignment
@@ -83,7 +83,7 @@ func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
 	// Reclaimed to an exact balance.
 	for _, tc := range []struct{ name, src string }{
 		{
-			// The headline row: 22400 -> 0, and 0 where NATIVE still leaks 6400.
+			// The main row: 22400 -> 0, and 0 where NATIVE still leaks 6400.
 			// Loop-declared, so it also covers the per-iteration store path that the
 			// exit sweep alone cannot reach.
 			name: "option_string_from_a_call",

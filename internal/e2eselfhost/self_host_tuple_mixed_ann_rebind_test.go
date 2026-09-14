@@ -41,7 +41,7 @@ type tupMixedAnnCase struct {
 func tupMixedAnnCases() []tupMixedAnnCase {
 	return []tupMixedAnnCase{
 		{
-			// The headline refusal: a compound scalar element beside a bare-ident
+			// The main refusal: a compound scalar element beside a bare-ident
 			// array element. Before the per-position admission this tuple was in
 			// no class at all — neither the box nor the retained buffer was freed.
 			name: "compound_scalar_elem",
@@ -128,7 +128,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 }
 
 // TestSelfHostTupleMixedAnnRebindX86_64 — the widened class and the assign-path
-// element walk balance exactly. allocs == frees is load-bearing in both
+// element walk balance exactly. allocs == frees is essential in both
 // directions: short is the leak these close, above is a double free. The
 // __rc_underflow_count() folded into every exit code separates a real balance
 // from a freelist recycle.
@@ -176,7 +176,7 @@ func TestSelfHostTupleMixedAnnRebindX86_64(t *testing.T) {
 
 // TestSelfHostTupleMixedAnnHazardsX86_64 — the shapes the widening must NOT
 // admit, each pinned by answer + __rc_underflow_count() (the counter is the
-// load-bearing half: a doubly-released block recycles and the arithmetic still
+// essential half: a doubly-released block recycles and the arithmetic still
 // comes out right). These assert answers, not leak counts — the refusals fall
 // back to leak-mode, the safe direction.
 func TestSelfHostTupleMixedAnnHazardsX86_64(t *testing.T) {

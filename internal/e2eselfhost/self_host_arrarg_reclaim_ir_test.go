@@ -20,7 +20,7 @@ import (
 // param position admits one where borrowability cannot — the callee stores the
 // argument, but every appearance of its parameter is a counted store or a
 // non-retaining read, so this one dec nets it to a single owner either way.
-// Pointer-element arrays ride only the counted-retain half: the release is the
+// Pointer-element arrays use only the counted-retain half: the release is the
 // shallow buffer dec, which at a borrowable position would strand the element
 // boxes.
 //

@@ -51,7 +51,7 @@ function main(): i32 {
     if (r == 3.0) { return 1; }
     return 0;
 }`},
-	// f32 (rides the f64 twin): id(2.5 as f32) + 1.0 as f32 == 3.5.
+	// f32 (uses the f64 twin): id(2.5 as f32) + 1.0 as f32 == 3.5.
 	{"typevar-f32-arith", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
     var r: f32 = id(2.5 as f32) + 1.0 as f32;

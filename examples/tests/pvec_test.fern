@@ -4,7 +4,7 @@ import "std/option";
 import "std/i32";
 
 // examples/tests/pvec_test.fern — pure-Fern coverage of std/pvec, the
-// persistent vector (32-way trie + tail). The load-bearing contracts
+// persistent vector (32-way trie + tail). The essential contracts
 // exercised here are STRUCTURAL SHARING (a snapshot taken before a
 // write is unchanged after it), the trie / tail invariants across every
 // growth and shrink boundary (`is_valid` after each append and pop

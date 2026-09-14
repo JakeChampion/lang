@@ -234,7 +234,7 @@ function cache_keys_sorted(c: Cache): string {
 
 // --------------------------------------------------------------- tests
 
-// The load-bearing one. A FIFO cache passes every other test in this file;
+// The essential one. A FIFO cache passes every other test in this file;
 // it fails this. Reading "a" makes it the most recent, so inserting "d" must
 // evict "b" — the oldest READ — not "a", the oldest INSERT.
 function test_a_read_promotes(): test.TestOutcome {

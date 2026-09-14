@@ -15,8 +15,8 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// TestWasmP3StreamImportFromFern is the colorless `stream[T]` payoff from REAL
-// Fern source — the capstone of the stream surface (docs/STREAM-TYPE-SURFACE.md):
+// TestWasmP3StreamImportFromFern is the colorless `stream[T]` demonstration from REAL
+// Fern source — the final gate of the stream surface (docs/STREAM-TYPE-SURFACE.md):
 //
 //	@import("test:dep/d","prod") async function body(): stream[u8];
 //	async function run(): i32 {

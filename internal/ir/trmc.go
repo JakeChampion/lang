@@ -700,7 +700,7 @@ func (b *builder) emitTrmcSteps(steps []trmcStep, holeSlot, resultSlot, loopD, e
 				return err
 			}
 			// The neutrality gate keeps rc-tracked locals out, so these tables
-			// are empty here; splicing them anyway keeps the TRMC path honest
+			// are empty here; splicing them anyway keeps the TRMC path correct
 			// if the gate ever widens.
 			for _, name := range b.rc.nestedDrops[s.stmt] {
 				b.emitPreciseDrop(name)

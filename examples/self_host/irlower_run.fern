@@ -246,7 +246,7 @@ function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i3
 //   plain     plain fn-pointer call_indirect sites, which carry no env box and
 //             are a different rewrite entirely
 //
-// `bail` is the honest denominator: a function outside the lowered subset
+// `bail` is the accurate denominator: a function outside the lowered subset
 // contributes no ops, so a census over a module that mostly bailed is a census
 // over almost nothing.
 function clo_census(fns: ir.LoweredFn[]): string {

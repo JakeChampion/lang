@@ -6,7 +6,7 @@
 // tee gives the WASM backend a single `local.tee` (saves a byte and
 // a load over `local.set $X; local.get $X`). The arm64 backend
 // generates equivalent code either way (pop / str / push), so the
-// pass is effectively WASM-only in payoff.
+// pass only benefits WASM in practice.
 //
 // The pass only fires when the store and load are immediately
 // adjacent and address the same slot. Anything between them — even

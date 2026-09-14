@@ -32,7 +32,7 @@ import (
 // credit was missing, exactly as the Result spelling already uses the same
 // emitter.
 //
-// THE SCALAR-INNER GATE IS LOAD-BEARING, and it decides which RELEASE a shape
+// THE SCALAR-INNER GATE IS ESSENTIAL, and it decides which RELEASE a shape
 // gets rather than whether it gets one. A flat dec frees the inner box but
 // nothing the box owns, so an rc inner payload must not use it — that one takes
 // the guarded two-level walk instead (#7718, the `rc_inner_*` rows). Crediting a
@@ -157,7 +157,7 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 		{
 			// REFUSED: a rebind ALIASING an inner box the function still reads.
 			// Releasing it at the next rebind would free a box under a live
-			// reference — the freshness requirement, load-bearing because the
+			// reference — the freshness requirement, essential because the
 			// payload is stored uncounted.
 			name: "refuses_rebind_aliasing_inner",
 			src: `function round(i: i32): i32 {
@@ -249,7 +249,7 @@ function round(i: i32): i32 {
 		{
 			// REFUSED: the inner box is ALIASED from a local the function still
 			// reads. Releasing it would free a box under a live reference — the
-			// family's freshness requirement, load-bearing because the payload is
+			// family's freshness requirement, essential because the payload is
 			// stored uncounted.
 			name: "refuses_aliased_inner",
 			src: `function round(i: i32): i32 {

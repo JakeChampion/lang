@@ -112,7 +112,7 @@ func TestPeepholeStillFiresWithCFI(t *testing.T) {
 	}
 }
 
-// TestPeepholeGateDetectsADeadJump keeps the check above honest: it must fail
+// TestPeepholeGateDetectsADeadJump proves the check above works: it must fail
 // on input that actually contains the pattern, or it proves nothing.
 func TestPeepholeGateDetectsADeadJump(t *testing.T) {
 	if _, found := jmpToNextLabel("\tjmp .L1\n.L1:\n\tret\n"); !found {

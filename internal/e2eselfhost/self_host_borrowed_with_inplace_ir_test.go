@@ -34,7 +34,7 @@ import (
 // (38, want 42) on all three backends.
 //
 // The cell now carries a `$cell$` name (box_rewrite_stmt), the same collision-
-// free marker `$wc$` uses for wide captures, so the mode rides on the name that
+// free marker `$wc$` uses for wide captures, so the mode is carried by the name that
 // ParamDecl has no field for. `borrowed_names_of` credits every other non-`own`
 // array param as a member, and the two cases are distinguishable at the gate.
 //

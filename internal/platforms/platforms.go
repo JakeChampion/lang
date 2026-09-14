@@ -172,7 +172,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     System V or AAPCS64.
 	//   - `userid` — an effective user / group id for the process.
 	//     Neither WASI preview has a notion of a user at all, so there
-	//     is nothing to report and no honest constant to report instead.
+	//     is nothing to report and no correct constant to report instead.
 	//   - `sysinfo` — the kernel's utsname record and the count of
 	//     processing units the process may run on. Neither WASI preview
 	//     exposes either; a guess would name a kernel the component is

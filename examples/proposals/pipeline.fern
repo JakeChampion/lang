@@ -11,13 +11,13 @@
 // So every stage records itself in a trace it carries, and a failure carries
 // the trace as it stood when the stage failed. "Stages after the failure did
 // not run" is then a property of the returned value, checkable directly, and
-// it is the load-bearing test here.
+// it is the essential test here.
 //
 // The second one is a differential between two spellings of the same
 // composition: the pipeline written with `?`, and the same pipeline written
 // with an explicit `match` that returns `Err(e)` by hand. They must agree on
 // the value, on the fault, and on the trace, for every pipeline in the corpus.
-// `?` is a language feature doing control flow, and the honest way to check it
+// `?` is a language feature doing control flow, and the correct way to check it
 // is against the control flow it stands for.
 //
 // On top sit the laws that make a pipeline composable at all — associativity
@@ -199,7 +199,7 @@ function test_the_try_operator_matches_the_explicit_match(): test.TestOutcome {
     return test.pass();
 }
 
-// The load-bearing one: nothing after the failure ran. Invisible in the
+// The essential one: nothing after the failure ran. Invisible in the
 // returned fault, which is why the trace exists.
 function test_no_stage_runs_after_the_failure(): test.TestOutcome {
     var ps: Stage[][] = pipelines();

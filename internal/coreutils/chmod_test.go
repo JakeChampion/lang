@@ -263,7 +263,7 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "four operators in one clause", args: []string{"-v", "a+rwx-w-r", "z"}, seedTree: chmodFlat},
 		{name: "the who spans the operators", args: []string{"-v", "ug+r-w", "z"}, seedTree: chmodFlat},
 
-		// ---- the special bits and who they ride on -----------------------
+		// ---- the special bits and who they apply to ----------------------
 		{name: "u plus s is setuid", args: []string{"-v", "u+s", "f"}, seedTree: chmodFlat},
 		{name: "g plus s is setgid", args: []string{"-v", "g+s", "f"}, seedTree: chmodFlat},
 		{name: "o plus s is nothing", args: []string{"-v", "o+s", "z"}, seedTree: chmodFlat},

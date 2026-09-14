@@ -158,7 +158,7 @@ pub struct TestRunner {
 //   Pass        — the case passed
 //   Fail(msg)   — the case failed; `msg` is the human-readable diff
 //
-// This is the honest model: a passing case is `Pass`, a failing case
+// This is the direct model: a passing case is `Pass`, a failing case
 // carries its diagnostic in `Fail`. (An earlier shape reused
 // `Option[string]` with `None` = pass, which inverted the usual
 // "None means absent/bad" intuition — see issue #2666.) Construct
@@ -2136,7 +2136,7 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
 // `bench` but fails when the MEDIAN per-iteration time
 // exceeds `max_us`. Median (not mean) is the right
 // regression signal: one GC pause inflates the mean but
-// leaves the median honest.
+// leaves the median accurate.
 pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () => void, max_us: i64): TestRunner {
     if (iterations <= 0) {
         return r.it(name, () => fail("bench: iterations must be > 0"));

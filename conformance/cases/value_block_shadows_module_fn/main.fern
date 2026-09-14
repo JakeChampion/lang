@@ -29,7 +29,7 @@ function main(): i32 {
     var ys: i64[] = [1i64, (if (true) { w } else { 2i64 }), 3i64];
     if (ys[1] != 6000000000i64) { return 2; }
 
-    // The forgiveness itself is load-bearing and must survive: a genuine call
+    // The forgiveness itself is essential and must survive: a genuine call
     // to an unshadowed module function from inside a value-block IIFE still
     // lifts, rather than becoming a capture the lift cannot type.
     var zs: i64[] = [1i64, (if (true) { widen2(5000000000i64) } else { 2i64 }), 3i64];

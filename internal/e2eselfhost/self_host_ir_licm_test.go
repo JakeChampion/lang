@@ -11,12 +11,12 @@ import (
 
 // TestSelfHostIRLICM pins the self-hosted stack IR's loop-invariant code motion
 // (examples/self_host/ir.fern's hoist_loop_invariants — the op-list twin of
-// native's internal/ir/licm.go, #8245) and the slot growth it rides on (#8247).
+// native's internal/ir/licm.go, #8245) and the slot growth it depends on (#8247).
 //
 // The ir_licm_run driver builds the op list irlower emits for each `while`
 // shape, runs the pass, and prints the ops AND the frame count. Every line
 // below is the mirror of a case in internal/ir/licm_test.go; the refusals are
-// the load-bearing half, since each one is a read the original program would
+// the essential half, since each one is a read the original program would
 // not have made.
 func TestSelfHostIRLICM(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

@@ -308,7 +308,7 @@ var embeddedAssets *embed.Set
 
 // sanitizerCoverage says what each -target's DEFAULT backend emits under
 // -sanitize: an empty note is the whole mode (census + rc over-release +
-// use-after-free quarantine), a non-empty one names the honest subset, and a
+// use-after-free quarantine), a non-empty one names the covered subset, and a
 // target absent from the map carries nothing at all. Both natives are
 // complete, and the arm64 family shares one generator so android / darwin
 // match plain arm64.

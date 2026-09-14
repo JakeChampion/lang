@@ -34,7 +34,7 @@ import (
 // and the failure mode of getting that wrong is a double free, which no byte
 // count shows — `docs/rc-log/2026-08-29-option-alias-payload-out.md` measured an
 // over-releasing build reading `300/300 live 0` where the correct one carried an
-// honest leak. `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` covers the same
+// actual leak. `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` covers the same
 // hazard for the shapes that already had a return-path release.
 //
 // The last four rows are the encodings this change rewrote but did not mean to

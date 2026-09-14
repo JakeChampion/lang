@@ -262,7 +262,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 //
 // Without it, a stdlib-importing program whose merged closure crosses the
 // budget dropped to the AST emitter (deleted since; #3457) — which could not
-// emit tcp_listen / poll / tcp_pollable at all, so the flagship edge-handler
+// emit tcp_listen / poll / tcp_pollable at all, so the main edge-handler
 // program (std/http + std/tcp + a `handle` function) compiled to asm with a
 // dozen dangling `__fn_` symbols and failed at LINK, even though every one of
 // its functions lowers on the IR path.

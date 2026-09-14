@@ -19,7 +19,7 @@ import (
 // so the only string dec that can appear in `acc` is `s`'s: with the fix it is
 // present (str_dec on the two-word ptrW=4 ABI, rc_dec on the single-word ptrW=8
 // native ABI); without it, `acc` emits ZERO string decs at either width. The
-// end-to-end heap-bump payoff is pinned separately in the e2e suite
+// end-to-end heap-bump benefit is pinned separately in the e2e suite
 // (TestWASMHeapBumpStrLiteralAccumBounded).
 func TestLowerStrLiteralAccumEmitsOverwriteDec(t *testing.T) {
 	prev := ast.RcFreeEnabled

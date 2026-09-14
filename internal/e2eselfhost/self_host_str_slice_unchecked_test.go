@@ -27,7 +27,7 @@ function main(): i32 {
     var s: string = mk();
     if (s.len() != 6) { return 1; }
 
-    // Byte-honest: the cut lands mid-é and keeps the lead byte.
+    // Byte-exact: the cut lands mid-é and keeps the lead byte.
     var cut: str = slice_unchecked(s, 0, 2);
     if (cut.len() != 2) { return 2; }
     if (cut[0] != 104) { return 3; }

@@ -25,7 +25,7 @@ import (
 // to balance across the drop point. A POINTER-element array (string[] /
 // struct[] / T[][] / tuple[]) with a nested last use falls back to the exit
 // sweep: its deep drop dec's each element, and an element aliased OUT across an
-// early drop rides the arm64 two-word heap-string reclamation path the plan
+// early drop takes the arm64 two-word heap-string reclamation path the plan
 // still defers (slice 5g) — an early drop there corrupts under allocation-reuse
 // pressure (the self-host driver's `var av: string[] = args()` with
 // `entry = av[1]` / `root = av[2]` last-used at `av[2]` inside an `if`). The

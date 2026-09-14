@@ -197,7 +197,7 @@ function check_off(): i32 {
 // line refers to it. `k0, k1` bound the join field, `nf` counts the
 // fields; the other fields are walked again when the line is printed,
 // which costs a byte scan of a short line and no allocation at all.
-// The first four fields' bounds ride along too, so a line that has no
+// The first four fields' bounds are carried too, so a line that has no
 // more than that is printed without a second walk.
 struct Line { text: string, lo: i32, hi: i32, k0: i32, k1: i32, nf: i32, s0: i32, e0: i32, s1: i32, e1: i32, s2: i32, e2: i32, s3: i32, e3: i32 }
 

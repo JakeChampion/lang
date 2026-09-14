@@ -260,7 +260,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     if (pm_mode == "link") {
         // Assemble the whole module from per-unit objects. Each unit is served
         // from the cache when its key still matches, so an incremental rebuild
-        // lowers ONLY the modules that actually changed — the payoff the rest of
+        // lowers ONLY the modules that actually changed — the benefit the rest of
         // #5331 was building toward. Link itself consults no ir_cache at all: the
         // needs, fn_sigs and RC type lists all come from the objects.
         var units: wasm_ir.WasmUnit[] = [];
@@ -283,7 +283,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         }
         // Hit-only: -link reads every unit from the cache and lowers NOTHING.
         // A missing unit is an error naming it, not a silent in-process build —
-        // that is the design that keeps a whole-compiler link off the arena wall
+        // that is the design that keeps a whole-compiler link under the arena limit
         // (#3425). The orchestrator emits each miss with -per-module-emit (its
         // own process) and links again.
         var missing: string = "";

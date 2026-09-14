@@ -11764,7 +11764,7 @@ func TestWASMComponentGoEncoderRunsLangCore(t *testing.T) {
 // module bytes + the same single WASI import shape, both must
 // produce byte-identical output.
 //
-// This is the load-bearing guarantee that lets the production
+// This is the essential guarantee that lets the production
 // driver use either implementation interchangeably — and a
 // regression alarm if one is updated without the other.
 func TestWASMComponentGoLangByteEquivalence(t *testing.T) {

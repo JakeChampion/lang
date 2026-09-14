@@ -620,7 +620,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"as-downcast-prim-target", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? i32) { Some(x) => { return x; }, None => { return 0; } }\n}\n", []string{"E060"}},
 		{"as-downcast-impl-ok", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Circle) { Some(c) => { return c.r; }, None => { return 0; } }\n}\n", nil},
 		// E062 (#4347): `d.m()` on `dyn A + B` where BOTH traits declare m is
-		// ambiguous. E006 no longer rides along: two DIFFERENT traits each
+		// ambiguous. E006 is no longer included: two DIFFERENT traits each
 		// providing `m` for S is a legitimate pair of providers since #6931,
 		// not a redeclaration, on both checkers. What is ambiguous is the
 		// dyn CALL, which is what E062 says. Distinct method names dispatch
@@ -1010,7 +1010,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-suffix-arg", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(300u8); }\n", []string{"E047"}},
 		{"literal-suffix-struct-field", "struct S { v: u8 }\nfunction main(): i32 { var s = S { v: 300u8 }; return 0; }\n", []string{"E047"}},
 		{"literal-suffix-unannotated", "function main(): i32 { var x = 300u8; return 0; }\n", []string{"E047"}},
-		// A quoted literal rides the same node with its spelling in `raw`; it is
+		// A quoted literal uses the same node with its spelling in `raw`; it is
 		// not a written numeral and no range rule applies to it.
 		{"literal-byte-quoted-ok", "function main(): i32 { var b: u8 = b'0'; return b as i32; }\n", nil},
 		// A wide literal inside an unannotated binding's arithmetic, or a cast
@@ -1022,7 +1022,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-wide-compare-ok", "function main(): i32 { var b = 4611686018427387904 > 1; if (b) { return 1; } return 0; }\n", nil},
 		{"literal-wide-generic-tuple-ok", "function pair[A, B](a: A, b: B): (A, B) { return (a, b); }\nfunction main(): i32 { var p = pair(4611686018427387904, \"hello\"); if (p.0 == 4611686018427387904) { return 1; } return 0; }\n", nil},
 		// #8640: the range rule reaches every integer WIDTH, not just i32, and
-		// every destination a literal settles at. A const rides the same rule:
+		// every destination a literal settles at. A const follows the same rule:
 		// the self-host represents one as a `FuncDecl` whose body returns the
 		// initialiser, so the return-position destination judges it. Each
 		// refused row is paired with the value one step inside the bound, so
@@ -1793,7 +1793,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e063-callee-param-ok", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(p: i32[]): [i32] { return idsl(p[0:2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		// An element-polymorphic receiver method is HOISTED to a free
 		// function, and the hoist rebuilds the decl rather than copying it
-		// — so the `[T]`-vs-`T[]` flag the report filter reads has to ride
+		// — so the `[T]`-vs-`T[]` flag the report filter reads has to be carried
 		// along or this stops being reported with no other symptom.
 		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { var local: T[] = [1, 2, 3]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		// Slicing an unbound TEMPORARY. The callee hands back storage it
@@ -1873,9 +1873,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-param-slice-ok", "function f(p: string): str {\n    return slice_unchecked(p, 0, 2);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-str-of-param-ok", "function f(p: str): str {\n    var t: str = p;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		// E032 (`use` binding-type inference): an un-annotated `use` whose
-		// callee has no signature (the E001 rides along) or whose last
+		// callee has no signature (the E001 is also reported) or whose last
 		// parameter isn't a function draws E032 (the E038 arg-type mismatch
-		// rides along on the desugared call); an inferrable or annotated
+		// is also reported on the desugared call); an inferrable or annotated
 		// `use` is clean.
 		{"e032-use-nosig", "function main(): i32 {\n    use n <- q(1);\n    return n;\n}\n", []string{"E001", "E032"}},
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
@@ -1997,7 +1997,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// what held E001 / E036 / E044 off the compile path. Each is silent
 		// now, so each is a row that must stay silent.
 		//
-		// A nested position in a `for` pattern rides the binder encoding as a
+		// A nested position in a `for` pattern uses the binder encoding as a
 		// parenthesised group, and the split ran over every comma — binding
 		// "(a" and "b)" and leaving `a` and `b` undefined.
 		{"for-nested-tuple-pattern", "function main(): i32 { var deep: ((i32, i32), string)[] = [((2, 3), \"xy\")]; var s: i32 = 0; for ((a, b), c) in deep { s = s + a * b + c.len(); } return s; }\n", nil},
@@ -2595,7 +2595,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// importing std/num also pulled `impl Iterator[i32] for Range` in via
 		// core/iter, whose generic-trait requirement signature the E021
 		// conformance check compared unsubstituted and always called a
-		// mismatch, so both diagnostics ride on this one case.
+		// mismatch, so this one case covers both diagnostics.
 		{"num-sum-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
 		{"num-product-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [2, 3]; return num.product(xs); }\n"},
 		// The same shape written by the USER, so the bound comes from the

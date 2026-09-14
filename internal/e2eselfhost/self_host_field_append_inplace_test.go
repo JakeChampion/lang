@@ -27,7 +27,7 @@ import (
 // SPARE CAPACITY is what makes an in-place grow possible at all, so each case
 // threads its container through several appends before the read it checks.
 //
-// `S { ...s, xs: s.xs.with(i, v) }` rides the same admission (#8419): the store
+// `S { ...s, xs: s.xs.with(i, v) }` uses the same admission (#8419): the store
 // lands in the field's own buffer, gated on the buffer's own count since
 // arr_set has no gate of its own, and the caller half brackets it exactly as
 // it brackets a grow. The `with-` cases below pin both halves for the store.

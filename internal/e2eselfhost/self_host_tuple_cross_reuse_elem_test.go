@@ -69,7 +69,7 @@ type tupXReuseElemCase struct {
 func tupXReuseElemCases() []tupXReuseElemCase {
 	return []tupXReuseElemCase{
 		{
-			// The headline shape: donor and recipient each retain a bare-ident
+			// The main shape: donor and recipient each retain a bare-ident
 			// array element. Only the donor's retain was stranded — the
 			// recipient's slot is exit-swept normally.
 			name: "donor_and_recipient_idents",
@@ -236,7 +236,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 // TestSelfHostTupleCrossReuseElemX86_64 — the donor's children are given back, so
 // allocs and frees balance exactly and the underflow counter stays at 0.
 //
-// Three assertions, each load-bearing in a different direction. The exit code
+// Three assertions, each essential in a different direction. The exit code
 // catches a release of a live buffer (99 = the counter tripped, and both oracles
 // agree on the want otherwise). allocs == frees catches the leak this closes, and
 // frees ABOVE allocs a double free. The exact alloc count catches the reuse

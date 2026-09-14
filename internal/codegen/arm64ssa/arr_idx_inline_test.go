@@ -24,7 +24,7 @@ func emitIdxAsm(t *testing.T, funcs map[string]*ssa.Func, entry string) string {
 // loop of anything that walks an array. cmp.sort's monomorphised body made 22
 // such calls where the stack-machine backend makes none.
 //
-// The bounds check has to survive inlining, and it is load-bearing beyond the
+// The bounds check has to survive inlining, and it is essential beyond the
 // trap: `cmp w` rejects a negative index as a huge unsigned, which is what makes
 // the full-width add below it safe.
 func TestArrayIndexIsInlinedNotCalled(t *testing.T) {

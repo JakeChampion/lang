@@ -14,7 +14,7 @@ import (
 // the unified `fern` CLI is built with on the Linux CI box. It builds the
 // CLI from fern.fern (which now `import`s arm64_native and assembles +
 // links the Mach-O in-process — no clang/ld64), emits a binary for each
-// program, and asserts a valid arm64 MH_EXECUTE. The flagship
+// program, and asserts a valid arm64 MH_EXECUTE. The main
 // TestSelfHostArm64DarwinBuilds additionally *executes* the binaries on the
 // macOS arm64 runner; this is the Linux-side structural guard.
 //

@@ -60,7 +60,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "leaky",
 		},
 		{
-			// HEAP-FREE, returning main: the report rides the _start epilogue
+			// HEAP-FREE, returning main: the report runs in the _start epilogue
 			// and must link with no allocator emitted — the reason the
 			// counters and report live outside the heap gate.
 			name: "heapfree_return",

@@ -21,7 +21,7 @@ import "std/utf8" as utf8;
 function cp(n: i32): string { return utf8.utf8_encode((n) as char); }
 
 function main(): i32 {
-    // A combining sequence is ONE cluster -- the headline case.
+    // A combining sequence is ONE cluster -- the main case.
     if (unicode.grapheme_count("e" + cp(769)) != 1) { return 1; }
     if (unicode.graphemes("e" + cp(769)).len() != 1) { return 2; }
 

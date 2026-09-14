@@ -35,7 +35,7 @@ import (
 //     the whole compose pipeline is assembled, and it is the constraint that
 //     decides which shapes the IR leg may serve at all.
 //
-// The out-of-subset rows are as load-bearing as the in-subset ones: each pins a
+// The out-of-subset rows are as essential as the in-subset ones: each pins a
 // shape that must KEEP falling through, because admitting it would emit a core
 // calling helpers nothing defines. Every WASI category component_shape knows
 // has now migrated — stdout/stderr/exit, clock, random, env, args, and finally

@@ -30,7 +30,7 @@ var freshContainerReadReclaimCases = []struct {
 	// A SCALAR element read out of a fresh owned array — the "ARR:" strict-fresh
 	// registry entry. Leaked the whole 4-element buffer per evaluation
 	// (2800 B / 50 rounds, exactly doubling); the buffer is now rc-dec'd at the
-	// read, element-blind because a scalar rides the freed buffer.
+	// read, element-blind because a scalar is stored in the freed buffer.
 	{"fresh-arr-index", `function lit(n: i32): i32[] { return [n, n + 1, n + 2, n + 3]; }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;

@@ -41,7 +41,7 @@ import (
 // drops only on the second (#6127). `blockscoped` is the row that would catch a
 // revoke-only change.
 //
-// TWO SHAPES STAY REFUSED, and both are load-bearing rather than decorative:
+// TWO SHAPES STAY REFUSED, and both are essential rather than decorative:
 //
 //   - `respread`: a `T { ...base }` copies every field pointer into a fresh box
 //     with NO inc, creating an uncounted third owner. Gated by FIELD TYPE

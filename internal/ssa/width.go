@@ -5,7 +5,7 @@ import "github.com/jakechampion/lang/internal/ir"
 // Width resolution: deciding, for every op in a module, whether its result
 // occupies a full 64-bit machine register or only the low 32 bits.
 //
-// The distinction is load-bearing because the 64-bit backends store an i32
+// The distinction is essential because the 64-bit backends store an i32
 // sign-extended into its whole register, and re-establish that after each
 // arithmetic op (`sxtw` / `movsxd`). Applied to a MACHINE ADDRESS that mask is
 // destructive: any pointer above 0x7fffffff comes back negative and its loads

@@ -10,7 +10,7 @@ import (
 // The wasi:http wrapper's helper closure.
 //
 // __http_entry is added to the helper set AFTER scanRuntimeHelpers has
-// already closed it, so the callees it needs cannot ride in on
+// already closed it, so the callees it needs cannot be added by
 // scanRuntimeHelpers' own pass — wasmbin.go closes the set a second
 // time over everything the post-scan adds pulled in.
 //

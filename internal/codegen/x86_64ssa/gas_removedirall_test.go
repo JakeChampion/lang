@@ -48,7 +48,7 @@ func TestAsmRunIoErrorVariants(t *testing.T) {
 		})
 	}
 
-	// The path rides the payload slot: its length is read back through the
+	// The path occupies the payload slot: its length is read back through the
 	// pointer the box holds, which a box built at the wrong offset loses.
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()

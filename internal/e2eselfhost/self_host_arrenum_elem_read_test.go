@@ -32,7 +32,7 @@ import (
 //
 // The hazard being guarded is a DOUBLE FREE, not a leak: freeing an element while
 // a binding still names its payload corrupts the self-compile. So the exit codes
-// here are load-bearing in a way this family's usually are not — the register and
+// here are essential in a way this family's usually are not — the register and
 // wasm legs check every row against the interpreter, and an over-admitted rule
 // shows up there as a wrong answer or an underflow rather than as a leak.
 var selfHostArrEnumElemReadCases = []struct {
@@ -114,7 +114,7 @@ func TestSelfHostArrEnumElemReadLeakCheck(t *testing.T) {
 }
 
 // TestSelfHostArrEnumElemReadX86_64 — every row against the interpreter oracle.
-// Load-bearing here: an over-admitted arm vet frees an element under a live
+// Essential here: an over-admitted arm vet frees an element under a live
 // binding, and that lands as a wrong answer or an underflow on this leg.
 func TestSelfHostArrEnumElemReadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

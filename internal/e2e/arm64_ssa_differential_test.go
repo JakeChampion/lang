@@ -107,7 +107,7 @@ const (
 	//
 	// It is NOT headroom over the heaviest real program, and an earlier note
 	// here claiming ~16x was measurably wrong: examples/bench/pmap_insert.fern
-	// took 49.8 s under `-backend ssa` on this container while the wall was
+	// took 49.8 s under `-backend ssa` on this container while the limit was
 	// 15 s (#8069). What a wall can say is "this did not finish", which is why
 	// crossing it is now its own outcome rather than a disagreement, and why
 	// the performance question is asked as a ratio (ssaSlowdown) instead.

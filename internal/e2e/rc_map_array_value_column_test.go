@@ -18,7 +18,7 @@ import (
 //
 // The strings are built by a call that branches on the loop variable, so
 // nothing folds and nothing packs inline. FERN_LEAKCHECK is the instrument on
-// the natives; wasm has no leak counter, so it rides the __heap_bump_bytes()
+// the natives; wasm has no leak counter, so it uses the __heap_bump_bytes()
 // high-water probe, flat under reclaim and linear under a leak.
 
 const mapArrayValueColumnSrc = `import "core/map";

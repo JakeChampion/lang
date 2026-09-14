@@ -17,7 +17,7 @@ import (
 // one, so a split/lines local fell through to the shallow buffer-only dec and
 // every element box leaked.
 //
-// The credit rides a prefix of its own ("SARRB:") because it needs a gate the
+// The credit uses a prefix of its own ("SARRB:") because it needs a gate the
 // existing one does not have. reclaimable_names_of is a NAME-level pass: it sees
 // `var xs = recv.split(sep)` and has no type for `recv`. A user method named
 // `split` on some other type answers to the same name, and its elements may be
@@ -49,7 +49,7 @@ import (
 // What is left on wasm (67200 for the 18-part split) is a separate question from
 // this one and is not the element boxes.
 //
-// One honest limit, on the NON-ESCAPE half rather than the type half. Building a
+// One real limit, on the NON-ESCAPE half rather than the type half. Building a
 // compiler with strarr_unsafe_for's verdict dropped for this class does change
 // emission — `first_of` below goes from __fern_arr_dec to the element walk, so
 // the guard demonstrably decides something — but no probe here faults under it,

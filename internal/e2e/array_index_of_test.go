@@ -8,7 +8,7 @@ import "testing"
 // the same-name-different-contract pair #4387 opened on.
 //
 // The receiver shapes matter more than the values here. On the self-host IR
-// path an `i32[]` receiver rides a lowering intercept to a runtime helper
+// path an `i32[]` receiver goes through a lowering intercept to a runtime helper
 // (`__fern_arr_i32_index_of_opt`) rather than the stdlib body, and the intercept
 // keys on the receiver: a LOCAL, a struct FIELD (the #6784 shape, which also
 // needs `builtin_arr_opt_ret_type` to recover the scrutinee type of an inline
@@ -42,7 +42,7 @@ function main(): i32 {
     // bound to a local first — the non-inline scrutinee path
     var o: Option[i32] = xs.index_of(8);
     match (o) { Some(i) => { if (i != 1) { return 13; } }, None => { return 14; } }
-    // .contains still rides the raw -1 scan on the same receivers
+    // .contains still uses the raw -1 scan on the same receivers
     if (!xs.contains(8))   { return 15; }
     if (xs.contains(88))   { return 16; }
     if (!h.xs.contains(8)) { return 17; }

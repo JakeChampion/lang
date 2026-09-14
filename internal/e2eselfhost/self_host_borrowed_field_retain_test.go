@@ -16,7 +16,7 @@ import (
 // up: the strict-fresh return gate refused a bare-ident array field, so the
 // CALLER's binding earned no drop at all; strarrfld_scan refused the same store,
 // so the type was not STRFLDOK-admitted; and the struct-literal construction
-// took no retain, because that rides struct_routes_field_reclaim — which the
+// took no retain, because that is gated on struct_routes_field_reclaim — which the
 // second decides. Opening the store gate turns the retain on, which is what
 // makes crediting the caller safe; either alone is inert, and the caller credit
 // alone would free the caller's array.

@@ -83,7 +83,7 @@
 //     backends pick the q-suffixed / x-register ops and a comparison still
 //     yields i32), and the width casts `int_extend` (i32 -> i64 via
 //     sext_i64 / zext_i64) and `int_wrap` (i64 -> i32 truncate). i64 locals
-//     ride the value slots (already 8-byte) with width flowing through
+//     occupy the value slots (already 8-byte) with width flowing through
 //     copy / phi. Values that don't fit i32 no longer bail.
 // Everything else (value-producing ifs, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls

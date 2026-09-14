@@ -1805,7 +1805,7 @@ type Program struct {
 	// which is deterministic because the function order is.
 	//
 	// The table is fixed at lowering time and the post-Lower passes never
-	// touch it, which is what makes the report honest about dead code: a
+	// touch it, which is what makes the report correct about dead code: a
 	// function the dead-function cull removes leaves its sites in the
 	// table with no site left to increment them, and they report 0 —
 	// never called is exactly what that means.
@@ -2745,7 +2745,7 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 // concrete drop (`__drop_struct_<C>` / `__drop_enum_<C>`) frees `data` and
 // everything it transitively owns (e.g. a String field) and self-guards on
 // rc==1; the vtable word is static data — never inc/dec'd. Reload-before-
-// free is load-bearing on the natives: freeing the cell first would read a
+// free is required on the natives: freeing the cell first would read a
 // reclaimed (possibly reused) cell for data/vtable — a use-after-free.
 //
 // Dispatch reuses OpCallDyn (slot = methodCount, sig (ptr)->ptr — every
@@ -4733,7 +4733,7 @@ func pruneShadowedVariants(names map[string]bool, info *checker.Info) map[string
 //     type-parameter bindings, if any), and
 //   - variant 1 is nullary.
 //
-// The canonical-order requirement is load-bearing: the IR's
+// The canonical-order requirement is essential: the IR's
 // pair-form construction reuses `OpMakeSomeI32` (tag=0) for
 // the payload-carrying variant and `OpMakeNoneI32` (tag=1)
 // for the nullary one, and the consumer-side tag dispatch
@@ -8472,7 +8472,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // earlier arm's same-named binding — the slot is REUSED instead of freshly
 // allocated.
 //
-// Why reuse is load-bearing: the return / function-exit dec sweep
+// Why reuse is essential: the return / function-exit dec sweep
 // resolves names through b.locals at the moment each return is LOWERED.
 // A fresh binding slot permanently shadows the var's pre-allocated slot,
 // so every later-lowered return sweeps the ARM's slot — which is never
@@ -14914,7 +14914,7 @@ func (b *builder) callBody(n *ast.Call) error {
 					return err
 				}
 			}
-			// ArgTypes is load-bearing, not decoration. Under the
+			// ArgTypes is essential, not decoration. Under the
 			// two-word string ABI (arm64, wasm) a `string` argument
 			// occupies TWO operand-stack slots, so a backend that pops
 			// I32=3 slots reads the length as the data pointer and the
@@ -14930,7 +14930,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
-	// runtime-helper-call shape and the same load-bearing ArgTypes: a
+	// runtime-helper-call shape and the same essential ArgTypes: a
 	// `string` is TWO operand slots on arm64 and wasm and one on x86-64, so
 	// without the declaration a backend popping I32=3 reads the length as
 	// the data pointer.
@@ -14947,7 +14947,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __count_byte(s, byte) — the same runtime-helper-call shape, and
-	// ArgTypes is load-bearing for the same reason as its three siblings: a
+	// ArgTypes is essential for the same reason as its three siblings: a
 	// `string` is two operand slots on arm64 and wasm and one on x86-64.
 	if id.Name == "__count_byte" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
@@ -14963,7 +14963,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	// __sum_bytes(s) — the same runtime-helper-call shape, with one argument
 	// and therefore the family's smallest ArgTypes, which is still
-	// load-bearing: a `string` is TWO operand slots on arm64 and wasm and one
+	// essential: a `string` is TWO operand slots on arm64 and wasm and one
 	// on x86-64, so a backend popping I32=1 reads the length as the result.
 	if id.Name == "__sum_bytes" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
@@ -14993,7 +14993,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
-	// above, and ArgTypes is load-bearing here for the same reason: `string`
+	// above, and ArgTypes is essential here for the same reason: `string`
 	// is two operand slots on arm64 and wasm, one on x86-64.
 	if id.Name == "__ascii_run" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
@@ -15008,7 +15008,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
-	// four siblings, with TWO strings. ArgTypes is doubly load-bearing here:
+	// four siblings, with TWO strings. ArgTypes is doubly essential here:
 	// under the two-word ABI this call is seven operand slots, not five, and
 	// the two strings are not adjacent, so a backend popping I32=5 reads the
 	// second string's length as `n`.
@@ -15029,7 +15029,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// backend rewinds its own cursor and snapshots its own freelist heads.
 	//
 	// These carry the SOURCE builtin name, not the __fern_ runtime name, and
-	// each backend rewrites it at the call site. That is load-bearing for
+	// each backend rewrites it at the call site. That is essential for
 	// release_to: it returns void, and the backends suppress the post-call
 	// operand-stack push via callReturnsVoid, which resolves voidness through
 	// the checker's FuncSigs — keyed by the source name. Emitting the runtime
@@ -15115,7 +15115,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// layout may diverge from strings later.
 	switch id.Name {
 	case "slice_unchecked":
-		// `slice_unchecked(s, a, b)` is `s[a:b]` under its honest name
+		// `slice_unchecked(s, a, b)` is `s[a:b]` under its accurate name
 		// (#5634, D9): lower it onto the identical __str_slice path as
 		// the SliceExpr arm so the two forms cannot drift — including
 		// the owned-temp source stash, without which the

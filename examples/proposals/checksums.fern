@@ -3,7 +3,7 @@
 //
 // A validator that returns `true` for everything passes every test made of
 // known-good numbers, and there are a lot of validators shaped like that. So
-// the load-bearing test here is not a table of valid inputs — it is the
+// the essential test here is not a table of valid inputs — it is the
 // property a checksum EXISTS for:
 //
 //   **every single-digit substitution of a valid number must be rejected.**

@@ -50,7 +50,7 @@ func TestSelfHostExternVariantF64ArmParamCustomProvider(t *testing.T) {
 		t.Fatalf("write provider wit: %v", err)
 	}
 	// take receives the variant flattened to (disc:i32, payload:i64). The d arm's
-	// f64 rides the i64 join as its raw bits, recovered via f64.reinterpret_i64.
+	// f64 occupies the i64 join as its raw bits, recovered via f64.reinterpret_i64.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i64) (result i32)

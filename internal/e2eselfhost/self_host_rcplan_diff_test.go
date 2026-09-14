@@ -450,7 +450,7 @@ function main(): i32 { return f(); }`,
 		},
 		{
 			// MOVE-ON-ALIAS, tuple limb (the rc-tuple flavor — the one whose
-			// release-role transfer is load-bearing): at the source's last
+			// release-role transfer is essential): at the source's last
 			// top-level mention both sides elide the transfer inc; the
 			// self-host moves the "TUPRCS:" deep-sweep class to the alias
 			// site and copies the slot facts the deep free reads
@@ -1392,7 +1392,7 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 			// credits here are reclaims native does not make rather than
 			// frees it must not.
 			//
-			// So the string exemption in rc_fe_run's seed is load-bearing and
+			// So the string exemption in rc_fe_run's seed is essential and
 			// must NOT be "fixed" into native parity: seeding a string param
 			// tainted would propagate through this alias and take #7553's
 			// reclaim back out. What was wrong was only the REASON the seed

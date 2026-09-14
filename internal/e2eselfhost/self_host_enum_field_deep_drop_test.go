@@ -87,7 +87,7 @@ var selfHostEnumFieldDeepDropCases = []struct {
 	//
 	// It is the guard the local-alias row cannot be: only the STRUCT alias took
 	// the marking path, which is why `local-alias-declines-walk` above stayed
-	// clean throughout. `__rc_underflow_count()` rides the answer here for the
+	// clean throughout. `__rc_underflow_count()` is added to the answer here for the
 	// same reason it does everywhere else in this table — the carve-out restores
 	// a dec, and a dec past a live claim would land as an underflow rather than
 	// as a leak.

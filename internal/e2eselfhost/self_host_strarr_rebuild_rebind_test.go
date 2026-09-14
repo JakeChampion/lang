@@ -30,7 +30,7 @@ import (
 //
 // The failure mode is an over-release rather than a leak — the store now frees
 // element boxes another holder could still reach — so the refused rows below
-// are load-bearing. Five shapes escape the array, bind an element out of it,
+// are essential. Five shapes escape the array, bind an element out of it,
 // rebind from a live local, rebuild from the array's own element, or store it
 // into a container; each reads its value back after 200 rounds of churn have
 // recycled the freelist, each stays pinned at its leaking count, and each

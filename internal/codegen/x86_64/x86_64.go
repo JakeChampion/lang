@@ -2470,7 +2470,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		if localsSize%16 != 0 {
 			localsSize += 8
 		}
-		// The bias rides in the `sub rsp, N` the frame already needs, so it
+		// The bias is folded into the `sub rsp, N` the frame already needs, so it
 		// costs nothing here. A frameless function emits no `sub rsp` at
 		// all, where the bias would be a whole extra instruction to save a
 		// pad it may never reach — so it keeps the canonical parity.
@@ -2805,7 +2805,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// binPop's pop-rhs-first order already puts the count
 		// in rcx, so we can shift directly. The destination
 		// register width must match the integer width: a 32-bit
-		// value rides zero-extended in the low half of rax, so a
+		// value is held zero-extended in the low half of rax, so a
 		// 64-bit `shl rax` would mask the count to 0..63 and let
 		// bits spill above bit 31 — `shl eax` masks to 0..31 and
 		// keeps the result in the canonical i32 lane (matching the
@@ -2817,7 +2817,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// sar (arithmetic right shift) preserves the sign
 		// bit for signed values; shr (logical) zero-fills
 		// for unsigned. Width matters for `sar`: a negative i32
-		// rides zero-extended in rax (high half all zero), so
+		// is held zero-extended in rax (high half all zero), so
 		// `sar rax` would read bit 63 (= 0) as the sign and
 		// produce a logical-looking result. `sar eax` reads the
 		// real i32 sign bit (bit 31). Both forms also mask the
@@ -2832,7 +2832,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpRotr:
 		// Same count-in-cl shape as the shifts, and the same width
-		// rule: `ror eax` rotates within the i32 lane an i32 rides
+		// rule: `ror eax` rotates within the i32 lane an i32 is held
 		// zero-extended in, where `ror rax` would drag the cleared
 		// high half through the low bits.
 		g.binPop()
@@ -3628,7 +3628,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpCallDirect:
 		target := op.Str
 		// Cheap f64 math intrinsics lower inline — no libm. The f64
-		// argument rides the operand stack as raw bits (same as
+		// argument is carried on the operand stack as raw bits (same as
 		// OpFNeg); the result goes back in rax before push.
 		if g.emitF64UnaryIntrinsic(target) {
 			g.push()
@@ -4096,7 +4096,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 		g.emit("movq rax, xmm1")
 	case "__sin_f64", "__cos_f64", "__exp_f64", "__log_f64":
 		// Transcendentals call the SSE2 polynomial helpers — no libm,
-		// and no x87. Argument and result both ride xmm0, matching
+		// and no x87. Argument and result both use xmm0, matching
 		// arm64's d0 convention for the same five helpers.
 		g.usesF64Trans = true
 		g.emit("movq xmm0, rax")
@@ -4107,7 +4107,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 }
 
 // emitF64Pow lowers __pow_f64(x, y) = exp(y·ln x) through the SSE2
-// helper bundle. Both args ride the operand stack; binPop leaves x in
+// helper bundle. Both args are carried on the operand stack; binPop leaves x in
 // rax and y in rcx. Result is left in rax (caller pushes).
 func (g *generator) emitF64Pow() {
 	g.binPop() // rax = x, rcx = y
@@ -4836,7 +4836,7 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 }
 
 // fbinPop pops two float-shaped values off the operand stack
-// (they ride as raw bit patterns) and moves them into xmm
+// (they are held as raw bit patterns) and moves them into xmm
 // registers. Width selects 32-bit (movd, single-precision)
 // or 64-bit (movq, double-precision). xmm1 = lhs, xmm0 =
 // rhs — same order as the integer binPop so x86's
@@ -6213,7 +6213,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
 		//
-		// The bounds check rides each arm of this dispatch: the heap
+		// The bounds check is emitted in each arm of this dispatch: the heap
 		// length is the 4-byte prefix, the inline length is in the tag
 		// byte, and the tag test that tells them apart is already here.
 		g.usesStrIdx = true
@@ -6529,7 +6529,7 @@ func (g *generator) emitDataSections() {
 			}
 		}
 	}
-	// SSO inline strings ride in a 64-bit register and don't
+	// SSO inline strings are held in a 64-bit register and don't
 	// have a usable memory address until materialised. The
 	// __str_idx index helper spills inline values to this
 	// global scratch slot before computing `&scratch[1 + idx]`
@@ -8045,7 +8045,7 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	if ast.RcTrace {
-		// See the `i` event in emitRcIncRuntime for why no count rides
+		// See the `i` event in emitRcIncRuntime for why no count is passed
 		// along. rc_dec returns nothing, so unlike inc there is no rax
 		// to re-derive.
 		g.emit("xor edx, edx")
@@ -10781,7 +10781,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("jb .Lcrc32_tail")
 	g.emit("movdqa xmm5, xmmword ptr [rip + .Lcrc32_bswap]")
 	g.emit("movdqa xmm2, xmmword ptr [rip + .Lcrc32_k1]")
-	// A = bswap(first block) ^ (crc << 96); the CRC rides the top 32 bits.
+	// A = bswap(first block) ^ (crc << 96); the CRC occupies the top 32 bits.
 	g.emit("movdqu xmm0, xmmword ptr [rsi]")
 	g.emit("pshufb xmm0, xmm5")
 	g.emit("mov r11d, eax")
@@ -12564,7 +12564,7 @@ func (g *generator) emitWasmTimerPollableRuntime() {
 }
 
 // emitWasmPollRuntime emits `__fern_wasm_poll(pollables)` — on native there are
-// no real pollables (a timer pollable is -1 and native readiness rides poll(2)
+// no real pollables (a timer pollable is -1 and native readiness uses poll(2)
 // directly), so this returns -1 (nothing ready), ignoring its array arg. On wasm
 // this symbol is the real wasi:io/poll.poll(list<pollable>) multiplexer instead.
 func (g *generator) emitWasmPollRuntime() {

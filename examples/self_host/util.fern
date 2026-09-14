@@ -292,7 +292,7 @@ pub function base_type_name(t: string): string {
 // across irlower, parser and checker.
 //
 // Three sites keep their own spelling because their length guard differs and
-// the difference is load-bearing at the edge: is_enum_like_name reaches its
+// the difference matters at the edge: is_enum_like_name reaches its
 // check only past an empty-string early return, and the two Map-key/value
 // spelling checks guard on `> 2` and `> 0`.
 pub function is_tuple_type_name(t: string): boolean {

@@ -44,7 +44,7 @@ function main(): i32 {
 }`
 
 // TestSelfHostRcTupleRebindReclaimX86_64 — a rebound rc-tuple frees every chain it
-// supersedes AND its final value. allocs == frees is load-bearing: frees short of
+// supersedes AND its final value. allocs == frees is essential: frees short of
 // allocs is the leak this closes, frees ABOVE allocs would mean the assign-site
 // deep drop and the scope-exit sweep both claimed one chain (a double free).
 func TestSelfHostRcTupleRebindReclaimX86_64(t *testing.T) {

@@ -231,7 +231,7 @@ pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[]
 // self-host printed the one-liner instead and every such comment was re-emitted
 // above the NEXT declaration, where it documents the wrong thing (#6802).
 //
-// It rides beside Module for the reason TraitDecl does: 57 StructFieldDecl
+// It sits beside Module for the reason TraitDecl does: 57 StructFieldDecl
 // literals across the self-host would each have to carry a line none of them
 // reads.
 pub struct FieldLines { name: string, decl_line: i32, lines: i32[] }
@@ -301,7 +301,7 @@ function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: 
     return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
 }
 // e_unit_at builds the unit value `()`. Its payload is the constant 0 the
-// native compiler lowers its UnitLit to, and `()` rides along as the source
+// native compiler lowers its UnitLit to, and `()` is kept as the source
 // spelling so the printer writes the unit back rather than the decoded payload.
 function e_unit_at(line: i32, col: i32): ast.Expr {
     return ast.ExprNumber { text: "0", suffix: "", raw: "()", is_float: false, line: line, col: col };
@@ -1071,7 +1071,7 @@ pub function resolve_labels_module(mod: Module): Module {
 // `for VAR in EXPR { body }` iter being the motivating case
 // (`for x in a {}` must read `a` + an empty block, not the empty
 // struct literal `a {}`). Set true only around the iter parse and
-// restored afterward; it rides through advance() so it stays in
+// restored afterward; it is carried through advance() so it stays in
 // force for the whole iter sub-expression, matching the Go
 // parser's noStructLit (which likewise blocks nested struct lits
 // in the iter — `for x in f(Foo{…})` is rejected on both).
@@ -1995,7 +1995,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 if (p.peek_punct() == "{") {
                     match (base) {
                         ast.ExprIdent(bid) => {
-                            // The written instantiation rides on the literal's
+                            // The written instantiation is stored in the literal's
                             // type name under `-fmt`: dropping it re-infers the
                             // literal, so `Box[i64] { val: 42 }` came back as
                             // `Box { val: 42 }` and quietly became `Box[i32]`.
@@ -2194,7 +2194,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
             // Range-check a float literal where the token becomes a value, the
             // same point the Go parser hands the text to strconv.ParseFloat: a
             // magnitude f64 cannot hold is P002 on both engines, not a silent
-            // +Inf (#6842). The rejection rides an ExprUnknown, since the parser
+            // +Inf (#6842). The rejection uses an ExprUnknown, since the parser
             // has no error list, and still goes through parse_postfix so token
             // consumption is unchanged.
             // `-fmt` opts out (Par.verbatim): a reformat must return the text it
@@ -2602,7 +2602,7 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
 // zero_expr_for builds a throwaway value of scalar return-type `rt` for the
 // synthetic terminal return above.
 //
-// A 64-BIT integer width rides on the zero as a literal suffix. The value local
+// A 64-BIT integer width is carried on the zero as a literal suffix. The value local
 // is declared unannotated, so a bare `var v = 0` gives it an i32 slot and the
 // arm store `v = 5000000000i64` then has nowhere to go — the module bails with
 // "assignment to `…_r` from number literal". The narrower integer tags need no
@@ -2863,7 +2863,7 @@ function with_sugar_origin(st: ast.Stmt, origin: string): ast.Stmt {
 }
 
 // p_tuple_carrier wraps a nested tuple element's encoding in a Pattern so it
-// can ride on elem_pats. The variant fields are inert — elem_kinds says 4, and
+// can be stored in elem_pats. The variant fields are inert — elem_kinds says 4, and
 // only the tup_* fields are read back.
 function p_tuple_carrier(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): ast.Pattern {
     var no_extra: string[] = [];
@@ -4405,7 +4405,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
                 bn = bn + 1;
             } else if (bn == 0 && p.peek_punct() == "(") {
                 // A TUPLE sub-pattern in the slot (`Pr((a, b))`). Pattern has
-                // no tuple case, so the elements ride on PatVariant and
+                // no tuple case, so the elements are stored on PatVariant and
                 // build_merged_arm turns them into a tuple inner match.
                 var (tk, tb, tl, tpp, tp) = parse_tuple_arm_pattern(p);
                 p = tp;
@@ -4547,7 +4547,7 @@ function arm_is_nested(arm: ast.MatchArm): boolean {
 // notion of arm-position nesting at all.
 // arms_take_flag_chain reports whether this arm list wants the done-flag
 // chain: some arm carries a payload sub-pattern, and none carries a TUPLE
-// sub-pattern. A tuple slot rides build_merged_arm's own tuple branch, which
+// sub-pattern. A tuple slot uses build_merged_arm's own tuple branch, which
 // wrap_payload_pats does not reproduce, so those keep the merge — they are
 // single-slot by construction and the merge expresses them correctly.
 function arms_take_flag_chain(arms: ast.MatchArm[]): boolean {
@@ -5146,7 +5146,7 @@ pub function stmts_mention(stmts: ast.Stmt[], name: string): boolean {
 }
 
 // parse_loop_stmt parses `loop { body }` — the canonical infinite loop —
-// and desugars it to `while (true) { body }` so it rides the existing
+// and desugars it to `while (true) { body }` so it uses the existing
 // StmtWhile IR lowering (block/loop/br_if) with no new node or emitter
 // arm. Kept in its own function so parse_stmt (already very large) doesn't
 // grow — an oversized function miscompiles on the native backend (#2720).
@@ -5291,7 +5291,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     if (at_pattern_head(p)) {
         var fp_line: i32 = p.peek_line();
         var fp_col: i32 = p.peek_col();
-        // The `@` binding rides on the DESTRUCTURE, which already names the
+        // The `@` binding is carried on the DESTRUCTURE, which already names the
         // temp holding the whole value after it — so the element local stays
         // synthetic and the printer has one rule for every pattern header:
         // a `$forpat_` element whose first body statement destructures it.
@@ -5348,7 +5348,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     // `__range(LOW, HIGH)` call — the same parser-internal-builtin
     // idiom as `__set_index` / `__set_field`. The checker binds the
     // loop var to i32 and irlower lowers it to a counted loop; the
-    // call shape rides through constfold / substitution / printing
+    // call shape goes through constfold / substitution / printing
     // for free (LOW, HIGH are ordinary i32 sub-expressions). The
     // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
     // instead, which irlower lowers with a `<=` (closed-interval)
@@ -5552,7 +5552,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         }
         var lam: ast.Expr = e_lambda(fr_func.params, fr_func.ret_type, fr_func.body);
         // `-fmt` records which of the two spellings was written, the way a
-        // struct destructure rides on the same field ("@sd:…"): both parse to a
+        // struct destructure uses the same field ("@sd:…"): both parse to a
         // lambda-valued local, so without the marker a nested declaration came
         // back as `var f = (…) => { … };`.
         if (p.verbatim) { return (s_var_at(fr_func.name, "@fndecl", lam, fr_func.line, fr_func.col), p); }
@@ -6373,7 +6373,7 @@ function ret_spelling_is_array(name: string): boolean {
 
 // fn_ret_admitted is the single rule for which RESULT spellings a fn type keeps
 // in its `fn_ret` sidecar. `r_is_arr` says the result is itself an array, which
-// rides on the separate ret_arr bit.
+// is recorded in the separate ret_arr bit.
 //
 // Struct and nominal-enum returns let a fn value resolve `g().field` and let
 // monomorphize rewrite a nested `match (cont(tok))` (#3640, #4722). `string`
@@ -6422,7 +6422,7 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
     // its own shape pointer); op_dyn_dispatch enumerates every module
     // method of the called name over its struct/prim receivers, so a
     // method from ANY trait in the set lands on the concrete impl. The
-    // trait set rides along on the op for the one case the name-keyed
+    // trait set is carried on the op for the one case the name-keyed
     // search cannot answer alone: two traits providing one method for
     // one type, where the second provider is emitted as
     // `<Type>.<Trait>.<m>` and only the trait picks it out
@@ -6579,7 +6579,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     if (is_fn && !top_comma && !(top_arrow && p.peek_punct() == "=>")) {
         // `-fmt` keeps the parenthesised signature: `fn[]` names neither
         // what the element takes nor what it returns, and the parens are
-        // load-bearing — `(string) => string[]` re-parses as ONE function
+        // essential — `(string) => string[]` re-parses as ONE function
         // returning `string[]`, so `((string) => string)[]` must keep them.
         if (p.verbatim) { return consume_array_suffix(p, tbuf); }
         // The coarse tag drops the signature, so recover the RESULT spelling
@@ -6608,7 +6608,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
         // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
         // array of closures. Record ret_arr when R is itself an
         // array (`(T) => U[]`): the tag stays the plain "fn" all
-        // consumers expect, but the bit rides along so lower_func can
+        // consumers expect, but the bit is still recorded so lower_func can
         // admit `for y in f(x)` (flat_map) onto the IR path.
         var (fnr_name, fnr_ret_arr, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
         var r_is_arr: boolean = ret_spelling_is_array(rr_name);
@@ -6631,7 +6631,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
         // returns, so a reformatted `cmp: (T, T) => i32` would lose
         // both (#6773). `fnr_name` is "fn" plus any trailing `[]`, and
         // native prints an array-of-closures as `(T) => R[]` — so the
-        // suffix rides on the end here too.
+        // suffix goes on the end here too.
         if (p.verbatim) {
             return (tbuf + " => " + rr_name + slice_unchecked(fnr_name, 2, fnr_name.len()), r_is_arr, fn_ret_ty, fnr_p);
         }
@@ -6745,7 +6745,7 @@ function rest_starts_with_array_suffix(s: string, from: i32): boolean {
 // parser, which resolves `(i32)` to `i32` wherever it occurs (#8800): the
 // list `(i32), i32` writes `i32, i32`, a nested `Option[(i32)]` writes
 // `Option[i32]`, and `((i32) => i32)` writes `(i32) => i32`. The parens are
-// load-bearing — and kept — when the group is a tuple (a top-level comma), a
+// essential — and kept — when the group is a tuple (a top-level comma), a
 // function parameter list (a `=>` follows its `)`), or an array-of-closure
 // whose suffix a kept group stops splitting.
 function canonicalise_type_args(s: string): string {
@@ -6818,7 +6818,7 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
     // native ir/erase_str.go choke point. A view lowers to exactly the
     // string box shape, so normalizing here keeps every downstream
     // `== "string"` dispatch site working unchanged. View-ness the checker
-    // enforces rides the sidecars recorded before this erasure
+    // enforces depends on the sidecars recorded before this erasure
     // (StmtVar.is_str, FuncDecl.ret_str -> checker t_str, #7293; the E065
     // view-escape chase). A qualified
     // `str.Foo` keeps its nominal spelling (the dot-chain above already
@@ -7061,7 +7061,7 @@ pub function is_destr_marker(type_name: string): boolean {
 // native parser's parseParamPattern: the param becomes a holder of the
 // annotated type, and the returned ParamDestr carries the binding list the
 // caller prepends to the freshly-parsed body as an ordinary destructure
-// statement, so the whole feature rides the existing destructure lowering.
+// statement, so the whole feature uses the existing destructure lowering.
 // The holder is named by the `@` binder when one is written, else a synthetic
 // `__ptuple_<line>_<col>` uniqued by source position — the same name native
 // mints, so the two compilers stay in step.
@@ -7511,7 +7511,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // to a CONCRETE container (`some1__i64(x: i64): Option[i64]`) makes every
         // backend lower it via the existing container path, so the wasm module no
         // longer bails. The bare-scalar-param gate excludes `map`/`filter`
-        // (ARRAY params — the wide value rides an i32 array pointer, never trips
+        // (ARRAY params — the wide value is behind an i32 array pointer, never trips
         // the erased-wide gate, and promoting them would over-monomorphise the
         // stdlib). `x: T` is bindable from the call arg, so the clone's T resolves.
         //
@@ -7526,7 +7526,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // stranded).
         if (all_tp_count == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
         // (c-arr) the ARRAY-param sibling: `reverse[T](xs: T[]): T[]`. The note
-        // above excluded these on the grounds that a wide value "rides an i32
+        // above excluded these on the grounds that a wide value "is behind an i32
         // array pointer, never trips the erased-wide gate" — half of which was
         // wrong. Nothing wide is passed by value, so the gate never fired, but
         // the ELEMENT width is erased too, and on wasm32 the callee then copies
@@ -7852,7 +7852,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
             // Record-form variant `V { f: T, g: U }`. The payload fields keep the
             // positional `__ev` / `__ev<k>` marker names, so the layout and every
             // downstream `__ev` test match the positional form exactly; the written
-            // names ride alongside in variant_field_names for the checker, the
+            // names are also recorded in variant_field_names for the checker, the
             // printer, and the named-pattern resolution.
             p = p.advance();
             var rnum: i32 = 0;
@@ -7968,7 +7968,7 @@ function parse_pubuse(p: Par): (Import, Par) {
 // EXPR — so the rest of the pipeline + the emitter reuse the existing
 // function machinery, and a bare `NAME` reference becomes a call.
 function parse_const_decl(p: Par): (FuncDecl, Par) {
-    // The const's own position and an is_const marker ride the desugared
+    // The const's own position and an is_const marker are stored on the desugared
     // FuncDecl. Both are needed downstream: printer.print_module skips decls
     // with no source position (that is how `@derive`'s synthesised methods stay
     // out of the output), and without the marker a const is indistinguishable

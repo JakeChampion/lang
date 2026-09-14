@@ -8,7 +8,7 @@
 //   is_leaksafe_payload — which additionally refused an `Option[f32]` STRUCT
 //   FIELD the moment such a struct was constructed.
 //
-// f32 rides the same 8-byte slot as f64 here (elem_ty_is_f64slot), so the bound
+// f32 occupies the same 8-byte slot as f64 here (elem_ty_is_f64slot), so the bound
 // payload loads at 64 bits and marks f64. `f32` marks f32 ON TOP, which keys
 // "f32.<m>" dispatch — hence the to_string arms below: they read a value whose
 // f32 and f64 renderings DIFFER, so dropping that mark makes this case disagree

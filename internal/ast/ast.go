@@ -1268,7 +1268,7 @@ var RcFreeEnabled = true
 
 // RcReuseEnabled gates the constructor-reuse (FBIP) layer specifically — the
 // self-overwrite reuse (tryStructReuseOverwrite / tryEnumReuseOverwrite) AND
-// the general reuse token (computeReuseSources, threaded drop→alloc). It rides
+// the general reuse token (computeReuseSources, threaded drop→alloc). It builds
 // ON top of RcFreeEnabled (reuse only makes sense when freeing), but is a
 // SEPARATE axis so the differential gate can pin reuse-on == reuse-off
 // byte-identical OUTPUT — isolating a reuse bug from a plain free bug. Default
@@ -1295,13 +1295,13 @@ var EnumRcPayloads = true
 // output; the reclaim is the only effect. Rolled out per param-type category
 // (enums first — immutable, so the inc can't disturb the in-place-mutation
 // semantics the borrow model exists for); a borrow-inference optimization that
-// keeps read-only non-escaping params borrowed rides on top in a later slice.
+// keeps read-only non-escaping params borrowed is added on top in a later slice.
 // On; the differential gate pins on == off byte-identical, so the reclaim is
 // the only effect.
 var OwnedByDefault = true
 
 // BorrowInferEnabled (Slice 2 / borrow inference, docs/OWNERSHIP-INFERENCE-PLAN.md)
-// is the optimization that rides on top of OwnedByDefault: a parameter that the
+// is the optimization that builds on top of OwnedByDefault: a parameter that the
 // escape analysis (inferParamEscapes) proves does NOT escape the callee is kept
 // BORROWED instead of owned — the caller skips the retain inc and the callee
 // skips the exit dec, since the value can't outlive the call frame and the

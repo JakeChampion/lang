@@ -10,7 +10,7 @@ import (
 
 // ifLetIRCases pin `if let PAT = EXPR { then } else { else }` on the IR path.
 // The parser desugars `if let` to `match (EXPR) { PAT => { then }, _ => { else } }`
-// (parser.fern, s_match_origin origin "if_let"), so it rides the already-proven
+// (parser.fern, s_match_origin origin "if_let"), so it uses the already-proven
 // match IR machinery. The existing TestSelfHostIfLet* assert only exit codes,
 // which the legacy AST emitter also satisfies — so a silent regression that
 // kicked `if let` off the IR path would pass undetected. These cases close that

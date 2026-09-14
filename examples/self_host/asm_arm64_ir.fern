@@ -94,7 +94,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 22) { return "    sub x0, x0, x1\n"; }
     if (tag == 23) { return "    mul x0, x0, x1\n"; }
     // i32 signed division narrows its result back to 32 bits: the operands
-    // ride sign-extended in 64-bit regs, and the one quotient that overflows
+    // are held sign-extended in 64-bit regs, and the one quotient that overflows
     // i32 — INT_MIN / -1 = 2^31 — is representable in the 64-bit register, so
     // without the sxtw it stayed positive instead of wrapping to INT_MIN like
     // native, interp, and the x86 IR path's guarded div (#4329). sdiv itself
@@ -115,7 +115,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     // shifts used to emit the bare x-form, so a count >= 32 wrapped mod 64
     // instead of mod 32 (#4330). Mirror asm_ir.fern's fix: mask the count to 5
     // bits BUT keep the 64-bit shift, so the operand's slot extension is
-    // preserved — a u32 rides zero-extended (bit 63 = 0) and an i32
+    // preserved — a u32 is held zero-extended (bit 63 = 0) and an i32
     // sign-extended (bit 63 = bit 31), and `asr`/`lsr`/`lsl` on the full
     // register does the right thing for both. (A w-form `asr` would fill from
     // bit 31, corrupting a u32 `>>` — which lowers through shr_s — whose bit 31
@@ -951,7 +951,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 92 || o.kind_tag == 94 || o.kind_tag == 95) {  // arr_push, arr_push_i64, arr_push_f64
             // [arr, val] -> grown array. __fern_arr_push(x0=arr, x1=val) -> x0.
-            // arm64 array slots are 8 bytes, so i64/u64/f64 elements ride the SAME
+            // arm64 array slots are 8 bytes, so i64/u64/f64 elements use the SAME
             // helper (x1 holds the full 8-byte value); only wasm needs a distinct
             // 8-byte-stride push.
             s = s.mark_arr_push();
@@ -1260,7 +1260,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             }
         } else if (o.kind_tag == 221) {  // popcount
             // arm64's hardware popcount is SIMD-side: `cnt` counts per BYTE,
-            // `addv` sums the byte lanes. So the value rides through v0. A
+            // `addv` sums the byte lanes. So the value goes through v0. A
             // write to a SIMD register zeroes the lanes above it, so the
             // 32-bit form's `fmov s0, w0` leaves the upper four bytes zero and
             // the same 8-byte count serves both widths.
@@ -1420,12 +1420,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.need("wasm_pollable_drop");
         } else if (o.kind_tag == 191) {  // wasm_block
             // [p] -> __fern_wasm_block(x0=p) -> 0 (native shim; no pollable to wait
-            // on, a deadline rides poll(2)) in x0.
+            // on, a deadline uses poll(2)) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_block\n    str x0, [sp, #-16]!\n");
             s = s.need("wasm_block");
         } else if (o.kind_tag == 192) {  // wasm_poll
             // [pollables ptr] -> __fern_wasm_poll(x0=ptr) -> -1 (native shim; no
-            // real pollables, readiness rides poll(2)) in x0.
+            // real pollables, readiness uses poll(2)) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_poll\n    str x0, [sp, #-16]!\n");
             s = s.need("wasm_poll");
         } else if (o.kind_tag == 193) {  // tcp_connect
@@ -1933,7 +1933,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
         } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,
             // unlike struct_set). One 8-byte str for EVERY element kind (i32 / i64 /
-            // f64 / pointer all ride the operand stack as 8 bytes), so width is
+            // f64 / pointer all occupy 8 bytes on the operand stack), so width is
             // ignored here — only wasm distinguishes it. Tuple constructor-reuse writer.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(o.i32_imm * 8) + "]\n");
         } else if (o.kind_tag == 141) {  // struct_set_shape
@@ -2004,7 +2004,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // low 32 bits, so e.g. 1e12 wrapped instead of clamping (#4332).
             // Unsigned (`f64 as u32`): fcvtzu w0 saturates over [0, u32::MAX]
             // (NaN / negative -> 0), and the w-dest zero-extends into x0 — no
-            // sxtw, a u32 rides zero-extended.
+            // sxtw, a u32 is held zero-extended.
             if (o.unsigned) {
                 s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzu w0, d0\n    str x0, [sp, #-16]!\n");
             } else {
@@ -2491,7 +2491,7 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     // close_needs carries i32_lcm → i32_gcd, so marking lcm alone would
     // still emit gcd's body; both are marked for symmetry with the x86
     // pair in asm_ir.
-    // __fern_map_find's body rides the maps bundle; a call to it from
+    // __fern_map_find's body is in the maps bundle; a call to it from
     // __fern_map_delete's Fern body must pull that bundle in, since call_direct
     // does not imply a need.
     if (o.str == "__fern_map_find") { s = s.need("maps"); }
@@ -2716,7 +2716,7 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
     // .S label struct_make / dyn_dispatch use, so pointer identity
     // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
     // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
-    // value rides the operand stack (which __fern_alloc preserves)
+    // value stays on the operand stack (which __fern_alloc preserves)
     // across the alloc, so the hit path reloads it as the Some payload.
     s = s.mark_heap();
     var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
@@ -2774,7 +2774,7 @@ function emit_arm64_op_i32_to_f64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
     // conversions, so each case is one instruction: scvtf for signed,
     // ucvtf for unsigned, from a w-source at 32 bits and an x-source at
     // 64. The old unconditional `scvtf d0, x0` was right for i32 / u32 /
-    // i64 (the 32-bit cases ride the slot correctly extended) but read a
+    // i64 (the 32-bit cases are stored in the slot correctly extended) but read a
     // u64 >= 2^63 as negative — u64::MAX converted to -1.0 (#6051, the
     // register sibling of the wasm fix in #5992).
     if (o.width == 64) {
@@ -4015,7 +4015,7 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
         s = s.write(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop\n");
     }
     // __fern_wasm_block(x0 = p) -> 0: no native pollable to wait on (a deadline
-    // rides poll(2)'s timeout arg), so blocking is a 0 no-op. Portability shim
+    // uses poll(2)'s timeout arg), so blocking is a 0 no-op. Portability shim
     // for the reactor's with_deadline.
     if (s.has_need("wasm_block")) {
         s = s.write(".globl __fern_wasm_block\n");
@@ -4026,7 +4026,7 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
         s = s.write(".size __fern_wasm_block, .-__fern_wasm_block\n");
     }
     // __fern_wasm_poll(x0 = pollables) -> -1: no real native pollables (readiness
-    // rides poll(2) directly), so nothing is ready; ignores its array arg.
+    // uses poll(2) directly), so nothing is ready; ignores its array arg.
     // Portability shim for the wasm reactor's poll.
     if (s.has_need("wasm_poll")) {
         s = s.write(".globl __fern_wasm_poll\n");
@@ -4150,7 +4150,7 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
         // a fresh buffer, a Tier-2 op needing the raw-memory primitives.) str_trim
         // is also Fern now (rt_src_str_trim) but gated on its own str_trim need,
         // emitted in the migrated-helpers section below — a zero-copy slice, so it
-        // no longer rides the str_search bundle.
+        // no longer belongs to the str_search bundle.
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), s.struct_decls, s);
         // str_to_upper / str_to_lower are now Fern too (rt_src_str_to_upper/_lower
         // via the raw-memory intrinsics) but gated on their own str_case need,
@@ -4710,7 +4710,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // __fern_str_box(x0 = data, x1 = len) -> x0 = box (rc-HEADERED, #2649 Option A
     // A1b). Block = [rc=1@base, fused=0@base+4, data@base+8, len@base+16] (24B,
     // freelist class 3); box = base+8, so data@box+0 / len@box+8 are UNCHANGED
-    // (every string consumer is untouched) and rc@box-8 rides the SAME 32-bit rc
+    // (every string consumer is untouched) and rc@box-8 is the SAME 32-bit rc
     // word arrays use (__fn___fern_rc_is_unique / rc_inc read [ptr,#-8]). Freed by
     // the rc-aware __fn___fern_str_free at rc==1.
     //
@@ -6060,7 +6060,7 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 // the op site never learns which body it got: param[0] (cmd) is at [sp],
 // param[1] (args) at [sp, #16], param[2] (stdin) at [sp, #32] on entry.
 //
-// The ABI-identical syscalls ride darwinize's number remap (close 57→6,
+// The ABI-identical syscalls go through darwinize's number remap (close 57→6,
 // read 63→3, write 64→4, exit 93→1, dup3 24→dup2 90, execve 221→59,
 // wait4 260→7). The BSD WIFEXITED/WTERMSIG status encoding matches Linux, so
 // the decode below is the same one the Fern helper does.
@@ -6536,7 +6536,7 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = emit_rt_fs(s, darwin);
         // subprocess (#2649) is Fern on arm64 Linux and hand-written on Darwin
         // (see emit_rt_subprocess). Need-gated on BOTH legs: the hand-asm used to
-        // ride the bare `heap` gate, so every allocating program carried ~400
+        // be gated on the bare `heap` gate, so every allocating program carried ~400
         // instructions nothing branched to — the same unconditional emission the
         // Reader bodies had (#6921).
         if (s.has_need("subprocess")) {
@@ -9121,7 +9121,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     → getentropy (random_i32), nanosleep → select (sleep_ms), and
 //     the whole of subprocess, whose pipe() and fork() both report a
 //     second value in x1 that no __syscall* op can see. A THIRD
-//     shape rides the generic `__syscall3` op (#2649): its number is an
+//     shape uses the generic `__syscall3` op (#2649): its number is an
 //     operand rather than a literal, so the Fern runtime source bakes in
 //     the target's number and darwinize only rewrites the number
 //     register + trap — see the `ldr x8, [sp], #16` rule below. The

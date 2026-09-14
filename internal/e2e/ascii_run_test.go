@@ -18,7 +18,7 @@ import (
 // byte, a high byte exactly at `from`, a `from` past the end, and every offset
 // where a 16-byte block straddles the end of the string.
 //
-// Two contract differences from __memchr, both load-bearing and both swept
+// Two contract differences from __memchr, both essential and both swept
 // below:
 //   - it returns len(s), not -1, when the rest is ASCII, so a validator can
 //     write `i = __ascii_run(s, i)` as a branch-free skip;

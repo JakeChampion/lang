@@ -4850,7 +4850,7 @@ func (g *generator) emitRmemchrRuntime() {
 // puts `byte` in w2 — and the same frame, because emitStrDataPtr2W needs 16
 // bytes of scratch to spill an inline SSO string.
 //
-// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// No cursor, so no clamp. Both degenerate answers are actual counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
 func (g *generator) emitCountByteRuntime() {
@@ -6347,7 +6347,7 @@ func (g *generator) emitPutsRuntime() {
 		// Return the empty (data, len) pair — print's return
 		// value is unused by lang user code, so we just hand
 		// back a zero pair to keep the AAPCS64 return-shape
-		// honest. The caller's IR-side push (commit applies
+		// correct. The caller's IR-side push (commit applies
 		// returnIsString fan-out for two-word).
 		g.emit("mov x0, xzr")
 		g.emit("mov x1, xzr")
@@ -9080,7 +9080,7 @@ const (
 //     a persistent kqueue across calls would amortise the registration, but
 //     it needs somewhere to store that fd's lifetime, which this helper — a
 //     leaf function with no state — has no place for. Creating and closing
-//     one per call is the honest first version: correct, and slower than it
+//     one per call is the simple first version: correct, and slower than it
 //     eventually should be. See docs/ATLAS-PLATFORM-PLAN.md §2c.
 //
 //  3. EV_ERROR EVENTS ARE SKIPPED. A failed registration comes back as an
@@ -11232,7 +11232,7 @@ func (g *generator) emitChownAtRuntime() {
 // reports no error, so the answer is only trustworthy when it is SHORTER
 // than the buffer. PATH_MAX is the kernel's own bound on a stored link
 // target, so a full buffer means the target is longer than any path can
-// be and the honest answer is ENAMETOOLONG rather than a truncated one.
+// be and the correct answer is ENAMETOOLONG rather than a truncated one.
 func (g *generator) emitReadLinkRuntime() {
 	g.line("")
 	g.line(".global __fern_read_link")
@@ -17127,7 +17127,7 @@ func bitmaskImmOK(v int64) bool {
 // class, which is a different and much narrower test.
 //
 // The emitted form is the 64-bit register form the unfolded lowering already
-// uses: a non-negative constant rides zero-extended in x0 there, so folding it
+// uses: a non-negative constant is held zero-extended in x0 there, so folding it
 // as a 64-bit immediate reproduces the same bits.
 func aluImmForm(kind ir.OpKind, k int64) (string, bool) {
 	switch kind {
@@ -17234,7 +17234,7 @@ func (g *generator) tryFoldConstOperand(ops []ir.Op, i int, scope *[]irScope) (i
 			return 0, false
 		}
 		// A comparison feeding a branch keeps its fusion (#4378) — the
-		// immediate rides along instead of defeating it.
+		// immediate is folded in instead of defeating it.
 		if adv, ok := g.tryFuseCmpBranch(ops, i+1, scope, k, true); ok {
 			return 1 + adv, true
 		}
@@ -17729,7 +17729,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 
 	case ir.OpDrop:
 		// Width=WidthString drops a two-slot (data, len) pair that
-		// rides the operand stack under the two-word string ABI (the
+		// is held on the operand stack under the two-word string ABI (the
 		// shape __fern_str_inc / payloadLoadOpFor produce). Mirrors
 		// the wasm OpDrop branch. Set by the Map[K, string] set
 		// retain + by copyprop when it rewrites a dead OpStoreLocal
@@ -17800,7 +17800,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("eor x0, x1, x0")
 		g.push()
 	case ir.OpShl:
-		// Width matters: an i32 value rides zero-extended in the
+		// Width matters: an i32 value is held zero-extended in the
 		// low half of x0, so the w-form (`lsl w0, w1, w0`) masks
 		// the count to 0..31 and keeps the result in the i32 lane,
 		// while the x-form would mask to 0..63 — diverging from the
@@ -17815,7 +17815,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// `(u64::MAX >> 1)` at `0xFFFF…` instead of
 		// `0x7FFF…` because the sign bit propagates. Pick
 		// `lsr` (logical) for unsigned operands. Width matters
-		// for `asr`: a negative i32 rides zero-extended in x0
+		// for `asr`: a negative i32 is held zero-extended in x0
 		// (top 32 bits clear), so the x-form would read bit 63
 		// (= 0) as the sign and yield a logical-looking result.
 		// The w-form reads the real i32 sign bit (bit 31).
@@ -18689,7 +18689,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		// f64 transcendentals — arm64 has no hardware sin/cos/exp/log,
 		// so these call into the fdlibm runtime helpers
-		// (emitFloatTranscendentalsRuntime). The arg(s) ride the
+		// (emitFloatTranscendentalsRuntime). The arg(s) are held on the
 		// operand stack as bit patterns; move into d0 (and d1 for
 		// pow) per AAPCS64, call, read the result out of d0.
 		switch target {

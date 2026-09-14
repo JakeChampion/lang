@@ -139,12 +139,12 @@ func TestExportWasiHttpHandlerSetResponseComposes(t *testing.T) {
 	}
 }
 
-// TestExportWasiHttpHandlerServes is the running-server capstone
+// TestExportWasiHttpHandlerServes is the running-server final gate
 // (docs/WIT-BRING-YOUR-OWN.md): the bring-your-own wasi:http handler composed
 // above is served by `wasmtime serve` and answers a real HTTP request with the
 // 200 it set via response-outparam.set — end-to-end proof that a Fern program
 // implements wasi:http/incoming-handler from a user-supplied WIT, no embedded
-// HTTP world. This is the payoff of P6 Slice 6.
+// HTTP world. This is what P6 Slice 6 was for.
 func TestExportWasiHttpHandlerServes(t *testing.T) {
 	if got := serveHttpHandlerStatus(t, httpHandlerSetResponseProg); got != http.StatusOK {
 		t.Fatalf("status = %d; want 200", got)

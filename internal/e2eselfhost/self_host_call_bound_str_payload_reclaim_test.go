@@ -25,7 +25,7 @@ import (
 //
 // The distinction this file exists to pin is REFUSAL, not reclaim. Freeing a
 // non-fresh payload does not leak less — it DANGLES, which is the one outcome
-// worse than the leak being fixed. So the aliased rows below are as load-bearing
+// worse than the leak being fixed. So the aliased rows below are as essential
 // as the reclaiming ones, and each asserts the exit code against `fern -interp`
 // so a dangle shows up as a wrong answer rather than a quiet corruption.
 

@@ -136,7 +136,7 @@ function main(): i32 { var s: S = S { v: 3 }; return s.m(); }`},
 
 		// CONTROLS on the binding path itself. A declared type now enters the
 		// scope alongside the value, and the width / precision coercion it has
-		// always driven rides the same call.
+		// always driven goes through the same call.
 		{"i64-width-binding", `function main(): i32 { var x: i64 = 100000; var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
 		{"f32-precision-binding", `function main(): i32 { var f: f32 = 16777217.0; var g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
 		{"param-width-binding", `function wide(x: i64): i32 { var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; } function main(): i32 { return wide(100000); }`},

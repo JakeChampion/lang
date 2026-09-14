@@ -17,7 +17,7 @@ import (
 // The program is the cross-module ENUM case (mirroring
 // TestSelfHostIRPerModuleCrossEnum): module `col` constructs `Blue(7)`; the
 // entry `match`es it. That match lowers to a shape-pointer compare (variant_is),
-// so it is the load-bearing test for the arm64 shape-symbol SHARING this slice
+// so it is the essential test for the arm64 shape-symbol SHARING this slice
 // adds — each unit emits the enum variant's shape name as a `.weak` global
 // (__fern_shp_col__Blue), so the SAME variant constructed in `col` and compared
 // in the entry resolves to ONE linker-merged address and the match finds its

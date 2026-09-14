@@ -39,7 +39,7 @@ var p3FutureRoundtripCore = []byte{
 	0x77, 0x72, 0x03, 0x02, 0x73, 0x77, 0x04, 0x02, 0x73, 0x72,
 }
 
-// TestWasmP3FutureRoundtrip is the WASI Preview-3 `future<T>` payoff, assembled
+// TestWasmP3FutureRoundtrip is the WASI Preview-3 `future<T>` gate, assembled
 // through the Go composer (component.BuildFutureRoundtripComponent): a consumer
 // creates a `future<u32>`, writes a value through its writable end, reads it back
 // through its readable end (synchronously, since the write precedes the read in

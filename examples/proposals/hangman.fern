@@ -312,7 +312,7 @@ function test_a_finished_game_ignores_further_guesses(): test.TestOutcome {
 // order-sensitive — a list compared positionally, say — passes every
 // single-sequence test.
 //
-// "for a game that never ends" is load-bearing, and the first draft left it
+// "for a game that never ends" is essential, and the first draft left it
 // out and was wrong. Once a game terminates it stops accepting guesses, so a
 // sequence that wins early and one that wins late genuinely differ in how many
 // wrong guesses they recorded — order matters exactly as much as termination

@@ -1,7 +1,7 @@
 import "std/test";
 import "std/async";
 
-// examples/tests/async_combinators_test.fern — the blessed
+// examples/tests/async_combinators_test.fern — the supported
 // structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
 // `gather` / `race` / `with_deadline` combinators over `Future[T]`.
 //

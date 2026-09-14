@@ -22,7 +22,7 @@
 //     `+`→`.add()` rewrite has not run yet,
 //   * the method an array-method helper or an interposed collision provider was
 //     renamed away from (ts_kept_name), neither of which the syntax spells.
-// The collector rides astwalk's fold spine, so it reaches every Expr/Stmt
+// The collector uses astwalk's fold spine, so it reaches every Expr/Stmt
 // form the parser produces, and, unlike astwalk's capture analysis, does NOT
 // subtract lambda-local bindings — for reachability, keeping an extra
 // same-named function is harmless; dropping a referenced one is not.

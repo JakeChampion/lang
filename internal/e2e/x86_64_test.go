@@ -1250,7 +1250,7 @@ function main(): i32 { return outer("hello"); }`
 }
 
 // Mirror of TestArm64LambdaWithBodyLocals. Anonymous lambdas
-// used to drop the body's Var declarations on the floor: the
+// used to discard the body's Var declarations entirely: the
 // checker stored them against a throwaway synthetic FuncDecl
 // pointer that closureconv never re-keyed onto the hoisted
 // lambda, so lowerFunc would panic with "var X has no slot".

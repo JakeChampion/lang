@@ -5,7 +5,7 @@
 //   - Signed right-shift `>>` on a negative i32 must be an
 //     arithmetic (sign-propagating) shift. The x86-64 / arm64
 //     backends emitted a 64-bit `sar` / `asr` on a value that
-//     rides zero-extended in the register, reading bit 63 (= 0)
+//     is held zero-extended in the register, reading bit 63 (= 0)
 //     as the sign and producing a logical-shift result.
 //   - Runtime shift counts must be masked to the operand width
 //     (0..31 for i32, 0..63 for i64), the way every codegen

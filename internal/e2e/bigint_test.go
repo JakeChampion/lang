@@ -244,7 +244,7 @@ function main(): i32 {
 // hash — is what makes this test necessary rather than obvious: an empty impl
 // silently records that a type satisfies a trait, so a signature that drifted
 // out of line with the trait would fail here and nowhere else. `cmp.sort` over
-// a BigInt[] is the load-bearing case; it only works if `cmp` really returns
+// a BigInt[] is the essential case; it only works if `cmp` really returns
 // the -1/0/1 that std/sort expects.
 func TestX86_64BigIntTraits(t *testing.T) {
 	src := `import "core/bigint";

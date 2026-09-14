@@ -4,7 +4,7 @@
 // rendered correctly. Two spellings of one value disagreeing.
 //
 // `is_float_array_type_name` deliberately maps BOTH `f64[]` and `f32[]` onto
-// is_f64arr, because an f32 rides the same 8-byte slot and stride here. That
+// is_f64arr, because an f32 uses the same 8-byte slot and stride here. That
 // sharing is right for storage — the stored element IS f32-rounded, only the
 // rendering was wrong — but it left an element read unable to tell the two
 // apart. is_f32arr is the DISPATCH-ONLY overlay that restores the distinction,

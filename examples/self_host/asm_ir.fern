@@ -122,7 +122,7 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
 // timerfd_create then timerfd_settime over an itimerspec in __fern_scratch.
 
 // emit_ir_wasm_timer_pollable appends __fern_wasm_timer_pollable(ns) -> -1: on
-// native there's no pollable (a deadline rides poll(2)'s timeout arg), so it
+// native there's no pollable (a deadline uses poll(2)'s timeout arg), so it
 // returns -1 (an fd poll(2) ignores). Portability shim for with_deadline.
 function emit_ir_wasm_timer_pollable(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_wasm_timer_pollable:\n");
@@ -143,7 +143,7 @@ function emit_ir_wasm_pollable_drop(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // emit_ir_wasm_block appends __fern_wasm_block(p) -> 0: on native there's no
-// pollable to wait on (a deadline rides poll(2)'s timeout arg — wasm_timer_pollable
+// pollable to wait on (a deadline uses poll(2)'s timeout arg — wasm_timer_pollable
 // returned -1), so blocking is a 0 no-op. On wasm this is a real
 // wasi:io/poll.[method]pollable.block. Portability shim for the reactor's
 // with_deadline.
@@ -155,7 +155,7 @@ function emit_ir_wasm_block(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // emit_ir_wasm_poll appends __fern_wasm_poll(pollables) -> -1: on native there
-// are no real pollables (readiness rides poll(2) directly), so it returns -1
+// are no real pollables (readiness uses poll(2) directly), so it returns -1
 // (nothing ready), ignoring its array arg. On wasm this is the real
 // wasi:io/poll.poll(list<pollable>) multiplexer.
 function emit_ir_wasm_poll(s: asmcore.EmitState): asmcore.EmitState {
@@ -346,7 +346,7 @@ function leak_check_on(): boolean {
 // clean run stays silent of `fern-sanitizer:` lines, so "was this clean" is
 // answerable without reading the census numbers.
 //
-// One gap versus the native backend, an honest subset rather than
+// One gap versus the native backend, a declared subset rather than
 // silently-different behaviour:
 //
 //   - No backtrace under the report. Native routes through __fern_report,
@@ -1984,7 +1984,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Option A). Block = [rc=1@base, fused=0@base+4, data@base+8, len@base+16]
     // (24 bytes, freelist class 3); box = base+8, so data@box+0 / len@box+8
     // (byte-identical to the old raw-16 layout, so every string CONSUMER —
-    // len/index/slice/concat/eq — is unchanged) and rc@box-8 rides the SAME rc word
+    // len/index/slice/concat/eq — is unchanged) and rc@box-8 uses the SAME rc word
     // as arrays (__fern_rc_inc / __fn___fern_rc_is_unique read -8(ptr)). Freed by the
     // rc-aware __fern_str_free at rc==1.
     //
@@ -3903,7 +3903,7 @@ function ir_div_guarded(tag: i32, width: i32, lb: string): string {
         s = s + lb + "_z0:\n    xorl %eax, %eax\n";
     }
     s = s + lb + "_dn:\n";
-    // An i32 result rides sign-extended in its 64-bit slot.
+    // An i32 result is stored sign-extended in its 64-bit slot.
     if (width != 64) { s = s + "    cltq\n"; }
     return s;
 }
@@ -3964,7 +3964,7 @@ function ir_div_const(tag: i32, width: i32, k: i64): string {
     var w64: boolean = (width == 64);
     var uns: boolean = (tag == 25 || tag == 27);
     var body: string = ir_div_const_body(w64, uns, tag == 26 || tag == 27, k);
-    // An i32 result rides sign-extended in its 64-bit slot; the l-forms
+    // An i32 result is stored sign-extended in its 64-bit slot; the l-forms
     // zero-extend, which is already the u32 convention.
     if (!w64 && !uns) { body = body + "    cltq\n"; }
     return body;
@@ -4481,7 +4481,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // Cursor as an INDEX in %rdx, count in %r10, so the whole body stays
         // inside the five registers this backend has free.
         //
-        // No cursor to clamp: both degenerate answers are honest counts
+        // No cursor to clamp: both degenerate answers are accurate counts
         // rather than sentinels.
         var clo: asmcore.LabelOut = asmcore.fresh_label(s);
         var c_vec: string = clo.name;
@@ -4832,7 +4832,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
     //
     // Read `.kind` off the bound Op struct INLINE rather than via a `var dk:
     // string = ...kind` local: a named string local aliasing a struct field and
-    // dec'd at each loop-iteration boundary rides arm64's deferred native heap-
+    // dec'd at each loop-iteration boundary takes arm64's deferred native heap-
     // string reclamation path (RC-PERCEUS slice 5g), which over-releases under
     // allocation pressure and crashed the arm64-compiled driver. The inline read
     // (matching the op-emission loop below, which never binds `.kind` to its own
@@ -4916,7 +4916,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
         } else if (o.kind_tag == 2) {  // const_i32_text
             // Integer literal source text spliced into the immediate (hex /
             // full u32 range): the assembler handles the base and the
-            // unsigned range, so a value past imm32 rides `movq`'s promotion
+            // unsigned range, so a value past imm32 uses `movq`'s promotion
             // to movabsq.
             s = emit_const_text_push(s, o.str, "movq");
         } else if (o.kind_tag == 3) {  // const_i64
@@ -4948,7 +4948,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 92 || o.kind_tag == 94 || o.kind_tag == 95) {  // arr_push, arr_push_i64, arr_push_f64
             // [arr, val] -> grown array. __fern_arr_push(%rdi=arr, %rsi=val). Every
-            // array slot is 8 bytes here, so the i64/u64/f64 element rides the SAME
+            // array slot is 8 bytes here, so the i64/u64/f64 element uses the SAME
             // helper (the popped operand-stack slot already holds the full 8-byte
             // value); only wasm needs a distinct 8-byte-stride push.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push\n    pushq %rax\n");
@@ -4956,7 +4956,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
         } else if (o.kind_tag == 93 || o.kind_tag == 302 || o.kind_tag == 303) {  // arr_push_owned, arr_push_owned_i64, arr_push_owned_f64
             // Sole-owner self-append (irlower's !aliased `a = a.append(v)`):
             // __fern_arr_push_owned reclaims the old buffer on a grow-realloc.
-            // The 8-byte element rides the same helper, as arr_push_i64 does.
+            // The 8-byte element uses the same helper, as arr_push_i64 does.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push_owned\n    pushq %rax\n");
             s = s.mark_arr_push(); s = s.need("arr_push_owned");
         } else if (o.kind_tag == 77) {  // alloc_u8
@@ -5306,12 +5306,12 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.need("wasm_pollable_drop");
         } else if (o.kind_tag == 191) {  // wasm_block
             // [p]; __fern_wasm_block(%rdi=p) -> 0 on native (no pollable to wait
-            // on; a deadline rides poll(2)). Push the 0 result.
+            // on; a deadline uses poll(2)). Push the 0 result.
             s = s.write("    popq %rdi\n    call __fern_wasm_block\n    pushq %rax\n");
             s = s.need("wasm_block");
         } else if (o.kind_tag == 192) {  // wasm_poll
             // [pollables ptr]; __fern_wasm_poll(%rdi=ptr) -> -1 on native (no real
-            // pollables; readiness rides poll(2)). Push the -1 result.
+            // pollables; readiness uses poll(2)). Push the -1 result.
             s = s.write("    popq %rdi\n    call __fern_wasm_poll\n    pushq %rax\n");
             s = s.need("wasm_poll");
         } else if (o.kind_tag == 193) {  // tcp_connect
@@ -5761,7 +5761,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // [n] -> sys_exit(n). Never returns; the pushed dummy keeps the
             // operand-stack shape for the statement-level drop.
             // exit() bypasses _start's epilogue, so the leak summary reports
-            // here too (#6068) — the exit code rides the stack across the call.
+            // here too (#6068) — the exit code is held on the stack across the call.
             if (leak_check_on()) {
                 s = s.write("    popq %rdi\n    pushq %rdi\n    call __fern_lc_report\n    popq %rdi\n");
                 s = s.write("    movq $60, %rax\n    syscall\n    pushq $0\n");
@@ -5878,7 +5878,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
         } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,
             // unlike struct_set). One 8-byte movq for EVERY element kind (i32 / i64
-            // / f64 / pointer all ride the operand stack as 8 bytes), so width is
+            // / f64 / pointer all occupy the operand stack as 8 bytes), so width is
             // ignored here — only wasm distinguishes it. Tuple constructor-reuse writer.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string(o.i32_imm * 8) + "(%rax)\n");
         } else if (o.kind_tag == 141) {  // struct_set_shape
@@ -6035,7 +6035,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
     // one-past-the-last op index (`ops.len()`) lands here — the function exit.
     // In a well-formed op stream every opener has an explicit `end` before the
     // body ends, so no bare `.Lir_*` reference ever reaches `ops.len()` and this
-    // label is a harmless no-op. It becomes load-bearing only when a scope is
+    // label is a harmless no-op. It becomes essential only when a scope is
     // left unterminated (a br/if to a block whose `end` is missing): `find_matching_end`
     // then walks off the end and returns `ops.len()`, and WITHOUT this definition
     // the emitted asm carries a dangling `.Lir_<fn>_<len>` reference that fails at
@@ -6675,7 +6675,7 @@ function emit_ir_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.EmitSt
     // (the SAME .S label struct_make / dyn_dispatch use, so pointer
     // identity holds): equal → Some(value) box [tag0@0, payload@8]; else
     // → None box [tag1@0, 0@8] — the ordinary Option box `match` reads.
-    // The dyn value rides the machine stack across __fern_alloc (like
+    // The dyn value is held on the machine stack across __fern_alloc (like
     // opt_make/dyn_box), so the hit path reuses it as the Some payload.
     var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
     s = dcl.state;
@@ -6978,7 +6978,7 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
     while (ni < s.needed.len()) {
         var nd: string = s.needed[ni];
         // struct_arr_elems_drop: must be checked BEFORE struct_drop: (the former is not
-        // a prefix of the latter, but both start distinctly — order is not load-bearing,
+        // a prefix of the latter, but both start distinctly — order is not required,
         // yet keep the more specific longer key first for clarity). Each emitter records
         // its own transitive needs (arr_elems -> struct_drop), absorbed by this index-
         // driven loop.
@@ -8436,7 +8436,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (asmcore.has_main(mod)) {
             s = s.write("    call __fn_main\n");
             // Leak summary before the exit syscall (#6068). main's return value
-            // is the exit code and is still in %rax, so it rides the stack
+            // is the exit code and is still in %rax, so it is held on the stack
             // across the call rather than relying on a register contract.
             if (leak_check_on()) {
                 s = s.write("    pushq %rax\n");

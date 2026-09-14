@@ -18,7 +18,7 @@ import (
 // associated `from` exists, rewrites the failure path to `Err(E2.from(e))`
 // (mirroring the native checker's tryConvertErrViaFrom desugar).
 //
-// The `err-converts*` cases are the load-bearing ones: `read(0)` yields
+// The `err-converts*` cases are the essential ones: `read(0)` yields
 // `Err(IoErr{42})`; the convert wraps it to `AppErr{42+50}` = 92, so the
 // handler reads e.code == 92. The pre-fix forward-the-box behaviour would
 // surface the un-converted IoErr{42} (e.code == 42) — so 92-vs-42 is a direct

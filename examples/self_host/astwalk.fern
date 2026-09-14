@@ -446,7 +446,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // visitor's acc through them, returning handled=false.
 //
 // CHILD ORDER IS CONTRACT here, not an implementation detail: consumers name
-// hoisted helpers `$cloN` / `$wrapN` / `$iifeN` from a counter riding the
+// hoisted helpers `$cloN` / `$wrapN` / `$iifeN` from a counter held in the
 // accumulator, so the visit order is baked into emitted symbol names and the
 // fixpoint's byte-identity with them. The order is source order — a statement's
 // own expressions before its child blocks (if: cond, then, else; match:
@@ -457,7 +457,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // StructLit field_values then base, MapLit key before value per entry.
 //
 // Statements are rebuilt, never replaced, on map_stmt's terms: a declined
-// statement is rebuilt with a functional update, so line / sugar / origin ride
+// statement is rebuilt with a functional update, so line / sugar / origin pass
 // through untouched, and a claiming visitor is expected to hand back the same
 // statement kind it was shown.
 //
@@ -466,7 +466,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // the parser promote `T` to the monomorphiser, and the per-module emit path
 // runs no monomorphiser at all — the un-cloned template reaches the unit emit
 // and fails IR verify. A bare tuple keeps `T` ERASED, the same single-compile
-// treatment the fold spine gets, so the spine rides every path fold does.
+// treatment the fold spine gets, so the spine takes every path fold does.
 // Like the fold's `T`, an accumulator must be pointer-shaped or i32 — an
 // erased slot cannot carry a bare wide scalar.
 //
@@ -864,7 +864,7 @@ pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): strin
 // (`FERN_STRICT_IR: function value n not defined`) on a program native
 // compiles and runs.
 pub function subst_ident_expr(e: ast.Expr, from: string, to: string): ast.Expr {
-    // Nested so the rename pair rides the closure rather than an extra
+    // Nested so the rename pair is captured by the closure rather than an extra
     // parameter on every recursive call — the same spelling the fold's
     // consumers use.
     function subst_one(x: ast.Expr): ast.Expr {

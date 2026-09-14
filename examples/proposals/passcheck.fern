@@ -15,7 +15,7 @@
 // next binary digit is a 1. Twenty iterations give far more precision than the
 // three digits reported.
 //
-// That makes the load-bearing test a numeric one with a real oracle: at every
+// That makes the essential test a numeric one with a real oracle: at every
 // exact power of two the answer must be exact (1000k, no rounding slop), and
 // across a swept range it must agree with independently computed reference
 // values to within a thousandth. A fixed-point routine that is merely
@@ -299,7 +299,7 @@ function test_structure_scores_below_the_same_characters_unstructured(): test.Te
 // that makes length advice worth giving, and the one a penalty applied
 // carelessly can invert.
 //
-// "no added structure" is load-bearing and the first draft got it wrong: the
+// "no added structure" is essential and the first draft got it wrong: the
 // pad string was "wfpgjluyzxkvmn", whose "yz" is a consecutive pair, so
 // appending the z was a PREDICTABLE position and the entropy correctly did not
 // move. The fix is a pad in which no adjacent characters are equal or

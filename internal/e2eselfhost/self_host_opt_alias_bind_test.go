@@ -110,7 +110,7 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 68, balance: true,
 		},
 		{
-			// Only the SOURCE is matched: the alias rides the consuming-match
+			// Only the SOURCE is matched: the alias depends on the consuming-match
 			// family's own gate, not the unmatched one. Clean before and after.
 			name: "arr_source_matched",
 			src: `function round(i: i32): i32 {

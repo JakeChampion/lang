@@ -12,7 +12,7 @@
 // Both read as correct under a bump allocator and for SHORT call chains: a
 // freed-then-immediately-reused block still holds its old bytes. Four calls is
 // where the freelist hands the block to something else and the length goes
-// wrong, so the repetition below is load-bearing — two calls passed while the
+// wrong, so the repetition below is required — two calls passed while the
 // bug was live.
 function wr_direct(own buf: i32[], at: i32, w: i32): i32[] {
     return buf.with(at, w);

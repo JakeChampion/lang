@@ -1291,7 +1291,7 @@ func (inv invocation) snapshotFollowFiles(t *testing.T) func() {
 
 // readUpTo reads at most limit bytes from r, calling onData with the running
 // total after each chunk arrives, and gives up at followDeadline. The total
-// is the caller's only honest view of how much has arrived — a callback that
+// is the caller's only accurate view of how much has arrived — a callback that
 // tracks its own accumulator cannot see what readUpTo has already buffered.
 // The deadline is what keeps a child that has stopped writing without exiting
 // — a `tail -f` with nothing left to write — from blocking the whole package

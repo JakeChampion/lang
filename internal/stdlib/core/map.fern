@@ -170,7 +170,7 @@ function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
 
 // __map_seed reads the kv buffer's per-map hash seed (at +16).
 //
-// ZERO MEANS UNSEEDED, and that convention is load-bearing in two
+// ZERO MEANS UNSEEDED, and that convention is relied on in two
 // places: it makes an unseeded map hash byte-identically to the
 // pre-#6194 implementation (__map_fnv_str_seeded's basis is the FNV
 // offset basis XOR the seed), and it is what lets __map_bucket_hash
@@ -205,7 +205,7 @@ function __map_seed(buf: usize): i32 {
 // 32-bit param reinterpreted as a pointer, which truncated the
 // high 32 bits once the heap crossed 4 GiB (arm64-darwin). They
 // are dead since #5052 moved every non-scalar key onto its own
-// honest `usize`-param adapter (__map_hash_str / __map_hash_wide,
+// properly typed `usize`-param adapter (__map_hash_str / __map_hash_wide,
 // below), so no caller passes keyKind 1 / 2 here anymore. Removing
 // them is the "future PR can flip this" the old doc anticipated,
 // and it clears the last `i32 as string` reinterpret in the

@@ -744,7 +744,7 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // arm's own list does not carry), and each named pointer binding is confined to
 // its arm's guard and body.
 //
-// The countedness condition is what keeps the outer join's DEEP drop honest:
+// The countedness condition is what keeps the outer join's DEEP drop correct:
 // that drop reaches the inner box through the instantiation's generated
 // __drop_enum_, which releases the inner payloads, so the inner enum must have
 // taken a reference to them. Only an EnumRcPayloads-eligible construction does

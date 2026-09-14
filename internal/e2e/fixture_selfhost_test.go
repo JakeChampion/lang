@@ -142,7 +142,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 		// PrintMainResult); the self-host emit has no equivalent. The x86-64 leg has
 		// no such blind spot, which is half of why it exists.
 		//
-		// This distinction is load-bearing, and getting it wrong in both
+		// This distinction is essential, and getting it wrong in both
 		// directions is easy. The first run of this leg reported 26 mismatches;
 		// 14 were only the clamp — including nine regex fixtures whose expected
 		// 255 is a feature bitmask, which read as a broken regex engine and was
@@ -437,7 +437,7 @@ type selfHostRun struct {
 // fixtures burned ~83s each before dying, and the held-back arm64 leg (see the
 // file header) hit its 43m lane wall two thirds through the corpus — a red lane
 // that could not report what else was red. Generous enough (20s,
-// ~100x the slowest honest fixture) that a slow qemu start is never mistaken for
+// ~100x the slowest normal fixture) that a slow qemu start is never mistaken for
 // a hang.
 const selfHostRunTimeout = 20 * time.Second
 

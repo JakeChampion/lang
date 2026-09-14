@@ -27,7 +27,7 @@ import (
 //
 // The flat cases RETURN THE MEASURED BYTES PER ROUND (clamped at 95) rather
 // than a boolean verdict, so a regression reports its own size: pre-fix the
-// headline case exits 40, post-fix 0. 99 = rc over-release, 97 = the two churns
+// main case exits 40, post-fix 0. 99 = rc over-release, 97 = the two churns
 // disagreed (a value was corrupted), 96 = wrong answer.
 //
 // The gate cases must NOT move: a bare-ident STRUCT alias, a non-strict-fresh
@@ -45,7 +45,7 @@ var dynCallReclaimCases = []struct {
 	src  string
 	exit int
 }{
-	// The headline shape. `mk` is strict-fresh (its only return is a fresh
+	// The main shape. `mk` is strict-fresh (its only return is a fresh
 	// struct literal), so its result is this frame's rc==1 box — the same
 	// standing the literal init has.
 	{"call-result-scalar-concrete", `trait Shape { function area(self: Self): i32; }

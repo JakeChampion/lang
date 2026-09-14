@@ -64,7 +64,7 @@ type tupStrElemCase struct {
 func tupStrElemCases() []tupStrElemCase {
 	return []tupStrElemCase{
 		{
-			// The headline shape.
+			// The main shape.
 			name: "str_elem",
 			src: tupStrElemW + `function round(i: i32): i32 {
     var s: string = w("ab");
@@ -215,7 +215,7 @@ func TestSelfHostTupleStrElemRetainX86_64(t *testing.T) {
 // direction and the same trade the array limb makes. A wrongly-GRANTED credit
 // here is a freed-then-read string, not a number.
 //
-// The underflow check is the load-bearing part. Without it every case below
+// The underflow check is the essential part. Without it every case below
 // passes against a compiler that over-releases: a doubly-released block goes back
 // to the freelist and the arithmetic still comes out right.
 //

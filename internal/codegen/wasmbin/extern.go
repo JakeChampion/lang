@@ -1244,7 +1244,7 @@ func appendVariantParamPayloadI64(body []byte, slot uint32, vs []ir.ExternEnumVa
 // slot's valtype: the matching arm pushes its field j loaded from the field's box
 // offset and coerced to the slot type, or the slot's zero if the arm has fewer
 // than j+1 fields (padding). The coercion is byte-preserving: a field whose
-// natural width matches the slot loads directly (an f32 field rides an i32 slot
+// natural width matches the slot loads directly (an f32 field occupies an i32 slot
 // as its raw bits, an f64 an i64); a 32-bit field under an i64 slot zero-extends.
 func appendVariantParamMultiField(body []byte, slot uint32, ep *ir.ExternEnumParam) []byte {
 	n := len(ep.Variants)

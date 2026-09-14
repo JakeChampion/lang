@@ -99,7 +99,7 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"range-body-if", "function main(): i32 { var c = 0; for i in 0..10 { if (i > 4) { c = c + 1; } } return c; }", 5},
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
 		// `loop { }` infinite loop (closes #2676 loop-form, self-host IR slice):
-		// desugars to `while (true)`, so it rides the existing StmtWhile lowering
+		// desugars to `while (true)`, so it uses the existing StmtWhile lowering
 		// (block/loop/br_if) — break/continue work as in any while loop.
 		{"loop-break", "function main(): i32 { var i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
 		{"loop-continue", "function main(): i32 { var i = 0; var s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
@@ -274,7 +274,7 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// The `store_local 0 ; load_local 0` pair this golden used to carry is GONE
 		// (#6638): ir.fuse_tee collapses it to a `tee_local 0`, and then
 		// ir.propagate_copies drops that tee outright because nothing else touches
-		// the slot — the write is dead and the value rides the operand stack into
+		// the slot — the write is dead and the value stays on the operand stack into
 		// the mul. So this pins both passes on the real lowering path alongside the
 		// fold's. A slot the RC sweeps read would keep its tee; an i32 is not swept.
 		const wantScale = "const_i32 5\n" +

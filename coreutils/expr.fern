@@ -20,7 +20,7 @@
 // to the diagnostics, because expr prints glibc's regerror text.
 //
 // Two shapes here are GNU's rather than anything a fresh design would
-// pick, and both are load-bearing:
+// pick, and both are essential:
 //
 //   - `--help` and `--version` are honoured only as the SOLE argument,
 //     by unique prefix (`expr --hel` prints the help, `expr --help x`

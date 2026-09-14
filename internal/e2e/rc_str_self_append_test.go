@@ -6,7 +6,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// #5637 option 3 — end-to-end payoff and safety of the in-place string
+// #5637 option 3 — end-to-end benefit and safety of the in-place string
 // self-append (`s = s + piece` → __fern_str_append). The LOWERING decision is
 // pinned target-independently in internal/ir/rc_str_self_append_test.go; these
 // pin what the emitted runtime actually does.

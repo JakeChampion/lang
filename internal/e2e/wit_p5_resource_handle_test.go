@@ -367,7 +367,7 @@ function main(): i32 {
 	}
 }
 
-// TestExternResourceHandleAutoDrop is the P5 slice-3 headline gate
+// TestExternResourceHandleAutoDrop is the P5 slice-3 main gate
 // (docs/WIT-BRING-YOUR-OWN.md): AUTOMATIC drop. The program declares NO drop
 // function — it just lets an owned `own Pollable` go out of scope. The compiler
 // inserts `defer <drop>(p);`, synthesizes the `[resource-drop]pollable` import,

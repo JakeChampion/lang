@@ -36,8 +36,8 @@
 
 pub struct TokEof { line: i32, col: i32 }
 // `raw` is the source spelling of a quoted literal — `'x'` / `b'x'`,
-// which reach the parser AS number tokens: the decoded value rides
-// `text` as a decimal numeral and the type rides `suffix` ("char" /
+// which reach the parser AS number tokens: the decoded value is stored in
+// `text` as a decimal numeral and the type is stored in `suffix` ("char" /
 // "u8"), so every consumer of a suffixed integer literal handles them
 // unchanged. Empty for an ordinary number, where `text` already is the
 // spelling. The printer re-emits `raw` so an author's escape survives
@@ -51,7 +51,7 @@ pub struct TokString { value: string, line: i32, col: i32 }
 // string, bare `0x`, unexpected character, …) as a first-class
 // token rather than being reported as EOF. The Go lexer returns a
 // `*lexer.Error` through a side channel; Fern has no exception /
-// multi-return-with-error idiom in this port, so the error rides
+// multi-return-with-error idiom in this port, so the error is carried in
 // the token stream and `tokenize` stops at the first one. Parser
 // consumers already fall through these via their `_` match arms.
 pub struct TokError { msg: string, line: i32, col: i32 }
@@ -197,7 +197,7 @@ function comment_tok(line: i32, col: i32, text: string): Comment {
     return Comment { line: line, col: col, text: text };
 }
 
-// Comments ride beside the tokens rather than becoming a token kind, so the
+// Comments are returned alongside the tokens rather than becoming a token kind, so the
 // parser stays grammar-only — same split as the Go lexer's Tokenize.
 pub struct LexResult { tokens: Token[], comments: Comment[] }
 

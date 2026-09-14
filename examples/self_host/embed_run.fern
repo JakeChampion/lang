@@ -28,7 +28,7 @@ function tree(): string {
     match (write_file(dir + "/z.txt", "ZZZ")) { Ok(u) => { }, Err(e) => { return ""; } }
     match (write_file(dir + "/a.txt", "AAA")) { Ok(u) => { }, Err(e) => { return ""; } }
     match (write_file(dir + "/sub/b.txt", "BB")) { Ok(u) => { }, Err(e) => { return ""; } }
-    // The load-bearing asset. An interior NUL and a byte past 0x7f are what a
+    // The essential asset. An interior NUL and a byte past 0x7f are what a
     // real bundle carries — an image, a font, a wasm module — and `read_file`
     // refuses the second of those outright, so a walk built on it embeds text
     // and rejects every directory holding anything else.

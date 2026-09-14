@@ -304,7 +304,7 @@ function main(): i32 {
 			body = body[:len(helper)+1+j]
 		}
 		// The below-heap guard computes 0x1000_0000 as 1 << 28 and skips
-		// anything lower. `lsl ... #28` is the load-bearing instruction;
+		// anything lower. `lsl ... #28` is the essential instruction;
 		// a regression to the old `#0x10000`-only guard drops it.
 		if !strings.Contains(body, "#28") {
 			t.Errorf("%s is missing the below-heap guard (no `lsl … #28` heap-base computation):\n%s", helper, body)

@@ -821,7 +821,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	// (free the elements only when this drop frees the buffer, i.e. the sole
 	// owner), then rc_dec's each element before the buffer dec.
 	//
-	// The binding is REASSIGNED, and that is load-bearing rather than
+	// The binding is REASSIGNED, and that is essential rather than
 	// incidental. With a single `var h = ...`, the reclaim this asserts on is
 	// the rebind over h's slot while that slot still holds its prologue zero —
 	// `is_unique(null)` is 0 on every path, so ir.fern's prune_zero_slot_guards

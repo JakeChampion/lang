@@ -146,7 +146,7 @@ function main(): i32 {
 		// connection, so the listener fd is deterministically read-ready and
 		// the only correct answer is its index. A stub returns -1 → exit 99.
 		//
-		// The leading -1 in the fd set is load-bearing, not padding. poll(2)
+		// The leading -1 in the fd set is essential, not padding. poll(2)
 		// ignores a negative fd by contract and std/tcp relies on that —
 		// it puts wasm_timer_pollable(...), which is -1 on native, straight
 		// into the set. kevent(2) does NOT ignore one; it fails that

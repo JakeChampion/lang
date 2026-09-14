@@ -44,7 +44,7 @@
 // Same stance as verifystack.go, for the same reason: a verifier that
 // reports a false problem gets switched off. A site whose shape this
 // pass does not recognise is SKIPPED and counted, never reported. The
-// count is the honest signal — an emitter that grows a new reuse shape
+// count is the reliable signal — an emitter that grows a new reuse shape
 // shows up as a coverage regression rather than as a spurious failure,
 // and it is per SITE rather than per function, so one unfamiliar shape
 // does not blind the pass to the familiar sites around it.

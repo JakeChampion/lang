@@ -11,7 +11,7 @@ import (
 // A trait's DEFAULT body is the trait module's source even though the
 // clone is instantiated in each `impl`, so its capability use is charged
 // to the package that DECLARED the trait (#8450). Charging it to the
-// implementer laundered it: the ordinary way to adopt a trait is an
+// implementer misattributed it: the ordinary way to adopt a trait is an
 // `impl` supplying only the required methods, and when that impl is in
 // the ROOT package — which is never enforced — the effectful default ran
 // with no diagnostic at all.
@@ -113,7 +113,7 @@ function main(): i32 {
 	}
 }
 
-// The same laundering one hop away from the root: a middle package
+// The same misattribution one hop away from the root: a middle package
 // writes the impl. `mid` is enforceable, so this case never exited 0 —
 // but the charge went to `mid` alone, and `mid` legitimately needs the
 // grant for calling into `b`. Granting it therefore silenced the

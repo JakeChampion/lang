@@ -2114,7 +2114,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// and neither WASI preview has one, so E066 refuses it there. It is
 	// not on `signal` — wasi-cli GRANTS that, because ignoring a signal
 	// nothing can deliver is honestly a no-op, and there is no such
-	// honest answer here.
+	// correct answer here.
 	c.info.FuncSigs["process_alive"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},
@@ -2138,7 +2138,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// ESRCH (no such process), EPERM (it exists and is not yours), EINVAL
 	// (no such signal). None of the three is one of the errnos
 	// `__fern_io_error` gives a named variant, so all three arrive as
-	// `Other("", strerror)` — the empty path being honest, since the
+	// `Other("", strerror)` — the empty path being accurate, since the
 	// primitive never saw the operand text the caller parsed the pid from.
 	// `gnu.io_error_text` is how a caller reads the three apart, the way
 	// `is_broken_pipe` already reads EPIPE.
@@ -2593,7 +2593,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// A final symlink IS followed, which is what `chmod(1)` does: a
 	// symlink has no mode of its own to set on Linux, and
 	// `AT_SYMLINK_NOFOLLOW` answers EOPNOTSUPP there rather than doing
-	// something useful, so there is no honest nofollow form to offer.
+	// something useful, so there is no correct nofollow form to offer.
 	//
 	// `write_file_exec` is the creating sibling — it sets a bit on a
 	// file it is making. This is the only way to change the mode of
@@ -3121,7 +3121,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// words — `sync: error opening 'f': ...` against `sync: error
 	// syncing 'f': Invalid argument`, which is what `fsync` on a FIFO
 	// answers on Linux — so a builtin that opened AND flushed would
-	// have one error where the utility needs two, and no honest way to
+	// have one error where the utility needs two, and no accurate way to
 	// tell which stage failed.
 	//
 	// On both Reader and Writer because a descriptor is a descriptor:
@@ -3403,7 +3403,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 
 	// `slice_unchecked(s: string, a: i32, b: i32): str` — the byte
-	// slice `s[a:b]` under its honest name: half-open, byte-indexed,
+	// slice `s[a:b]` under its accurate name: half-open, byte-indexed,
 	// traps (exit 134) on `a < 0 || b > s.len() || a > b`, and does
 	// NOT check UTF-8 char boundaries, so it can cut a code point in
 	// half. Callers guarantee both indices are boundaries — indices
@@ -3573,7 +3573,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 		c.info.FuncSigs[n] = &ast.FuncType{Params: ps, Result: usizeT}
 		// FP-return variants `__c_call<n>_f32` / `_f64`: same integer-arg
-		// shim, but the result rides in an FP register (xmm0 / d0). These let
+		// shim, but the result is returned in an FP register (xmm0 / d0). These let
 		// std/jni read float/double JNIEnv methods (Get{Float,Double}Field,
 		// CallFloatMethod, …). FP *arguments* are not modelled — only the
 		// return crosses the FP boundary.
@@ -8054,7 +8054,7 @@ func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) 
 	// where `a`/`b` have type `T` and `T`'s bound provides the op's trait
 	// method (`+`→`Add.add`, `*`→`Mul.mul`, …) desugars to `a.add(b)` —
 	// resolved through the same deferred trait-bound dispatch as `a.cmp(b)`
-	// for `T: Ord`. This is the #2706 payoff: generic numeric code
+	// for `T: Ord`. This is the #2706 benefit: generic numeric code
 	// (`function sum[T: Num](xs: T[]): T { var acc = …; for x in xs { acc = acc + x } }`)
 	// reads with operators instead of explicit `.add` calls. A type param
 	// WITHOUT the matching arithmetic bound falls through (handled=false) to
@@ -9431,7 +9431,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	// element, return) must materialise a fresh copy via .to_owned().
 	// str==str is Equal above. Argument positions get a borrow carve-out
 	// (argAssignable) since params are borrowed by default; tightening for
-	// `own`-annotated params rides the A2 escape slice (#4814).
+	// `own`-annotated params is part of the A2 escape slice (#4814).
 	if _, ok := dst.(ast.StrType); ok {
 		_, srcIsString := src.(ast.StringType)
 		return srcIsString
@@ -9483,7 +9483,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	// full 8-byte address survives on arm64-darwin, and flow user-shaped
 	// pointer / integer values through without an `as` cast. Exposing this
 	// implicitly to USER code, though, turns usize into a bypass that
-	// launders i64→i32 narrowing and even string→struct reinterpretation
+	// passes i64→i32 narrowing and even string→struct reinterpretation
 	// past the type system. So gate it to stdlib context; user code must
 	// use an explicit `as` cast (the CastExpr machinery already allows the
 	// usize hop). See docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
@@ -10763,7 +10763,7 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 
 // checkEscapes runs the two view-escape rules — E063 (`[T]` slice) and
 // E065 (`str`) — over the whole program, after every body has been
-// checked. Both are interprocedural: a view laundered through a callee
+// checked. Both are interprocedural: a view passed through a callee
 // (`return id(slice_unchecked(s, 0, 1))`) escapes exactly when the
 // argument that callee views does, so each rule needs a summary of which
 // PARAMETERS a function's return may view, and that summary needs the
@@ -10949,7 +10949,7 @@ func isViewReturn(t ast.Type) bool {
 // reclaim at exit. Params and receivers are caller-owned, so slicing one
 // is fine; an array literal or a locally-declared owned array is not.
 //
-// Like E065 the chase runs through calls: a slice laundered through a
+// Like E065 the chase runs through calls: a slice passed through a
 // callee that returns a view of one of its parameters — `return
 // id_sl(a[0:2])` — views whatever the caller passed to that parameter.
 // The summary returnViewSummaries computes says which those are.
@@ -16214,7 +16214,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		// Record them for the call-site ownership guard, which runs after
 		// the body is checked and has no callee type of its own. A
-		// dispatch-rewritten method call is excluded: its receiver rides in
+		// dispatch-rewritten method call is excluded: its receiver is held in
 		// Args[0] and the guard has never covered that shape.
 		if len(calleeOwnFlags) > 0 && !recvIsArg0 && n.Method == nil {
 			if c.callOwnFlags == nil {

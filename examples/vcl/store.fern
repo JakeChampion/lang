@@ -11,7 +11,7 @@
 // Every field is `<byte count>\n<bytes>`, so nothing needs escaping and
 // nothing can be confused for a delimiter.
 //
-// The cost is honest and worth stating: encode and decode are O(total
+// The cost is real and worth stating: encode and decode are O(total
 // cached bytes) per request, so this is a demonstration store, not a
 // storage engine. A real one would keep objects in a memory-mapped file
 // and touch only the object being read — which is what Varnish does, and

@@ -36,7 +36,7 @@ var iifeI64AnnotIRCases = []struct {
 }{
 	// if-expression, runtime condition, both branches small i64 literals. 5.
 	{"ifexpr-i64-runtime", `function main(): i32 { var n = 5; var x: i64 = if (n > 3) { 5 } else { 9 }; return x as i32; }`},
-	// u64 annotation rides the same path. 5.
+	// u64 annotation takes the same path. 5.
 	{"u64-ifexpr-runtime", `function main(): i32 { var n = 5; var x: u64 = if (n > 3) { 5 } else { 9 }; return x as i32; }`},
 	// match-expression, small i64 literal arms. 5.
 	{"matchexpr-i64", `function main(): i32 { var n = 1; var x: i64 = match (n) { 1 => 5, _ => 9 }; return x as i32; }`},
@@ -62,7 +62,7 @@ var iifeI64AnnotIRCases = []struct {
 	// (705032704) / 1000000000 = 0. 1 /? 0 is None, so the None arm is the value.
 	{"matchexpr-i64-binary-arm-taken", `function main(): i32 { var x: i64 = match ((1i64) /? (0i64)) { Some(w) => w, None => (5000000000i64 / 1000000000i64) }; return x as i32; }`},
 	// A SHIFT arm. wider_rt over BOTH operands is what carries the width here, and
-	// it is load-bearing that the shift is not special-cased to its left operand:
+	// it is essential that the shift is not special-cased to its left operand:
 	// "i32" doubles as if_expr_rt's unknown, so a shift whose value is a CALL
 	// (`id(489i64) << 2147484177i64`) reads i32 on the left and recovers the width
 	// only from the right. 5000000000 >> 30 = 4; truncated to 32 bits, 0.

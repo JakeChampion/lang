@@ -57,7 +57,7 @@ import (
 // L is back to 0 and pinned there.
 //
 // The loop/lambda exclusion and the params-only restriction are both carried over
-// from native and are load-bearing; `grow_sole_exempt_names_of` says why.
+// from native and are required; `grow_sole_exempt_names_of` says why.
 type growSoleCase struct {
 	name    string
 	g       string

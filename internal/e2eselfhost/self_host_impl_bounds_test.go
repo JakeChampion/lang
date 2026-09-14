@@ -32,7 +32,7 @@ import (
 //	Box[T].hello  a trait DEFAULT method, synthesised onto the impl by
 //	              parse_module rather than written in the block. It reaches
 //	              finalize_impl_method through ImplInfo, which is why the bounds
-//	              have to ride on that struct and not just on the local.
+//	              have to be stored on that struct and not just on the local.
 //	Box[T].show   a trait impl rather than an inherent one
 //
 // The unbounded rows are the controls: free_plain and Plain.* have no type

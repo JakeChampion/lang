@@ -6411,15 +6411,15 @@ function main(): i32 {
 	},
 	{
 		// The refusal that keeps the credit sound: one copying use
-		// does not launder a retaining one. keep both scans its
+		// does not admit a retaining one. keep both scans its
 		// parameter AND stores it in the array it returns, so
 		// everyOccurrenceSafe refuses the whole param and the caller
 		// keeps its reference alive for the container. Pinned on the
 		// answer + the underflow counter because an over-releasing
 		// build reads BETTER on live_bytes.
-		// Originally the launder pin from #7867 slice 2: the append store
+		// Originally the refusal pin from #7867 slice 2: the append store
 		// REFUSED the param, and this case pinned the resulting leak to
-		// prove the copying-builtin credit did not launder it. The #7914
+		// prove the copying-builtin credit did not admit it. The #7914
 		// push-element credit made that same append a COUNTED occurrence,
 		// so both occurrences are now legitimately safe and the case's job
 		// flipped: it proves the two credits COMPOSE and the returned
@@ -6457,7 +6457,7 @@ function main(): i32 {
 		// The push credit's REFUSAL half: a param that is pushed AND
 		// returned bare has an occurrence nothing counts, so it stays
 		// uncredited and the caller's temp keeps its safe leak — pinned
-		// in the gate so the refusal is watched (the role the launder
+		// in the gate so the refusal is watched (the role the #7867
 		// pin above used to carry).
 		name: "string_pushed_then_returned_bare_stays_refused",
 		src: `
@@ -8635,7 +8635,7 @@ function main(): i32 {
 	},
 	{
 		// #8785: a reassigned string PARAMETER is consumed-threaded, and the
-		// entry retain that pays for it is also what keeps the append honest.
+		// entry retain that pays for it is also what keeps the append correct.
 		// The incoming buffer is the CALLER's, so `a = a + s` inside the
 		// callee must copy — rc 2 sends __fern_str_append down its copy path
 		// — and the caller's own name must still read the string it passed.
@@ -8719,7 +8719,7 @@ function main(): i32 {
 		// only question is who owns the value the slot was overwritten with.
 		// The callee does, and must release it — that is the promotion's leak
 		// half. Returning the param on one path and not the other keeps the
-		// exit sweep's move-on-return exclusion honest at the same time.
+		// exit sweep's move-on-return exclusion correct at the same time.
 		name: "str_param_reassigned_to_a_fresh_value",
 		src: `
 function mk(n: i32): string {

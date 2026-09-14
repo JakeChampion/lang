@@ -53,7 +53,7 @@ function main(): i32 {
 }`
 
 // TestSelfHostRcEnumRebindReclaimX86_64 — a rebound rc-payload enum local frees
-// every chain it orphans AND its final value. allocs == frees is the load-bearing
+// every chain it orphans AND its final value. allocs == frees is the essential
 // assertion: frees short of allocs is the leak this closes, frees ABOVE allocs
 // would mean the rebind release and the consuming-match free both claimed the
 // same chain (a double free).

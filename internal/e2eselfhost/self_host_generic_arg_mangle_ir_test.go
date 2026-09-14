@@ -28,7 +28,7 @@ import (
 //
 // The program covers the shapes that share the code path: the Option payload
 // (the reported case), a Result Ok payload, a nested `Option[Flag][]` (array
-// depth rides alongside the arguments), and a `Map`-style two-argument generic
+// depth is encoded alongside the arguments), and a `Map`-style two-argument generic
 // where only the second argument is module-local. Every result is CONSUMED at
 // its own type, so a half-recovered spelling shows up as a wrong exit code
 // rather than as a bail.

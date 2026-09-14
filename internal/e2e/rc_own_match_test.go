@@ -6,7 +6,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// Consuming match on an `own` parameter — Perceus's headline FBIP result: a
+// Consuming match on an `own` parameter — Perceus's main FBIP result: a
 // recursive traversal (`map`/`filter`/`length`) that reuses the structure's
 // cells in place. Matching an owned scrutinee MOVES its pointer payloads into
 // the arm bindings (reclaimed downstream) and shallow-frees the box, so the old

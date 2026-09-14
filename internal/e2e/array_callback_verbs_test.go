@@ -11,7 +11,7 @@ import (
 // arbitrary T[], in both the free-function and receiver-method forms.
 //
 // Unlike the structural verbs (reverse/take/drop/concat), these take a callback
-// or comparator, so — like the existing map/filter/fold combinators — they ride
+// or comparator, so — like the existing map/filter/fold combinators — they use
 // the indirect-call path and are gated through the interpreter (oracle) + the
 // native wasm backend rather than the self-host stdtest gate (the self-host
 // can't lower a closure passed to a generic function yet). Callbacks are kept

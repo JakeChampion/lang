@@ -27,7 +27,7 @@ import (
 // This gate asks the other question: for each provided callee, does the
 // emitter have a target for it at all?
 //
-// The two exemptions below are the only honest ones. Anything else that
+// The two exemptions below are the only legitimate ones. Anything else that
 // fails here is a missing lowering, and belongs in the emitter rather than
 // in a list.
 //
@@ -57,7 +57,7 @@ var providedRefusedByPlatform = map[string]bool{
 	// Liveness of an arbitrary pid, which needs the same process table.
 	"process_alive": true,
 	// Delivering a signal to one, which needs it as well and has no
-	// honest no-op: wasi-cli grants `signal` for the DISPOSITION calls,
+	// valid no-op: wasi-cli grants `signal` for the DISPOSITION calls,
 	// where ignoring something nothing can deliver really is a no-op.
 	"signal_send": true,
 	// `fsinfo` — the size and the length limits of a filesystem, where

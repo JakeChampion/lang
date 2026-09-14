@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmWholeCompilerShardedLink is the payoff for #5508: the ENTIRE
+// TestSelfHostWasmWholeCompilerShardedLink is the main gate for #5508: the ENTIRE
 // self-host wasm compiler (15 modules, incl. irlower at ~894 funcs) links into
 // one valid wasm module — with the oversized module emitted in FUNCTION WINDOWS
 // across separate processes so no single lowering exhausts the bump arena.
@@ -229,7 +229,7 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 // (14 = len("sharded") + 7) comes back only if the lexer, parser, module
 // resolution, IR lowering and wasm emit all still work after being cut into
 // function windows across as many processes — and the string literal in the leaf
-// module makes the data-section/base wiring load-bearing rather than incidental.
+// module makes the data-section/base wiring essential rather than incidental.
 func runShardedCompiler(t *testing.T, wasmtime, wasmtools, dir, compiler string) {
 	t.Helper()
 	proj := filepath.Join(dir, "proj")

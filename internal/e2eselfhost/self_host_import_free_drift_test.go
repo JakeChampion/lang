@@ -15,7 +15,7 @@ import (
 // Drift gate for the import-free self-host modules.
 //
 // Several modules in examples/self_host carry no `import` statement at all.
-// That is deliberate and load-bearing rather than an accident: several
+// That is deliberate and required rather than an accident: several
 // e2eselfhost drivers build a single-module program by CONCATENATING one of
 // these files with a `main()`, which only works while the file pulls in
 // nothing. x86_native.fern says so at its head —

@@ -111,7 +111,7 @@ func (*Cell) String() string { return "<cell>" }
 // uses different digit budgets per width); the underlying
 // storage is float64 either way — for f32 we round-trip through
 // `float32` during arithmetic and at f32_bits boundary points
-// to keep the visible precision honest.
+// to keep the visible precision correct.
 //
 // The interp had no float values for most of its lifetime
 // (raw-memory ops in the Lang stdlib bodies couldn't be modeled
@@ -984,7 +984,7 @@ func New() *Interp {
 	//
 	// It keeps __memchr's byte-range guard and drops its cursor: there is no
 	// `from`, so the only two answers a degenerate call can give are 0 for an
-	// out-of-range byte and 0 for an empty string, and both are the honest
+	// out-of-range byte and 0 for an empty string, and both are the accurate
 	// count rather than a sentinel.
 	i.Builtins["__count_byte"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
@@ -2509,7 +2509,7 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	}
 	// A separator would let the prefix steer the directory out of the
 	// temp root. Rejected with the shape every backend's EINVAL takes,
-	// rather than laundering Go's own pattern error through
+	// rather than routing Go's own pattern error through
 	// classifyIoError, so the answer is identical on all of them.
 	if strings.ContainsRune(string(prefix), '/') {
 		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil

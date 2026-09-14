@@ -526,7 +526,7 @@ func TestSelfHostFipVerifyCorpusClean(t *testing.T) {
 // native's internal/ir/verifyprovided.go.
 //
 // Same driver and the same both-directions discipline as the passes above.
-// The silent half is the load-bearing one here too, and for a sharper reason
+// The silent half is the essential one here too, and for a sharper reason
 // than usual: this pass rests on an INVENTORY of runtime-helper names, and an
 // inventory is a thing that goes stale. A missing entry is a report on valid
 // IR; a wrong prefix rule excuses a genuinely missing body. The driver's cases

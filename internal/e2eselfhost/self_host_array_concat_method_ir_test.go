@@ -18,7 +18,7 @@ import (
 // register_array_method_generics now folds such a method into a bounded free
 // generic `__arrm_concat[T](xs: T[], other: T[])` (receiver as arg0) and
 // mono_expr rewrites `xs.concat(ys)` to `__arrm_concat(xs, ys)`, which the
-// existing free-generic worklist clones per element type — so the method rides
+// existing free-generic worklist clones per element type — so the method takes
 // the IR path and matches the interpreter. (This flipped
 // array_structural_verbs_test.fern from AST to IR.)
 //

@@ -14,7 +14,7 @@ import (
 // so a match on a call through a closure local had no way to name its scrutinee
 // type. The `alias` case below is what that closes.
 //
-// The load-bearing detail is that the lift runs BEFORE lowering: by the time
+// The essential detail is that the lift runs BEFORE lowering: by the time
 // `var f = <lambda>` reaches irlower its init is a `__mkclo$<cloname>` marker
 // call, whose callee ident is not itself a module function — `<cloname>`, after
 // the 8-char prefix, is. Reading the callee name directly recovers nothing and

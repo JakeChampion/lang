@@ -21,7 +21,7 @@ import (
 //   - Are its elements 8-byte? `slice_elem_is_wide` picks the arr_slice width;
 //     getting it wrong copies 4-byte elements out of an 8-byte array.
 //
-// Both are load-bearing here. The first three cases BAILED before the carrier
+// Both are required here. The first three cases BAILED before the carrier
 // (verified against the pre-carrier compiler); `slice_of_call_field_i64`
 // additionally needs the width half — with only the gate wired it lowers at a
 // 4-byte stride and returns the wrong number rather than failing.

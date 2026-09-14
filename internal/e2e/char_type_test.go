@@ -79,7 +79,7 @@ func TestCharTypeArm64(t *testing.T) {
 // charUnicodeProgram pins std/unicode's `char` surface (#5629 slice 5) —
 // the first stdlib producer/consumer of the type.
 //
-// These are METHODS, not free functions, and that is load-bearing: a free
+// These are METHODS, not free functions, and that is essential: a free
 // `to_upper(c: char)` would collide with `to_upper(s: string)` in the same
 // module. The method form also makes the receiver TYPE carry the meaning,
 // which is the whole point of D2 — `c.to_upper()` and `s.to_upper()` are

@@ -587,7 +587,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// sibling of the rc-payload-option precise drop. A `Poly([..])` (array-payload
 		// variant) with no top-level match and a borrow-only arm binding has its runtime
 		// variant deep-dropped + box freed (emit_enum_variant_drops) after the enclosing
-		// statement. The enum name rides in the "enum-rcpayload:<E>"
+		// statement. The enum name is carried in the "enum-rcpayload:<E>"
 		// kind. FIRING: f(5): x=Poly([10,20,30]), c=a[0]+a[2]=40, return 40+5=45.
 		{"enum-arr-precise-if-value", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { return f(5); }`, 45},
 		{"enum-arr-precise-if-detector", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 45) { return 99; } return __rc_underflow(); }`, 0},
@@ -958,7 +958,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"iife-match-string-payload-detector", `enum E { V(string), N } function go(): i32 { var e: E = E.V("world"); var r = match (e) { V(s) => s.len(), N => 0 }; if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// ARROW LAMBDA (`(params): R => expr`) — the self-host parser now parses the
 		// concise arrow form into the SAME ExprLambda the verbose `function (params):
-		// R { return expr; }` produces, so it rides the existing lambda-lift + IR
+		// R { return expr; }` produces, so it reuses the existing lambda-lift + IR
 		// lowering with no codegen changes. Each case routes "ir" and is oracle-checked
 		// against the native interpreter.
 		// Non-capturing binding, called once: __lam_N(5) = 6.
@@ -997,7 +997,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// a still has 3 (1,2,3): b[3] + a.len() = 4 + 3 = 7.
 		{"append-value-field-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var s = Buf { xs: [1, 2, 3], n: 3 }; var t = Buf { xs: s.xs.append(4), n: s.n + 1 }; var r = t.xs[3] + s.xs.len() + t.n; if (r != 11) { return 99; } return __rc_underflow(); }`, 0},
 
-		// STRUCT-FIELD `.with` — the headline BAIL→ir flip: the pervasive immutable-
+		// STRUCT-FIELD `.with` — the main BAIL→ir flip: the pervasive immutable-
 		// update idiom `State { xs: s.xs.with(i, v), n: s.n }`. The base `s.xs` field
 		// is cloned (borrowed for the copy, not aliased), so the new struct owns a
 		// fresh array with NO alias-inc. `t.xs[1]` reads 99, `s.xs[1]` still reads 2
@@ -1082,7 +1082,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// arm must agree on the composite type (mismatched arms still bail).
 		//
 		// BARE STRUCT payload returned whole, used via `p.field`. The leak-safe
-		// struct pointer rides one slot; the temp + `p` are marked struct P.
+		// struct pointer occupies one slot; the temp + `p` are marked struct P.
 		{"iife-match-struct-payload-field-value", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { x: 7 }); var p: P = match (e) { V(q) => q, N => P { x: 0 } }; return p.x; }`, 7},
 		// The OTHER (constructor) arm is taken: the N-arm builds a fresh P, same type.
 		{"iife-match-struct-payload-other-arm", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.N; var p: P = match (e) { V(q) => q, N => P { x: 42 } }; return p.x; }`, 42},
@@ -1094,7 +1094,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// neither over-releases. Detector reads 0.
 		{"iife-match-struct-payload-detector", `struct P { x: i32 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { x: 7 }); var p: P = match (e) { V(q) => q, N => P { x: 0 } }; if (p.x != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// BARE ENUM payload returned whole, used via a nested `match (p)`. The inner
-		// enum pointer rides one slot; the temp + `p` are marked enum Inner.
+		// enum pointer occupies one slot; the temp + `p` are marked enum Inner.
 		{"iife-match-enum-payload-match-value", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function main(): i32 { var o: Outer = Outer.W(Inner.A(5)); var p: Inner = match (o) { W(q) => q, Z => Inner.B }; return match (p) { A(n) => n, B => 99 }; }`, 5},
 		// The Z-arm constructs a fresh Inner.B of the same enum type; nested match on it.
 		{"iife-match-enum-payload-other-arm", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function main(): i32 { var o: Outer = Outer.Z; var p: Inner = match (o) { W(q) => q, Z => Inner.B }; return match (p) { A(n) => n, B => 8 }; }`, 8},
@@ -1103,7 +1103,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// constructed arm over-releases. Detector reads 0.
 		{"iife-match-enum-payload-detector", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function go(): i32 { var o: Outer = Outer.W(Inner.A(5)); var p: Inner = match (o) { W(q) => q, Z => Inner.B }; var r = match (p) { A(n) => n, B => 99 }; if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// BARE TUPLE payload returned whole, used via `p.0` / `p.1`. The tuple pointer
-		// rides one slot; the temp + `p` are marked with the element tags.
+		// occupies one slot; the temp + `p` are marked with the element tags.
 		{"iife-match-tuple-payload-elem-value", `enum E { V((i32, i32)), N } function main(): i32 { var e: E = E.V((3, 4)); var p: (i32, i32) = match (e) { V(q) => q, N => (0, 0) }; return p.0 + p.1; }`, 7},
 		// UNANNOTATED tuple binding (the element tags come from the composite-result
 		// fallback, payload arm first).

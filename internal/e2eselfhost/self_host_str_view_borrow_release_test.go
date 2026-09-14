@@ -41,7 +41,7 @@ import (
 // parked slot is `0 - 1` on every non-wasm target and free_parked_view_after
 // then emits nothing.
 //
-// One honest limit on the ORDERING. The drain lands after the consuming op, which
+// One real limit on the ORDERING. The drain lands after the consuming op, which
 // is the only correct place — the op still has to read the box. But a build that
 // frees BEFORE the op passes every probe here, because the free and the use are
 // adjacent with no allocation able to intervene, so the read finds stale-but-

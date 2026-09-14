@@ -364,7 +364,7 @@ var interpProgs = []struct {
 	// mid-body read after the defer still sees the pre-defer value.
 	{"defer-not-eager-mid-body", "function main(): i32 { var r = 1; defer { r = 100; } var x = r + 1; if (x == 2) { return 2; } return 3; }", 2},
 	// Labeled break unwinds MULTIPLE loop levels (#4348 item 2): the
-	// resolve_labels-baked depth now rides the sig encoding (2+2d) and each
+	// resolve_labels-baked depth is now part of the sig encoding (2+2d) and each
 	// loop arm peels one level. Pre-fix the depth was ignored, `break outer`
 	// broke only the inner loop, and `outer: while (true)` hung forever.
 	{"labeled-break-two-level", "function main(): i32 { var s = 0; outer: while (true) { var i = 0; while (i < 10) { s = s + 1; if (s >= 11) { break outer; } i = i + 1; } } return s; }", 11},

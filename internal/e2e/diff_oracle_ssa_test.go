@@ -99,7 +99,7 @@ type ssaTally struct {
 }
 
 // runBounded starts cmd and waits at most timeout for it. A child that
-// outlives the wall is killed and reported as timedOut with no error;
+// outlives the timeout is killed and reported as timedOut with no error;
 // otherwise the Wait error comes back as it would from cmd.Run.
 func runBounded(cmd *exec.Cmd, timeout time.Duration) (timedOut bool, err error) {
 	if err := cmd.Start(); err != nil {
@@ -310,7 +310,7 @@ func assertSSARunRatio(t *testing.T, tally *ssaTally) {
 
 // TestRunBoundedClassifiesTimeout pins the three outcomes runBounded
 // separates: a child that exits cleanly, one that exits non-zero, and
-// one that outlives the wall — the last must come back as timedOut
+// one that outlives the timeout — the last must come back as timedOut
 // with no error, since that is what keeps a slow machine out of the
 // coverage-gap count.
 func TestRunBoundedClassifiesTimeout(t *testing.T) {

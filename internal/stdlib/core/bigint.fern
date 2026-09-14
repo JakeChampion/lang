@@ -338,7 +338,7 @@ pub function (a: BigInt) eq(b: BigInt): boolean { return a.cmp(b) == 0; }
 // representation is canonical: trimmed magnitudes mean equal values always
 // have identical limb arrays, and zero-is-never-negative means the two
 // spellings of zero cannot exist to hash differently. Both invariants are
-// load-bearing for this function, not just tidiness.
+// essential for this function, not just tidiness.
 //
 // i32 arithmetic wraps rather than trapping (docs/INTEGER-SEMANTICS.md), which
 // is what makes the accumulate loop well-defined.

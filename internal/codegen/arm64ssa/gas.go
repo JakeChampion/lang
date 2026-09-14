@@ -45,7 +45,7 @@ import (
 //	                   TestRuntimeHelpersPreserveCalleeSaved)
 //	22..25  x12..x15   caller-saved, the scratch pool at the default numAlloc
 //
-// Two properties are load-bearing. Indices 0..7 must stay x0..x7 because
+// Two properties are essential. Indices 0..7 must stay x0..x7 because
 // argMoveLines / paramMoveLines treat the incoming argument register for arg i
 // as abstract register i. And the callee-saved run must be contiguous and below
 // the scratch pool at the default numAlloc, so a call-crossing value the
@@ -2791,7 +2791,7 @@ func emitWasmTimerPollableHelper(w func(string, ...any)) {
 }
 
 // emitWasmPollHelper writes wasm_poll(pollables) → i32: returns -1 on native (no
-// real pollables; native readiness rides poll(2)), ignoring its array arg. On
+// real pollables; native readiness uses poll(2)), ignoring its array arg. On
 // wasm this is the real wasi:io/poll.poll(list<pollable>) multiplexer. Leaf.
 func emitWasmPollHelper(w func(string, ...any)) {
 	w("")
@@ -5076,7 +5076,7 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // caller-saved. Floats here live as their f64 bit pattern in a GPR, so no v
 // register is live across a call for this to clobber.
 //
-// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// No cursor, so no clamp. Both degenerate answers are real counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
 func emitCountByteHelper(w func(string, ...any)) {
@@ -8132,7 +8132,7 @@ func emitSliceIdxHelper(name string, shift int) func(w func(string, ...any)) {
 // The sxtw normalises a bound that reaches the helper with dirty bits above 31,
 // mirroring the flat backend's #5294 fix, so the unsigned compares see the
 // value the caller meant. It is redundant at this emitter's width
-// discipline rather than load-bearing: maskFix sign-extends every narrow
+// discipline rather than required: maskFix sign-extends every narrow
 // result, so bounds already arrive sign-extended, and on a value that fits i32
 // zero-extension would decide identically (both turn a negative into a large
 // unsigned). Keep it — the cost is three instructions and it stops the helper
@@ -9778,7 +9778,7 @@ func callLines(in x86.Inst, numAlloc, scratch int, fr frameLayout) ([]string, er
 	// staging scratch entirely — exactly when the restores do not write them.
 	// The allocator cannot put a result and a value live ACROSS the same call in
 	// one register (their intervals overlap), so this holds for every call; the
-	// check is what keeps that an optimisation rather than a load-bearing
+	// check is what keeps that an optimisation rather than a necessary
 	// assumption about a pass in another package.
 	direct := !inSaveSet(saved, in.Dst) && (in.Op != x86.CallPair || !inSaveSet(saved, in.Dst2))
 	var out []string
