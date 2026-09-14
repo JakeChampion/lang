@@ -423,9 +423,9 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.Str
 }
 
 // The undeclared constructions whose wide operand is an ARRAY element, written
-// at the width its op carries.
+// at the width its op carries; a cell's slot is one.
 function wide_element_site(k: i32): boolean {
-    return kind_in([ssasem.array_new(), ssasem.append(), ssasem.with()], k);
+    return kind_in([ssasem.array_new(), ssasem.append(), ssasem.with(), ssasem.cell_new(), ssasem.cell_set()], k);
 }
 
 // The declaration a record or variant construction stores its fields
@@ -583,7 +583,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
 // one: its captures ride the same i32-shaped words an array element does.
 function builds(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(),
-        ssasem.append(), ssasem.with(), ssasem.closure_new()], k);
+        ssasem.append(), ssasem.with(), ssasem.closure_new(), ssasem.cell_new(), ssasem.cell_set()], k);
 }
 
 function kind_in(kinds: i32[], k: i32): boolean {
@@ -602,7 +602,7 @@ function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index()], k)
-        || variant_op(k);
+        || variant_op(k) || ssasem.is_cell_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -900,6 +900,7 @@ function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
 function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
+    if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { return emit(function_site(r, ins), ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { return emit(append_push(r, f, ins), ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
@@ -981,6 +982,50 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     r = emit(r, ir.op_load_local(ins.args[2]));
     r = emit(r, arr_set_op(elem));
     return emit(r, ir.op_load_local(scratch));
+}
+
+// A cell is a one-element array box shared by every holder, built over the
+// one element it takes.
+function cell_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.cell_get()) { return cell_read(r, f, ins); }
+    if (ins.kind_tag == ssasem.cell_set()) { return cell_write(r, f, ins); }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, arr_make_op(semtypes.cell_elem(f.values[ins.result]), 1));
+    return emit(r, ir.op_store_local(ins.result));
+}
+
+// A read hands out a unit of the element: the slot is loaded and, for a
+// reference, retained, since a later write may release what the slot held
+// while the value read is still in hand.
+function cell_read(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = f.values[ins.result];
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, arr_get_op(elem));
+    r = emit(r, ir.op_store_local(ins.result));
+    if (reference(elem)) { r = helper(r, ins.result, "__fern_rc_inc"); }
+    return r;
+}
+
+// A write releases what the slot held, stores the unit it was supplied and
+// leaves the dummy a statement op leaves for the store of its void result.
+function cell_write(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = f.values[ins.args[1]];
+    if (reference(elem)) {
+        var old: i32 = f.graph.nvals;
+        r = reserve(r, old + 1);
+        r = emit(r, ir.op_load_local(ins.args[0]));
+        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, arr_get_op(elem));
+        r = emit(r, ir.op_store_local(old));
+        r = drop_value(r, old, elem, old + 1, f);
+    }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, arr_set_op(elem));
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_store_local(ins.result));
 }
 
 // A closure value and the call through one. The value is the env box the

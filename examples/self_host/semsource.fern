@@ -891,10 +891,26 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
+// A cell's methods: `get` hands out a unit of the element, and `set` takes the
+// new element's unit and returns nothing, so it stands only as a statement.
+function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+    var elem: typeinfo.Type = semtypes.cell_elem(s.values[recv.id]);
+    if (fa.field == "get" && c.args.len() == 0) { return define(s, ssasem.cell_get(), [recv.id], 0, "", elem); }
+    if (fa.field != "set" || c.args.len() != 1) { return refused(s, "unsupported call target"); }
+    if (!statement) { return refused(s, "unsupported void call"); }
+    var v: Value = expr(c.args[0], s, elem);
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
+    if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "cell element type"); }
+    return define(s, ssasem.cell_set(), [recv.id, v.id], 0, "", t_void());
+}
+
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
-function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
+    if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
@@ -906,7 +922,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
 // the way the declaration keyed its contract, and the way every backend labels
 // the body: <Type>.<method>. The receiver is argument 0, because the callee
 // declared it as parameter 0.
-function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value {
+function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, statement: boolean): Value {
     var recv: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = recv.s;
     if (!s.ok) { return recv; }
@@ -916,7 +932,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view
     // reaches them as a lent box; the two builtins every text has come first.
-    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s); }
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s, statement); }
     if (owner == "") { owner = "string"; }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
@@ -939,6 +955,20 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     }
     if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
     return define(s, ssasem.call(), ids, 0, key, contract.result);
+}
+
+// `cell_new(v)` builds the shared one-element box over v's unit. The checker
+// types the call as a bare `Cell`, so the element is the argument's type,
+// produced at the width the destination names; a view cannot be held, as an
+// array cannot hold one.
+function cell_construction(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    var v: Value = expr(c.args[0], s, semtypes.cell_elem(expected));
+    s = v.s;
+    if (!s.ok) { return v; }
+    var elem: typeinfo.Type = s.values[v.id];
+    if (!semtypes.concrete(elem, false)) { return refused(s, "unresolved cell element type"); }
+    if (ssasem.is_view(elem)) { return refused(s, "view element escapes its source"); }
+    return define(s, ssasem.cell_new(), [v.id], 0, "", typeinfo.TypeStruct { name: "Cell", args: [elem] });
 }
 
 // `slice_unchecked(s, start, end)` reads a window of a string's bytes. The box
@@ -1169,13 +1199,20 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (parser.is_value_block(c)) { return value_block(e, c, s); }
-    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
+    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s, statement); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
+    return free_call(e, name, c, s, statement, expected);
+}
+
+// A call of a free name: a builtin with a shape of its own, the lambda
+// lift's closure constructor, a declaration with a contract, or a variant.
+function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (is_slice_call(name, c)) { return string_slice(c, s); }
+    if (name == "cell_new" && c.args.len() == 1) { return cell_construction(c, s, expected); }
     // The lambda lift's closure constructor names no declaration of its own:
     // it is the marker left where a capturing inline lambda — or a bare
     // function name at a function-typed argument — was written, carrying the

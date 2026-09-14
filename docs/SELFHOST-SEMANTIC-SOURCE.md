@@ -663,7 +663,20 @@ folds both to their literals before anything lowers, so the census folds them
 the same way, against the default target, and counts the calls as the
 literals the boundary actually sees.
 
-Measured against the whole loaded self-hosted compiler, 7,730 of its 7,809
+The cell's own vocabulary crosses (`cell_count`, `cell_share`, `cell_words`,
+`cell_wide`, `cell_float`, `cell_closure`, and `cell_round` / `cell_text` in
+the print fixture). `cell_new(v)` is a construction over one element and
+takes its unit; `get` hands out a UNIT of the element rather than a borrow of
+the slot, since a write may release what the slot held while the value read
+is still in hand; `set` takes the new element's unit, releases the old one
+and gives nothing back, so it stands only as a statement. The box is the
+one-element array the AST lowering builds, so a cell shared between a local,
+a record field and a closure's capture is one box, and the write is seen by
+every holder. Worth +6 outright against the 34 the vocabulary held: the
+interpreter's cells all sit under its 32-bit float, which the fold had
+already moved 24 more callers onto, so that leaf is now 47.
+
+Measured against the whole loaded self-hosted compiler, 7,736 of its 7,809
 functions produce, plan and physically lower, through 102 instances of its
 generic declarations. The three stages report the same number: neither the
 unit planner nor physical RC refuses anything a producer admitted, so every
@@ -682,9 +695,10 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by the `Cell` and `Map` method vocabulary (30 call
-targets plus `map_new` 10 and `cell_new` 3) and the 32-bit float (24, up
-from 10 once the target fold let its callers reach it); the closure env box, which stood at 482 captures and 84 bindings,
+The leaves are now led by the 32-bit float (47, every one of them in the
+interpreter, up from 10 as the target fold and then the cell vocabulary let
+its callers reach it) and the `Map` vocabulary (14: `map_new` 10 and the
+`insert` / `has` sites of `wasm_ir`); the closure env box, which stood at 482 captures and 84 bindings,
 is at zero, worth +564 across the environment record and the `own` a lambda's
 binding spells. Callees with no semantic contract are 47, none of them a
 declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
@@ -1042,14 +1056,15 @@ base name under the array suffix and which `parser.ref_is_own` answered false
 for. Each of those was a checker or lift bug the boundary's exact-type rule
 found, fixed where it lived rather than relaxed here.
 
-What is left is 79 functions: the `Cell` and `Map` method vocabulary (30
-call targets plus `map_new` 10 and `cell_new` 3), the 32-bit float (24:
-`f32_bits` takes an `f32`, a width this vocabulary has no slot for), `usize`
-(6), which the checker resolves to unknown because a pointer width is a
-target decision, a function value stored in a record field (5, the
-`astwalk.splice_stmts_with_lambda` shape), and one interpreter callee. The
-void-`Result` builtins and `target_os` closed, worth +10 against their 26:
-the fold moved 14 callers one leaf further in, to the float and the map. Then a
+What is left is 73 functions: the 32-bit float (47: `f32_bits` takes an
+`f32`, a width this vocabulary has no slot for, and every interpreter path
+reaches it), the `Map` vocabulary (14: `map_new` and the `insert` / `has`
+sites), `usize` (6), which the checker resolves to unknown because a pointer
+width is a target decision, a function value stored in a record field (5,
+the `astwalk.splice_stmts_with_lambda` shape), and one interpreter callee.
+The void-`Result` builtins and `target_os` closed, worth +10 against their
+26, and the cell vocabulary +6 against its 34: each fold moved the
+interpreter's callers one leaf further in, onto the float. Then a
 production consumer that lowers produced functions through this pipeline and
 feeds `caller_sigs` to the remaining AST callers — a union result being the
 position that fixture measured a leak at.

@@ -62,6 +62,9 @@ pub function str_as(): i32 { return 0 - 18; }
 pub function with(): i32 { return 0 - 19; }
 pub function closure_new(): i32 { return 0 - 20; }
 pub function call_value(): i32 { return 0 - 21; }
+pub function cell_new(): i32 { return 0 - 22; }
+pub function cell_get(): i32 { return 0 - 23; }
+pub function cell_set(): i32 { return 0 - 24; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -572,15 +575,53 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 // pushed onto an array or replaced in it, a window onto a string, and one of
 // its bytes.
 function is_builtin_op(kind: i32): boolean {
-    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index();
+    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index() || is_cell_op(kind);
 }
+
+pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
+    if (is_cell_op(ins.kind_tag)) { return cell_error(ins, f, result); }
     return append_error(ins, f, result);
+}
+
+// A cell is the shared one-element box (docs/CELL-TYPE-PLAN.md). Its
+// construction takes the element's unit; a read hands out a unit of the
+// element rather than borrowing the slot, since a write may release what the
+// slot held while the value read is still in hand; a write takes the new
+// element's unit and gives nothing back, so it stands only as a statement.
+function cell_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == cell_new()) { return cell_construction_error(ins, f, result); }
+    if (ins.kind_tag == cell_get()) { return cell_read_error(ins, f, result); }
+    return cell_write_error(ins, f, result);
+}
+
+function cell_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "cell construction arity"; }
+    if (!semtypes.is_cell(result)) { return "cell construction type"; }
+    if (!semtypes.equal(semtypes.cell_elem(result), f.values[ins.args[0]])) { return "cell element type"; }
+    return "";
+}
+
+function cell_read_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "cell read arity"; }
+    var cell: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.is_cell(cell)) { return "cell read type"; }
+    if (!semtypes.equal(semtypes.cell_elem(cell), result)) { return "cell element type"; }
+    return "";
+}
+
+function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "cell write arity"; }
+    var cell: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.is_cell(cell)) { return "cell write type"; }
+    if (!semtypes.equal(semtypes.cell_elem(cell), f.values[ins.args[1]])) { return "cell element type"; }
+    if (!is_void(result)) { return "cell write result"; }
+    return "";
 }
 
 function is_variant_op(kind: i32): boolean {
