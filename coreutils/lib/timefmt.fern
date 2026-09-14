@@ -14,7 +14,7 @@
 // the fields came from rather than a second one.
 import "std/array";
 import "std/string";
-import "std/time";
+import "std/io_buffered";
 import "./gnu";
 import "./tz";
 
@@ -22,50 +22,76 @@ function byte_string(b: i32): string {
   return string_from_bytes_unchecked([b as u8]);
 }
 
-pub struct Tm { year: i32, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32, offset: i32, abbrev: string }
+pub struct Tm { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32, offset: i32, abbrev: string }
 
 // `break_time(z, t)` — localtime(3) as a conversion reads it: the
 // broken-down fields, the offset behind them and the zone designation
 // they are named by.
 pub function break_time(z: tz.Zone, t: i64): Tm {
-  var dt: DateTime = z.civil(t);
-  return Tm { year: dt.date.year, month: dt.date.month, day: dt.date.day, hour: dt.time.hour, min: dt.time.minute, sec: dt.time.second, wday: dt.date.weekday(), yday: dt.date.day_of_year() - 1, offset: z.offset_at(t), abbrev: z.abbrev_at(t) };
+  var e: tz.Entry = z.entry_at(t);
+  var c: tz.Civil = tz.civil_at(t + e.off as i64);
+  return Tm { year: c.year, month: c.month, day: c.day, hour: c.hour, min: c.min, sec: c.sec, wday: c.wday, yday: c.yday, offset: e.off, abbrev: e.abbrev };
 }
 
 function floor_div(a: i64, b: i64): i64 {
-  var q: i64 = a / b;
-  if (a % b != 0 as i64 && a < 0 as i64 != b < 0 as i64) {
-    q = q - 1 as i64;
-  }
-  return q;
+  return tz.floor_div(a, b);
 }
 
 function floor_mod(a: i64, b: i64): i64 {
-  return a - floor_div(a, b) * b;
+  return tz.floor_mod(a, b);
 }
 
 // ---- strftime ---------------------------------------------------------------
-function pad_num(v: i64, width: i32, zero: boolean): string {
-  var neg: boolean = v < 0 as i64;
-  var mag: string = v.to_string();
-  if (neg) {
-    mag = slice_unchecked(mag, 1, mag.len()) + "";
+// Padding: `0` the default, which each conversion reads as it likes; `1`
+// the `0` flag; `2` the `+` flag; `3` the `_` flag; `4` the `-` flag.
+function pad_zero(): i32 {
+  return 0;
+}
+
+function pad_always_zero(): i32 {
+  return 1;
+}
+
+function pad_sign(): i32 {
+  return 2;
+}
+
+function pad_space(): i32 {
+  return 3;
+}
+
+function pad_none(): i32 {
+  return 4;
+}
+
+// `width_add(h, text, width, pad)` — `text` padded on the left to
+// `width`: with zeros under the `0` and `+` flags, spaces otherwise,
+// and not at all under `-`.
+function width_add(h: usize, text: string, width: i32, pad: i32): void {
+  var w: i32 = width;
+  if (pad == pad_none() || w < 0) {
+    w = 0;
   }
-  var fill: string = " ";
-  if (zero) {
-    fill = "0";
+  var fill: i32 = 32;
+  if (pad == pad_always_zero() || pad == pad_sign()) {
+    fill = 48;
   }
-  var want: i32 = width;
-  if (neg) {
-    want = want - 1;
+  var n: i32 = w - text.len();
+  while (n > 0) {
+    buf_push_byte(h, fill);
+    n = n - 1;
   }
-  while (mag.len() < want) {
-    mag = fill + mag;
+  buf_push(h, text);
+}
+
+function cased(s: string, up: boolean, low: boolean): string {
+  if (low) {
+    return lower_ascii(s);
   }
-  if (neg) {
-    return "-" + mag;
+  if (up) {
+    return upper_ascii(s);
   }
-  return mag;
+  return s;
 }
 
 function day_name(i: i32): string {
@@ -96,7 +122,7 @@ function iso_weeks_in(y: i64): i32 {
 function iso_week(tm: Tm): (i64, i32) {
   var wd: i32 = (tm.wday + 6) % 7;
   var week: i32 = (tm.yday - wd + 10) / 7;
-  var y: i64 = tm.year as i64;
+  var y: i64 = tm.year;
   if (week < 1) {
     y = y - 1 as i64;
     week = iso_weeks_in(y);
@@ -107,28 +133,6 @@ function iso_week(tm: Tm): (i64, i32) {
   return (y, week);
 }
 
-function zone_offset_text(off: i32, colons: i32): string {
-  var sign: string = "+";
-  var v: i32 = off;
-  if (v < 0) {
-    sign = "-";
-    v = 0 - v;
-  }
-  var hh: string = pad_num((v / 3600) as i64, 2, true);
-  var mm: string = pad_num((v / 60 % 60) as i64, 2, true);
-  var ss: string = pad_num((v % 60) as i64, 2, true);
-  if (colons == 0) {
-    return sign + hh + mm;
-  }
-  if (colons == 1) {
-    return sign + hh + ":" + mm;
-  }
-  if (colons == 2) {
-    return sign + hh + ":" + mm + ":" + ss;
-  }
-  return sign + hh;
-}
-
 function hour12(h: i32): i32 {
   var v: i32 = h % 12;
   if (v == 0) {
@@ -137,322 +141,715 @@ function hour12(h: i32): i32 {
   return v;
 }
 
-function meridiem(h: i32, upper: boolean): string {
+function meridiem(h: i32): string {
   if (h < 12) {
-    if (upper) {
-      return "AM";
-    }
-    return "am";
+    return "AM";
   }
-  if (upper) {
-    return "PM";
-  }
-  return "pm";
+  return "PM";
 }
 
 function lower_ascii(s: string): string {
-  var out: string = "";
+  var out: u8[] = [];
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
     if (b >= 65 && b <= 90) {
       b = b + 32;
     }
-    out = out + byte_string(b);
+    out = out.append(b as u8);
     i = i + 1;
   }
-  return out;
+  return string_from_bytes_unchecked(out);
 }
 
 function upper_ascii(s: string): string {
-  var out: string = "";
+  var out: u8[] = [];
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
     if (b >= 97 && b <= 122) {
       b = b - 32;
     }
-    out = out + byte_string(b);
+    out = out.append(b as u8);
     i = i + 1;
   }
-  return out;
+  return string_from_bytes_unchecked(out);
 }
 
-// `conv(c, tm, t, nsec)` — one conversion as (text, known, the width it
-// pads to by default, whether that padding is zeros).
-function conv(c: i32, tm: Tm, t: i64, nsec: i64): (string, boolean, i32, boolean) {
-  var year: i64 = tm.year as i64;
-  if (c == 97) {
-    return (abbrev3(day_name(tm.wday)), true, 0, false);
-  }
-  if (c == 65) {
-    return (day_name(tm.wday), true, 0, false);
-  }
-  if (c == 98 || c == 104) {
-    return (abbrev3(month_name(tm.month)), true, 0, false);
-  }
-  if (c == 66) {
-    return (month_name(tm.month), true, 0, false);
-  }
-  if (c == 99) {
-    return (abbrev3(day_name(tm.wday)) + " " + abbrev3(month_name(tm.month)) + " " + pad_num(tm.day as i64, 2, false) + " " + pad_num(tm.hour as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true) + ":" + pad_num(tm.sec as i64, 2, true) + " " + year.to_string(), true, 0, false);
-  }
-  if (c == 67) {
-    return (pad_num(floor_div(year, 100 as i64), 2, true), true, 2, true);
-  }
-  if (c == 100) {
-    return (pad_num(tm.day as i64, 2, true), true, 2, true);
-  }
-  if (c == 68 || c == 120) {
-    return (pad_num(tm.month as i64, 2, true) + "/" + pad_num(tm.day as i64, 2, true) + "/" + pad_num(floor_mod(year, 100 as i64), 2, true), true, 0, false);
-  }
-  if (c == 101) {
-    return (pad_num(tm.day as i64, 2, false), true, 2, false);
-  }
-  if (c == 70) {
-    return (pad_num(year, 4, true) + "-" + pad_num(tm.month as i64, 2, true) + "-" + pad_num(tm.day as i64, 2, true), true, 0, false);
-  }
-  if (c == 103) {
-    return (pad_num(floor_mod(iso_week(tm).0, 100 as i64), 2, true), true, 2, true);
-  }
-  if (c == 71) {
-    return (pad_num(iso_week(tm).0, 4, true), true, 4, true);
-  }
-  if (c == 72) {
-    return (pad_num(tm.hour as i64, 2, true), true, 2, true);
-  }
-  if (c == 73) {
-    return (pad_num(hour12(tm.hour) as i64, 2, true), true, 2, true);
-  }
-  if (c == 106) {
-    return (pad_num((tm.yday + 1) as i64, 3, true), true, 3, true);
-  }
-  if (c == 107) {
-    return (pad_num(tm.hour as i64, 2, false), true, 2, false);
-  }
-  if (c == 108) {
-    return (pad_num(hour12(tm.hour) as i64, 2, false), true, 2, false);
-  }
-  if (c == 109) {
-    return (pad_num(tm.month as i64, 2, true), true, 2, true);
-  }
-  if (c == 77) {
-    return (pad_num(tm.min as i64, 2, true), true, 2, true);
-  }
-  if (c == 110) {
-    return ("\n", true, 0, false);
-  }
-  if (c == 78) {
-    return (pad_num(nsec, 9, true), true, 9, true);
-  }
-  if (c == 112) {
-    return (meridiem(tm.hour, true), true, 0, false);
-  }
-  if (c == 80) {
-    return (meridiem(tm.hour, false), true, 0, false);
-  }
-  if (c == 113) {
-    return (((tm.month - 1) / 3 + 1).to_string(), true, 0, false);
-  }
-  if (c == 114) {
-    return (pad_num(hour12(tm.hour) as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true) + ":" + pad_num(tm.sec as i64, 2, true) + " " + meridiem(tm.hour, true), true, 0, false);
-  }
-  if (c == 82) {
-    return (pad_num(tm.hour as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true), true, 0, false);
-  }
-  if (c == 115) {
-    return (t.to_string(), true, 0, false);
-  }
-  if (c == 83) {
-    return (pad_num(tm.sec as i64, 2, true), true, 2, true);
-  }
-  if (c == 116) {
-    return ("\t", true, 0, false);
-  }
-  if (c == 84 || c == 88) {
-    return (pad_num(tm.hour as i64, 2, true) + ":" + pad_num(tm.min as i64, 2, true) + ":" + pad_num(tm.sec as i64, 2, true), true, 0, false);
-  }
-  if (c == 117) {
-    var u: i32 = tm.wday;
-    if (u == 0) {
-      u = 7;
-    }
-    return (u.to_string(), true, 0, false);
-  }
-  if (c == 85) {
-    return (pad_num(((tm.yday + 7 - tm.wday) / 7) as i64, 2, true), true, 2, true);
-  }
-  if (c == 86) {
-    return (pad_num(iso_week(tm).1 as i64, 2, true), true, 2, true);
-  }
-  if (c == 119) {
-    return (tm.wday.to_string(), true, 0, false);
-  }
-  if (c == 87) {
-    return (pad_num(((tm.yday + 7 - (tm.wday + 6) % 7) / 7) as i64, 2, true), true, 2, true);
-  }
-  if (c == 121) {
-    return (pad_num(floor_mod(year, 100 as i64), 2, true), true, 2, true);
-  }
-  if (c == 89) {
-    return (pad_num(year, 4, true), true, 4, true);
-  }
-  if (c == 90) {
-    return (tm.abbrev, true, 0, false);
-  }
-  if (c == 122) {
-    return (zone_offset_text(tm.offset, 0), true, 0, false);
-  }
-  if (c == 37) {
-    return ("%", true, 0, false);
-  }
-  return ("", false, 0, false);
-}
-
-// The numeric value behind a padded conversion, so an explicit width
-// can repad it.
-function unpad(s: string): i64 {
-  var i: i32 = 0;
-  var neg: boolean = s.len() > 0 && s[0] as i32 == 45;
-  while (i < s.len() && (s[i] as i32 == 32 || s[i] as i32 == 48 || s[i] as i32 == 45)) {
-    i = i + 1;
-  }
-  var v: i64 = 0 as i64;
-  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
-    i = i + 1;
-  }
-  if (neg) {
+function abs64(v: i64): i64 {
+  if (v < 0 as i64) {
     return 0 as i64 - v;
   }
   return v;
 }
 
-// `strftime(fmt, z, t, nsec)` — nstrftime in the C locale: the
-// conversions above with gnulib's `-` `_` `0` `^` `#` flags, an
-// optional field width, the `E` / `O` modifiers (C has no alternative
-// representations, so they are skipped) and the `:` repetitions of
-// `%z`. An unknown conversion is copied out with its percent, as glibc
-// copies it.
-pub function strftime(fmt: string, z: tz.Zone, t: i64, nsec: i64): string {
-  var tm: Tm = break_time(z, t);
-  var out: string = "";
+// `digits_of(v, mask)` — the decimal digits of a magnitude, with a
+// colon inserted before the i'th digit from the right for each bit
+// `i` set in `mask`, which is how `%::z` gets its two colons.
+function digits_of(v: i64, mask: i32): string {
+  var out: u8[] = [];
+  var n: i64 = v;
+  var m: i32 = mask;
+  while (true) {
+    if ((m & 1) != 0) {
+      out = out.append(58 as u8);
+    }
+    m = m / 2;
+    out = out.append((48 as i64 + n % (10 as i64)) as u8);
+    n = n / (10 as i64);
+    if (n == 0 as i64 && m == 0) {
+      break;
+    }
+  }
+  var rev: u8[] = [];
+  var i: i32 = out.len();
+  while (i > 0) {
+    i = i - 1;
+    rev = rev.append(out[i]);
+  }
+  return string_from_bytes_unchecked(rev);
+}
+
+// `number(h, digits, negative, sign_always, width, pad, d)` — a
+// number's sign and padding as the original places them: a leading
+// sign, then under `_` the spaces come before the sign and under the
+// rest the zeros come after it.
+function number(h: usize, digits: string, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): void {
+  var width: i32 = number_sign(h, digits.len(), negative, sign_always, width_in, pad_in, d);
+  width_add(h, digits, width, pad_or_zero(pad_in));
+}
+
+function pad_or_zero(pad: i32): i32 {
+  if (pad == pad_zero()) {
+    return pad_always_zero();
+  }
+  return pad;
+}
+
+// `number_sign(h, ndigits, …)` — the sign and the padding that goes
+// before it, answering the width left for the digits.
+function number_sign(h: usize, ndigits: i32, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): i32 {
+  var pad: i32 = pad_or_zero(pad_in);
+  var width: i32 = width_in;
+  if (width < 0) {
+    width = d;
+  }
+  var sign: i32 = 0;
+  if (negative) {
+    sign = 45;
+  } else if (sign_always) {
+    sign = 43;
+  }
+  if (sign != 0) {
+    var shortage: i32 = width - 1 - ndigits;
+    if (pad == pad_space() && shortage > 0) {
+      var n: i32 = shortage;
+      while (n > 0) {
+        buf_push_byte(h, 32);
+        n = n - 1;
+      }
+      width = width - shortage;
+    }
+    buf_push_byte(h, sign);
+    width = width - 1;
+  }
+  return width;
+}
+
+function digit_count(v: i64): i32 {
+  var n: i32 = 1;
+  var x: i64 = v;
+  while (x >= 10 as i64) {
+    x = x / (10 as i64);
+    n = n + 1;
+  }
+  return n;
+}
+
+// `plain_number(h, v, negative, sign_always, width, pad, d)` — a
+// number with no colons in it, written straight into the builder.
+function plain_number(h: usize, v: i64, negative: boolean, sign_always: boolean, width_in: i32, pad_in: i32, d: i32): void {
+  var n: i32 = digit_count(v);
+  var width: i32 = number_sign(h, n, negative, sign_always, width_in, pad_in, d);
+  var pad: i32 = pad_or_zero(pad_in);
+  var w: i32 = width;
+  if (pad == pad_none() || w < 0) {
+    w = 0;
+  }
+  var fill: i32 = 32;
+  if (pad == pad_always_zero() || pad == pad_sign()) {
+    fill = 48;
+  }
+  var k: i32 = w - n;
+  while (k > 0) {
+    buf_push_byte(h, fill);
+    k = k - 1;
+  }
+  io_buffered.buf_push_u64(h, v as u64);
+}
+
+// One `%` directive as the loop over a format sees it.
+struct Spec { pad: i32, width: i32, up: boolean, low: boolean, change: boolean, modifier: i32, c: i32, at: i32, end: i32 }
+
+// `parse_spec(fmt, i, upcase, width)` — the flags, width, modifier and
+// conversion letter starting at the `%` at `i`.
+function parse_spec(fmt: string, i: i32, upcase: boolean, width: i32): Spec {
+  var pad: i32 = pad_zero();
+  var up: boolean = upcase;
+  var change: boolean = false;
+  var j: i32 = i + 1;
+  var flagging: boolean = true;
+  while (j < fmt.len() && flagging) {
+    var f: i32 = fmt[j] as i32;
+    if (f == 95) {
+      pad = pad_space();
+    } else if (f == 45) {
+      pad = pad_none();
+    } else if (f == 43) {
+      pad = pad_sign();
+    } else if (f == 48) {
+      pad = pad_always_zero();
+    } else if (f == 94) {
+      up = true;
+    } else if (f == 35) {
+      change = true;
+    } else {
+      flagging = false;
+    }
+    if (flagging) {
+      j = j + 1;
+    }
+  }
+  var w: i32 = width;
+  if (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
+    // A width past what an int holds saturates, as the original's does.
+    w = 0;
+    while (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
+      var d: i32 = fmt[j] as i32 - 48;
+      if (w > 214748364 || w == 214748364 && d > 7) {
+        w = 2147483647;
+      } else {
+        w = w * 10 + d;
+      }
+      j = j + 1;
+    }
+  }
+  var modifier: i32 = 0;
+  if (j < fmt.len() && (fmt[j] as i32 == 69 || fmt[j] as i32 == 79)) {
+    modifier = fmt[j] as i32;
+    j = j + 1;
+  }
+  var c: i32 = 0;
+  if (j < fmt.len()) {
+    c = fmt[j] as i32;
+  }
+  return Spec { pad: pad, width: w, up: up, low: false, change: change, modifier: modifier, c: c, at: i, end: j };
+}
+
+// `yearish(out, s, v, negative, d, yr_spec)` — `%Y`, `%C`, `%G`, `%g`
+// and `%y`: the `+` flag writes a sign when the value outruns its
+// natural width or the field is wider than that.
+function yearish(h: usize, s: Spec, v: i64, negative: boolean, d: i32, yr_spec: i32): void {
+  var pad: i32 = s.pad;
+  if (pad == pad_zero()) {
+    pad = yr_spec;
+  }
+  var limit: i64 = 9999;
+  if (d == 2) {
+    limit = 99;
+  }
+  var sign_always: boolean = pad == pad_sign() && (v > limit || d < s.width);
+  plain_number(h, v, negative, sign_always, s.width, pad, d);
+}
+
+function plain(h: usize, s: Spec, v: i64, d: i32): void {
+  plain_number(h, abs64(v), v < 0 as i64, false, s.width, s.pad, d);
+}
+
+function spacepad(h: usize, s: Spec, v: i64, d: i32): void {
+  var pad: i32 = s.pad;
+  if (pad == pad_zero()) {
+    pad = pad_space();
+  }
+  plain_number(h, abs64(v), v < 0 as i64, false, s.width, pad, d);
+}
+
+function tz_offset(h: usize, s: Spec, tm: Tm, colons: i32): void {
+  var diff: i32 = tm.offset;
+  var negative: boolean = diff < 0;
+  if (diff == 0) {
+    negative = tm.abbrev.len() > 0 && tm.abbrev[0] as i32 == 45;
+  }
+  var mag: i32 = diff;
+  if (mag < 0) {
+    mag = 0 - mag;
+  }
+  var hh: i32 = mag / 3600;
+  var mm: i32 = mag / 60 % 60;
+  var ss: i32 = mag % 60;
+  var d: i32 = 5;
+  var mask: i32 = 0;
+  var v: i32 = hh * 100 + mm;
+  var mode: i32 = colons;
+  if (mode == 3) {
+    if (ss != 0) {
+      mode = 2;
+    } else if (mm != 0) {
+      mode = 1;
+    } else {
+      d = 3;
+      v = hh;
+    }
+  }
+  if (mode == 1) {
+    d = 6;
+    mask = 4;
+  } else if (mode == 2) {
+    d = 9;
+    mask = 20;
+    v = hh * 10000 + mm * 100 + ss;
+  }
+  if (mask == 0) {
+    plain_number(h, v as i64, negative, true, s.width, s.pad, d);
+    return;
+  }
+  number(h, digits_of(v as i64, mask), negative, true, s.width, s.pad, d);
+}
+
+// `nanoseconds(out, s, nsec)` — `%N`: the leading digits the width has
+// room for, the rest of the field filled on the right.
+function nanoseconds(h: usize, s: Spec, nsec: i64): void {
+  var width: i32 = s.width;
+  if (width <= 0) {
+    width = 9;
+  }
+  var n: i64 = nsec;
+  var ndigs: i32 = 9;
+  while (width < ndigs || ndigs > 1 && n % (10 as i64) == 0 as i64) {
+    ndigs = ndigs - 1;
+    n = n / (10 as i64);
+  }
+  var text: string = n.to_string();
+  while (text.len() < ndigs) {
+    text = "0" + text;
+  }
+  var pad: i32 = s.pad;
+  if (pad == pad_zero()) {
+    pad = pad_always_zero();
+  }
+  buf_push(h, text);
+  width_add(h, "", width - ndigs, pad);
+}
+
+function century(tm: Tm): (i64, boolean) {
+  var tm_year: i64 = tm.year - 1900 as i64;
+  var negative: boolean = tm_year < 0 as i64 - 1900 as i64;
+  var adjust: i64 = 0;
+  if (!negative && tm_year < 0 as i64) {
+    adjust = 99;
+  }
+  var c: i64 = (tm_year - adjust) / (100 as i64) + 19 as i64;
+  return (abs64(c), negative);
+}
+
+// `c_int(v)` — `v` as a C int: wrapped to 32 bits, which is what the
+// C library's own strftime does with a year past its range.
+function c_int(v: i64): i64 {
+  var w: i64 = tz.floor_mod(v, 4294967296 as i64);
+  if (w >= 2147483648 as i64) {
+    return w - 4294967296 as i64;
+  }
+  return w;
+}
+
+// `c_year(year)` — the year as the C library prints it in `%c` and
+// under the `E` modifier: `tm_year + 1900` in int arithmetic, with no
+// padding.
+function c_year(year: i64): string {
+  return c_int(c_int(year - 1900 as i64) + 1900 as i64).to_string();
+}
+
+function two_digit_year(y: i64): i64 {
+  var tm_year: i64 = y - 1900 as i64;
+  var yy: i64 = tm_year % (100 as i64);
+  if (yy < 0 as i64) {
+    if (tm_year < 0 as i64 - 1900 as i64) {
+      return 0 as i64 - yy;
+    }
+    return yy + 100 as i64;
+  }
+  return yy;
+}
+
+function is_e(s: Spec): boolean {
+  return s.modifier == 69;
+}
+
+function is_o(s: Spec): boolean {
+  return s.modifier == 79;
+}
+
+// `subformat(out, s, sub, tm, t, nsec, yr_spec, subwidth)` — a
+// conversion that is itself a format, `%c` or `%T`: rendered with the
+// case flag carried in and padded as a whole.
+function subformat(h: usize, s: Spec, sub: string, tm: Tm, t: i64, nsec: i64, yr_spec: i32, subwidth: i32): void {
+  // `%c`, `%x`, `%X` and `%r` are handed to the C library's own
+  // strftime, which knows none of the flags; the rest are expanded in
+  // place and inherit the padding.
+  var subpad: i32 = s.pad;
+  if (s.c == 99 || s.c == 120 || s.c == 88 || s.c == 114) {
+    subpad = pad_zero();
+  }
+  var inner: string = format_with(sub, tm, t, nsec, s.up, subpad, subwidth);
+  width_add(h, inner, s.width, s.pad);
+}
+
+// `text(out, s, value, up, low)` — a word: `%a`, `%p`, `%Z` and the
+// rest, padded to the width and cased by the flags.
+function text(h: usize, s: Spec, value: string, up: boolean, low: boolean): void {
+  width_add(h, cased(value, up, low), s.width, s.pad);
+}
+
+// `convert(out, fmt, s, tm, t, nsec, yr_spec)` — one conversion, or
+// (false, ...) for one the original copies out as it stands.
+function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): boolean {
+  var c: i32 = s.c;
+  var year: i64 = tm.year;
+  var e: boolean = is_e(s);
+  var o: boolean = is_o(s);
+  if (c == 97) {
+    if (s.modifier != 0) {
+      return false;
+    }
+    text(h, s, abbrev3(day_name(tm.wday)), s.up || s.change, false);
+    return true;
+  }
+  if (c == 65) {
+    if (s.modifier != 0) {
+      return false;
+    }
+    text(h, s, day_name(tm.wday), s.up || s.change, false);
+    return true;
+  }
+  if (c == 98 || c == 104) {
+    if (e) {
+      return false;
+    }
+    text(h, s, abbrev3(month_name(tm.month)), s.up || s.change, false);
+    return true;
+  }
+  if (c == 66) {
+    if (e) {
+      return false;
+    }
+    text(h, s, month_name(tm.month), s.up || s.change, false);
+    return true;
+  }
+  if (c == 99) {
+    if (o) {
+      return false;
+    }
+    subformat(h, s, "%a %b %e %H:%M:%S " + c_year(year), tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 67) {
+    if (e) {
+      text(h, s, tz.floor_div(c_int(c_int(year - 1900 as i64) + 1900 as i64), 100 as i64).to_string(), false, false);
+      return true;
+    }
+    var cen: (i64, boolean) = century(tm);
+    yearish(h, s, cen.0, cen.1, 2, yr_spec);
+    return true;
+  }
+  if (c == 120) {
+    if (o) {
+      return false;
+    }
+    subformat(h, s, "%m/%d/%y", tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 68) {
+    if (s.modifier != 0) {
+      return false;
+    }
+    subformat(h, s, "%m/%d/%y", tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 100) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, tm.day as i64, 2);
+    return true;
+  }
+  if (c == 101) {
+    if (e) {
+      return false;
+    }
+    spacepad(h, s, tm.day as i64, 2);
+    return true;
+  }
+  if (c == 70) {
+    if (s.modifier != 0) {
+      return false;
+    }
+    var f: Spec = s;
+    var subwidth: i32 = 0;
+    if (s.pad == pad_zero() && s.width < 0) {
+      f = Spec { ...s, pad: pad_sign() };
+      subwidth = 4;
+    } else {
+      subwidth = s.width - 6;
+      if (subwidth < 0) {
+        subwidth = 0;
+      }
+    }
+    subformat(h, f, "%Y-%m-%d", tm, t, nsec, yr_spec, subwidth);
+    return true;
+  }
+  if (c == 72) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, tm.hour as i64, 2);
+    return true;
+  }
+  if (c == 73) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, hour12(tm.hour) as i64, 2);
+    return true;
+  }
+  if (c == 107) {
+    if (e) {
+      return false;
+    }
+    spacepad(h, s, tm.hour as i64, 2);
+    return true;
+  }
+  if (c == 108) {
+    if (e) {
+      return false;
+    }
+    spacepad(h, s, hour12(tm.hour) as i64, 2);
+    return true;
+  }
+  if (c == 106) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, (tm.yday + 1) as i64, 3);
+    return true;
+  }
+  if (c == 77) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, tm.min as i64, 2);
+    return true;
+  }
+  if (c == 109) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, tm.month as i64, 2);
+    return true;
+  }
+  if (c == 78) {
+    if (e) {
+      return false;
+    }
+    nanoseconds(h, s, nsec);
+    return true;
+  }
+  if (c == 110) {
+    width_add(h, "\n", s.width, s.pad);
+    return true;
+  }
+  if (c == 112 || c == 80) {
+    var low: boolean = c == 80 || s.change;
+    text(h, s, meridiem(tm.hour), s.up && !low, low);
+    return true;
+  }
+  if (c == 113) {
+    plain(h, s, ((tm.month - 1) / 3 + 1) as i64, 1);
+    return true;
+  }
+  if (c == 82) {
+    subformat(h, s, "%H:%M", tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 114) {
+    subformat(h, s, "%I:%M:%S %p", tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 83) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, tm.sec as i64, 2);
+    return true;
+  }
+  if (c == 115) {
+    plain_number(h, abs64(t), t < 0 as i64, false, s.width, s.pad, 1);
+    return true;
+  }
+  if (c == 88) {
+    if (o) {
+      return false;
+    }
+    subformat(h, s, "%H:%M:%S", tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 84) {
+    subformat(h, s, "%H:%M:%S", tm, t, nsec, yr_spec, -1);
+    return true;
+  }
+  if (c == 116) {
+    width_add(h, "\t", s.width, s.pad);
+    return true;
+  }
+  if (c == 117) {
+    plain(h, s, ((tm.wday + 6) % 7 + 1) as i64, 1);
+    return true;
+  }
+  if (c == 85) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, ((tm.yday - tm.wday + 7) / 7) as i64, 2);
+    return true;
+  }
+  if (c == 86 || c == 103 || c == 71) {
+    if (e) {
+      return false;
+    }
+    var w: (i64, i32) = iso_week(tm);
+    if (c == 86) {
+      plain(h, s, w.1 as i64, 2);
+      return true;
+    }
+    if (c == 103) {
+      yearish(h, s, two_digit_year(w.0), false, 2, yr_spec);
+      return true;
+    }
+    yearish(h, s, abs64(w.0), w.0 < 0 as i64, 4, yr_spec);
+    return true;
+  }
+  if (c == 87) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, ((tm.yday - (tm.wday + 6) % 7 + 7) / 7) as i64, 2);
+    return true;
+  }
+  if (c == 119) {
+    if (e) {
+      return false;
+    }
+    plain(h, s, tm.wday as i64, 1);
+    return true;
+  }
+  if (c == 89) {
+    if (o) {
+      return false;
+    }
+    if (e) {
+      text(h, s, c_year(year), false, false);
+      return true;
+    }
+    yearish(h, s, abs64(year), year < 0 as i64, 4, yr_spec);
+    return true;
+  }
+  if (c == 121) {
+    yearish(h, s, two_digit_year(year), false, 2, yr_spec);
+    return true;
+  }
+  if (c == 90) {
+    var low: boolean = s.change;
+    text(h, s, tm.abbrev, s.up && !low, low);
+    return true;
+  }
+  if (c == 122) {
+    tz_offset(h, s, tm, 0);
+    return true;
+  }
+  return false;
+}
+
+// `format_with(fmt, tm, t, nsec, upcase, yr_spec, width)` — the
+// engine, re-entered for the compound conversions: `upcase` is a `^`
+// carried in from outside, `yr_spec` the padding a year inherits, and
+// `width` the width the first conversion starts with.
+function format_with(fmt: string, tm: Tm, t: i64, nsec: i64, upcase: boolean, yr_spec: i32, width0: i32): string {
+  var h: usize = buf_new(64);
   var i: i32 = 0;
+  var width: i32 = width0;
   while (i < fmt.len()) {
     var b: i32 = fmt[i] as i32;
     if (b != 37) {
-      out = out + byte_string(b);
+      if (width > 1) {
+        width_add(h, byte_string(b), width, pad_zero());
+      } else {
+        buf_push_byte(h, b);
+      }
+      width = -1;
       i = i + 1;
       continue;
     }
-    var start: i32 = i;
-    var j: i32 = i + 1;
-    var pad_dash: boolean = false;
-    var pad_under: boolean = false;
-    var pad_zero: boolean = false;
-    var up: boolean = false;
-    var swap: boolean = false;
-    var colons: i32 = 0;
-    var flagging: boolean = true;
-    while (j < fmt.len() && flagging) {
-      var f: i32 = fmt[j] as i32;
-      if (f == 45) {
-        pad_dash = true;
-        j = j + 1;
-      } else if (f == 95) {
-        pad_under = true;
-        j = j + 1;
-      } else if (f == 48) {
-        pad_zero = true;
-        j = j + 1;
-      } else if (f == 94) {
-        up = true;
-        j = j + 1;
-      } else if (f == 35) {
-        swap = true;
-        j = j + 1;
-      } else {
-        flagging = false;
+    var s: Spec = parse_spec(fmt, i, upcase, width);
+    width = -1;
+    var j: i32 = s.end;
+    if (s.c == 37) {
+      if (j == i + 1) {
+        width_add(h, "%", s.width, s.pad);
+        i = j + 1;
+        continue;
       }
+      // Flags before a second `%` are copied out, and that `%` opens
+      // the next conversion.
+      width_add(h, cased(slice_unchecked(fmt, i, j) + "", s.up, s.low), s.width, s.pad);
+      i = j;
+      continue;
     }
-    var width: i32 = 0;
-    var has_width: boolean = false;
-    while (j < fmt.len() && gnu.is_digit(fmt[j] as i32)) {
-      has_width = true;
-      if (width < 1000) {
-        width = width * 10 + (fmt[j] as i32 - 48);
-      }
-      j = j + 1;
-    }
-    while (j < fmt.len() && fmt[j] as i32 == 58) {
-      colons = colons + 1;
-      j = j + 1;
-    }
-    if (j < fmt.len() && (fmt[j] as i32 == 69 || fmt[j] as i32 == 79)) {
-      j = j + 1;
-    }
-    if (j >= fmt.len()) {
-      out = out + slice_unchecked(fmt, start, fmt.len());
+    if (s.c == 0) {
+      width_add(h, cased(slice_unchecked(fmt, i, fmt.len()) + "", s.up, s.low), s.width, s.pad);
       i = fmt.len();
       continue;
     }
-    var c: i32 = fmt[j] as i32;
-    if (colons > 0 && c != 122) {
-      out = out + slice_unchecked(fmt, start, j + 1);
+    if (s.c == 58) {
+      var colons: i32 = 0;
+      while (j + colons < fmt.len() && fmt[j + colons] as i32 == 58) {
+        colons = colons + 1;
+      }
+      if (j + colons < fmt.len() && fmt[j + colons] as i32 == 122 && colons <= 3) {
+        tz_offset(h, s, tm, colons);
+        i = j + colons + 1;
+        continue;
+      }
+      if (j + colons < fmt.len() && fmt[j + colons] as i32 == 122) {
+        j = j + colons;
+      }
+      width_add(h, cased(slice_unchecked(fmt, i, j + 1) + "", s.up, s.low), s.width, s.pad);
       i = j + 1;
       continue;
     }
-    var r: (string, boolean, i32, boolean) = conv(c, tm, t, nsec);
-    if (colons > 0) {
-      r = (zone_offset_text(tm.offset, colons), true, 0, false);
+    if (!convert(h, s, tm, t, nsec, yr_spec)) {
+      width_add(h, cased(slice_unchecked(fmt, i, j + 1) + "", s.up, s.low), s.width, s.pad);
     }
-    if (!r.1) {
-      out = out + slice_unchecked(fmt, start, j + 1);
-      i = j + 1;
-      continue;
-    }
-    var text: string = r.0;
-    if (c == 78 && has_width) {
-      if (width <= 9) {
-        text = slice_unchecked(text, 0, width) + "";
-      } else {
-        text = text + "0".repeat(width - 9);
-      }
-      has_width = false;
-      r = (text, true, 0, false);
-    }
-    var want: i32 = r.2;
-    var zero: boolean = r.3;
-    if (pad_dash) {
-      want = 0;
-    }
-    if (pad_under) {
-      zero = false;
-    }
-    if (pad_zero) {
-      zero = true;
-    }
-    if (has_width && width > want) {
-      want = width;
-    }
-    if (r.2 > 0) {
-      text = pad_num(unpad(text), want, zero);
-    } else if (has_width) {
-      while (text.len() < width) {
-        if (zero) {
-          text = "0" + text;
-        } else {
-          text = " " + text;
-        }
-      }
-    }
-    if (up || swap && c != 90) {
-      text = upper_ascii(text);
-    } else if (swap) {
-      text = lower_ascii(text);
-    }
-    out = out + text;
     i = j + 1;
   }
-  return out;
+  return buf_take(h);
+}
+
+// `strftime(fmt, z, t, nsec)` — nstrftime in the C locale: the
+// conversions with gnulib's `-` `_` `0` `+` `^` `#` flags, an optional
+// field width, the `E` / `O` modifiers (C has no alternative
+// representations, so they are skipped where they are allowed and
+// refuse the conversion where they are not) and the `:` repetitions
+// of `%z`. A conversion the original does not know is copied out with
+// its percent, padded like anything else.
+pub function strftime(fmt: string, z: tz.Zone, t: i64, nsec: i64): string {
+  return format_with(fmt, break_time(z, t), t, nsec, false, pad_zero(), -1);
 }

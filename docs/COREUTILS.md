@@ -1448,6 +1448,15 @@ ordinary user — but the name asked about is two bytes longer, so a path within
 two bytes of PATH_MAX could answer ENAMETOOLONG where GNU's would not. Fern has
 no chdir builtin, and one was judged too narrow a reason to add it.
 
+**`date -s` cannot set the clock.** GNU parses the string and calls
+settime; Fern has no builtin that writes the system clock, so `date -s
+STRING` and the `date MMDDhhmm[[CC]YY][.ss]` operand form parse their
+argument exactly as GNU does — an invalid one is refused with the same
+message — and then print the date after `cannot set date: Operation not
+permitted`, which is what GNU prints without the privilege. The corpus
+holds only invalid spellings of both, since a valid one run by the
+root the suite runs as would move the machine's clock.
+
 **`df --sync` does not sync.** GNU calls `sync(2)` before it measures, so its
 numbers are post-writeback. Fern has no such builtin — no `sync`, `fsync` or
 `syncfs` in FuncSigs, and no flush-to-device on `Writer` — so `df.fern` accepts
@@ -1978,7 +1987,7 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
-  `install` `touch` `truncate` (#9142) `mkfifo` (done) `mknod` (done)
+  `install` `touch` (done — the open that creates the file is `open_appender`, which is GNU's `O_WRONLY|O_CREAT` without the `O_NONBLOCK` a FIFO would want, so a FIFO or socket operand is answered by its stat and its times set by path; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (done, on `sync()` and the fsync / fdatasync / syncfs handle
   methods from #9181; a FIFO operand is answered from its stat because no
   Fern open is non-blocking — see `sync.fern`'s header) (rename,
@@ -1992,7 +2001,7 @@ groups are the order of work. Each sub-issue names its group.
   every diagnostic before the context change; the change itself has no
   primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
-  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
   `shred` `stty`, `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the

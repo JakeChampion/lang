@@ -44,10 +44,11 @@ import "std/time";
 
 // ---- the zone ---------------------------------------------------------------
 // `Zone` — a transition table plus the rule that takes over past its
-// end. `first` / `first_abbr` are what stands before the first
-// transition; `times`, `offs` and `abbrs` are the same length, entry
-// `i` being in effect from `times[i]` until `times[i + 1]`.
-pub struct Zone { times: i64[], offs: i32[], abbrs: string[], first: i32, first_abbr: string, rule: Rule }
+// end. `first` / `first_abbr` / `first_dst` are what stands before the
+// first transition; `times`, `offs`, `abbrs` and `dsts` are the same
+// length, entry `i` being in effect from `times[i]` until
+// `times[i + 1]`.
+pub struct Zone { times: i64[], offs: i32[], abbrs: string[], dsts: boolean[], first: i32, first_abbr: string, first_dst: boolean, rule: Rule }
 
 // `Rule` — a POSIX TZ string: the standard offset, and when DST is
 // observed, the DST offset and the two dates that switch between them.
@@ -74,11 +75,12 @@ pub function utc_rule(): Rule {
 
 // `fixed_zone(off, name)` — a zone with no transitions and no rule, so
 // every instant is the same offset under the same name.
-function fixed_zone(off: i32, name: string): Zone {
+pub function fixed_zone(off: i32, name: string): Zone {
   var t: i64[] = [];
   var o: i32[] = [];
   var a: string[] = [];
-  return Zone { times: t, offs: o, abbrs: a, first: off, first_abbr: name, rule: utc_rule() };
+  var d: boolean[] = [];
+  return Zone { times: t, offs: o, abbrs: a, dsts: d, first: off, first_abbr: name, first_dst: false, rule: utc_rule() };
 }
 
 pub function utc_zone(): Zone {
@@ -89,41 +91,47 @@ pub function utc_zone(): Zone {
 pub function local_zone(): Zone {
   match (env("TZ")) {
     Some(spec) => {
-      // glibc substitutes the NAME `Universal` for an empty TZ and then
-      // runs it through the same two steps, which is why `TZ=` prints
-      // that word as its abbreviation on a machine carrying no
-      // zoneinfo file of that name.
-      var name: string = spec;
-      if (name.len() == 0) {
-        name = "Universal";
-      }
-      if (name[0] as i32 == 58) {
-        name = slice_unchecked(name, 1, name.len()) + "";
-      }
-      // `TZ=:` is the colon and nothing else, which names no file and
-      // leaves glibc on the default one.
-      if (name.len() == 0) {
-        return default_zone();
-      }
-      match (read_zone_file(zone_path(name))) {
-        Some(z) => {
-          return z;
-        },
-        None => {}
-      }
-      var r: Rule = parse_posix(name);
-      if (!r.valid) {
-        // A TZ that is neither a file nor a rule leaves tzset with the
-        // UTC offset and NO abbreviation, which is what a fresh
-        // process then prints for it.
-        return fixed_zone(0, "");
-      }
-      return rule_zone(r);
+      return zone_from_tz(spec);
     },
     None => {
       return default_zone();
     }
   }
+}
+
+// `zone_from_tz(spec)` — the zone a TZ value names, by tzset's rules:
+// a file first, then a POSIX rule.
+pub function zone_from_tz(spec: string): Zone {
+  // glibc substitutes the NAME `Universal` for an empty TZ and then
+  // runs it through the same two steps, which is why `TZ=` prints
+  // that word as its abbreviation on a machine carrying no
+  // zoneinfo file of that name.
+  var name: string = spec;
+  if (name.len() == 0) {
+    name = "Universal";
+  }
+  if (name[0] as i32 == 58) {
+    name = slice_unchecked(name, 1, name.len()) + "";
+  }
+  // `TZ=:` is the colon and nothing else, which names no file and
+  // leaves glibc on the default one.
+  if (name.len() == 0) {
+    return default_zone();
+  }
+  match (read_zone_file(zone_path(name))) {
+    Some(z) => {
+      return z;
+    },
+    None => {}
+  }
+  var r: Rule = parse_posix(name);
+  if (!r.valid) {
+    // A TZ that is neither a file nor a rule leaves tzset with the
+    // UTC offset and NO abbreviation, which is what a fresh
+    // process then prints for it.
+    return fixed_zone(0, "");
+  }
+  return rule_zone(r);
 }
 
 // The zone a process with no usable TZ gets: /etc/localtime, and UTC
@@ -145,7 +153,8 @@ function rule_zone(r: Rule): Zone {
   var t: i64[] = [];
   var o: i32[] = [];
   var a: string[] = [];
-  return Zone { times: t, offs: o, abbrs: a, first: r.std_off, first_abbr: r.std_name, rule: r };
+  var d: boolean[] = [];
+  return Zone { times: t, offs: o, abbrs: a, dsts: d, first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: r };
 }
 
 // Where a TZ value names a file. An absolute name is itself; a relative
@@ -185,6 +194,46 @@ pub function (z: Zone) offset_at(sec: i64): i32 {
     return z.rule.std_off;
   }
   return z.offs[i];
+}
+
+// `(z: Zone) is_dst_at(sec)` — localtime's tm_isdst at that instant:
+// the table entry's own flag, or which side of the footer rule it
+// falls on.
+pub function (z: Zone) is_dst_at(sec: i64): boolean {
+  var i: i32 = z.index_at(sec);
+  if (i == 0 - 1) {
+    return z.first_dst;
+  }
+  if (i == 0 - 2) {
+    return rule_dst(z.rule, sec);
+  }
+  return z.dsts[i];
+}
+
+// `(z: Zone) is_fixed()` — one offset for all time: no transition and
+// no daylight rule.
+pub function (z: Zone) is_fixed(): boolean {
+  return z.times.len() == 0 && !(z.rule.valid && z.rule.has_dst);
+}
+
+// `Entry` — everything a zone says about one instant: the offset, the
+// designation and the DST flag, from one lookup.
+pub struct Entry { off: i32, abbrev: string, dst: boolean }
+
+// `(z: Zone) entry_at(sec)` — the offset, designation and DST flag at
+// that instant, from a single search of the table.
+pub function (z: Zone) entry_at(sec: i64): Entry {
+  var i: i32 = z.index_at(sec);
+  if (i == 0 - 1) {
+    return Entry { off: z.first, abbrev: z.first_abbr, dst: z.first_dst };
+  }
+  if (i == 0 - 2) {
+    if (rule_dst(z.rule, sec)) {
+      return Entry { off: z.rule.dst_off, abbrev: z.rule.dst_name, dst: true };
+    }
+    return Entry { off: z.rule.std_off, abbrev: z.rule.std_name, dst: false };
+  }
+  return Entry { off: z.offs[i], abbrev: z.abbrs[i], dst: z.dsts[i] };
 }
 
 // `(z: Zone) abbrev_at(sec)` — the zone designation in force at that
@@ -367,6 +416,7 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
   var times: i64[] = [];
   var tofs: i32[] = [];
   var tabb: string[] = [];
+  var tdst: boolean[] = [];
   i = 0;
   while (i < c.time) {
     var t: i64 = 0;
@@ -382,6 +432,7 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
     times = times.append(t);
     tofs = tofs.append(offs[k]);
     tabb = tabb.append(names[k]);
+    tdst = tdst.append(isdst[k]);
     i = i + 1;
   }
   // Before the first transition, localtime uses the first type that is
@@ -398,7 +449,7 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
       i = i + 1;
     }
   }
-  return Some(Zone { times: times, offs: tofs, abbrs: tabb, first: first, first_abbr: first_name, rule: parse_posix(footer) });
+  return Some(Zone { times: times, offs: tofs, abbrs: tabb, dsts: tdst, first: first, first_abbr: first_name, first_dst: false, rule: parse_posix(footer) });
 }
 
 // One entry of the designation table: the NUL-terminated string at
@@ -717,21 +768,22 @@ function rule_instant(d: DateRule, year: i32): i64 {
 // The day of the year of the `week`th `day`-of-the-week in `mon`, with
 // week 5 meaning the last one in the month.
 function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
-  var wd: i32 = time.date_make(year, mon, 1).weekday();
+  var first: i64 = days_from_civil(year as i64, mon, 1);
+  var wd: i32 = floor_mod(first + 4 as i64, 7 as i64) as i32;
   var dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
   var last: i32 = time.days_in_month(year, mon);
   while (dom > last) {
     dom = dom - 7;
   }
-  return time.date_make(year, mon, dom).day_of_year();
+  return (first + (dom - 1) as i64 - days_from_civil(year as i64, 1, 1)) as i32 + 1;
 }
 
 function epoch_day(year: i32, mon: i32, day: i32): i32 {
-  return time.date_make(year, mon, day).days_since(time.date_make(1970, 1, 1));
+  return days_from_civil(year as i64, mon, day) as i32;
 }
 
 function year_of(local_sec: i64): i32 {
-  return time.instant_from_unix(local_sec).in_zone(time.timezone_utc()).to_datetime().date.year;
+  return civil_from_days(floor_div(local_sec, 86400 as i64)).0 as i32;
 }
 
 // ---- what a caller prints ---------------------------------------------------
@@ -740,4 +792,77 @@ function year_of(local_sec: i64): i32 {
 pub function (z: Zone) civil(sec: i64): DateTime {
   var off: i32 = z.offset_at(sec);
   return time.instant_from_unix(sec).in_zone(time.timezone_fixed_offset(off)).to_datetime();
+}
+
+// `Civil` — localtime(3)'s fields with the year kept in 64 bits, so a
+// timestamp the calendar has a year for is never narrowed on the way
+// to being printed or parsed.
+pub struct Civil { year: i64, month: i32, day: i32, hour: i32, min: i32, sec: i32, wday: i32, yday: i32 }
+
+// `(z: Zone) local_fields(sec)` — the broken-down local time at `sec`.
+pub function (z: Zone) local_fields(sec: i64): Civil {
+  return civil_at(sec + z.offset_at(sec) as i64);
+}
+
+// `civil_at(local)` — the fields of a local-seconds count, which is a
+// UTC instant when the offset is zero.
+pub function civil_at(local: i64): Civil {
+  var days: i64 = floor_div(local, 86400 as i64);
+  var rem: i32 = (local - days * (86400 as i64)) as i32;
+  var ymd: (i64, i32, i32) = civil_from_days(days);
+  var wday: i32 = floor_mod(days + 4 as i64, 7 as i64) as i32;
+  var yday: i32 = (days - days_from_civil(ymd.0, 1, 1)) as i32;
+  return Civil { year: ymd.0, month: ymd.1, day: ymd.2, hour: rem / 3600, min: rem / 60 % 60, sec: rem % 60, wday: wday, yday: yday };
+}
+
+pub function floor_div(a: i64, b: i64): i64 {
+  var q: i64 = a / b;
+  if (a % b != 0 as i64 && a < 0 as i64 != b < 0 as i64) {
+    q = q - 1 as i64;
+  }
+  return q;
+}
+
+pub function floor_mod(a: i64, b: i64): i64 {
+  return a - floor_div(a, b) * b;
+}
+
+// `days_from_civil(y, m, d)` — days since 1970-01-01 of a proleptic
+// Gregorian date, Hinnant's algorithm in 64 bits. The month must be
+// 1..12; the day may be anything, which is how a caller normalises
+// `mday` the way mktime does.
+pub function days_from_civil(y: i64, m: i32, d: i32): i64 {
+  var yy: i64 = y;
+  if (m <= 2) {
+    yy = yy - 1 as i64;
+  }
+  var era: i64 = floor_div(yy, 400 as i64);
+  var yoe: i64 = yy - era * (400 as i64);
+  var mp: i32 = m + 9;
+  if (m > 2) {
+    mp = m - 3;
+  }
+  var doy: i64 = ((153 * mp + 2) / 5) as i64 + d as i64 - 1 as i64;
+  var doe: i64 = yoe * (365 as i64) + yoe / (4 as i64) - yoe / (100 as i64) + doy;
+  return era * (146097 as i64) + doe - 719468 as i64;
+}
+
+// `civil_from_days(z)` — the inverse: (year, month, day).
+pub function civil_from_days(z_in: i64): (i64, i32, i32) {
+  var z: i64 = z_in + 719468 as i64;
+  var era: i64 = floor_div(z, 146097 as i64);
+  var doe: i64 = z - era * (146097 as i64);
+  var yoe: i64 = (doe - doe / (1460 as i64) + doe / (36524 as i64) - doe / (146096 as i64)) / (365 as i64);
+  var y: i64 = yoe + era * (400 as i64);
+  var doy: i64 = doe - (365 as i64 * yoe + yoe / (4 as i64) - yoe / (100 as i64));
+  var mp: i64 = (5 as i64 * doy + 2 as i64) / (153 as i64);
+  var d: i32 = (doy - (153 as i64 * mp + 2 as i64) / (5 as i64) + 1 as i64) as i32;
+  var m: i32 = (mp + 3 as i64) as i32;
+  if (mp >= 10 as i64) {
+    m = (mp - 9 as i64) as i32;
+  }
+  if (m <= 2) {
+    y = y + 1 as i64;
+  }
+  return (y, m, d);
 }
