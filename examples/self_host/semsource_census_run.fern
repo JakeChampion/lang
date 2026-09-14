@@ -7,6 +7,13 @@
 // only "call target was refused" is charged to the reason at the end of the
 // chain, because that is the construct worth building next.
 //
+// A template NOTHING instantiates is counted apart, as `bodyless`, and left
+// out of `measured`. It has no body: it is not evidence that this boundary
+// cannot lower it, the production pipeline shakes it out before lowering, and
+// which templates an entry leaves uninstantiated says more about that entry's
+// imports than about the language. Counting it as a refusal buried 66,429 of
+// them in the corpus histogram, 44% of every refusal there.
+//
 //   $ fern -embed internal/stdlib -o census semsource_census_run.fern
 //   $ census <entry.fern>
 //
@@ -120,6 +127,7 @@ function report(merged: parser.Module, tab: irlower.StructTab): void {
     var n_planned: i32 = 0;
     var n_lowered: i32 = 0;
     var n_instances: i32 = 0;
+    var n_bodyless: i32 = 0;
     var refusals: Hist = Hist { keys: [], counts: [] };
     var leaves: Hist = Hist { keys: [], counts: [] };
     var plan_why: Hist = Hist { keys: [], counts: [] };
@@ -133,7 +141,9 @@ function report(merged: parser.Module, tab: irlower.StructTab): void {
     var i: i32 = 0;
     while (i < built.decls.len()) {
         var p: semsource.Produced = built.decls[i];
-        if (!p.ok) {
+        if (p.bodyless) {
+            n_bodyless = n_bodyless + 1;
+        } else if (!p.ok) {
             refusals = hist_bump(refusals, p.why);
             leaves = hist_bump(leaves, leaf(p.why));
             if (listed != "" && leaf(p.why) == listed) { print("  refused " + merged.funcs[i].name + ": " + p.why); }
@@ -151,6 +161,8 @@ function report(merged: parser.Module, tab: irlower.StructTab): void {
         i = i + 1;
     }
     print("functions      " + util.i32_to_string(total));
+    print("bodyless       " + util.i32_to_string(n_bodyless));
+    print("measured       " + util.i32_to_string(total - n_bodyless));
     print("produced       " + util.i32_to_string(n_produced));
     print("planned        " + util.i32_to_string(n_planned));
     print("lowered        " + util.i32_to_string(n_lowered));

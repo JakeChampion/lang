@@ -16,7 +16,13 @@ import "./util";
 // — has no body of its own: it is produced once per instantiation its callers
 // request, each an instance named by the types bound, and its own entry says
 // whether every instance produced. `key` is the template an instance came from.
-pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[] }
+//
+// `bodyless` separates the two ways a template can fail to produce. One its
+// instances refused, and that is a refusal. One NOTHING instantiates has no
+// body to refuse: a measurement over it says nothing about what this boundary
+// admits, and the production pipeline shakes it out before lowering. Both
+// answer `ok: false`; only the first is evidence.
+pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean }
 
 // An instance a produced body asks for: the template's declaration key, the
 // instance's symbol, and the type each variable binds.
@@ -2216,7 +2222,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [] }, modes: [], template: false, key: "", requests: [] };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string): State {
@@ -2392,7 +2398,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls };
     var analysis: ssasem.Analysis = ssasem.analyze(f);
     if (!analysis.ok) { return refuse("produced graph fails semantic verification: " + analysis.why); }
-    return Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests };
+    return Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false };
 }
 
 // build produces one body's typed semantic graph from its checked declaration,
@@ -2728,8 +2734,8 @@ function close_module(all: Produced[], names: string[]): Produced[] {
     return all;
 }
 
-function template_entry(key: string, ok: boolean, why: string): Produced {
-    return Produced { ...refuse(why), ok: ok, template: true, key: key };
+function template_entry(key: string, ok: boolean, why: string, bodyless: boolean): Produced {
+    return Produced { ...refuse(why), ok: ok, template: true, key: key, bodyless: bodyless };
 }
 
 // A template's entry is the verdict over its instances: it produced when every
@@ -2740,11 +2746,11 @@ function template_verdict(key: string, instances: Produced[]): Produced {
     for p in instances {
         if (p.key == key) {
             seen = true;
-            if (!p.ok) { return template_entry(key, false, p.why); }
+            if (!p.ok) { return template_entry(key, false, p.why, false); }
         }
     }
-    if (!seen) { return template_entry(key, false, "uninstantiated generic"); }
-    return template_entry(key, true, "");
+    if (!seen) { return template_entry(key, false, "uninstantiated generic", true); }
+    return template_entry(key, true, "", false);
 }
 
 function queue(pending: Request[], requests: Request[]): Request[] {
@@ -2772,7 +2778,7 @@ pub function build_module(mod: parser.Module): Built {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
-        var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic");
+        var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
         if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name); }
         pending = queue(pending, p.requests);
         decls = decls.append(p);
