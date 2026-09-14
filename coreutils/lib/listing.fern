@@ -489,6 +489,12 @@ function out_new(): Out {
 }
 
 function put(o: Out, s: string): Out {
+  // An empty write is not free — it rebuilds the writer and drops it
+  // again — and most entries have three of them: no frills, no
+  // indicator, no colour.
+  if (s.len() == 0) {
+    return o;
+  }
   return Out { ...o, w: gnu.put_with(o.w, s, status_usage()), pos: o.pos + s.len() as i64 };
 }
 
@@ -529,20 +535,32 @@ function fail(o: Out, msg: string, status: i32): Out {
 }
 
 // ---- small helpers ----------------------------------------------------------
-function pad_left(s: string, w: i32): string {
-  var out: string = s;
-  while (out.len() < w) {
-    out = " " + out;
+// A run of `n` spaces in ONE allocation, sliced out of a literal.
+// Prepending a byte at a time allocated a string per byte of padding,
+// and a long listing pads six fields per line.
+function spaces(n: i32): string {
+  if (n <= 0) {
+    return "";
   }
-  return out;
+  var pool: string = "                                                                ";
+  if (n <= pool.len()) {
+    return slice_unchecked(pool, 0, n) + "";
+  }
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    bs = bs.append(32 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+function pad_left(s: string, w: i32): string {
+  return spaces(w - s.len()) + s;
 }
 
 function pad_right(s: string, w: i32): string {
-  var out: string = s;
-  while (out.len() < w) {
-    out = out + " ";
-  }
-  return out;
+  return s + spaces(w - s.len());
 }
 
 // The padding between two columns: a tab while the target tab stop is
@@ -939,14 +957,14 @@ function wrap_seq(p: Palette, code: string): string {
 // the entry outright: `--group-directories-first` counts a link to a
 // directory as a directory, and `ln=target` colours a link as its
 // referent.
-struct Ent { name: string, path: string, st: FileStat, stated: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean }
+struct Ent { name: string, path: string, st: FileStat, stated: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string }
 
 function blank_stat(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
 }
 
 function ent_new(name: string, path: string): Ent {
-  return Ent { name: name, path: path, st: blank_stat(), stated: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false };
+  return Ent { name: name, path: path, st: blank_stat(), stated: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "" };
 }
 
 // Whether the listing needs a stat(2) per entry at all. A plain `ls`
@@ -1081,21 +1099,18 @@ function effective_mode(c: Cfg, e: Ent): u32 {
 }
 
 // ---- sorting ----------------------------------------------------------------
+// The `<` / `>` operators, not a byte loop: they are one memcmp each
+// where the loop was a bounds check and two loads per byte, and this is
+// the innermost thing a listing does — 28% of a plain `ls` over four
+// thousand names went here before.
 function byte_cmp(a: string, b: string): i32 {
-  var n: i32 = a.len();
-  if (b.len() < n) {
-    n = b.len();
+  if (a < b) {
+    return 0 - 1;
   }
-  var i: i32 = 0;
-  while (i < n) {
-    var x: i32 = a[i] as i32;
-    var y: i32 = b[i] as i32;
-    if (x != y) {
-      return x - y;
-    }
-    i = i + 1;
+  if (a > b) {
+    return 1;
   }
-  return a.len() - b.len();
+  return 0;
 }
 
 // The file suffix `-X` groups by: everything from the last dot that is
@@ -1125,6 +1140,9 @@ function cmp_i64(a: i64, b: i64): i32 {
 // `-r` reversing the whole comparison reverses the tie-break too, which
 // is why `ls -Sr` on two files of one size prints them backwards.
 function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
+  if (c.sort_key == sort_name()) {
+    return byte_cmp(a.name, b.name);
+  }
   if (c.sort_key == sort_time()) {
     var r: i32 = cmp_i64(ent_time(c, b), ent_time(c, a));
     if (r == 0) {
@@ -1165,23 +1183,33 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
   return byte_cmp(a.name, b.name);
 }
 
+// `before(c, es, a, b)` — whether the entry at `a` sorts before the one
+// at `b`. A BOOLEAN rather than a three-way compare, and by INDEX
+// rather than by value, because that is all a merge asks: the name key
+// then answers with one `<` where an ordering would take two, and
+// nothing copies a record to be compared.
+//
 // `--group-directories-first` sits OUTSIDE the reversal: `-r` still
 // puts the directories first and only reverses within each group.
-function cmp_entries(c: Cfg, a: Ent, b: Ent): i32 {
+function before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
   if (c.dirs_first) {
-    var ad: boolean = is_dir_entry(c, a);
-    var bd: boolean = is_dir_entry(c, b);
+    var ad: boolean = is_dir_entry(c, es[a]);
+    var bd: boolean = is_dir_entry(c, es[b]);
     if (ad != bd) {
-      if (ad) {
-        return 0 - 1;
-      }
-      return 1;
+      return ad;
     }
   }
   if (c.reverse) {
-    return cmp_key(c, b, a);
+    return key_before(c, es, b, a);
   }
-  return cmp_key(c, a, b);
+  return key_before(c, es, a, b);
+}
+
+function key_before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
+  if (c.sort_key == sort_name()) {
+    return es[a].name < es[b].name;
+  }
+  return cmp_key(c, es[a], es[b]) < 0;
 }
 
 // A symlink TO a directory counts as one here, unlike for `-F`, where
@@ -1224,7 +1252,7 @@ function sort_entries(c: Cfg, es: Ent[]): Ent[] {
       var p: i32 = start;
       var q: i32 = mid;
       while (p < mid && q < end) {
-        if (cmp_entries(c, es[src[q]], es[src[p]]) < 0) {
+        if (before(c, es, src[q], src[p])) {
           dst = dst.with(at, src[q]);
           q = q + 1;
         } else {
@@ -1526,32 +1554,99 @@ function is_device(e: Ent): boolean {
   return filetype.is_blk(e.st.mode) || filetype.is_chr(e.st.mode);
 }
 
-function owner_text(c: Cfg, e: Ent): string {
-  if (c.numeric_ids) {
-    return e.st.uid.to_string();
+// `pwdb`'s own header says the lookups that take a path re-read the
+// whole file, and that this is "quadratic for one asking per entry" —
+// which a long listing is, twice over. So the two databases are read
+// ONCE and every id resolved against the text, with the answers
+// remembered: a listing of four thousand files has one owner and one
+// group in practice, so the cache is a short linear scan and the parse
+// happens once per DISTINCT id rather than once per entry.
+//
+// It is built only when a name is going to be printed. `-n` renders the
+// number and reads nothing at all.
+struct IdNames { passwd: string, group: string, uids: i64[], users: string[], gids: i64[], groups: string[] }
+
+function id_names_new(c: Cfg): IdNames {
+  var empty: IdNames = IdNames { passwd: "", group: "", uids: [], users: [], gids: [], groups: [] };
+  if (c.format != fmt_long() || c.numeric_ids) {
+    return empty;
   }
-  match (pwdb.user_by_uid(e.st.uid as i64)) {
-    Some(u) => {
-      return u.name;
-    },
-    None => {
-      return e.st.uid.to_string();
-    }
+  var want_user: boolean = c.show_owner || c.show_author;
+  if (!want_user && !c.show_group) {
+    return empty;
   }
+  var text: string = "";
+  if (want_user) {
+    text = pwdb.passwd_text();
+  }
+  var groups: string = "";
+  if (c.show_group) {
+    groups = pwdb.group_text();
+  }
+  return IdNames { ...empty, passwd: text, group: groups };
 }
 
-function group_text(c: Cfg, e: Ent): string {
-  if (c.numeric_ids) {
-    return e.st.gid.to_string();
-  }
-  match (pwdb.group_name(e.st.gid as i64)) {
-    Some(g) => {
-      return g;
-    },
-    None => {
-      return e.st.gid.to_string();
+function owner_of(n: IdNames, uid: u32): (string, IdNames) {
+  var key: i64 = uid as i64;
+  var i: i32 = 0;
+  while (i < n.uids.len()) {
+    if (n.uids[i] == key) {
+      return (n.users[i], n);
     }
+    i = i + 1;
   }
+  var name: string = uid.to_string();
+  match (pwdb.user_by_uid_in(n.passwd, key)) {
+    Some(u) => {
+      name = u.name;
+    },
+    None => {}
+  }
+  return (name, IdNames { ...n, uids: n.uids.append(key), users: n.users.append(name) });
+}
+
+function group_of(n: IdNames, gid: u32): (string, IdNames) {
+  var key: i64 = gid as i64;
+  var i: i32 = 0;
+  while (i < n.gids.len()) {
+    if (n.gids[i] == key) {
+      return (n.groups[i], n);
+    }
+    i = i + 1;
+  }
+  var name: string = gid.to_string();
+  match (pwdb.group_name_in(n.group, key)) {
+    Some(g) => {
+      name = g;
+    },
+    None => {}
+  }
+  return (name, IdNames { ...n, gids: n.gids.append(key), groups: n.groups.append(name) });
+}
+
+// The two columns an entry prints, resolved once at gather time so that
+// the width pass and the line pass read a string rather than ask again.
+function resolve_ids(c: Cfg, n: IdNames, e: Ent): (Ent, IdNames) {
+  if (c.format != fmt_long() || !e.stated) {
+    return (e, n);
+  }
+  if (c.numeric_ids) {
+    return (Ent { ...e, owner: e.st.uid.to_string(), group: e.st.gid.to_string() }, n);
+  }
+  var names: IdNames = n;
+  var owner: string = "";
+  if (c.show_owner || c.show_author) {
+    var u: (string, IdNames) = owner_of(names, e.st.uid);
+    owner = u.0;
+    names = u.1;
+  }
+  var group: string = "";
+  if (c.show_group) {
+    var g: (string, IdNames) = group_of(names, e.st.gid);
+    group = g.0;
+    names = g.1;
+  }
+  return (Ent { ...e, owner: owner, group: group }, names);
 }
 
 // `-Z` on a kernel with no SELinux is `?` for every file, which is
@@ -1638,13 +1733,13 @@ function measure(c: Cfg, es: Ent[]): Widths {
       }
       w = Widths { ...w, nlink: max_i32(w.nlink, nl.len()) };
       if (c.show_owner) {
-        w = Widths { ...w, owner: max_i32(w.owner, field_or_query(e.stated, owner_text(c, e)).len()) };
+        w = Widths { ...w, owner: max_i32(w.owner, field_or_query(e.stated, e.owner).len()) };
       }
       if (c.show_group) {
-        w = Widths { ...w, group: max_i32(w.group, field_or_query(e.stated, group_text(c, e)).len()) };
+        w = Widths { ...w, group: max_i32(w.group, field_or_query(e.stated, e.group).len()) };
       }
       if (c.show_author) {
-        w = Widths { ...w, author: max_i32(w.author, field_or_query(e.stated, owner_text(c, e)).len()) };
+        w = Widths { ...w, author: max_i32(w.author, field_or_query(e.stated, e.owner).len()) };
       }
       if (!e.stated) {
         w = Widths { ...w, size: max_i32(w.size, 1) };
@@ -1718,41 +1813,75 @@ function frills(c: Cfg, w: Widths, e: Ent): string {
   return out;
 }
 
-// Everything on a long line before the name.
+// Everything on a long line before the name, built in a
+// capacity-carrying buffer: a dozen `+` allocated and copied a growing
+// string a dozen times per line, and a dozen writes threaded and
+// rebuilt the writer a dozen times, where one buffer appends in place
+// and hands the result over without a copy.
 function long_prefix(c: Cfg, w: Widths, e: Ent): string {
-  var out: string = frills(c, w, e);
+  var h: usize = buf_new(96);
+  buf_push(h, frills(c, w, e));
   if (e.stated) {
-    out = out + filetype.mode_string(e.st.mode);
+    buf_push(h, filetype.mode_string(e.st.mode));
   } else {
-    out = out + unknown_mode_string(e);
+    buf_push(h, unknown_mode_string(e));
   }
   var nl: string = "?";
   if (e.stated) {
     nl = e.st.nlink.to_string();
   }
-  out = out + " " + pad_left(nl, w.nlink);
+  buf_push(h, " ");
+  push_left(h, nl, w.nlink);
   if (c.show_owner) {
-    out = out + " " + pad_field(c, field_or_query(e.stated, owner_text(c, e)), w.owner);
+    buf_push(h, " ");
+    push_field(c, h, field_or_query(e.stated, e.owner), w.owner);
   }
   if (c.show_group) {
-    out = out + " " + pad_field(c, field_or_query(e.stated, group_text(c, e)), w.group);
+    buf_push(h, " ");
+    push_field(c, h, field_or_query(e.stated, e.group), w.group);
   }
   if (c.show_author) {
-    out = out + " " + pad_field(c, field_or_query(e.stated, owner_text(c, e)), w.author);
+    buf_push(h, " ");
+    push_field(c, h, field_or_query(e.stated, e.owner), w.author);
   }
   if (c.show_context) {
-    out = out + " " + pad_right(context_text(), w.context);
+    buf_push(h, " ");
+    push_right(h, context_text(), w.context);
   }
-  return out + " " + size_field(c, w, e) + " " + time_text(c, e) + " ";
+  buf_push(h, " ");
+  buf_push(h, size_field(c, w, e));
+  buf_push(h, " ");
+  buf_push(h, time_text(c, e));
+  buf_push(h, " ");
+  return buf_take(h);
+}
+
+function push_pad(h: usize, n: i32): void {
+  var i: i32 = 0;
+  while (i < n) {
+    buf_push_byte(h, 32);
+    i = i + 1;
+  }
+}
+
+function push_left(h: usize, s: string, w: i32): void {
+  push_pad(h, w - s.len());
+  buf_push(h, s);
+}
+
+function push_right(h: usize, s: string, w: i32): void {
+  buf_push(h, s);
+  push_pad(h, w - s.len());
 }
 
 // An id pads to the RIGHT as a name and to the LEFT as a number, which
 // is the whole of the difference `-n` makes to the two columns.
-function pad_field(c: Cfg, s: string, w: i32): string {
+function push_field(c: Cfg, h: usize, s: string, w: i32): void {
   if (c.numeric_ids) {
-    return pad_left(s, w);
+    push_left(h, s, w);
+  } else {
+    push_right(h, s, w);
   }
-  return pad_right(s, w);
 }
 
 // ---- writing a name ---------------------------------------------------------
@@ -2279,7 +2408,7 @@ function attach(dir: string, name: string): string {
   return gnu.join_path(dir, name);
 }
 
-function dir_entries(c: Cfg, o: Out, path: string): (Ent[], Out) {
+function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, IdNames) {
   var out: Out = o;
   var names: string[] = [];
   match (read_dir(path)) {
@@ -2287,7 +2416,7 @@ function dir_entries(c: Cfg, o: Out, path: string): (Ent[], Out) {
       names = es;
     },
     Err(e) => {
-      return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e), status_minor()));
+      return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e), status_minor()), seed);
     }
   }
   var list: Ent[] = [];
@@ -2306,8 +2435,9 @@ function dir_entries(c: Cfg, o: Out, path: string): (Ent[], Out) {
     i = i + 1;
   }
   if (!needs_stat(c)) {
-    return (list, out);
+    return (list, out, seed);
   }
+  var ids: IdNames = seed;
   var filled: Ent[] = [];
   var k: i32 = 0;
   while (k < list.len()) {
@@ -2325,10 +2455,12 @@ function dir_entries(c: Cfg, o: Out, path: string): (Ent[], Out) {
         Err(_) => {}
       }
     }
-    filled = filled.append(e);
+    var r2: (Ent, IdNames) = resolve_ids(c, ids, e);
+    filled = filled.append(r2.0);
+    ids = r2.1;
     k = k + 1;
   }
-  return (filled, out);
+  return (filled, out, ids);
 }
 
 // ---- listing a directory ----------------------------------------------------
@@ -2337,17 +2469,17 @@ function dir_entries(c: Cfg, o: Out, path: string): (Ent[], Out) {
 // its grandchild `tree/bdir/nested` and not `nested`.
 struct Pending { path: string }
 
-struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[] }
+struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: IdNames }
 
 // One directory: its header, its `total` when the format asks for one,
 // and its entries. `-R` pushes each subdirectory it found, in the
 // sorted order, so the walk is depth first through the listing's own
 // order rather than readdir's.
 function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
-  var r: (Ent[], Out) = dir_entries(c, st.out, p.path);
+  var r: (Ent[], Out, IdNames) = dir_entries(c, st.out, p.path, st.names);
   var es: Ent[] = r.0;
   var out: Out = r.1;
-  var state: State = State { ...st, out: out };
+  var state: State = State { ...st, out: out, names: r.2 };
   if (header) {
     if (state.wrote) {
       state = State { ...state, out: put(state.out, "\n") };
@@ -2398,6 +2530,7 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
   var every: Ent[] = [];
   var dirs: Pending[] = [];
   var out: Out = o;
+  var ids: IdNames = id_names_new(c);
   var explicit: boolean = operands.len() > 0;
   var args: string[] = operands;
   if (!explicit) {
@@ -2413,7 +2546,9 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
       i = i + 1;
       continue;
     }
-    every = every.append(r.0);
+    var got0: (Ent, IdNames) = resolve_ids(c, ids, r.0);
+    every = every.append(got0.0);
+    ids = got0.1;
     i = i + 1;
   }
   // Sorted BEFORE the split, so `ls d2 d1` walks d1 first however the
@@ -2432,7 +2567,7 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
     }
     k2 = k2 + 1;
   }
-  var state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs };
+  var state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
   // The command-line group gets no `total`: that line counts one
   // DIRECTORY's blocks, and a list of operands is not one.
   if (files.len() > 0) {
