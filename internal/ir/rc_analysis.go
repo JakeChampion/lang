@@ -1208,7 +1208,40 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 	return out
 }
 
+// inferParamCountedRetain answers the question countedArgTemp asks: may the
+// caller dec a FRESH TEMP immediately after the call? A bare `return p` of a
+// borrowed parameter is refused there, and deliberately — every hazard the
+// refusal tests name is that path's ("crediting it double-frees the caller's
+// temp", "lets the caller free a buffer the result points at").
 func inferParamCountedRetain(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool) map[string][]bool {
+	return inferParamRetainSummary(prog, info, trmcFuncs, false)
+}
+
+// inferParamNoUncountedAlias answers the WEAKER question computeFreeEligible's
+// string-argument taint asks: may the caller's own LOCAL keep its scope-exit
+// release? That needs only "the callee retains no UNCOUNTED alias of this
+// parameter", and a bare `return p` satisfies it — the return-transfer inc
+// fires (`function handout(a: string): string { return a; }` lowers to
+// `local.load; rc.inc; return`) and nothing can cancel it, since
+// move-on-return needs an owned rc LOCAL and a parameter is never one. So the
+// caller receives a count of its own and releasing its local leaves the
+// result's intact.
+//
+// Refusing that cost the caller its release: `var out = data; out = f(out);`
+// — every buffer threaded through a helper with a pass-through path — kept
+// the seed's transfer inc with nothing to spend it, one reference per call.
+// `coreutils/dd.fern`'s `out = apply_case(out, tab, s.conv)` stranded a whole
+// 64 KiB read buffer per record: 40.2 ms against GNU's 3.6 on a 64 MiB copy
+// with 37.6 ms of it in system time, because every record's buffer was a
+// fresh mapping. After, 2.2 ms against 2.7 (#9246).
+//
+// Two summaries rather than one relaxed summary, so the stricter table and
+// the refusals pinned on it are untouched.
+func inferParamNoUncountedAlias(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool) map[string][]bool {
+	return inferParamRetainSummary(prog, info, trmcFuncs, true)
+}
+
+func inferParamRetainSummary(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool, creditBareReturn bool) map[string][]bool {
 	// Precompute the shadowed-name set per function once (match / match-expr
 	// bindings that reuse a parameter name), and the consumed-threaded string
 	// params whose entry retain makes a bare `return p` the frame's own
@@ -1260,7 +1293,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info, trmcFuncs ma
 			}
 			switch pt := p.Type.(type) {
 			case ast.StringType:
-				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, consumedStr[p.Name])
+				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted, consumedStr[p.Name] || creditBareReturn)
 			case ast.ArrayType:
 				flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
 			case ast.StructType:
@@ -2936,7 +2969,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 							// places: "copies bytes OUT of its string
 							// receiver into a fresh buffer".
 							pureRead := pureReadReceiverBuiltin(id.Name)
-							counted := b.paramCountedRetain[id.Name]
+							// The WEAKER summary: this asks whether the
+							// caller's local may keep its release, not
+							// whether a fresh temp may be dec'd after the
+							// call (#9246).
+							counted := b.paramNoUncountedAlias[id.Name]
 							for ai, a := range s.Args[argStart:] {
 								if aid, ok := a.(*ast.Ident); ok {
 									if _, isStr := b.exprType(aid).(ast.StringType); isStr {

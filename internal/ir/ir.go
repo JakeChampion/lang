@@ -3156,6 +3156,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// Per-callee: string params retained only through counted constructions, so
 	// a caller may release its own reference (see inferParamCountedRetain).
 	paramCountedRetain := inferParamCountedRetain(prog, info, trmcFuncs)
+	paramNoUncountedAlias := inferParamNoUncountedAlias(prog, info, trmcFuncs)
 	// Per-callee: which ARRAY params the consumed-threaded promotion claims,
 	// so a call site can release a fresh temp the callee will treat as a
 	// borrow (consumedArrayParamPositions).
@@ -3205,7 +3206,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		if fn.ImportIface != "" {
 			return nil
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, paramNoUncountedAlias, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return err
 		}
@@ -5384,6 +5385,12 @@ type builder struct {
 	// an element from somewhere — so its result may alias what was passed in,
 	// which the escape summary alone does not say (findReturnsParamProjection).
 	returnsParamProjection map[string]bool
+	// paramNoUncountedAlias is paramCountedRetain's weaker sibling: it asks
+	// only whether the callee retains no UNCOUNTED alias of the parameter,
+	// which a bare `return p` satisfies. computeFreeEligible's
+	// string-argument taint reads this one; countedArgTemp reads the
+	// stricter table (#9246).
+	paramNoUncountedAlias map[string][]bool
 	// paramCountedRetain[fn][i] is true when string parameter i of `fn` is
 	// retained only by counted constructions, so an argument passed there needs
 	// no conservative escape taint (inferParamCountedRetain).
@@ -5903,7 +5910,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, returnsConstructedBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain, paramNoUncountedAlias map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5938,6 +5945,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		paramEscapes:            paramEscapes,
 		returnsParamProjection:  returnsParamProjection,
 		paramCountedRetain:      paramCountedRetain,
+		paramNoUncountedAlias:   paramNoUncountedAlias,
 		consumedArrayArgPos:     consumedArrayArgPos,
 		readOnlyComparators:     readOnlyComparators,
 		vtableDispatched:        vtableDispatched,
