@@ -11169,7 +11169,10 @@ func (g *generator) emitMknodRuntime() {
 // wants. Omitting both leaves an empty list, which setattrlistat accepts
 // and which does nothing, exactly as UTIME_OMIT on both halves does.
 // The attribute list has no "now" either, so a now bit reads
-// gettimeofday first and names that value, as libc does.
+// gettimeofday first and names that value, as libc does — and, as libc
+// does when both halves are now, sets FSOPT_UTIMES_NULL (0x40) in the
+// options, which is what makes the kernel ask for write access rather
+// than ownership.
 //
 // The two operands are read into the frame before the path copy: they
 // arrive in argument registers that NUL-terminating the path clobbers.
@@ -11270,7 +11273,12 @@ func (g *generator) emitSetFileTimesRuntime() {
 		g.emit("add x3, x29, #128") // attribute buffer
 		g.emit("ldr x4, [x29, #160]")
 		g.emit("and x5, x23, #1") // FSOPT_NOFOLLOW
-		g.emit("mov x16, #524")   // setattrlistat
+		g.emit("and x9, x23, #30")
+		g.emit("cmp x9, #24") // both now, neither omitted
+		g.emit("b.ne .Lsft_opts")
+		g.emit("orr x5, x5, #0x40") // FSOPT_UTIMES_NULL
+		g.label(".Lsft_opts")
+		g.emit("mov x16, #524") // setattrlistat
 		g.emit("svc #0x80")
 		g.emit("b.cc .Lsft_done")
 		g.emit("neg x0, x0")
