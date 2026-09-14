@@ -1013,6 +1013,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesFdFlags {
 		g.emitFdFlagsRuntime()
 	}
+	if g.usesHandleIsatty {
+		g.emitHandleIsattyRuntime()
+	}
 	if g.usesWriterTruncate {
 		g.emitWriterTruncateRuntime()
 	}
@@ -12114,6 +12117,20 @@ func (g *generator) emitFdFlagsRuntime() {
 	g.line(".ltorg")
 }
 
+// emitHandleIsattyRuntime emits `__fern_handle_isatty(handle_ptr)` in
+// x0 → 1 when the descriptor the handle holds is a terminal. A Reader
+// and a Writer keep it at the same place, so both methods land here, and
+// the answer is the free form's — one tail call.
+func (g *generator) emitHandleIsattyRuntime() {
+	g.line("")
+	g.line(".global __fern_handle_isatty")
+	g.typeDirective("__fern_handle_isatty")
+	g.label("__fern_handle_isatty")
+	g.emit("ldr w0, [x0]") // fd
+	g.emit("b __fern_isatty")
+	g.sizeDirective("__fern_handle_isatty")
+}
+
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
 // length)` in (x0, x1) → Option[IoError]: ftruncate(2) on the handle's
 // fd. None = the payloadless box; Some = {tag=0, IoError @8}. The length
@@ -14322,6 +14339,7 @@ type generator struct {
 	usesFdStat         bool
 	usesReaderSeek     bool
 	usesFdFlags        bool
+	usesHandleIsatty   bool
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
@@ -15164,6 +15182,15 @@ func (g *generator) emitStartRuntime() {
 		}
 	}
 	g.emit("bl %s", AsmFnName("main"))
+	// A `main` that returns nothing exits 0: x0 holds whatever its last
+	// call left there otherwise, which made the status a stable fact
+	// about the emitted code rather than about the program (#9233). The
+	// wasm side already decided it this way (SynthCliRun).
+	if m := g.funcs["main"]; m != nil {
+		if _, isVoid := m.ReturnType.(ast.VoidType); isVoid {
+			g.emit("mov x0, #0")
+		}
+	}
 	// The exit-time reports (leak summary #5362, coverage #5548) both run
 	// here, and either can be on alone or both together. main's return
 	// value parks in x19 (callee-save, and _start has no caller to
@@ -18877,6 +18904,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__method_Reader_flags", "__method_Writer_flags":
 			target = "__fern_fd_flags"
 			g.usesFdFlags = true
+		case "__method_Reader_isatty", "__method_Writer_isatty":
+			target = "__fern_handle_isatty"
+			g.usesHandleIsatty = true
+			g.usesIsatty = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "__method_Reader_seek", "__method_Writer_seek":

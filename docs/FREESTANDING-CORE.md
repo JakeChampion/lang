@@ -418,6 +418,20 @@ there. No capability gates it, for the reason no handle method does: the
 Reader or Writer had to be obtained first, and `open_*` is where the
 filesystem capability is spent.
 
+**`isatty` on a handle is the free `isatty` with a different subject**, and it
+is classified the same way: ungated on every target, boolean rather than a
+Result, and false where there is nothing that could be a terminal. `r.isatty()`
+/ `w.isatty()` (#9229) exist because `isatty(fd)` takes a descriptor NUMBER and
+a handle from `open_*` surrenders none — so only fds 0, 1 and 2 could be asked,
+which is exactly the subject a program that opened a name does not have. On the
+natives and preview 1 the answer comes from the same place the free form's
+does (a terminal-attribute ioctl; `fd_fdstat_get`'s filetype on preview 1); on
+preview 2 it is the same constant no the free form gives, because a component
+has no fd table to interrogate. "Not a terminal" is the truthful answer on a
+target with no terminals, which is why neither form needs a capability and
+neither is refused by E066 — unlike `window_size`, where there is no truthful
+width for a terminal that does not exist.
+
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the
 classification's. Keeping it out of the capability vocabulary is deliberate — otherwise

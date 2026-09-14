@@ -272,6 +272,7 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
 	"__method_Reader_read_line": true, "__method_Reader_seek": true, "__method_Writer_seek": true,
 	"__method_Reader_flags": true, "__method_Writer_flags": true,
+	"__method_Reader_isatty": true, "__method_Writer_isatty": true,
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
@@ -412,7 +413,10 @@ var rcInert = map[string]bool{
 	"__fern_idiv_u64": true, "__fern_irem_s32": true, "__fern_irem_s64": true,
 	"__fern_irem_u32": true, "__fern_irem_u64": true,
 	"cabi_realloc": true, "isatty": true, "poll": true,
-	"signal_default": true, "signal_ignore": true,
+	// The handle form of isatty reads the descriptor out of a box it
+	// borrows and answers 0/1: no count moves either way.
+	"__fern_handle_isatty": true,
+	"signal_default":       true, "signal_ignore": true,
 	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 

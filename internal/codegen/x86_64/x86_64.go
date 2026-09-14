@@ -898,6 +898,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
+	if g.usesHandleIsatty {
+		g.emitHandleIsattyRuntime()
+	}
 	if g.usesWindowSize {
 		g.emitWindowSizeRuntime()
 	}
@@ -1305,6 +1308,9 @@ type generator struct {
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
+	// The same question asked of a Reader or a Writer, which needs
+	// `__fern_isatty` beside it.
+	usesHandleIsatty bool
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
@@ -1953,6 +1959,9 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "isatty":
 		g.usesIsatty = true
+	case "__method_Reader_isatty", "__method_Writer_isatty":
+		g.usesHandleIsatty = true
+		g.usesIsatty = true
 	case "window_size":
 		g.usesWindowSize = true
 		g.usesAlloc = true
@@ -2305,6 +2314,13 @@ func (g *generator) emitStartRuntime() {
 		g.emit("mov [rip + __fern_envp], rdi")
 	}
 	g.emit(fmt.Sprintf("call %s", AsmFnName("main")))
+	// A `main` that returns nothing exits 0: eax holds whatever its last
+	// call left there otherwise, which made the status a stable fact
+	// about the emitted code rather than about the program (#9233). The
+	// wasm side already decided it this way (SynthCliRun).
+	if g.callReturnsVoid("main") {
+		g.emit("xor eax, eax")
+	}
 	// The exit-time reports (leak summary #5362, coverage #5548) both run
 	// here, and either can be on alone or both together. main's return
 	// value parks in rbx across them (callee-save, and _start has no
@@ -3799,6 +3815,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_reader_seek"
 		case "__method_Reader_flags", "__method_Writer_flags":
 			target = "__fern_fd_flags"
+		case "__method_Reader_isatty", "__method_Writer_isatty":
+			target = "__fern_handle_isatty"
 		case "__method_Writer_truncate":
 			target = "__fern_writer_truncate"
 		case "__method_Reader_close",
@@ -16170,6 +16188,21 @@ func (g *generator) emitFdFlagsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_fd_flags, .-__fern_fd_flags")
+}
+
+// emitHandleIsattyRuntime emits `__fern_handle_isatty(handle_ptr)` —
+// `isatty` on the descriptor a Reader or a Writer holds, which both keep
+// at the same place. One tail call, since the answer is the free form's.
+//
+// System V: rdi = handle ptr.
+func (g *generator) emitHandleIsattyRuntime() {
+	g.line("")
+	g.line(".globl __fern_handle_isatty")
+	g.line(".type __fern_handle_isatty, @function")
+	g.label("__fern_handle_isatty")
+	g.emit("mov edi, [rdi]") // fd
+	g.emit("jmp __fern_isatty")
+	g.line(".size __fern_handle_isatty, .-__fern_handle_isatty")
 }
 
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,

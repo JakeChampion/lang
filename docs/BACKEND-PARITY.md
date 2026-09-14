@@ -24,7 +24,11 @@ on one calls nothing), and `-emit command-module` writes a WASI preview-1
 command, the same core bytes plus a `_start` that runs main and exits with its
 value. The exit code is what separates the last two from the first: a
 `wasi:cli/run` component reports ok or err and nothing wider, so `return 42`
-reaches the host as 1. Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
+reaches the host as 1. A `main` that returns NOTHING exits 0 on all three
+(#9233): the natives used to hand the kernel whatever the last call left in
+the return register, which made the status a stable fact about the emitted
+code — `print(s + "d")` exited 232 on x86-64 and 144 on arm64 — where wasm's
+`SynthCliRun` had always supplied the zero. Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
 what let `wasm-ssa` skip capability enforcement entirely.
 
 The **self-host driver spells targets the same way** since #6635 — it took the

@@ -648,9 +648,10 @@ function dash_handle(): (Writer, boolean) {
 // /dev/null is a character device it overwrites happily. S_IFMT is the
 // top four bits of the mode, 0o010000 FIFO and 0o140000 socket.
 //
-// `tty` cannot be asked of a NAMED operand yet: `isatty` takes a
-// descriptor number and an open handle does not surrender one, so
-// `shred /dev/pts/0` is written where GNU refuses it. #9229.
+// The terminal is the one of the three that a mode cannot answer:
+// /dev/null and /dev/ptmx are both character devices and only one is
+// refused, so the question goes to the HANDLE (#9229) rather than to a
+// name — `-` has a descriptor number but an opened operand does not.
 function unshreddable(mode: u32, tty: boolean): boolean {
   if (tty) {
     return true;
@@ -661,13 +662,13 @@ function unshreddable(mode: u32, tty: boolean): boolean {
 
 // A failing fstat is not decided here: `-s` supplies a length the
 // operand itself could not, so shred_length owns that case.
-function shred_type_ok(w: Writer, path: string, is_dash: boolean): boolean {
+function shred_type_ok(w: Writer, path: string): boolean {
   match (w.stat()) {
     Err(_) => {
       return true;
     },
     Ok(st) => {
-      if (unshreddable(st.mode, is_dash && isatty(1))) {
+      if (unshreddable(st.mode, w.isatty())) {
         gnu.error(path + ": invalid file type");
         return false;
       }
@@ -682,7 +683,7 @@ function shred_type_ok(w: Writer, path: string, is_dash: boolean): boolean {
 // is as far as `-u` reaches there. A stdio handle is not closed either —
 // the process still needs fd 1.
 function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: boolean): (boolean, boolean) {
-  if (!shred_type_ok(w, path, is_dash)) {
+  if (!shred_type_ok(w, path)) {
     if (!is_dash) {
       w.close();
     }

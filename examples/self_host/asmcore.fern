@@ -4048,6 +4048,9 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
         return ty_result(ty_unknown());
     }
     if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && (fa.field == "seek" || fa.field == "flags")) { return ty_result(ty_i32()); }
+    // Reader.isatty / Writer.isatty answer the free isatty's boolean, not a
+    // Result: a handle that cannot be a terminal is not one.
+    if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "isatty") { return ty_bool(); }
     if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {
