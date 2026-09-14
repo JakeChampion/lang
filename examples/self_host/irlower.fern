@@ -66228,12 +66228,23 @@ function borrow_reg_record(key: string, flags: string): string {
 // return a scalar. A string local passed there keeps its reclaim; without the
 // rows every `print(out)` cost `out` its release. The checker rejects a user
 // function redeclaring a builtin name, so the free keys can never name one.
-// The method key is seeded only while no user receiver method is named `write`:
-// the escape walks see no receiver type, so the name alone must settle it.
+// `Writer.write_some` is the same write with the loop taken out, and its
+// Result carries a COUNT, so the string it wrote is named by nothing it
+// hands back.
+// Each method key is seeded only while no user receiver method carries that
+// name: the escape walks see no receiver type, so the name alone must settle
+// it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
     var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch"];
-    for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
-    return keys.append("Writer.write");
+    var has_write: boolean = false;
+    var has_write_some: boolean = false;
+    for fn in funcs {
+        if (fn.receiver_type.len() > 0 && fn.name == "write") { has_write = true; }
+        if (fn.receiver_type.len() > 0 && fn.name == "write_some") { has_write_some = true; }
+    }
+    if (!has_write) { keys = keys.append("Writer.write"); }
+    if (!has_write_some) { keys = keys.append("Writer.write_some"); }
+    return keys;
 }
 
 // copying_builtin_flags: the per-parameter borrowability flag string for one

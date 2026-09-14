@@ -212,6 +212,46 @@ func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
 	}
 }
 
+// `Writer.write_some` is the same fact for the unlooped write: it hands
+// back a COUNT, so the string it wrote cannot be named by the result at
+// all. Without its table entry the accumulator was borrow-tainted exactly
+// as `write`'s was — `out = out + piece` copied the whole prefix afresh
+// every round, and the superseded copy was decremented without being
+// freed. Measured on a dd-shaped loop over 8 MiB: 67 MB of read buffers
+// live at exit under `FERN_LEAKCHECK`.
+func TestAccumulatorWrittenToWriterWriteSomeStaysInPlace(t *testing.T) {
+	src := `function main(): i32 {
+    var w: Writer = stdout();
+    match (Some("abcdefgh\n")) {
+        Some(chunk) => {
+            var out: string = "";
+            var i: i32 = 0;
+            while (i < 4) {
+                out = out + slice_unchecked(chunk, 0, chunk.len());
+                i = i + 1;
+            }
+            match (w.write_some(out)) { Ok(_) => {}, Err(_) => { return 1; } }
+        },
+        None => { return 2; }
+    }
+    return 0;
+}`
+	dumps := map[string]string{}
+	RcPlanHook = func(fn, dump string) { dumps[fn] = dump }
+	defer func() { RcPlanHook = nil }()
+	p := lowerSourceWith(t, src, 8)
+	if !hasPlanName(dumps["main"], "freeEligible", "out") {
+		t.Errorf("out is not freeEligible — the Writer.write_some argument taints it; plan:\n%s", dumps["main"])
+	}
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_append_range"); n != 1 {
+		t.Errorf("main calls __fern_str_append_range %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
+	}
+	if n := countCallDirect(fn.Ops, "__str_slice"); n != 0 {
+		t.Errorf("main materialises the slice %d times, want 0 (the append reads the range out of `chunk`); ops:\n%s", n, p)
+	}
+}
+
 // The argument-temp half for the method form (#8413): a fresh string handed
 // straight to `Writer.write` is stashed and released after the call. The
 // call-level admission needs a scalar result and the position-wise one a
