@@ -8,15 +8,14 @@ import "testing"
 // so the pointer is dead by the time the join frees the box, which is the
 // property `Err(_)` has syntactically and this one has by proof.
 //
-// bindingConfinedToArm asked borrowingCallArg, whose extra gate is a
-// CONCRETE SCALAR result — the arg-temp reclaim's requirement, since that
-// path decs a fresh temp right after the call, and not a confinement's. A
-// helper returning a string failed it, the arm was refused, and the whole
-// match declined its release: 32 bytes per I/O call in every utility that
-// reports an errno (#9245). The confinement now asks readOnlyCallArg,
-// where the escape oracle answers by itself — paramEscapesInFn counts a
-// returned parameter as escaping, so a parameter it clears is one the
-// callee neither stored nor returned, whatever the result's shape.
+// The confinement asks readOnlyCallArg, where the escape oracle answers by
+// itself: paramEscapesInFn counts a returned parameter as escaping, so a
+// parameter it clears is one the callee neither stored nor returned,
+// whatever the result's shape. Demanding a CONCRETE SCALAR result on top —
+// the arg-temp reclaim's requirement, since that path decs a fresh temp
+// right after the call — refused every helper returning a string, and with
+// it the whole match's release: 32 bytes per I/O call in every utility that
+// reports an errno (#9245).
 //
 // `handsBack` is the other side of that line and must still be refused:
 // its helper returns the payload, so the returned string and the box the
