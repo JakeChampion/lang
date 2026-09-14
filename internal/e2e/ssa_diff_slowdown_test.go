@@ -13,7 +13,7 @@ import (
 // arm64 backend on examples/bench/pmap_insert.fern — was the fixed run timeout,
 // and it reported the program as HUNG and DISAGREEING when it neither hung nor
 // disagreed: it finished, in 49.8s, with the same exit code. On a native runner
-// the same work stayed under the wall, so CI never saw it at all.
+// the same work stayed under the timeout, so CI never saw it at all.
 //
 // A wall sized for native execution and applied unchanged to emulated execution
 // cannot do this job. A ratio can: it means the same thing on both, because a
@@ -34,7 +34,7 @@ const (
 	//
 	// so 8x sits above everything the backend costs today and far below the
 	// class of gap it is here to catch. LOWER it as those close; raising it to
-	// quiet a program is the move this gate exists to prevent.
+	// quiet a program is what this gate exists to prevent.
 	ssaDiffMaxSlowdown = 8.0
 
 	// ssaDiffMinAbsGap stops the ratio firing on process startup. A 5 ms

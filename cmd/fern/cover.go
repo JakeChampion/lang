@@ -24,7 +24,7 @@ import (
 // and folds them into per-file totals — or into lcov, for the tools that
 // already know how to draw a coverage report.
 //
-// The stream is the whole truth: a -cover binary emits a line for every
+// The stream is the complete record: a -cover binary emits a line for every
 // instrumented line whether it ran or not, so the rows present ARE the
 // denominator and a missing row means the compile never instrumented that
 // line, not that it went unexecuted.

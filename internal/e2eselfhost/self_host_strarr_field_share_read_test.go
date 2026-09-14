@@ -38,7 +38,7 @@ import (
 // THE FAILURE MODE HERE IS AN OVER-RELEASE, not a leak, which is what separates
 // this cell from the five `__param` ones. str_field_share_read states it: "one
 // box under two rc-aware k_str decs frees on the first and dangles on the
-// second." So `escaping_holder` below is the load-bearing case rather than a
+// second." So `escaping_holder` below is the essential case rather than a
 // formality: it returns the target holder while the source dies inside the
 // callee, then reads every element back after 200 rounds of churn have recycled
 // the freelist.

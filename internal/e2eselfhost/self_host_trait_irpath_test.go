@@ -39,12 +39,12 @@ import (
 //   - `@derive(Json)` on a struct + enum lowers through the IR path: the
 //     synthesised `to_json` is structurally identical to the Display
 //     `to_string` body (string concat + `match` + per-field/-payload
-//     `.to_json()` dispatch), so it rides the same IR machinery already
+//     `.to_json()` dispatch), so it uses the same IR machinery already
 //     proven for Display. Externally-tagged enums render unit variants as a
 //     quoted name and single-payload variants as a one-key object.
 //   - `@derive(Debug)` and `@derive(Hash)` on a struct + enum lower through
 //     the IR path too. Debug is the structural sibling of Display (string
-//     fields render quoted via the emitter-intrinsic render), so it rides the
+//     fields render quoted via the emitter-intrinsic render), so it uses the
 //     same machinery. Hash is the seeded fold `h = h*31 + f.hash()` (struct)
 //     / variant-tag-seeded fold (enum), the same match + arithmetic + method
 //     dispatch shape already proven for the derived Eq/Ord.

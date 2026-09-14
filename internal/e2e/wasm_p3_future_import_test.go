@@ -58,7 +58,7 @@ var p3FutureConsumerCore = []byte{
 }
 
 // TestWasmP3FutureExportImport is the WASI Preview-3 `future<T>` ACROSS-A-BOUNDARY
-// payoff, assembled through the Go composer (component.BuildFutureExportImportComponent):
+// gate, assembled through the Go composer (component.BuildFutureExportImportComponent):
 // a nested producer exports `prod: async func() -> future<u32>` (future.new →
 // task.return the readable end → future.write the value), and a consumer
 // `canon lower async`-es that import, reads the returned future handle,

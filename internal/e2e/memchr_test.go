@@ -19,7 +19,7 @@ import (
 // string. The corpus therefore sweeps LENGTH and POSITION exhaustively over a
 // small range rather than sampling interesting-looking strings.
 //
-// That sweep is the point, and it paid: the corpus was written while both
+// That sweep is the point, and it was worth it: the corpus was written while both
 // bodies were still scalar, so when they were replaced with 16-byte vector
 // loops (SSE2 on x86-64, NEON on arm64) it already covered every block
 // boundary they have, and it passed unchanged. Written afterwards it would

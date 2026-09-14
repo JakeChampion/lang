@@ -97,7 +97,7 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 		}
 		// Assembled and run, not just inspected: a veneer that lands
 		// anywhere but its target still produces plausible-looking asm
-		// from a compiler that crashed or wandered mid-emit.
+		// from a compiler that crashed or went wrong mid-emit.
 		compiled := filepath.Join(dir, "prog.bin")
 		if err := nativeLinkArm64(string(asm), compiled); err != nil {
 			t.Fatalf("linking the orchestrator's output: %v", err)

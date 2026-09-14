@@ -74,7 +74,7 @@ func mkdirPartial(t *testing.T, dir string) {
 	mkdirMake(t, dir, filepath.Join("a", "b"), 0o755)
 }
 
-// mkdirBlocked is a regular file where the walk wants a directory.
+// mkdirBlocked is a regular file where the walk expects a directory.
 func mkdirBlocked(t *testing.T, dir string) {
 	t.Helper()
 	mkdirFile(t, dir, "f")
@@ -203,7 +203,7 @@ func mkdirCases(t *testing.T) []invocation {
 	add(invocation{name: "parents takes no argument", args: []string{"--parents=x", "d"}})
 	add(invocation{name: "verbose takes no argument", args: []string{"--verbose=x", "d"}})
 	add(invocation{name: "mode requires an argument", args: []string{"-m"}})
-	// `--mode d` eats the operand as its value, so what is left is nothing.
+	// `--mode d` takes the operand as its value, so what is left is nothing.
 	add(invocation{name: "the long mode eats the operand", args: []string{"--mode", "d"}})
 	add(invocation{name: "an empty long mode value", args: []string{"--mode=", "d"}})
 	add(invocation{name: "mode by one-letter prefix", args: []string{"--m=755", "d"}, seedTree: mkdirBare})

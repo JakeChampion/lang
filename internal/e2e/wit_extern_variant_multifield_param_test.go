@@ -16,7 +16,7 @@ import (
 // *parameter* gate (docs/WIT-BRING-YOUR-OWN.md): a Fern enum whose cases carry
 // more than one payload — `enum Ev { Click(i32, i32), Key(i32), Close }` — passed
 // to an `@import` extern taking the WIT `variant ev { click(tuple<u32, u32>),
-// key(u32), close }` (a WIT case carries one type, so multiple values ride a
+// key(u32), close }` (a WIT case carries one type, so multiple values go in a
 // tuple, which flattens identically). The canonical join is SlotCount=2 i32 slots;
 // the param wrapper pushes each slot by branching on the box tag — the matching
 // arm's field j, or 0 to pad shorter arms (appendVariantParamMultiField).

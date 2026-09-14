@@ -4,7 +4,7 @@ import "std/option";
 import "std/i32";
 
 // examples/tests/ordmap_test.fern — pure-Fern coverage of std/ordmap, the
-// persistent ordered map (weight-balanced tree). The load-bearing
+// persistent ordered map (weight-balanced tree). The essential
 // contracts exercised here are STRUCTURAL SHARING (a snapshot taken
 // before an update is unchanged after it, for inserts, removes, and the
 // set algebra), the balance / ordering invariants after every kind of

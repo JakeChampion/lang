@@ -943,7 +943,7 @@ func TestRunnerUuidExamplePasses(t *testing.T) {
 // known-answer vectors (empty / "abc" / pangram, raw-digest length, an
 // HMAC vector), plus the constant-time consteq / hmac_verify / hmac_verify_hex
 // MAC-comparison helpers (#4384). This is the interp oracle; std/crypto also
-// rides the self-host IR differential now (selfHostStdTestCases). Passing
+// runs in the self-host IR differential now (selfHostStdTestCases). Passing
 // suite → exit 0.
 func TestRunnerCryptoExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -965,7 +965,7 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 // of 1000 bytes, and as 7-byte view slices — so the pending-block logic, not
 // just the round function, is what the vectors prove. `hash_checksums_test`
 // does the same for std/hash's cksum(1) CRC and the sum(1) checksums against
-// GNU coreutils' values. Interp oracle here; all of them also ride the
+// GNU coreutils' values. Interp oracle here; all of them also run in the
 // self-host IR differential (selfHostStdTestCases).
 func runnerSuitePasses(t *testing.T, file, suite string, n int) {
 	t.Helper()
@@ -1024,7 +1024,7 @@ func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 // forms, boolean flags, positional operands, the `--` terminator, the
 // value_or default, the error paths (unknown option / missing value /
 // value on a bool), auto-usage, subcommands, the completion generators,
-// and the roff man page. This is the interp oracle; std/cli also rides the
+// and the roff man page. This is the interp oracle; std/cli also runs in the
 // self-host IR differential (selfHostStdTestCases).
 func TestRunnerCliExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -1411,7 +1411,7 @@ func TestRunnerCmpNanTotalOrderExamplePasses(t *testing.T) {
 	}
 }
 
-// `examples/tests/async_combinators_test.fern` exercises the blessed
+// `examples/tests/async_combinators_test.fern` exercises the supported
 // structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
 // `gather` / `race` / `with_deadline` combinators over `Future[T]`,
 // on the portable `Ready`-future path (resolves on every backend).
@@ -1629,7 +1629,7 @@ func TestRunnerSkipAndSubsuitesExample(t *testing.T) {
 // `examples/tests/utf8_validity_property_test.fern` is #5634's closing
 // property: from a VALID UTF-8 string, no stdlib string operation hands
 // back an invalid one. It is the gate on the invariant `string` now
-// carries, and it earned its keep immediately — the width-padding target
+// carries, and it proved worthwhile immediately — the width-padding target
 // failed on first run, because pad_start / pad_end / center repeated the
 // fill's first BYTE and so emitted a fragment of a multibyte character.
 //
@@ -3779,7 +3779,7 @@ func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 
 // `examples/tests/unions_migrated_test.fern` — Lang port
 // of `TestInterpScriptUnions` from `interp_script_test.go`.
-// Second migration in the runner-adoption campaign
+// Second migration in the runner-adoption effort
 // (after the string-prelude port). Original Go test pinned
 // one Add(10, 32) → 42 data point via exit-code; the
 // migrated form expands to a small table of match-arm
@@ -3809,7 +3809,7 @@ func TestRunnerUnionsMigratedExample(t *testing.T) {
 
 // `examples/tests/header_map_migrated_test.fern` — Lang
 // port of `TestInterpScriptHeaderMap`. Third migration in
-// the runner-adoption campaign. The Go original was 5
+// the runner-adoption effort. The Go original was 5
 // table-driven subprocess cases; the migrated form folds
 // them into 6 in-process `r.it(...)` cases (splitting the
 // "set replaces in place" test into a size-check + value-
@@ -3844,7 +3844,7 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 
 // `examples/tests/http_request_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpRequestHeaders`.
-// Fourth migration in the runner-adoption campaign.
+// Fourth migration in the runner-adoption effort.
 // Original was 3 table-driven subprocess cases; migrated
 // to 5 in-process `r.it(...)` cases (split the
 // "parsed headers reachable" case into Content-Type-value
@@ -3948,7 +3948,7 @@ func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 
 // `examples/tests/http_response_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpResponseHeaders`.
-// Fifth migration in the runner-adoption campaign.
+// Fifth migration in the runner-adoption effort.
 // Original was 4 table-driven subprocess cases; migrated
 // to 6 in-process `r.it(...)` cases — added the stronger
 // "bogus 9999 doesn't leak into wire" negative form and
@@ -4096,7 +4096,7 @@ func TestRunnerQuietModeExample(t *testing.T) {
 // `examples/tests/set_test.fern` covers std/set — the generic,
 // value-semantic Set[T] (membership, dedup, union/intersect/
 // difference, subset/equals) over both i32 and string elements. The
-// load-bearing case is `add is pure` (test 4): the value-semantics
+// essential case is `add is pure` (test 4): the value-semantics
 // contract that an operation never mutates its receiver. Passing
 // suite → exit 0; the TAP plan line is `1..12`.
 func TestRunnerSetExamplePasses(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 // the rc helpers' address guard treats them as immortal. Observed through
 // __fern_rc_is_unique: a fresh heap string is unique (rc==1 => 1); a
 // literal is not (guarded => 0). String VALUES are unchanged (every access
-// is s-relative); counting + release ride on this foundation in later
+// is s-relative); counting + release build on this foundation in later
 // slices. (str_box reuses $__fern_arr_dec / the size-class freelist for
 // release, since a string is flat with no rc-tracked children.)
 func TestSelfHostRcStrBoxWasm(t *testing.T) {
@@ -80,7 +80,7 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = slice_unchecked(src, 1, 4); return s.len() + __rc_underflow_count(); }", 3},
 		// Regression: a function returning a BORROWED string field with NO
 		// swept locals must still return-retain it, or the caller's sweep of
-		// the result frees the field underfoot (the node_head/watbin UAF).
+		// the result frees the field still in use (the node_head/watbin UAF).
 		{"string-borrowed-field-return", "struct H { name: string } function getname(h: H): string { return h.name; } function main(): i32 { var s: string = \"ab\" + \"cd\"; var h = H { name: s }; var n: string = getname(h); return n.len() + h.name.len() + __rc_underflow_count(); }", 8},
 	}
 	for _, tc := range cases {

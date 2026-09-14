@@ -22,7 +22,7 @@ import (
 // struct-field case bailed instead, because that position calls
 // try_fn_field_value directly and the walk never reached the call's arguments.
 //
-// A `PASSTHRU:<fn>:<argidx>` marker rides the closure_fns list (the same
+// A `PASSTHRU:<fn>:<argidx>` marker is stored in the closure_fns list (the same
 // convention as `FNPTR:` / `RETCLO2:` / `CLOARR:`) so the read side can answer
 // "is this call a box" with "is its passthrough argument one".
 //

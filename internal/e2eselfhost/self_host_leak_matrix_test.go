@@ -26,7 +26,7 @@ import (
 // list: goal-2 progress flips recorded leak cells to clean deliberately, a
 // regression flips a clean cell to leak loudly, and — the #7357 point — the
 // generator reaches classes (shadowed siblings, conditional blocks) that no
-// hand-curated corpus stays honest about.
+// hand-curated corpus stays accurate about.
 //
 // WHAT IT DOES NOT ASSERT: byte counts. Layout and capacity schedules
 // legitimately move totals; zero-vs-nonzero live bytes is the layout-free
@@ -538,7 +538,7 @@ function main(): i32 {
 		// The same element-returning callee with a CALL-producer tuple: the
 		// payload tier refuses the ELEMENT kinds while the box tier still
 		// grants the shallow "TUP:" box free — box freed once by the caller,
-		// element ownership rides out to main's is_arr sweep. Clean on both
+		// element ownership passes out to main's is_arr sweep. Clean on both
 		// sides, and the layering (box flag licenses box-only, TUPB licenses
 		// deep) is exactly what this cell pins.
 		leakCell{name: "tuple_mixed__elemret__box_tier_only", src: `function maketup(): (i32, i32[]) { return (5, [6, 7]); }

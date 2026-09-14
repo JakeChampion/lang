@@ -379,7 +379,7 @@ func TestBuildWriteFile(t *testing.T) {
 
 // TestBuildWriteFileRoundtrip — write then read the same file
 // from inside one program. Confirms write_file's bytes show up
-// on disk in a form __fern_read_file is happy to consume; both
+// on disk in a form __fern_read_file can consume; both
 // helpers share the same WASI rights / preopen / scratch
 // conventions, so a regression in either surfaces here.
 func TestBuildWriteFileRoundtrip(t *testing.T) {
@@ -477,7 +477,7 @@ function main(): i32 { return 42; }`
 // TestBuildPreview2Wrap — BuildWithOptions(ForceMemorySection +
 // SynthStart) produces bytes that wrap cleanly into a preview-2
 // component when fed through the WASI adapter. The synthesised
-// `_start` makes `wasm-tools component new` happy; the forced
+// `_start` satisfies `wasm-tools component new`; the forced
 // memory section satisfies the adapter's env::memory import.
 // Test gates on the adapter being present at FERN_WASI_ADAPTER.
 func TestBuildPreview2Wrap(t *testing.T) {

@@ -7,7 +7,7 @@
 // "within 8 of the original" test would be measuring the units rather than
 // the conversion.
 //
-// The load-bearing test is that round trip: RGB -> HSL -> RGB must come back
+// The essential test is that round trip: RGB -> HSL -> RGB must come back
 // within one unit per channel, for every colour in a swept corpus rather than
 // a chosen handful. Conversion formulas are exactly the kind of code that is
 // right on the primaries, right on grey, and wrong in the sixth of the hue

@@ -32,7 +32,7 @@ import (
 //     it catches a helper called with the wrong number (the one way
 //     emitSyscallPreloaded could lie).
 
-// TestNoBareSyscallEmit is the load-bearing structural gate: every
+// TestNoBareSyscallEmit is the essential structural gate: every
 // syscall emission must go through emitSyscall or
 // emitSyscallPreloaded, which record the number. A bare
 // `g.emit("syscall")` would issue a syscall the recorded set does not

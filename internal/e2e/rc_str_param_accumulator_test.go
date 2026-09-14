@@ -72,7 +72,7 @@ func checkStrParamNoLeak(t *testing.T, what, stderr string, exit int) {
 // checkStrParamAccumulatorShape is the shape gate: the same accumulation at
 // two sizes must cost proportionally. Quadratic copying allocates once per
 // append (allocs == n), so the per-size bound n/8 already separates the
-// regimes; the ratio check is the second size earning its place — under the
+// regimes; the ratio check is what makes the second size worth having — under the
 // copy regime doubling n doubles the allocations too, so only the growth
 // SCHEDULE (one allocation per allocator class step) keeps 2n under 1.5x n.
 func checkStrParamAccumulatorShape(t *testing.T, small, large [3]int64, n int) {

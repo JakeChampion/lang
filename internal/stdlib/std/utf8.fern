@@ -111,7 +111,7 @@ pub function char_from_i32(n: i32): Option[char] {
 // Takes a `char` (#5629). The range check stays even though `n as char`
 // now rejects an out-of-range LITERAL: a cast of a runtime i32 is still
 // unchecked by design, so a `char` reaching here can hold a surrogate or
-// an out-of-range value. This is the last line of defence for "the output
+// an out-of-range value. This is the final check for "the output
 // is always well-formed UTF-8".
 pub function utf8_encode(ch: char): string {
     var c: i32 = ch as i32;
@@ -177,7 +177,7 @@ pub function codepoint_count(s: string): i32 {
 // and this is the readable place for them.
 //
 // The skip runs only when `b0` is already ASCII, and that condition is
-// load-bearing rather than defensive. Called unconditionally, dense
+// essential rather than defensive. Called unconditionally, dense
 // non-ASCII input (every codepoint multi-byte, so the skip finds a hit
 // immediately and never clears a block) pays a call per codepoint where
 // the old code paid none — measured 15% SLOWER on a 43 KB CJK body.

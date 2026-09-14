@@ -27,7 +27,7 @@ import (
 // drop the field buffers (and, for the struct-array case, their element boxes)
 // are reclaimed onto the freelist and reused, so memory stays bounded and the
 // program completes (exit 0); a regression to the pass-through leaks one block
-// per iteration, blows past the cap, and traps. The WAT-shape assertions pin the
+// per iteration, goes past the cap, and traps. The WAT-shape assertions pin the
 // emitted body so a silent reroute to the AST path (where a different drop
 // handles it) can't make the gate pass vacuously.
 func TestSelfHostStructDropWasm(t *testing.T) {
@@ -65,7 +65,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		// STRUCT-array field (Inner[]) — the k_box path: $__fern_arr_dec_ptr also
 		// releases each element box. 400k cycles stay bounded ⇒ both the buffer and
 		// its element boxes are reclaimed (a buffer-only free would still leak the
-		// elements and blow the cap).
+		// elements and exceed the cap).
 		{
 			"struct-array-field-reclaim",
 			"struct Inner { v: i32 } struct Nest { inners: Inner[] } " +

@@ -6,7 +6,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// compose_world.go is P2's payoff (docs/WIT-BRING-YOUR-OWN.md): build a real
+// compose_world.go is P2's result (docs/WIT-BRING-YOUR-OWN.md): build a real
 // component whose import surface is declared from the full decoded WIT world —
 // every interface, emitted by componenttype.EmitWorldImports — instead of the
 // hand-written minimized type bodies. It reuses the existing

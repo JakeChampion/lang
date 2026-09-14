@@ -21,7 +21,7 @@ import (
 // made an earlier round of these measurements read as clean.
 //
 // FERN_LEAKCHECK is the instrument on the natives (exact block + byte balance);
-// wasm has no leak counter, so it rides the __heap_bump_bytes() high-water
+// wasm has no leak counter, so it uses the __heap_bump_bytes() high-water
 // probe, which is flat under reclaim and linear under a leak.
 
 // mapStringColumnSrc exercises the whole map surface a string-keyed,

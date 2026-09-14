@@ -324,7 +324,7 @@ func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
 	}
 
 	if backend == "wasm" {
-		// Exit value rides on stdout (handled above); a non-zero
+		// Exit value comes back on stdout (handled above); a non-zero
 		// wasmtime status here means the component trapped.
 		if exit != 0 {
 			t.Errorf("wasm component trapped (exit %d)", exit)

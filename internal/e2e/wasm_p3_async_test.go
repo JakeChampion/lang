@@ -718,7 +718,7 @@ var p3MemModule = []byte{
 }
 
 // TestWasmP3AsyncImportAwait is the WASI Preview-3 async IMPORT / await
-// payoff, assembled entirely through the Go composer (no wac, no
+// demonstration, assembled entirely through the Go composer (no wac, no
 // wasm-tools compose): a consumer bundles the async-export provider as a
 // NESTED component, lowers its `dep: async func() -> u32` import with
 // canon lower async, calls + awaits it (synchronous completion → result

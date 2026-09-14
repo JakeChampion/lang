@@ -19,7 +19,7 @@ import (
 // the refcounted locals live at a join — so its cost is a Bell number
 // of the width, B(12) = 4.2 million, which is a scaling failure they
 // hit and had to fix. It says to plan the summarisation up front rather
-// than discover the same wall. This measures the wall.
+// than discover the same limit. This measures the limit.
 //
 // Two things it settles, one of them by refutation:
 //
@@ -32,7 +32,7 @@ import (
 //
 //   - No lattice exponential in the LIVE width is viable, and Bell
 //     numbers are not the binding constraint — the width is. At p99 =
-//     157 and a maximum of 1879, 2^n is as hopeless as B(n).
+//     157 and a maximum of 1879, 2^n is as infeasible as B(n).
 //
 // But the live width is the wrong number. A join summary only has to
 // relate the values its predecessors DISAGREE about, and that set is

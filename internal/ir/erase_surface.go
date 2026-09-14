@@ -14,7 +14,7 @@ import (
 //     `string` (a box pointer; the #4294 immortal rc=-1 view box IS the
 //     runtime view).
 //   - ast.CharType (`char`, the Unicode scalar value — #5629) to a 32-bit
-//     signed ast.NumberType. A `char` rides an i32 slot.
+//     signed ast.NumberType. A `char` occupies an i32 slot.
 //
 // In both cases the checker has already enforced the discipline (string
 // borrows into str and str never silently promotes; char never implicitly

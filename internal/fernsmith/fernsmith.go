@@ -9,7 +9,7 @@
 // expressions. Every expression production picks operands whose
 // types match the surrounding context, so the emitted source is
 // guaranteed to parse AND type-check. That property is the
-// load-bearing invariant the fuzz oracle relies on: any parser or
+// essential invariant the fuzz oracle relies on: any parser or
 // checker error means a real bug.
 //
 // Inspired by wasm-smith: a structured generator that walks the
@@ -197,7 +197,7 @@ func (c *randChooser) exhausted() bool     { return false }
 // so chopping bytes off the end of a corpus collapses the
 // program rather than rewriting it.
 //
-// This is the load-bearing minimisation contract for the fuzz
+// This is the essential minimisation contract for the fuzz
 // oracle: the testing.F mutator can shrink failing inputs by
 // truncating, knowing the generator will collapse smoothly.
 type byteChooser struct {
@@ -791,7 +791,7 @@ func GenMain(seed uint64) string {
 // helper (forward refs only — sidesteps self- and mutual-
 // recursion without a static check). Sets the generator's
 // profile to ProfileRunnable for the duration so nested
-// productions can't sneak f32 in through boolean comparisons.
+// productions can't introduce f32 through boolean comparisons.
 func (g *Generator) MainProgram() string {
 	prevProfile := g.profile
 	prevHelpers := g.helpers
@@ -1933,7 +1933,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		// `pick` is the three-arg variant. Both `a` and `b`
 		// recurse at type t so the checker's pairwise
 		// unification produces a single T. Use genericArg so
-		// type-ambiguous values like bare `None` get nudged
+		// type-ambiguous values like bare `None` get forced
 		// into a concrete form before the inference runs.
 		b.WriteString("pick(")
 		g.expr(b, sc, tBool, depth+1)
@@ -2656,7 +2656,7 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 // A checked op cannot substitute for its base operator the way a saturating
 // one can: it yields `Option[T]`, not `T`. Folding it back through a match is
 // what makes it usable anywhere an integer is expected, and it is also the
-// honest shape — the operator exists so a caller HANDLES the overflow, so the
+// realistic shape — the operator exists so a caller HANDLES the overflow, so the
 // corpus should be generating the handling too.
 //
 // Worth generating for the same reason as the saturating family, only more so:

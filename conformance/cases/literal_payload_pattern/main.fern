@@ -19,7 +19,7 @@ enum Nest2 { Wrap(Res2), Bare }
 enum Pair2 { Pr(i32, i32), Non }
 enum Msg { Txt(string), Num(i32) }
 
-// The headline: a literal slot beside a binding slot on the same variant.
+// The main case: a literal slot beside a binding slot on the same variant.
 function classify(o: Opt2): string {
     match (o) {
         Sm(0) => { return "zero"; },

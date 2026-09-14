@@ -47,7 +47,7 @@ type Error struct {
 // caller-scope name past the check untouched, which is the exact class the
 // check exists to stop. Whitelisting closes it for every shape at once,
 // including the ones the AST does not have yet: a node nobody taught this
-// function about is refused, not waved through.
+// function about is refused, not let through.
 //
 // Top-level consts are folded to literals before this pass runs, so
 // `= SOME_CONST` is unaffected.

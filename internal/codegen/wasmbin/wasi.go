@@ -2678,7 +2678,7 @@ func buildSignalDispositionReadBody(map[string]uint32) []byte {
 // buildHostnameBody assembles hostname() on both previews: the empty
 // string as a (data, len) pair in the inline form — data 0, len with only
 // the inline flag set, which LengthWasm reads as 0 and __fern_str_dec
-// short-circuits on. A component has no node name, so "" is the honest
+// short-circuits on. A component has no node name, so "" is the correct
 // answer rather than a stand-in (compare isatty's constant no).
 func buildHostnameBody(map[string]uint32) []byte {
 	var body []byte

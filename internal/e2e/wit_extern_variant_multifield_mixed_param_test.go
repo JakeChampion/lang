@@ -20,8 +20,8 @@ import (
 //
 // The canonical join is computed position-wise: slot0 = join(s32, f32) = i32,
 // slot1 = join(s64, f64) = i64. So the flattened param is (disc:i32, s0:i32,
-// s1:i64). The Move arm's fields pass directly (i32, i64); the Spin arm's f32 rides
-// the i32 slot as its raw bits and its f64 rides the i64 slot as its raw bits —
+// s1:i64). The Move arm's fields pass directly (i32, i64); the Spin arm's f32 occupies
+// the i32 slot as its raw bits and its f64 occupies the i64 slot as its raw bits —
 // the provider recovers them with f32.reinterpret_i32 / f64.reinterpret_i64.
 //
 // `take: func(e: ev) -> s32`: Move(a,b) → a + b*1000, Spin(f,d) → trunc(f) +

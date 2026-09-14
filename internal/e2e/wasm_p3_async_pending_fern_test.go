@@ -17,7 +17,7 @@ import (
 )
 
 // TestWasmP3AsyncImportPendingFromFern is the colorless async-import vertical's
-// PENDING payoff from REAL Fern source: unlike TestWasmP3AsyncImportFromFern
+// PENDING case from REAL Fern source: unlike TestWasmP3AsyncImportFromFern
 // (whose provider completes synchronously, so the `canon lower async` returns
 // RETURNED and the wrapper's await loop is skipped), here the bundled provider
 // GENUINELY DEFERS — its core `thread.yield`s before `task.return` — so the

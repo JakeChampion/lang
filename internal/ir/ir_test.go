@@ -1610,7 +1610,7 @@ function build(): i32 {
 }
 
 // TestLowerGenericEnumScalarFieldFreesBox pins that a SCALAR generic
-// instantiation as a field — Option[i32] — DOES mint a per-instantiation
+// instantiation as a field — Option[i32] — DOES get a per-instantiation
 // drop fn, so its box is reclaimed.
 //
 // Such a field is NOT "pair-form, no heap box", and a box_free on it does
@@ -1627,7 +1627,7 @@ function build(): i32 {
 // nothing about a field's representation, and reading it as a type-level
 // property is what produced both the wrong comment and this wrong test.
 //
-// The corruption the old test feared does not occur: this program returns
+// The corruption the old test assumed does not occur: this program returns
 // 7 and reports allocs=2 frees=2 live_bytes=0 end-to-end, matching the
 // interpreter. Runtime coverage lives in
 // TestX86_64/Arm64LeakCheckEnumStringPayloadBox's scalar-nested-in-struct

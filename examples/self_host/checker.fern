@@ -84,7 +84,7 @@ function t_u8(): typeinfo.Type {
 }
 
 // `char` — a Unicode scalar value in an i32 slot (#5629). Width 32 because
-// that is the slot it rides; `is_char` is what distinguishes it.
+// that is the slot it occupies; `is_char` is what distinguishes it.
 function t_char(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: true, width: 32, unsigned: false };
 }
@@ -144,7 +144,7 @@ function lit_scalar_msg(text: string): string {
 // registered them under one name while calls looked them up under
 // another, so every classifier call reported a spurious E043.
 function int_label(t: typeinfo.TypeI32): string {
-  // `char` before the width ladder: it rides a 32-bit slot but registers and
+  // `char` before the width ladder: it occupies a 32-bit slot but registers and
   // dispatches its methods under "char" (std/unicode's seven), so labelling
   // it "i32" would look up a key nothing declares (#5629) — the same
   // register-here / look-up-there skew that took std/string off the IR path
@@ -179,7 +179,7 @@ function t_string(): typeinfo.Type {
 }
 
 // `str` — the borrowed-string view (#4813). The parser erases the SPELLING to
-// "string" (parse_type_name), so view-ness rides the sidecars (StmtVar.is_str,
+// "string" (parse_type_name), so view-ness is carried by the sidecars (StmtVar.is_str,
 // FuncDecl.ret_str); this constructor is how they re-enter the type system.
 // tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
 // tag-blind — a view IS a string box everywhere but at an owning sink, which
@@ -565,7 +565,7 @@ pub function type_debug(t: typeinfo.Type): string {
 }
 
 // is_integer reports whether `t` is an integer of ANY width or signedness.
-// `char` rides an i32 slot but is not an integer (#5629), so it is excluded.
+// `char` occupies an i32 slot but is not an integer (#5629), so it is excluded.
 //
 // The numeric operator rules want this rather than type_eq: native unifies
 // widths across `+`, `<`, `%` and friends (`c - n` with `c: i64`, `n: i32` is
@@ -656,7 +656,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeI32(ai) => {
       match (b) {
         typeinfo.TypeI32(bi) => {
-          // `char` is NOT an integer, even though it rides an i32 slot
+          // `char` is NOT an integer, even though it occupies an i32 slot
           // (#5629). The Go checker rejects both directions without an
           // explicit cast — that distinctness is the type's whole point,
           // since a byte and a code point sharing i32 is what made
@@ -1645,7 +1645,7 @@ function split_pattern_names(encoded: string): string[] {
 // be in scope. A destructuring `var` / `let` goes through
 // bind_destructure_names instead, which types each binding.
 //
-// A nested position rides in the same encoding as a parenthesised group
+// A nested position uses the same encoding as a parenthesised group
 // ("(a,b),s" for `for ((a, b), s) in xs`), so the split is depth-aware and
 // recurses: splitting on every comma bound "(a" and "b)" and left `a` and `b`
 // undefined (#8461).
@@ -2580,7 +2580,7 @@ function retired_collection_spelling(ns: string, method: string): string {
 }
 
 // scalar_module_for: the stdlib module carrying a scalar type's method surface,
-// "" for a type whose methods are not in one. u8 rides std/i32, not std/u32 —
+// "" for a type whose methods are not in one. u8 uses std/i32, not std/u32 —
 // every `pub function (b: u8) …` in the stdlib is declared there, so naming
 // std/u32 made the hint unfollowable.
 function scalar_module_for(t: typeinfo.Type): string {
@@ -2799,7 +2799,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   // `str` (#4813): a borrowed view never silently promotes to an owned
   // `string` — an owning sink must materialise a copy via .to_owned().
   // Checked BEFORE type_eq, which is deliberately tag-blind. The reverse
-  // direction (an owned string into a `str` slot) borrows freely and rides
+  // direction (an owned string into a `str` slot) borrows freely and goes through
   // the type_eq below. Argument positions re-allow the lend via
   // str_arg_borrow at their call sites, mirroring native argAssignable.
   if (is_str_view(from) && is_owned_string(to)) {
@@ -3254,7 +3254,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_string();
   }
   // slice_unchecked(s, a, b) builtin — the byte slice s[a:b] under its
-  // honest name (#5634). Returns the borrowed `str` view, as native does
+  // accurate name (#5634). Returns the borrowed `str` view, as native does
   // (#7293), so an owning sink refuses it without .to_owned().
   if (!is_method && name == "slice_unchecked") {
     if (c.args.len() != 3) {
@@ -5903,7 +5903,7 @@ function mc_mentions_list(list: ast.Expr[], name: string): boolean {
 // target, which is a bare string on the statement rather than an expression and
 // so needs the statement visitor rather than the expression one.
 //
-// Both ride astwalk's node fold, so a new parser node is covered here the moment
+// Both use astwalk's node fold, so a new parser node is covered here the moment
 // astwalk covers it. The hand-written pair each ended in a `_ => false` arm,
 // which silently did not search whatever it did not name.
 function mc_mentions_expr(e: ast.Expr, name: string): boolean {
@@ -7273,7 +7273,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // checker reports E058 in the `else` branch after the E011 check, so the
 // two never both fire on one statement).
 // loop_diags_in_exprs runs loop_diags over the statement lists one statement's
-// expressions hold, each with the scope it deserves. An ordinary lambda is a
+// expressions hold, each with the scope it needs. An ordinary lambda is a
 // scope: a label does not cross a function boundary and a `break` inside one is
 // E011, so it recurses with in_loop = false and no labels. A value block is not
 // — it is an if-/match-expression desugar that irlower inlines, so
@@ -7933,7 +7933,7 @@ function lit_negated(signs: LitSign[], line: i32, col: i32): boolean {
 // suffix_range_diag: E047 for a typed-suffix integer literal outside its own
 // type's range. A suffix pins the type in the parser, so no destination ever
 // settles the literal and no other rule judges it. A quoted literal (`'a'`,
-// `b'0'`) rides the same node with its spelling in `raw` and is not a written
+// `b'0'`) uses the same node with its spelling in `raw` and is not a written
 // numeral, so it is left alone.
 function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
   var out: util.Diag[] = [];
@@ -10906,7 +10906,7 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
 
 // A slot where `own` says something: a reference, whose unit changes hands. A
 // SCALAR carries none, so `own` on one transfers nothing and there is no
-// affine discipline to police — a second mention of it is an ordinary read,
+// affine discipline to enforce — a second mention of it is an ordinary read,
 // not a use after move. A generic `own acc: T` reaches every instantiation,
 // and its scalar ones would otherwise report one.
 function ow_ownable_type(type_name: string): boolean {
@@ -11065,7 +11065,7 @@ function ow_count_ident_list(list: ast.Expr[], name: string): i32 {
 }
 
 // ow_count_ident tallies how many times `name` appears as an identifier in an
-// expression. It rides astwalk's fold, so a new parser node is counted here the
+// expression. It uses astwalk's fold, so a new parser node is counted here the
 // moment astwalk reaches it; the hand-written version ended in a `_ => 0` arm
 // that silently did not look inside whatever it did not name.
 function ow_count_ident(e: ast.Expr, name: string): i32 {
@@ -12625,7 +12625,7 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
             }
             return out;
           }
-          // `fip` is the stronger claim and may only lean on other `fip`
+          // `fip` is the stronger claim and may only rely on other `fip`
           // callees; `fbip` may also call `fbip`, whose own construction sites
           // E068 verifies in turn.
           var callable: boolean = false;
@@ -14089,7 +14089,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
   // check (plus union-variant assignability) covers enums the same way
   // it covers `type X = A | B` aliases. The self-host's own source uses
-  // no enum decls, so this is inert on the bundle; it lights up
+  // no enum decls, so this is inert on the bundle; it enables
   // exhaustiveness for user / corpus enum matches.
   for ed in mod.enums {
     unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });
@@ -16025,7 +16025,7 @@ function vb_placeholder_decl(v: ast.StmtVar): boolean {
 // vb_zero_of builds the declaration placeholder for a value local of type
 // `tag`. The integer widths carry their suffix: the local is declared
 // unannotated, so a bare `0` is what makes it an i32 — the width and the
-// signedness have nowhere else to ride, and the store the arms make is checked
+// signedness have nowhere else to be recorded, and the store the arms make is checked
 // against exactly this declaration.
 function vb_zero_of(tag: string): ast.Expr {
   if (tag == "string") {
@@ -16133,7 +16133,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
 //     does not hold; and a `var` inside the lambda supplies the destination
 //     annotation exactly as one outside does.
 //
-// The scope rides the accumulator unchanged: the walk never rebinds it, so
+// The scope is carried in the accumulator unchanged: the walk never rebinds it, so
 // every sibling reads the same one.
 function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
   var (ne, ns, nh) = astwalk.map_expr_acc(e, s, vb_at_stmt, vb_at_expr);

@@ -49,7 +49,7 @@ func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 
 // LookupArm64Tooling is Arm64Tooling's discovery half without the skip, for a
 // caller that has to decide for itself what a missing toolchain means — a test
-// needing BOTH register backends at once has no lane where a skip is the honest
+// needing BOTH register backends at once has no lane where a skip is the correct
 // answer (#6849).
 func LookupArm64Tooling() (gcc, qemu string, ok bool) {
 	// Native arm64 Linux: plain `gcc` produces arm64 binaries,

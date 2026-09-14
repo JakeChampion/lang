@@ -14,7 +14,7 @@ import (
 // untested.
 //
 // Nothing in either WASI world can deliver a signal, so all four lower to a
-// no-op that drops their arguments and leaves a zero behind — the honest
+// no-op that drops their arguments and leaves a zero behind — the correct
 // answer rather than a stub for a missing import, the same shape as
 // hostname()'s "". What that leaves to assert is the STACK EFFECT: the
 // arithmetic around the calls is what a wrong one would corrupt, and it is

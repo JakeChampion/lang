@@ -86,7 +86,7 @@ function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolea
 function main(): i32 { var ys: List = inc_all(build(300000)); if (sum(ys) != 600000) { return 1; } return __rc_underflow(); }`,
 		"trmc-deep-stack", 0)
 
-	// STRING-HEAD payloads ride the same rewrite (width-0 pointer fields).
+	// STRING-HEAD payloads take the same rewrite (width-0 pointer fields).
 	run(t, `enum SList { SCons(string, SList), SNil }
 function tag_all(xs: SList): SList {
     match (xs) {

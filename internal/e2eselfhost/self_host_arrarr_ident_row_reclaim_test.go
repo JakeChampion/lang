@@ -85,7 +85,7 @@ function main(): i32 {
 }`, 0, true},
 
 	// The PRODUCER spelling: the same literal returned rather than bound. It
-	// rides the "AAC:" registry, whose two freshness flags read the identical
+	// uses the "AAC:" registry, whose two freshness flags read the identical
 	// pair of gates, so the widening has to reach it or the caller's binding
 	// earns the credit in one spelling and not the other.
 	{"producer-returns-ident-row", `function tag(k: i32): string {

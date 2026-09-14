@@ -254,7 +254,7 @@ func TestWASMSync(t *testing.T) {
 // Both wasm worlds refuse the whole-machine flush. Preview 1's fd_sync is one
 // descriptor's and a preopen is a capability handle rather than a mount, so
 // there is no set of filesystems for a component to name; a no-op would be a
-// flush the caller asked for and never got, so the honest answer is the
+// flush the caller asked for and never got, so the correct answer is the
 // compile-time refusal.
 func TestWASMSyncRefused(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {

@@ -81,7 +81,7 @@ func flattenOps(ops []Op, retType ast.Type, ptrW int, sigs map[string]funcSig) [
 	// Flatten is only sound when the OpIf is at "statement
 	// position" — i.e., the operand stack right before the if
 	// holds only the just-pushed condition. Otherwise the
-	// rewrite swallows the outer-stack values into a block that
+	// rewrite encloses the outer-stack values in a block that
 	// can't reach them, producing a wasm validator error
 	// ("type mismatch: expected i32 but nothing on stack").
 	// `dataDepthValid` flips to false on the first op with
@@ -364,7 +364,7 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		// pointer-sized value (the closure ptr).
 		return int(op.I32), 1, true
 	// Control-flow ops: handled outside the data-stack tracker
-	// (we surrender data tracking once we hit one mid-stream
+	// (we give up data tracking once we hit one mid-stream
 	// since the relooper-style depth math doesn't compose with
 	// the simple linear walk used here). The depth==0 gate
 	// upstream means we only fire on top-level patterns; nested

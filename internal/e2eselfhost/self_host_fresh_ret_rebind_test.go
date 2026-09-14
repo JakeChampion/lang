@@ -177,7 +177,7 @@ function round(i: i32): i32 {
 		{
 			// REFUSED: the old value is in a live container when the rebind
 			// orphans it. Releasing there frees a box `keep` still points at, so
-			// the readback is what proves the refusal is load-bearing.
+			// the readback is what proves the refusal is required.
 			name: "alias_into_container",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     var s: S = mk(i);

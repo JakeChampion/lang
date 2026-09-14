@@ -1067,7 +1067,7 @@ func TestEncodeSSE4Surface(t *testing.T) {
 	}
 }
 
-// TestRejectNearMisses pins the loud-error side: shapes one step away from
+// TestRejectNearMisses pins the refusal side: shapes one step away from
 // a real instruction, each of which GNU as also rejects (or which would
 // otherwise silently encode a different width or register file).
 func TestRejectNearMisses(t *testing.T) {

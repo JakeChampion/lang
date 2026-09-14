@@ -6,7 +6,7 @@ import "core/iter" as iter;
 // (+ Zero)], product_with / product [Mul (+ One)]) and the Iterator-bounded
 // forms (sum_iter / product_iter over `I: iter.Iterator[T]`). The iter forms are
 // exactly the shape #3915 (Iterator-bounded reducers) just lowered; this probes
-// whether std/num rides that fix. Driven over i32.
+// whether std/num benefits from that fix. Driven over i32.
 
 function test_sum_with(): test.TestOutcome {
     var xs: i32[] = [1, 2, 3, 4];

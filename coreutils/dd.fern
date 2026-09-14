@@ -686,7 +686,7 @@ function sink_flush(k: Sink): Sink {
 // ---- the input side ---------------------------------------------------------
 //
 // One `read_chunk` is one record, however few bytes it returned — which
-// is what makes `0+2 records in` the honest answer for a pipe that
+// is what makes `0+2 records in` the correct answer for a pipe that
 // dribbled two bytes at a time into a 4-byte block. `iflag=fullblock`
 // asks for the other reading: keep reading until the block is full or
 // the input ends, so the same two dribbles become `1+0`.

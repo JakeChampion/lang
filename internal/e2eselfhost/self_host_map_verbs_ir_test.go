@@ -81,7 +81,7 @@ function main(): i32 {
 		},
 		{
 			// string keys — already correct under the string default, but must
-			// still ride the fold (a distinct clone, not the i32 one).
+			// still go through the fold (a distinct clone, not the i32 one).
 			name:      "string_keys",
 			wantClone: "__mapm_merge__string__i32",
 			src: `import "core/map";

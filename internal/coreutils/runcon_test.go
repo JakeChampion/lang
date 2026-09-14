@@ -22,7 +22,7 @@ func init() {
 //
 // What is out of reach: everything past the SELinux check. No machine the
 // corpus runs on has SELinux, so the context construction, the `invalid
-// context: %s` verdict and the exec are compared by nothing here — and are not
+// context: %s` diagnostic and the exec are compared by nothing here — and are not
 // implemented either, because each is blocked on a runtime primitive Fern does
 // not have (coreutils/runcon.fern's header names the three). A Fern build on an
 // SELinux host says so and exits 125 where GNU would run the command; the

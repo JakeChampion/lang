@@ -20,7 +20,7 @@ import (
 // sides of the call can tell those apart.
 //
 // Every bound is ONE-SIDED. nanosleep may overshoot by any amount the scheduler
-// likes (and this runs under qemu and wasmtime, which like it a lot), so "not
+// chooses (and this runs under qemu and wasmtime, which overshoot a lot), so "not
 // shorter than asked" is the only property the helper owns.
 //
 // The bare `sleep_ns(0)` is not a third no-op for its own sake: the count is an

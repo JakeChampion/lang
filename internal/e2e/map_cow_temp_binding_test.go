@@ -242,8 +242,8 @@ func TestMapCowTempBindingHeapFlatWasm(t *testing.T) {
 // allocates on the two-word string ABI (wasm32, and arm64 under
 // TwoWordOverride) — but only when it inserts. On an overwrite
 // __map_set_keyed_impl keeps the equal key already in the column and returns,
-// so the cell and the one string reference it carries were dropped on the
-// floor: 16 B per overwrite for an immortal literal key, 32 B when the key is
+// so the cell and the one string reference it carries were discarded, not
+// freed: 16 B per overwrite for an immortal literal key, 32 B when the key is
 // a fresh heap string. Unbounded in a loop, and invisible on x86-64, which
 // does not box string keys at all.
 //

@@ -309,7 +309,7 @@ func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
 
 // The wasm leg runs under the component's preopen, so its paths are relative
 // and `chmod` is absent: neither WASI preview has permission bits and E066
-// refuses the builtin on that target, which is the honest answer rather than
+// refuses the builtin on that target, which is the correct answer rather than
 // a mode word that describes nothing.
 //
 // main's return reaches us on STDOUT, not as the exit status: the harness

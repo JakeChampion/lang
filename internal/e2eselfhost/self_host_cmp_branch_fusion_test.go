@@ -79,7 +79,7 @@ func cmpLit(v uint64, unsigned bool) string {
 // which the lowering reaches through a `not` the source never wrote).
 //
 // main accumulates `(got - want)^2` rather than branching on each answer, and
-// that is load-bearing rather than a style: a check written as `if (got != want)
+// that is required rather than a style: a check written as `if (got != want)
 // { return … }` is measured by the very lowering under test, so a polarity slip
 // that inverts EVERY branch inverts the checks too and the program reports
 // itself clean. The arithmetic form has no branch to invert.

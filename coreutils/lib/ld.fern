@@ -1194,7 +1194,7 @@ pub function round_nearest(): i32 {
 // `nearest` is `floor(|v| + 1/2)` with the sign put back, NOT a
 // correctly-rounded round-half-away: the addition rounds to the format
 // first, so a value a hair under a half carries up to the half and then
-// rounds away with it. That asymmetry is load-bearing — it is why
+// rounds away with it. That asymmetry is essential — it is why
 // `numfmt --round=nearest --format=%.3f 0.0005` is 0.001 — so the
 // addition has to happen at the target's precision, not exactly.
 pub function (f: Format) round_to_int(v: LD, mode: i32): LD {

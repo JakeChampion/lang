@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostAsyncGatherModloadIRX86_64 is slice 6 of docs/ASYNC-SELFHOST-IR.md
-// — the end-to-end payoff: a self-host-compiled `std/async` program (gather over
+// — the end-to-end benefit: a self-host-compiled `std/async` program (gather over
 // a Future[i32][]) compiles through the MODLOAD driver's IR path and runs.
 //
 // This exercises the full stack landed across slices 1-5b (poll, the Future

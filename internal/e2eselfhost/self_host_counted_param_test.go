@@ -39,7 +39,7 @@ import (
 // walk, so the question there is why the deep credit is refused, not why the
 // argument reads as an escape.
 //
-// ON THE LOAD-BEARING CHECK, measured rather than asserted: replacing the "CNT:"
+// ON WHETHER THE CHECK IS NEEDED, measured rather than asserted: replacing the "CNT:"
 // lookup with a blanket admission of every bare-ident call argument does NOT
 // break any case below, nor the rc suites — it merely closes enum__param too.
 // So these probes do NOT separate the tier from the blanket. The lookup is kept

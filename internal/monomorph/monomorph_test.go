@@ -341,7 +341,7 @@ function main(): i32 {
 	}
 }
 
-// TestWalkerCoversEveryASTNodeWithChildren is the load-bearing
+// TestWalkerCoversEveryASTNodeWithChildren is the essential
 // "no silent gaps" guarantee for monomorph's call-rewriting
 // walker. Through this thread the walker has been missing seven
 // shapes that can host a sub-expression (MapLit, FString,
@@ -1082,7 +1082,7 @@ function main(): i32 { var b: Box[string] = Box.default(); return b.v.len(); }`}
 // rewrite names `T`'s impl with the same classifier the checker
 // registers `impl Default for <scalar>` under (`ast.ReceiverTypeName`);
 // when the two disagreed the call resolved onto ANOTHER type's impl and
-// the trailing re-check died with a "compiler bug".
+// the trailing re-check failed with a "compiler bug".
 //
 // `u8` is the case that motivated the table: it used to fall through a
 // width switch that only knew 32 and 64, so a byte was named `u32` here

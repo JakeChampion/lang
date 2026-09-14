@@ -104,7 +104,7 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		// #3640 slice B.2: the UNANNOTATED `var f = mk` where mk is a zero-arg
 		// struct-returning fn and `f` is later CALLED. infer_fnvalue_locals_module
 		// (on the shared IR funnel) binds it as a fn-value rather than const-calling
-		// mk — matching the native compiler's use-directed inference — so it rides
+		// mk — matching the native compiler's use-directed inference — so it uses
 		// the slice-B.1 lowering. Const-calling instead stores mk()'s struct, and
 		// `f()` then calls the struct box as a code pointer. A bare
 		// `var p = mk` that is NOT called stays a const-call (unchanged).

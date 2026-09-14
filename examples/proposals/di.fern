@@ -11,7 +11,7 @@
 // wrong on a DIAMOND: with `app` depending on `a` and `b`, both depending on
 // `config`, the naive version constructs `config` twice and hands out two
 // different instances. Every value is still "right", the program still runs,
-// and the two halves of it disagree about state forever. So the load-bearing
+// and the two halves of it disagree about state forever. So the essential
 // test is not that resolution succeeds — it is that each provider's
 // constructor ran EXACTLY ONCE, which the resolver's construction log makes
 // countable.
@@ -88,7 +88,7 @@ function join(xs: string[], sep: string): string {
 // Depth-first resolve. Returns the state and the value; on failure the state
 // carries the first error and the value is 0.
 //
-// The order of the three checks at the top is load-bearing:
+// The order of the three checks at the top is essential:
 //   1. an error already recorded — stop, so the FIRST failure is reported
 //      rather than the last;
 //   2. the cycle check, BEFORE the cache — a name on the active path has not

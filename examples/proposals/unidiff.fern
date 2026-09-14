@@ -4,7 +4,7 @@
 // LCS by dynamic programming, backtracked into an edit script, grouped into
 // hunks with three lines of context, rendered as a unified diff.
 //
-// The load-bearing test is a ROUND TRIP through the rendered text: the diff
+// The essential test is a ROUND TRIP through the rendered text: the diff
 // is parsed back — hunk headers, context and change lines — and applied to
 // the original, and the result must equal the target exactly. That covers
 // the renderer and the parser together, and it is the property a diff is

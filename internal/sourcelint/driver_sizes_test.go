@@ -173,7 +173,7 @@ func TestCheckDriverSizesToleratesSmallDrift(t *testing.T) {
 }
 
 // A driver nobody baselined is measured but not compared, and one aggregate
-// annotation asks for the entry — one per driver would drown the channel.
+// annotation asks for the entry — one per driver would be too many.
 func TestCheckDriverSizesReportsUnbaselinedOnce(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", "# tracked-artifact: fern.fern\nfern.fern 155895596\n")
 	report := writeTemp(t, "report.txt", "fern.fern\t155895596\nssa_run.fern\t40000000\nchecker_modload_run.fern\t41000000\n")
@@ -278,7 +278,7 @@ func TestCheckDriverSizesCompleteModeFlagsUnmeasured(t *testing.T) {
 		}
 	}
 	// One annotation for the set, as with UNBASELINED — one per driver would
-	// drown the channel this gate already lost once.
+	// be too many for the channel this gate already lost once.
 	if n := strings.Count(out, "::warning"); n != 1 {
 		t.Errorf("want exactly 1 annotation for 2 unmeasured drivers, got %d:\n%s", n, out)
 	}

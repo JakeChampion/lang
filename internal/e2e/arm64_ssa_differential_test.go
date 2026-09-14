@@ -61,7 +61,7 @@ const (
 	// behaviour is KNOWN to disagree with the flat backend today, one
 	// `<path> <reason>` row each. Exact in BOTH directions, as the self-host
 	// legs' files are: a listed program that starts AGREEING fails too. An
-	// allowlist nobody prunes is where bugs go to be forgotten, and this one
+	// allowlist nobody prunes is where bugs get forgotten, and this one
 	// is mostly a single defect whose fix should empty it in one go.
 	arm64SSADiffKnownFile = "arm64-ssa-diff-known-divergences.txt"
 
@@ -107,7 +107,7 @@ const (
 	//
 	// It is NOT headroom over the heaviest real program, and an earlier note
 	// here claiming ~16x was measurably wrong: examples/bench/pmap_insert.fern
-	// took 49.8 s under `-backend ssa` on this container while the wall was
+	// took 49.8 s under `-backend ssa` on this container while the limit was
 	// 15 s (#8069). What a wall can say is "this did not finish", which is why
 	// crossing it is now its own outcome rather than a disagreement, and why
 	// the performance question is asked as a ratio (ssaSlowdown) instead.
@@ -315,7 +315,7 @@ func arm64SSADiffDetail(base, ssa arm64Run) string {
 }
 
 // firstStdoutDiff names the first differing line, so a 200-line TAP stream
-// reports the one case that changed rather than two walls of text.
+// reports the one case that changed rather than both entire streams.
 func firstStdoutDiff(a, b string) string {
 	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
 	for i := 0; i < len(al) || i < len(bl); i++ {

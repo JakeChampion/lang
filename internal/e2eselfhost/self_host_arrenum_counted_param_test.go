@@ -32,7 +32,7 @@ import (
 // admits BY TYPE.
 //
 // Two guards make the tier narrow rather than a blanket accept, and the refused
-// cases below are what prove them load-bearing:
+// cases below are what prove them essential:
 //
 //   - The element walk must EXIST. enum_arr_elems_walk_ok is the same predicate
 //     the backends ask before emitting __enum_arr_elems_drop_<E> at the arr_dec
@@ -121,7 +121,7 @@ func arrenumCountedCases() []arrenumShareCase {
 			want: 9,
 		},
 		{
-			// The case that makes the element guard load-bearing rather than
+			// The case that makes the element guard essential rather than
 			// decorative: the callee stores an ELEMENT — not the array — in a
 			// struct field. The store is counted for the ELEMENT, so a tier
 			// that asked only "is this a counted store?" would admit it, and

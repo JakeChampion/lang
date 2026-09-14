@@ -53,7 +53,7 @@ var p3StreamSinkProviderCore = []byte{
 	0x65, 0x03, 0x02, 0x73, 0x64, 0x04, 0x02, 0x73, 0x6c,
 }
 
-// TestWasmP3StreamParamFromFern is the colorless `stream[T]` PARAMETER payoff from
+// TestWasmP3StreamParamFromFern is the colorless `stream[T]` PARAMETER case from
 // REAL Fern source — the produce mirror of TestWasmP3StreamImportFromFern:
 //
 //	@import("test:dep/d","sink") async function sink(s: stream[u8]): i32;

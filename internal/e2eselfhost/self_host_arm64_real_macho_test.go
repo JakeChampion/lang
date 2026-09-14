@@ -10,7 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 )
 
-// TestSelfHostArm64DarwinMachORealAsm is the capstone of the arm64-darwin
+// TestSelfHostArm64DarwinMachORealAsm is the final gate of the arm64-darwin
 // native-binary track: it assembles the compiler's *actual* emitted
 // arm64-darwin assembly — not hand-written snippets — into a runnable,
 // ad-hoc-signed Mach-O with no external as/clang/ld64.

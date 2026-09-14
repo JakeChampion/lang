@@ -89,7 +89,7 @@ func TestArrayPushBoundElemMovesLikeInline(t *testing.T) {
 // iterations, so transferring its single reference into the first iteration's
 // buffer would let that buffer's drop free a value the next iteration reads —
 // a use-after-free, not a leak. markLoopBodyConstructionMoves' `allow` gate is
-// what holds this, and the push arm rides on it.
+// what holds this, and the push arm relies on it.
 func TestArrayPushOuterLocalElemNotMoved(t *testing.T) {
 	src := `struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {

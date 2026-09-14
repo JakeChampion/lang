@@ -36,8 +36,8 @@
 
 pub struct TokEof { line: i32, col: i32 }
 // `raw` is the source spelling of a quoted literal — `'x'` / `b'x'`,
-// which reach the parser AS number tokens: the decoded value rides
-// `text` as a decimal numeral and the type rides `suffix` ("char" /
+// which reach the parser AS number tokens: the decoded value is stored in
+// `text` as a decimal numeral and the type is stored in `suffix` ("char" /
 // "u8"), so every consumer of a suffixed integer literal handles them
 // unchanged. Empty for an ordinary number, where `text` already is the
 // spelling. The printer re-emits `raw` so an author's escape survives
@@ -49,9 +49,9 @@ pub struct TokPunct { text: string, line: i32, col: i32 }
 pub struct TokString { value: string, line: i32, col: i32 }
 // TokError surfaces a lex failure (bad numeric suffix, unterminated
 // string, bare `0x`, unexpected character, …) as a first-class
-// token rather than masquerading as EOF. The Go lexer returns a
+// token rather than being reported as EOF. The Go lexer returns a
 // `*lexer.Error` through a side channel; Fern has no exception /
-// multi-return-with-error idiom in this port, so the error rides
+// multi-return-with-error idiom in this port, so the error is carried in
 // the token stream and `tokenize` stops at the first one. Parser
 // consumers already fall through these via their `_` match arms.
 pub struct TokError { msg: string, line: i32, col: i32 }
@@ -197,7 +197,7 @@ function comment_tok(line: i32, col: i32, text: string): Comment {
     return Comment { line: line, col: col, text: text };
 }
 
-// Comments ride beside the tokens rather than becoming a token kind, so the
+// Comments are returned alongside the tokens rather than becoming a token kind, so the
 // parser stays grammar-only — same split as the Go lexer's Tokenize.
 pub struct LexResult { tokens: Token[], comments: Comment[] }
 
@@ -232,7 +232,7 @@ function (l: Lex) advance(): Lex {
 // SINGLE Lex instead of one per byte. It tracks line/col exactly as a
 // run of `advance()` calls would (newlines reset col, bump line), so
 // it's a drop-in for the hot `while (...) { l = l.advance(); }` scan
-// loops — which otherwise churn one throwaway Lex box per source
+// loops — which otherwise allocate one throwaway Lex box per source
 // character (the dominant per-char struct allocation).
 function (l: Lex) advance_to(end: i32): Lex {
     if (end <= l.i) { return l; }
@@ -954,7 +954,7 @@ function tokenize_impl(src: string, keep: boolean): LexResult {
         var start_col: i32 = l.col;
         var b: i32 = l.peek_byte();
         // f-string `f"..."` — checked before the identifier path so
-        // the leading `f` isn't scooped up as an ident. Mirrors the
+        // the leading `f` isn't consumed as an ident. Mirrors the
         // Go lexer's first-branch f-string detection.
         if (b == 102 && l.i + 1 < l.n && l.src[l.i + 1] == b'"') {
             l = l.advance();   // consume `f`

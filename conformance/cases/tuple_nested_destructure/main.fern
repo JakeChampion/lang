@@ -19,7 +19,7 @@
 //
 // The self-host reaches the same place from the other side. Its destructure is
 // one StmtVar whose name is the comma-joined binding list, so a nested position
-// rides as its own parenthesised list ("a,(b,c)"), lower_stmt_var splits on
+// appears as its own parenthesised list ("a,(b,c)"), lower_stmt_var splits on
 // TOP-LEVEL commas, and a parenthesised position binds a temp that the same
 // function destructures again. The second level already had to work — a tuple
 // element marks its slot's element tags so `var (s, b) = p` resolves — so the

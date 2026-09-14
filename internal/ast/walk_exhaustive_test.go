@@ -13,7 +13,7 @@ import (
 // walkSkips names the Expr-, Stmt- and *Block-typed fields Walk deliberately
 // does not descend into, with the reason. TestWalkVisitsEveryChildSlot
 // requires every other such field to be reached, and fails on an entry that
-// IS reached — so the table cannot rot into a licence for whatever the
+// IS reached — so the table cannot become a licence for whatever the
 // traversal happens to miss.
 var walkSkips = map[string]string{
 	"FString.Desugared":     "checker-stamped mirror of Parts; walking both double-visits every interpolant",

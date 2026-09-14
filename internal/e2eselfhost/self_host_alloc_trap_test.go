@@ -17,14 +17,14 @@ import (
 // fresh n-byte block and NEVER writes it (no zero-init, and its `usize` result
 // is a scalar — no rc, so no reclaim ever recycles it). Each call advances the
 // bump CURSOR by ~2 GiB (pow2-rounded) while touching ZERO physical pages, so
-// residency stays flat at a few MB no matter how far the cursor races. ~8 calls
+// residency stays flat at a few MB no matter how far the cursor advances. ~8 calls
 // overrun the 16 GiB arena and the ~9th trips the bounds check → exit(125) in
 // ~1 ms.
 //
 // This replaced the old approach (grow `s` by concat, `a.append(s)` to keep
 // every intermediate live so ~10.5 GiB of string bytes overflowed the arena):
 // once the arena reached 16 GiB (#5218) that no longer worked on a 16 GB CI
-// runner. Touching ~16 GiB to reach the arena wall host-OOMs FIRST — a SIGKILL,
+// runner. Touching ~16 GiB to reach the arena limit host-OOMs FIRST — a SIGKILL,
 // which Go reports as ExitCode -1, not the clean 125 this asserts — and any
 // count small enough to fit RAM stays UNDER the 16 GiB arena and COMPLETES
 // (exit 0). Decoupling cursor advance from residency removes that dependency on

@@ -91,7 +91,7 @@ func TestSelfHostFnArrayFieldGateX86_64(t *testing.T) {
 				t.Errorf("rejection still wrote %d bytes of asm", len(out))
 			}
 			// Naming the field is the whole point — "cannot classify" without
-			// saying which field leaves the author hunting.
+			// saying which field leaves the author searching.
 			if !strings.Contains(errOut, "R.hs") {
 				t.Errorf("diagnostic does not name the field:\n%s", errOut)
 			}

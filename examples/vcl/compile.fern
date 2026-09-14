@@ -92,7 +92,7 @@ function is_header(name: string): boolean {
 }
 
 // read_code is the Fern expression that reads a variable from `t`. This is
-// the payoff: a struct field, not a table lookup.
+// the benefit: a struct field, not a table lookup.
 // fern-lint: allow cyclomatic-complexity
 pub function read_code(name: string): string {
   if (is_header(name)) {

@@ -89,8 +89,8 @@ function main(): i32 {
 }
 `
 
-// rcPayloadOptionDirectSrc is the CONTROL that was already green, and it earns
-// its place: it is the row that proves the deep drop was never the missing
+// rcPayloadOptionDirectSrc is the CONTROL that was already green, and it still
+// matters: it is the row that proves the deep drop was never the missing
 // piece. If a change to the call path ever regresses this, the fix has broken
 // the machinery it was supposed to reuse.
 const rcPayloadOptionDirectSrc = `import "core/int";

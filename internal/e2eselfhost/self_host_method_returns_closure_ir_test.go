@@ -17,7 +17,7 @@ import (
 // ExprFieldAccess, which fell through the match unhandled — so `var f =
 // m.make()` left `f` a plain fn-value local and `f(21)` lowered to a direct
 // `call_indirect` passing the BOX POINTER as the table index, with the wrong
-// signature type to boot (the wrapper takes env + arg, the call site declared
+// signature type as well (the wrapper takes env + arg, the call site declared
 // one param). wasm trapped at runtime:
 //
 //	wasm trap: undefined element: out of bounds table access

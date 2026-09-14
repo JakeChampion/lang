@@ -1,6 +1,6 @@
 // std/async — structured-concurrency combinators over `Future[T]`.
 //
-// This is the BLESSED async surface (docs/ASYNC-REDESIGN.md). It
+// This is the SUPPORTED async surface (docs/ASYNC-REDESIGN.md). It
 // replaces the `concurrent { … }` / `await` / `race` keyword surface
 // (a parser-side CPS transform) with plain library functions over one
 // abstraction — a `Future[T]`, a not-yet-ready value of type `T`. The

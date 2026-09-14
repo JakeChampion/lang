@@ -21,7 +21,7 @@ import (
 //
 // with `allocs=400 frees=400 live_bytes=0` throughout — a doubly-released block
 // goes straight back to the freelist, so the byte count is clean and the answer is
-// only wrong because the probe checks the counter. Nothing else dissents.
+// only wrong because the probe checks the counter. Nothing else disagrees.
 //
 // What isolated it was a one-word diff: renaming the second block's local to `u`,
 // changing nothing else, made the same program correct (and left the alloc counts
@@ -159,7 +159,7 @@ func leakSummaryLine(stderr string) string {
 // TestSelfHostTupleClassSlotKeyX86_64 — each binding resolves its own class, so no
 // box is released twice and none is left unreleased.
 //
-// The exit code is the load-bearing assertion here and the byte count is the
+// The exit code is the essential assertion here and the byte count is the
 // secondary guard. An over-release does not move `live_bytes` — the block returns to
 // the freelist — so only `__rc_underflow()` separates a correct compiler from the
 // broken one. `allocs == frees` is what catches the opposite failure: a site key

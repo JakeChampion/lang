@@ -52,7 +52,7 @@ func callsToIn(p *Program, caller, callee string) int {
 // "sole reference, so the original dies" shortcut: the original does NOT die,
 // because the dead-function cull roots it for the caller outside the program.
 //
-// The unexported half is what keeps this honest — it proves the shortcut
+// The unexported half is what makes this conclusive — it proves the shortcut
 // really does fire on this shape, so the exported half is testing the export
 // and not some unrelated disqualifier.
 func TestInlineSizePolicyCountsTheExternalCaller(t *testing.T) {

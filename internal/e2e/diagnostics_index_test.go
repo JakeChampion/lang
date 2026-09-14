@@ -79,7 +79,7 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 		}
 	}
 
-	// 2. Every claimed pin must hold, and every `—` must be honest.
+	// 2. Every claimed pin must hold, and every `—` must be accurate.
 	for _, r := range rows {
 		switch {
 		case r.pin == "—":

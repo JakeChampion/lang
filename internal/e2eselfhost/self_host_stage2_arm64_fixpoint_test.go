@@ -101,7 +101,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		// The heavyweight: gen2 compiling the whole compiler under qemu. This
 		// is the case the deleted test measured at ~709 s on the AST path, and
 		// it is the strongest form of the property — but it is not worth its
-		// wall-clock on every run, so it rides an env var.
+		// wall-clock on every run, so it is gated by an env var.
 		{name: "self", src: "examples/self_host/asm_load_run.fern", selfEnv: true},
 	}
 	for _, tc := range cases {

@@ -10,7 +10,7 @@ import (
 // tupleMatchCases pin tuple-pattern match arms
 // `match (p) { (0, y) => …, (x, y) => … }` on the self-host compiler.
 // The parser desugars the whole match at parse time (build_tuple_match)
-// into a destructure + flag-guarded if chain, so these ride constructs
+// into a destructure + flag-guarded if chain, so these use constructs
 // every self-host backend already lowers. Covers literal dispatch,
 // binder extraction, a guard (which must see the arm's binders), a
 // trailing `_` arm, a string element, and the expression form (IIFE).

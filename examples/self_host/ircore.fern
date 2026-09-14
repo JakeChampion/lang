@@ -389,13 +389,13 @@ pub function eligible_core_known_impl(mod: parser.Module, known: string[]): bool
     // The 512-function module-size budget is GONE (#3457). It existed because
     // emit_module_ir's per-function ir.Op lists grow past the runtime's 2048 B
     // "large" freelist tier, and that tier did not recycle — so a merged
-    // ~1000-function bundle leaked enough to march the bump heap into exit-137
+    // ~1000-function bundle leaked enough to push the bump heap into exit-137
     // (#3425). Its own comment said "until the native large-tier freelist is
     // fixed"; that is done (ported to the self-host runtime, x86 #5609 / arm64
     // #5614, with the per-module fixpoint green), so the precondition is met.
     //
     // Removing it is not just cleanup. Since #5972 deleted the AST emitters the
-    // budget stopped being a FALLBACK and became a WALL: a >512-function
+    // budget stopped being a FALLBACK and became a HARD LIMIT: a >512-function
     // whole-program module was simply uncompilable on the register backends
     // ("module is not IR-eligible; the AST emitter is no longer reachable"). It
     // is also the last thing keeping the merged whole-compiler bundle off the IR

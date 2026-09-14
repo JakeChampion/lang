@@ -47,7 +47,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// The alias RETURNED on one path: `return a` is not a bare return
 			// of a frame-fresh local (its init is an ident, not a literal),
 			// and the payload scan on a sees the return as an escape — the
-			// admission stays refused and the floor holds. Blessing this
+			// admission stays refused and the floor holds. Admitting this
 			// shape would hand the caller two admitted paths to one box.
 			name: "alias_returned_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {

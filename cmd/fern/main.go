@@ -308,10 +308,10 @@ var embeddedAssets *embed.Set
 
 // sanitizerCoverage says what each -target's DEFAULT backend emits under
 // -sanitize: an empty note is the whole mode (census + rc over-release +
-// use-after-free quarantine), a non-empty one names the honest subset, and a
+// use-after-free quarantine), a non-empty one names the covered subset, and a
 // target absent from the map carries nothing at all. Both natives are
 // complete, and the arm64 family shares one generator so android / darwin
-// ride along with plain arm64.
+// match plain arm64.
 //
 // Neither extreme of the warning is safe on a partial target: claiming the
 // whole mode makes a silent run read as "no findings" when two of the three
@@ -1440,7 +1440,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// A declared-but-unemitted target refuses HERE, after enforcement, so a
 	// program that also violates the capability set gets the E066 naming what
 	// it reached for rather than this. Without the check the target would fall
-	// through to the "unknown target" error below, which would be a lie: the
+	// through to the "unknown target" error below, which would be false: the
 	// descriptor exists and `-check` against it works.
 	// `-backend` selects an alternate emitter for the SAME target, so an
 	// unsupported combination is rejected by name rather than silently
@@ -1571,7 +1571,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		// module-level assembler have existed and been tested for a while;
 		// nothing selected them, so docs/SSA-CUTOVER-PLAN.md's readiness table
 		// lists x86-64 as "unreachable from the CLI" and calls a module
-		// assembler the long pole. The assembler was already there — see that
+		// assembler the blocker. The assembler was already there — see that
 		// doc's corrected note.
 		asm, err := buildX86SSA(prog, info)
 		if err != nil {
@@ -2174,12 +2174,12 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 		// Verify AFTER Optimize, not before. This backend promises that an
 		// unsupported construct ERRORS rather than miscompiles, and without
 		// any Verify call on a build path that promise did not hold: invalid
-		// SSA sailed through regalloc and emit and yielded a binary that
+		// SSA passed through regalloc and emit and yielded a binary that
 		// SIGSEGVs.
 		//
 		// After-Optimize only, because the lifter deliberately leaves blocks
 		// unreachable — endBlockScope / endLoopScope say so explicitly, for
-		// PruneUnreachable to drop — and Verify's use-before-def rule wants a
+		// PruneUnreachable to drop — and Verify's use-before-def rule needs a
 		// def in an ancestor block, which nothing in an unreachable block has.
 		// Checking before Optimize would therefore reject programs the lifter
 		// considers well-formed, and it buys no detection: an invalid lift

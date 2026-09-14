@@ -39,7 +39,7 @@ var iifeArrayResultCases = []struct {
 function rd(e: E, i: i32): i32[] { return (match (e) { E.A(xs) => xs, E.B => [i] }); }
 function main(): i32 { return rd(E.A([1, 2]), 0).len() + rd(E.B, 5).len(); }`, 3},
 
-	// The 8-byte-stride element kinds ride their own marks (mark_f64arr /
+	// The 8-byte-stride element kinds use their own marks (mark_f64arr /
 	// mark_i64arr) and would read at the wrong width without them.
 	{"iife-array-payload-f64", `enum E { A(f64[]), B }
 function rd(e: E): f64[] { return (match (e) { E.A(xs) => xs, E.B => [1.5] }); }

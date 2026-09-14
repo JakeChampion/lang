@@ -9,7 +9,7 @@ import "std/test";
 //
 // Median (not mean) is the right regression signal — a
 // single GC pause inflates the mean but leaves the median
-// honest.
+// accurate.
 
 function workload_tiny(): void {
     var i: i32 = 0;

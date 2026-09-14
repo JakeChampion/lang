@@ -10,7 +10,7 @@
 // fields; NaN is an infinity with a non-zero mantissa; and -0.0 differs from
 // 0.0 in exactly the bit an inspector exists to show you.
 //
-// So the load-bearing test is not "the fields look right", it is a ROUND TRIP
+// So the essential test is not "the fields look right", it is a ROUND TRIP
 // over bit patterns: decode to (sign, exponent, mantissa), rebuild the 64 bits
 // from those three, and require the same bits back. Comparing the rebuilt
 // f64 with `==` would be the wrong test twice over — `NaN == NaN` is false and

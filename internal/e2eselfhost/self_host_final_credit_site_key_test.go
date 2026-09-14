@@ -20,7 +20,7 @@ import (
 // the other inherits its verdict. THREE different signals came out of it:
 //
 //	fault     ARRTUP / ARRSTRUCT / STRUCTARR / STRUCTARRA / ARRENUM  -> exit 99
-//	latent    SCENUMS — the class leaks its own source, so nothing dissents
+//	latent    SCENUMS — the class leaks its own source, so nothing reports it
 //	denial    DYN — tagged_value_of returns the FIRST match, so the alias's
 //	          entry SHADOWED the credited one and suppressed a release
 //
@@ -194,7 +194,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			// The same fault on "ARRENUM:", whose entry is "<key>#<Enum>" — the
-			// element enum rides the credit because an `E[]` slot records its
+			// element enum is carried in the credit because an `E[]` slot records its
 			// element type nowhere. A site key contains no '#', so the split is
 			// unambiguous. Base: 99.
 			//

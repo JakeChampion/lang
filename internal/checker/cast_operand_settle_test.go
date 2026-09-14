@@ -58,7 +58,7 @@ func TestCastSettlesPolymorphicOperandAtSignedI32(t *testing.T) {
 // The range check on a compound operand's literal judges it against the type
 // the operand computes in. Beside an operand already committed to i32, a
 // literal only i64 can hold is an E047 naming i32 — never u32, and never a
-// widening of the variable behind its back.
+// silent widening of the variable.
 func TestCastOperandLiteralRangeIsJudgedAtI32(t *testing.T) {
 	err := checkSource(t, "function main(): i32 {\n    var a: i32 = 3;\n    var v: f64 = (a - 4611686018427387904) as f64;\n    return 0;\n}\n")
 	if err == nil {

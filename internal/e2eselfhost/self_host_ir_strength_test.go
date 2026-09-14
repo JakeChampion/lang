@@ -139,7 +139,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// it, which the back-edge reaches after the write.
 		"kp_frame_write_in_loop: const_i32 7 ; store_local 1 ; loop ; load_local 1 ; drop ; str_slice frame:1 ; drop ; end ; load_local 1\n" +
 		"kp_idempotent=1\n" +
-		// The payoff, through optimize_ops, and the clearest example of the battery
+		// The benefit, through optimize_ops, and the clearest example of the battery
 		// composing: pruning the decided `if` leaves the store and load ADJACENT, so
 		// fuse_tee fires where it previously could not reach, propagate_copies then
 		// drops the tee as dead, and the fold collapses what is left. Nine ops to
@@ -192,7 +192,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// i32 / u32 / sub-word arithmetic op. wc_nested is `1 + 2 * 3`: the
 		// int_cast between the folded `mul` and the `add` is what used to
 		// leave a runtime add of two constants in every default build. The
-		// refusals are the load-bearing half — a negative constant through
+		// refusals are the essential half — a negative constant through
 		// `as u32` is 2^32 + v (which is how u32's max lowers), and
 		// int_extend / int_wrap change the value's wasm TYPE, so neither
 		// pair may collapse to an i32 constant.
@@ -228,7 +228,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"zg_late_write_fires: const_i32 0 ; if ; end ; call_direct mk/0 ; store_local 1\n" +
 		"zg_rezero_fires: const_i32 0 ; store_local 1 ; const_i32 0\n" +
 		"zg_frame_write_refused: str_slice frame:1 ; drop ; load_local 1 ; call_direct __fern_rc_is_unique/1\n" +
-		// The payoff: the pass removes nothing itself, it hands the fold a decided
+		// The benefit: the pass removes nothing itself, it hands the fold a decided
 		// `if` and the whole drop body goes with it.
 		"zg_in_optimize: return\n" +
 		"zg_idempotent=1\n" +

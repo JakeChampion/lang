@@ -15,7 +15,7 @@ import (
 //
 //   - IIFE callee: `((b) => {...})(args)` -> `__lam_N(args)` (a direct call).
 //   - tuple element: `((x) => {...}, 10)` -> a fn-pointer tuple element, so
-//     `t.0(t.1)` rides the tuple-element call_indirect path.
+//     `t.0(t.1)` takes the tuple-element call_indirect path.
 //   - assignment RHS: `f = (x) => {...}` -> `f = __lam_N` (a fn-pointer store).
 //
 // `lift_lambdas` already hoisted no-capture lambdas in call-argument /

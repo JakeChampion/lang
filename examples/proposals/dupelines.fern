@@ -19,10 +19,10 @@
 // finder is a hash map, and a hash map has no order, so the natural
 // implementation reports groups in whatever sequence the buckets happen to
 // yield — which changes with the seed, the capacity, or the insertion history.
-// That is invisible in a one-file test and infuriating in a diff. So the
+// That is invisible in a one-file test and noisy in a diff. So the
 // contract is FIRST OCCURRENCE order, with ascending line numbers inside each
 // group, and it is asserted rather than assumed: the map here is used only for
-// lookup, and the ordering rides on a separate array. Running the same input
+// lookup, and the ordering is kept in a separate array. Running the same input
 // twice and comparing is the guard that keeps it that way.
 //
 // Two smaller decisions are pinned because they are the ones a user would

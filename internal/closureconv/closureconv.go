@@ -409,7 +409,7 @@ func (c *converter) rewriteBlock(b *ast.Block, hoistedFor *captureCtx) error {
 // (e.g. `fact(n - 1)` inside `fact`'s body) can be rewritten to a
 // direct call to the hoisted name + an `__env` arg forwarded
 // through. The checker deliberately doesn't capture the function's
-// own name to avoid a chicken-and-egg in the env's capture set, so
+// own name to avoid a circular dependency in the env's capture set, so
 // the rewrite is the only thing that bridges the renamed top-level
 // to the original recursive call site.
 type captureCtx struct {
@@ -765,7 +765,7 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		// Recursive self-reference inside the hoisted body:
 		// `fact(n - 1)` where `fact` is the function whose body
 		// we're rewriting. The checker skipped this in capture
-		// collection (to avoid the chicken-and-egg of the env
+		// collection (to avoid the circular dependency of the env
 		// needing the closure that needs the env), so it would
 		// otherwise fall through unchanged — IR would then call
 		// a top-level `fact` which no longer exists (it's now

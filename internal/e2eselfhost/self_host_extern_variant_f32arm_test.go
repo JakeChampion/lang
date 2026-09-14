@@ -51,7 +51,7 @@ func TestSelfHostExternVariantF32ArmParamCustomProvider(t *testing.T) {
 		t.Fatalf("write provider wit: %v", err)
 	}
 	// take receives the variant flattened to (disc:i32, payload:i32). The f
-	// arm's f32 rides the i32 join as its raw bits, recovered via
+	// arm's f32 is carried in the i32 join as its raw bits, recovered via
 	// f32.reinterpret_i32.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)

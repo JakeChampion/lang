@@ -53,7 +53,7 @@ var u64IRCases = []struct {
 	{"uclamp-highbit-hi", `var hi: u64 = 18000000000000000000 as u64; return u64_clamp(50 as u64, 10 as u64, hi) as i32;`},
 	// A CONCRETE u64-returning function's result chained DIRECTLY in an unsigned
 	// op, where the call is the SOLE u64 operand (a shift follows its left operand,
-	// and the shift amount is a plain i32) — so the unsigned-ness rides only on the
+	// and the shift amount is a plain i32) — so the unsigned-ness depends only on the
 	// callee's u64 return, not on an `as u64` sibling. Without is_u64_ret_fn the
 	// shift lowered SIGNED (arithmetic) and diverged: 0xF9CCD8A1C5080000 >> 57 is
 	// 124 unsigned but 252 (sign-extended low byte) signed. #5159.

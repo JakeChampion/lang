@@ -17,7 +17,7 @@
 // the definition of precedence, it shares no code with the fold, and it is
 // checked for every key in the union of the corpus.
 //
-// Three things a config merger gets wrong in the field, each with its own test:
+// Three things a config merger gets wrong in practice, each with its own test:
 //
 //   - **An empty string is a VALUE, not an absence.** `FERN_LOG=` must override
 //     a non-empty default with the empty string. Implementations that model

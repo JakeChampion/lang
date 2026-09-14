@@ -5,7 +5,7 @@ import "std/i32";
 // Property-based round-trip audit for std/base64 and std/hex.
 //
 // A deterministic LCG drives the input generation so every backend
-// (interp / x86-64 / arm64 / wasm) exercises the exact same swarm of
+// (interp / x86-64 / arm64 / wasm) exercises the exact same set of
 // inputs and any disagreement is a real cross-backend bug, not noise.
 // Inputs deliberately include the full 0..255 byte range (embedded
 // NULs and high bytes) and lengths 0..47, since codec byte handling

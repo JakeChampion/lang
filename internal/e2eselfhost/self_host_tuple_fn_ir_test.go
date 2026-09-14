@@ -126,7 +126,7 @@ var tupleFnIRCases = []struct {
 	{"arrtuple-elem-inline-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 300) { var k = i % 6; var a = [((x: i32): i32 => { return x + k; }, k), ((x: i32): i32 => { return x * 2 + k; }, k + 1)]; var j = 0; while (j < a.len()) { acc = (acc + a[j].0(2) + a[j].1) % 1000; j = j + 1; } i = i + 1; } return acc % 256; }", 100},
 	// A STRING-capturing lambda in a tuple (`var s = "ab" + "c"` captured for
 	// `s.len()`): cap_type_expr now infers string for string+string concat, so
-	// the lift wraps it (a string capture rides the env box's pointer slot).
+	// the lift wraps it (a string capture occupies the env box's pointer slot).
 	// Before, the lift declined, the module bailed, and the legacy fallback
 	// MISCOMPILED the shape (exit 100; native reference 44).
 	{"string-capture-tuple-churn", "function main(): i32 { var acc = 0; var i = 0; while (i < 200) { var s = \"ab\" + \"c\"; var t = ((x: i32): i32 => { return x + s.len(); }, i % 4); acc = (acc + t.0(2) + t.1) % 1000; i = i + 1; } return acc % 256; }", 44},

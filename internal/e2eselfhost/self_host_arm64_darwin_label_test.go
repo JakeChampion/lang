@@ -13,7 +13,7 @@ import (
 // distance across a label as a compile-time constant, and CFI's epilogue
 // rule stops assembling. The native emitter got the same fix in its printer;
 // this is the self-host's, applied in `darwinize`, which is the pass that
-// already reskins the listing for Mach-O and already walks it line by line.
+// already rewrites the listing for Mach-O and already walks it line by line.
 //
 // Both directions matter here. The Darwin listing must carry no `.L` outside
 // string data, and the Linux listing must still carry them — otherwise this

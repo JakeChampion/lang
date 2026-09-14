@@ -558,7 +558,7 @@ function x86enc_selftest_11(): i32 {
     if (vo.len() != 3 || vo[0] != 15 || vo[1] != 188 || vo[2] != 200) { return 125; }
     var vp: i32[] = x86_bsf_r32([], 9, 9);
     if (vp.len() != 4 || vp[0] != 69 || vp[1] != 15 || vp[2] != 188 || vp[3] != 201) { return 126; }
-    // xorpd rides the same 66 0F shape: %xmm1,%xmm0 -> 66 0F 57 C1.
+    // xorpd uses the same 66 0F shape: %xmm1,%xmm0 -> 66 0F 57 C1.
     var vq: i32[] = x86_sse_any_rr([], 102, 87, 0, 1);
     if (vq.len() != 4 || vq[0] != 102 || vq[1] != 15 || vq[2] != 87 || vq[3] != 193) { return 127; }
     // bsr, the one instruction separating __rmemchr's vector body from

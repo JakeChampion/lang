@@ -449,7 +449,7 @@ function main(): i32 {
     return acc + __rc_underflow_count();
 }`
 
-// pushLoopFreeSrc is the headline push-loop case: 200 grows of a
+// pushLoopFreeSrc is the main push-loop case: 200 grows of a
 // plain i32[]. Flag-on, each copy-grow frees the OLD buffer
 // (dec-on-overwrite → __fern_arr_dec → __free), which the next grow
 // reuses from the freelist — the O(N²)→O(N) reclamation. If a freed
@@ -476,7 +476,7 @@ function main(): i32 {
 }`
 
 // stringReassignFreeSrc is the string analogue of pushLoopFreeSrc and
-// the headline case for the Phase 1e-strings dec-on-overwrite: a string
+// the main case for the Phase 1e-strings dec-on-overwrite: a string
 // local reassigned in a loop frees its OLD heap buffer before taking the
 // new one, so 300 concat-growth iterations reclaim+reuse instead of
 // orphaning every intermediate. The concat RHS is a fresh rc=1 buffer
@@ -513,7 +513,7 @@ function main(): i32 {
 // Phase 3 step-4: arrays free their buffer when rc hits 0 (flag-on).
 // This exercises __fern_drop_arr_ptr's tail-free + freelist reuse
 // across 50 build/drop cycles, and re-runs the whole rc-correctness
-// corpus with free actually happening — the use-after-free net for
+// corpus with free actually happening — the use-after-free guard for
 // the eventual flag flip.
 func TestX86_64ArrayDropFree(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, arrayDropFreeReuseSrc); code != 0 {
@@ -599,7 +599,7 @@ func TestWASMStringReassignFree(t *testing.T) {
 // Wasm mirror of TestX86_64FreelistReuse. Sets ast.RcFreeEnabled
 // around runWasm (buildComponent reads it at emit time; wasm
 // codegen doesn't take CodegenMu, and this test isn't parallel).
-// SKIPs without wasmtime (rides CI). The fixtures use only the
+// SKIPs without wasmtime (runs in CI). The fixtures use only the
 // `__alloc` / `__free` builtins, so they need no imports.
 func TestWASMFreelistReuse(t *testing.T) {
 	prev := ast.RcFreeEnabled
@@ -647,7 +647,7 @@ func TestWASMFreelistReuse(t *testing.T) {
 }
 
 // Arm64 mirror of TestX86_64FreelistReuse. SKIPs without an
-// aarch64 toolchain (rides CI).
+// aarch64 toolchain (runs in CI).
 func TestArm64FreelistReuse(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, freelistReuseSrc.reuse); code != 0 {
 		t.Errorf("same-size reuse: got %d, want 0 (freed block should be reused)", code)
@@ -730,7 +730,7 @@ func TestArm64AllocReuse(t *testing.T) {
 	}
 }
 
-// Wasm mirror. SKIPs without wasmtime (rides CI). Sets RcFreeEnabled
+// Wasm mirror. SKIPs without wasmtime (runs in CI). Sets RcFreeEnabled
 // around runWasm like TestWASMFreelistReuse.
 func TestWASMAllocReuse(t *testing.T) {
 	prev := ast.RcFreeEnabled

@@ -26,7 +26,7 @@ import (
 // path, so an IR-routed reclaim test can't use them. Reclaim is proven by a
 // memory-pressure differential: a single call whose snapshot param is loop-rebound
 // 2M times reclaims every intermediate (memory stays ~bounded under a tight cap)
-// with the real bodies, and leaks one box+buffer per rebind — blowing any
+// with the real bodies, and leaks one box+buffer per rebind — exceeding any
 // reasonable cap — with the pass-through. The WAT-shape assertion pins the emitted
 // real body so a silent reroute to the AST path can't make the gate pass vacuously.
 func TestSelfHostFieldReclaimWasm(t *testing.T) {

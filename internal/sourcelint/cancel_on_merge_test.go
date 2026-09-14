@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// The reaper in cancel-on-merge.yml decides what to kill by diffing two
+// The reaper in cancel-on-merge.yml decides what to cancel by diffing two
 // snapshots: the runs in flight on the closed PR's branch, and the head SHAs of
 // the PRs still open on that same branch. Both invariants below are orderings
 // or spellings inside an inline `github-script` body, so nothing type-checks
 // them and a plausible-looking edit can undo either in silence — the failure
 // mode is a cancelled run on someone else's live PR, visible only as CI that
-// mysteriously never finished.
+// never finished.
 func TestCancelOnMergeReapsSafely(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cancel-on-merge.yml"))
 	if err != nil {
@@ -38,7 +38,7 @@ func TestCancelOnMergeReapsSafely(t *testing.T) {
 	}
 
 	// Every status a run can sit in without having reached a terminal state. A
-	// run in a status missing here survives the reap and burns a runner slot
+	// run in a status missing here survives the reap and wastes a runner slot
 	// testing a branch nobody cares about — the whole point of the workflow.
 	for _, status := range []string{"requested", "waiting", "pending", "queued", "in_progress"} {
 		if !strings.Contains(src, `"`+status+`"`) {

@@ -937,7 +937,7 @@ import "std/time";
 function main(): i32 {
     var ts: Instant = time.instant_now();
     // 1700000000 = 2023-11-14T22:13:20Z. Anything before is
-    // either a clock catastrophe or a sign-handling bug.
+    // either a badly wrong clock or a sign-handling bug.
     if (ts.sec < (1700000000 as i64)) { return 1; }
     // Year 9999-ish upper bound; if we somehow returned
     // micro/nanos instead of milliseconds-converted-to-

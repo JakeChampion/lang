@@ -14,7 +14,7 @@ import (
 //
 // — and every generation of that block leaked under the self-host, 64 KiB per
 // term, until the OOM killer took the process. Each shape below pins one of
-// the things that refused or defeated the local's rebind release:
+// the things that refused or prevented the local's rebind release:
 //
 //   - `return (w, out)` read as a container-literal escape of `out`, where
 //     `return T { f: out }` and `return g(out)` were already admitted as the

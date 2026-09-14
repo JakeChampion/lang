@@ -300,7 +300,7 @@ func TestAssembleMrsSysreg(t *testing.T) {
 	}
 }
 
-// TestAssembleMrsReject keeps an unlisted system register loud. Encoding a
+// TestAssembleMrsReject keeps an unlisted system register an error. Encoding a
 // guessed op0:op1:CRn:CRm:op2 would read some other register at runtime
 // instead of failing the build.
 func TestAssembleMrsReject(t *testing.T) {
@@ -688,7 +688,7 @@ func TestBitCountInsns(t *testing.T) {
 	}
 }
 
-// TestBitCountInsnsReject keeps the vector-operand parser loud rather
+// TestBitCountInsnsReject keeps the vector-operand parser strict rather
 // than silently assembling a different instruction: cnt exists only for
 // byte lanes, an addv destination must match the element size, and a
 // mismatched arrangement pair is refused.
@@ -766,7 +766,7 @@ func TestNeonByteKernelInsns(t *testing.T) {
 	}
 }
 
-// TestNeonByteKernelReject keeps the new operand parsers loud. Each of these
+// TestNeonByteKernelReject keeps the new operand parsers strict. Each of these
 // is a plausible typo that must NOT assemble as something else — the failure
 // mode this whole family is prone to, since a wrong arrangement or addressing
 // form is usually a valid encoding of a different instruction.

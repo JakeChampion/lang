@@ -263,8 +263,8 @@ const freelistHeadsAddr = (scratchEnd + 7) &^ 7
 //	           2^25 B (32 MiB). Blocks above that are not recycled.
 //
 // The large tier is the wasm mirror of the native two-tier freelist
-// (#3425). Without it every buffer over 2048 B was dropped on the
-// floor: a `string[]` self-append loop's largest grow buffer is
+// (#3425). Without it every buffer over 2048 B was never given
+// back: a `string[]` self-append loop's largest grow buffer is
 // 16 + 8*cap bytes, which crosses 2048 at cap 254 — so
 // `a = a.append(s)` past ~254 elements leaked one buffer per call,
 // while the single-word `struct[]` sibling (16 + 4*cap) stayed under

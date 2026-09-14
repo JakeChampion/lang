@@ -80,7 +80,7 @@ func TestSegmentMapMatchesAssembler(t *testing.T) {
 	}
 }
 
-// TestSegmentMapGateSeesCalls keeps the scan honest: if the call shape or the
+// TestSegmentMapGateSeesCalls checks the scan matches: if the call shape or the
 // naming changes and the regex stops matching, every check above passes
 // vacuously.
 func TestSegmentMapGateSeesCalls(t *testing.T) {

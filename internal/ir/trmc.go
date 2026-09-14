@@ -208,7 +208,7 @@ func (b *builder) trmcNeutralStmt(s ast.Stmt) bool {
 		if !isIdent {
 			return false
 		}
-		// Rebinding a parameter would fight the loop's own advance.
+		// Rebinding a parameter would conflict with the loop's own advance.
 		for _, p := range b.fn.Params {
 			if p.Name == id.Name {
 				return false
@@ -700,7 +700,7 @@ func (b *builder) emitTrmcSteps(steps []trmcStep, holeSlot, resultSlot, loopD, e
 				return err
 			}
 			// The neutrality gate keeps rc-tracked locals out, so these tables
-			// are empty here; splicing them anyway keeps the TRMC path honest
+			// are empty here; splicing them anyway keeps the TRMC path correct
 			// if the gate ever widens.
 			for _, name := range b.rc.nestedDrops[s.stmt] {
 				b.emitPreciseDrop(name)

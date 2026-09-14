@@ -49,7 +49,7 @@ type strArrFwdCase struct {
 func strArrFwdCases() []strArrFwdCase {
 	return []strArrFwdCase{
 		{
-			// The headline shape. `keep.get().len()` is a whole-array borrow
+			// The main shape. `keep.get().len()` is a whole-array borrow
 			// one step further out than `keep.xs.len()`, and it now reads as
 			// one. Base: 800/100, 288 B/round unbounded.
 			name: "forwarder_called_len",
@@ -182,7 +182,7 @@ function main(): i32 {
 		},
 		{
 			// NEGATIVE CONTROL. `keep.get()[0]` binds an ELEMENT — the exact
-			// alias the scan exists to refuse, laundered through a call.
+			// alias the scan exists to refuse, reached through a call.
 			// A direct `keep.xs[0]` was already caught; this is the route that
 			// was not.
 			name: "forwarder_element_read",

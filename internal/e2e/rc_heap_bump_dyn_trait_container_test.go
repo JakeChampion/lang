@@ -1,6 +1,6 @@
 // RC of `dyn Trait` values NESTED INSIDE A CONTAINER (docs/DYN-TRAITS.md
 // §7.8 — the follow-up after standalone trait-object RC shipped, slices
-// 4a/4b/4c). The headline container is `dyn Shape[]` — a heterogeneous
+// 4a/4b/4c). The main container is `dyn Shape[]` — a heterogeneous
 // array of trait objects (the §2 motivating example). Before this slice a
 // `dyn` value held inside a container LEAKED on the natives: the
 // container's recursive-drop path declined a `DynTraitType` element, so
@@ -85,7 +85,7 @@ function main(): i32 {
 
 // --- x86-64 ---------------------------------------------------------------
 
-// TestX86_64DynShapeArrayHeapBumpBounded: the headline container proof on
+// TestX86_64DynShapeArrayHeapBumpBounded: the main container proof on
 // x86-64. A loop creating + dropping a `dyn Shape[]` of String-owning
 // concretes must report the SAME bump growth at N=50 and N=5000 — a leak
 // (every element cell + concrete + String per iteration) would grow with N.

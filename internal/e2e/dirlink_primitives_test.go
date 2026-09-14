@@ -173,7 +173,7 @@ func TestInterpDirLinkPrimitives(t *testing.T) {
 
 // The wasm leg runs under the component's preopen, so its paths are relative
 // and `umask` is absent: WASI has no file-mode creation mask and E066 refuses
-// the builtin on that target, which is the honest answer rather than a mask
+// the builtin on that target, which is the correct answer rather than a mask
 // that describes nothing.
 //
 // main's return reaches us on STDOUT, not as the exit status: the harness

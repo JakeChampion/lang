@@ -21,7 +21,7 @@ import (
 // teaches exprNoParamEscape the three provenance-free-fresh string shapes
 // (literal = static sentinel; concat = byte-copy into a fresh buffer; string
 // slice = fresh copy, not a view) — the same rule rhsTainted's IsStringConcat
-// case already encodes. The reclaim itself rides the existing, proven route:
+// case already encodes. The reclaim itself takes the existing, proven route:
 // freeEligible → emitVarReinitDropOld → __drop_enum_<E> → __drop_struct_<S>
 // (string fields dec'd inline) — the machinery the scalar-payload sibling has
 // exercised all along.

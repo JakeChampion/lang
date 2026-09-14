@@ -1196,7 +1196,7 @@ function is_char(t: Tok, c: i32): boolean {
 // Every item answers the state with `ok` and `next` set: the index
 // past the item, or on failure the index of the token the grammar had
 // no move for. A struct comes back in registers where a tuple holding
-// one would be boxed, which is why the two ride inside `Pc`.
+// one would be boxed, which is why the two are stored inside `Pc`.
 function done(pc: Pc, i: i32, la: boolean): Pc {
   return Pc { ...pc, ok: true, next: i, la: la };
 }

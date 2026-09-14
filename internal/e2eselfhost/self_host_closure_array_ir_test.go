@@ -211,7 +211,7 @@ function main(): i32 { return apply_all([((x: i32) => 1i32), ((y: i32) => apply_
 	// boxing own the returns only when the arms yield fn values, and an arm
 	// yielding an ordinary call is owned by nobody. The lambda stayed raw while
 	// the callee's fn parameter dispatches env-first, so it read slot 0 of a bare
-	// code address. gen_f0's other parameters are load-bearing: the reduction
+	// code address. gen_f0's other parameters are required: the reduction
 	// keeps them because a shorter signature does not reach the same path.
 	{"iife-arm-call-fn-argument", `enum Color { Red, Green, Blue }
 enum Status { Active, Inactive, Pending }

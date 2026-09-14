@@ -497,7 +497,7 @@ func TestExclusivesAndBarriersReject(t *testing.T) {
 
 // TestFPScalarInsns pins the fused multiply-adds, fnmul, min/max,
 // fcsel, fccmp, fcmpe, and the single-precision forms of the unary ops
-// (previously a loud D-only gap). Expectations from
+// (previously a reported D-only gap). Expectations from
 // aarch64-linux-gnu-as.
 func TestFPScalarInsns(t *testing.T) {
 	assemblePinned(t, []struct {
@@ -576,7 +576,7 @@ func TestFpAliasAndSysregs(t *testing.T) {
 	})
 }
 
-// TestMsrReject keeps the write direction honest: dczid_el0 and the
+// TestMsrReject keeps the write direction correct: dczid_el0 and the
 // counter-timer registers are read-only from EL0, so an msr to them is
 // refused rather than encoded (the encoding would exist and trap at
 // runtime).

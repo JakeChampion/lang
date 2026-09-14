@@ -143,7 +143,7 @@ function __fuzz_bytes_insert(xs: u8[], at: i32, b: u8): u8[] {
 //   7 leave unchanged (run the seed verbatim)
 //
 // The bit-flip / byte-zero / byte-max strategies are
-// borrowed from AFL — they're useful for fishing for
+// borrowed from AFL — they're useful for finding
 // boundary-conditions bugs that random-byte flips would
 // miss (e.g. parsers that special-case 0x00 or 0xFF).
 //
@@ -210,7 +210,7 @@ function __fuzz_mutator_count(): i32 { return 8; }
 // failure diagnostic. Non-printable bytes go to "\xNN", quote
 // + backslash get escaped, everything else passes through.
 // Caps output at 200 bytes with a trailing " ..." so a
-// pathological input doesn't blow up the log.
+// pathological input doesn't bloat the log.
 function __fuzz_escape(bs: u8[]): string {
     var n: i32 = bs.len();
     var cap: i32 = 200;
@@ -330,7 +330,7 @@ pub function (r: test.TestRunner) fuzz(name: string, seeds: u8[][], iterations: 
 // Shrinking (a.k.a. delta debugging / minimisation) walks
 // the input looking for a smaller variant that still trips
 // the same property, so the failure log is a *minimal*
-// reproducer rather than the wild mutated buffer that
+// reproducer rather than the large mutated buffer that
 // happened to fire first.
 //
 // We implement the two cheapest strategies that cover most

@@ -14,7 +14,7 @@ import (
 // #5992 fixed the wasm half of this and recorded that the register backends
 // "can ignore" the op's width + signedness, one 64-bit cvtsi2sd / scvtf
 // covering all four conversions. That is true of three of the four — i32, u32
-// (which rides its slot zero-extended) and i64 — and false of the fourth: x86
+// (which is held in its slot zero-extended) and i64 — and false of the fourth: x86
 // has only a SIGNED int->double, so a u64 >= 2^63 converts to a NEGATIVE
 // double. u64::MAX came out as -1.0, and the fixture asserting it exceeds 1e19
 // returned 1 instead of 0. No fixture leg ran the self-host x86-64 path when

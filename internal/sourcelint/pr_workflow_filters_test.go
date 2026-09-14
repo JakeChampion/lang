@@ -25,7 +25,7 @@ const alwaysRunOnPR = "lint"
 // lane in alwaysRunOnPR is the single deliberate exception, and it is kept out
 // of the table altogether (TestCILaneFiltersMatchTheirJobs).
 //
-// This is a drift guard, and the drift it guards against has bitten here
+// This is a drift guard, and the drift it guards against has happened here
 // before in the same shape: a list maintained by hand in one place while the
 // thing it describes grows somewhere else (see scripts/unit-test-packages for
 // the version of this that cost four rounds of silently-unrun tests). A lane

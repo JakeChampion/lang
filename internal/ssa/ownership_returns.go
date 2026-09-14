@@ -320,7 +320,7 @@ func classifyValue(f *Func, defs map[int32]*Op, escaped map[int32]bool, sigs map
 // The answer is UNKNOWN rather than borrow. The value really is a
 // borrow, but of the container it was stored into — reachable from a
 // parameter, not identical to one — and `ReturnBorrowedFrom` can only
-// name a parameter position. Refusing both conclusions is the honest
+// name a parameter position. Refusing both conclusions is the correct
 // answer and the fail-soft one.
 func freshUnlessEscaped(escaped map[int32]bool, v Value) (classification, []int) {
 	if escaped[v.ID] {

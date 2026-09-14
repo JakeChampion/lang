@@ -23,7 +23,7 @@ import (
 // runner. Neither shows up as a failure, so the lane goes on reporting on a
 // corpus smaller than the one it names.
 //
-// This repository has been bitten by that exact shape twice: `go test -run`
+// This repository has already had that exact shape twice: `go test -run`
 // exits 0 for a name matching nothing, so the arm64 lane silently ran 15 of
 // the 17 tests it listed (#6310), and four driver-size reports sharing a
 // filename merged down to one (#7519). Both were a hand-maintained count

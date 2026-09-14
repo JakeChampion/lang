@@ -54,8 +54,8 @@ var bindStmtParityCases = []bindStmtParityCase{
 		// Every shape of `var` the annotated path can take, including the two
 		// check_stmt reports a type error for and still binds the ANNOTATION
 		// under (unknown annotation, init/annotation mismatch): the error goes
-		// in the `ty` all twelve callers discard, so bind_stmt must not be
-		// tempted to disagree about the scope there.
+		// in the `ty` all twelve callers discard, so bind_stmt must not
+		// disagree about the scope there.
 		name: "var forms",
 		src: `struct P { x: i32, y: string }
 struct G { v: i32 }

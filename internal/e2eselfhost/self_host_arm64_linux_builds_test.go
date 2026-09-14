@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64LinuxBuilds is the arm64-Linux flagship: the self-host CLI
+// TestSelfHostArm64LinuxBuilds is the main arm64-Linux test: the self-host CLI
 // (examples/self_host/fern.fern, `-target arm64-linux`) now emits a runnable static
 // ELF **in-process** — asm_arm64 / ssa_arm64 produce the GAS text and
 // arm64_native + elf.fern assemble + link it, with no `.s` + gcc/ld step (the
@@ -160,7 +160,7 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 			// command exited 1 with no output — indistinguishable from a
 			// program that ran and returned 1, and it cost one investigation
 			// a fabricated reproduction before anyone checked the mode
-			// (#6133). Asserting it here is what keeps the fix honest.
+			// (#6133). Asserting it here is what checks the fix.
 			fi, err := os.Stat(binPath)
 			if err != nil {
 				t.Fatalf("stat output: %v", err)

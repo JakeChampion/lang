@@ -83,7 +83,7 @@ function main(): i32 {
 // `access` has to ask about the EFFECTIVE ids — GNU's `test -r` / `-w` / `-x`
 // is specified against `euidaccess`, not `access(2)`, which asks about the
 // REAL ones and answers a different question for a set-uid process. Every
-// native backend therefore reaches for the flag-taking call (faccessat2 on
+// native backend therefore uses the flag-taking call (faccessat2 on
 // Linux, faccessat on Darwin) with AT_EACCESS set, and the flag's VALUE
 // differs between the two (0x200 vs 0x10).
 //

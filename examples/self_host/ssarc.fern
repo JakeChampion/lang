@@ -21,7 +21,7 @@ function empty(why: string): irlower.LowerResult {
 // This physical boundary refuses types whose stack representation is not
 // implemented here, even when the unit planner knows their abstract
 // ownership: the 32-bit float, and a record with no schema or with type
-// arguments (its box is named by the bare declaration). The byte rides the
+// arguments (its box is named by the bare declaration). The byte occupies the
 // same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
 // integer and the f64 each get a slot of their own, which is a VALUE here, a
 // declared field and an array element, but never a tuple element
@@ -56,7 +56,7 @@ function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 // slot; the register backends give every element eight bytes and ignore the
 // width. The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take
 // the same ones; a float shares the width and differs in the load and store
-// wasm selects, the f32 riding the f64's slot.
+// wasm selects, the f32 occupying the f64's slot.
 function elem_width(t: typeinfo.Type): i32 {
     if (ssasem.is_wide(t) || ssasem.is_float(t)) { return 64; }
     return 32;
@@ -89,8 +89,8 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
     return ir.op_arr_push_owned();
 }
 // The types whose stack representation needs no declaration looked up: a
-// boolean and a void ride one word, a string is its own box, and a function
-// value is the env box its captures ride in.
+// boolean and a void occupy one word, a string is its own box, and a function
+// value is the env box its captures are stored in.
 function supported_leaf(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
@@ -612,7 +612,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
 }
 
 // The operations that write a value into a container's slot. A closure box is
-// one: its captures ride the same i32-shaped words an array element does.
+// one: its captures occupy the same i32-shaped words an array element does.
 function builds(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(),
         ssasem.append(), ssasem.with(), ssasem.closure_new(), ssasem.cell_new(), ssasem.cell_set()], k);
@@ -739,7 +739,7 @@ function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerRes
 
 // The float operators are the stack IR's own f64 opcodes: arithmetic hands
 // back an f64, rounded to single precision where the result is an f32, a
-// comparison the i32 the boolean rides, and negation flips the sign bit.
+// comparison the i32 the boolean occupies, and negation flips the sign bit.
 // Nothing wraps.
 function float_scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == 10) { return emit(r, ir.op_funary("fneg")); }
@@ -946,7 +946,7 @@ function zero(t: typeinfo.Type): ir.Op {
 
 // A constant the verifier gave literal text to reaches the backends as that
 // text, spliced into an immediate of its own width (ssasem.text_constant);
-// every other integer constant rides the instruction's i32 immediate.
+// every other integer constant is carried in the instruction's i32 immediate.
 function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) { return emit(r, ir.op_const_i64_text(ins.str)); }
     if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) { return emit(r, ir.op_const_i32_text(ins.str)); }
@@ -1210,7 +1210,7 @@ function intrinsic_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     return byte_scan_site(r, ins);
 }
 
-// One op per operand width, the width riding the op rather than the name.
+// One op per operand width, the width carried by the op rather than the name.
 function bit_count_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__clz32") { return Lowered { found: true, r: emit(r, ir.op_clz(32)) }; }
     if (ins.str == "__ctz32") { return Lowered { found: true, r: emit(r, ir.op_ctz(32)) }; }

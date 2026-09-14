@@ -381,7 +381,7 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // so a fold site nobody added cannot quietly go back to matching every value.
 // tup_kinds / tup_binds / tup_lits / tup_pats carry a TUPLE sub-pattern sitting
 // in payload slot 0 (`Pr((a, b))`), in parse_tuple_arm_pattern's encoding.
-// Pattern cannot express a tuple, so the data rides here and build_merged_arm
+// Pattern cannot express a tuple, so the data is stored here and build_merged_arm
 // turns it into a build_tuple_match inner match rather than the variant one.
 // Empty tup_kinds means no tuple sub-pattern.
 pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean, tup_kinds: i32[], tup_binds: string[], tup_lits: Expr[], tup_pats: Pattern[] }

@@ -17,7 +17,7 @@
 // The self-host emitters cannot import Go, so they keep their own literals and
 // selfhost_parity_test.go pins them to this table bit for bit.
 //
-// Three properties of the table are load-bearing rather than incidental:
+// Three properties of the table are essential rather than incidental:
 //
 //   - The reductions are Cody-Waite. A constant is split into a head with its
 //     low mantissa bits zeroed plus a tail, so `x - k*head` is EXACT and only

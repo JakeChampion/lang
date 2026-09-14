@@ -297,7 +297,7 @@ func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 //
 // The site COUNT is deliberately not asserted: the blocks here come from two
 // sites (the row literals and the outer buffer's growth inside
-// __fern_arr_push), and pinning a number would make this test a hostage to
+// __fern_arr_push), and pinning a number would tie this test to
 // allocation shape rather than to attribution working. That sites are
 // per-call-site at all is covered by TestSelfHostRcTracePairsX86_64.
 func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {

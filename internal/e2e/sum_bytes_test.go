@@ -189,12 +189,12 @@ func TestArm64SSASumBytes(t *testing.T) {
 
 // The wrap, which no case in the corpus above can reach: 2^32 needs more than
 // 16 MiB of 0xff, so the input is built at run time rather than written as a
-// literal. 255 * 16843010 is 2^32 + 254, so the kernel owes 254 and a backend
-// that accumulates in 64 bits without truncating owes 4294967550.
+// literal. 255 * 16843010 is 2^32 + 254, so the kernel must return 254 and a backend
+// that accumulates in 64 bits without truncating returns 4294967550.
 //
 // It allocates the string, so it is not folded into the corpus runner: the
 // heap assertion below is about the KERNEL allocating nothing, and a 16 MiB
-// haystack in the same program would drown it.
+// haystack in the same program would hide it.
 const sumBytesWrapSrc = `import "std/i32";
 
 function main(): i32 {

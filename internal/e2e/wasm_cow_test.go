@@ -30,7 +30,7 @@ import (
 // produces a component wasmtime refuses to instantiate ("missing module
 // instantiation argument named `wasi:random/random@0.2.0`"). That reads
 // as the program returning 1, i.e. as a CoW failure, which is not what
-// it is. Classifying keeps the harness honest about whatever the core
+// it is. Classifying keeps the harness correct about whatever the core
 // module actually imports.
 //
 // This exercises the real native memory layout (heap at ~1024), where

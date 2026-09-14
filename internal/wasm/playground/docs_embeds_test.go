@@ -26,7 +26,7 @@ var embedCodeRe = regexp.MustCompile("(?s)code=\\{`(.*?)`\\}")
 //
 // This is the docs-side sibling of TestPlaygroundExamplesCompile (which
 // guards web/index.html's built-in examples): the same flip-class
-// regression bit the docs embeds, and only a human loading the page
+// regression broke the docs embeds, and only a human loading the page
 // would have noticed.
 func TestDocsPlaygroundEmbedsCompile(t *testing.T) {
 	// internal/wasm/playground -> repo root is three levels up.

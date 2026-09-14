@@ -45,7 +45,7 @@ func TestShadowedNameIsNotSubstituted(t *testing.T) {
 		},
 		{
 			name: "tuple-match-binding",
-			// A tuple pattern's binders ride TupleElems, which the scope
+			// A tuple pattern's binders are stored in TupleElems, which the scope
 			// walk did not read at all — so `(N, b)` bound nothing as far as
 			// it was concerned and the arm body's N became the const's value
 			// (#8607).
@@ -59,7 +59,7 @@ func TestShadowedNameIsNotSubstituted(t *testing.T) {
 		},
 		{
 			name: "payload-sub-pattern-binding",
-			// A payload SUB-PATTERN's binders ride Payloads, the same node a
+			// A payload SUB-PATTERN's binders are stored in Payloads, the same node a
 			// tuple element is, and were missed with them.
 			src: "enum I { S(i32), Z }\nenum O { H(I), E }\n" +
 				"function main(): i32 {\n    var o: O = H(S(7));\n" +

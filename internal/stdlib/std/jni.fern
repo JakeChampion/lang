@@ -276,7 +276,7 @@ pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
 // Integer-shaped getters/setters (object / boolean / byte / char / short /
 // int / long) pass and return their value in the integer-arg registers.
 // Float and DOUBLE *getters* are also provided (get_float_field /
-// get_double_field below) — their result rides in an FP register, handled
+// get_double_field below) — their result is returned in an FP register, handled
 // by the call*_f32 / call*_f64 dispatch. The float/double *setters* are
 // still omitted: passing an FP argument needs the value in an FP register,
 // which the integer-only __c_call shim doesn't set up. Bit-cast through a

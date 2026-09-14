@@ -206,7 +206,7 @@ func TestWalk_MatchArmGuardIsVisitedBeforeBody(t *testing.T) {
 
 func TestWalk_ForOptionalSlots(t *testing.T) {
 	// Cover the nil-init / nil-step paths so the walker doesn't
-	// blow up on while-style for loops.
+	// panic on while-style for loops.
 	root := &For{
 		P:    Position{1, 1},
 		Cond: &BoolLit{P: Position{1, 8}, Value: true},

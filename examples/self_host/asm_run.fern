@@ -19,7 +19,7 @@
 // that proves the per-function IR subset covers the corpus rather than the
 // curated part of it. A decline names its bail site under FERN_STRICT_IR=1.
 //
-// Despite the "demo" framing above this is a WORKHORSE: the *_ir_test.go
+// Despite the "demo" framing above this is HEAVILY USED: the *_ir_test.go
 // suites build it to exercise the IR path end-to-end. It is not deletable.
 
 import "./lexer";

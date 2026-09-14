@@ -211,7 +211,7 @@ func TestFuseRotatesRejectsImpureOperand(t *testing.T) {
 	}
 }
 
-// A string local rides two stack slots, so a backward walk that counted
+// A string local occupies two stack slots, so a backward walk that counted
 // it as one would mis-locate the operand boundary. It is refused.
 func TestFuseRotatesRejectsTwoWordLocal(t *testing.T) {
 	fn := &Func{

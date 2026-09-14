@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostStage2Bootstrap is the capstone of the self-host effort:
+// TestSelfHostStage2Bootstrap is the strongest gate of the self-host effort:
 // a genuine TWO-STAGE bootstrap.
 //
 //	stage 0: the Go compiler builds the file-based asm driver

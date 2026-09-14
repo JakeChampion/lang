@@ -21,7 +21,7 @@ import "std/i32";
 enum Sh { A(i32), B, C(i32, i32) }
 enum Wrap { P((i32, (i32, i32))), Q }
 
-// The headline: binders at depth 2, mixed with a binder at depth 1.
+// The main case: binders at depth 2, mixed with a binder at depth 1.
 function add3(t: (i32, (i32, i32))): i32 {
     match (t) {
         (a, (b, c)) => { return a + b + c; },

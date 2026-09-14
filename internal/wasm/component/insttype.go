@@ -106,7 +106,7 @@ func (b *instTypeBuilder) body() []byte {
 // ---- wasi:filesystem/types@0.2.0 -------------------------------------
 //
 // The shared vocabulary every filesystem instance type declares, in the
-// order the hand-written bodies declared it. Order is load-bearing: the
+// order the hand-written bodies declared it. Order is essential: the
 // emitted bytes are pinned byte-for-byte by
 // TestWasiFilesystemTypesInstanceTypeBodies_Golden, because these types
 // are what a composed component's imports are matched against.

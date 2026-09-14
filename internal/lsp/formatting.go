@@ -53,7 +53,7 @@ func runFormatting(state *docState) []textEdit {
 
 // isParseDiagnostic distinguishes parser errors (where the AST is
 // truncated or missing) from checker errors (where the AST is
-// complete but type-incorrect). The format-on-error guard kicks in
+// complete but type-incorrect). The format-on-error guard applies
 // only for the former. We can't read diag.Filed off a Diagnostic
 // (it's a wire struct, not an error), so this is a heuristic:
 // diagnostic messages starting with "parse" are parser-emitted;

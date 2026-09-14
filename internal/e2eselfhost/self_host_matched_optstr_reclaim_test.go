@@ -40,7 +40,7 @@ import (
 // proof, which is what `refuses_rebind_aliasing_param` (an aliased rebind) and
 // `refuses_reassigned_escaping` (the escape gate) pin.
 //
-// THE REFUSALS ARE THE LOAD-BEARING HALF. A string payload is stored UNCOUNTED
+// THE REFUSALS ARE THE ESSENTIAL HALF. A string payload is stored UNCOUNTED
 // (`op_opt_make`) and a string assignment BORROWS, so the arm binding takes no
 // retain — which is why the credit is safe when the arm only reads, and why
 // freeing a payload the arm hands out would be a use-after-free rather than a

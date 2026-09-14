@@ -17,7 +17,7 @@ import (
 // APPEARS on stderr. A change that reorders diagnostics, or reports one twice,
 // is green in all three and plainly visible to a user.
 //
-// The gap is load-bearing for the SH-022 walker migration (docs/SELF-HOST-AUDIT.md).
+// The gap matters for the SH-022 walker migration (docs/SELF-HOST-AUDIT.md).
 // Folding a diagnostic collector onto astwalk swaps its traversal for the shared
 // one, and the two need not visit siblings in the same order. Worse, getting the
 // DESCENT wrong duplicates a report rather than dropping one:

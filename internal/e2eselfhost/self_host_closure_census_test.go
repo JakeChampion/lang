@@ -63,7 +63,7 @@ func censusField(t *testing.T, line, key string) int {
 
 // TestSelfHostClosureCallCensusBuckets pins one program per provenance bucket.
 //
-// The load-bearing case is `called-only-lambda`, which counts ZERO: a lambda
+// The essential case is `called-only-lambda`, which counts ZERO: a lambda
 // that is only ever called never reaches an indirect dispatch at all, because
 // try_lift_binding direct-calls it. That is why env_local is ~0 across the whole
 // measurement, and it is the single fact the "do not build defunctionalise"
@@ -156,7 +156,7 @@ function main(): i32 {
 		},
 		{
 			// A CAPTURING lambda in the same shape. The capture puts the box
-			// behind a provenance the census does not name, which is the honest
+			// behind a provenance the census does not name, which is the correct
 			// answer: env_other is what no rewrite short of a points-to analysis
 			// can resolve, and the capturing spelling lands there while the
 			// non-capturing one above does not.

@@ -30,7 +30,7 @@ package e2e
 //
 // The bar is deliberately loose (each bucket within 25% of even for a 3-way
 // tie over 600 seeds). A tight bound on a fixed seed range would be a golden
-// value wearing a statistic's clothes, and would go red on any future
+// value disguised as a statistic, and would go red on any future
 // generator change for no good reason.
 
 import "testing"

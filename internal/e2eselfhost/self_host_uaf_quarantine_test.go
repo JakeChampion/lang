@@ -10,7 +10,7 @@ import (
 // Under FERN_RC_FREE_DEBUG — or FERN_SANITIZE, which implies it
 // (ast.ApplySanitize parity) — NOTHING is recycled: every free site writes
 // ast.RcPoison (0x7EEDFACE) over the block's rc word where it has one and
-// declines its freelist push, and the rc helpers die with the named report the
+// declines its freelist push, and the rc helpers abort with the named report the
 // moment a stale reference touches a poisoned block. The poison is a large
 // POSITIVE value precisely so the immortal (`js`) guard cannot swallow it.
 //

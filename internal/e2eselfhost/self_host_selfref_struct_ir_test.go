@@ -14,7 +14,7 @@ import (
 // like, the shape behind linked lists / trees / ASTs.
 //
 // The leak-safety gate (irlower.decl_is_leaksafe_d) walks a struct's field type
-// graph to decide whether it can ride the IR path in leak mode (no RC; the boxes
+// graph to decide whether it can take the IR path in leak mode (no RC; the boxes
 // leak with the struct, matching the AST path's exit codes). It used a depth cap
 // to avoid looping on cyclic type graphs, which also rejected legitimate
 // self-referential structs — a `next: Node[]` field recurses into Node forever

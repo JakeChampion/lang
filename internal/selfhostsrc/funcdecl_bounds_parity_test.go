@@ -41,7 +41,7 @@ import (
 // exist. A test that only looks at literals carrying `type_params` forward is
 // blind to it by construction.
 //
-// Matching the literal alone was not enough: `finalize_impl_method` laundered
+// Matching the literal alone was not enough: `finalize_impl_method` passed
 // `type_params` through a local and lost the impl block's bounds unseen (#7224).
 // So a `type_params: <local>` counts as carrying a declaration too, when that
 // local is declared from one in the same function. One level only — that is the

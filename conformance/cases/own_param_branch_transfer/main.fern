@@ -45,7 +45,7 @@ function main(): i32 {
     if (a.code.len() != 32) { return 91; }
     if (a.fixups.len() != 16) { return 92; }
     // Assert the written VALUES, not just the lengths — a recycled block keeps
-    // its shape while its contents rot.
+    // its shape while its contents go stale.
     if (a.code[0] != 7 || a.code[1] != 0 || a.code[30] != 7 || a.code[31] != 0) { return 93; }
     if (a.fixups[0] != 0 || a.fixups[15] != 30) { return 94; }
     return 0;

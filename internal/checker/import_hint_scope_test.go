@@ -51,7 +51,7 @@ function main(): i32 { return f("abcdef"); }`, "as_bytes"},
 }
 
 // The negative half, and the one that matters: a mis-keyed lookup collapses to
-// "never already imported", which is the OLD behaviour and would sail through a
+// "never already imported", which is the OLD behaviour and would pass a
 // positive-only test. The spellings the hint is written in (`std/string`) and
 // the keys DirectImports is built from (`stdlib://std/string.fern`) are
 // different vocabularies — stdlib.ModuleKey is what joins them.

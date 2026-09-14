@@ -43,7 +43,7 @@ import (
 // #6773's last item closed the `trait` block: the compile path keeps two
 // DERIVED views of one and neither can be printed from, so the written form is
 // retained beside the Module — the way the comment and blank-line maps already
-// ride beside it, rather than as a field on Module that 101 literals would have
+// sit beside it, rather than as a field on Module that 101 literals would have
 // to carry and none would read.
 //
 // #6783 did the same for `impl` blocks, which were desugared into free-standing
@@ -1080,7 +1080,7 @@ function main(): i32 {
 	// altogether (E040), and `empty[i32]()` formatted to `empty()` — the
 	// formatter deleting the syntax the diagnostic recommends. These were a
 	// native-only list until the self-host grew a written-form carrier for
-	// both (#6802): the type args ride on the literal's type name and on the
+	// both (#6802): the type args are stored on the literal's type name and on the
 	// callee's written name, which is where its printer already reads from.
 	{"struct-lit-type-args", `struct Box[T] {
   val: T
@@ -1295,7 +1295,7 @@ return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4))
 	// (#7089). #7065 fixed only the statement form.
 	//
 	// A TUPLE sub-pattern in an arm payload (`Pr((a, b))`) is the same leak one
-	// level down and in BOTH positions: it rides on the pattern's tup_* fields
+	// level down and in BOTH positions: it is stored on the pattern's tup_* fields
 	// rather than on `nested`, so neither the written-form snapshot nor the
 	// pattern printer knew about it and the arm came back as
 	// `Pr(__nest_5_9_0) => { match (__nest_5_9_0) { … } }`.
@@ -1433,7 +1433,7 @@ return a + b + c + y + s + g(0, 1) + constant(1, "x");
 	// there (#8706, #8717). Both printers must put the grouping parens back
 	// around a function-typed return, or `-fmt` writes a program that
 	// re-parses with the wrong split. A tuple return and a single-element
-	// grouping ride along, since those are the shapes the reservation exists
+	// grouping are included, since those are the shapes the reservation exists
 	// for.
 	{"lambda-return-annotation", `function main(): i32 {
 var tup = (): (string, i32) => { return ("ab", 7); };

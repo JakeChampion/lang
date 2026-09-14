@@ -90,7 +90,7 @@ function lit_string(s: string): ast.Expr {
 // Optional-Int sentinel: Fern-port has no Option in the stdlib
 // (no generics in our parser stub). Encode "absent" as the
 // boolean `ok` field; consumers check that first. The value is i64 and the
-// literal's suffix rides alongside, because folding has to know the declared
+// literal's suffix is kept alongside, because folding has to know the declared
 // width to decide whether its answer is representable — see fits.
 struct OptInt { ok: boolean, v: i64, suffix: string }
 
@@ -547,7 +547,7 @@ function main(): i32 {
 
     // Unsigned operands fold with UNSIGNED semantics, because the arithmetic
     // runs in i64 and a u32 literal keeps its value there. Read as signed i32
-    // this answered -677 (#6261's fixture value). The suffix rides onto the
+    // this answered -677 (#6261's fixture value). The suffix is copied onto the
     // folded literal, so the result is still a u32.
     var mod10: parser.Module = fold_source("var a = 2147484527u32 % 861u32; return 0;");
     match (mod10.top_stmts[0]) {

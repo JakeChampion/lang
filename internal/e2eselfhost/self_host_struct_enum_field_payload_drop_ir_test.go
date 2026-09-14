@@ -55,7 +55,7 @@ function drive(n: i32): i32 {
 
 	// churnEnumFieldAliasedPayload: the payload ARRAY aliases a live local. This
 	// one DOES release (the box is sole-owned), and stays balanced because a
-	// bare-ident array payload rides the variant-construction alias-inc — the
+	// bare-ident array payload gets the variant-construction alias-inc — the
 	// reason the admission needs no per-construction freshness proof for arrays.
 	churnEnumFieldAliasedPayload = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
@@ -145,7 +145,7 @@ func balancedMain(iters string) string {
 // reclaim), an aliased BOX and a base-copied field (the __fern_rc_is_unique gate
 // must decline — releasing there frees a payload another owner still reads), and
 // an aliased PAYLOAD (must reclaim AND stay balanced, since a bare-ident array
-// payload rides the variant-construction alias-inc). Growth proves the reclaim;
+// payload gets the variant-construction alias-inc). Growth proves the reclaim;
 // exit 99 would catch the over-release the aliased shapes risk.
 func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

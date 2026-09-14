@@ -23,7 +23,7 @@ import (
 //
 // That gap is not hypothetical. `sleep_ns` was classified in all six places
 // and never lowered, so `coreutils/sleep.fern` compiled on the native leg and
-// died on the self-host one with `error[E001]: undefined function "sleep_ns"`.
+// failed on the self-host one with `error[E001]: undefined function "sleep_ns"`.
 // #9060 merged with that suite red and main stayed broken until #9081. Five
 // more builtins were in the same state behind it (#9085).
 //

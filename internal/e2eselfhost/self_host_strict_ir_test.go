@@ -25,7 +25,7 @@ import (
 // either way; what the flag buys is the diagnostic pointing at the construct.
 //
 // These tests are the tripwire that would have caught it at the bail. Two
-// halves, and both are load-bearing:
+// halves, and both are essential:
 //
 //   - strictIRCorpus asserts NO refusal across constructs the IR path is
 //     supposed to cover. A newly-unlowerable construct fails here, naming the

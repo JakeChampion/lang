@@ -31,7 +31,7 @@ import (
 // result cannot alias anything, which makes the deep drop unconditionally safe.
 //
 // An rc-field read (`(A { … }).xs`) stays refused, and that refusal is
-// load-bearing. Dropping the scalar gate puts `rc_field_read_uaf` at
+// essential. Dropping the scalar gate puts `rc_field_read_uaf` at
 // **802 frees against 800 allocs** — more frees than allocations, a double free
 // — with the leakcheck summary itself corrupted. It also makes the plain
 // `rc_field_read` case read a clean 200/200 where the correct compiler reads
@@ -88,7 +88,7 @@ func structLitFieldReadCases() []arrenumShareCase {
 			want: 6,
 		},
 		{
-			// REFUSED, and the case that proves the scalar gate load-bearing:
+			// REFUSED, and the case that proves the scalar gate essential:
 			// hold the handed-out array across allocation churn and read it.
 			// Without the gate this reports 802 frees for 800 allocs.
 			name: "rc_field_read_uaf",

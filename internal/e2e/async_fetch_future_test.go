@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// The redesign's headline payoff (docs/ASYNC-REDESIGN.md): two parallel
+// The redesign's main benefit (docs/ASYNC-REDESIGN.md): two parallel
 // outbound fetches that return their response BODIES, expressed purely
-// through the blessed combinator surface — `fetch.fetch_future` (the
+// through the supported combinator surface — `fetch.fetch_future` (the
 // awaitable fetch) fanned out through `async.gather`. Both connections'
 // reads overlap on one thread; each future's continuation recvs and
 // returns the body. This is the edge-handler fan-out (fetch a cache + a

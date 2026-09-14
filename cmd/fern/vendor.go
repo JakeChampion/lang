@@ -145,7 +145,7 @@ func depSourceDir(m *manifest.Manifest, name string, d manifest.Dep) (string, er
 // copyPackage copies a package's Fern sources into dst: fern.toml plus
 // every .fern / .fern.md file, preserving subdirectory layout. A nested
 // `vendor/` directory is skipped (the flat top-level vendor is the only
-// one that matters) as are dot-directories (.git and friends). Anything
+// one that matters) as are dot-directories (.git and the like). Anything
 // that isn't a source file is left behind — a vendored package is
 // source, not a working tree.
 func copyPackage(src, dst string) error {

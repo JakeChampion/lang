@@ -120,7 +120,7 @@ function main(): i32 {
     out = out + "fold_then_strength: " + render(optimize(fold_then)) + "\n";
 
     // 9. optimize_ops — strength feeds folding: `* 0` leaves a `const_i32 0`
-    //    next to the constant that followed, which the next fold round eats.
+    //    next to the constant that followed, which the next fold round collapses.
     var strength_then: ir.Op[] = [base(), ir.op_const_i32(0), ir.op_bin("mul", 0, false),
                                   ir.op_const_i32(5), ir.op_bin("add", 0, false)];
     var once: ir.Op[] = optimize(strength_then);
@@ -427,7 +427,7 @@ function main(): i32 {
                              ir.op_else(), ir.op_const_i32(8), ir.op_drop(), ir.op_end(), ir.op_return()];
     out = out + "pi_false_arm: " + render(ir.fold_const_binaries(pi_false)) + "\n";
 
-    // 16a. No else and a false condition: the whole construct evaporates. `const`
+    // 16a. No else and a false condition: the whole construct is removed. `const`
     //      pushes one and `if` pops it, so the pair is stack-neutral to remove.
     var pi_none: ir.Op[] = [ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
                             ir.op_end(), ir.op_return()];
@@ -594,7 +594,7 @@ function main(): i32 {
                              ir.op_call_direct("__fern_rc_is_unique", 1)];
     out = out + "zg_frame_write_refused: " + render(ir.prune_zero_slot_guards(zg_frame, 0)) + "\n";
 
-    // 18f. The payoff, through optimize_ops: this pass removes nothing on its own,
+    // 18f. The benefit, through optimize_ops: this pass removes nothing on its own,
     //      it only produces the constant the fold's decided-`if` rule then deletes
     //      the whole drop body with. Running it before the leading fold is what puts
     //      that deletion in the same call.

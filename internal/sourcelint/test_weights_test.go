@@ -281,7 +281,7 @@ func TestCITestWeightsReportsWhenItRanBlind(t *testing.T) {
 }
 
 // Timing files that exist but hold no rows are as blind as no files at all. This
-// is the nastier half of the no-data case: the artifacts arrive, the glob matches,
+// is the quieter half of the no-data case: the artifacts arrive, the glob matches,
 // and without a check the run reports the all-clear having compared nothing.
 func TestCITestWeightsReportsEmptyTimingFiles(t *testing.T) {
 	timings := seed(t, map[string]string{

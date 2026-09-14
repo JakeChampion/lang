@@ -11,7 +11,7 @@
 // That is the whole difficulty: a naive split on whitespace produces nine
 // tokens for this line and silently reads the HTTP version as the status code.
 //
-// So the load-bearing test is a round trip. `format(parse(line))` must return
+// So the essential test is a round trip. `format(parse(line))` must return
 // the line back, byte for byte, for every well-formed input — a parser that
 // drops a field, mis-splits a group, or trims something it should have kept
 // fails that, and it fails for every field at once rather than only the one
@@ -302,7 +302,7 @@ function test_a_malformed_line_is_rejected_outright(): test.TestOutcome {
 // serve two bytes, which is precisely why log shippers frame lines rather than
 // detect truncation.
 //
-// So the honest invariant is the one a parser can actually keep: a prefix
+// So the correct invariant is the one a parser can actually keep: a prefix
 // either fails, or parses to a record that reformats to exactly those bytes.
 // It never invents a field to fill a gap. That is checked at every one of the
 // line's byte offsets, and it is the property the report depends on.
@@ -325,7 +325,7 @@ function test_every_prefix_either_fails_or_round_trips(): test.TestOutcome {
         }
     }
     // A prefix cut inside either GROUP must fail outright — an unclosed
-    // bracket or quote has no honest reading at all.
+    // bracket or quote has no valid reading at all.
     var line: string = good_lines()[0];
     var mid_bracket: string = "" + slice_unchecked(line, 0, 30);
     var mid_quote: string = "" + slice_unchecked(line, 0, 60);

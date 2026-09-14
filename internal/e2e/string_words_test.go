@@ -47,7 +47,7 @@ function main(): i32 {
     // A full stop with no digit after it is its own segment.
     if (unicode.word_segments("3.").len() != 2) { return 11; }
 
-    // ExtendNumLet glues word-like things together (WB13a/WB13b).
+    // ExtendNumLet joins word-like things together (WB13a/WB13b).
     if (unicode.word_count("snake_case") != 1) { return 12; }
     // Letters bind to digits in both directions (WB9/WB10).
     if (unicode.word_count("x2") != 1) { return 13; }
@@ -71,7 +71,7 @@ function main(): i32 {
 
     // Hebrew geresh (WB7a) and gershayim (WB7b/WB7c). The gershayim
     // joins only when a Hebrew letter follows it, so the pair alone is
-    // two segments while the sandwich is one -- the same asymmetry the
+    // two segments while the triple is one -- the same asymmetry the
     // apostrophe has above.
     if (unicode.word_segments(cp(1488) + cp(1523)).len() != 1) { return 23; }
     if (unicode.word_segments(cp(1488) + cp(1524)).len() != 2) { return 24; }

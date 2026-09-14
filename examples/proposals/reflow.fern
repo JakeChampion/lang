@@ -10,7 +10,7 @@
 // reads like reflowed text, which is why eyeballing the result is worthless.
 //
 // So the tests are stated as invariants over arbitrary input rather than as a
-// table of expected output. The load-bearing one is that the word sequence of
+// table of expected output. The essential one is that the word sequence of
 // the whole document is unchanged; the rest pin down the parts of the claim
 // that "same words" does not cover:
 //

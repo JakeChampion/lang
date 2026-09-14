@@ -10,7 +10,7 @@ import (
 
 // letElseIRCases pin `let PAT = EXPR else { divergent };` on the IR path. The
 // parser desugars it by folding the rest of the enclosing block into the success
-// arm of a statement-match (parser.fern), so it rides the already-proven match IR
+// arm of a statement-match (parser.fern), so it uses the already-proven match IR
 // machinery. As with the if-let pin, the existing TestSelfHostLetElse* assert
 // only exit codes (which the AST emitter also satisfies); these cases add the
 // missing IR-path gate, mirroring self_host_bool_match_ir_test.go.

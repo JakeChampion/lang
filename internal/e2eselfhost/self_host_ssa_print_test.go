@@ -79,7 +79,7 @@ func TestSelfHostSSAPrint(t *testing.T) {
 		{"print-chained-concat", "function main(): i32 { print(\"a\" + \"b\" + \"c\" + \"d\"); return 0; }", "abcd\n"},
 		// A string-returning helper + concat builds output (the i32_to_string shape).
 		{"print-built", "function digit(d: i32): string { if (d == 1) { return \"1\"; } if (d == 2) { return \"2\"; } return \"3\"; } function main(): i32 { var out = \"\"; out = out + digit(1); out = out + digit(2); out = out + digit(3); print(out); return 0; }", "123\n"},
-		// The headline: a real i32_to_string (mod/div + digit chain + concat)
+		// The main case: a real i32_to_string (mod/div + digit chain + concat)
 		// printing formatted numbers — positive, negative, and zero. Each
 		// print() adds its own newline, so the explicit print("\n") calls are
 		// no longer needed.

@@ -108,7 +108,7 @@ impl Num for u64 {}
 
 // ---- generic numeric reducers ------------------------------------------------
 //
-// One implementation, every width — the #2706 payoff: a `[T: Add]` / `[T: Mul]`
+// One implementation, every width — the #2706 benefit: a `[T: Add]` / `[T: Mul]`
 // bound collapses the width-suffixed `sum_i64` / `product_u32` / … family into a
 // single generic body that dispatches `.add` / `.mul` by method. They work for
 // the primitive impls above AND for any user type that `impl`s the trait (a 2D

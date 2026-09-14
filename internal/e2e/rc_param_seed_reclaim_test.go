@@ -128,7 +128,7 @@ func TestRcParamSeedAnswersArm64(t *testing.T) {
 // adds nothing rather than a growth ratio: measured 0 B after the fix and
 // 6368 / 12768 B before it, on both arm64-darwin and wasm.
 //
-// __rc_underflow_count() rides along in the other direction — narrowing the
+// __rc_underflow_count() is included in the other direction — narrowing the
 // verdict too far would release the caller's value and show up here.
 const rcParamSeedBoundedProg = `
 import "std/i32";

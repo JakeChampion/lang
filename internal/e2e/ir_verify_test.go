@@ -102,11 +102,11 @@ func corpusPrograms(t *testing.T, fn func(name string, cfg verifyConfig, ip *ir.
 			}
 			// Mirror what a backend does between checking and lowering.
 			// Every omission here failed to LOWER rather than failing
-			// loudly, so it was swallowed by the skip below and the case
+			// loudly, so it was hidden by the skip below and the case
 			// went silently absent from every gate built on this helper:
 			// without monomorphisation a generic instantiation stays
 			// unspecialised, without the tree-shake a case importing
-			// `std/float` dies on a function no program reaches, and
+			// `std/float` fails on a function no program reaches, and
 			// without DynSupported a `dyn Trait` case is refused outright
 			// at ptrW 8.
 			if err := monomorph.Run(p, info); err != nil {

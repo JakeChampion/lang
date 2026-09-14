@@ -78,7 +78,7 @@ pub function large_fl_cells(): i32 { return 2049; }
 // per-function LowerResult list in mod.funcs order. It is the cache the wasm IR
 // emit path threads through its two dozen collect / gate passes (str_values,
 // module_uses_*, module_emits_op_cached, field_reclaim_types, fn_value_table, …)
-// so a module is lowered a single time instead of once per pass — killing the
+// so a module is lowered a single time instead of once per pass — removing the
 // O(functions²) × O(passes) re-lowering that OOMed the self-host wasm compile of
 // large / many-function modules (#4652).
 //
@@ -940,7 +940,7 @@ function wasm_helper_symbol(name: string): string {
 // heap + RC runtime needs emitting).
 pub function module_allocates(cache: irlower.LowerResult[]): boolean {
     // ir.op_allocates is the shared list (see ir.fern), identical to asm_ir's
-    // heap gate. The RC probes live in rc_runtime_helpers, which rides this same
+    // heap gate. The RC probes live in rc_runtime_helpers, which uses this same
     // gate, so a program that only READS the counters still needs it: a
     // scalar-capture closure allocates nothing an op reports, and its
     // `__fern_rc_underflow_count()` then called a function the module never
@@ -1330,7 +1330,7 @@ function arr_i32_extremum_helper(which: string, cmp: string): string {
 }
 
 // module_calls_arr_i32_helper scans the lowered cache for a call to any of those
-// helpers — a callee-NAME scan rather than an op-kind one, so it cannot ride
+// helpers — a callee-NAME scan rather than an op-kind one, so it cannot use
 // module_emits_op_cached. Drives the @uses_arr_i32_helpers need.
 pub function module_calls_arr_i32_helper(cache: irlower.LowerResult[]): boolean {
     function is_arr_i32_call(o: ir.Op): boolean { return o.kind_tag == 149 && arr_i32_fern_helper(o.str); }  // call_direct
@@ -1728,8 +1728,8 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         if (util.index_of_str(ids, "process_alive") >= 0) { return "process_alive"; }
         // signal_send (#8377) — the same missing process table, named as a
         // delivery target. `signal` is granted on wasi-cli only because
-        // ignoring a signal nothing can deliver is an honest no-op; there is
-        // no honest no-op for sending one.
+        // ignoring a signal nothing can deliver is a correct no-op; there is
+        // no correct no-op for sending one.
         if (util.index_of_str(ids, "signal_send") >= 0) { return "signal_send"; }
         // rlimit_nofile (#8819) — neither WASI preview enforces a resource
         // limit, and every constant that could stand in (a plausible 1024, or
@@ -1816,8 +1816,8 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // (wasm.arr_str_join_helper, gated on @uses_arr_str_join) — no exclusion here.
         // 8-byte-VALUE maps (i64/u64 AND f64) NOW lower fully on the wasm IR path
         // (#5253): set / get_or / values / get / iter box the 8-byte value into an
-        // rc cell whose pointer rides the i32 value column (map_w64_helpers, the
-        // *_w64 helpers). The cell stores raw 8 bytes, so f64 rides the same helpers
+        // rc cell whose pointer occupies the i32 value column (map_w64_helpers, the
+        // *_w64 helpers). The cell stores raw 8 bytes, so f64 uses the same helpers
         // as i64/u64 with an f64<->i64 reinterpret at the scalar sites. No exclusion
         // here — the former module_has_wide_map_val_cached gate is retired.
         // poll has no wasm IR runtime: real readiness on wasm needs the
@@ -2459,7 +2459,7 @@ pub function writefile_func_p2(): string {
 }
 
 // component_io_imports emits the preview2 import section of a mode-2 core. The
-// order is load-bearing: the component framings alias imports positionally, so
+// order is essential: the component framings alias imports positionally, so
 // it mirrors wasm.emit_module_mode's AST ordering exactly — get-stderr, the
 // shared blocking-write-and-flush, then get-stdout when the module eprints
 // (component_full_io_eprint's shape), otherwise get-stdout then the write, with
@@ -2986,7 +2986,7 @@ pub function ipv4_parse_func(): string {
 //   -> drop incoming + outgoing streams, then the socket.
 //
 // Connecting via stream(Some(remote)) is what keeps this tractable: the
-// destination rides the 15-i32 ip-socket-address flattening (the same one tcp
+// destination uses the 15-i32 ip-socket-address flattening (the same one tcp
 // start-bind / start-connect use), so the outgoing-datagram carries
 // remote-address: NONE and only its data ptr/len and the option discriminant
 // need writing — no hand-marshalling of the address variant into the record.
@@ -4695,7 +4695,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 }
 
 // decl_result_wat is the WAT result clause a DECLARATION's return type asks for.
-// u64 returns ride the i64 result type (8-byte; only signedness of the value's
+// u64 returns use the i64 result type (8-byte; only signedness of the value's
 // own ops differs, handled at the producing expression) (#2904). A bare-typevar
 // (erased-generic) return is typed i64 — the uniform 8-byte slot the register
 // backends give every value — so a wide value survives pass-through and the
@@ -5814,7 +5814,7 @@ pub function remove_file_func(): string {
 // [tag@0, payload@4] Result the fs family beside them builds: Ok = 0, Err = 1
 // with the IoError box at +4.
 //
-// Two honest gaps, both WASI's rather than this emitter's, and both recorded
+// Two known gaps, both WASI's rather than this emitter's, and both recorded
 // in docs/FREESTANDING-CORE.md: path_create_directory carries no mode, so
 // create_dir's is dropped (and `umask` is refused outright on this target),
 // and every path resolves under the preopen, so one that escapes it is
@@ -6606,7 +6606,7 @@ pub function rmemchr_helper(): string {
 // block, and its alignment hint is 0 — the cursor is arbitrary, and a hint
 // LARGER than the access is a validation error where a smaller one is legal.
 //
-// No cursor, so no clamp: both degenerate answers are honest counts rather
+// No cursor, so no clamp: both degenerate answers are actual counts rather
 // than sentinels — an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
 //
@@ -8385,7 +8385,7 @@ pub function reader_read_chunk_func(): string {
 //
 // A close carries no PATH, so the errno is classified against a FRESH empty
 // string box, for the same reason writer_write's error path builds one: a bare
-// $__fern_alloc block has no rc word at [p-8]. Allocates, so it rides the heap
+// $__fern_alloc block has no rc word at [p-8]. Allocates, so it uses the heap
 // runtime; needs_io_error folds "reader_close" in so the classifier and the
 // strerror texts are emitted for a module that only closes (#8569).
 pub function reader_close_func(): string {
@@ -9050,7 +9050,7 @@ function lc_bump_free(nexpr: string): string {
 
 // lc_report_and_exit_wrapper: `$__fern_lc_report` — the census summary on
 // stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line — plus
-// the `$proc_exit` wrapper that reports before dying, so BOTH exit paths
+// the `$proc_exit` wrapper that reports before exiting, so BOTH exit paths
 // (the exit() op and $_start) report through the one flag-gated definition;
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0 only: the component modes have no preview1 proc_exit and
@@ -9184,7 +9184,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     // $__fern_large_push(base, bytes): return a freed >= 512 KiB block to the
     // large tier (#7735), the wasm twin of asm_ir's __fern_large_push. Bins by
     // the same round-up $__fern_alloc used, so a block returns to the class
-    // whose capacity it was bumped at; the successor rides in the bsz slot at
+    // whose capacity it was bumped at; the successor is stored in the bsz slot at
     // base+4, as the small tier's does. Over 1 GiB is dropped rather than
     // recycled, matching alloc — a leak, not a free, which is why any free
     // accounting belongs before this point rather than inside it.
@@ -9218,7 +9218,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
     // unboxed — the rc helpers' address guard treats them as immortal.
     // Frees through the shared $__fern_arr_dec (size-class freelist), since
     // a string is flat (no rc-tracked children). Foundation: heap strings
-    // are now rc-boxed; counting + release ride on this in later slices.
+    // are now rc-boxed; counting + release depend on this in later slices.
     o = o + "  (func $__fern_str_box (param $p i32) (result i32)\n";
     o = o + "    (local $base i32) (local $n i32)\n";
     o = o + "    (local.set $n (i32.and (i32.add (i32.add (i32.const 8) (local.get $p)) (i32.const 7)) (i32.const -8)))\n";
@@ -9349,7 +9349,7 @@ pub function arr_dec_ptr2_func(heap_base: i32): string {
 // `__fn___store_i32` runtime funcs: __alloc forwards to the bump heap so
 // the rc tests (and any `core/map` raw-memory source that links) resolve.
 // This is the additive Phase-0c foundation for wasm RC — the array
-// layout migration + inc/dec call sites ride on it in later slices,
+// layout migration + inc/dec call sites depend on it in later slices,
 // exactly as on the asm backends.
 pub function rc_runtime_helpers(heap_base: i32): string {
     var lo: string = util.i32_to_string(heap_base);
@@ -9603,8 +9603,8 @@ pub function arr_push_owned_helper(heap_base: i32): string {
     // buffer (the WIT-codec SIGABRT that blocked #5138 — outer's
     // `out = out.append(k)` on a bracketed param, chained tx shape). At
     // rc == 1 the shared $__fern_arr_dec takes its free path, so the sole-
-    // owner behaviour is unchanged; guards (null/tagged/low/immortal) ride
-    // along inside it.
+    // owner behaviour is unchanged; guards (null/tagged/low/immortal) still
+    // apply inside it.
     o = o + "    (if (i32.and (i32.ne (local.get $na) (local.get $a)) (i32.and (i32.ge_u (local.get $a) (i32.const " + hb + ")) (i32.eqz (i32.and (local.get $a) (i32.const 1))))) (then\n";
     o = o + "      (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
     o = o + "        (drop (call $__fern_arr_dec (local.get $a)))))))\n";
@@ -9769,7 +9769,7 @@ pub function arr_push_wide(vty: string, sop: string): string {
 function preview1_imports(needs: string[]): string {
     var parts: string[] = [];
     if (leak_check_on()) {
-        // Census (#5362): the raw import steps aside so the flag-gated
+        // Census (#5362): the raw import is renamed so the flag-gated
         // reporting $proc_exit (lc_report_and_exit_wrapper) can define the
         // name every existing call site — the exit op and $_start — uses.
         parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit_raw (param i32)))\n");
@@ -10131,7 +10131,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (mode == 2) { parts = parts.append(component_io_shims(needs)); }
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
-    // arr_dec_ptr2_func for why it must not ride along unconditionally.
+    // arr_dec_ptr2_func for why it must not be included unconditionally.
     if (need(needs, "@calls_strarrarr_free")) { parts = parts.append(arr_dec_ptr2_func(heap_base_for_strs(sv, cv))); }
     if (need(needs, "@map_free_vsa")) { parts = parts.append(map_release_func("_vsa", "$__fern_arr_dec_ptr")); }
     if (need(needs, "@calls_optarrarr_free")) { parts = parts.append(optarrarr_free_func(heap_base_for_strs(sv, cv))); }
@@ -10318,11 +10318,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "read_line")) { parts = parts.append(read_line_func()); }
     if (need(needs, "read_int")) { parts = parts.append(read_int_func()); }
     // $__fern_read_all_stdin reads fd 0 to EOF into one string block (#5623);
-    // allocates, so it rides the heap runtime gated above.
+    // allocates, so it uses the heap runtime gated above.
     if (need(needs, "read_all_stdin")) { parts = parts.append(read_all_stdin_func()); }
     // $__fern_reader_read_chunk(fd,n) / $__fern_reader_close(fd) back the
     // Reader intrinsics (r.read_chunk(n) / r.close()) — a Reader is just its fd
-    // (stdin = fd 0). Both box (Option[string] / Option[IoError]), so they ride
+    // (stdin = fd 0). Both box (Option[string] / Option[IoError]), so they use
     // the heap runtime (gated in above); read_chunk reads via fd_read, close
     // via fd_close (imports emitted above). Backs std/io read_all_stdin on wasm.
     if (need(needs, "read_chunk")) { parts = parts.append(reader_read_chunk_func()); }
@@ -10792,7 +10792,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
             var k: i32 = 0;
             while (k < structs.decls[si].fields.len()) {
                 var ft: string = structs.decls[si].fields[k].type_name;
-                // A replaced STRING field (#4355) rides the same guarded dec:
+                // A replaced STRING field (#4355) uses the same guarded dec:
                 // a wasm heap string is a single inline rc-headered block, so
                 // $__fern_arr_dec IS the wasm string free (it null-/low-/
                 // sentinel-guards a literal internally). Balanced by the shared
@@ -10800,7 +10800,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                 // read scan (str_ok) — see the x86 emit_ir_field_reclaim_one
                 // string arm.
                 var frk: string = struct_field_kind_char(ft, structs, mr_types);
-                // A replaced fn (closure) field rides the same guarded
+                // A replaced fn (closure) field uses the same guarded
                 // $__fern_arr_dec: the superseded `__mkclo$` env box is one
                 // rc-headered block, shallow-freed (captures leak). Gated on
                 // the clofld admission (clo_ok) — the wasm fr_clo sibling.
@@ -10957,7 +10957,7 @@ pub function is_enum_type_name(structs: irlower.StructTab, mr_types: string[], n
 // so a `T[]` struct field of that element type is deep-released through
 // $__fern_arr_dec_ptr, walking raw scalars as pointers. `f32` and `u64` were
 // both missing: an `f32[]` field trapped (memory fault dereferencing 1.5) and
-// a `u64[]` field returned a silently wrong answer. It only bit a program with
+// a `u64[]` field returned a silently wrong answer. It only broke a program with
 // an `import`, since mr_types is empty without one.
 pub function is_primitive_type_name(name: string): boolean {
     return name == "i32" || name == "i64" || name == "f64" || name == "boolean"
@@ -11295,7 +11295,7 @@ pub function extern_variant_param_supported(mod: parser.Module, t: string): bool
                 k2 = k2 + 1;
             }
             // S2 f32 scope (#5327): only the non-uniform same-width shape
-            // `{ i(s32), f(f32) }` — the f32 arm rides the canonical 32-bit
+            // `{ i(s32), f(f32) }` — the f32 arm uses the canonical 32-bit
             // i32 join via a demote+reinterpret bridge, so the variant must
             // ALSO carry an i32/u32 payload arm (keeping the join i32) and NO
             // 64-bit arm. Still deferred: a uniform-f32 variant (its canonical
@@ -12935,7 +12935,7 @@ pub function nth_tuple_type_elem(spelling: string, idx: i32): string {
 // elem_slot_size / elem_store_op / elem_load_op give the per-element byte
 // stride and the wasm store/load instruction for an element kind.
 //
-// The float test is elem_ty_is_f64slot, not `== "f64"`: an f32 rides the same
+// The float test is elem_ty_is_f64slot, not `== "f64"`: an f32 occupies the same
 // 8-byte slot, so a kind that reaches here spelled "f32" or "float" needs the
 // f64 stride and instruction. Spelling it literally is what left an f32 tuple
 // element storing through i32.store — `expected i32, found f64` at validation

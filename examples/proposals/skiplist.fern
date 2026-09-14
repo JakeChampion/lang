@@ -71,7 +71,7 @@ function new_list(): SkipList {
     var i: i32 = 0;
     while (i <= max_level()) { next = next.append(-1); i = i + 1; }
     // The head's key is never compared — every walk starts past it — but a
-    // value below every real key keeps that from being load-bearing.
+    // value below every real key keeps that from being relied on.
     return SkipList { nodes: [Node { key: -2147483647, next: next }],
         max_level: max_level() };
 }

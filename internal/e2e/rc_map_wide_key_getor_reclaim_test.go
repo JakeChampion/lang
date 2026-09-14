@@ -15,13 +15,13 @@ import "testing"
 // leaks the boxed wide-KEY cell that `insert` stores whichever way this goes —
 // 16 B an iteration, present with no read in the program at all (the wide-key
 // column walk, #8276 / #8171's neighbour). Subtracting the insert-only
-// baseline measures the read and nothing else, so this stays honest while that
+// baseline measures the read and nothing else, so this stays valid while that
 // gap is open and does not silently start passing if it closes.
 //
 // wasm32, 100 rounds: insert-only 1600, with the read 4800 before the fix and
 // 1600 after — the fallback array was the whole difference. arm64 and x86-64
 // hold an i64 key in a pointer slot, so they never box it and read 0 either
-// way; they ride along to prove the shape is not wasm-only by construction.
+// way; they are included to prove the shape is not wasm-only by construction.
 func TestMapWideKeyGetOrFallbackIsReclaimed(t *testing.T) {
 	src := func(read string) string {
 		return `

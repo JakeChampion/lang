@@ -21,7 +21,7 @@ import (
 // Every source is piped through interp_run.fern and asm_run.fern and run
 // directly against the native interp; all three must return the same exit code.
 //
-// This is the load-bearing parity net between the self-host compiler and the one
+// This is the essential parity net between the self-host compiler and the one
 // implementation whose bugs are UNCORRELATED with it. The native interpreter is
 // written in a different language and compiled by a different compiler, so it is
 // the only engine here that cannot share a frontend bug with the others — see

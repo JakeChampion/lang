@@ -171,7 +171,7 @@ func TestInterpSignalDisposition(t *testing.T) {
 
 // TestWASMSignalDispositionIsANoOp: both calls must lower and run on wasm.
 //
-// Nothing in either WASI world can deliver a signal, so the honest answer is
+// Nothing in either WASI world can deliver a signal, so the correct answer is
 // to do nothing — the same shape as hostname() answering "" rather than
 // failing. What that leaves to assert is that the program still runs: the
 // calls have to lower, drop their argument, and leave the operand stack

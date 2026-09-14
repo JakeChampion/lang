@@ -50,7 +50,7 @@ var strAccumIRCases = []struct {
 	// Memory-safety at scale: a BOUNDED accumulator (grow, then reset to a fresh 1-char
 	// chr(..) at len > 40) over 5,000,000 iterations, using a loop-invariant operand so
 	// there is no per-iteration literal temporary. If the growth chain leaked, resident
-	// memory would explode; a double-free would corrupt the freelist and crash / return
+	// memory would grow; a double-free would corrupt the freelist and crash / return
 	// garbage. exit 0 (fixed) with the reclaim present proves the balance (flat heap).
 	{"accum-churn-safe",
 		`function main(): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = chr(65); } i = i + 1; } return 0; }`,

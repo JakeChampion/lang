@@ -172,7 +172,7 @@ function main(): i32 {
     if ((0 - 1).trailing_zeros() != 0) { return 33; }
     if (((0 as i64) - (1 as i64)).count_ones() != 64) { return 34; }
 
-    // count_zeros / bit_length ride on the same primitives.
+    // count_zeros / bit_length build on the same primitives.
     if ((0 as u32).count_zeros() != 32) { return 35; }
     if ((255 as u32).bit_length() != 8) { return 36; }
     if ((256 as u32).bit_length() != 9) { return 37; }

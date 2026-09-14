@@ -12,7 +12,7 @@ import (
 // TestSelfHostMapI64ValueWasmIR is the wasm port of TestSelfHostMapI64ValueIRX86_64
 // (#5253): 64-bit Map VALUES (i64 / u64) on the self-host WASM IR path. The
 // i32-celled wasm map runtime can't hold an 8-byte value inline, so a wide value
-// is boxed into an 8-byte rc cell whose i32 pointer rides the value column
+// is boxed into an 8-byte rc cell whose i32 pointer occupies the value column
 // ($__fern_map_set_w64 / $__fern_map_get_or_w64, map_w64_helpers), selected by the
 // widekind==1 op flag. Before this, any i64/u64-valued map fell back to the legacy
 // AST wasm emitter (module_has_wide_map_val_cached). Each case pipes a single

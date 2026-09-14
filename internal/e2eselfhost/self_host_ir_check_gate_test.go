@@ -58,7 +58,7 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		{"option-as-i32-assign", "function find(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; }\nfunction main(): i32 { var x = 1; x = find(3); return 0; }"},
 		// Bare-map_new chain with a key-kind mismatch (native E038/E003 class):
 		// a NUMBER key dispatched through the string-keyed map_new() chain
-		// (and the map_new_i32 mirror) used to sail through check and
+		// (and the map_new_i32 mirror) used to pass check and
 		// miscompile — the emitted binary SIGSEGV'd. check_map_new_chain now
 		// rejects both directions; a kind-CONSISTENT chain (the Map{…} literal
 		// desugar) stays accepted — see the accept case below.

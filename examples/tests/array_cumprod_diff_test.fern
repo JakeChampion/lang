@@ -4,7 +4,7 @@ import "std/array" as array;
 // std/array's cumprod_f64 (running product) and diff_f64 (successive
 // differences, one shorter than the input; the discrete derivative and
 // left-inverse of cumsum). Both are scan-style ops that need sequential context
-// and return an f64[] (scalar payload), so this rides all four native backends
+// and return an f64[] (scalar payload), so this runs on all four native backends
 // and both self-host gates. The Go-side TestArrayCumprodDiff pins the native
 // backends; this is the migration-shaped companion.
 

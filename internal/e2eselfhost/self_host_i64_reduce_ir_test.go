@@ -20,7 +20,7 @@ import (
 // narrowing) handles the shape the stdlib fix relies on, on every backend.
 //
 // avg() itself returns Option[i32], which is not IR-eligible yet (a separate
-// slice), so the stdlib method rides the AST path on the self-host today; this
+// slice), so the stdlib method takes the AST path on the self-host today; this
 // reduction returns a bare i32, so it stays on the IR path where the i64
 // arithmetic is exercised directly.
 const i64MeanReduceProgram = `function imean(arr: i32[]): i32 {

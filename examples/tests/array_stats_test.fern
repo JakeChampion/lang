@@ -8,7 +8,7 @@ import "std/array" as array;
 // these across interp / x86-64 / arm64 (the wasmbin leg skips Option over a
 // 64-bit payload, the enum-i64/f64 gap avg_f64 / variance_f64 share); this is the
 // migration-shaped companion. Option[f64] lowers on the self-host asm_ir path,
-// so this rides both self-host gates too.
+// so this runs in both self-host gates too.
 
 function unwrap(o: Option[f64]): f64 {
     match (o) {

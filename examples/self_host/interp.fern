@@ -34,7 +34,7 @@ pub struct VInt { v: i32 }
 // laid out and dropped cleanly. The full i64 is reconstructed into a local
 // only for arithmetic (local i64s are fine); it never lives in the union.
 //
-// `unsigned` tags the pattern as u64 rather than i64. A u64 rides the same
+// `unsigned` tags the pattern as u64 rather than i64. A u64 occupies the same
 // bits (native's `Number` does too, and takes signedness from the checker's
 // static type); only div / rem / compares / `>>` and the receiver type name
 // read it — the 64-bit twin of the split VUint makes at 32 bits.
@@ -48,7 +48,7 @@ pub struct VBool { v: boolean }
 pub struct VString { v: string }
 // VFloat carries a 64-bit IEEE 754 float. Literals tagged
 // `is_float = true` by the parser produce a VFloat; arithmetic
-// + comparison operators on two VFloats stay in float-land.
+// + comparison operators on two VFloats stay on the float path.
 // Mixed i32/f64 isn't supported — explicit cast at the source
 // level would route through a future numeric coercion pass.
 pub struct VFloat { v: f64 }
@@ -305,7 +305,7 @@ function vfloat_as_f64(v: Value): f64 {
 function v_bool(b: boolean): Value { return VBool { v: b }; }
 function v_string(s: string): Value { return VString { v: s }; }
 function v_float(n: f64): Value { return VFloat { v: n }; }
-// f32_round rounds an f64 to single precision. The demote rides the
+// f32_round rounds an f64 to single precision. The demote uses the
 // f32_bits / f32_from_bits builtin pair (not a bare `as f32` round-trip):
 // every pipeline that runs this interpreter special-cases the pair with a
 // real cvtsd2ss/cvtss2sd narrowing, whereas the legacy self-host AST
@@ -329,7 +329,7 @@ function v_err(msg: string): Value { return VErr { msg: msg }; }
 // v_void is the result of an expression that produces no value — a call to a
 // void function, or a body that runs off its end without a `return`, which is
 // how a void function returns. The interpreter has no VVoid variant: nothing
-// reads a void result, so it rides on the zero the void builtins already
+// reads a void result, so it reuses the zero the void builtins already
 // return.
 function v_void(): Value { return v_int(0); }
 
@@ -338,7 +338,7 @@ function v_void(): Value { return v_int(0); }
 // that flag), and the `recv` / `closure_val` initialisers every path
 // overwrites before use.
 //
-// It rides on VErr because the union has no neutral variant, NOT because
+// It uses VErr because the union has no neutral variant, NOT because
 // anything went wrong — nothing anywhere compares the message. Adding a
 // VAbsent variant would put a dead arm in every exhaustive match over Value,
 // which is a worse trade than one named constructor.
@@ -2465,7 +2465,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // The capacity-carrying string builder (#8773) — `buf_new` reserves a
 // buffer and hands back its handle, the three pushes append to it,
 // `buf_len` reports what has accumulated, `buf_take` hands the bytes over
-// as a string and leaves the builder armed at its reserve, and `buf_free`
+// as a string and leaves the builder ready at its reserve, and `buf_free`
 // releases it. std/array's `join` and every std/io_buffered writer bottom
 // out here, so a stdlib-importing program reaches them constantly.
 //
@@ -2474,7 +2474,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // plane has no shape for, and an append MUTATES the buffer two copies of a
 // handle share, which it has no expression for either.
 //
-// The handle rides as an unsigned 64-bit value, so a pointer-width one
+// The handle is carried as an unsigned 64-bit value, so a pointer-width one
 // survives the round trip out through the interpreted program's `usize`
 // variables and back in as an argument.
 // That makes a handle an ADDRESS rather than a key into a table of live
@@ -2548,7 +2548,7 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
 }
 
 // The three handle-only builtins: the accumulated length, the take that
-// hands the bytes over and leaves the builder armed at its reserve, and the
+// hands the bytes over and leaves the builder ready at its reserve, and the
 // free that releases it.
 function call_buf_read(name: string, h: usize, args: Value[]): Value {
     if (args.len() != 1) { return v_err(name + ": expected 1 arg (b)"); }
@@ -2594,7 +2594,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         if (args.len() != 1) { return v_err(name + " takes exactly 1 argument"); }
         match (args[0]) {
             VString(s) => {
-                // The typed local is load-bearing for the bootstrap: passing
+                // The typed local is required for the bootstrap: passing
                 // `s.v` straight to a Display-constrained builtin resolves the
                 // field against the wrong variant under the pinned stage0
                 // (VInt, VBool and VString all name their payload `v`), and
@@ -2710,12 +2710,12 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // total; __ascii_run reports len(s) rather than -1 when the rest is
     // ASCII, which is what lets a caller use it as a branchless skip.
     //
-    // `__count_byte(s, byte)` rides __memchr's arms rather than taking its
+    // `__count_byte(s, byte)` reuses __memchr's arms rather than taking its
     // own: it needs the same "first arg is a string" destructure, and the
     // wildcard that destructure costs is ratcheted (§1 of
     // docs/SELFHOST-LANGUAGE-FRICTION.md) with no headroom to spend on a
     // second copy of it. It has no cursor, so no clamp, and both degenerate
-    // answers are honest counts rather than sentinels: an out-of-range byte
+    // answers are actual counts rather than sentinels: an out-of-range byte
     // counts 0 because nothing can equal it, an empty string counts 0
     // because it has no bytes.
     if (name == "__memchr" || name == "__count_byte" || name == "__sum_bytes") {
@@ -3053,7 +3053,7 @@ function value_eq(a: Value, b: Value): boolean {
 
 // eval_stmt returns (new env, control signal, optional value). The
 // returned env carries `var x = …;` bindings forward. Control flow
-// rides the DEDICATED `sig` channel (SH-002) — never the Value union,
+// uses the DEDICATED `sig` channel (SH-002) — never the Value union,
 // so a user value like Err("__break__") can no longer be mistaken for
 // a loop signal (the old encoding keyed break/continue/return off
 // magic VErr message strings). `ret` is meaningful only for SIG 1:

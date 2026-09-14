@@ -137,7 +137,7 @@ function main(): i32 {
 	}
 }
 
-// A carried string (and a bool) ride the reuse: the reuse branch never reads or
+// A carried string (and a bool) survive the reuse: the reuse branch never reads or
 // writes them, so the two-word shape that keeps strings out of the placeable
 // set does not arise. LowerState — the struct this issue is about — has one of
 // each, so without this the measured shape would not qualify at all.

@@ -35,7 +35,7 @@ func init() {
 // opened it, and the same states decide whether an unknown keyword is
 // fatal or ignored — so the section cases come in pairs that differ by
 // one intervening line. The pattern is fnmatch(3) with flags 0, whose
-// malformed shapes part ways (an unterminated `[` restarts as a literal,
+// malformed shapes differ (an unterminated `[` restarts as a literal,
 // a bad character class fails the whole match), so the `g*` files put one
 // pattern each in front of several TERM values. And the shell escaper is
 // a toggle rather than an escape, which only a `^` or a `\` next to a `:`

@@ -17,7 +17,7 @@ import (
 // `peek_member_name` returns "" for a keyword, `parse_func_decl` returns a
 // FuncDecl with an empty name, and the module parses "successfully".
 //
-// `function use()` is the case that bit: `use` is in the lexer's keyword set, so
+// `function use()` is the case that cost us: `use` is in the lexer's keyword set, so
 // the function came out nameless and every downstream stage reported
 // verdicts about a malformed module. Two sessions of #3457 read those verdicts as
 // evidence about the IR subset and wrote a WRONG bisection into

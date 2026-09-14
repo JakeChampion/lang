@@ -47,7 +47,7 @@ func TestSelfHostAssumeEligibleBailRefusesByName(t *testing.T) {
 	}
 
 	// A refusal names the function and the construct, exits 3 like every
-	// other IR refusal, and is not the verifier's account of the wreckage.
+	// other IR refusal, and is not the verifier's account of the malformed IR.
 	assertRefusal := func(t *testing.T, leg string, stderr string, code int, fn, reason string) {
 		t.Helper()
 		if code != 3 {

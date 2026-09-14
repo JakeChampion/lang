@@ -122,7 +122,7 @@ func runCoverX86_64(t *testing.T, src string) (string, string, int, string) {
 }
 
 // runCoverArm64 is the arm64 sibling (qemu; SKIPs without the aarch64
-// toolchain — rides CI).
+// toolchain — runs in CI).
 func runCoverArm64(t *testing.T, src string) (string, string, int, string) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)

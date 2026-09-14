@@ -57,7 +57,7 @@ var selectorLanes = map[string][]laneFile{
 //
 // A test nothing runs is worse than a missing test: it reads as coverage, it
 // is maintained as coverage, and it reports nothing. The four holes this gate
-// was written for had stood for months apiece behind a wall of green checks.
+// was written for had stood for months apiece behind green checks.
 func TestEveryGoTestIsSelectedByALane(t *testing.T) {
 	root := mustRepoRoot(t)
 	tests := collectGoTests(t, root)

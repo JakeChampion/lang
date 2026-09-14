@@ -69,10 +69,10 @@ func printableSeeds(t *testing.T) uint64 {
 // invalid.
 //
 // A row is a known COMPILER bug being tolerated so the rest of the
-// corpus keeps running. The skip is loud and cites an open issue, so an
+// corpus keeps running. The skip is reported and cites an open issue, so an
 // untracked row is visible as such.
 //
-// Empty is the desired state: a row earns its place only while its issue
+// Empty is the desired state: a row is worth keeping only while its issue
 // is open. Seeds 545 and 831 (#6145) left with #6142's fix — both carry
 // more closure cells than the static pool had room for below the
 // allocator's freelist heads table, which is the same collision, not a

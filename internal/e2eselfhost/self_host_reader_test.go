@@ -101,7 +101,7 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStdIoBundleX86_64 is the capstone of the Reader work:
+// TestSelfHostStdIoBundleX86_64 is the final gate of the Reader work:
 // the self-hosted compiler compiles the REAL internal/stdlib/std/io.fern
 // — unmodified — bundled as a module behind an `import "./io"`, with the
 // qualified `io.read_all_stdin()` call rewritten by flatten. This proves

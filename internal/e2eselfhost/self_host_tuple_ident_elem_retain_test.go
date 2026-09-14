@@ -50,7 +50,7 @@ type tupIdentElemCase struct {
 func tupIdentElemCases() []tupIdentElemCase {
 	return []tupIdentElemCase{
 		{
-			// The headline shape: one bare-ident array element.
+			// The main shape: one bare-ident array element.
 			name: "ident_elem_array",
 			src: `function round(i: i32): i32 {
     var xs: i32[] = [i, i + 1];
@@ -184,7 +184,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 // "leaving a live alias to over-release".
 //
 // Each probe ends with an explicit `__rc_underflow()` check, and that is the
-// load-bearing part: WITHOUT it both cases pass on a compiler that over-releases,
+// essential part: WITHOUT it both cases pass on a compiler that over-releases,
 // because a doubly-released block goes back to the freelist and the arithmetic
 // still comes out at 40. The first version of this test was vacuous for exactly
 // that reason. The counter is the only thing that separates the two readings.
@@ -258,7 +258,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 // TestSelfHostTupleIdentElemRetainX86_64 — the retained element references are
 // given back, so allocs and frees balance exactly.
 //
-// allocs == frees is the load-bearing assertion in both directions. frees short
+// allocs == frees is the essential assertion in both directions. frees short
 // of allocs is the leak this closes; frees ABOVE allocs would mean the sweep and
 // the rebind store both claimed one reference, which is a double free.
 func TestSelfHostTupleIdentElemRetainX86_64(t *testing.T) {

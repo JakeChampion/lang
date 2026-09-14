@@ -75,7 +75,7 @@ func nofileProbeLimit(t *testing.T) int64 {
 // set a child's limit from Go, and `exec` keeps the shell from adding a process
 // between it and the probe.
 //
-// `-S` is load-bearing: a bare `ulimit -n N` sets BOTH limits, which would make
+// `-S` is essential: a bare `ulimit -n N` sets BOTH limits, which would make
 // a helper reading rlim_max agree with one reading rlim_cur and let the whole
 // hard-vs-soft question through untested.
 func runUnderNofile(want int64, argv ...string) *exec.Cmd {

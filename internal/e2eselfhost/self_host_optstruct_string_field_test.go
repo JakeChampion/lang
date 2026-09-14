@@ -66,7 +66,7 @@ func TestSelfHostOptStructStringFieldX86_64(t *testing.T) {
 		}
 	}
 
-	// The headline row: block-scoped in a loop, the shape the leak list measured.
+	// The main row: block-scoped in a loop, the shape the leak list measured.
 	t.Run("block_scoped_string_field", func(t *testing.T) {
 		balanced(t, "oss_block", `struct P { name: string, n: i32 }
 function round(r: i32): i32 {

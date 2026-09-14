@@ -29,7 +29,7 @@ import (
 //
 // It is to FERN_LEAKCHECK what FERN_RC_UNDERFLOW_TRAP is to the
 // underflow counter: leakcheck says a leak happened, this says which
-// alloc site it came from. So the load-bearing properties these tests
+// alloc site it came from. So the essential properties these tests
 // pin are (1) the two agree, exactly, on every number they both
 // report, (2) sites are per-call-site rather than a constant, and
 // (3) allocs pair with frees by pointer on a balanced program.
@@ -384,7 +384,7 @@ func TestRcTraceX86_64OffEmitsNothing(t *testing.T) {
 // deliberately NOT matched by rcTraceLineRe: `pairRcTrace` reads that
 // regex and treats every non-`a` match as a free, so widening it to
 // [afid] would make each inc silently decrement the leak census's
-// counts. The narrow regex is load-bearing — this one is separate.
+// counts. The narrow regex is required — this one is separate.
 var rcTraceRcLineRe = regexp.MustCompile(`^rctrace ([id]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
 
 func TestRcTraceX86_64EmitsIncAndDecEvents(t *testing.T) {

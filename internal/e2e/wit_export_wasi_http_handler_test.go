@@ -12,13 +12,13 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
 
-// TestExportWasiHttpIncomingHandlerComposes is the P6 capstone composer gate
+// TestExportWasiHttpIncomingHandlerComposes is the P6 final composer gate
 // (docs/WIT-BRING-YOUR-OWN.md): a Fern program `@export`s the REAL
 // `wasi:http/incoming-handler@0.2.0#handle` — `func(own<incoming-request>,
 // own<response-outparam>)` — and the world-driven composer produces a valid
 // `wasi:http` component against the actual `wasi:http` WIT (the repo's
 // `cmd/fern/wit` `http` world, supplied as input — NOT the compiler's embedded
-// HTTP world). This is the headline "bring-your-own-WIT" demonstration: the
+// HTTP world). This is the main "bring-your-own-WIT" demonstration: the
 // HTTP handler shape composes from a user-supplied `.wit` via `@export` +
 // resource-handle params, with no HTTP-specific knowledge in the composer.
 // Gated by `wasm-tools validate` + the component WIT exporting

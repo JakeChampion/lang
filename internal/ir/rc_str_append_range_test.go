@@ -14,7 +14,7 @@ import (
 //
 // These pin the LOWERING decision target-independently, on both shapes that
 // reach the append (the marked self-append and a chain's consumed
-// intermediate) and on every shape that must NOT reach it. The runtime payoff
+// intermediate) and on every shape that must NOT reach it. The runtime benefit
 // and the bounds trap are pinned end-to-end in
 // internal/e2e/rc_str_append_range_test.go.
 

@@ -87,7 +87,7 @@ var selfHostEnumFieldDeepDropCases = []struct {
 	//
 	// It is the guard the local-alias row cannot be: only the STRUCT alias took
 	// the marking path, which is why `local-alias-declines-walk` above stayed
-	// clean throughout. `__rc_underflow_count()` rides the answer here for the
+	// clean throughout. `__rc_underflow_count()` is added to the answer here for the
 	// same reason it does everywhere else in this table — the carve-out restores
 	// a dec, and a dec past a live claim would land as an underflow rather than
 	// as a leak.
@@ -111,7 +111,7 @@ var selfHostEnumFieldDeepDropCases = []struct {
 // on BOTH compilers, native as the oracle.
 //
 // FIVE rows leak without #8567's fix: the three defect rows and both guard rows.
-// The guards earn their name from the other direction — they are the rows an
+// The guards do their work in the other direction — they are the rows an
 // UNGATED or unbalanced walk would fail, and it would fail them as a changed
 // answer or an underflow rather than as a leak, which is why the exit code is
 // asserted alongside the verdict. The two controls are clean either way, and the

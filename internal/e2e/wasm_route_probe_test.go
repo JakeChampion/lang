@@ -83,7 +83,7 @@ func TestWasmRouteProbe(t *testing.T) {
 	// where the interpreter says 42, then became a refusal when that emitter
 	// retired, and now it runs and returns 42. The refusal was the right
 	// intermediate state — a silent wrong answer is worse than a loud one — but
-	// it was never the destination.
+	// it was never the end state.
 	const foldShape = "function sum_all[T](xs: T[], seed: T): T { var acc: T = seed; for x in xs { acc = x; } return acc; }\n" +
 		"function main(): i32 {\n" +
 		"    var xs: i64[] = [1, 2, 5000000000];\n" +

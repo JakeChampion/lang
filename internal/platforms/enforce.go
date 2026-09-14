@@ -48,7 +48,7 @@ var gatedBuiltins = map[string]string{
 	// The same process table, named as a signal target rather than
 	// merely looked up. Not `signal`: that capability is the disposition
 	// of signals arriving HERE, which wasi-cli can honestly no-op, while
-	// there is no honest no-op for delivering one somewhere else.
+	// there is no correct no-op for delivering one somewhere else.
 	"signal_send": "proc",
 
 	// A kernel-enforced ceiling on a process resource. Its own

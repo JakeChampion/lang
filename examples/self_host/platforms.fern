@@ -349,7 +349,7 @@ pub function gated_builtins(): Gate[] {
 
         // The process's own identity — the effective pair, the real pair,
         // and the supplementary group set. Neither WASI preview has a
-        // notion of a user, and there is no honest constant to answer with:
+        // notion of a user, and there is no accurate constant to answer with:
         // 0 claims to be root while FileStat's uid/gid are also zero there,
         // so every file would look like the caller's. An empty group list
         // is the same fiction one level down.

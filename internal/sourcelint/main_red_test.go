@@ -44,8 +44,8 @@ func TestMainRedWatchesCI(t *testing.T) {
 // The reporter must fire for main's PUSHES and nothing else.
 //
 // A pull_request run is the author's to fix and cancel-on-failure.yml already
-// reaps its siblings; filing an issue per red PR lane would bury the tracker
-// under work that is already assigned. A workflow_dispatch at a commit is
+// reaps its siblings; filing an issue per red PR lane would fill the tracker
+// with work that is already assigned. A workflow_dispatch at a commit is
 // someone's deliberate run and may be red on purpose. Both were live mistakes
 // to make here, so the guard names the condition rather than trusting it.
 func TestMainRedFiresOnMainPushesOnly(t *testing.T) {

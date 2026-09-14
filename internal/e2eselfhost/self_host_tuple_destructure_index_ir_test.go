@@ -20,8 +20,8 @@ import (
 // arm already had the ExprIndex.ty fallback (#6165); the destructure did not.
 //
 // Which matches the evidence: `ps[0].1` is right while `var (i, v) = ps[0]`
-// is wrong, one token apart. The controls below hold that
-// line — remove the fallback and only the destructure cases fail.
+// is wrong, one token apart. The controls below pin that
+// difference — remove the fallback and only the destructure cases fail.
 var tupleDestructureIndexCases = []struct {
 	name string
 	src  string

@@ -17,7 +17,7 @@ import (
 // appends the trailing OpDrop its drop fns need — but __drop_dyn_<set> returns
 // void. The emitted module failed wasm validation outright: "not enough
 // arguments on the stack for drop". #8797; the verifier's own blindness to this
-// shape is #8798, which is why the Coverage.Skipped assertion below is load-bearing.
+// shape is #8798, which is why the Coverage.Skipped assertion below is essential.
 const dynBoxedCaptureSrc = `
 trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }

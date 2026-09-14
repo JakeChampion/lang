@@ -17,11 +17,11 @@ import (
 //   - `runtime_need_deps("<X>")` declares the same edges for `close_needs()`,
 //     the transitive closure taken once before the runtime is emitted.
 //
-// Both exist because a need can arrive by either door: most emit sites call the
+// Both exist because a need can arrive by either route: most emit sites call the
 // wrapper, but some seed a root directly (`.need("x")` at an op site, the
 // driver's `-ir-extra-need`), and those reach only the table. So an edge present
 // in one and missing from the other is a helper that links or not depending on
-// which door its need came in by.
+// which route its need came in by.
 //
 // That had already drifted: `mark_str_trim` marked `str_concat` — a dep a
 // trim-without-concat link failure proved, recorded in its own comment — while
@@ -101,7 +101,7 @@ func TestMarkWrappersAgreeWithRuntimeNeedDeps(t *testing.T) {
 		// The table may legitimately declare MORE than the wrapper: a root the
 		// wrapper never marks directly can still be pulled in transitively.
 		// What must not happen is the wrapper knowing an edge the table does
-		// not, because then only the wrapper door carries it.
+		// not, because then only the wrapper route carries it.
 		for _, d := range wrapperDeps {
 			if !contains(tableDeps, d) {
 				t.Errorf("mark_%s marks %q but runtime_need_deps(%q) does not declare it: %v\n"+

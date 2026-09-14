@@ -12,7 +12,7 @@ import (
 // silence — and with `-f` / `-e` / `-m` it canonicalises instead,
 // which is the walk `coreutils/lib/canon.fern` runs for realpath too.
 //
-// The corpus is built around the three places the modes part company:
+// The corpus is built around the three places the modes differ:
 // a final component that does not exist (`-f` and `-m` print it, `-e`
 // refuses), a component in the MIDDLE that does not exist (only `-m`),
 // and a symbolic-link cycle (only `-m`, which stops where it stood and

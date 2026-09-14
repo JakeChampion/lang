@@ -13,7 +13,7 @@ import (
 // (array-method monomorphisation, slice 3). The slice-1/2 path folded only
 // closure-free array methods (concat); these carry a closure ("fn") parameter,
 // which it excluded. The receiver alone fixes the instantiation `T`, and the
-// closure rides through as a fn value — register_array_method_generics now folds
+// closure passes through as a fn value — register_array_method_generics now folds
 // `(xs: T[]) reduce(f)` into a free generic `__arrm_reduce[T](xs, f)` whose body
 // delegates to the free `reduce`, which already lowers closures on the IR path.
 // (Methods carrying their OWN type params — map[U] / flat_map[U] / fold[A] /

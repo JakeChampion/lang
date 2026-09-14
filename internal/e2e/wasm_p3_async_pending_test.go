@@ -63,7 +63,7 @@ var p3PendMemCore = []byte{
 	0x07, 0x05, 0x01, 0x01, 'm', 0x02, 0x00,
 }
 
-// TestWasmP3AsyncPendingAwait is the WASI Preview-3 PENDING-await payoff,
+// TestWasmP3AsyncPendingAwait is the WASI Preview-3 PENDING-await gate,
 // assembled through the Go composer (component.BuildPendingAwaitComponent): a
 // consumer awaits a genuinely-deferring async import (the provider `thread.yield`s
 // before returning, so the `canon lower async` returns STARTED), drives the
