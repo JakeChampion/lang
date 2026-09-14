@@ -210,8 +210,11 @@ function env_records(f: ssasem.Func): semrecords.Record[] {
 
 // A function value's static type names no captures, so its box is matched at
 // run time: slot 0 holds the body's address, and each environment this
-// function knows is tried against it. A box built elsewhere, or one whose
-// captures own nothing, matches none and is released alone.
+// function knows is tried against it. A box whose captures own nothing
+// matches none and is released alone. A box built in another frame is only
+// ever lent to this one — the producer refuses an owning function parameter
+// and a function value result — so the frame that walks a box to zero is
+// the frame whose schema names its captures.
 function drop_captures(r: irlower.LowerResult, slot: i32, f: ssasem.Func): irlower.LowerResult {
     for rec in env_records(f) {
         r = emit(r, ir.op_load_local(slot));

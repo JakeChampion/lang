@@ -425,6 +425,10 @@ function twice_it(x: i32): i32 { return x * 2; }
 function apply_int(f: (i32) => i32, x: i32): i32 { return f(x); }
 function use_apply(n: i32): i32 { return apply_int(twice_it, n); }
 function shift_by(k: i32, n: i32): i32 { return apply_int((x: i32): i32 => { return x + k; }, n); }
+// A function value is lent, never handed over: a parameter that would take
+// its box and release it here has no contract, since only the frame that
+// built the box knows the captures its release must walk.
+function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 function bound_fn(n: i32): i32 { var g: (i32) => i32 = twice_it; return g(n) + g(1); }
 function head_of_arr(xs: i32[]): i32 { return xs[0]; }
 function apply_arr(f: (i32[]) => i32, xs: i32[]): i32 { return f(xs) + f([9, 8]); }
