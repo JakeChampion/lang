@@ -95,6 +95,37 @@ not for sequencing you have been delegated, not for confirmation that a plan is
 good. Momentum over check-ins; the PR and the report are how you keep the user
 informed, not a pre-flight ask.
 
+**A question is not a request for a change.** When the user is describing a
+problem, asking how something works, or thinking out loud, the deliverable is
+your assessment: report what you found and stop; apply a fix when they ask.
+
+**Check your last paragraph before ending the turn.** If it is a plan, a list of
+next steps, or a promise — "I'll…", "next I'll…" — that work is undone; do it
+now rather than announce it. A long session is not a reason to stop early: end
+the turn when the task is complete or when you are blocked on something only the
+user can provide.
+
+## Working style
+
+- **Say what you are doing, and recap at the end.** Long tool-calling turns go
+  quiet here — one suite runs 45 minutes — so open with the plan in a line and
+  close with a recap that stands on its own. The user sees at most a few lines
+  of any command's output: what they need from a test log goes in the reply, not
+  left in the terminal.
+- **Batch independent tool calls.** Reads, greps and builds that do not depend
+  on each other belong in one response; each extra turn costs a round trip, and
+  on a 4-core container those add up faster than the work itself.
+- **Edit surgically; never rewrite a file to change part of it.** The self-host
+  sources run to thousands of lines, and a whole-file rewrite buries the change
+  in a diff nobody can review.
+- **Write plainly.** Commit messages, PR bodies and `docs/` are read by people.
+  Say the thing literally instead of reaching for a metaphor — "a parameter
+  worth varying", not "a dial worth turning".
+
+`docs/AGENT-PROMPTING.md` has the rest: the model behaviours these four correct
+for, the harness settings no prompt can fix (effort levels, append-only history,
+compaction summaries), and the two places this repo overrides that guidance.
+
 ## Working with PRs
 
 **Every push of completed work gets a PR — no exceptions, never ask first.**
@@ -258,6 +289,11 @@ suites, so the debt stays visible in one place.
 - **A Fern quirk or bug you hit gets an issue AND a fix — never a workaround.**
   Standing order. If the fix is too broad for the current PR, file the issue,
   land nothing that routes around it, and make the fix the next PR.
+- **Generic agent guidance does not relax this bar.** The published prompting
+  advice for coding agents recommends deferring a pre-existing bug to a
+  follow-up and committing fewer tests; here the two rules above win, because a
+  follow-up issue standing in for the fix is the workaround this bar forbids.
+  `docs/AGENT-PROMPTING.md` records the override.
 
 Timings, memory budgets, sharding, the arena-vs-OOM exit codes, which instrument
 to measure with, and the arm64/qemu policy all live in
