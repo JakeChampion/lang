@@ -149,6 +149,19 @@ func handleStatSeekSource(path, out, app string) string {
             }
         }
     }
+    // Three whence values and no more: 5 is EINVAL on every target, and
+    // it beats a pipe's ESPIPE because the kernel checks the whence
+    // first. (3 and 4 are SEEK_DATA / SEEK_HOLE, which the natives pass
+    // through and no WASI preview has, so nothing here asks for them.)
+    match (stdout().seek(0 as i64, 5)) {
+        Ok(_) => { return 80; },
+        Err(e) => {
+            match (e) {
+                Other(_, msg) => { if (msg != "Invalid argument") { return 81; } },
+                _ => { return 82; }
+            }
+        }
+    }
     return 0;
 }
 `, path, out, app)
@@ -360,6 +373,19 @@ func handleStatSeekWasmSource() string {
             match (e) {
                 Other(_, msg) => { if (msg != "Illegal seek") { return 74; } },
                 _ => { return 75; }
+            }
+        }
+    }
+    // Three whence values and no more: 5 is EINVAL on every target, and
+    // it beats a pipe's ESPIPE because the kernel checks the whence
+    // first. (3 and 4 are SEEK_DATA / SEEK_HOLE, which the natives pass
+    // through and no WASI preview has, so nothing here asks for them.)
+    match (stdout().seek(0 as i64, 5)) {
+        Ok(_) => { return 80; },
+        Err(e) => {
+            match (e) {
+                Other(_, msg) => { if (msg != "Invalid argument") { return 81; } },
+                _ => { return 82; }
             }
         }
     }

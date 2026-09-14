@@ -2925,6 +2925,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// stream rather than jump to the end. On a Writer opened for append
 	// the offset moves as lseek's does and the writes keep landing at
 	// the end, O_APPEND's rule on every target.
+	//
+	// Those three are the whole domain, and anything else is EINVAL on
+	// every target. A Linux kernel takes two more — 3 and 4 are
+	// SEEK_DATA and SEEK_HOLE — which the natives pass through and
+	// neither WASI preview can answer, so a program that wants a hole
+	// is target-specific and has to say so.
 	seekResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Reader", "seek",

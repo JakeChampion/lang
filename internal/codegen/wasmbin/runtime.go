@@ -2793,7 +2793,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// (w, offset: i64, whence) → i32 — heap-form
 		// Result[i64, IoError]: lseek of the handle's fd, the same
 		// body as the Reader's on preview 1, where a handle is its
-		// fd; preview 2 has its own (wasi_fs_handle.go).
+		// fd; preview 2 has its own (wasi_writer_seek.go).
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderSeekBody,

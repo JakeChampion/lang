@@ -122,6 +122,10 @@ func selfHostHandleMethodSource(path string, out string, app string) string {
         Err(_) => { return 52; },
         Ok(s) => { if (s != "0123ab6789") { return 53; } }
     }
+    match (stdout().seek(0 as i64, 5)) {
+        Ok(_) => { return 80; },
+        Err(_) => {}
+    }
     return 0;
 }
 `, path, out, app)
@@ -294,6 +298,10 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
     match (read_file("out.txt")) {
         Err(_) => { return 52; },
         Ok(s) => { if (s != "0123ab6789") { return 53; } }
+    }
+    match (stdout().seek(0 as i64, 5)) {
+        Ok(_) => { return 80; },
+        Err(_) => {}
     }
     return 0;
 }

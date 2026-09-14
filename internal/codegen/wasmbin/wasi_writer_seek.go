@@ -17,7 +17,8 @@
 //     end, which is why the stream is left alone here;
 //   - a target past the end is legal (the file grows a hole on the next
 //     write), a negative one is EINVAL, and a handle with no descriptor
-//     — a stdio Writer, a pipe — is ESPIPE.
+//     — a stdio Writer, a pipe — is ESPIPE, which is the answer a pipe
+//     gives whatever the whence.
 package wasmbin
 
 import (
@@ -127,6 +128,9 @@ func buildWriterSeekBodyP2(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
+	// The whence is checked before the handle is: `lseek(pipe, 0, 5)` is
+	// EINVAL where `lseek(pipe, 0, 0)` is ESPIPE.
+	body = emitWhenceGuardP2(body, idxs, 2, 3, 5, 6)
 	// A handle with no descriptor has no offset to move: ESPIPE, the
 	// same refusal lseek gives on a pipe.
 	body = inst.InstLocalGet(body, 0)
