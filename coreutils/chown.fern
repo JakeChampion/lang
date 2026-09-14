@@ -55,6 +55,7 @@
 // corpus renames anything under a running chown, so the two agree there; the
 // gap is real all the same.
 import "std/array";
+import "./lib/filetype";
 import "./lib/gnu";
 import "./lib/owner";
 
@@ -314,18 +315,6 @@ function child_path(dir: string, name: string): string {
   return dir + "/" + name;
 }
 
-function s_ifmt(): u32 {
-  return 61440 as u32;
-}
-
-function is_dir_mode(m: u32): boolean {
-  return (m & s_ifmt()) == 16384 as u32;
-}
-
-function is_link_mode(m: u32): boolean {
-  return (m & s_ifmt()) == 40960 as u32;
-}
-
 // ---- diagnostics -----------------------------------------------------------
 // A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
 // the message, not the failure.
@@ -506,12 +495,12 @@ function look(s: Settings, path: string, top: boolean): (Seen, string) {
   var want_target: boolean = follows(s) || descends_links(s, top);
   match (lstat(path)) {
     Ok(li) => {
-      if (!want_target || !is_link_mode(li.mode)) {
-        return (Seen { ok: true, uid: li.uid as i64, gid: li.gid as i64, is_dir: is_dir_mode(li.mode), is_link: is_link_mode(li.mode) }, "");
+      if (!want_target || !filetype.is_link(li.mode)) {
+        return (Seen { ok: true, uid: li.uid as i64, gid: li.gid as i64, is_dir: filetype.is_dir(li.mode), is_link: filetype.is_link(li.mode) }, "");
       }
       match (stat(path)) {
         Ok(ti) => {
-          var dir: boolean = is_dir_mode(ti.mode) && descends_links(s, top);
+          var dir: boolean = filetype.is_dir(ti.mode) && descends_links(s, top);
           var uid: i64 = ti.uid as i64;
           var gid: i64 = ti.gid as i64;
           if (!follows(s)) {

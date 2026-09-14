@@ -1,0 +1,11 @@
+// ls.fern — GNU-compatible `ls`: list directory contents.
+//
+//   ls [OPTION]... [FILE]...
+//
+// The program is `lib/listing.fern`, which `dir` and `vdir` share;
+// this file names which of the three it is.
+import "./lib/listing";
+
+function main(): i32 {
+  return listing.ls();
+}

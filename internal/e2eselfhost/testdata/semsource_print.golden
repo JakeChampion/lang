@@ -1092,7 +1092,15 @@ func wrap_opt {
     ret v3
 }
 
-refused wide builtin union payload
+modes 1 result Option[i64]
+v0:i64 v1:Option[i64]
+func refused_wide_opt {
+  b0:
+    v0 = param 0
+    v1 = variant_new Some v0
+    ret v1
+}
+
 modes 1 result Shape
 v0:i32 v1:i32 v2:boolean v3:Shape v4:i32 v5:boolean v6:Shape v7:i32 v8:boolean v9:i32 v10:i32 v11:i32[] v12:Shape v13:i32[] v14:Shape
 func shape {

@@ -6136,7 +6136,10 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     }
     if (arm64_str_starts_with(line, ".quad")) { return Arm64GasProg { ...p, bss_size: p.bss_size + 8 }; }
     if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) { return Arm64GasProg { ...p, bss_size: p.bss_size + 4 }; }
-    if (arm64_str_starts_with(line, ".byte")) { return Arm64GasProg { ...p, bss_size: p.bss_size + 1 }; }
+    // A `.byte` list reserves one byte PER VALUE, so the count is its
+    // commas plus one; reserving one for the whole list shifted every
+    // later symbol.
+    if (arm64_str_starts_with(line, ".byte")) { return Arm64GasProg { ...p, bss_size: p.bss_size + arm64_gas_value_count(line, 5) }; }
     if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
         var sp2: i32 = arm64_str_indexof(line, " ");
         if (sp2 >= 0) {
@@ -6210,7 +6213,26 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
         return lp;
     }
     if (arm64_str_starts_with(line, ".byte")) {
-        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(line, 5, line.len()))), 1);
+        // Every comma-separated value, the way `.long` above takes them.
+        // Taking only the first laid one byte down for a whole table and
+        // shifted every later data symbol.
+        var brest: string = arm64_gas_trim(slice_unchecked(line, 5, line.len()));
+        var bp: Arm64GasProg = p;
+        var btok: string = "";
+        var bci: i32 = 0;
+        while (bci < brest.len()) {
+            if (brest[bci] == b',') {
+                bp = arm64_gas_data_le(bp, arm64_gas_atoi64(arm64_gas_trim(btok)), 1);
+                btok = "";
+            } else {
+                btok = btok + slice_unchecked(brest, bci, bci + 1);
+            }
+            bci = bci + 1;
+        }
+        if (arm64_gas_trim(btok).len() > 0) {
+            bp = arm64_gas_data_le(bp, arm64_gas_atoi64(arm64_gas_trim(btok)), 1);
+        }
+        return bp;
     }
     if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
         return arm64_gas_data_asciz(p, line);
@@ -6228,6 +6250,18 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
         }
     }
     return p; // other directives ignored
+}
+
+// arm64_gas_value_count counts the comma-separated values a data directive
+// carries, `from` being the index just past its mnemonic.
+function arm64_gas_value_count(line: string, from: i32): i32 {
+    var n: i32 = 1;
+    var i: i32 = from;
+    while (i < line.len()) {
+        if (line[i] == b',') { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
 }
 
 // arm64_lit_le64 appends the 8 little-endian bytes of a 64-bit literal-pool

@@ -77,6 +77,7 @@ import "./lib/gnu";
 import "./lib/tz";
 import "./lib/pwdb";
 import "./lib/canon";
+import "./lib/filetype";
 
 function help_text(): string {
   var out: string = "";
@@ -611,97 +612,6 @@ function dev_minor(dev: u64): u64 {
   return dev & 0xff as u64 | dev >> 12 as u64 & 0xffffff00 as u64;
 }
 
-// ---- the file record --------------------------------------------------------
-function s_ifmt(): u32 {
-  return 0xf000 as u32;
-}
-
-function file_type_name(mode: u32, size: i64): string {
-  var t: u32 = mode & s_ifmt();
-  if (t == 0x8000 as u32) {
-    if (size == 0 as i64) {
-      return "regular empty file";
-    }
-    return "regular file";
-  }
-  if (t == 0x4000 as u32) {
-    return "directory";
-  }
-  if (t == 0xa000 as u32) {
-    return "symbolic link";
-  }
-  if (t == 0x2000 as u32) {
-    return "character special file";
-  }
-  if (t == 0x6000 as u32) {
-    return "block special file";
-  }
-  if (t == 0x1000 as u32) {
-    return "fifo";
-  }
-  if (t == 0xc000 as u32) {
-    return "socket";
-  }
-  return "weird file";
-}
-
-function type_letter(mode: u32): string {
-  var t: u32 = mode & s_ifmt();
-  if (t == 0x4000 as u32) {
-    return "d";
-  }
-  if (t == 0xa000 as u32) {
-    return "l";
-  }
-  if (t == 0x2000 as u32) {
-    return "c";
-  }
-  if (t == 0x6000 as u32) {
-    return "b";
-  }
-  if (t == 0x1000 as u32) {
-    return "p";
-  }
-  if (t == 0xc000 as u32) {
-    return "s";
-  }
-  if (t == 0x8000 as u32) {
-    return "-";
-  }
-  return "?";
-}
-
-// One rwx triple. `extra` is the setuid / setgid / sticky bit for this
-// triple and `hi` / `lo` the letters it takes when the execute bit is
-// set and when it is not.
-function triple(mode: u32, shift: i32, extra: u32, hi: string, lo: string): string {
-  var bits: u32 = mode >> shift as u32 & 7 as u32;
-  var out: string = "-";
-  if ((bits & 4 as u32) != 0 as u32) {
-    out = "r";
-  }
-  var w: string = "-";
-  if ((bits & 2 as u32) != 0 as u32) {
-    w = "w";
-  }
-  var x: string = "-";
-  if ((bits & 1 as u32) != 0 as u32) {
-    x = "x";
-  }
-  if ((mode & extra) != 0 as u32) {
-    if ((bits & 1 as u32) != 0 as u32) {
-      x = hi;
-    } else {
-      x = lo;
-    }
-  }
-  return out + w + x;
-}
-
-function mode_string(mode: u32): string {
-  return type_letter(mode) + triple(mode, 6, 0x800 as u32, "s", "S") + triple(mode, 3, 0x400 as u32, "s", "S") + triple(mode, 0, 0x200 as u32, "t", "T");
-}
-
 // ---- timestamps -------------------------------------------------------------
 function pad2(n: i32): string {
   if (n < 10) {
@@ -893,7 +803,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone, style: i32): Rendered {
     return ok_rendered(out_octal(d, (st.mode & 0xfff as u32) as u64));
   }
   if (c == 65) {
-    return ok_rendered(out_string(d, mode_string(st.mode)));
+    return ok_rendered(out_string(d, filetype.mode_string(st.mode)));
   }
   if (c == 98) {
     return ok_rendered(out_unsigned(d, st.blocks as u64));
@@ -911,7 +821,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone, style: i32): Rendered {
     return ok_rendered(out_hex(d, st.mode as u64));
   }
   if (c == 70) {
-    return ok_rendered(out_string(d, file_type_name(st.mode, st.size)));
+    return ok_rendered(out_string(d, filetype.type_name(st.mode, st.size)));
   }
   if (c == 103) {
     return ok_rendered(out_unsigned(d, st.gid as u64));
@@ -1167,7 +1077,7 @@ function stat_of(name: string, deref: boolean): Result[FileStat, IoError] {
 }
 
 function is_symlink(st: FileStat): boolean {
-  return (st.mode & s_ifmt()) == 0xa000 as u32;
+  return filetype.is_link(st.mode);
 }
 
 function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, style: i32, builtin: string): (io_buffered.BufWriter, boolean) {
