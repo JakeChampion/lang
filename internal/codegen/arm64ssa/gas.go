@@ -1230,6 +1230,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_sum_bytes":          emitSumBytesHelper,
+	"__fern_crc32_cksum":        emitCrc32CksumHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -4996,6 +4997,59 @@ func emitSumBytesHelper(w func(string, ...any)) {
 	w("\tadd x8, x8, #1")
 	w("\tb .Lssa_sum_bytes_loop")
 	w(".Lssa_sum_bytes_ret:")
+	w("\tmov w0, w4")
+	w("\tret")
+}
+
+// emitCrc32CksumHelper writes __fern_crc32_cksum(crc, s) -> the bytes of `s`
+// folded into the running CRC-32 that cksum(1) prints: poly 0x04C11DB7, MSB
+// first, unreflected, and no final complement — the length fold and the
+// complement belong to std/hash's finish, not to a chunk.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The native arm64 emitter
+// folds the same bytes with pmull/pmull2, and the declared baseline's crypto
+// extensions make that portable here whenever a measurement asks for it. It is
+// not this commit: §3.4 puts the scalar lowering in every backend FIRST,
+// because a builtin that is fast on two legs and absent on six cannot be
+// adopted by std/hash at all.
+//
+// Branchless: the polynomial is selected by an arithmetic shift of the sign
+// bit rather than a conditional branch, so the eight bit steps have nothing
+// unpredictable between them.
+//
+// crc arrives in w0 and the string in x1 — the SCALAR is first here, which is
+// the reverse of the family's other kernels. Strings on this backend are ONE
+// word (the data pointer) with the length at [ptr-4]. Leaf: no frame, and
+// every register it touches (x4..x9 and x13) is caller-saved.
+//
+// An empty string returns the incoming crc unchanged, which is what makes
+// chunked hashing associative.
+func emitCrc32CksumHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_crc32_cksum"))
+	w("\tmov w4, w0")           // running crc
+	w("\tldur w2, [x1, #-4]")   // len
+	w("\tmov x8, x1")           // cursor
+	w("\tadd x9, x1, w2, uxtw") // end = data + len
+	w("\tmovz w5, #0x1db7")     // poly 0x04c11db7
+	w("\tmovk w5, #0x04c1, lsl #16")
+	w(".Lssa_crc32_scan:")
+	w("\tcmp x8, x9")
+	w("\tb.ge .Lssa_crc32_ret")
+	w("\tldrb w6, [x8]")
+	w("\tlsl w6, w6, #24")
+	w("\teor w4, w4, w6")
+	w("\tmov w7, #8")
+	w(".Lssa_crc32_bit:")
+	w("\tasr w13, w4, #31")
+	w("\tand w13, w13, w5")
+	w("\tlsl w4, w4, #1")
+	w("\teor w4, w4, w13")
+	w("\tsub w7, w7, #1")
+	w("\tcbnz w7, .Lssa_crc32_bit")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_crc32_scan")
+	w(".Lssa_crc32_ret:")
 	w("\tmov w0, w4")
 	w("\tret")
 }

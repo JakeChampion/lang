@@ -81,7 +81,9 @@ func runCrc32CksumCorpus(t *testing.T, run func(t *testing.T, src string) string
 	var body strings.Builder
 	want := make([]string, 0, len(cases))
 	for _, c := range cases {
-		body.WriteString(fmt.Sprintf("    write((__crc32_cksum(%d, %s)).to_string()); write(\"\\n\");\n",
+		// `print` rather than `write` + a newline: the x86-64 `-backend ssa`
+		// leg has no `write` at all, and the two differ only in that newline.
+		body.WriteString(fmt.Sprintf("    print((__crc32_cksum(%d, %s)).to_string());\n",
 			int32(c.crc), fernQuote(c.s)))
 		want = append(want, fmt.Sprint(crc32CksumRef(c.crc, c.s)))
 	}

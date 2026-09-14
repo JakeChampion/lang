@@ -1917,6 +1917,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_ascii_run":              emitAsciiRunHelper,
 	"__fern_count_byte":             emitCountByteHelper,
 	"__fern_sum_bytes":              emitSumBytesHelper,
+	"__fern_crc32_cksum":            emitCrc32CksumHelper,
 	"__alloc_u8":                    emitAllocU8Helper,
 	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
 	"__str_slice":                   emitStrSliceHelper,
@@ -3075,6 +3076,56 @@ func emitSumBytesHelper(w func(string, ...any)) {
 	w("\tadd edx, 1")
 	w("\tjmp .Lssa_sum_bytes_loop")
 	w(".Lssa_sum_bytes_ret:")
+	w("\tret")
+}
+
+// emitCrc32CksumHelper writes __fern_crc32_cksum(crc, s) -> the bytes of `s`
+// folded into the running CRC-32 that cksum(1) prints: poly 0x04C11DB7, MSB
+// first, unreflected, and no final complement — the length fold and the
+// complement belong to std/hash's finish, not to a chunk.
+//
+// SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). The flat x86-64 backend
+// folds the same bytes with pclmulqdq at 4.3x, and this backend's baseline has
+// the instruction too, so the fold is portable here whenever a measurement
+// asks for it. It is not this commit: §3.4 puts the scalar lowering in every
+// backend FIRST, because a builtin that is fast on two legs and absent on six
+// cannot be adopted by std/hash at all.
+//
+// Branchless: the polynomial is selected by an arithmetic shift of the sign
+// bit rather than a conditional jump, so the eight bit steps have no
+// unpredictable branch between them.
+//
+// crc arrives in edi and the string in rsi — the SCALAR is first here, which
+// is the reverse of the family's other kernels. Strings on this backend are
+// ONE word (the data pointer) with the length at [ptr-4]. Leaf: no frame, and
+// every register it touches is caller-saved.
+//
+// An empty string returns the incoming crc unchanged, which is what makes
+// chunked hashing associative.
+func emitCrc32CksumHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_crc32_cksum"))
+	w("\tmov eax, edi")                   // running crc
+	w("\tmov r8d, %s", memRef("rsi", -4)) // len
+	w("\txor edx, edx")                   // cursor, as an INDEX
+	w(".Lssa_crc32_scan:")
+	w("\tcmp edx, r8d")
+	w("\tjae .Lssa_crc32_ret")
+	w("\tmovzx r9d, byte ptr [rsi + rdx]")
+	w("\tshl r9d, 24")
+	w("\txor eax, r9d")
+	w("\tmov r11d, 8")
+	w(".Lssa_crc32_bit:")
+	w("\tmov r10d, eax")
+	w("\tsar r10d, 31")
+	w("\tand r10d, 0x04c11db7")
+	w("\tadd eax, eax")
+	w("\txor eax, r10d")
+	w("\tsub r11d, 1")
+	w("\tjnz .Lssa_crc32_bit")
+	w("\tadd edx, 1")
+	w("\tjmp .Lssa_crc32_scan")
+	w(".Lssa_crc32_ret:")
 	w("\tret")
 }
 
