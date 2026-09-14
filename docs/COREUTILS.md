@@ -226,7 +226,10 @@ below the floor, and the container spent its life comparing against it, which
 is not a gate (#9162). The image now builds 9.4 and puts it ahead of
 `/usr/bin`, so a green run in the container means what a green lane means.
 That also supplies the two binaries Debian does not build at all, `uptime`
-and `kill`. Benchmarks
+and `kill`, and asserts both rather than only the first. CI's `test-units`
+lane builds the same 9.4 and installs those two beside `/usr/bin`, with both
+in the cache key — a cache written when the step installed `uptime` alone
+cannot satisfy a run that needs both. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
