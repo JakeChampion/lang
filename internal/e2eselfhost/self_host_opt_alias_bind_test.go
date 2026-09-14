@@ -266,6 +266,10 @@ function round(i: i32): i32 {
 		{
 			// REFUSED: a link hands the PAYLOAD out. All-or-nothing — the escape is
 			// on `u`, and it costs `t` and `v` their credit too.
+			// 100, not 200: the payload the arm carries out is a counted
+			// reference since the Some binding is spelled as an array (#9190),
+			// so `out`'s sweep no longer frees it out from under the refused
+			// box; the call-scrutinee form of the same shape always read 100.
 			name: "refuses_alias_chain_payload_out",
 			src: `function round(i: i32): i32 {
     var t: Option[i32[]] = Some([i, i + 1]);
@@ -275,7 +279,7 @@ function round(i: i32): i32 {
     match (u) { Some(a) => { out = a; }, None => {} }
     return out.len() + i;
 }` + optAliasBindMain,
-			want: 4, wantFrees: 200,
+			want: 4, wantFrees: 100,
 		},
 		{
 			// REFUSED: the last link is RETURNED, so the box outlives the frame and
@@ -309,7 +313,7 @@ function round(i: i32): i32 {
     match (x) { Some(xs) => { out = xs; }, None => {} }
     return out.len();
 }` + optAliasBindMain,
-			want: 34, wantFrees: 200,
+			want: 34, wantFrees: 100,
 		},
 		{
 			// REFUSED: the alias is REASSIGNED, so its final value is not the box
