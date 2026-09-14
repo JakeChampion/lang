@@ -778,7 +778,8 @@ func buildReadDirRawBody(idxs map[string]uint32) []byte {
 // 1 on the stack when the name at (nameLocal, namlenLocal) is one of
 // them. WASI's fd_readdir yields both; Go's os.ReadDir — which the
 // interpreter wraps — does not, so read_dir must drop them or the
-// two backends disagree on every directory listing.
+// two backends disagree on every directory listing. read_dir_all
+// wants them, and skips this test.
 func emitIsDotName(body []byte, nameLocal, namlenLocal uint32) []byte {
 	// namlen == 1 && name[0] == '.'
 	body = inst.InstLocalGet(body, namlenLocal)
@@ -807,7 +808,19 @@ func emitIsDotName(body []byte, nameLocal, namlenLocal uint32) []byte {
 	return body
 }
 
-// buildReadDirBody assembles __fern_read_dir.
+// buildReadDirBody assembles __fern_read_dir: base names, unsorted,
+// "." and ".." filtered out to match os.ReadDir.
+func buildReadDirBody(idxs map[string]uint32) []byte {
+	return buildReadDirLike(idxs, true)
+}
+
+// buildReadDirAllBody assembles __fern_read_dir_all: the same listing
+// with "." and ".." kept, in the order fd_readdir reports them.
+func buildReadDirAllBody(idxs map[string]uint32) []byte {
+	return buildReadDirLike(idxs, false)
+}
+
+// buildReadDirLike is the body both share.
 //
 // Signature: (path_data, path_len) → i32 — heap-form
 // Result[string[], IoError].
@@ -816,7 +829,8 @@ func emitIsDotName(body []byte, nameLocal, namlenLocal uint32) []byte {
 // dirent records twice: once to count the entries that survive the
 // "." / ".." filter, once to fill the array. Two passes rather than a
 // growable array because the count decides the single allocation, and
-// the buffer is already in hand.
+// the buffer is already in hand. `skipDots` applies the filter in both
+// passes.
 //
 // Entries are base names, unsorted — the checker's documented
 // contract, and what the interpreter's os.ReadDir yields.
@@ -827,7 +841,7 @@ func emitIsDotName(body []byte, nameLocal, namlenLocal uint32) []byte {
 //	6: $buf       7: $used           8: $off    9: $namlen
 //	10: $name     11: $count         12: $arr_base
 //	13: $arr      14: $errno         15: $err_ptr  16: $box
-func buildReadDirBody(idxs map[string]uint32) []byte {
+func buildReadDirLike(idxs map[string]uint32, skipDots bool) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
@@ -885,20 +899,24 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 7)
 
-	// Pass 1: count entries, skipping "." and "..".
+	// Pass 1: count the entries the listing will hold.
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 8) // off
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 11) // count
 	body = emitDirentWalk(body, 6, 7, 8, 9, 10, func(b []byte) []byte {
-		b = emitIsDotName(b, 10, 9)
-		b = numeric.InstI32Eqz(b)
-		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		if skipDots {
+			b = emitIsDotName(b, 10, 9)
+			b = numeric.InstI32Eqz(b)
+			b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		}
 		b = inst.InstLocalGet(b, 11)
 		b = inst.InstI32Const(b, 1)
 		b = numeric.InstI32Add(b)
 		b = inst.InstLocalSet(b, 11)
-		b = inst.InstEnd(b)
+		if skipDots {
+			b = inst.InstEnd(b)
+		}
 		return b
 	})
 
@@ -924,9 +942,11 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 11)
 	body = emitDirentWalk(body, 6, 7, 8, 9, 10, func(b []byte) []byte {
-		b = emitIsDotName(b, 10, 9)
-		b = numeric.InstI32Eqz(b)
-		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		if skipDots {
+			b = emitIsDotName(b, 10, 9)
+			b = numeric.InstI32Eqz(b)
+			b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		}
 		{
 			// slot = arr + idx*8
 			b = inst.InstLocalGet(b, 13)
@@ -954,7 +974,9 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 			b = numeric.InstI32Add(b)
 			b = inst.InstLocalSet(b, 11)
 		}
-		b = inst.InstEnd(b)
+		if skipDots {
+			b = inst.InstEnd(b)
+		}
 		return b
 	})
 
@@ -2250,7 +2272,9 @@ func emitDirRecWalk(body []byte, bufLocal, countLocal, iLocal, recLocal uint32, 
 // No "." / ".." filter either — wasi-filesystem specifies that
 // read-directory omits them, where preview-1's fd_readdir yields both.
 // The e2e test asserts the resulting counts match across backends,
-// which is what would catch the spec being wrong about that.
+// which is what would catch the spec being wrong about that. That also
+// makes this __fern_read_dir_all: with the dot entries never reported,
+// the two helpers have the same answer to give.
 //
 // Locals after the two params:
 //

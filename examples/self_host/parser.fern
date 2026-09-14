@@ -8101,7 +8101,7 @@ pub function builtin_function_names(): string[] {
         "open_reader", "open_writer", "open_appender", "open_exclusive",
         "open_reader_with", "open_writer_with",
         // filesystem
-        "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
+        "read_file", "read_file_bytes", "write_file", "write_file_exec", "read_dir", "read_dir_all", "remove_dir_all", "remove_file",
         "create_dir_all", "stat", "lstat", "access", "temp_dir",
         // the FILESYSTEM a path resolves on, where stat describes one entry
         "statfs",

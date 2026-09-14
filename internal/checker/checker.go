@@ -2201,6 +2201,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// read_dir_all(path): Result[string[], IoError] — read_dir
+	// without the `.` / `..` filter: every name the directory
+	// holds, in the order the kernel hands them back. The two
+	// exist separately because dropping the dot entries is what
+	// nearly every caller wants, while a listing tool needs the
+	// raw order — `ls -f` prints entries in readdir order, and
+	// synthesizing `.` and `..` at the front puts them somewhere
+	// the real directory did not.
+	//
+	// Inherits read_dir's UTF-8-path assumption. On a target
+	// whose directory reader does not report the dot entries at
+	// all (wasm32-wasi preview 2) the result is read_dir's list.
+	c.info.FuncSigs["read_dir_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// stat(path): Result[FileStat, IoError] — pull file
 	// metadata. `is_file` / `is_dir` distinguish the kind;
 	// `size` carries byte size for regular files (and the

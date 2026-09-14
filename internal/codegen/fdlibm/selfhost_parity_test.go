@@ -205,11 +205,18 @@ func TestSelfHostWasmTwoOverPiMatches(t *testing.T) {
 }
 
 // powIntMaxSpellings is the bound as each self-host emitter writes it —
-// three assembly/WAT dialects, so the number is the only shared part.
-var powIntMaxSpellings = map[string]func(int) string{
-	selfHostAsmX86:   func(n int) string { return fmt.Sprintf("cmpq $%d, %%rcx", n) },
-	selfHostAsmArm64: func(n int) string { return fmt.Sprintf("cmp x11, #%d", n) },
-	selfHostWasm:     func(n int) string { return fmt.Sprintf("(i64.const %d)", n) },
+// three assembly/WAT dialects, so the number is the only shared part — with
+// the text that anchors the search to pow's own emitter. The anchor is the
+// line that emits the symbol DEFINITION, not any mention of the name: each
+// file also has call sites and comments naming it, and the earliest of those
+// is thousands of lines above the emitter.
+var powIntMaxSpellings = map[string]struct {
+	anchor string
+	spell  func(int) string
+}{
+	selfHostAsmX86:   {".globl __fern_pow_f64", func(n int) string { return fmt.Sprintf("cmpq $%d, %%rcx", n) }},
+	selfHostAsmArm64: {".global __fern_pow_f64", func(n int) string { return fmt.Sprintf("cmp x11, #%d", n) }},
+	selfHostWasm:     {"(func $__fern_pow_f64", func(n int) string { return fmt.Sprintf("(i64.const %d)", n) }},
 }
 
 // TestSelfHostPowIntMaxMatches pins __fern_pow_f64's repeated-squaring bound
@@ -222,16 +229,40 @@ var powIntMaxSpellings = map[string]func(int) string{
 // is what #6405 was — a wrong answer no gate could distinguish from a rounding
 // difference, for three weeks.
 func TestSelfHostPowIntMaxMatches(t *testing.T) {
-	for path, spell := range powIntMaxSpellings {
-		src := readSelfHost(t, path)
-		if want := spell(PowIntMax); !strings.Contains(src, want) {
+	for path, emitter := range powIntMaxSpellings {
+		spell := emitter.spell
+		region := powEmitterRegion(t, path, emitter.anchor, readSelfHost(t, path))
+		if want := spell(PowIntMax); !strings.Contains(region, want) {
 			t.Errorf("%s does not emit %q — PowIntMax is %d; either this emitter's bound has drifted or its spelling has, and both are the drift this gate exists for",
 				path, want, PowIntMax)
 		}
 		// A leftover 64 in the same instruction shape is the specific
 		// regression: the old bound, still readable as deliberate.
-		if stale := spell(64); PowIntMax != 64 && strings.Contains(src, stale) {
+		if stale := spell(64); PowIntMax != 64 && strings.Contains(region, stale) {
 			t.Errorf("%s still emits %q, the pre-#6405 bound", path, stale)
 		}
 	}
+}
+
+// powEmitterRegion narrows a self-host source to the emitter that writes
+// __fern_pow_f64 — from the line emitting the symbol definition to the end of
+// the Fern function holding it.
+//
+// The whole file is the wrong haystack: these spellings are ordinary
+// instructions, not pow's alone. `cmp x11, #64` is also how the arm64 crc32
+// kernel tests for a 64-byte fold block, so a file-wide search for the stale
+// bound reported a bound that is not there and cannot drift, while a real
+// drift inside pow would still have been found. Scoping it keeps the gate
+// pointed at the one number it is about.
+func powEmitterRegion(t *testing.T, path, anchor, src string) string {
+	t.Helper()
+	i := strings.Index(src, anchor)
+	if i < 0 {
+		t.Fatalf("no %q in %s — the extraction pattern has gone stale", anchor, path)
+	}
+	rest := src[i:]
+	if end := strings.Index(rest, "\n}\n"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }

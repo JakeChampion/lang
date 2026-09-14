@@ -663,7 +663,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// working buffers (#9001); remove_dir_all also releases its child paths.
 	if g.usesChdir || g.usesRemoveDirAll || g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir ||
 		g.usesRemoveDir || g.usesCreateLink || g.usesCreateSymlink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
+		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesAccess || g.usesReadLink ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt {
 		g.usesFree = true
@@ -1032,6 +1032,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesReadDir {
 		g.emitReadDirRuntime()
+	}
+	if g.usesReadDirAll {
+		g.emitReadDirAllRuntime()
 	}
 	if g.usesStat {
 		g.emitStatRuntime()
@@ -1576,6 +1579,7 @@ type generator struct {
 	usesRemoveFile     bool
 	usesTempDir        bool
 	usesReadDir        bool
+	usesReadDirAll     bool
 	usesStat           bool
 	usesLstat          bool
 	usesFdStat         bool
@@ -2181,6 +2185,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "read_dir":
 		g.usesReadDir = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "read_dir_all":
+		g.usesReadDirAll = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "stat":
@@ -3807,6 +3815,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_temp_dir"
 		case "read_dir":
 			target = "__fern_read_dir"
+		case "read_dir_all":
+			target = "__fern_read_dir_all"
 		case "stat":
 			target = "__fern_stat"
 		case "lstat":
@@ -15916,18 +15926,31 @@ func (g *generator) emitTempDirRuntime() {
 
 // emitReadDirRuntime emits `__fern_read_dir(path) →
 // Result[string[], IoError]` — lists the non-recursive children
-// of `path` as base names (unsorted). Pipeline: openat(O_RDONLY|
-// O_DIRECTORY) → getdents64-drain into a 1 MiB heap buffer →
-// close → pass 1 counts entries (skipping "." / "..") → array
-// alloc (canonical layout: 16-byte header, cap@data-12,
-// rc=1@data-8, len@data-4, 8-byte string-ptr elements) → pass 2
-// fills with fresh rc=1 strings. openat failure → Err(IoError).
-// System V: rdi = path string value.
+// of `path` as base names (unsorted), dropping "." and "..".
 func (g *generator) emitReadDirRuntime() {
+	g.emitReadDirLike("__fern_read_dir", ".Lrdd", true)
+}
+
+// emitReadDirAllRuntime emits `__fern_read_dir_all(path) →
+// Result[string[], IoError]` — the same listing with "." and ".."
+// kept, in the order getdents64 reports them.
+func (g *generator) emitReadDirAllRuntime() {
+	g.emitReadDirLike("__fern_read_dir_all", ".Lrda", false)
+}
+
+// emitReadDirLike is the body both share. Pipeline: openat(O_RDONLY|
+// O_DIRECTORY) → getdents64-drain into a 1 MiB heap buffer → close →
+// pass 1 counts entries → array alloc (canonical layout: 16-byte
+// header, cap@data-12, rc=1@data-8, len@data-4, 8-byte string-ptr
+// elements) → pass 2 fills with fresh rc=1 strings. openat failure →
+// Err(IoError). `skipDots` drops the "." / ".." records in both
+// passes. System V: rdi = path string value.
+func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
+	L := func(suffix string) string { return lb + "_" + suffix }
 	g.line("")
-	g.line(".globl __fern_read_dir")
-	g.line(".type __fern_read_dir, @function")
-	g.label("__fern_read_dir")
+	g.line(".globl " + sym)
+	g.line(".type " + sym + ", @function")
+	g.label(sym)
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // pathz, then array data ptr
@@ -15949,14 +15972,14 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("call __fern_alloc")
 	g.emit("mov rbx, rax")
 	g.emit("xor ecx, ecx")
-	g.label(".Lrdd_cp")
+	g.label(L("cp"))
 	g.emit("cmp rcx, r13")
-	g.emit("jae .Lrdd_cpd")
+	g.emit("jae " + L("cpd"))
 	g.emit("mov al, [r12 + rcx]")
 	g.emit("mov [rbx + rcx], al")
 	g.emit("add rcx, 1")
-	g.emit("jmp .Lrdd_cp")
-	g.label(".Lrdd_cpd")
+	g.emit("jmp " + L("cp"))
+	g.label(L("cpd"))
 	g.emit("mov byte ptr [rbx + r13], 0")
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=0x10000, 0)
 	g.emit("mov edi, -100")
@@ -15970,52 +15993,56 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("call __fern_free")
 	g.emit("mov rax, r14")
 	g.emit("test rax, rax")
-	g.emit("js .Lrdd_err")
+	g.emit("js " + L("err"))
 	g.emit("mov r12, rax") // fd
 	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
 	g.emit("mov edi, 1048576")
 	g.emit("call __fern_alloc")
 	g.emit("mov r13, rax")
 	g.emit("xor r14, r14")
-	g.label(".Lrdd_g")
+	g.label(L("g"))
 	g.emit("mov edx, 1048576")
 	g.emit("sub rdx, r14")
-	g.emit("jz .Lrdd_gd")
+	g.emit("jz " + L("gd"))
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r14]")
 	g.emitSyscall(217)
 	g.emit("test rax, rax")
-	g.emit("jle .Lrdd_gd")
+	g.emit("jle " + L("gd"))
 	g.emit("add r14, rax")
-	g.emit("jmp .Lrdd_g")
-	g.label(".Lrdd_gd")
+	g.emit("jmp " + L("g"))
+	g.label(L("gd"))
 	g.emit("mov edi, r12d")
 	g.emitSyscall(3)
-	// Pass 1: count entries that aren't "." / "..".
+	// Pass 1: count the entries the listing will hold.
 	g.emit("xor r12d, r12d") // count (fd is closed)
 	g.emit("xor r15, r15")   // offset
-	g.label(".Lrdd_c1")
+	g.label(L("c1"))
 	g.emit("cmp r15, r14")
-	g.emit("jae .Lrdd_c1d")
-	g.emit("lea rsi, [r13 + r15 + 19]") // d_name ptr
-	g.emit("movzx ecx, byte ptr [rsi]")
-	g.emit("cmp cl, 46") // '.'
-	g.emit("jne .Lrdd_c1n")
-	g.emit("movzx ecx, byte ptr [rsi + 1]")
-	g.emit("test cl, cl")
-	g.emit("jz .Lrdd_c1s") // "."
-	g.emit("cmp cl, 46")
-	g.emit("jne .Lrdd_c1n")
-	g.emit("movzx ecx, byte ptr [rsi + 2]")
-	g.emit("test cl, cl")
-	g.emit("jz .Lrdd_c1s") // ".."
-	g.label(".Lrdd_c1n")
+	g.emit("jae " + L("c1d"))
+	if skipDots {
+		g.emit("lea rsi, [r13 + r15 + 19]") // d_name ptr
+		g.emit("movzx ecx, byte ptr [rsi]")
+		g.emit("cmp cl, 46") // '.'
+		g.emit("jne " + L("c1n"))
+		g.emit("movzx ecx, byte ptr [rsi + 1]")
+		g.emit("test cl, cl")
+		g.emit("jz " + L("c1s")) // "."
+		g.emit("cmp cl, 46")
+		g.emit("jne " + L("c1n"))
+		g.emit("movzx ecx, byte ptr [rsi + 2]")
+		g.emit("test cl, cl")
+		g.emit("jz " + L("c1s")) // ".."
+		g.label(L("c1n"))
+	}
 	g.emit("add r12, 1")
-	g.label(".Lrdd_c1s")
+	if skipDots {
+		g.label(L("c1s"))
+	}
 	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
 	g.emit("add r15, rax")
-	g.emit("jmp .Lrdd_c1")
-	g.label(".Lrdd_c1d")
+	g.emit("jmp " + L("c1"))
+	g.label(L("c1d"))
 	// Array alloc: 16-byte header + count * 8. pathz (rbx) is dead
 	// past openat, so rbx becomes the array data ptr.
 	g.emit("lea rdi, [r12 * 8 + 16]")
@@ -16027,31 +16054,33 @@ func (g *generator) emitReadDirRuntime() {
 	// Pass 2: fill with fresh rc=1 strings.
 	g.emit("xor r12d, r12d") // element index
 	g.emit("xor r15, r15")   // offset
-	g.label(".Lrdd_p2")
+	g.label(L("p2"))
 	g.emit("cmp r15, r14")
-	g.emit("jae .Lrdd_p2d")
+	g.emit("jae " + L("p2d"))
 	g.emit("lea rsi, [r13 + r15 + 19]") // d_name ptr
-	g.emit("movzx ecx, byte ptr [rsi]")
-	g.emit("cmp cl, 46")
-	g.emit("jne .Lrdd_p2t")
-	g.emit("movzx ecx, byte ptr [rsi + 1]")
-	g.emit("test cl, cl")
-	g.emit("jz .Lrdd_p2a")
-	g.emit("cmp cl, 46")
-	g.emit("jne .Lrdd_p2t")
-	g.emit("movzx ecx, byte ptr [rsi + 2]")
-	g.emit("test cl, cl")
-	g.emit("jz .Lrdd_p2a")
-	g.label(".Lrdd_p2t")
+	if skipDots {
+		g.emit("movzx ecx, byte ptr [rsi]")
+		g.emit("cmp cl, 46")
+		g.emit("jne " + L("p2t"))
+		g.emit("movzx ecx, byte ptr [rsi + 1]")
+		g.emit("test cl, cl")
+		g.emit("jz " + L("p2a"))
+		g.emit("cmp cl, 46")
+		g.emit("jne " + L("p2t"))
+		g.emit("movzx ecx, byte ptr [rsi + 2]")
+		g.emit("test cl, cl")
+		g.emit("jz " + L("p2a"))
+		g.label(L("p2t"))
+	}
 	g.emit("mov [rbp - 80], rsi") // name ptr (survives the alloc)
 	// nlen = strlen(name)
 	g.emit("xor rdx, rdx")
-	g.label(".Lrdd_nl")
+	g.label(L("nl"))
 	g.emit("cmp byte ptr [rsi + rdx], 0")
-	g.emit("je .Lrdd_nld")
+	g.emit("je " + L("nld"))
 	g.emit("add rdx, 1")
-	g.emit("jmp .Lrdd_nl")
-	g.label(".Lrdd_nld")
+	g.emit("jmp " + L("nl"))
+	g.label(L("nld"))
 	g.emit("mov [rbp - 72], rdx") // nlen
 	g.emit("lea edi, [rdx + 1]")
 	g.emit("call __fern_alloc_rc1")
@@ -16059,22 +16088,22 @@ func (g *generator) emitReadDirRuntime() {
 	g.emitStrLenStore("edx", "rax")
 	g.emit("mov rsi, [rbp - 80]")
 	g.emit("xor ecx, ecx")
-	g.label(".Lrdd_nc")
+	g.label(L("nc"))
 	g.emit("cmp rcx, rdx")
-	g.emit("jae .Lrdd_ncd")
+	g.emit("jae " + L("ncd"))
 	g.emit("mov r9b, [rsi + rcx]")
 	g.emit("mov [rax + rcx], r9b")
 	g.emit("add rcx, 1")
-	g.emit("jmp .Lrdd_nc")
-	g.label(".Lrdd_ncd")
+	g.emit("jmp " + L("nc"))
+	g.label(L("ncd"))
 	g.emit("mov byte ptr [rax + rdx], 0")
 	g.emit("mov [rbx + r12 * 8], rax")
 	g.emit("add r12, 1")
-	g.label(".Lrdd_p2a")
+	g.label(L("p2a"))
 	g.emit("movzx eax, word ptr [r13 + r15 + 16]") // d_reclen
 	g.emit("add r15, rax")
-	g.emit("jmp .Lrdd_p2")
-	g.label(".Lrdd_p2d")
+	g.emit("jmp " + L("p2"))
+	g.label(L("p2d"))
 	g.emit("mov rdi, r13") // the dirent buffer
 	g.emit("mov esi, 1048576")
 	g.emit("call __fern_free")
@@ -16082,9 +16111,9 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov dword ptr [rax], 0") // Ok
 	g.emit("mov [rax + 8], rbx")
-	g.emit("jmp .Lrdd_return")
+	g.emit("jmp " + L("return"))
 
-	g.label(".Lrdd_err")
+	g.label(L("err"))
 	g.emit("neg rax")
 	g.emit("mov r12, rax")
 	g.emit("mov edi, r12d")
@@ -16096,7 +16125,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("mov dword ptr [rax], 1") // Err
 	g.emit("mov [rax + 8], r12")
 
-	g.label(".Lrdd_return")
+	g.label(L("return"))
 	g.emit("add rsp, 40")
 	g.emit("pop r15")
 	g.emit("pop r14")
@@ -16105,7 +16134,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __fern_read_dir, .-__fern_read_dir")
+	g.line(".size " + sym + ", .-" + sym)
 }
 
 // linuxStatFields maps each FileStat field onto the Linux x86-64

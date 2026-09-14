@@ -178,6 +178,19 @@ than discovering:
     these five's, but a `ln` or `mkdir` operand is far likelier to be absolute
     than a `read_file` one.
 
+**`read_dir_all` is plain `fs` beside `read_dir`, and preview 2 answers it
+with less than it was asked for.** Every kernel and preview 1 report `.` and
+`..` from a directory read, so dropping them is the filter `read_dir` applies
+and `read_dir_all` (#9279) does not. wasi-filesystem's `read-directory` omits
+them at the HOST, so a preview-2 module has none to keep and `read_dir_all`
+there is `read_dir`'s list — the same shape `stat` takes on an inherited
+stdio handle, where the answer is the all-zero record rather than a refusal.
+Not classified out for it: the builtin's question is answerable there, just
+with a listing that happens to carry no dot entries, and a target-level
+refusal would take `read_dir_all` away from every program that only wants the
+names. The e2e probe asserts the equivalence rather than skipping the leg, so
+a host that started reporting them shows up as a failure.
+
 **`truncate` is plain `fs`, and `mknod` is the one that is not.** Both
 create or change an entry, which is why the pair is worth stating
 together. A LENGTH is not a permission bit: a host can serve files, have

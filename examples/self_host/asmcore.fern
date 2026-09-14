@@ -2148,7 +2148,7 @@ pub function rt_src_read_file_bytes(t: string): string {
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY),
 // then DRAIN the directory with a loop of getdents reads into a FRESH 64 KiB
 // buffer each iteration — appending each entry's base name (skipping "." / "..")
-// to a string[]. The fresh-buffer-per-read shape avoids the `buf + off` pointer
+// to a string[]. rt_src_read_dir_all is the same body without that skip. The fresh-buffer-per-read shape avoids the `buf + off` pointer
 // arithmetic the i32 raw-pointer floor cannot do 64-bit-safely (a directory
 // record is never split across calls, so each buffer parses independently, and
 // a fused string over the whole block hands it back at the end of the iteration
@@ -2175,8 +2175,26 @@ pub function rt_src_read_file_bytes(t: string): string {
 // Linux value on Darwin means O_NDELAY|O_ASYNC, so the open SUCCEEDS and the
 // first read fails — see oflag.
 pub function rt_src_read_dir(t: string): string {
+    return rt_src_read_dir_like(t, "__fern_read_dir", true);
+}
+
+// rt_src_read_dir_all backs `read_dir_all(path)`: the same drain with the
+// "." / ".." records kept, in the order the directory reader reports them.
+pub function rt_src_read_dir_all(t: string): string {
+    return rt_src_read_dir_like(t, "__fern_read_dir_all", false);
+}
+
+// rt_src_read_dir_like is the source both share. `skip_dots` wraps the
+// per-entry append in the "." / ".." test.
+function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean): string {
     var nameoff: string = direntoff(t, "name");
-    return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "rd_directory") + "); var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz, plen))); } var basep: i32 = __raw_alloc(8); var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd, buf, 65536, basep); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); } pos = pos + reclen; } } var buf_own: string = __raw_string(buf, 65536); } var basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Ok(names); }";
+    var guard_open: string = "";
+    var guard_close: string = "";
+    if (skip_dots) {
+        guard_open = "var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { ";
+        guard_close = "} ";
+    }
+    return "function " + fname + "(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "rd_directory") + "); var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz, plen))); } var basep: i32 = __raw_alloc(8); var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd, buf, 65536, basep); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); " + guard_close + "pos = pos + reclen; } } var buf_own: string = __raw_string(buf, 65536); } var basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Ok(names); }";
 }
 
 // rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs leaf) →
@@ -3067,7 +3085,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                     if (id.name == "read_file" || id.name == "read_all_stdin") { return ty_string(); }
                     if (id.name == "tcp_recv") { return ty_array_i32(); }
                     if (id.name == "temp_dir") { return ty_string(); }
-                    if (id.name == "read_dir") { return ty_array_string(); }
+                    if (id.name == "read_dir" || id.name == "read_dir_all") { return ty_array_string(); }
                     // Arbitrary free / module function returning
                     // Option[T] or Result[T, …] — see asm.fern.
                     var fi: i32 = 0;
@@ -4476,7 +4494,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // (parser.inject_builtin_enums injects the decl).
     if (id.name == "subprocess") { return ty_unknown(); }
     if (id.name == "temp_dir") { return ty_result(ty_string()); }
-    if (id.name == "read_dir") { return ty_result(ty_array_string()); }
+    if (id.name == "read_dir" || id.name == "read_dir_all") { return ty_result(ty_array_string()); }
     if (id.name == "environ") { return ty_array_string(); }
     if (id.name == "stat") { return ty_result(ty_unknown()); }
     if (id.name == "access") { return ty_result(ty_unknown()); }
@@ -5094,7 +5112,7 @@ pub function runtime_need_deps(name: string): string[] {
         var d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
         return d8;
     }
-    if (name == "read_dir") {
+    if (name == "read_dir" || name == "read_dir_all") {
         // __fern_read_dir (#2649) builds the result string[] with .append() — same
         // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
         // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
@@ -6430,7 +6448,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_eprint_str", "__fn___fern_putchar",
         "__fn___fern_read_int", "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
         "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
-        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
+        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
+        "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
         "__fn___fern_create_dir", "__fn___fern_remove_dir",
         "__fn___fern_create_link", "__fn___fern_create_symlink",

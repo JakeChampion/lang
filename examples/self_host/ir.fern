@@ -1144,6 +1144,11 @@ pub function op_create_dir_all(): Op { return op0("create_dir_all"); }
 // string[] via __fern_arr_box). No wasm file I/O here, so a read_dir module is
 // wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_read_dir(): Op { return op0("read_dir"); }
+// `read_dir_all` is `read_dir` without the `.`/`..` filter: every name the
+// directory holds, in getdents64 order (a VALUE op — one arg consumed, the box
+// left on the stack). Lowers to each backend's __fern_read_dir_all helper. A
+// listing tool needs that order; `ls -f` prints entries in it.
+pub function op_read_dir_all(): Op { return op0("read_dir_all"); }
 // `env` pops a name string value and looks up that environment variable,
 // pushing a fresh Option[string]: Some(value) when set, None when unset (a
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
@@ -1782,7 +1787,7 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 284, 286..290, then 309 — 281
+// NEXT FREE EXTENSION ID: 284, 286..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -2268,6 +2273,7 @@ function kind_id_len12(name: string): i32 {
 
 function kind_id_len12_r(name: string): i32 {
     if (name == "raw_load_ptr") { return 85; }
+    if (name == "read_dir_all") { return 310; }
     if (name == "reader_close") { return 179; }
     if (name == "random_bytes") { return 185; }
     return 0;
@@ -2543,6 +2549,7 @@ function kind_name_4(id: i32): string {
     if (id == 233) { return "read_file_bytes"; }
     if (id == 170) { return "write_file"; }
     if (id == 171) { return "read_dir"; }
+    if (id == 310) { return "read_dir_all"; }
     if (id == 172) { return "remove_dir_all"; }
     if (id == 173) { return "remove_file"; }
     if (id == 174) { return "temp_dir"; }
@@ -2774,6 +2781,7 @@ function pops1_io(t: i32): boolean {
     return t == 154 || t == 158 || t == 159 || t == 160                  // if, brif, drop, return
         || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
         || t == 169 || t == 233 || t == 171 || t == 172 || t == 173      // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
+        || t == 310                                                      // read_dir_all
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 266                                                      // sleep_ns
         || t == 168                                                      // read_line (fd)
@@ -4486,9 +4494,9 @@ pub function op_allocates(tag: i32): boolean {
     // heap-build the NUL-terminated paths they pass to the kernel;
     // read_link boxes the target string as well.
     if (tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264) { return true; }
-    // read_dir boxes a fresh string[] (the arr box + a string block per entry),
-    // so it needs the heap runtime.
-    if (tag == 171) { return true; }
+    // read_dir / read_dir_all box a fresh string[] (the arr box + a string
+    // block per entry), so they need the heap runtime.
+    if (tag == 171 || tag == 310) { return true; }
     // env boxes the looked-up value into a fresh string block (+ the Option
     // wrapper), so it needs the heap runtime.
     if (tag == 176) { return true; }

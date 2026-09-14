@@ -2070,7 +2070,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_readdir")
 		}
 	}
-	if helpers.set["__fern_read_dir"] {
+	if helpers.set["__fern_read_dir"] || helpers.set["__fern_read_dir_all"] {
 		// Both close the directory they listed; the preview-2 body also
 		// drops the entry stream inside __fern_read_dir_raw.
 		if opts.Preview2WASI {
@@ -2895,6 +2895,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_open_dir":            buildOpenDirBodyP2,
 	"__fern_read_dir_raw":        buildReadDirRawBodyP2,
 	"__fern_read_dir":            buildReadDirBodyP2,
+	"__fern_read_dir_all":        buildReadDirBodyP2,
 	"__fern_rmdir_rec":           buildRmdirRecBodyP2,
 }
 

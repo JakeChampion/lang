@@ -790,10 +790,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_lstat")
-				case "__fern_read_dir":
+				case "__fern_read_dir", "__fern_read_dir_all":
 					// (path) → Result[string[], IoError]. Opens +
 					// lists via the two internal workers, and copies
-					// each name into an owned string.
+					// each name into an owned string. read_dir_all is
+					// the same helper set without the dot filter.
 					needs.add("__fern_alloc")
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
@@ -801,7 +802,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__build_io_error")
 					needs.add("__fern_open_dir")
 					needs.add("__fern_read_dir_raw")
-					needs.add("__fern_read_dir")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_remove_dir_all":
 					// (path) → Result[void, IoError] via the
 					// recursive __fern_rmdir_rec worker, which shares
@@ -1278,6 +1279,7 @@ var helperResultBoxCallers = []string{
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
+	"__fern_read_dir_all",
 	"__fern_remove_dir_all", "__fern_temp_dir",
 	"__fern_create_dir_all",
 	"__fern_create_dir", "__fern_remove_dir", "__fern_create_link",
@@ -2610,6 +2612,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReadDirBody,
+	},
+	"__fern_read_dir_all": {
+		// The same listing with "." and ".." kept. Under preview 2
+		// that is read_dir's answer — the host never reports them.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadDirAllBody,
 	},
 	"__fern_rmdir_rec": {
 		// (path_buf, path_byte_len) → errno. RECURSIVE worker behind

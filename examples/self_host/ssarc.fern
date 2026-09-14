@@ -1152,6 +1152,7 @@ function union_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "read_file") { return Lowered { found: true, r: emit(r, ir.op_read_file()) }; }
     if (ins.str == "read_file_bytes") { return Lowered { found: true, r: emit(r, ir.op_read_file_bytes()) }; }
     if (ins.str == "read_dir") { return Lowered { found: true, r: emit(r, ir.op_read_dir()) }; }
+    if (ins.str == "read_dir_all") { return Lowered { found: true, r: emit(r, ir.op_read_dir_all()) }; }
     if (ins.str == "stat") { return Lowered { found: true, r: emit(r, ir.op_stat()) }; }
     if (ins.str == "lstat") { return Lowered { found: true, r: emit(r, ir.op_lstat()) }; }
     if (ins.str == "read_line") { return Lowered { found: true, r: emit(emit(r, ir.op_const_i32(0)), ir.op_read_line()) }; }

@@ -58,6 +58,7 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_stat":              true,
 	"__fern_lstat":             true,
 	"__fern_read_dir":          true,
+	"__fern_read_dir_all":      true,
 	"__fern_remove_dir_all":    true,
 	"__fern_temp_dir":          true,
 	"__fern_create_dir_all":    true,

@@ -605,7 +605,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// above; pulled in here for the programs that use file I/O
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
-		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
+		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat ||
 		g.usesFdStat || g.usesReaderSeek || g.usesFdFlags || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesRemoveDir || g.usesCreateLink ||
@@ -639,7 +639,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesChdir || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
-		g.usesReadDir || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
+		g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat || g.usesStatfs || g.usesAccess ||
 		g.usesRemoveDirAll ||
 		g.usesRename || g.usesChmod || g.usesSetFileTimes || g.usesTruncate ||
 		g.usesMknod || g.usesChownAt || g.usesReaderWriter {
@@ -1012,6 +1012,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReadDir {
 		g.emitReadDirRuntime()
+	}
+	if g.usesReadDirAll {
+		g.emitReadDirAllRuntime()
 	}
 	if g.usesStat {
 		g.emitStatRuntime()
@@ -11935,21 +11938,34 @@ func (g *generator) emitTempDirRuntime() {
 	g.line(".ltorg")
 }
 
-// emitReadDirRuntime emits `__fern_read_dir(path_data,
-// path_len)` in (x0, x1) → Result[string[], IoError] — lists the
-// non-recursive children of `path` as base names (unsorted).
-// Pipeline: openat(O_RDONLY|O_DIRECTORY) → getdents64-drain into
-// a 1 MiB heap buffer → close → pass 1 counts entries (skipping
-// "." / "..") → array alloc (canonical two-word layout: 16-byte
-// header, cap@data-12, rc=1@data-8, len@data-4, 16-byte
-// (data, len) elements) → pass 2 fills with fresh rc=1 strings.
-// openat failure → Err(IoError). Ok = 16-byte box {tag=0,
-// array ptr @8}; Err = 16-byte box {tag=1, IoError @8}.
+// emitReadDirRuntime emits `__fern_read_dir(path_data, path_len)` in
+// (x0, x1) → Result[string[], IoError] — lists the non-recursive
+// children of `path` as base names (unsorted), dropping "." and "..".
 func (g *generator) emitReadDirRuntime() {
+	g.emitReadDirLike("__fern_read_dir", ".Lrdd2w", true)
+}
+
+// emitReadDirAllRuntime emits `__fern_read_dir_all(path_data,
+// path_len)` — the same listing with "." and ".." kept, in the order
+// the directory reader reports them.
+func (g *generator) emitReadDirAllRuntime() {
+	g.emitReadDirLike("__fern_read_dir_all", ".Lrda2w", false)
+}
+
+// emitReadDirLike is the body both share. Pipeline:
+// openat(O_RDONLY|O_DIRECTORY) → getdents64-drain into a 1 MiB heap
+// buffer → close → pass 1 counts entries → array alloc (canonical
+// two-word layout: 16-byte header, cap@data-12, rc=1@data-8,
+// len@data-4, 16-byte (data, len) elements) → pass 2 fills with fresh
+// rc=1 strings. openat failure → Err(IoError). Ok = 16-byte box
+// {tag=0, array ptr @8}; Err = 16-byte box {tag=1, IoError @8}.
+// `skipDots` drops the "." / ".." records in both passes.
+func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
+	L := func(suffix string) string { return lb + "_" + suffix }
 	g.line("")
-	g.line(".global __fern_read_dir")
-	g.typeDirective("__fern_read_dir")
-	g.label("__fern_read_dir")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
 	// Frame: fp/lr (16) + x19..x26 (64) + 16-byte inline-spill
 	// scratch at [x29+80] = 96.
 	g.emit("stp x29, x30, [sp, #-96]!")
@@ -11970,7 +11986,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("mov x3, #0")
 	g.syscall("openat")
 	g.emitFreeNulTermPath2W("x21", "x22")
-	g.emit("tbnz x0, #63, .Lrdd2w_err")
+	g.emit("tbnz x0, #63, %s", L("err"))
 	g.emit("mov x23, x0") // fd
 	// 1 MiB dirent buffer (mirrors the self-host helper's cap).
 	g.emit("mov x0, #1")
@@ -11984,11 +12000,11 @@ func (g *generator) emitReadDirRuntime() {
 		g.emit("mov x24, x0")
 	}
 	g.emit("mov x22, #0") // total (path byte len dead)
-	g.label(".Lrdd2w_g")
+	g.label(L("g"))
 	g.emit("mov x2, #1")
 	g.emit("lsl x2, x2, #20")
 	g.emit("sub x2, x2, x22")
-	g.emit("cbz x2, .Lrdd2w_gd")
+	g.emit("cbz x2, %s", L("gd"))
 	g.emit("mov x0, x23")
 	g.emit("add x1, x21, x22")
 	if g.darwin {
@@ -11996,40 +12012,44 @@ func (g *generator) emitReadDirRuntime() {
 	}
 	g.syscallGetdents()
 	g.emit("cmp x0, #0")
-	g.emit("b.le .Lrdd2w_gd")
+	g.emit("b.le %s", L("gd"))
 	g.emit("add x22, x22, x0")
-	g.emit("b .Lrdd2w_g")
-	g.label(".Lrdd2w_gd")
+	g.emit("b %s", L("g"))
+	g.label(L("gd"))
 	g.emit("mov x0, x23")
 	g.syscall("close")
 	if g.darwin {
 		g.emitFreeScratch2W("x24", 8)
 	}
-	// Pass 1: count entries that aren't "." / "..".
+	// Pass 1: count the entries the listing will hold.
 	g.emit("mov x23, #0") // count (fd is closed)
 	g.emit("mov x26, #0") // offset
-	g.label(".Lrdd2w_c1")
+	g.label(L("c1"))
 	g.emit("cmp x26, x22")
-	g.emit("b.ge .Lrdd2w_c1d")
-	g.emit("add x10, x21, x26")
-	g.emit("add x10, x10, #%d", g.direntNameOff()) // d_name ptr
-	g.emit("ldrb w11, [x10]")
-	g.emit("cmp w11, #46") // '.'
-	g.emit("b.ne .Lrdd2w_c1n")
-	g.emit("ldrb w11, [x10, #1]")
-	g.emit("cbz w11, .Lrdd2w_c1s") // "."
-	g.emit("cmp w11, #46")
-	g.emit("b.ne .Lrdd2w_c1n")
-	g.emit("ldrb w11, [x10, #2]")
-	g.emit("cbz w11, .Lrdd2w_c1s") // ".."
-	g.label(".Lrdd2w_c1n")
+	g.emit("b.ge %s", L("c1d"))
+	if skipDots {
+		g.emit("add x10, x21, x26")
+		g.emit("add x10, x10, #%d", g.direntNameOff()) // d_name ptr
+		g.emit("ldrb w11, [x10]")
+		g.emit("cmp w11, #46") // '.'
+		g.emit("b.ne %s", L("c1n"))
+		g.emit("ldrb w11, [x10, #1]")
+		g.emit("cbz w11, %s", L("c1s")) // "."
+		g.emit("cmp w11, #46")
+		g.emit("b.ne %s", L("c1n"))
+		g.emit("ldrb w11, [x10, #2]")
+		g.emit("cbz w11, %s", L("c1s")) // ".."
+		g.label(L("c1n"))
+	}
 	g.emit("add x23, x23, #1")
-	g.label(".Lrdd2w_c1s")
+	if skipDots {
+		g.label(L("c1s"))
+	}
 	g.emit("add x12, x21, x26")
 	g.emit("ldrh w11, [x12, #16]") // d_reclen
 	g.emit("add x26, x26, x11")
-	g.emit("b .Lrdd2w_c1")
-	g.label(".Lrdd2w_c1d")
+	g.emit("b %s", L("c1"))
+	g.label(L("c1d"))
 	// Array alloc: 16-byte header + count * 16 (two-word string
 	// elements).
 	g.emit("lsl x0, x23, #4")
@@ -12043,43 +12063,45 @@ func (g *generator) emitReadDirRuntime() {
 	// Pass 2: fill with fresh rc=1 strings.
 	g.emit("mov x23, #0") // element index
 	g.emit("mov x26, #0") // offset
-	g.label(".Lrdd2w_p2")
+	g.label(L("p2"))
 	g.emit("cmp x26, x22")
-	g.emit("b.ge .Lrdd2w_p2d")
+	g.emit("b.ge %s", L("p2d"))
 	g.emit("add x10, x21, x26")
 	g.emit("add x10, x10, #%d", g.direntNameOff())
-	g.emit("ldrb w11, [x10]")
-	g.emit("cmp w11, #46")
-	g.emit("b.ne .Lrdd2w_p2t")
-	g.emit("ldrb w11, [x10, #1]")
-	g.emit("cbz w11, .Lrdd2w_p2a")
-	g.emit("cmp w11, #46")
-	g.emit("b.ne .Lrdd2w_p2t")
-	g.emit("ldrb w11, [x10, #2]")
-	g.emit("cbz w11, .Lrdd2w_p2a")
-	g.label(".Lrdd2w_p2t")
+	if skipDots {
+		g.emit("ldrb w11, [x10]")
+		g.emit("cmp w11, #46")
+		g.emit("b.ne %s", L("p2t"))
+		g.emit("ldrb w11, [x10, #1]")
+		g.emit("cbz w11, %s", L("p2a"))
+		g.emit("cmp w11, #46")
+		g.emit("b.ne %s", L("p2t"))
+		g.emit("ldrb w11, [x10, #2]")
+		g.emit("cbz w11, %s", L("p2a"))
+		g.label(L("p2t"))
+	}
 	// nlen = strlen(name).
 	g.emit("mov x11, #0")
-	g.label(".Lrdd2w_sl")
+	g.label(L("sl"))
 	g.emit("ldrb w12, [x10, x11]")
-	g.emit("cbz w12, .Lrdd2w_sld")
+	g.emit("cbz w12, %s", L("sld"))
 	g.emit("add x11, x11, #1")
-	g.emit("b .Lrdd2w_sl")
-	g.label(".Lrdd2w_sld")
+	g.emit("b %s", L("sl"))
+	g.label(L("sld"))
 	g.emit("mov x24, x10")         // name ptr (survives the alloc)
 	g.emit("str x11, [sp, #-16]!") // nlen across the alloc
 	g.emit("add x0, x11, #1")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("ldr x11, [sp], #16")
 	g.emit("mov x9, #0")
-	g.label(".Lrdd2w_nc")
+	g.label(L("nc"))
 	g.emit("cmp x9, x11")
-	g.emit("b.ge .Lrdd2w_ncd")
+	g.emit("b.ge %s", L("ncd"))
 	g.emit("ldrb w12, [x24, x9]")
 	g.emit("strb w12, [x0, x9]")
 	g.emit("add x9, x9, #1")
-	g.emit("b .Lrdd2w_nc")
-	g.label(".Lrdd2w_ncd")
+	g.emit("b %s", L("nc"))
+	g.label(L("ncd"))
 	g.emit("strb wzr, [x0, x11]") // NUL (libc-shaped consumers)
 	// Write entry: data at [x25 + i*16], len at [x25 + i*16 + 8].
 	g.emit("lsl x12, x23, #4")
@@ -12087,20 +12109,20 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("add x12, x12, #8")
 	g.emit("str x11, [x25, x12]") // len (heap form, top bit clear)
 	g.emit("add x23, x23, #1")
-	g.label(".Lrdd2w_p2a")
+	g.label(L("p2a"))
 	g.emit("add x12, x21, x26")
 	g.emit("ldrh w11, [x12, #16]") // d_reclen
 	g.emit("add x26, x26, x11")
-	g.emit("b .Lrdd2w_p2")
-	g.label(".Lrdd2w_p2d")
+	g.emit("b %s", L("p2"))
+	g.label(L("p2d"))
 	g.emitFreeScratch2W("x21", 1<<20) // the dirent buffer
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x25, [x0, #8]")
-	g.emit("b .Lrdd2w_return")
+	g.emit("b %s", L("return"))
 
-	g.label(".Lrdd2w_err")
+	g.label(L("err"))
 	g.emit("neg x22, x0") // errno (path byte len dead)
 	g.emit("mov x0, x22")
 	g.emit("mov x1, x19")
@@ -12113,14 +12135,14 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("str w9, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
 
-	g.label(".Lrdd2w_return")
+	g.label(L("return"))
 	g.emit("ldp x25, x26, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #96")
 	g.emit("ret")
-	g.sizeDirective("__fern_read_dir")
+	g.sizeDirective(sym)
 	g.line(".ltorg")
 }
 
@@ -14668,6 +14690,7 @@ type generator struct {
 	usesRemoveFile     bool
 	usesTempDir        bool
 	usesReadDir        bool
+	usesReadDirAll     bool
 	usesStat           bool
 	usesLstat          bool
 	usesFdStat         bool
@@ -19451,6 +19474,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// openat(O_DIRECTORY) + getdents64 drain.
 			target = "__fern_read_dir"
 			g.usesReadDir = true
+		case "read_dir_all":
+			// read_dir_all(path): the same drain with the "." /
+			// ".." records kept.
+			target = "__fern_read_dir_all"
+			g.usesReadDirAll = true
 		case "stat":
 			// stat(path): Result[FileStat, IoError] — fstatat
 			// into a FileStat box.

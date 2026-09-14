@@ -1297,6 +1297,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
+	"read_dir_all":                  emitReadDirAllHelper,
 	"__fern_io_error":               emitIoErrorHelper,
 	"tcp_listen":                    emitTcpListenHelper,
 	"tcp_accept":                    emitTcpAcceptHelper,
@@ -3684,6 +3685,7 @@ var runtimeHelperDeps = map[string][]string{
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
 	"read_dir":                      {"__fern_io_error"},
+	"read_dir_all":                  {"__fern_io_error"},
 	"open_writer":                   {"__fern_io_error"},
 	"__method_Writer_write":         {"__fern_io_error"},
 	"__method_Writer_truncate":      {"__fern_io_error"},
@@ -3775,6 +3777,7 @@ var heapUsingHelpers = map[string]bool{
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
 	"read_dir":                      true,
+	"read_dir_all":                  true,
 	"random_bytes":                  true,
 	"tcp_recv":                      true,
 	"poll":                          true,
@@ -7074,24 +7077,36 @@ func emitTempDirHelper(w func(string, ...any)) {
 }
 
 // emitReadDirHelper writes read_dir(path) -> Result[string[], IoError]: list the
-// immediate children of a directory (base names only, no recursion, "." and ".."
-// excluded), matching os.ReadDir. It NUL-terminates the path, opens it with
-// O_DIRECTORY (16384 — the arm64 Linux arch-specific value, NOT the asm-generic
-// 65536), then makes two getdents64 passes over a small 4 KiB scratch buffer
-// (the buffer is never reclaimed, so it stays far smaller than the native
-// backend's 1 MiB one): pass 1 counts the kept entries to size the array, an lseek rewinds
-// the directory, and pass 2 allocates a single-word rc string per base name and
-// stores it into the string[] container (16-byte header: cap@[data-12],
-// rc@[data-8], len@[data-4]; element pointers at [data + i*8]). Each pass loops
-// getdents until it returns 0, so directories of any size are listed (bounded
-// only by the arena the strings must fit in). The container is
-// wrapped in the Result Ok box (tag 0, arr@8). Any openat/getdents failure maps
-// -errno through __fern_io_error and returns Err(IoError). Non-leaf; 96-byte
+// immediate children of a directory, base names only, "." and ".." excluded.
+func emitReadDirHelper(w func(string, ...any)) {
+	emitReadDirLike(w, "read_dir", ".Lssa_rd", true)
+}
+
+// emitReadDirAllHelper writes read_dir_all(path) -> Result[string[], IoError]:
+// the same listing with "." and ".." kept, in getdents64 order.
+func emitReadDirAllHelper(w func(string, ...any)) {
+	emitReadDirLike(w, "read_dir_all", ".Lssa_rda", false)
+}
+
+// emitReadDirLike is the body both share. It NUL-terminates the path, opens it
+// with O_DIRECTORY (16384 — the arm64 Linux arch-specific value, NOT the
+// asm-generic 65536), then makes two getdents64 passes over a small 4 KiB
+// scratch buffer (the buffer is never reclaimed, so it stays far smaller than
+// the native backend's 1 MiB one): pass 1 counts the kept entries to size the
+// array, an lseek rewinds the directory, and pass 2 allocates a single-word rc
+// string per base name and stores it into the string[] container (16-byte
+// header: cap@[data-12], rc@[data-8], len@[data-4]; element pointers at
+// [data + i*8]). Each pass loops getdents until it returns 0, so directories of
+// any size are listed (bounded only by the arena the strings must fit in). The
+// container is wrapped in the Result Ok box (tag 0, arr@8). Any openat/getdents
+// failure maps -errno through __fern_io_error and returns Err(IoError).
+// `skipDots` drops the "." / ".." records in both passes. Non-leaf; 96-byte
 // frame with callee-saved x19=offset / x20=fd / x21=buffer / x22=chunk-len /
 // x23=count / x24=fill-index / x25=path / x26=pathz / x27=container. x0=path.
-func emitReadDirHelper(w func(string, ...any)) {
+func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bool) {
+	L := func(suffix string) string { return lb + "_" + suffix }
 	w("")
-	w("%s:", fnLabel("read_dir"))
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-96]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
@@ -7112,14 +7127,14 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tstr x6, [x3]")
 	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
-	w(".Lssa_rd_cp:")
+	w("%s:", L("cp"))
 	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_rd_cpd")
+	w("\tb.hs %s", L("cpd"))
 	w("\tldrb w8, [x25, x7]")
 	w("\tstrb w8, [x4, x7]")
 	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_rd_cp")
-	w(".Lssa_rd_cpd:")
+	w("\tb %s", L("cp"))
+	w("%s:", L("cpd"))
 	w("\tstrb wzr, [x4, x2]")
 	w("\tmov x26, x4") // pathz
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0).
@@ -7130,7 +7145,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov x3, #0")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_rd_err_open")
+	w("\ttbnz x0, #63, %s", L("err_open"))
 	w("\tmov x20, x0") // fd
 	// Allocate a 4 KiB dirent scratch buffer (x21), reused across both passes.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -7144,38 +7159,42 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov x21, x4") // buffer
 	// Pass 1: getdents loop counting kept entries (excluding "." / "..") into x23.
 	w("\tmov x23, #0")
-	w(".Lssa_rd_g1:")
+	w("%s:", L("g1"))
 	w("\tmov x0, x20")
 	w("\tmov x1, x21")
 	w("\tmov x2, #4096")
 	w("\tmov x8, #61") // getdents64
 	w("\tsvc #0")
-	w("\tcbz x0, .Lssa_rd_g1d")             // end of directory
-	w("\ttbnz x0, #63, .Lssa_rd_err_close") // error
+	w("\tcbz x0, %s", L("g1d"))             // end of directory
+	w("\ttbnz x0, #63, %s", L("err_close")) // error
 	w("\tmov x22, x0")                      // chunk len
 	w("\tmov x19, #0")                      // offset
-	w(".Lssa_rd_c1:")
+	w("%s:", L("c1"))
 	w("\tcmp x19, x22")
-	w("\tb.hs .Lssa_rd_g1") // chunk consumed → read the next
-	w("\tadd x10, x21, x19")
-	w("\tadd x10, x10, #19") // d_name ptr
-	w("\tldrb w11, [x10]")
-	w("\tcmp w11, #46") // '.'
-	w("\tb.ne .Lssa_rd_c1n")
-	w("\tldrb w11, [x10, #1]")
-	w("\tcbz w11, .Lssa_rd_c1s") // "." → skip
-	w("\tcmp w11, #46")
-	w("\tb.ne .Lssa_rd_c1n")
-	w("\tldrb w11, [x10, #2]")
-	w("\tcbz w11, .Lssa_rd_c1s") // ".." → skip
-	w(".Lssa_rd_c1n:")
+	w("\tb.hs %s", L("g1")) // chunk consumed → read the next
+	if skipDots {
+		w("\tadd x10, x21, x19")
+		w("\tadd x10, x10, #19") // d_name ptr
+		w("\tldrb w11, [x10]")
+		w("\tcmp w11, #46") // '.'
+		w("\tb.ne %s", L("c1n"))
+		w("\tldrb w11, [x10, #1]")
+		w("\tcbz w11, %s", L("c1s")) // "." → skip
+		w("\tcmp w11, #46")
+		w("\tb.ne %s", L("c1n"))
+		w("\tldrb w11, [x10, #2]")
+		w("\tcbz w11, %s", L("c1s")) // ".." → skip
+		w("%s:", L("c1n"))
+	}
 	w("\tadd x23, x23, #1")
-	w(".Lssa_rd_c1s:")
+	if skipDots {
+		w("%s:", L("c1s"))
+	}
 	w("\tadd x12, x21, x19")
 	w("\tldrh w11, [x12, #16]") // d_reclen
 	w("\tadd x19, x19, x11")
-	w("\tb .Lssa_rd_c1")
-	w(".Lssa_rd_g1d:")
+	w("\tb %s", L("c1"))
+	w("%s:", L("g1d"))
 	// Rewind the directory for pass 2: lseek(fd, 0, SEEK_SET).
 	w("\tmov x0, x20")
 	w("\tmov x1, #0")
@@ -7201,39 +7220,41 @@ func emitReadDirHelper(w func(string, ...any)) {
 	// Pass 2: getdents loop again, filling the container with a fresh string per
 	// kept entry.
 	w("\tmov x24, #0") // fill index
-	w(".Lssa_rd_g2:")
+	w("%s:", L("g2"))
 	w("\tmov x0, x20")
 	w("\tmov x1, x21")
 	w("\tmov x2, #4096")
 	w("\tmov x8, #61") // getdents64
 	w("\tsvc #0")
-	w("\tcbz x0, .Lssa_rd_g2d")
-	w("\ttbnz x0, #63, .Lssa_rd_err_close")
+	w("\tcbz x0, %s", L("g2d"))
+	w("\ttbnz x0, #63, %s", L("err_close"))
 	w("\tmov x22, x0") // chunk len
 	w("\tmov x19, #0") // offset
-	w(".Lssa_rd_p2:")
+	w("%s:", L("p2"))
 	w("\tcmp x19, x22")
-	w("\tb.hs .Lssa_rd_g2") // chunk consumed → read the next
+	w("\tb.hs %s", L("g2")) // chunk consumed → read the next
 	w("\tadd x10, x21, x19")
 	w("\tadd x10, x10, #19") // d_name ptr
-	w("\tldrb w11, [x10]")
-	w("\tcmp w11, #46")
-	w("\tb.ne .Lssa_rd_p2t")
-	w("\tldrb w11, [x10, #1]")
-	w("\tcbz w11, .Lssa_rd_p2a")
-	w("\tcmp w11, #46")
-	w("\tb.ne .Lssa_rd_p2t")
-	w("\tldrb w11, [x10, #2]")
-	w("\tcbz w11, .Lssa_rd_p2a")
-	w(".Lssa_rd_p2t:")
+	if skipDots {
+		w("\tldrb w11, [x10]")
+		w("\tcmp w11, #46")
+		w("\tb.ne %s", L("p2t"))
+		w("\tldrb w11, [x10, #1]")
+		w("\tcbz w11, %s", L("p2a"))
+		w("\tcmp w11, #46")
+		w("\tb.ne %s", L("p2t"))
+		w("\tldrb w11, [x10, #2]")
+		w("\tcbz w11, %s", L("p2a"))
+		w("%s:", L("p2t"))
+	}
 	// strlen(d_name) → x12.
 	w("\tmov x12, #0")
-	w(".Lssa_rd_p2sl:")
+	w("%s:", L("p2sl"))
 	w("\tldrb w13, [x10, x12]")
-	w("\tcbz w13, .Lssa_rd_p2sd")
+	w("\tcbz w13, %s", L("p2sd"))
 	w("\tadd x12, x12, #1")
-	w("\tb .Lssa_rd_p2sl")
-	w(".Lssa_rd_p2sd:")
+	w("\tb %s", L("p2sl"))
+	w("%s:", L("p2sd"))
 	// Allocate a single-word rc string: 8-byte header + len + NUL.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -7249,23 +7270,23 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tstr w12, [x4, #4]") // len
 	w("\tadd x14, x4, #8")   // string data
 	w("\tmov x15, #0")
-	w(".Lssa_rd_p2cp:")
+	w("%s:", L("p2cp"))
 	w("\tcmp x15, x12")
-	w("\tb.hs .Lssa_rd_p2cpd")
+	w("\tb.hs %s", L("p2cpd"))
 	w("\tldrb w16, [x10, x15]")
 	w("\tstrb w16, [x14, x15]")
 	w("\tadd x15, x15, #1")
-	w("\tb .Lssa_rd_p2cp")
-	w(".Lssa_rd_p2cpd:")
+	w("\tb %s", L("p2cp"))
+	w("%s:", L("p2cpd"))
 	w("\tstrb wzr, [x14, x12]")        // trailing NUL
 	w("\tstr x14, [x27, x24, lsl #3]") // container[idx] = string
 	w("\tadd x24, x24, #1")
-	w(".Lssa_rd_p2a:")
+	w("%s:", L("p2a"))
 	w("\tadd x12, x21, x19")
 	w("\tldrh w11, [x12, #16]") // d_reclen
 	w("\tadd x19, x19, x11")
-	w("\tb .Lssa_rd_p2")
-	w(".Lssa_rd_g2d:")
+	w("\tb %s", L("p2"))
+	w("%s:", L("g2d"))
 	// close(fd).
 	w("\tmov x0, x20")
 	w("\tmov x8, #57") // close
@@ -7284,17 +7305,17 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8") // box data
 	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
 	w("\tstr x27, [x0, #8]")
-	w("\tb .Lssa_rd_ret")
-	w(".Lssa_rd_err_close:")
+	w("\tb %s", L("ret"))
+	w("%s:", L("err_close"))
 	w("\tneg x9, x0") // errno (x9 survives the close syscall)
 	w("\tmov x0, x20")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
 	w("\tmov x0, x9")
-	w("\tb .Lssa_rd_err_dispatch")
-	w(".Lssa_rd_err_open:")
+	w("\tb %s", L("err_dispatch"))
+	w("%s:", L("err_open"))
 	w("\tneg x0, x0") // errno
-	w(".Lssa_rd_err_dispatch:")
+	w("%s:", L("err_dispatch"))
 	w("\tmov x1, x25") // path
 	w("\tbl %s", fnLabel("__fern_io_error"))
 	w("\tmov x25, x0") // IoError box
@@ -7313,7 +7334,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tmov w6, #1")
 	w("\tstr w6, [x0]") // tag = 1 (Err)
 	w("\tstr x25, [x0, #8]")
-	w(".Lssa_rd_ret:")
+	w("%s:", L("ret"))
 	w("\tldp x27, x28, [sp, #80]")
 	w("\tldp x25, x26, [sp, #64]")
 	w("\tldp x23, x24, [sp, #48]")

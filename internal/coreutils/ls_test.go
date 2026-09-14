@@ -1,12 +1,8 @@
 package coreutils
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -583,6 +579,7 @@ func listingCases(t *testing.T, util string) []invocation {
 	env("color-columns", []string{"LS_COLORS=di=2"}, "--color=always", "-C", "-w", "60")
 	env("color-recursive", []string{"LS_COLORS=di=2"}, "--color=always", "-R", "bdir")
 	env("color-after-f", []string{"LS_COLORS=di=2"}, "-f", "-t", "--color=always")
+	env("color-f-unsorted", []string{"LS_COLORS=di=2"}, "-f", "--color=always")
 	env("color-before-f", []string{"LS_COLORS=di=2"}, "--color=always", "-f", "-t")
 
 	// --- --hyperlink ------------------------------------------------------------------
@@ -599,18 +596,24 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("hyperlink-dir", "--hyperlink=always", "adir")
 
 	// --- -f, which is three options at once ---------------------------------------------
-	// `-f` is `-a` plus `-U`, and the two of those together are the one
-	// listing this corpus cannot compare: `read_dir` drops `.` and `..`
-	// before Fern sees them, so an UNSORTED listing can only put them at
-	// the front rather than where the kernel had them (#9279). The cases
-	// here are the ones where that does not arise — a sort that puts them
-	// somewhere definite, and `-A`, which drops them — and
-	// TestLsUnsortedAllShowsTheDotEntries below gates the rest without
-	// depending on their position.
+	// `-f` is `-a` plus `-U`, so an unsorted listing carries `.` and `..`
+	// wherever the directory itself holds them. That position is what
+	// read_dir_all exists for (#9279); it is compared byte for byte here
+	// like every other case, and one shared tree is what makes the
+	// comparison meaningful — both sides read the same directory.
+	add("f", "-f")
+	add("f-one-per-line", "-f", "-1")
+	add("f-long", "-f", "-l")
+	add("f-unsorted-all", "-a", "-U")
 	add("f-then-sort", "-f", "-t")
 	add("f-then-almost-all", "-f", "-A")
 	add("f-unsorted-almost-all", "-A", "-U")
 	add("f-then-sort-size", "-f", "-S")
+	// `.` and `..` reach the ignore checks like any other name, so -I can
+	// take them out of an `-a` listing while -B cannot.
+	add("all-ignore-every-dotfile", "-a", "-I", ".*")
+	add("all-ignore-dot", "-a", "-I", ".")
+	add("all-ignore-backups", "-a", "-B")
 
 	// --- errors ---------------------------------------------------------------------------
 	add("err-missing", "nosuchfile")
@@ -695,67 +698,4 @@ func TestLsVersion(t *testing.T) {
 	requireVersion(t, "ls", []string{"-l", "--version"}, 0)
 	requireVersion(t, "dir", []string{"--version"}, 0)
 	requireVersion(t, "vdir", []string{"--version"}, 0)
-}
-
-// The half of `-f` the corpus cannot reach, gated on what does not
-// depend on the order: that `-f` shows the dotfiles AND the two dot
-// entries, and that the same set of names comes back as GNU's.
-//
-// The position of `.` and `..` inside an unsorted listing needs
-// `read_dir_all` (#9279); everything else about `-f` is in the cases
-// above, whose order IS defined. `-1` is forced so that one line is one
-// name whichever of the three programs is running, and the one-time
-// colour reset is stripped because it attaches to whichever name came
-// first — which is the very thing this test does not compare.
-func TestLsUnsortedAllShowsTheDotEntries(t *testing.T) {
-	dir := lsTree(t)
-	names := func(out []byte) []string {
-		var got []string
-		for _, line := range strings.Split(string(out), "\n") {
-			if line == "" {
-				continue
-			}
-			got = append(got, strings.TrimPrefix(line, "\x1b[0m"))
-		}
-		sort.Strings(got)
-		return got
-	}
-	for _, util := range []string{"ls", "dir", "vdir"} {
-		for _, args := range [][]string{{"-f", "-1"}, {"-a", "-U", "-1"}, {"-f", "-1", "--color=always"}} {
-			inv := invocation{args: args, dir: dir, env: []string{"LS_COLORS=di=2"}}
-			want := inv.run(t, referenceBin(t, util), util)
-			got := inv.run(t, fernBin(t, util), util)
-			if got.exit != want.exit {
-				t.Errorf("%s %s: gnu exit %d, fern exit %d", util, quoteArgs(args), want.exit, got.exit)
-			}
-			if !bytes.Equal(got.stderr, want.stderr) {
-				t.Errorf("%s %s: stderr gnu %q, fern %q", util, quoteArgs(args), want.stderr, got.stderr)
-			}
-			gotNames, wantNames := names(got.stdout), names(want.stdout)
-			if !reflect.DeepEqual(gotNames, wantNames) {
-				t.Errorf("%s %s: names differ\n gnu: %q\nfern: %q", util, quoteArgs(args), wantNames, gotNames)
-				continue
-			}
-			// The three names `-f` is there to produce. Checked on the
-			// uncoloured runs, where a name is the whole line; the
-			// coloured one has already been compared against GNU's
-			// escapes name for name above.
-			if !contains(args, "--color=always") {
-				for _, want := range []string{".", "..", ".hidden"} {
-					if !contains(gotNames, want) {
-						t.Errorf("%s %s: %q is missing from the listing", util, quoteArgs(args), want)
-					}
-				}
-			}
-		}
-	}
-}
-
-func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
 }
