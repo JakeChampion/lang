@@ -19725,7 +19725,9 @@ function ifexpr_leaf_is_array_read(e: ast.Expr, s: LowerState): boolean {
         ast.ExprIdent(id) => { return s.is_arr_slot(s.slot_of(id.name)); },
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) { return is_array_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s)); }
-            return expr_yields_array(e, s);
+            return scalar_arr_field_type(e, s) != "" || struct_arr_field_read_type(e, s) != ""
+                || enum_arr_field_read_type(e, s) != "" || nested_arr_field_read_type(e, s) != ""
+                || expr_yields_array(e, s);
         },
         ast.ExprIndex(_) => { return expr_yields_array(e, s); },
         _ => { return false; }

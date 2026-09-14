@@ -34,12 +34,17 @@ Two things were wrong at once:
   before the sweep runs; from a caller's frame the parent compiler exits 99
   on `if-expression-alias-exit-sweep`. The leaf now takes the alias retain
   (`retain_tos`) for the read shapes the `var` ladder retains — a bare array
-  local, a struct field, a tuple element, a nested-array element
+  local, a struct field of any array kind (through the ladder's own field
+  classifiers, `scalar_arr_field_type` and its struct / enum / nested
+  siblings), a tuple element, a nested-array element
   (`ifexpr_leaf_is_array_read`) — so `b` owns the reference its sweep
   releases and the source's next update finds the buffer shared and copies
   once. A fresh producer in a branch (a literal, a slice, a call) is a move
   and stays unretained. The container-read leaves were the reviewer's
-  catch: each exited 99 the same way with only the ident covered.
+  catch, twice: each exited 99 the same way with only the ident covered,
+  and an `i32[]` / `boolean[]` / `u8[]` field still did when the field arm
+  asked only the width classifiers, which spell string, i64 and f64 fields
+  and nothing else.
 
 ## Measured
 
@@ -59,8 +64,8 @@ read of zero were both compatible with the double release.
 
 Six rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `if-expression-alias`, `if-expression-fresh-arm`,
-`if-expression-alias-exit-sweep`, and the field / index / tuple
-`-leaf-exit-sweep` rows. Against the parent commit's lowering the first
+`if-expression-alias-exit-sweep`, and the field (`u64[]`, `i32[]`,
+`boolean[]`) / index / tuple `-leaf-exit-sweep` rows. Against the parent commit's lowering the first
 three fail (103 / 3, 102 / 2, exit 99) and the other thirty pass; the leaf
 rows exit 99 with the ident-only guard. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
 — the lift change touches every function with an if-expression — and

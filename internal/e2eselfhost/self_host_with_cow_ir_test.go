@@ -513,6 +513,38 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
+	{"if-expression-i32-field-leaf-exit-sweep", `struct Box { items: i32[], n: i32 }
+@noinline
+function exercise(): i32 {
+    var box: Box = Box { items: [1, 2], n: 0 };
+    var d: i32[] = [4];
+    var b: i32[] = if (box.n == 0) { box.items } else { d };
+    if (b[0] != 1) { return 1; }
+    if (box.items[0] != 1) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    var r: i32 = exercise();
+    if (r != 0) { return r; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"if-expression-boolean-field-leaf-exit-sweep", `struct Box { flags: boolean[], n: i32 }
+@noinline
+function exercise(): i32 {
+    var box: Box = Box { flags: [true, false], n: 0 };
+    var d: boolean[] = [false];
+    var b: boolean[] = if (box.n == 0) { box.flags } else { d };
+    if (!b[0]) { return 1; }
+    if (!box.flags[0]) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    var r: i32 = exercise();
+    if (r != 0) { return r; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
 	{"if-expression-index-leaf-exit-sweep", `@noinline
 function exercise(): i32 {
     var g: i32[][] = [[1, 2], [3]];
