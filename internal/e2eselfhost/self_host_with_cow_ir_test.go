@@ -633,6 +633,29 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+	// The same receiver one index deeper: a tuple element holding `T[][][]`.
+	{"if-expression-tuple-nested2-index-leaf-handback", `@noinline
+function mk(): i32[][][] {
+    var t: (i32, i32[][][]) = (2, [[[1, 2], [3]], [[4]]]);
+    var d: i32[] = [5];
+    var b: i32[] = if (t.0 == 2) { t.1[0][1] } else { d };
+    if (b[0] != 3) { return []; }
+    return t.1;
+}
+@noinline
+function churn(): i32 {
+    var j1: i32[] = [7];
+    var j2: i32[] = [8];
+    var j3: i32[] = [9];
+    return j1[0] + j2[0] + j3[0];
+}
+function main(): i32 {
+    var m: i32[][][] = mk();
+    if (churn() != 24) { return 3; }
+    if (m[0][1][0] != 3) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 	{"if-expression-tuple-leaf-exit-sweep", `@noinline
 function exercise(): i32 {
     var t: (i32[], i32) = ([1, 2], 7);
