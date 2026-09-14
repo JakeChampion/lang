@@ -3,10 +3,10 @@ package ir
 import "testing"
 
 // A struct with an Option field is as droppable on self-reassignment as one
-// without: typeSelfDropSafe judges the builtin generic enums by their type
-// arguments rather than looking for a declaration that does not exist
-// (#8755). Pinned on the lowered ops: the overwrite routes through the
-// struct's drop function, not the flat dec.
+// without: typeSelfDropSafe binds the instantiation's arguments to the enum's
+// type parameters and judges the bound payloads (#8755). Pinned on the lowered
+// ops: the overwrite routes through the struct's drop function, not the flat
+// dec.
 func TestOptFieldStructOverwriteDeepDrops(t *testing.T) {
 	// put may hand its receiver back (BufWriter.write_string does on its
 	// error path), which taints the local it initialises: freeEligible is
