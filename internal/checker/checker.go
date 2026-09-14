@@ -2946,6 +2946,40 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
 	registerStructMethod("Writer", "seek",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	// flags() is fcntl(fd, F_GETFL) reduced to what every target can
+	// answer, as a word of Fern's own — the query side of the flags word
+	// `open_reader_with` / `open_writer_with` take:
+	//
+	//	1  the handle may be read
+	//	2  the handle may be written
+	//	4  writes land at the END of the file whatever the offset says
+	//
+	// Three bits and no more, because a fourth would have to be invented
+	// somewhere. O_NONBLOCK is the one a caller asks for next and it is
+	// the one preview 2 has no spelling for at all: its `get-flags`
+	// reports read / write / the three sync bits and nothing else, so a
+	// cleared bit there would be a claim nobody measured — the answer
+	// `geteuid` is refused for (docs/FREESTANDING-CORE.md). Append IS
+	// answerable on all three: F_GETFL on the natives, `fdstat`'s
+	// fs_flags on preview 1, and on preview 2 the Writer box's own
+	// append flag, which is where the fact lives there (a descriptor has
+	// no append bit; the STREAM was opened append-via-stream).
+	//
+	// What it exists for: a program handed a descriptor it did not open
+	// cannot otherwise tell an append-only stdout from a writable one,
+	// and the two want opposite handling — `shred -` overwrites the
+	// first and must refuse the second (#9219).
+	// The word is 64 bits wide for the same reason `seek`'s offset is:
+	// that is the payload shape every backend's Result box already
+	// carries for these handle methods (a 16-byte box, payload at +8).
+	// Three bits do not need it, and an i32 payload is a DIFFERENT box
+	// layout (8 bytes, payload at +4) that nothing else in this family
+	// emits — one hand-written helper per backend is not the place to
+	// introduce a second one.
+	flagsResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Reader", "flags", nil, flagsResult)
+	registerStructMethod("Writer", "flags", nil, flagsResult)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set

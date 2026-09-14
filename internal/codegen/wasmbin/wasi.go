@@ -1878,8 +1878,13 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	// Preview 2 has no fd table to interrogate, so its `isatty` is a
-	// constant and imports nothing (see buildIsattyBodyP2).
+	// constant and imports nothing (see buildIsattyBodyP2). `flags()` is
+	// the same shape: preview 1 reads the fdstat record, preview 2
+	// answers from the handle itself (see wasi_fd_flags.go).
 	if helpers.set["isatty"] && !opts.Preview2WASI {
+		in.add("wasi_fd_fdstat_get")
+	}
+	if (helpers.set["__fern_reader_flags"] || helpers.set["__fern_writer_flags"]) && !opts.Preview2WASI {
 		in.add("wasi_fd_fdstat_get")
 	}
 	if helpers.set["__fern_random_i32"] {
@@ -2855,6 +2860,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_fd_syncfs":           buildFdSyncfsBody,
 	"__fern_reader_seek":         buildReaderSeekBodyP2,
 	"__fern_writer_seek":         buildWriterSeekBodyP2,
+	"__fern_reader_flags":        buildReaderFlagsBodyP2,
+	"__fern_writer_flags":        buildWriterFlagsBodyP2,
 	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,

@@ -197,6 +197,8 @@ var rcResultOwned = map[string]bool{
 	"__fern_fd_syncfs":           true,
 	"__fern_reader_seek":         true,
 	"__fern_writer_seek":         true,
+	"__fern_reader_flags":        true,
+	"__fern_writer_flags":        true,
 	"__fern_remove_file":         true,
 	"__fern_stat":                true,
 	"__fern_lstat":               true,
@@ -290,6 +292,8 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_truncate":   true, // __fern_writer_truncate
 	"__method_Reader_seek":       true, // __fern_reader_seek
 	"__method_Writer_seek":       true, // __fern_writer_seek
+	"__method_Reader_flags":      true, // __fern_reader_flags
+	"__method_Writer_flags":      true, // __fern_writer_flags
 	"__method_Reader_stat":       true, // __fern_fd_stat
 	"__method_Writer_stat":       true, // __fern_fd_stat
 	"__method_Reader_fsync":      true, // __fern_fd_fsync

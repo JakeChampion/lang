@@ -604,6 +604,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_writer_seek")
+				case "__fern_reader_flags", "__fern_writer_flags":
+					// (h) → i32 — the handle's open flags as
+					// Fern's three bits; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_writer_truncate":
 					// (w, length) → i32 — ftruncate of the
 					// handle; Option[IoError].
@@ -1193,6 +1200,8 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_fd_syncfs":         {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
 	"__fern_writer_seek":       {"__wasi_errno_of_code"},
+	"__fern_reader_flags":      {"__wasi_errno_of_code"},
+	"__fern_writer_flags":      {"__wasi_errno_of_code"},
 	"__fern_writer_truncate":   {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
@@ -1246,6 +1255,7 @@ var helperResultBoxCallers = []string{
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek", "__fern_writer_seek",
+	"__fern_reader_flags", "__fern_writer_flags",
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
@@ -2804,6 +2814,20 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderSeekBody,
+	},
+	"__fern_reader_flags": {
+		// (r) → i32 — heap-form Result[i64, IoError]: the handle's
+		// open flags as Fern's three bits. See wasi_fd_flags.go.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdFlagsBody,
+	},
+	"__fern_writer_flags": {
+		// (w) → i32 — the same on preview 1, where a handle is its
+		// fd; preview 2 answers per handle kind (wasi_fd_flags.go).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdFlagsBody,
 	},
 	"__fern_writer_truncate": {
 		// (w, length: i64) → i32 — heap-form Option[IoError]:

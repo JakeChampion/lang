@@ -426,18 +426,70 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   return t_unknown("not a cell method");
 }
 
-// The free builtins whose RESULT the expression written around the call needs:
-// the byte-array string constructor and the bit reinterpretations of both
-// float widths, typed as native's FuncSigs type them. Left unknown they
-// collapsed the struct literal, array or operator holding the call.
+// The free builtins whose RESULT the expression written around the call needs,
+// typed as native's FuncSigs type them. Left unknown the call collapses the
+// struct literal, array or operator holding it, and every reader of that value
+// after it.
 function free_builtin_result(name: string, argc: i32): typeinfo.Type {
-  if (argc != 1) { return t_unknown("not a typed free builtin"); }
-  if (name == "string_from_bytes_unchecked") { return t_string(); }
-  if (name == "f64_bits") { return t_i64(); }
-  if (name == "f64_from_bits") { return t_float(); }
-  if (name == "f32_bits") { return t_i32(); }
-  if (name == "f32_from_bits") { return t_f32(); }
-  return t_unknown("not a typed free builtin");
+  if (argc == 1) {
+    if (name == "string_from_bytes_unchecked") { return t_string(); }
+    if (name == "f64_bits") { return t_i64(); }
+    if (name == "f64_from_bits") { return t_float(); }
+    if (name == "f32_bits") { return t_i32(); }
+    if (name == "f32_from_bits") { return t_f32(); }
+  }
+  return intrinsic_result(name, argc);
+}
+
+// The ten f64 primitives `std/float`'s methods dispatch to. Every backend
+// implements all of them.
+function is_f64_primitive(name: string): boolean {
+  var names: string[] = ["__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64",
+    "__abs_f64", "__log_f64", "__exp_f64", "__sin_f64", "__cos_f64"];
+  for n in names { if (n == name) { return true; } }
+  return false;
+}
+
+// The bit-counting intrinsics, one name per operand width because the width is
+// what the backend needs and the argument's static type is what fixes it. Each
+// answers an i32 count.
+function is_bit_count(name: string): boolean {
+  var names: string[] = ["__clz32", "__ctz32", "__popcount32", "__clz64", "__ctz64", "__popcount64"];
+  for n in names { if (n == name) { return true; } }
+  return false;
+}
+
+// The runtime intrinsics: the float primitives, the bit counts, the raw-memory
+// escape hatches, the byte scans over a borrowed string, and the C-ABI
+// trampolines. `__alloc_u8` is the one whose result the caller OWNS — a fresh
+// zeroed `u8[]` — where every other answer here is a scalar.
+function intrinsic_result(name: string, argc: i32): typeinfo.Type {
+  if (argc == 1 && is_f64_primitive(name)) { return t_float(); }
+  if (argc == 2 && name == "__pow_f64") { return t_float(); }
+  if (argc == 1 && is_bit_count(name)) { return t_i32(); }
+  if (argc == 1 && name == "__alloc") { return t_usize(); }
+  if (argc == 1 && name == "__alloc_u8") { return typeinfo.TypeArray { elem: t_u8() }; }
+  if (argc == 2 && name == "__free") { return t_void(); }
+  if (argc == 0 && name == "__ptr_width") { return t_i32(); }
+  if (argc == 0 && name == "__heap_bump_bytes") { return t_i64(); }
+  if (argc == 0 && name == "__heap_mark") { return t_i64(); }
+  if (argc == 1 && name == "__heap_release_to") { return t_void(); }
+  if (argc == 3 && name == "__memcpy") { return t_void(); }
+  if (argc == 3 && name == "__memset") { return t_void(); }
+  if (argc == 1 && name == "__load_u8") { return t_i32(); }
+  if (argc == 1 && name == "__load_i32") { return t_i32(); }
+  if (argc == 1 && name == "__load_i64") { return t_i64(); }
+  if (argc == 1 && name == "__load_ptr") { return t_usize(); }
+  if (argc == 2 && name == "__store_i32") { return t_void(); }
+  if (argc == 2 && name == "__store_i64") { return t_void(); }
+  if (argc == 2 && name == "__store_ptr") { return t_void(); }
+  if (argc == 5 && name == "__mismatch") { return t_i32(); }
+  if (argc == 1 && name == "__sum_bytes") { return t_i32(); }
+  if (argc == 2 && name == "__ascii_run") { return t_i32(); }
+  if (argc == 2 && name == "__count_byte") { return t_i32(); }
+  if (argc == 3 && name == "__memchr") { return t_i32(); }
+  if (argc == 3 && name == "__rmemchr") { return t_i32(); }
+  return t_unknown("not a runtime intrinsic");
 }
 
 // The builtin results a call carries ahead of the user tables. Unknown for

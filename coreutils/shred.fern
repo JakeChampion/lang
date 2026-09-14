@@ -574,16 +574,11 @@ function remove_entry(path: string, s: Settings): boolean {
 // `failed to open for writing` rather than a fresh empty file.
 function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
   if (path == "-") {
-    // `-` shreds standard output, and which of GNU's three answers is
-    // right depends on how fd 1 was OPENED: a regular file is
-    // overwritten, an append-only one is `cannot shred append-only file
-    // descriptor`, a pipe is `invalid file type`. Nothing here can ask
-    // that question — an O_APPEND handle stats and seeks exactly like a
-    // plain one — so this build refuses the operand rather than
-    // appending to a file it was asked to erase. #9219 is the
-    // primitive, and this goes away with it.
-    gnu.error("-: standard output requires the handle's open flags, which are not supported on this system");
-    return (false, false);
+    var d: (Writer, boolean) = dash_handle();
+    if (!d.1) {
+      return (false, false);
+    }
+    return shred_handle(d.0, "-", s, rnd, true);
   }
   match (open_for_shred(path, s)) {
     Err(e) => {
@@ -591,24 +586,101 @@ function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
       return (false, false);
     },
     Ok(w) => {
-      var sized: (Lengths, boolean) = shred_length(w, s);
-      if (!sized.1) {
-        gnu.error(path + ": failed to stat");
-        w.close();
-        return (false, false);
-      }
-      var wrote: (boolean, boolean) = write_passes(w, path, sized.0, s, rnd);
-      if (!wrote.0) {
-        w.close();
-        return (false, wrote.1);
-      }
-      w.close();
+      return shred_handle(w, path, s, rnd, false);
     }
   }
+}
+
+// `-` is standard output, and which of GNU's answers is right depends on
+// how fd 1 was OPENED. The questions go in GNU's order: the FLAGS first,
+// whose failure it reports as `fcntl failed: <errno>` — the shape its own
+// fcntl(F_GETFL) gives, and what a closed fd 1 answers with — and then
+// the file TYPE, where a FIFO or a socket is refused outright while a
+// DEVICE is overwritten like a file, which is shred's classic use.
+//
+// An append-only descriptor is refused rather than appended to: its
+// writes land at the end whatever the offset says, so overwriting in
+// place is not something it can be asked to do. #9219 is the primitive
+// this waited on.
+function dash_handle(): (Writer, boolean) {
+  var w: Writer = stdout();
+  match (w.flags()) {
+    Err(e) => {
+      gnu.error("-: fcntl failed: " + gnu.io_error_text(e));
+      return (w, false);
+    },
+    Ok(f) => {
+      if ((f & 4 as i64) != 0 as i64) {
+        gnu.error("-: cannot shred append-only file descriptor");
+        return (w, false);
+      }
+    }
+  }
+  match (w.stat()) {
+    Err(e) => {
+      gnu.error("-: " + gnu.io_error_text(e));
+      return (w, false);
+    },
+    Ok(st) => {
+      if (is_pipe_or_socket(st.mode)) {
+        gnu.error("-: invalid file type");
+        return (w, false);
+      }
+    }
+  }
+  return (w, true);
+}
+
+// A FIFO and a socket are the two types with no length to overwrite;
+// S_IFMT is the top four bits of the mode, 0o010000 and 0o140000.
+function is_pipe_or_socket(mode: u32): boolean {
+  var kind: u32 = mode & 61440 as u32;
+  return kind == 4096 as u32 || kind == 49152 as u32;
+}
+
+// The passes over one open handle, and then what standing in for removal
+// means for it: a named operand is renamed and unlinked, while standard
+// output has no name to wipe and is TRUNCATED to nothing instead, which
+// is as far as `-u` reaches there. A stdio handle is not closed either —
+// the process still needs fd 1.
+function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: boolean): (boolean, boolean) {
+  var sized: (Lengths, boolean) = shred_length(w, s);
+  if (!sized.1) {
+    gnu.error(path + ": failed to stat");
+    if (!is_dash) {
+      w.close();
+    }
+    return (false, false);
+  }
+  var wrote: (boolean, boolean) = write_passes(w, path, sized.0, s, rnd);
+  if (!wrote.0) {
+    if (!is_dash) {
+      w.close();
+    }
+    return (false, wrote.1);
+  }
+  if (is_dash) {
+    return (dash_remove(w, s), false);
+  }
+  w.close();
   if (s.remove) {
     return (remove_entry(path, s), false);
   }
   return (true, false);
+}
+
+function dash_remove(w: Writer, s: Settings): boolean {
+  if (!s.remove) {
+    return true;
+  }
+  match (w.truncate(0 as i64)) {
+    Some(e) => {
+      gnu.error("-: " + gnu.io_error_text(e));
+      return false;
+    },
+    None => {}
+  }
+  return true;
 }
 
 // `open_for_shred(path, s)` — the write handle, and `-f`'s retry.

@@ -666,6 +666,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
+	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
+	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
@@ -2621,6 +2623,52 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError("", serr)), nil
 	}
 	return resultOk(fileStatValue(info)), nil
+}
+
+// builtinFdFlags answers `r.flags()` / `w.flags()`: `fcntl(fd, F_GETFL)`
+// reduced to the three bits every target can answer — 1 readable,
+// 2 writable, 4 appending. The access mode is a VALUE rather than a pair
+// of bits in the kernel's word (0 read-only, 1 write-only, 2 read-write),
+// so the two bits come out of two comparisons against it.
+//
+// A stdio stream a test replaced with a buffer has no descriptor to ask
+// and answers Unsupported, the same refusal `stat` gives for it.
+func builtinFdFlags(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("flags: expected 1 arg")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	const fGetfl = 3
+	raw, _, errno := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), fGetfl, 0)
+	if errno != 0 {
+		return resultErr(classifyIoError("", errno)), nil
+	}
+	return resultOk(Number(fernHandleFlags(int(raw)))), nil
+}
+
+// fernHandleFlags reduces an open(2) flag word to Fern's own three bits.
+func fernHandleFlags(raw int) int {
+	access := raw & 3
+	bits := 0
+	if access != 1 {
+		bits |= 1
+	}
+	if access != 0 {
+		bits |= 2
+	}
+	if raw&syscall.O_APPEND != 0 {
+		bits |= 4
+	}
+	return bits
 }
 
 // syncMethod is the shared body of `fsync` / `fdatasync` / `syncfs` on

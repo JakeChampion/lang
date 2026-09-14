@@ -588,7 +588,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
-		g.usesFdStat || g.usesReaderSeek || g.usesWriterTruncate ||
+		g.usesFdStat || g.usesReaderSeek || g.usesFdFlags || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
@@ -1009,6 +1009,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
+	}
+	if g.usesFdFlags {
+		g.emitFdFlagsRuntime()
 	}
 	if g.usesWriterTruncate {
 		g.emitWriterTruncateRuntime()
@@ -12044,6 +12047,73 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.line(".ltorg")
 }
 
+// emitFdFlagsRuntime emits `__fern_fd_flags(handle_ptr)` in x0 →
+// Result[i64, IoError]: fcntl(fd, F_GETFL) reduced to Fern's own three
+// bits — 1 readable, 2 writable, 4 appending. A Reader and a Writer hold
+// the fd at the same place, so both methods land here.
+//
+// The kernel's access mode is a VALUE in the low two bits (0 read-only,
+// 1 write-only, 2 read-write) rather than two independent flags, so the
+// two bits come out of two comparisons against it. O_APPEND is one of
+// the bits Linux and XNU disagree about — 02000 against 0x8 — like the
+// open flags oflagWrite translates.
+func (g *generator) emitFdFlagsRuntime() {
+	const fGetfl = 3
+	oAppend := 0o2000
+	if g.darwin {
+		oAppend = 0x8
+	}
+	g.line("")
+	g.line(".global __fern_fd_flags")
+	g.typeDirective("__fern_fd_flags")
+	g.label("__fern_fd_flags")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("ldr w0, [x0]") // fd
+	g.emit("mov x1, #%d", fGetfl)
+	g.emit("mov x2, #0")
+	g.syscall("fcntl")
+	g.emit("tbnz x0, #63, .Lfdfl_err")
+	// w19 = Fern's bits, from the raw word in w0.
+	g.emit("and w2, w0, #3")
+	g.emit("mov w19, #0")
+	g.emit("cmp w2, #1")
+	g.emit("b.eq .Lfdfl_nord")
+	g.emit("orr w19, w19, #1")
+	g.label(".Lfdfl_nord")
+	g.emit("cbz w2, .Lfdfl_nowr")
+	g.emit("orr w19, w19, #2")
+	g.label(".Lfdfl_nowr")
+	g.emit("mov w3, #%d", oAppend)
+	g.emit("tst w0, w3")
+	g.emit("b.eq .Lfdfl_noap")
+	g.emit("orr w19, w19, #4")
+	g.label(".Lfdfl_noap")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x19, [x0, #8]")
+	g.emit("b .Lfdfl_ret")
+	g.label(".Lfdfl_err")
+	g.emit("neg x19, x0")
+	g.emit("mov x0, x19")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lfdfl_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_fd_flags")
+	g.line(".ltorg")
+}
+
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
 // length)` in (x0, x1) → Option[IoError]: ftruncate(2) on the handle's
 // fd. None = the payloadless box; Some = {tag=0, IoError @8}. The length
@@ -14251,6 +14321,7 @@ type generator struct {
 	usesLstat          bool
 	usesFdStat         bool
 	usesReaderSeek     bool
+	usesFdFlags        bool
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
@@ -18803,6 +18874,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "sync":
 			target = "__fern_sync"
 			g.usesSync = true
+		case "__method_Reader_flags", "__method_Writer_flags":
+			target = "__fern_fd_flags"
+			g.usesFdFlags = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "__method_Reader_seek", "__method_Writer_seek":
 			// lseek(2) on the handle's fd → Result[i64, IoError]; a Reader
 			// and a Writer hold the fd at the same place.

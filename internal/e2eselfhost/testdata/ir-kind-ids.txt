@@ -287,3 +287,4 @@ arr_push_owned_f64=303
 open_reader_with=304
 open_writer_with=305
 buf_push_u64=306
+fd_flags=307

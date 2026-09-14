@@ -2050,6 +2050,69 @@ func flagged {
 }
 
 refused unsupported map shape
+modes 1 1 result i32
+v0:f64 v1:u32 v2:f64 v3:f64 v4:f64 v5:f64 v6:i32 v7:i32 v8:i32 v9:u64 v10:i32 v11:i32
+func measured {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call __sqrt_f64 v0
+    v3 = const_int 2.0
+    v4 = call __pow_f64 v2 v3
+    v5 = call __floor_f64 v4
+    v6 = cast v5
+    v7 = call __popcount32 v1
+    v8 = binary + v6 v7
+    v9 = const_int 1
+    v10 = call __clz64 v9
+    v11 = binary + v8 v10
+    ret v11
+}
+
+modes 2 1 result i32
+v0:string v1:i32 v2:i32 v3:i32 v4:i32 v5:i32 v6:i32 v7:i32 v8:i32 v9:i32 v10:i32
+func scanned {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call __count_byte v0 v1
+    v3 = const_int 0
+    v4 = call __memchr v0 v1 v3
+    v5 = binary + v2 v4
+    v6 = const_int 0
+    v7 = call __ascii_run v0 v6
+    v8 = binary + v5 v7
+    v9 = call __sum_bytes v0
+    v10 = binary + v8 v9
+    ret v10
+}
+
+modes 1 result i32
+v0:i32 v1:u8[] v2:i32 v3:i32 v4:i32
+func buffered {
+  b0:
+    v0 = param 0
+    v1 = call __alloc_u8 v0
+    v2 = length v1
+    v3 = call __ptr_width
+    v4 = binary + v2 v3
+    ret v4
+}
+
+modes result i32
+v0:i32 v1:usize v2:i32 v3:void v4:i32 v5:i32 v6:void
+func poked {
+  b0:
+    v0 = const_int 16
+    v1 = call __alloc v0
+    v2 = const_int 7
+    v3 = call __store_i32 v1 v2
+    v4 = call __load_i32 v1
+    v5 = const_int 16
+    v6 = call __free v1 v5
+    ret v4
+}
+
 refused unsupported map shape
 refused unsupported map shape
 modes 2 1 result i32
