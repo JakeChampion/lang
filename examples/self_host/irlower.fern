@@ -41138,6 +41138,74 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[], spread_
 //
 // Struct receivers only: the marker it feeds is the struct deep drop.
 pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, borrowable: string[], sfok: string[], cntret: string[]): string[] {
+    var rows: string[] = recv_borrow_pass(funcs, structs, borrowable, sfok, cntret, []);
+    var i: i32 = 0;
+    while (i <= funcs.len()) {
+        var next: string[] = recv_borrow_pass(funcs, structs, borrowable, sfok, cntret, rows);
+        if (next.len() == rows.len()) { return next; }
+        rows = next;
+        i = i + 1;
+    }
+    return rows;
+}
+
+// recv_nomove_methods_of: the methods of `sty` that a receiver may be handed to
+// without the hand-off counting as a field move — the plain key and the
+// "RECVIDENT:" tier, which is the same pair the CALLER side already trusts for
+// this exact question when it builds its own nomove list.
+function recv_nomove_methods_of(prev: string[], sty: string): string[] {
+    if (sty.len() == 0) { return []; }
+    var out: string[] = recv_borrow_methods_of(prev, sty);
+    var pfx: string = "RECVIDENT:" + sty + ".";
+    for row in prev {
+        if (row.len() > pfx.len() && slice_unchecked(row, 0, pfx.len()) == pfx) {
+            out = push_str_unique(out, slice_unchecked(row, pfx.len(), row.len()) + "");
+        }
+    }
+    return out;
+}
+
+// body_forwards_receiver_ret: some `return <name>.m(...)` whose callee may hand
+// the receiver back — it carries a "RECVRET:" or "CNTRECVRET:" row in `prev`.
+// The result then MAY be the receiver's own box, exactly as a bare `return name`
+// makes it, so it earns the same row and stays out of the plain key, whose
+// contract is that the receiver escapes nowhere.
+function body_forwards_receiver_ret(stmts: ast.Stmt[], name: string, sty: string, prev: string[]): boolean {
+    for stmt in stmts { if (stmt_forwards_receiver_ret(stmt, name, sty, prev)) { return true; } }
+    return false;
+}
+function stmt_forwards_receiver_ret(st: ast.Stmt, name: string, sty: string, prev: string[]): boolean {
+    match (st) {
+        ast.StmtReturn(r) => { return expr_forwards_receiver(r.value, name, sty, prev); },
+        ast.StmtIf(f) => {
+            return body_forwards_receiver_ret(f.then_body, name, sty, prev)
+                || body_forwards_receiver_ret(f.else_body, name, sty, prev);
+        },
+        ast.StmtWhile(w) => { return body_forwards_receiver_ret(w.body, name, sty, prev); },
+        ast.StmtFor(fo) => { return body_forwards_receiver_ret(fo.body, name, sty, prev); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { if (body_forwards_receiver_ret(arm.body, name, sty, prev)) { return true; } }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function expr_forwards_receiver(e: ast.Expr, name: string, sty: string, prev: string[]): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            if let ast.ExprIdent(rid) = fa.obj {
+                if (rid.name != name) { return false; }
+                var key: string = sty + "." + fa.field;
+                return util.index_of_str(prev, "RECVRET:" + key) >= 0
+                    || util.index_of_str(prev, "CNTRECVRET:" + key) >= 0;
+            }
+        }
+    }
+    return false;
+}
+
+function recv_borrow_pass(funcs: parser.FuncDecl[], structs: StructTab, borrowable: string[], sfok: string[], cntret: string[], prev: string[]): string[] {
     var out: string[] = [];
     for fn in funcs {
         if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0) {
@@ -41165,12 +41233,18 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, bo
                 // its receiver back, and the caller's credit gate has to know.
                 // A cnt_struct_ret_fns member hands it back COUNTED and keys
                 // "CNTRECVRET:" instead, which that gate does not read.
-                if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
+                var fwd_ret: boolean = body_forwards_receiver_ret(fn.body, fn.receiver_name, rty, prev);
+                if (body_returns_bare_ident(fn.body, fn.receiver_name) || fwd_ret) {
                     out = out.append(recvret_row(cntret, rty + "." + fn.name));
                 }
-                if (!moves_fields_stmts(fn.body, fn.receiver_name, no_names(), spread_copy_counted(structs, sfok, rty))
+                if (!moves_fields_stmts(fn.body, fn.receiver_name, recv_nomove_methods_of(prev, rty), spread_copy_counted(structs, sfok, rty))
                     && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
-                    if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
+                    // A forwarding return hands the receiver out through the
+                    // callee's own result, which expr_unsafe_for reads as a
+                    // borrow because the receiver POSITION is one. The plain
+                    // key would then claim an escape-free body it does not
+                    // have, so the forward takes the identity tier instead.
+                    if (!fwd_ret && !body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
                         out = out.append(rty + "." + fn.name);
                     }
                     // Second tier: the ONLY escape is that bare `return self`.
