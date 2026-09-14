@@ -307,6 +307,14 @@ function t_func_own(param_types: typeinfo.Type[], param_own: boolean[], ret_type
   return typeinfo.TypeFunc { param_types: param_types, param_own: typeinfo.own_flags(param_own, param_types), ret_type: ret_type, params_known: true };
 }
 
+// A lambda's consuming slots are the `own` its parameters declare, the same
+// way a named function's are: the value a lambda is bound to spells them.
+function lambda_owns(lm: ast.ExprLambda): boolean[] {
+  var owns: boolean[] = [];
+  for param in lm.params { owns = owns.append(param.own); }
+  return owns;
+}
+
 // t_func_opaque builds the callable whose parameter list was never recorded,
 // so its emptiness carries no information and no caller may arity-check it.
 function t_func_opaque(ret_type: typeinfo.Type): typeinfo.Type {
@@ -2946,12 +2954,14 @@ function closure_env_param(sig: FuncSig): boolean {
 // The type the box hands out: the body's signature without its environment.
 function t_func_after_env(sig: FuncSig): typeinfo.Type {
   var params: typeinfo.Type[] = [];
+  var owns: boolean[] = [];
   var i: i32 = 1;
   while (i < sig.param_types.len()) {
     params = params.append(sig.param_types[i]);
+    owns = owns.append(i < sig.param_own.len() && sig.param_own[i]);
     i = i + 1;
   }
-  return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(sig.param_own, params), ret_type: sig.ret_type, params_known: true };
+  return t_func_own(params, owns, sig.ret_type);
 }
 
 // check_call_expr types an ExprCall (plain / closure / method call).
@@ -3569,7 +3579,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // to the function turned `Some(pair) => pair.0` into an E043 inside
       // std the moment a user function was named `pair`.
       if (csig.name.len() > 0 && !s.is_bound(id.name)) {
-        return t_func(csig.param_types, csig.ret_type);
+        return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
       }
       return bound;
     },
@@ -3968,7 +3978,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         bi = bi + 1;
       }
       check_block(lm.body, body_scope);
-      return t_func(pts, rt);
+      return t_func_own(pts, lambda_owns(lm), rt);
     },
     ast.ExprMapLit(_) => {
       // ExprMapLit is the formatter's written form of `Map { … }`; the compile
@@ -4013,7 +4023,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
             lpts = lpts.append(s.resolve_param(param));
           }
           var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
-          init_scope = s.bind(v.name, t_func(lpts, lrt));
+          init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
         },
         _ => {}
       }
@@ -4290,7 +4300,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
             lpts = lpts.append(s.resolve_param(param));
           }
           var lrt: typeinfo.Type = s.resolve_type(lm.ret_type);
-          init_scope = s.bind(v.name, t_func(lpts, lrt));
+          init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
         },
         _ => {}
       }
@@ -6291,7 +6301,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
       var rt: typeinfo.Type = cur.resolve_type(lm.ret_type);
       var lsc: Scope = cur;
       if (self_name.len() > 0) {
-        lsc = lsc.bind(self_name, t_func(pts, rt));
+        lsc = lsc.bind(self_name, t_func_own(pts, lambda_owns(lm), rt));
       }
       var bi: i32 = 0;
       while (bi < lm.params.len()) {
@@ -9741,7 +9751,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             for param in lm.params {
               fpts = fpts.append(cur.resolve_param(param));
             }
-            vsc = cur.bind(v.name, t_func(fpts, cur.resolve_type(lm.ret_type)));
+            vsc = cur.bind(v.name, t_func_own(fpts, lambda_owns(lm), cur.resolve_type(lm.ret_type)));
             cur = vsc;
           },
           _ => {
@@ -15507,7 +15517,7 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
   }
   var rt: typeinfo.Type = s.resolve_type(lm.ret_type);
   var ls: Scope = Scope { ...s, loop_depth: 0, ret_type: rt };
-  if (self_name.len() > 0) { ls = ls.bind(self_name, t_func(pts, rt)); }
+  if (self_name.len() > 0) { ls = ls.bind(self_name, t_func_own(pts, lambda_owns(lm), rt)); }
   var i: i32 = 0;
   while (i < lm.params.len()) {
     ls = ls.bind(lm.params[i].name, pts[i]);

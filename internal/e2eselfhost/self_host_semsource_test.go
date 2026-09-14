@@ -447,6 +447,14 @@ function pick_capture(k: i32, n: i32): i32 {
     if (k > 0) { g = (x: i32): i32 => { return x + w.len(); }; }
     return g(n);
 }
+// A nested function with an owning parameter is a lambda bound to a name,
+// and the name's type spells the own the way the box's does.
+struct Tally { n: i32 }
+function use_of(n: i32, f: string, a: Tally): Tally { return Tally { n: a.n + f.len() + n }; }
+function scan(x: i32, f: string): Tally {
+    function ve(n: i32, own a: Tally): Tally { return use_of(n, f, a); }
+    return fold_own(Tally { n: x }, ve);
+}
 function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function refused_fn_result(): (i32) => i32 { return twice_it; }
 function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
