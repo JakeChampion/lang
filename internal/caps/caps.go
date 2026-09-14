@@ -202,6 +202,16 @@ var Ungated = map[string]bool{
 	// question is whether the target has signals at all.
 	"signal_ignore":  true,
 	"signal_default": true,
+	// Scheduling priority is the same shape as a signal disposition:
+	// reading it reports this process's own state, and setting it
+	// changes how this process — and, since niceness is inherited
+	// across fork and exec, anything it starts — competes for the CPU.
+	// The consequence is timing rather than reach, and no v1
+	// capability names timing. `internal/platforms` gates both,
+	// because there the question is whether the target has a scheduler
+	// knob at all.
+	"priority":     true,
+	"set_priority": true,
 	// Reading a disposition or the blocked mask reaches even less far
 	// than setting one does: it reports this process's own state and
 	// changes nothing. signal_mask writes as well, and to the same

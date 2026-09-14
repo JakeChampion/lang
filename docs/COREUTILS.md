@@ -2358,7 +2358,8 @@ groups are the order of work. Each sub-issue names its group.
   `builtin_function_names()` in the self-hosted parser, and fails naming
   each one that is missing. Lowered: `sleep_ns` (266), `rename` (267),
   `chmod` (268), `set_file_times` (269), `statfs` (270), `process_alive`
-  (271), `rlimit_nofile` (272), `truncate` (273), `mknod` (274).
+  (271), `rlimit_nofile` (272), `truncate` (273), `mknod` (274),
+  `priority` (282), `set_priority` (283).
 
   `truncate` is path-based rather than fd-based because no Fern open
   yields a writable descriptor to an EXISTING file without first
@@ -2419,7 +2420,8 @@ groups are the order of work. Each sub-issue names its group.
   Two of those do not reach every target, and the refusal is deliberate
   rather than a gap: `chmod` is refused on wasm (E066, capability
   `fsmode` — neither WASI preview has permission bits), and
-  `process_alive` and `rlimit_nofile` are refused there too, named by
+  `process_alive`, `rlimit_nofile` and the `priority` / `set_priority`
+  pair are refused there too, named by
   the wasm emitter rather than by the platforms gate, because
   `wasm_ir_run` / `wasm_run` / `playground_run` reach `emit_ir_module`
   directly and would otherwise present a deliberate absence as a

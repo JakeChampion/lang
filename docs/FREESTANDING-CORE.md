@@ -62,6 +62,7 @@ costs a silent failure on the first target that lacks it.
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
 | `proc` | `proc_fork`, `proc_exec`, `proc_waitpid`, `process_alive` | processes |
 | `rlimit` | `rlimit_nofile` | a kernel that enforces ceilings on this process's resources |
+| `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | interp-only; no compiled target provides it |
 | `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
 
@@ -347,6 +348,25 @@ build for wasm rather than capping itself against a fiction.
 The package-capability side leaves it UNGATED, beside `geteuid`: the
 ceiling was chosen by whoever exec'd the program, and a dependency that
 learns how many descriptors it may open gains no reach it did not have.
+
+**`sched` is its own capability for the same reason, one step further
+out.** A host can schedule processes without exposing a knob for how, so
+`priority` / `set_priority` need a second thing beyond `proc`: a nice
+value, and a kernel willing to move it.
+
+Neither WASI preview has one, and neither stand-in is honest in the same
+way `rlimit`'s are not. Answering 0 from `priority` claims the default
+nice value was measured; letting `set_priority` succeed claims a change
+that did not happen — worse than the read, because a caller that renices
+itself and carries on believes it took effect. E066 refuses both, so
+`nice` does not build for wasm rather than running a command at a
+priority it did not set.
+
+The package-capability side leaves the pair UNGATED, beside the signal
+dispositions: reading reports this process's own state, and setting
+changes how this process — and, since niceness is inherited across fork
+and exec, anything it starts — competes for the CPU. The consequence is
+timing, and no v1 capability names timing.
 
 **`process_alive` is `proc`, and the reason it is not `signal` is the
 whole point of the pair.** It is `kill(pid, 0)` underneath — a signal

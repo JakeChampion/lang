@@ -664,6 +664,21 @@ pub function op_rename(): Op { return op0("rename"); }
 // umask(2), which sets and reads in one uninterruptible step. It cannot
 // fail. Native only: neither WASI preview has a file-mode creation mask.
 pub function op_umask(): Op { return op0("umask"); }
+// `priority` takes no operands and pushes an i32: this process's NICE value,
+// getpriority(PRIO_PROCESS, 0). The number runs the other way round to what
+// the name suggests — -20 is the most favourable and 19 the least. It cannot
+// fail for the caller's own process, so there is no Result: PRIO_PROCESS is a
+// valid `which` and pid 0 always exists, and -1 is a legal nice value that a
+// Result-less caller could not otherwise tell from an error return. Native
+// only: neither WASI preview has a scheduler knob.
+pub function op_priority(): Op { return op0("priority"); }
+// `set_priority` takes one operand [nice] and pushes Result[void, IoError]:
+// setpriority(PRIO_PROCESS, 0, nice), the write of what `priority` reads.
+// LOWERING the value needs privilege, so an unprivileged caller asking for -5
+// gets EACCES as Other("", strerror) — which is the whole point of the Result
+// rather than an edge of it. The kernel clamps what it stores to its own
+// range rather than refusing a value outside it. Native only, as above.
+pub function op_set_priority(): Op { return op0("set_priority"); }
 // The metadata writes on an entry that already exists (#9059). `chmod` takes
 // [path, mode] and pushes Result[void, IoError] — fchmodat(2), which sets the
 // low twelve permission bits verbatim: a umask filters a CREATION, and this is
@@ -1752,7 +1767,7 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 282..284, 286..290, then 302 — 281
+// NEXT FREE EXTENSION ID: 284, 286..290, then 309 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -1997,6 +2012,7 @@ function kind_id_len8(name: string): i32 {
     if (c == b'o' && name == "opt_make") { return 120; }
     if (c == b'o' && name == "opt_none") { return 121; }
     if (c == b'p' && name == "popcount") { return 221; }
+    if (c == b'p' && name == "priority") { return 282; }
     if (c == b'r') { return kind_id_len8_r(name); }
     if (c == b's') { return kind_id_len8_s(name); }
     if (c == b't') { return kind_id_len8_t(name); }
@@ -2242,6 +2258,7 @@ function kind_id_len12_r(name: string): i32 {
 }
 
 function kind_id_len12_s(name: string): i32 {
+    if (name == "set_priority") { return 283; }
     if (name == "str_to_upper") { return 106; }
     if (name == "str_to_lower") { return 107; }
     if (name == "str_index_of") { return 116; }
@@ -2615,6 +2632,8 @@ function kind_name_4(id: i32): string {
     if (id == 279) { return "signal_disposition"; }
     if (id == 280) { return "proc_exec_as"; }
     if (id == 281) { return "writer_truncate"; }
+    if (id == 282) { return "priority"; }
+    if (id == 283) { return "set_priority"; }
     if (id == 285) { return "signal_send"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     if (id == 298) { return "sync"; }
@@ -2698,7 +2717,7 @@ function pops0(t: i32): boolean {
         || t == 238 || t == 239 || t == 240                              // geteuid, getegid, hostname
         || t == 246 || t == 247 || t == 248 || t == 249                  // getuid, getgid, getgroups, environ
         || t == 251 || t == 252                                          // getcwd, cpu_count
-        || t == 272                                                      // rlimit_nofile
+        || t == 272 || t == 282                                          // rlimit_nofile, priority
         || t == 298;                                                     // sync
 }
 
@@ -2747,6 +2766,7 @@ function pops1_io(t: i32): boolean {
         || t == 241 || t == 250 || t == 307                              // fd_stat, uname_field, fd_flags
         || t == 299 || t == 300 || t == 301                              // fd_fsync, fd_fdatasync, fd_syncfs
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
+        || t == 283                                                      // set_priority (nice)
         || t == 270 || t == 271                                          // statfs, process_alive
         || t == 276                                                      // window_size
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid

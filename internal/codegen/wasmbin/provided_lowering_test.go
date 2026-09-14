@@ -110,6 +110,13 @@ var providedRefusedByPlatform = map[string]bool{
 	// bits a creation is allowed to keep. WASI has no creation mask, and
 	// answering 0 would claim every bit survives.
 	"umask": true,
+	// `sched` — how this process competes for the CPU. Neither
+	// preview has a scheduler knob, and neither stand-in is honest:
+	// answering 0 from `priority` claims the default nice value was
+	// measured, and letting `set_priority` succeed claims a change
+	// that did not happen.
+	"priority":     true,
+	"set_priority": true,
 	// `userid` — a user / group id, effective or real, and the
 	// supplementary group set. Neither WASI preview has a notion of a
 	// user at all, and FileStat's uid / gid are zero there for the same

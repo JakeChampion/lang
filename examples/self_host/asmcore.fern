@@ -480,6 +480,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "fchownat") { return "260"; }
         if (name == "utimensat") { return "280"; }
         if (name == "umask") { return "95"; }
+        if (name == "getpriority") { return "140"; }
+        if (name == "setpriority") { return "141"; }
         if (name == "kill") { return "62"; }
         if (name == "getrlimit") { return "97"; }
         if (name == "statfs") { return "137"; }
@@ -569,6 +571,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "symlinkat") { return "474"; }
         if (name == "readlinkat") { return "473"; }
         if (name == "umask") { return "60"; }
+        if (name == "getpriority") { return "100"; }
+        if (name == "setpriority") { return "101"; }
         if (name == "kill") { return "37"; }
         if (name == "getrlimit") { return "194"; }
         // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
@@ -641,6 +645,11 @@ pub function sysno(t: string, name: string): string {
     if (name == "symlinkat") { return "36"; }
     if (name == "readlinkat") { return "78"; }
     if (name == "umask") { return "166"; }
+    // SET is 140 and GET is 141 in the asm-generic table — the opposite
+    // order to x86-64's 140 get / 141 set above, so the two rows are not
+    // interchangeable.
+    if (name == "setpriority") { return "140"; }
+    if (name == "getpriority") { return "141"; }
     if (name == "kill") { return "129"; }
     if (name == "getrlimit") { return "163"; }
     if (name == "statfs") { return "43"; }
@@ -2008,6 +2017,34 @@ pub function rt_src_set_file_times(t: string): string {
 // one argument; the two extra words __syscall3 passes are ignored.
 pub function rt_src_umask(t: string): string {
     return "function __fern_umask(mask: i32): i32 { return __syscall3(" + sysno(t, "umask") + ", mask, 0, 0); }";
+}
+
+// rt_src_priority backs `priority()` (syscall-leaf) → this process's NICE
+// value, getpriority(PRIO_PROCESS, 0). It cannot fail for the caller's own
+// process, so the syscall's return value is the whole result.
+//
+// The two kernels disagree about what that value IS. Linux answers the nice
+// value BIASED by 20, so a success is never negative — nice 19 arrives as 1
+// and -20 as 40 — and undoing the bias is the caller's job on every libc.
+// BSD answers it directly and reports failure through errno alone, so Darwin
+// needs no correction and applying Linux's would negate the answer.
+pub function rt_src_priority(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_priority(): i32 { return __syscall3(" + sysno(t, "getpriority") + ", 0, 0, 0); }";
+    }
+    return "function __fern_priority(): i32 { return 20 - __syscall3(" + sysno(t, "getpriority") + ", 0, 0, 0); }";
+}
+
+// rt_src_set_priority backs `set_priority(nice)` (syscall-leaf) →
+// Result[void, IoError], setpriority(PRIO_PROCESS, 0, nice). No bias on this
+// side, on either kernel: only the READ is biased.
+//
+// EACCES and EPERM are what an unprivileged caller gets for asking to go
+// below its current value, and neither is an errno __fern_io_error names a
+// variant for, so each arrives as Other("", strerror) — the empty path being
+// honest, since the op never saw the text its caller parsed the value from.
+pub function rt_src_set_priority(t: string): string {
+    return "function __fern_set_priority(nice: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "setpriority") + ", 0, 0, nice); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
@@ -4223,6 +4260,10 @@ function builtin_i32_names(): string[] {
         // as isatty's; rlimit_nofile() -> i64, in one like the clocks'.
         "process_alive",
         "rlimit_nofile",
+        // priority() -> this process's nice value, -20..19. An integer
+        // slot like the ids'; NEGATIVE, which no other member of this
+        // list is, and the slot carries that without truncation.
+        "priority",
         // geteuid() / getegid() / getuid() / getgid() -> the process's
         // effective and real ids. u32 in native's signature; an integer
         // slot here, like every other id.
@@ -4409,6 +4450,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "chmod") { return ty_option(ty_unknown()); }
     if (id.name == "signal_send") { return ty_option(ty_unknown()); }
+    if (id.name == "set_priority") { return ty_option(ty_unknown()); }
     if (id.name == "truncate") { return ty_option(ty_unknown()); }
     if (id.name == "sync") { return ty_unknown(); }
     if (id.name == "mknod") { return ty_option(ty_unknown()); }
@@ -6410,6 +6452,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // process's descriptor ceiling.
         "__fn___fern_process_alive", "__fn___fern_signal_send",
         "__fn___fern_rlimit_nofile",
+        // and how it competes for the CPU.
+        "__fn___fern_priority", "__fn___fern_set_priority",
         // random_bytes and random_i32 are Fern on BOTH register backends now
         // (#2649), so only the stack-ABI symbols exist; the register-ABI
         // __fern_random_bytes / __fern_random_i32 are gone.

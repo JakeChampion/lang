@@ -357,7 +357,14 @@ var rcInertBuiltins = map[string]bool{
 	// process state in between: nothing to move. Native-only — E066
 	// refuses it on both wasm worlds, which have no file-mode creation
 	// mask — so it is classified here under the builtin name.
-	"umask":   true,
+	"umask": true,
+	// () → the current nice value, and (nice) → a Result[void] saying
+	// whether the kernel took it. A scalar in, process state in
+	// between, and nothing to move either way — the same shape
+	// `signal_send` has. Native-only: E066 refuses both on the wasm
+	// worlds, which have no scheduler knob, so they are classified
+	// here under the builtin names.
+	"priority": true, "set_priority": true,
 	"geteuid": true, "getegid": true, "hostname": true,
 	"getuid": true, "getgid": true,
 	// `getgroups` has no arguments either, and it is classified here

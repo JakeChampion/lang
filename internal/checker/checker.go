@@ -2813,6 +2813,47 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// priority(): the calling process's NICE value —
+	// `getpriority(PRIO_PROCESS, 0)`. The name is the syscall's; the
+	// number is the nice value, so it runs the other way round to what
+	// "priority" suggests: -20 is the most favourable to the process
+	// and 19 the least, 0 the default.
+	//
+	// It cannot fail for the caller's own process — PRIO_PROCESS is a
+	// valid `which` and pid 0 is always a process that exists — so it
+	// is a plain number rather than a Result. That matters because -1
+	// is a legal nice value as well as getpriority's error return, and
+	// a caller cannot tell them apart without errno.
+	//
+	// Gated on `sched`, not `proc`: a host can schedule processes
+	// without exposing a knob for how, which is the same argument
+	// `rlimit_nofile` gets its own capability by.
+	c.info.FuncSigs["priority"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// set_priority(nice): Result[void, IoError] —
+	// `setpriority(PRIO_PROCESS, 0, nice)`, the write of the value
+	// `priority` reads.
+	//
+	// A Result because this one really does fail, and the failure is
+	// the point rather than an edge: LOWERING the nice value needs
+	// privilege, so an unprivileged caller asking for -5 gets EACCES
+	// and has to carry on at the value it already had. That is exactly
+	// what `nice` prints as `cannot set niceness: Permission denied`
+	// before running the command anyway.
+	//
+	// The kernel clamps the value it stores to its own range rather
+	// than refusing one outside it, so a caller that needs GNU's
+	// -20..19 saturation must do its own clamping to see the same
+	// number back from `priority`.
+	c.info.FuncSigs["set_priority"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// remove_dir_all(path): Result[void, IoError] — recursively
 	// remove `path` (mirrors POSIX `rm -rf`). Used by tests
 	// to scrub `temp_dir` output. Same return shape as

@@ -1182,6 +1182,8 @@ func New() *Interp {
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
+	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
+	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
@@ -3530,6 +3532,34 @@ func builtinUmask(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("umask: expected number mask, got %T", args[0])
 	}
 	return Number(setUmask(int(mask) & 0o7777)), nil
+}
+
+// builtinPriority is getpriority(PRIO_PROCESS, 0): this process's nice
+// value, where -20 is the most favourable and 19 the least.
+func builtinPriority(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("priority: expected 0 args, got %d", len(args))
+	}
+	return Number(getProcPriority()), nil
+}
+
+// builtinSetPriority is setpriority(PRIO_PROCESS, 0, nice).
+//
+// The interpreter shares its process with the Go runtime, so this
+// renices `fern` itself for as long as the program runs — the same
+// one-process scope a compiled program has, and the same scope
+// `signal_ignore` moves in.
+func builtinSetPriority(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("set_priority: expected 1 arg, got %d", len(args))
+	}
+	nice, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("set_priority: expected number nice value, got %T", args[0])
+	}
+	// The path is empty for the same reason signal_send's is: the
+	// primitive never saw the text its caller parsed the value out of.
+	return ioResult("", setProcPriority(int(nice))), nil
 }
 
 // builtinCreateDirAll creates `path` and every missing parent.
