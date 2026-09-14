@@ -24027,8 +24027,14 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 // exactly when the pointer changed (emit_arr_store's cow guard). A sole owner's
 // arr_push_owned reclaims on grow itself, and a parameter's store is its
 // ownership flag's (emit_consumed_param_store).
+//
+// Scalar elements only. The un-share copy duplicates the element words with no
+// retain, so a pointer-element buffer (string[], T[][], a struct array) shares
+// its elements with the copy uncounted; releasing this frame's reference lets
+// the other holder's deep free reach rc 1 and walk elements the copy still
+// reads (#9209). That buffer is left to its holders, as before.
 function aliased_push_releases_old(sole_owner: boolean, s: LowerState, slot: i32): boolean {
-    return !sole_owner && arr_slot_shallow_release_ok(s, slot);
+    return !sole_owner && arr_slot_shallow_release_ok(s, slot) && slot_holds_scalar_elems(s, slot);
 }
 
 // append_target_sole_owner: `name = name.append(v)` may reclaim the superseded
