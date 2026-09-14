@@ -32,10 +32,32 @@ Two things were wrong at once:
   the exit sweep releases it. So the function released the one buffer twice
   at exit. The probe never saw it because `__rc_underflow_count()` is read
   before the sweep runs; from a caller's frame the parent compiler exits 99
-  on `if-expression-alias-exit-sweep`. The ident leaf now takes the alias
-  retain (`retain_tos`), the same second holder `var b = a` records, so `b`
-  owns the reference its sweep releases and the source's next update finds
-  the buffer shared and copies once.
+  on `if-expression-alias-exit-sweep`. The leaf now takes the alias retain
+  (`retain_tos`) for the read shapes the `var` ladder retains — a bare array
+  local, a struct field of any array kind (through the ladder's own field
+  classifiers, `scalar_arr_field_type` and its struct / enum / nested
+  siblings), a tuple element, a nested-array element
+  (`ifexpr_leaf_is_array_read`) — so `b` owns the reference its sweep
+  releases and the source's next update finds the buffer shared and copies
+  once. A fresh producer in a branch (a literal, a slice, a call) is a move
+  and stays unretained. The container-read leaves were the reviewer's
+  catch, twice: each exited 99 the same way with only the ident covered,
+  and an `i32[]` / `boolean[]` / `u8[]` field still did when the field arm
+  asked only the width classifiers, which spell string, i64 and f64 fields
+  and nothing else. A third catch was the index arm: `box.grid[0]` over a
+  nested-array FIELD, and `m[0][1]`, answered no under `expr_yields_array`,
+  whose index reading accepts an ident receiver alone. Nested arrays are a
+  leak-only class, so that one did not exit 99: the binding's sweep freed a
+  row the struct still held, and a caller handed the struct read 7 for 1
+  once three small allocations had recycled the row (exit 2). The index arm
+  now also asks `index_read_is_arr`, the compiler's own indexed-array-read
+  decision, which spells both shapes — and, after the reviewer's fourth
+  catch, a tuple element holding a nested array (`t.1[0]`, exit 2 the same
+  way), which that decision's field arm now reads through the element's tag
+  (`field_arr_tag`), on the return path as well — and, one index deeper, the
+  fifth: `t.1[0][1]` over a tuple holding `T[][][]` asked the doubly-indexed
+  classifier, whose field arm read the struct-field type alone; it reads the
+  same tag now.
 
 ## Measured
 
@@ -53,11 +75,16 @@ read of zero were both compatible with the double release.
 
 ## Gates
 
-Three rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
+Twelve rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `if-expression-alias`, `if-expression-fresh-arm`,
-`if-expression-alias-exit-sweep`. Against the parent commit's lowering
-exactly those three fail (103 / 3, 102 / 2, exit 99) and the other thirty
-pass. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
+`if-expression-alias-exit-sweep`, the field (`u64[]`, `i32[]`,
+`boolean[]`) / index / tuple `-leaf-exit-sweep` rows, and the four
+`-handback` rows (a nested-array field indexed, a doubly-indexed element, a
+tuple element's nested array indexed once and twice) that pin the
+recycled-row read. Against the parent commit's lowering the
+first three fail (103 / 3, 102 / 2, exit 99) and the other thirty pass; the
+leaf rows exit 99 with the ident-only guard, and the handback rows exit 2
+with the ident-receiver index arm. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
 — the lift change touches every function with an if-expression — and
 `TestSelfHostCoreutilsParity/(od|printf)`. The probe set of the predecessor
 entry is otherwise unchanged; #9191 (alias + append) and #9190 (Option
