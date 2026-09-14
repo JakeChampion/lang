@@ -351,11 +351,13 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The MIXED-path producer ("FRESHSELF:"): `relabel` returns a fresh Pair on one
-	// path and the RECEIVER on the other, so no all-fresh registry can admit it and
-	// the fresh path's box was stranded at every call. Which box arrived is a
-	// runtime fact, so the release is a pointer compare against the receiver — the
-	// struct twin of the SFRRECV chain release.
+	// The MIXED-path producer: `relabel` returns a fresh Pair on one path and the
+	// RECEIVER on the other, so no all-fresh registry can admit it and the fresh
+	// path's box was stranded at every call. It is a counted-return member
+	// ("CNTRET:") since #9203, which is what retires the pointer compare the row
+	// was written for: the handback path is counted by the return path now, so the
+	// result carries one count this frame owns whichever box arrived and the
+	// release is the bare dec either way. The row's name is the historical one.
 	{"freshself-mixed-method-flat", `struct Pair { j: i32, k: i32 }
 function (p: Pair) relabel(t: i32): Pair {
     if (t == 0) { return p; }
@@ -446,13 +448,14 @@ function main(): i32 {
 	// an over-release: `me()` hands the RECEIVER back, so the "temp" the read
 	// would free is `keep`'s own box and the moved-out tag is `keep`'s own string.
 	//
-	// The REGISTRY no longer refuses this shape. "FRESHSELF:" admits a method whose
-	// every return is a strict-fresh literal or the receiver, and `me()` is the
-	// degenerate all-receiver member of that set — body_returns_fresh_or_self_struct
-	// says true for it. What declines is the RELEASE: emit_freshself_release
-	// compares the result against the receiver's slot and frees nothing when they
-	// are the same pointer, which here is every call. The safety this case pins is
-	// unchanged; the mechanism delivering it moved from the admission to the guard.
+	// The REGISTRY no longer refuses this shape, and since #9203 neither does the
+	// release. `me()` is the degenerate all-receiver member of the counted-return
+	// class, so its result is the receiver's own box carrying one count the callee
+	// added on the way out; the read-through release decs exactly that count
+	// (emit_counted_result_release) rather than comparing the result against the
+	// receiver's slot. `keep`'s box and its moved-out tag are untouched either way,
+	// which is the safety this case pins — the mechanism moved from a pointer
+	// guard to the count itself.
 	{"method-identity-return-not-released", `struct Box { tag: string, n: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function (b: Box) me(): Box { return b; }
