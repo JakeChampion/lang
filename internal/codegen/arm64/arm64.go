@@ -517,7 +517,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err := g.resolveFernHelpers(); err != nil {
 		return "", err
 	}
-	g.line(`.arch armv8-a`)
+	// The declared baseline (CLAUDE.md, docs/BACKEND-PARITY.md): ARMv8.2-A
+	// with the cryptographic extensions, which is what makes pmull's .1q
+	// form — the carry-less multiply the CRC kernel folds with — assemblable
+	// by an external `as`. Emitted once here rather than as a mid-file
+	// `.arch_extension`, whose scope would silently depend on which kernel
+	// happened to be emitted first.
+	g.line(`.arch armv8.2-a+crypto`)
 	g.line(`.text`)
 	if g.entry == platforms.EntryProcess {
 		g.emitStartRuntime()
@@ -4927,15 +4933,6 @@ func (g *generator) emitCountByteRuntime() {
 // them: one chain runs at the multiply's latency rather than its throughput.
 func (g *generator) emitCrc32CksumRuntime() {
 	g.line("")
-	if !g.darwin {
-		// pmull's .1q form is FEAT_PMULL, which GNU as does not enable at
-		// its default architecture even though the declared baseline has
-		// it — `-cc aarch64-linux-gnu-gcc` fails to assemble the kernel
-		// without this. The in-process assembler encodes it either way, so
-		// only the external-toolchain path needs telling. Apple's
-		// assembler defaults to a core that has it.
-		g.line(".arch_extension aes")
-	}
 	g.line(".global __fern_crc32_cksum")
 	g.typeDirective("__fern_crc32_cksum")
 	g.label("__fern_crc32_cksum")
@@ -5054,20 +5051,26 @@ func (g *generator) emitCrc32LoadBlock(v, ptr string) {
 
 // emitCrc32Step folds the byte in w17 into the CRC in w0, branchless: the
 // polynomial is selected by an arithmetic shift of the sign bit.
+//
+// Scratch stays in x12/x13/x14, which the fold finished with once the
+// constants were inserted into v2 and v17. x19 and x20 are AAPCS64
+// callee-saved and generated code parks call-crossing values there BECAUSE
+// callees preserve them, so a kernel using them without a save/restore pair
+// corrupts its caller rather than itself; x18 is the platform register.
 func (g *generator) emitCrc32Step() {
 	lbl := fmt.Sprintf(".Lcrc32_bit%d", g.crc32StepSeq)
 	g.emit("lsl w17, w17, #24")
 	g.emit("eor w0, w0, w17")
-	g.emit("mov w18, #8")
-	g.emit("movz w19, #0x1db7")
-	g.emit("movk w19, #0x04c1, lsl #16")
+	g.emit("mov w12, #8")
+	g.emit("movz w13, #0x1db7")
+	g.emit("movk w13, #0x04c1, lsl #16")
 	g.label(lbl)
-	g.emit("asr w20, w0, #31")
-	g.emit("and w20, w20, w19")
+	g.emit("asr w14, w0, #31")
+	g.emit("and w14, w14, w13")
 	g.emit("lsl w0, w0, #1")
-	g.emit("eor w0, w0, w20")
-	g.emit("sub w18, w18, #1")
-	g.emit("cbnz w18, %s", lbl)
+	g.emit("eor w0, w0, w14")
+	g.emit("sub w12, w12, #1")
+	g.emit("cbnz w12, %s", lbl)
 	g.crc32StepSeq++
 }
 

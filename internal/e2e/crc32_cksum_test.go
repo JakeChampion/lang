@@ -147,7 +147,26 @@ func TestWASMCrc32Cksum(t *testing.T) {
 // The streaming identity the carried state exists for: the same bytes cut at
 // irregular offsets must fold to the same CRC as one call. Cuts straddle the
 // single-block, prime and 4-way boundaries, and none of them divides 64.
+// The arm64 kernel gets the same streaming check, and it carries a second
+// job there: the loop keeps several locals live ACROSS the call, which is
+// what a kernel clobbering a callee-saved register corrupts. The corpus
+// cannot see that — its call sites are straight-line expressions with
+// nothing live over them — so a kernel that destroyed x19/x20 passed 487
+// cases and still miscompiled its caller.
+func TestArm64Crc32CksumStreams(t *testing.T) {
+	runCrc32CksumStreams(t, func(t *testing.T, src string) (string, int) {
+		return compileAndRunArm64(t, src)
+	})
+}
+
 func TestX86_64Crc32CksumStreams(t *testing.T) {
+	runCrc32CksumStreams(t, func(t *testing.T, src string) (string, int) {
+		return compileAndRunX86_64(t, src)
+	})
+}
+
+func runCrc32CksumStreams(t *testing.T, run func(t *testing.T, src string) (string, int)) {
+	t.Helper()
 	src := `import "std/i32";
 
 function main(): i32 {
@@ -170,7 +189,7 @@ function main(): i32 {
     return 0;
 }
 `
-	out, exit := compileAndRunX86_64(t, src)
+	out, exit := run(t, src)
 	if exit != 0 {
 		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
 	}
