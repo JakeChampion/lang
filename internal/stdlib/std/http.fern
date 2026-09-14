@@ -212,10 +212,10 @@ pub function http_path_segments(path: string): string[] {
 // unchanged when there's no query. Companion to
 // http_path_segments when callers want the bare path
 // without splitting.
-pub function http_url_path_only(path: string): str {
+pub function http_url_path_only(path: string): string {
     var q: i32 = path.index_of("?");
     if (q < 0) { return path; }
-    return slice_unchecked(path, 0, q);
+    return (slice_unchecked(path, 0, q) + "");
 }
 
 // `http_user_agent_is_bot(ua)` — heuristic bot detection

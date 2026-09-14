@@ -96,7 +96,7 @@ pub function path_join(parts: string[]): string {
     return out;
 }
 
-pub function path_parent(p: string): str {
+pub function path_parent(p: string): string {
     var n: i32 = p.len();
     if (n == 0) { return ""; }
     // Walk back from the end skipping a trailing `/`, find the
@@ -109,10 +109,10 @@ pub function path_parent(p: string): str {
     while (i >= 0 && p[i] != 47) { i = i - 1; }
     if (i < 0) { return ""; }
     if (i == 0) { return "/"; }
-    return slice_unchecked(p, 0, i);
+    return (slice_unchecked(p, 0, i) + "");
 }
 
-pub function path_file_name(p: string): str {
+pub function path_file_name(p: string): string {
     var n: i32 = p.len();
     if (n == 0) { return ""; }
     // Trim trailing slashes — "a/b/" → "b".
@@ -121,10 +121,10 @@ pub function path_file_name(p: string): str {
     if (end == 0) { return ""; }
     var i: i32 = end - 1;
     while (i >= 0 && p[i] != 47) { i = i - 1; }
-    return slice_unchecked(p, i + 1, end);
+    return (slice_unchecked(p, i + 1, end) + "");
 }
 
-pub function path_extension(p: string): str {
+pub function path_extension(p: string): string {
     var name: str = path_file_name(p);
     var n: i32 = name.len();
     if (n == 0) { return ""; }
@@ -133,7 +133,7 @@ pub function path_extension(p: string): str {
     // Hidden files (leading dot, no other dot) have no
     // extension: `.bashrc` → "", not "bashrc".
     if (i <= 0) { return ""; }
-    return slice_unchecked(name, i + 1, n);
+    return (slice_unchecked(name, i + 1, n) + "");
 }
 
 // path_clean lexically normalises `p` (no FS access), matching Go
@@ -216,8 +216,8 @@ pub function path_is_absolute(p: string): boolean {
 //   "archive.tar.gz" → "archive.tar"  (only the final extension goes)
 //   ".bashrc"        → ".bashrc"      (a leading-dot file has no ext)
 //   "foo"            → "foo"          (no dot: whole name)
-pub function path_stem(p: string): str {
-    var name: str = path_file_name(p);
+pub function path_stem(p: string): string {
+    var name: string = path_file_name(p);
     var n: i32 = name.len();
     if (n == 0) { return ""; }
     var i: i32 = n - 1;
@@ -225,7 +225,7 @@ pub function path_stem(p: string): str {
     // A dot only at index 0 (hidden file) is not an extension
     // separator, so the whole name is the stem.
     if (i <= 0) { return name; }
-    return slice_unchecked(name, 0, i);
+    return (slice_unchecked(name, 0, i) + "");
 }
 
 // path_with_extension(p, ext) — `p` with its final extension replaced

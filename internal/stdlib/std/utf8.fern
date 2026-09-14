@@ -386,7 +386,7 @@ pub function ceil_char_boundary(s: string, i: i32): i32 {
 // byte slice `s[a:b]` — which would split multibyte characters and
 // produce invalid UTF-8. A single O(n) scan records the byte offsets
 // where the codepoint cursor crosses `start` and `end`.
-pub function substring(s: string, start: i32, end: i32): str {
+pub function substring(s: string, start: i32, end: i32): string {
     var n: i32 = s.len();
     var lo: i32 = start;
     if (lo < 0) { lo = 0; }
@@ -405,5 +405,5 @@ pub function substring(s: string, start: i32, end: i32): str {
     if (cp_idx == end) { byte_end = i; }
     if (byte_start < 0) { return ""; }          // `start` past the last codepoint
     if (byte_end < byte_start) { return ""; }   // `end` <= `start`
-    return slice_unchecked(s, byte_start, byte_end);
+    return (slice_unchecked(s, byte_start, byte_end) + "");
 }

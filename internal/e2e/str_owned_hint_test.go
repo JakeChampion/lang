@@ -10,10 +10,14 @@ import (
 
 // A borrowed `str` never silently promotes to an owned `string` — that rule is
 // deliberate. What was missing is the way out: the diagnostics restated the two
-// type names and stopped, leaving the most ordinary string expression in the
-// language (`var t: string = s.trim();`) with nowhere to go. `.to_owned()` is
-// the materialiser, named in the checker's own comments and used throughout the
-// stdlib, and now named in the message.
+// type names and stopped, leaving a `str` at an owning sink with nowhere to go.
+// `.to_owned()` is the materialiser, named in the checker's own comments and
+// used throughout the stdlib, and now named in the message.
+//
+// The view here is `slice_unchecked`, which is what a `str` producer looks like
+// under O2 (docs/STR-VIEW-CONTRACT.md §5). `.trim()` used to stand in for it and
+// no longer can: it hands back an owned copy, so `var t: string = slice_unchecked(s, 0, 2);` is
+// simply legal now and tests nothing.
 //
 // The second half matters more than the first: a hint you cannot follow is
 // worse than no hint. Every site that offers `.to_owned()` is re-checked here
@@ -42,30 +46,30 @@ func TestStrToOwnedHintAtEveryOwningSink(t *testing.T) {
 	}{
 		{
 			"var init",
-			`function main(): i32 { var s: string = "  x  "; var t: string = s.trim(); return t.len(); }`,
-			`function main(): i32 { var s: string = "  x  "; var t: string = s.trim().to_owned(); return t.len(); }`,
+			`function main(): i32 { var s: string = "  x  "; var t: string = slice_unchecked(s, 0, 2); return t.len(); }`,
+			`function main(): i32 { var s: string = "  x  "; var t: string = slice_unchecked(s, 0, 2).to_owned(); return t.len(); }`,
 		},
 		{
 			"assignment",
-			`function main(): i32 { var s: string = "  x  "; var t: string = "y"; t = s.trim(); return t.len(); }`,
-			`function main(): i32 { var s: string = "  x  "; var t: string = "y"; t = s.trim().to_owned(); return t.len(); }`,
+			`function main(): i32 { var s: string = "  x  "; var t: string = "y"; t = slice_unchecked(s, 0, 2); return t.len(); }`,
+			`function main(): i32 { var s: string = "  x  "; var t: string = "y"; t = slice_unchecked(s, 0, 2).to_owned(); return t.len(); }`,
 		},
 		{
 			"return",
-			`function f(s: string): string { return s.trim(); }
+			`function f(s: string): string { return slice_unchecked(s, 0, 2); }
 function main(): i32 { return f("  x  ").len(); }`,
-			`function f(s: string): string { return s.trim().to_owned(); }
+			`function f(s: string): string { return slice_unchecked(s, 0, 2).to_owned(); }
 function main(): i32 { return f("  x  ").len(); }`,
 		},
 		{
 			"struct field",
-			`function main(): i32 { var s: string = "  x  "; var b: Box = Box { name: s.trim() }; return b.name.len(); }`,
-			`function main(): i32 { var s: string = "  x  "; var b: Box = Box { name: s.trim().to_owned() }; return b.name.len(); }`,
+			`function main(): i32 { var s: string = "  x  "; var b: Box = Box { name: slice_unchecked(s, 0, 2) }; return b.name.len(); }`,
+			`function main(): i32 { var s: string = "  x  "; var b: Box = Box { name: slice_unchecked(s, 0, 2).to_owned() }; return b.name.len(); }`,
 		},
 		{
 			"own parameter",
-			`function main(): i32 { var s: string = "  x  "; return consume(s.trim()); }`,
-			`function main(): i32 { var s: string = "  x  "; return consume(s.trim().to_owned()); }`,
+			`function main(): i32 { var s: string = "  x  "; return consume(slice_unchecked(s, 0, 2)); }`,
+			`function main(): i32 { var s: string = "  x  "; return consume(slice_unchecked(s, 0, 2).to_owned()); }`,
 		},
 	}
 
