@@ -237,7 +237,7 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
     // funcs, structs, enums, consts and traits, and never touches TypeAlias.
     // Collecting them here would not just add pages native does not have — it
     // would advance the WALK, so an alias sitting above a documented
-    // declaration would eat the run that declaration is owed.
+    // declaration would consume the run that declaration is owed.
     return out;
 }
 
@@ -328,7 +328,7 @@ pub function docs_of(src: string): DocModule {
 // The Markdown half, mirroring cmd/ferndoc's renderModule and its
 // per-declaration renderers. Gated byte-for-byte against the native pages, so
 // every literal below — the front matter, the fence language, the blank line
-// after a signature, the trailing comma inside an enum body — is load-bearing
+// after a signature, the trailing comma inside an enum body — is required
 // rather than styling.
 //
 // The one structural difference is where the type strings come from. Native
@@ -491,7 +491,7 @@ function render_enum(ed: parser.EnumDecl, structs: parser.StructDecl[], doc: str
 }
 
 // render_trait mirrors cmd/ferndoc's renderTrait. Two omissions are
-// deliberate and byte-load-bearing: native renders NEITHER the supertrait
+// deliberate and required for byte parity: native renders NEITHER the supertrait
 // clause NOR the type parameters, so `pub trait Num: Add + Sub + Mul + Div {}`
 // prints as an empty body and `pub trait From[T]` prints as `pub trait From`.
 // join_type_params — used by render_struct / render_enum / render_func — must
@@ -537,7 +537,7 @@ function trait_named(mod: parser.Module, name: string, line: i32): parser.TraitD
 // self-host has no array-of-arrays to group into.
 // trait_label is the trait as the source wrote it — qualifier included — which
 // is what native's table shows. parse_type_name resolves `async.Driver` to
-// `Driver`, so the spelling rides beside the resolved name on ImplInfo; an
+// `Driver`, so the spelling is stored beside the resolved name on ImplInfo; an
 // inherent impl has no trait and no spelling.
 function trait_label(im: parser.ImplInfo): string {
     if (im.trait_spelling.len() > 0) { return im.trait_spelling; }

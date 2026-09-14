@@ -44,7 +44,7 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		// rejected here.
 		{"struct-destructure", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var P { x, y } = p; return x + y; }\n", 0, ""},
 		{"struct-destructure-single-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var P { x, .. } = p; return x; }\n", 0, ""},
-		// #5356: an `@` binding rides on the destructure's marker channel, so
+		// #5356: an `@` binding is carried on the destructure's marker channel, so
 		// its `@at:` component reaches the checker in the slot a `: Type`
 		// annotation uses. It must not be read as one — a spurious diagnostic
 		// here would reject a program native accepts.

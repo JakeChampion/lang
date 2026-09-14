@@ -34,7 +34,7 @@ pub function line_cut(hold: string, n: u64, term: i32): i32 {
 // lines begin, found by walking `n + 1` terminators back from the end,
 // or -1 when `s` does not hold that many.
 //
-// The -1 is load-bearing and was a bug for a while (#9064). Answering 0
+// The -1 is essential and was a bug for a while (#9064). Answering 0
 // for "ran out" is indistinguishable from "they begin at s[0]", and the
 // callers act on the second reading: a chunk holding exactly `n`
 // terminators takes the fast path and releases a hold that was part of

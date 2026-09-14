@@ -58,7 +58,7 @@ func genericDisplayMethodIRSrc(mainBody string) string {
 }
 
 // TestSelfHostGenericDisplayMethodIRX86_64 pins the x86-64 IR path (already
-// correct pre-fix) so the differential oracle stays honest.
+// correct pre-fix) so the differential oracle stays valid.
 func TestSelfHostGenericDisplayMethodIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

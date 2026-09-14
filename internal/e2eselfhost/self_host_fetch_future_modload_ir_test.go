@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostFetchFutureModloadIRX86_64 is the capstone of async slice 6c: the
+// TestSelfHostFetchFutureModloadIRX86_64 is the last gate of async slice 6c: the
 // real std/fetch `fetch_future` — whose `__fetch_drain` returns
 // `Pending(tcp_pollable(c), resume)` where the nested `resume` captures the
 // connection fd (i32) AND a string accumulator — now compiles through the

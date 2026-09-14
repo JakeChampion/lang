@@ -1744,7 +1744,7 @@ function arm64_gas_fp_size(code: i32, szhi: boolean): i32 {
 }
 
 // BEGIN GENERATED ARM64 VFP3_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
-// arm64_vfp3_entry: three-register lane-wise FP. The szHi bit rides in the
+// arm64_vfp3_entry: three-register lane-wise FP. The szHi bit is stored in the
 // size-mask slot, which is free here because the arrangement set is fixed.
 function arm64_vfp3_entry(mnem: string): i32 {
     match (mnem) {
@@ -2123,7 +2123,7 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
 // arm64_gas_emit_vecgen encodes one of them. Operand shapes are vetted by
 // arm64_gas_bad_vecgen before the program loop reaches here, so anything it
 // could not express has already been recorded and refused; the arity guards
-// are the same belt-and-braces every emitter here carries, because the loop
+// are the same redundant checks every emitter here carries, because the loop
 // still calls through after recording.
 function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     var czero: i32 = arm64_vcmpzero_entry(mnem);
@@ -4599,7 +4599,7 @@ function arm64_gas_bad_unscaled2(mnem: string, ops: string[], lm: Arm64Mem): str
 }
 
 // stp/ldp: the register class (X/W/D) picks the offset scale, s-register
-// pairs are a loud gap, and the offset is range-checked here — the
+// pairs are a reported gap, and the offset is range-checked here — the
 // encoder masks it into imm7, so out of range would encode a different,
 // valid instruction.
 function arm64_gas_bad_pair(mnem: string, ops: string[], lm: Arm64Mem): string {
@@ -6019,7 +6019,7 @@ function parse_f64_bits(s: string): i64 {
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
     }
     // Trailing zeros in the significand carry no information; trimming
-    // keeps the sticky/remainder tests honest.
+    // keeps the sticky/remainder tests correct.
     while (digits.len() > 0 && digits[digits.len() - 1] == 0) {
         digits = pf64_sub(digits, 0, digits.len() - 1);
     }
@@ -6559,7 +6559,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // `orr Xd, Xn, #imm` (logical immediate) — same verified-bitmask path
         // as `and #imm`. Without this branch the register dispatch read the
         // immediate token as a register, got -1, masked it to XZR, and
-        // silently encoded `orr Xd, Xn, xzr` — a no-op wearing the right
+        // silently encoded `orr Xd, Xn, xzr` — a no-op with the right
         // mnemonic. Register-form `orr` falls through to emit.
         if (mnem == "orr" && arm64_gas_third_is_imm(ops)) {
             var oimm: i64 = arm64_gas_imm64(ops[2]);

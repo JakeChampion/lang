@@ -170,7 +170,7 @@ function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
 
 // __map_seed reads the kv buffer's per-map hash seed (at +16).
 //
-// ZERO MEANS UNSEEDED, and that convention is load-bearing in two
+// ZERO MEANS UNSEEDED, and that convention is relied on in two
 // places: it makes an unseeded map hash byte-identically to the
 // pre-#6194 implementation (__map_fnv_str_seeded's basis is the FNV
 // offset basis XOR the seed), and it is what lets __map_bucket_hash
@@ -205,7 +205,7 @@ function __map_seed(buf: usize): i32 {
 // 32-bit param reinterpreted as a pointer, which truncated the
 // high 32 bits once the heap crossed 4 GiB (arm64-darwin). They
 // are dead since #5052 moved every non-scalar key onto its own
-// honest `usize`-param adapter (__map_hash_str / __map_hash_wide,
+// properly typed `usize`-param adapter (__map_hash_str / __map_hash_wide,
 // below), so no caller passes keyKind 1 / 2 here anymore. Removing
 // them is the "future PR can flip this" the old doc anticipated,
 // and it clears the last `i32 as string` reinterpret in the
@@ -336,7 +336,7 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
     // Safe to vary run to run because BUCKET ORDER IS NOT OBSERVABLE:
     // entries live in an insertion-ordered array and every iteration path
     // (`keys` / `values` / `entries` / the MapIter cursor) walks that array,
-    // never the bucket table. std/json's key-order preservation rides on the
+    // never the bucket table. std/json's key-order preservation depends on the
     // same property and is unaffected.
     var seed: i32 = 0;
     if (keyKind == 1) { seed = __map_hash_seed(); }
@@ -350,7 +350,7 @@ pub function map_new_impl(cap_hint: i32, keyTag: i32, valKind: i32): usize {
     // the handle layout uniform across targets. Using
     // `__store_ptr` / `__load_ptr` (pointer-width helpers)
     // lets backends pick the right STR/LDR width. The handle
-    // pointer itself rides through `usize` end-to-end so
+    // pointer itself is passed as `usize` end-to-end so
     // arm64-darwin's >4 GiB heap addresses survive the
     // round-trip through every Map helper below.
     //
@@ -408,7 +408,7 @@ pub function __map_cow_inplace(m: usize): usize {
 // __map_own_copied_cols gives a freshly-__memcpy'd kv buffer its own claim on
 // the pointer-shaped columns it would otherwise share with the buffer it came
 // from. Both copies reach rc==1 independently, so both deep drops run and the
-// first one to fire takes the other's memory with it.
+// first one to fire frees memory the other still uses.
 //
 // A string KEY slot means two different things across the two string ABIs, and
 // __map_own_str_slot covers both. Array VALUES are counted on every target, so one
@@ -859,7 +859,7 @@ pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
 // column and retains every element — O(n) time + memory PER CALL. Calling
 // either in a loop (or re-evaluating `for k in m.keys()`) re-snapshots each
 // time. For the common "visit every entry" case use `for (k, v) in m`, which
-// rides the MapIter cursor (__map_iter_impl) with NO per-iteration allocation.
+// uses the MapIter cursor (__map_iter_impl) with NO per-iteration allocation.
 // Use keys()/values() only when a materialised K[]/V[] is actually needed
 // (sort / index / outlive the map). #2688; snapshot-free general protocol: #2686.
 pub function __map_keys_impl(m: usize): usize {
@@ -1463,7 +1463,7 @@ pub function __mapiter_advance_impl(it: usize): void {
 // → empty array.
 pub function (m: Map[K, V]) entries(): (K, V)[] {
     var out: (K, V)[] = [];
-    // Ride the MapIter cursor (`for (k, v) in m`) rather than snapshotting
+    // Use the MapIter cursor (`for (k, v) in m`) rather than snapshotting
     // `keys()` and re-`get()`ing each key: the cursor visits the columns in
     // the same storage order with NO per-call `K[]` snapshot and no per-key
     // hash lookup — O(n) with a single pass instead of O(n) lookups plus an

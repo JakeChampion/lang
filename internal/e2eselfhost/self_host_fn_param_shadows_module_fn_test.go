@@ -63,7 +63,7 @@ var fnParamShadowsModuleFnCases = []struct {
 	//
 	// Variant names avoid Ok/Err/Some/None -- those clash with the built-in
 	// Result/Option and make the program itself invalid (E036), which is a
-	// compile error masquerading as a wrong answer.
+	// compile error that reads as a wrong answer.
 	{"uncalled-module-fn", `
 enum Verdict { Fine, Wrong(string) }
 

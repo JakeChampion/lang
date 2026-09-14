@@ -12,7 +12,7 @@ import "testing"
 // program (interp / x86-64 / wasm / arm64-qemu), each skipping itself
 // when its toolchain is absent.
 
-// setPurityProg exercises the load-bearing invariant: an operation
+// setPurityProg exercises the essential invariant: an operation
 // returns a NEW set and never mutates its receiver. `before*100 +
 // after*10 + clen` == 223 iff `a.add(3)` left `a` (len 2) untouched
 // while producing a 3-element result. The naive in-place impl yields

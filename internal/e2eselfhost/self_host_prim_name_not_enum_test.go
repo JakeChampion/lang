@@ -72,7 +72,7 @@ var primNameNotEnumCases = []struct {
 		"    return 0;\n}"},
 	// `char[]` as a struct field. It too was admitted as an array-of-enum and
 	// dropped by a box walk; it is a flat 4-byte-slot scalar buffer, so it now
-	// rides is_leaksafe_array_field with i32[] / u32[] / u8[].
+	// is covered by is_leaksafe_array_field with i32[] / u32[] / u8[].
 	{"char-array-struct-field", "struct C { cs: char[] }\n" +
 		"function main(): i32 {\n" +
 		"    var c: C = C { cs: [97 as char, 98 as char] };\n" +

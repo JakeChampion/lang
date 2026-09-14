@@ -29,7 +29,7 @@
 //
 // Every entry here was read off the helper's definition in
 // `internal/codegen/wasmbin/runtime.go` and its siblings, which
-// `rcsigs.go` names as the canonical one. The names lie often enough
+// `rcsigs.go` names as the canonical one. The names mislead often enough
 // that this is the whole method:
 //
 //   - `__alloc_u8` sounds like the raw allocator beside it and is not:
@@ -140,7 +140,7 @@ var rcResultOwned = map[string]bool{
 	// Hands the capacity-carrying builder's own buffer over as a string
 	// (#8773). No copy: the buffer was allocated string-shaped, so the
 	// take stamps the length and releases it. The builder drops the
-	// pointer in the same breath, so the caller holds the only reference.
+	// pointer at the same time, so the caller holds the only reference.
 	"buf_take": true,
 	// The kernel's node name copied into a fresh rc=1 string; the empty
 	// answer is the same sentinel / inline form the string helpers use.

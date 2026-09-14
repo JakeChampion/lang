@@ -25,7 +25,7 @@ func TestStructFieldAppendAliasDifferential(t *testing.T) {
 	cases := []struct {
 		name, src string
 	}{
-		// The headline #4873 repro: a GENERIC struct wraps the array, `a` is
+		// The main #4873 repro: a GENERIC struct wraps the array, `a` is
 		// built via a push-chain, then `a.push(3)` must not grow `a` in place —
 		// `a.size()` after must still be 2. before*10+after = 22 (bug: 23).
 		{"generic_box_cow_shared", `import "std/i32";

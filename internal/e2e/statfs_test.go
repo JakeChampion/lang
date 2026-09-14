@@ -90,7 +90,7 @@ func TestInterpStatfs(t *testing.T) {
 
 // Both wasm worlds refuse it. A zero-filled record would claim a filesystem
 // with no blocks and no name length — a measurement a component never took —
-// so the honest answer is the compile-time refusal.
+// so the correct answer is the compile-time refusal.
 func TestWASMStatfsRefused(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     match (statfs(".")) { Ok(_) => { return 0; }, Err(_) => { return 1; } }

@@ -65,8 +65,8 @@ function main(): i32 {
     }
     // A from past the end clamps to the last index rather than missing.
     if (__rmemchr("abc", 97, 100) != 0) { return 6; }
-    // ... and a negative one finds nothing, which is where this parts company
-    // with __memchr, whose negative from means the whole string.
+    // ... and a negative one finds nothing, which is where this differs
+    // from __memchr, whose negative from means the whole string.
     if (__rmemchr("abc", 97, 0 - 1) != 0 - 1) { return 7; }
     if (__rmemchr("abc", 256, 2) != 0 - 1) { return 8; }
     if (__rmemchr("abc", 0 - 1, 2) != 0 - 1) { return 9; }

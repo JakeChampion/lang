@@ -198,7 +198,7 @@ func TestEhFramePlacement(t *testing.T) {
 				t.Errorf("data segment at %#x overlaps .eh_frame ending at %#x", rw.vaddr, m.EhFrame+uint64(len(u.Frame)))
 			}
 
-			// The payoff: the rip-relative load still names the real data.
+			// The result: the rip-relative load still names the real data.
 			// `lea rax, [rip+msg]` is the first instruction, 7 bytes.
 			disp := int32(binary.LittleEndian.Uint32(text[3:7]))
 			target := uint64(int64(m.Text) + 7 + int64(disp))

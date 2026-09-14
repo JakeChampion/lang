@@ -107,7 +107,7 @@ func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 }
 
 // runLeakCheckArm64 is the arm64 sibling (qemu; SKIPs without the
-// aarch64 toolchain — rides CI).
+// aarch64 toolchain — runs in CI).
 func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	return runLeakCheckArm64Args(t, src)
@@ -277,7 +277,7 @@ func TestX86_64LeakCheckExitBuiltinReports(t *testing.T) {
 	}
 }
 
-// Arm64 mirrors (qemu; ride CI, SKIP without the toolchain).
+// Arm64 mirrors (qemu; run in CI, SKIP without the toolchain).
 func TestArm64LeakCheckBalanced(t *testing.T) {
 	stdout, stderr, code := runLeakCheckArm64(t, leakCheckBalancedSrc)
 	if code != 0 || stdout != "" {
@@ -575,7 +575,7 @@ const loopConstructionFreshSrc = `function main(): i32 {
     return s % 7;
 }`
 
-// The hazard the move must NOT swallow: `a1` aliases a loop-OUTER array
+// The hazard the move must NOT reach: `a1` aliases a loop-OUTER array
 // without an inc. Moving it would let the first iteration's release free a
 // buffer later iterations still read — a use-after-free, not a leak. Pinned by
 // exit code as well as balance, since an over-release corrupts the read.
@@ -941,7 +941,7 @@ const ctorRetainedEnumPayloadSrc = `function main(): i32 {
     return s % 251;
 }`
 
-// The shape the release must NOT swallow: a1 aliases a loop-OUTER array. It
+// The shape the release must NOT reach: a1 aliases a loop-OUTER array. It
 // takes no construction inc, so it is absent from ctorAliasInced and keeps its
 // existing handling; releasing it per iteration would over-release a0's buffer.
 // Pinned on exit code too, since an over-release corrupts the read.
@@ -1372,7 +1372,7 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 //   - The stage-(b) arg-temp reclaim was gated on `resultCannotAliasArg`, which
 //     rejects every pointer result. `pad_start` really can return its receiver
 //     (`if (sl >= n) { return s; }`), so the gate was not wrong — but the alias
-//     it fears is COUNTED: `return <param>` emits the return-transfer inc, and a
+//     at issue is COUNTED: `return <param>` emits the return-transfer inc, and a
 //     param is never an isOwnedRcLocal, so move-on-return cannot cancel that inc
 //     away. rc is 2 on the pass-through path and 1 on the fresh path, and one
 //     post-call dec nets both to a single owner (resultIsCountedStringAlias).
@@ -1389,7 +1389,7 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 // alias reasoning were wrong that is a use-after-free — a wrong exit code or a
 // segfault, not a leak. Widening this gate to pointer results in general is
 // what segfaulted the differential oracle before (see reclaimArgTemps), so the
-// narrowing to concrete strings + user callees is load-bearing, not tidiness.
+// narrowing to concrete strings + user callees is essential, not tidiness.
 //
 // Both legs use LONG (> 7 byte) intermediates deliberately. On the single-word
 // x86-64 string ABI a <= 7-byte string is SSO-inline and allocates nothing, so

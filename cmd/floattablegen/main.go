@@ -193,7 +193,7 @@ const (
 //
 // NOTE this differs from Dragonbox's CacheEntry, which rounds up at every
 // index. 10^k and 5^k have the same normalised significand, so the two tables
-// agree on every bit but the last — and that last bit is load-bearing for both
+// agree on every bit but the last — and that last bit is essential for both
 // algorithms, so they cannot be shared.
 func Pow5Entry(q int) *big.Int {
 	num, den := big.NewInt(1), big.NewInt(1)

@@ -183,7 +183,7 @@ func TestMapWideValueOverwriteAliasWasm(t *testing.T) {
 // displaced cell invisible to a reader. get() reboxes into its own
 // Option[V], get_or / iter unbox, and values() copies into a wide-stride
 // V[]; so a value read before an overwrite must survive the overwrite that
-// frees the cell it came from. A wide KEY column rides along: its cells are
+// frees the cell it came from. A wide KEY column is exercised too: its cells are
 // the key machinery's, and the value walk must not disturb them.
 const mapWideValueReadAfterOverwriteProg = `
 import "core/map";

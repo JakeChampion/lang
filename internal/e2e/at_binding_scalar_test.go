@@ -2,7 +2,7 @@
 // used to accept only variant, struct and tuple sub-patterns, so `n @ 1..10`
 // — the form the unified pattern grammar is specified around — was rejected.
 //
-// The cases below are mostly about the payoff of sharing one grammar rather
+// The cases below are mostly about the benefit of sharing one grammar rather
 // than about the scalar arm itself: `if let` and `let … else` read the same
 // parseMatchPattern, so widening it there reaches every binding site at once
 // with no per-site work. `_` stays the one sub-pattern an `@` cannot carry.

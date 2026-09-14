@@ -10,7 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 )
 
-// TestInterpHandlesEveryASTNode is the load-bearing "no silent
+// TestInterpHandlesEveryASTNode is the essential "no silent
 // gaps" guarantee for the tree-walking interpreter. Three times
 // during the fernsmith / differential-oracle work the interp
 // errored on an AST node every other backend supports — FString

@@ -25,7 +25,7 @@ import (
 // compiled through the self-host *wasm* emitter that runs it through
 // arm64_gas_program + arm64_gas_link + macho_executable and writes
 // the resulting Mach-O. This is the wasm-backend coverage of arm64_native
-// assembling the full real runtime (the flagship TestSelfHostArm64DarwinBuilds
+// assembling the full real runtime (the main TestSelfHostArm64DarwinBuilds
 // covers the Go x86 / Go arm64 CLI path end-to-end). The test asserts the
 // assembler reported no unknown mnemonics and the bytes parse as an arm64
 // MH_EXECUTE.

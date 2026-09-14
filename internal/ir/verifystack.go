@@ -346,13 +346,13 @@ func (s *stackChecker) localSlots(op Op) ([]valKind, bool) {
 	return []valKind{kInt}, true
 }
 
-// isTwoWord reports whether a value of type t rides two operand-stack
+// isTwoWord reports whether a value of type t occupies two operand-stack
 // slots on this target.
 func (s *stackChecker) isTwoWord(t ast.Type) bool {
 	return TypeIsTwoWordABI(t, s.ptrW, s.twoWordStr)
 }
 
-// TypeIsTwoWord reports whether a value of type t rides two operand-stack
+// TypeIsTwoWord reports whether a value of type t occupies two operand-stack
 // slots on the target with pointer width ptrW: a string under the two-word
 // ABI (its data and length), and a `dyn Trait` on wasm, where the fat
 // pointer stays inline rather than being boxed (OpBoxDyn is the native

@@ -60,7 +60,7 @@ func decimalNorm(s string) string {
 // rounding interval: for 2^-24 they are 5960464477539063e-23 and
 // 5960464477539062e-23, and the lower one parses back one ULP short — the
 // shorter-interval miscompile TestFloatShortestPowersOfTwoF64 exists to catch,
-// which a distance test alone would wave through as a tie.
+// which a distance test alone would accept as a tie.
 func shortestTie(got, want string, v float64, bits int) bool {
 	if !roundTripsTo(got, v, bits) {
 		return false

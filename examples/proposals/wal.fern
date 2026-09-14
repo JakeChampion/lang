@@ -8,7 +8,7 @@
 //   replaying ANY prefix of the file must yield a prefix of the records,
 //   never a partial record and never an invented one.
 //
-// That makes the load-bearing test enumerable rather than anecdotal. A log of
+// That makes the essential test enumerable rather than anecdotal. A log of
 // n bytes has n+1 truncation points; the test walks every one of them and
 // requires the replay to be a prefix of what was appended, with the torn flag
 // set exactly when the cut did not land on a record boundary. A framing bug

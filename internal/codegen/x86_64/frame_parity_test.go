@@ -47,7 +47,7 @@ func TestCallAtOddOperandDepthNeedsNoPad(t *testing.T) {
 	}
 }
 
-// The bias has to ride inside the `sub rsp, N` the frame already needs. If it
+// The bias has to be folded into the `sub rsp, N` the frame already needs. If it
 // ever becomes its own instruction the trade stops paying, because a function
 // with one padded call would break even and one with none would lose.
 func TestFrameBiasCostsNoInstruction(t *testing.T) {

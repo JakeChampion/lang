@@ -19,13 +19,13 @@ import (
 // the .to_upper family, a named producer) — the "f" flag. That is exactly the
 // proof `__fern_str_free` needs, because op_opt_make stores the payload
 // UNCOUNTED: a fresh payload is sole-owned, an aliased one is not. Only the
-// flag was being dropped on the floor by the two name extractors, so lower_func
+// flag was being discarded by the two name extractors, so lower_func
 // could not see it; it is now seeded as "OPTFRESHF:<name>" beside the existing
 // "OPTFRESH:<name>".
 //
 // The distinction this file exists to pin is REFUSAL, not reclaim. Freeing a
 // non-fresh payload does not leak less — it DANGLES, which is the one outcome
-// worse than the leak being fixed. So the aliased rows below are as load-bearing
+// worse than the leak being fixed. So the aliased rows below are as essential
 // as the reclaiming ones, and each asserts the exit code against `fern -interp`
 // so a dangle shows up as a wrong answer rather than a quiet corruption.
 

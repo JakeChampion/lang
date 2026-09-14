@@ -18,7 +18,7 @@ import (
 // The parser now recognises a literal at the pattern position and
 // desugars the whole match to an if/else-if chain (build_literal_match),
 // the same shape `switch` and the native emitLiteralMatch produce — so it
-// rides the existing if / while / `==` lowering with no new AST node and
+// reuses the existing if / while / `==` lowering with no new AST node and
 // every backend (here the IR path) inherits it. The expression form
 // (`var r = match (n) { 1 => 10, _ => 0 }`) routes through the same
 // desugar inside the IIFE the self-host already builds for value-position

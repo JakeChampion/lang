@@ -16,7 +16,7 @@ import (
 // to the legacy AST emitter because the monomorphiser's clone_bg split the
 // instantiation key on `__`, and a module-mangled type argument
 // (`iter__Range`, from the bundling loader) itself contains `__`, so
-// `split_dunder("iter__Range")` shattered into ["iter","Range"] and
+// `split_dunder("iter__Range")` split into ["iter","Range"] and
 // subst_ty bound the type parameter to the bogus "iter". The clone's
 // `it: I` then became `it: iter`, an unknown type, and the IR lowerer
 // bailed (BAIL lower). Guarding the single-type-param case (use the key

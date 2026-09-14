@@ -14,7 +14,7 @@ import (
 // is about.
 //
 // irlower lowers a Cell as a one-element array — `cell_new(v)` → `[v]`,
-// `c.get()` → `c[0]`, `c.set(x)` → `c[0] = x` — so it rides the array
+// `c.get()` → `c[0]`, `c.set(x)` → `c[0] = x` — so it uses the array
 // machinery every backend already has rather than needing three dedicated
 // wasm ops. These cases exist to pin that, since the desugar is the only thing
 // standing between the wasm IR path and a `$cell_new` link failure.
@@ -75,7 +75,7 @@ var cellWasmIRCases = []struct {
 	// without it `c.get()` bailed the module exactly as the tuple element did.
 	{"enum-payload", `enum H { Has(Cell[i32]), No } function main(): i32 { var h: H = Has(cell_new(4)); match (h) { Has(c) => { c.set(c.get() + 3); return c.get(); }, No => { return 0; } } }`, 7},
 	{"enum-payload-f64", `enum H { Has(Cell[f64]), No } function main(): i32 { var h: H = Has(cell_new(2.5)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
-	// `f32` is the OTHER float spelling, and it rides the same 8-byte column: a
+	// `f32` is the OTHER float spelling, and it occupies the same 8-byte column: a
 	// scalar f32 lowers to a wasm f64 (is_float_array_type_name, #6175). The
 	// sites that learn a cell's element each spelled the ladder themselves and
 	// had drifted on that pair; they share mark_cell_elem now.

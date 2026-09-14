@@ -145,7 +145,7 @@ func TestX86_64RemoveDirAllFile(t *testing.T) {
 	}
 }
 
-// The issue's headline regression pin: an unmodified
+// The issue's main regression pin: an unmodified
 // examples/tests TAP file must compile to a native x86-64 binary
 // through the full CLI pipeline (modload + the in-process
 // assembler) and run. Before the fix this failed at link with

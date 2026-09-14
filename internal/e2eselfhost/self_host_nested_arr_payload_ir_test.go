@@ -13,7 +13,7 @@ import (
 // (fuzz_corpus_from_dir(d)) { Ok(seeds) => … }` over a `Result[u8[][], E]`).
 // The payload classifier admitted only flat arrays, so any `T[][]` payload
 // binding bailed the whole function (`did not lower: match`). The binding now
-// rides the flat-array pointer read plus the is_arrarr + inner-element-kind
+// uses the flat-array pointer read plus the is_arrarr + inner-element-kind
 // marks a `var m: T[][]` binding records, so nested reads (`seeds[0][1]`),
 // inner string dispatch (`rows[0][1].len()`), and a lambda CAPTURING the
 // binding all resolve. Strict-IR drives each case so a bail fails the test

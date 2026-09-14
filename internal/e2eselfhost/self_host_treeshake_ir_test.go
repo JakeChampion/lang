@@ -49,7 +49,7 @@ func copySelfHostTree(t *testing.T) string {
 // that are NOT in the cmp/json transitive closure. Without treeshake the merged
 // module pulls all of them (~580 funcs) and exceeds the 512 IR budget (→ ast);
 // with treeshake only the reachable slice (~90) survives, so it fits (→ ir).
-// (The http/regex/time imports are load-bearing: cmp+json alone already lower
+// (The http/regex/time imports are required: cmp+json alone already lower
 // to ~480 funcs — under budget — so json's Map.iter flipping to IR removed the
 // old over-budget margin; the extra modules restore a genuine >512 closure.)
 // Returns 7 (the count of passing checks), a stable oracle independent of hash
@@ -178,7 +178,7 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		// treeshake changes the path, not behaviour. Between #3457 slice 5 (which
 		// deleted the AST emitter the over-budget module used to fall back to) and
 		// the budget removal, this asserted a REFUSAL instead — the prune was
-		// briefly load-bearing for compilability. It is not any more.
+		// briefly required for compilability. It is not any more.
 		if noPrune, _ := runDriver(entry, root, "-no-treeshake"); len(noPrune) == 0 {
 			t.Error("heavy (unpruned) emitted 0 bytes, want a build — the merged bundle is being refused again")
 		}

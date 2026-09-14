@@ -16,7 +16,7 @@ import (
 // into the box's data and SIGSEGVing. irlower now marks a local bound from a
 // closure-array field (element or whole-array alias) is_closurearr /
 // closure-local, so the call dispatches env-first (box[0] = fn_addr, box passed
-// as __env). The for-loop rides the same fix via lower_foreach_snapshot's hidden
+// as __env). The for-loop uses the same fix via lower_foreach_snapshot's hidden
 // `var $forit = r.hs`.
 //
 // RC-soundness follow-up: the bound element / foreach loop var is a BORROW of the

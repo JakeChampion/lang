@@ -6,7 +6,7 @@ package x86_64
 // The soundness argument is that the copy is the last read of rax before a
 // call, so what the rename leaves in rax cannot be observed: rax is
 // caller-saved and is not an argument register. Everything here is about
-// keeping "last read before a call" honest — the instructions allowed to sit
+// keeping "last read before a call" correct — the instructions allowed to sit
 // between the copy and the call are a whitelist, because the accumulator has
 // four names and one of them, `al`, is a substring of `call`.
 

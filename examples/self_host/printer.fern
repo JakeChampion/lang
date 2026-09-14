@@ -855,7 +855,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
                 }
                 return np + ")";
             }
-            // A TUPLE sub-pattern (`Pr((a, b))`) rides on tup_* rather than on
+            // A TUPLE sub-pattern (`Pr((a, b))`) is recorded on tup_* rather than on
             // nested, and binds nothing itself either — printing `head` here
             // dropped it and re-parsed as a payload-less arm, leaving the
             // desugar's `__nest_<l>_<c>_<d>` temp behind in its place.
@@ -983,7 +983,7 @@ function lit_cond_for(cond: ast.Expr, binder: string): ast.Expr {
 
 // print_tuple_elem renders ONE position of a tuple arm pattern, from the
 // element kinds build_tuple_match encodes: 0 = binder, 1 = `_`, 2 = literal,
-// 3 = variant sub-pattern, 4 = nested tuple (whose own encoding rides on
+// 3 = variant sub-pattern, 4 = nested tuple (whose own encoding is recorded on
 // elem_pats via p_tuple_carrier).
 function print_tuple_elem(kind: i32, bind: string, lit: ast.Expr, pat: ast.Pattern): string {
     if (kind == 1) { return "_"; }
@@ -2521,7 +2521,7 @@ function print_type_alias(a: parser.TypeAlias): string {
 
 function print_import(im: parser.Import): string {
     // A `pub use "path".{a, b};` re-export is an import record too, and both
-    // its spelling and the `as` ALIAS are load-bearing: dropping either leaves
+    // its spelling and the `as` ALIAS are essential: dropping either leaves
     // every use of the bound name undefined, so it is data loss rather than a
     // style difference.
     if (im.is_reexport) {

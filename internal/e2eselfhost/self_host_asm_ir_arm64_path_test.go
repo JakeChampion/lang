@@ -628,7 +628,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// A struct-valued if-/match-EXPRESSION binding (lifted to a `__lam_N`
 		// whose return type is inferred from its struct-literal body, so the
 		// `__lam_N()` call site recovers the struct type for `.field` / method
-		// dispatch). The legacy AST path also handles these, so they ride the
+		// dispatch). The legacy AST path also handles these, so they run in the
 		// differential gate.
 		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
@@ -676,7 +676,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"i32-pow-helper", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`},
 		// gcd / lcm: helper-backed like pow, and the only pair whose helper body
 		// calls ANOTHER helper (lcm's Fern source calls `.gcd()`). arm64 is where
-		// that bit first, because its per-module unit path emits lcm's body
+		// that broke first, because its per-module unit path emits lcm's body
 		// unconditionally — see the lowering comment in irlower and #5940.
 		{"i32-gcd-helper", `function main(): i32 { var n: i32 = 48; return n.gcd(18); }`},
 		{"i32-gcd-negative", `function main(): i32 { var n: i32 = 0 - 48; return n.gcd(18); }`},
@@ -865,7 +865,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"random-bytes-chunked", `function main(): i32 { var b: u8[] = random_bytes(600); if (b.len() != 600) { return 1; } var v: i32 = 0; var i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } var w: i32 = 0; var j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
 		{"uuid-v4", uuidV4Program, 0},
 		// Range-for through the arm64 self-host IR path (#2699). The legacy
-		// AST arm64 emitter has no range desugar, so these ride the IR-only
+		// AST arm64 emitter has no range desugar, so these run in the IR-only
 		// gate. Half-open `..` and inclusive `..=` (closed interval, exits on
 		// `i <= hi` so it also visits HIGH).
 		{"range-sum", `function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }`, 10},
@@ -875,7 +875,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"rangei-continue", `function main(): i32 { var s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }`, 52},
 		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
 		// field (struct_get at successive indices), not just the first. The
-		// legacy AST emitter binds only field 0, so these ride the IR-only
+		// legacy AST emitter binds only field 0, so these run in the IR-only
 		// gate against the native interp's value.
 		{"match-multi-bind", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(x, y) => { return x * y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 42},
 		{"match-multi-bind-three", `enum T { Tri(i32, i32, i32), Empty } function f(t: T): i32 { match (t) { Tri(a, b, c) => { return a + b * c; }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Tri(1, 2, 3)); }`, 7},
@@ -884,7 +884,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// Multi-payload variant arm in a value-position match-EXPRESSION
 		// (`return match (e) { Pair(a, b) => a + b }`): lower_iife_match now admits
 		// an arm with extra_bindings when every payload is i32 (#3193). The legacy
-		// AST emitter mishandles this (segfaults), so these ride the IR-only gate.
+		// AST emitter mishandles this (segfaults), so these run in the IR-only gate.
 		{"match-expr-multi-bind", `enum E { Pair(i32, i32) } function main(): i32 { var e = E.Pair(3, 4); return match (e) { Pair(a, b) => a + b }; }`, 7},
 		{"match-expr-multi-2var", `enum E { Pair(i32, i32), Single(i32) } function main(): i32 { var e = E.Single(9); return match (e) { Pair(a, b) => a + b, Single(x) => x }; }`, 9},
 		{"match-expr-multi-wildcard", `enum E { Pair(i32, i32) } function main(): i32 { var e = E.Pair(3, 4); return match (e) { Pair(_, b) => b }; }`, 4},

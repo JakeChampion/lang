@@ -33,7 +33,7 @@ enum Outer { A(Inner), B }
 enum Wrap { W((i32, i32)), Z(i32) }
 enum Tag { T(string), U }
 
-// The headline: a nested variant in a payload slot, beside a sibling arm
+// The main case: a nested variant in a payload slot, beside a sibling arm
 // whose payload is a plain binder.
 function nested(t: (Outer, i32)): i32 {
     match (t) {

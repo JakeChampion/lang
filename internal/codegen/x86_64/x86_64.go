@@ -160,7 +160,7 @@ func (g *generator) emitSeccompRuntime() {
 	// CONFIG_SECCOMP_FILTER, or a seccomp-blocking sandbox we are
 	// already inside, returns an error and the program runs unhardened
 	// rather than refusing to start. Hardening that turns a working
-	// deployment into a boot loop would not survive contact with users,
+	// deployment into a boot loop would not be acceptable to users,
 	// and the compile-time capability system is still in force either
 	// way.
 	g.emit("ret")
@@ -439,7 +439,7 @@ func EmitWithSyscalls(prog *ast.Program, info *checker.Info, opts Options) (stri
 
 // EmitWithOptions runs treeshake, lowers to IR with ptrW=8,
 // then walks each surviving function emitting GAS-flavoured
-// AT&T assembly... no wait, Intel syntax. We deliberately use
+// assembly in Intel syntax, not AT&T. We deliberately use
 // Intel syntax (`.intel_syntax noprefix`) for readability —
 // the rest of the codebase's runtime asm is comparable to the
 // arm64 style (mnemonic dst, src), and Intel x86 syntax
@@ -2470,7 +2470,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		if localsSize%16 != 0 {
 			localsSize += 8
 		}
-		// The bias rides in the `sub rsp, N` the frame already needs, so it
+		// The bias is folded into the `sub rsp, N` the frame already needs, so it
 		// costs nothing here. A frameless function emits no `sub rsp` at
 		// all, where the bias would be a whole extra instruction to save a
 		// pad it may never reach — so it keeps the canonical parity.
@@ -2805,7 +2805,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// binPop's pop-rhs-first order already puts the count
 		// in rcx, so we can shift directly. The destination
 		// register width must match the integer width: a 32-bit
-		// value rides zero-extended in the low half of rax, so a
+		// value is held zero-extended in the low half of rax, so a
 		// 64-bit `shl rax` would mask the count to 0..63 and let
 		// bits spill above bit 31 — `shl eax` masks to 0..31 and
 		// keeps the result in the canonical i32 lane (matching the
@@ -2817,7 +2817,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// sar (arithmetic right shift) preserves the sign
 		// bit for signed values; shr (logical) zero-fills
 		// for unsigned. Width matters for `sar`: a negative i32
-		// rides zero-extended in rax (high half all zero), so
+		// is held zero-extended in rax (high half all zero), so
 		// `sar rax` would read bit 63 (= 0) as the sign and
 		// produce a logical-looking result. `sar eax` reads the
 		// real i32 sign bit (bit 31). Both forms also mask the
@@ -2832,7 +2832,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpRotr:
 		// Same count-in-cl shape as the shifts, and the same width
-		// rule: `ror eax` rotates within the i32 lane an i32 rides
+		// rule: `ror eax` rotates within the i32 lane an i32 is held
 		// zero-extended in, where `ror rax` would drag the cleared
 		// high half through the low bits.
 		g.binPop()
@@ -3628,7 +3628,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpCallDirect:
 		target := op.Str
 		// Cheap f64 math intrinsics lower inline — no libm. The f64
-		// argument rides the operand stack as raw bits (same as
+		// argument is carried on the operand stack as raw bits (same as
 		// OpFNeg); the result goes back in rax before push.
 		if g.emitF64UnaryIntrinsic(target) {
 			g.push()
@@ -4096,7 +4096,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 		g.emit("movq rax, xmm1")
 	case "__sin_f64", "__cos_f64", "__exp_f64", "__log_f64":
 		// Transcendentals call the SSE2 polynomial helpers — no libm,
-		// and no x87. Argument and result both ride xmm0, matching
+		// and no x87. Argument and result both use xmm0, matching
 		// arm64's d0 convention for the same five helpers.
 		g.usesF64Trans = true
 		g.emit("movq xmm0, rax")
@@ -4107,7 +4107,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 }
 
 // emitF64Pow lowers __pow_f64(x, y) = exp(y·ln x) through the SSE2
-// helper bundle. Both args ride the operand stack; binPop leaves x in
+// helper bundle. Both args are carried on the operand stack; binPop leaves x in
 // rax and y in rcx. Result is left in rax (caller pushes).
 func (g *generator) emitF64Pow() {
 	g.binPop() // rax = x, rcx = y
@@ -4836,7 +4836,7 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 }
 
 // fbinPop pops two float-shaped values off the operand stack
-// (they ride as raw bit patterns) and moves them into xmm
+// (they are held as raw bit patterns) and moves them into xmm
 // registers. Width selects 32-bit (movd, single-precision)
 // or 64-bit (movq, double-precision). xmm1 = lhs, xmm0 =
 // rhs — same order as the integer binPop so x86's
@@ -6213,7 +6213,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
 		//
-		// The bounds check rides each arm of this dispatch: the heap
+		// The bounds check is emitted in each arm of this dispatch: the heap
 		// length is the 4-byte prefix, the inline length is in the tag
 		// byte, and the tag test that tells them apart is already here.
 		g.usesStrIdx = true
@@ -6529,7 +6529,7 @@ func (g *generator) emitDataSections() {
 			}
 		}
 	}
-	// SSO inline strings ride in a 64-bit register and don't
+	// SSO inline strings are held in a 64-bit register and don't
 	// have a usable memory address until materialised. The
 	// __str_idx index helper spills inline values to this
 	// global scratch slot before computing `&scratch[1 + idx]`
@@ -7030,7 +7030,7 @@ func (g *generator) emitRctRuntime() {
 	g.label("__fern_rct_ev")
 	// rbp is saved for one reason only: the push count must stay EVEN
 	// or every `call` below lands on a misaligned stack. r15 made it
-	// odd; rbp is the honest partner because the hook reads through it.
+	// odd; rbp is the right choice because the hook reads through it.
 	saved := []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbx", "r12", "r13", "r14", "r15", "rbp"}
 	for _, r := range saved {
 		g.emit("push " + r)
@@ -8045,7 +8045,7 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	if ast.RcTrace {
-		// See the `i` event in emitRcIncRuntime for why no count rides
+		// See the `i` event in emitRcIncRuntime for why no count is passed
 		// along. rc_dec returns nothing, so unlike inc there is no rax
 		// to re-derive.
 		g.emit("xor edx, edx")
@@ -10651,7 +10651,7 @@ func (g *generator) emitRmemchrRuntime() {
 // dispatch. Unlike lzcnt/tzcnt it FAULTS below that baseline rather than
 // silently decoding as something else, so a wrong assumption here is loud.
 //
-// No cursor, so no clamp. The two degenerate answers are both honest counts
+// No cursor, so no clamp. The two degenerate answers are both real counts
 // rather than sentinels: an out-of-range byte counts 0 because no byte can
 // equal it, and an empty string counts 0 because it has no bytes.
 func (g *generator) emitCountByteRuntime() {
@@ -10781,7 +10781,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("jb .Lcrc32_tail")
 	g.emit("movdqa xmm5, xmmword ptr [rip + .Lcrc32_bswap]")
 	g.emit("movdqa xmm2, xmmword ptr [rip + .Lcrc32_k1]")
-	// A = bswap(first block) ^ (crc << 96); the CRC rides the top 32 bits.
+	// A = bswap(first block) ^ (crc << 96); the CRC occupies the top 32 bits.
 	g.emit("movdqu xmm0, xmmword ptr [rsi]")
 	g.emit("pshufb xmm0, xmm5")
 	g.emit("mov r11d, eax")
@@ -12564,7 +12564,7 @@ func (g *generator) emitWasmTimerPollableRuntime() {
 }
 
 // emitWasmPollRuntime emits `__fern_wasm_poll(pollables)` — on native there are
-// no real pollables (a timer pollable is -1 and native readiness rides poll(2)
+// no real pollables (a timer pollable is -1 and native readiness uses poll(2)
 // directly), so this returns -1 (nothing ready), ignoring its array arg. On wasm
 // this symbol is the real wasi:io/poll.poll(list<pollable>) multiplexer instead.
 func (g *generator) emitWasmPollRuntime() {
@@ -12994,7 +12994,7 @@ func (g *generator) emitGetgroupsRuntime() {
 // and for a request past one page it may write fewer and
 // return early when a signal arrives — or -EINTR having
 // written none. A single call would leave the tail of the
-// buffer as the allocator left it, which is zeros: silence
+// buffer as the allocator left it, which is zeros: no entropy
 // where a caller asked for randomness (#9221). A hard error
 // (EFAULT, EINVAL — neither reachable from this call shape)
 // ends the loop rather than spinning, because the signature
@@ -15168,7 +15168,7 @@ func (g *generator) emitSignalDispositionReadRuntime() {
 	g.label("__fern_signal_disposition")
 	if g.entry != platforms.EntryProcess {
 		// Nothing can deliver a signal, so every one of them is at the
-		// default it was born with.
+		// default it started with.
 		g.emit("xor eax, eax")
 		g.emit("ret")
 		g.line(".size __fern_signal_disposition, .-__fern_signal_disposition")
@@ -15246,7 +15246,7 @@ func (g *generator) emitCreateSymlinkRuntime() {
 // reports no error, so the answer is only trustworthy when it is SHORTER
 // than the buffer. PATH_MAX is the kernel's own bound on a stored link
 // target, so a full buffer means the target is longer than any path can
-// be and the honest answer is ENAMETOOLONG rather than a truncated one.
+// be and the correct answer is ENAMETOOLONG rather than a truncated one.
 func (g *generator) emitReadLinkRuntime() {
 	g.line("")
 	g.line(".globl __fern_read_link")
@@ -15788,7 +15788,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emitStrLen("r12d", "rdi")
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 56]")
 	// The prefix names a directory, not a path: a '/' in it would
-	// steer the result out of the temp root, since the bytes are
+	// place the result outside the temp root, since the bytes are
 	// concatenated straight into "/tmp/<prefix>-<ns>".
 	g.emit("xor ecx, ecx")
 	g.label(".Ltd_sep")

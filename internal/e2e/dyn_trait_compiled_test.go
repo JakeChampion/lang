@@ -300,7 +300,7 @@ function main(): i32 {
 // heap-init mmap `syscall`. x86-64's OpBoxDyn used to hold data/vtable
 // in caller-save r10/r11 across that call; the syscall clobbered them
 // (r11 ← RFLAGS), so the cell came back as garbage and dispatch
-// segfaulted on the first `dyn` over an i32. Now data/vtable ride
+// segfaulted on the first `dyn` over an i32. Now data/vtable use
 // callee-saved rbx/r12 (the x86-64 mirror of arm64's x19/x20). wasm
 // carries the i32 inline (no box) and arm64 already used callee-saved
 // regs, so both already worked — these pin all three. ---

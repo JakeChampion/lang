@@ -34,7 +34,7 @@ function main(): i32 { return z_of(7) + 42; }`, 42},
 impl One for i32 { function one(): Self { return 1; } }
 function o_of[T: One](x: T): T { return T.one(); }
 function main(): i32 { return o_of(7) + 41; }`, 42},
-	// the payoff: a generic numeric reducer seeded from T.zero() and folding with
+	// the benefit: a generic numeric reducer seeded from T.zero() and folding with
 	// the bound's .add — 10+20+12 = 42.
 	{"sum-add-zero", `pub trait Add { function add(self: Self, o: Self): Self; }
 pub trait Zero { function zero(): Self; }

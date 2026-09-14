@@ -1,6 +1,6 @@
 // spec: ST-03
 //
-// `slice_unchecked(s, a, b)` is the byte slice under its honest name.
+// `slice_unchecked(s, a, b)` is the byte slice under its accurate name.
 // It indexes BYTES, not code points, and it performs no code-point
 // boundary check — the two bounds here cut the two-byte `é` of "héllo"
 // in half and it hands the half back regardless. That is the whole

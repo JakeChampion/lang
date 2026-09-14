@@ -9,7 +9,7 @@
 // Every conversion op is a single opcode byte with no immediate.
 // Includes the post-MVP sign-extension ops (0xC0..0xC4) — they
 // were added in the same proposal and use the same encoding
-// shape so they ride along here rather than in a separate
+// shape so they are included here rather than in a separate
 // package. The saturating-truncate ops (the multi-byte 0xFC
 // prefix, from the nontrapping-float-to-int-conversions proposal)
 // are included below: the production wasm backend uses them so a

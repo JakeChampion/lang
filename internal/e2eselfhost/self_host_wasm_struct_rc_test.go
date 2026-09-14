@@ -16,7 +16,7 @@ import (
 // stays at struct_field_off. Observed through __fern_rc_is_unique: a fresh
 // struct / variant value is unique (rc==1). Field values + array/string
 // members (already construction-inc'd) survive. Counting + recursive
-// field-release ride on this foundation in later slices.
+// field-release build on this foundation in later slices.
 //
 // Extern-ABI structs (canonical-ABI result records) are intentionally left
 // raw in this slice — layout-only never sweeps structs, so the mix is

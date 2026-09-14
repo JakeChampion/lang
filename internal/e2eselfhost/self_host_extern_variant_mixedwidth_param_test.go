@@ -51,7 +51,7 @@ func TestSelfHostExternVariantMixedWidthParamCustomProvider(t *testing.T) {
 		t.Fatalf("write provider wit: %v", err)
 	}
 	// take receives the variant flattened to (disc:i32, payload:i64). The i arm's
-	// s32 rides the i64 join's low 32 bits; the l arm's s64 fills it.
+	// s32 occupies the i64 join's low 32 bits; the l arm's s64 fills it.
 	if err := os.WriteFile(filepath.Join(dir, "prov_core.wat"), []byte(`(module
   (memory (export "memory") 1)
   (func (export "local:test/sink@0.1.0#take") (param $disc i32) (param $p i64) (result i32)

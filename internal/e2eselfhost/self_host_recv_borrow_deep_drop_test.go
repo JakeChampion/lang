@@ -182,7 +182,7 @@ var recvBorrowDeepDropLeakCases = []struct {
 	name string
 	src  string
 }{
-	// The headline: a struct local handed to a borrowing method keeps its deep
+	// The main case: a struct local handed to a borrowing method keeps its deep
 	// drop, so its fresh string field is freed every round. 22 B/round before.
 	{"recvborrow-deep-drop-flat", `struct Box { tag: string, n: i32 }
 function (b: Box) score(): i32 { return b.n * 2; }

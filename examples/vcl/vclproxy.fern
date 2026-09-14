@@ -5,7 +5,7 @@
 //   $ ./vclproxy testdata/proxy.vcl 8080
 //   $ curl -i http://127.0.0.1:8080/some/path
 //
-// This is the whole stack doing its job at once: a real listening socket,
+// This is the whole stack working end to end: a real listening socket,
 // a real HTTP/1.1 request parsed off the wire, the policy's own
 // subroutines deciding what happens, a real TCP fetch from the declared
 // backend on a miss, an in-memory cache that survives between requests,
@@ -14,7 +14,7 @@
 // The policy is parsed and CHECKED once at startup, exactly as `varnishd`
 // loads VCL: a policy with a scoping error never reaches the accept loop.
 //
-// Two honest gaps, both from the runtime rather than the design:
+// Two known gaps, both from the runtime rather than the design:
 //
 //   * `tcp_serve` does not surface the peer address, so `client.ip` comes
 //     from `X-Forwarded-For` when the request carries one and is

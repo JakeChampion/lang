@@ -2273,7 +2273,7 @@ pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 // rather than a value of its operands' width. Comparisons and the logical
 // connectives are width-collapsing (i64 operands still give an i32 result), so
 // compute_widths must NOT propagate 64-bit width through them — only through the
-// arithmetic / bitwise ops whose result rides its operands' width.
+// arithmetic / bitwise ops whose result takes its operands' width.
 pub function binop_is_cmp(op: string): boolean {
     return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
 }
@@ -3267,7 +3267,7 @@ function build_call_named(cid: ast.ExprIdent, c: ast.ExprCall, s: BState): BStat
     // dedicated op (the backends emit a write-syscall helper);
     // not a generic call, so calls_all_known doesn't bail.
     // print → stdout (fd 1), eprint → stderr (fd 2); the fd
-    // rides in the op's imm.
+    // is held in the op's imm.
     if ((cid.name == "print" || cid.name == "eprint") && c.args.len() == 1) {
         s = build_expr(c.args[0], s);
         if (!s.ok) { return s; }

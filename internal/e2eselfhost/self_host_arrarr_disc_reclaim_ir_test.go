@@ -36,7 +36,7 @@ var arrArrDiscReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// f64 inners are scalar-leaf too (value-copied elements ride the freed
+	// f64 inners are scalar-leaf too (value-copied elements are stored in the freed
 	// buffer) — reclaimed and bounded.
 	{"arrarr-disc-f64", `function main(): i32 {
     var acc: i32 = 0;

@@ -45,7 +45,7 @@ import (
 //	                   TestRuntimeHelpersPreserveCalleeSaved)
 //	22..25  x12..x15   caller-saved, the scratch pool at the default numAlloc
 //
-// Two properties are load-bearing. Indices 0..7 must stay x0..x7 because
+// Two properties are essential. Indices 0..7 must stay x0..x7 because
 // argMoveLines / paramMoveLines treat the incoming argument register for arg i
 // as abstract register i. And the callee-saved run must be contiguous and below
 // the scratch pool at the default numAlloc, so a call-crossing value the
@@ -955,7 +955,7 @@ func emitLcAdd(w func(string, ...any), sym, addend, addrReg, valReg string) {
 //
 // K is signed, so an over-free reads negative rather than wrapping. Where the
 // counts come from is the lc*Sym block's comment. Called from the two paths a
-// program leaves by — _start's epilogue and the exit() builtin — which park the
+// program leaves by — _start's epilogue and the exit() builtin — which hold the
 // exit status in x9 across it: this clobbers x0..x7 and nothing else.
 // `heap` is false for a module that never allocates: then there is no arena to
 // read and every number is zero.
@@ -2791,7 +2791,7 @@ func emitWasmTimerPollableHelper(w func(string, ...any)) {
 }
 
 // emitWasmPollHelper writes wasm_poll(pollables) → i32: returns -1 on native (no
-// real pollables; native readiness rides poll(2)), ignoring its array arg. On
+// real pollables; native readiness uses poll(2)), ignoring its array arg. On
 // wasm this is the real wasi:io/poll.poll(list<pollable>) multiplexer. Leaf.
 func emitWasmPollHelper(w func(string, ...any)) {
 	w("")
@@ -3893,7 +3893,7 @@ func staticClosureLabel(idx int) string { return fmt.Sprintf("clo_%d", idx) }
 // it finds, but a callee with no entry in runtimeHelperEmitters is simply
 // skipped — a user function is a legitimate skip, and until this a helper the
 // table had never heard of was one too. The call went out with nothing behind
-// it and the program died in the assembler, half an hour of compilation later,
+// it and the build failed in the assembler, half an hour of compilation later,
 // on a mangled label name that says nothing about which backend owed it.
 //
 // This is the same condition the assembler checks; the point is to fail here,
@@ -4808,7 +4808,7 @@ func emitMismatchHelper(w func(string, ...any)) {
 // arguments land in x0/x1/x2 with no slot arithmetic. Leaf: no frame, and the
 // registers it touches (x0..x3, x8..x12, v0/v1) are all caller-saved — floats
 // here live as their f64 bit pattern in a GPR, so no v register is live across
-// a call for this to tread on.
+// a call for this to clobber.
 //
 // No feature detection: Advanced SIMD is mandatory in the declared ARMv8-A
 // baseline, so these are hard requirements rather than a fast path.
@@ -5074,9 +5074,9 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 // the native arm64 twin spends a frame unboxing a two-word SSO string first.
 // Leaf: no frame, and every register it touches (x0..x6, x8..x11, v0/v1) is
 // caller-saved. Floats here live as their f64 bit pattern in a GPR, so no v
-// register is live across a call for this to tread on.
+// register is live across a call for this to clobber.
 //
-// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// No cursor, so no clamp. Both degenerate answers are real counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
 func emitCountByteHelper(w func(string, ...any)) {
@@ -5139,7 +5139,7 @@ func emitCountByteHelper(w func(string, ...any)) {
 // The entry existed here first for TOTALITY rather than speed: §3.4 requires an
 // op to lower on every backend before any caller may adopt it, precisely so an
 // adoption cannot turn into a link error on the target nobody remembered.
-// __memchr learned that the expensive way — added to the other six backends,
+// __memchr is what that rule came from — added to the other six backends,
 // adopted, and only then did CI report `branch to undefined label
 // "fn___fern_memchr"` from this seventh one.
 //
@@ -8131,8 +8131,8 @@ func emitSliceIdxHelper(name string, shift int) func(w func(string, ...any)) {
 //
 // The sxtw normalises a bound that reaches the helper with dirty bits above 31,
 // mirroring the flat backend's #5294 fix, so the unsigned compares see the
-// value the caller meant. It is belt-and-braces at this emitter's width
-// discipline rather than load-bearing: maskFix sign-extends every narrow
+// value the caller meant. It is redundant at this emitter's width
+// discipline rather than required: maskFix sign-extends every narrow
 // result, so bounds already arrive sign-extended, and on a value that fits i32
 // zero-extension would decide identically (both turn a negative into a large
 // unsigned). Keep it — the cost is three instructions and it stops the helper
@@ -9778,7 +9778,7 @@ func callLines(in x86.Inst, numAlloc, scratch int, fr frameLayout) ([]string, er
 	// staging scratch entirely — exactly when the restores do not write them.
 	// The allocator cannot put a result and a value live ACROSS the same call in
 	// one register (their intervals overlap), so this holds for every call; the
-	// check is what keeps that an optimisation rather than a load-bearing
+	// check is what keeps that an optimisation rather than a necessary
 	// assumption about a pass in another package.
 	direct := !inSaveSet(saved, in.Dst) && (in.Op != x86.CallPair || !inSaveSet(saved, in.Dst2))
 	var out []string

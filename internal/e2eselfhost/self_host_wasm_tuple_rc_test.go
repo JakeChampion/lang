@@ -13,7 +13,7 @@ import (
 // rc word at [t-8] while every t-relative element access (t.N) is
 // unchanged. Observed through __fern_rc_is_unique: a fresh tuple is unique
 // (rc==1). Values + array/string elements (construction-inc'd) survive.
-// Counting + recursive field-release ride on this foundation in later
+// Counting + recursive field-release build on this foundation in later
 // slices.
 func TestSelfHostRcTupleBoxWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

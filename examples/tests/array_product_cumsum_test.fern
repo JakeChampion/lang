@@ -3,7 +3,7 @@ import "std/array" as array;
 // examples/tests/array_product_cumsum_test.fern — pure-Fern coverage of
 // std/array's `product` at an f64 element (product of all elements, empty = 1)
 // and cumsum_f64 (running prefix sum, same length as input). product returns a
-// plain f64, cumsum an f64[] — both scalar payload, so this rides all four
+// plain f64, cumsum an f64[] — both scalar payload, so this runs on all four
 // native backends and both self-host gates. The Go-side TestArrayProductCumsum
 // pins the native backends; this is the migration-shaped companion.
 //

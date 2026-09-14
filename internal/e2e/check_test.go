@@ -147,7 +147,7 @@ func TestCheckStdinTypeError(t *testing.T) {
 
 // `fern -check ENTRY.fern` follows imports — a type error in a
 // transitive dep is surfaced with the dep's own filename, not
-// the entry file's. This is the payoff of the check command:
+// the entry file's. This is the benefit of the check command:
 // running it on a project root finds errors everywhere modload
 // can reach.
 func TestCheckFollowsImports(t *testing.T) {

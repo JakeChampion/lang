@@ -123,7 +123,7 @@ func TestLiterateMultiFileDiagnosticRemap(t *testing.T) {
 // checker only stamps the file inside a FuncDecl. In a multi-file
 // document each module has its own tangle line map, so routing such an
 // error through the entry module's map would point a caret at the wrong
-// `.fern.md` line. The fix renders the bare message instead — honest,
+// `.fern.md` line. The fix renders the bare message instead — accurate,
 // not misattributed. Regression for L3 in
 // docs/ADVERSARIAL-REVIEW-2026-06.md.
 func TestLiterateMultiFileUnattributedErrorNotMisremapped(t *testing.T) {

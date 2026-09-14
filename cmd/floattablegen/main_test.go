@@ -191,7 +191,7 @@ func TestGenerateIsDeterministic(t *testing.T) {
 }
 
 // The Eisel-Lemire table rounds DOWN everywhere except the band where 5^|q|
-// still fits in a 64-bit word, which rounds UP. That asymmetry is load-bearing
+// still fits in a 64-bit word, which rounds UP. That asymmetry is essential
 // — it is what makes "low <= 1" a sound tie signal — and it is exactly what
 // distinguishes this table from the Dragonbox one, so pin it directly.
 func TestPow5RoundingConvention(t *testing.T) {

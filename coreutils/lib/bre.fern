@@ -8,7 +8,7 @@
 // `$` only where one ends, and backreferences `\1`…`\9` are part of the
 // language. The GNU word operators glibc adds (`\<` `\>` `\b` `\B` `\w`
 // `\W` `\s` `\S` `` \` `` `\'`) are here too, because expr users get them
-// from glibc whether POSIX blesses them or not. Diagnostics are glibc's
+// from glibc whether POSIX admits them or not. Diagnostics are glibc's
 // `regerror` texts verbatim, since that is what the utilities print.
 //
 // tac(1) never sets a syntax at all, which leaves glibc's default —

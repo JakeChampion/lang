@@ -112,7 +112,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"fnval-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function inc(n: i32): i32 { return n + 1; } function main(): i32 { var h = H { f: inc, n: 100 }; return h.f(h.n); }`},
 		// No-capture LAMBDA as a struct-literal field value (#2994): the lambda is
 		// hoisted to a top-level fn, so the field holds a function pointer — the
-		// same shape a named-function field above lowers, and `b.f(args)` rides the
+		// same shape a named-function field above lowers, and `b.f(args)` uses the
 		// existing fn-value-field call path. Capturing lambda fields still bail.
 		{"clo-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var b = Box { f: (x: i32): i32 => { return x * 3; } }; return b.f(7); }`},
 		{"clo-struct-field-mixed", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { var h = H { f: (x: i32): i32 => { return x + 1; }, n: 100 }; return h.f(h.n); }`},
@@ -126,7 +126,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Array literals of NO-CAPTURE LAMBDAS (#2994): each lambda element is
 		// hoisted to a top-level fn (the lift a no-capture lambda arg gets), so the
 		// array is a function-pointer array and `fs[i](args)` / `for f in fs`
-		// ride the existing fn-pointer-array call path. (Named-function arrays
+		// use the existing fn-pointer-array call path. (Named-function arrays
 		// above already lowered; this adds the inline-lambda element form.)
 		{"clo-arr-call", `function main(): i32 { var fs = [(x: i32): i32 => { return x * 2; }, (x: i32): i32 => { return x + 100; }]; return fs[0](5) + fs[1](5); }`},
 		{"clo-arr-len", `function main(): i32 { var fs = [(x: i32): i32 => { return x + 1; }]; return fs.len() + 9; }`},
@@ -138,7 +138,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// such a param into its arr_ret_fns view, so the foreach snapshot
 		// `var $forit = f(x)` marks an owned array and `for y in f(x)` lowers like
 		// `for x in xs`. Was BAIL lower (the single bail across the functional
-		// core); now ir. The bare-fn-name arg `apply(dup)` rides the existing
+		// core); now ir. The bare-fn-name arg `apply(dup)` uses the existing
 		// fn-value-arg path (callee_param_is_fn still sees type_name "fn").
 		{"fnval-ret-arr-forin", `function apply(xs: i32[], f: (i32) => i32[]): i32 { var out = 0; for x in xs { for y in f(x) { out = out + y; } } return out; } function dup(n: i32): i32[] { return [n, n]; } function main(): i32 { return apply([1, 2, 3], dup); }`},
 		{"fnval-ret-arr-varlen", `function apply(xs: i32[], f: (i32) => i32[]): i32 { var c = 0; for x in xs { for y in f(x) { c = c + 1; } } return c; } function upto(n: i32): i32[] { var a: i32[] = []; var i = 0; while (i < n) { a = a.append(i); i = i + 1; } return a; } function main(): i32 { return apply([1, 2, 3], upto); }`},
@@ -233,7 +233,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Sub-word (u8[]) array as a STRUCT FIELD (is_leaksafe_array_field
 		// admits u8[], the only sub-word array type left after #4408) — a
 		// byte-buffer struct (the BytesWriter
-		// shape from std/io_buffered). The field stores a pointer; elements ride
+		// shape from std/io_buffered). The field stores a pointer; elements use
 		// the i32[] 4-byte-slot representation (op_arr_push / op_arr_get(32)), the
 		// sub-word value pre-wrapped by `as u8` at the push site. Binding the
 		// field to a local (`var data = w.data`) aliases via a Perceus dup,
@@ -255,11 +255,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"bytes-call-field", "struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s.bytes(), pos: 0 }; } function (x: S) sum(): i32 { var d: u8[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + (d[i] as i32); i = i + 1; } return t; } function main(): i32 { var x: S = mk(\"ABC\"); return x.sum(); }"},
 		// A sub-word (u8[]) array as a TUPLE element — the std/stream
 		// `(s: Stream) read_all(): (u8[], Stream)` cursor-idiom shape. u8[] (the
-		// only sub-word array type left after #4408) rides the same i32[]
+		// only sub-word array type left after #4408) uses the same i32[]
 		// 4-byte-slot tuple representation as i32[]/u32[], so
 		// tuple_elems_lowerable now admits them: construction
 		// stores the buffer pointer in one slot, the destructure binds it as an
-		// array local (mark_arr), and `bytes[i]` rides the 4-byte arr_get. Builds
+		// array local (mark_arr), and `bytes[i]` uses the 4-byte arr_get. Builds
 		// [10,20,35], reads it back through the (u8[], St) return: 10+20+35 + pos
 		// 3 = 68.
 		{"subword-arr-tuple-elem", "struct St { data: u8[], pos: i32 } function (s: St) read_all(): (u8[], St) { var out: u8[] = []; var i: i32 = s.pos; var end: i32 = s.data.len(); while (i < end) { out = out.append(s.data[i]); i = i + 1; } return (out, St { ...s, pos: end }); } function main(): i32 { var d: u8[] = []; d = d.append(10 as u8); d = d.append(20 as u8); d = d.append(35 as u8); var s: St = St { data: d, pos: 0 }; var (bytes, s2) = s.read_all(); var total: i32 = 0; var i: i32 = 0; while (i < bytes.len()) { total = total + (bytes[i] as i32); i = i + 1; } return total + s2.pos; }"},
@@ -513,7 +513,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-arr-field", `struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }`},
 		{"struct-arr-param", `struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }`},
 		{"struct-arr-extract", `struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [7, 8, 9] }; var a = b.data; return a[0] + a[2]; }`},
-		// u32[] struct fields ride the i32[] 4-byte element read; only the leak-
+		// u32[] struct fields use the i32[] 4-byte element read; only the leak-
 		// safety gate (is_leaksafe_array_field) had to admit them. Field
 		// round-trip: construction, indexed read, extract-to-local, by-value param.
 		{"struct-u32arr-field", `struct Vec { vals: u32[], n: i32 } function main(): i32 { var v = Vec { vals: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`},
@@ -543,7 +543,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-param", `struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }`},
 		{"struct-bool-field", `struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }`},
 		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8) is
-		// leak-safe and lowers — these ride the same i32 slot, so only the
+		// leak-safe and lowers — these occupy the same i32 slot, so only the
 		// leaf-safe gate blocked them. Covers local / param / struct-returning /
 		// mixed-field / functional-update shapes; u64 / f32 stay on AST (width
 		// work). (i16/i8 sign-extend and u16 cases were retired (#4408); u8 is
@@ -589,14 +589,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { var (b, n) = f(); if (b) { return n; } return 0; }`},
 		{"tuple-bool-both", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { var t = f(); var r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`},
 		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
-		// u8) — these ride the same i32 slot, so only the return-type gate
+		// u8) — these occupy the same i32 slot, so only the return-type gate
 		// (tuple_elems_lowerable) blocked them. Covers the high-bit u32 case
 		// and sub-word wrap. (i16/i8 sign-extend and u16 cases were retired
 		// (#4408); u8 is the only sub-word type left.)
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
 		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
 		{"tuple-u32-second", `function f(): (i32, u32) { return (3, 9 as u32); } function main(): i32 { var t = f(); return t.0 + (t.1 as i32); }`},
-		// A u64 tuple element rides the i64 8-byte slot (tuple_get_w(64)); `.N`
+		// A u64 tuple element occupies the i64 8-byte slot (tuple_get_w(64)); `.N`
 		// access, destructure, and the 2nd-element position all preserve the full
 		// 64 bits, and the element stays UNSIGNED for shifts (bit-63-set >> case).
 		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`},
@@ -609,7 +609,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-i32arr-destr", `function f(): (i32[], i32) { return ([5, 10], 7); } function main(): i32 { var (arr, n) = f(); return arr[0] + arr[1] + n; }`},
 		{"tuple-u32arr-destr", `function f(): (u32[], i32) { return ([5, 10], 7); } function main(): i32 { var (arr, n) = f(); return (arr[0] as i32) + (arr[1] as i32) + n; }`},
 		{"tuple-i32arr-second", `function f(): (i32, i32[]) { return (3, [10, 20]); } function main(): i32 { var (n, arr) = f(); return n + arr[0] + arr[1]; }`},
-		// f32 in composites rides the f64 8-byte slot (Fern represents f32 as f64
+		// f32 in composites occupies the f64 8-byte slot (Fern represents f32 as f64
 		// internally), so tuple elements + struct fields lower like f64: `.N`
 		// access, destructure, 2nd-position, and float arithmetic on the element.
 		{"tuple-f32-access", `function f(): (f32, i32) { return (4.5 as f32, 3); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
@@ -668,7 +668,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
 		{"opt-u32-payload-shift", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`},
 		{"opt-u32-tuple-field", `struct S { t: (Option[u32], i32) } function main(): i32 { var s = S { t: (Some(7), 3) }; return s.t.1; }`},
-		// A u64 Option/Result payload rides the i64 8-byte slot: construction tags
+		// A u64 Option/Result payload occupies the i64 8-byte slot: construction tags
 		// a u64 arg "i64" (8-byte store), and the match binding reads via
 		// op_opt_payload_w(64) and marks the slot u64. The full 64 bits must
 		// survive the box round-trip — `5000000000 >> 32 == 1` (a 32-bit-truncated
@@ -1308,7 +1308,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Byte-source builtins (issue #2747) — DETERMINISTIC shapes only, so the
 		// AST and IR paths must agree. random_bytes(n).len() is always n; as_bytes
 		// / bytes byte values on a literal are fixed. (random_i32 + the random byte
-		// VALUES are non-deterministic, so they ride the IR-only block below.)
+		// VALUES are non-deterministic, so they go in the IR-only block below.)
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`},
 		{"random-bytes-len-var", `function main(): i32 { var s: u8[] = random_bytes(13); return s.len(); }`},
 		// Clock leaves migrated to Fern on the IR path (#2649). The VALUES are
@@ -1477,7 +1477,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// A struct-valued if-/match-EXPRESSION binding (lifted to a `__lam_N`
 		// whose return type is inferred from its struct-literal body, so the
 		// `__lam_N()` call site recovers the struct type for `.field` / method
-		// dispatch). The legacy AST path also handles these, so they ride the
+		// dispatch). The legacy AST path also handles these, so they run in the
 		// differential gate.
 		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { var p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
@@ -1506,7 +1506,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// callee's registered return type, letting a later `match (o)` lower.
 		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
-		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
+		// `for x in <u64[]>`: the element uses the i64 8-byte read but is bound
 		// u64, so body compares/shifts on it are unsigned. Both paths must
 		// agree, and the large
 		// element (> 2^63) makes a signed-vs-unsigned miscompile observable — a
@@ -1577,7 +1577,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 	}
 
 	// IR-ONLY assertions (issue #2747 / uuid #2682). random_i32 has no legacy
-	// x86-64 AST counterpart, so it can't ride the differential gate — compile
+	// x86-64 AST counterpart, so it can't run in the differential gate — compile
 	// only via -ir and assert structural properties of the IR output. uuid_v4
 	// (random_bytes + sliced-hex string building) likewise exercises the full
 	// byte-source path through the IR backend.
@@ -1902,7 +1902,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// uuid_v4: 36 chars, '4' at index 14, '-' at 8, distinct draws.
 		{"uuid-v4", uuidV4Program, 0},
 		// Range-for through the x86-64 self-host IR path (#2699). The legacy
-		// AST x86-64 emitter has no range desugar, so these ride the IR-only
+		// AST x86-64 emitter has no range desugar, so these go in the IR-only
 		// gate. Half-open `..` and inclusive `..=` (closed interval) — the
 		// latter exits on `i <= hi`, so it visits HIGH and runs one more
 		// iteration than the half-open form.
@@ -1913,7 +1913,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"rangei-continue", `function main(): i32 { var s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }`, 52},
 		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
 		// field (struct_get at successive indices), not just the first. The
-		// legacy AST x86-64 emitter binds only field 0, so these ride the
+		// legacy AST x86-64 emitter binds only field 0, so these go in the
 		// IR-only gate against the native interp's value.
 		{"match-multi-bind", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(x, y) => { return x * y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 42},
 		{"match-multi-bind-three", `enum T { Tri(i32, i32, i32), Empty } function f(t: T): i32 { match (t) { Tri(a, b, c) => { return a + b * c; }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Tri(1, 2, 3)); }`, 7},
@@ -1922,7 +1922,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Multi-payload variant arm in a value-position match-EXPRESSION
 		// (`return match (e) { Pair(a, b) => a + b }`): lower_iife_match now admits
 		// an arm with extra_bindings when every payload is i32 (#3193). The legacy
-		// AST emitter mishandles this (segfaults), so these ride the IR-only gate.
+		// AST emitter mishandles this (segfaults), so these go in the IR-only gate.
 		{"match-expr-multi-bind", `enum E { Pair(i32, i32) } function main(): i32 { var e = E.Pair(3, 4); return match (e) { Pair(a, b) => a + b }; }`, 7},
 		{"match-expr-multi-2var", `enum E { Pair(i32, i32), Single(i32) } function main(): i32 { var e = E.Single(9); return match (e) { Pair(a, b) => a + b, Single(x) => x }; }`, 9},
 		{"match-expr-multi-wildcard", `enum E { Pair(i32, i32) } function main(): i32 { var e = E.Pair(3, 4); return match (e) { Pair(_, b) => b }; }`, 4},
@@ -1931,7 +1931,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// a `__mkclo$<fd>$cloN(caps…)` env-box marker; the array's `is_closurearr`
 		// slot routes `fs[i](args)` through the existing env-first closure-call path
 		// (push box, args, box[0] funcval, call_indirect arity+1). The legacy AST
-		// x86-64 emitter bails on these (a first-class closure box), so they ride the
+		// x86-64 emitter bails on these (a first-class closure box), so they go in the
 		// IR-only gate against the absolute value. (A capturing lambda in a struct
 		// FIELD is scoped out of this slice — see lift_inline_closures_expr — and
 		// stays on AST.) Single capturing lambda; fs[0](7) = 7 + 10 = 17.
@@ -2036,8 +2036,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// string) and passes it as an ARGUMENT to a free-function call (#3498). The
 		// statement-form match already lowered this; the value-position gate now
 		// admits an i32-returning free-fn call whose args are borrow reads of the
-		// payload, so `V(p) => g(p)` rides the i32 result temp. The recursive-list
-		// `sum` is the headline shape (`Cons(h, t) => h + sum(t)` passes the enum
+		// payload, so `V(p) => g(p)` uses the i32 result temp. The recursive-list
+		// `sum` is the main shape (`Cons(h, t) => h + sum(t)` passes the enum
 		// payload `t` to the recursive call). Native/AST-correct; pinned to the IR
 		// value (the gate decides IR-vs-AST, so the value confirms the IR path).
 		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
@@ -2056,7 +2056,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// call that BORROWS the payload and returns a fresh value is itself
 		// borrow-safe, so `.len()` over a payload string-method result
 		// (`s.trim().len()`) and a NESTED-call argument (`sum(id(t))`, `id` returns
-		// the recursive enum) ride the i32 result temp instead of bailing.
+		// the recursive enum) use the i32 result temp instead of bailing.
 		{"match-expr-payload-strmethod-len", `function f(o: Option[string]): i32 { return match (o) { Some(s) => s.trim().len(), None => 0 }; } function main(): i32 { return f(Some("hi ")); }`, 2},
 		{"match-expr-nested-call-arg", `enum L { C(i32, L), N } function id(l: L): L { return l; } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(id(t)), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 	}

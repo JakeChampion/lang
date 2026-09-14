@@ -210,7 +210,7 @@ function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
 
 // The string entry point is the one the utilities run: `cksum -a sysv` and
 // `sum -s` both read 64 KiB chunks as strings, so this is where the kernel
-// pays. `update_bytes` keeps the indexed loop because `[u8]` is not the
+// matters. `update_bytes` keeps the indexed loop because `[u8]` is not the
 // kernel family's operand type — the same split `__count_byte` has, where
 // `s.count_byte(b)` is string-only and there is no `[u8]` counterpart.
 //

@@ -8,7 +8,7 @@ import "testing"
 // The sub-64-bit rows are the ones that matter. `mov eax, eax` looks identical
 // to a naive "the operands are equal" rule but zero-extends into the upper 32
 // bits, and truncOrExt emits precisely that as the u32 conversion — so a filter
-// keyed on operand equality alone would delete a load-bearing instruction and
+// keyed on operand equality alone would delete a required instruction and
 // silently miscompile every u32 narrowing. Width is the whole condition.
 func TestDeadSelfMoveDropsOnly64Bit(t *testing.T) {
 	for _, tc := range []struct {

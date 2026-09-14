@@ -51,7 +51,7 @@ func TestSCCPFoldsBranchOnConst(t *testing.T) {
 	}
 }
 
-// TestSCCPProvesPhiConstantAcrossDeadEdge — the killer
+// TestSCCPProvesPhiConstantAcrossDeadEdge — the decisive
 // demonstration of SCCP's edge over Fold + FoldBranches run
 // separately:
 //

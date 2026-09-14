@@ -26,7 +26,7 @@ import (
 //
 // The rows pair each value-block form with the identical program written
 // without one, so a regression shows up as the pair diverging rather than as a
-// number nobody can place. `if` expressions and block expressions ride the same
+// number nobody can place. `if` expressions and block expressions use the same
 // origin set as `match` and are pinned here for that reason.
 //
 // Exit 99 is reserved for an over-release on every row: the narrowing must not
@@ -93,7 +93,7 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			want: 3, allocs: 300, frees: 300,
 		},
 		{
-			// No alias in sight: a match expression over a plain local's field.
+			// No alias at all: a match expression over a plain local's field.
 			// The poisoning was never about the alias — the alias bind is just
 			// where the refusal became visible.
 			name: "match_expr_no_alias",
@@ -105,7 +105,7 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			want: 5, allocs: 300, frees: 300,
 		},
 		{
-			// An IF expression rides the same value-block origin set, so it was
+			// An IF expression uses the same value-block origin set, so it was
 			// poisoning identically — with an array-field holder, to show the
 			// field kind was never what mattered.
 			name: "if_expr_field_read_aliased",

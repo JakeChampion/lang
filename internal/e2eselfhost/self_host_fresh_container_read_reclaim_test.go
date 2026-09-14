@@ -30,7 +30,7 @@ var freshContainerReadReclaimCases = []struct {
 	// A SCALAR element read out of a fresh owned array — the "ARR:" strict-fresh
 	// registry entry. Leaked the whole 4-element buffer per evaluation
 	// (2800 B / 50 rounds, exactly doubling); the buffer is now rc-dec'd at the
-	// read, element-blind because a scalar rides the freed buffer.
+	// read, element-blind because a scalar is stored in the freed buffer.
 	{"fresh-arr-index", `function lit(n: i32): i32[] { return [n, n + 1, n + 2, n + 3]; }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
@@ -152,7 +152,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The refusal that keeps the local-built admission honest. `seeded` rebinds its
+	// The refusal that keeps the local-built admission narrow. `seeded` rebinds its
 	// local FROM A PARAMETER before appending, so the buffer it hands back is the
 	// caller's — reclaiming it at the read would free `live` out from under main.
 	// `body_unsafe_for_allow_ret` cannot catch this on its own (its assign arm reads

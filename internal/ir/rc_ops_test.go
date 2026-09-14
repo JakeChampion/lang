@@ -30,7 +30,7 @@ func TestRcOpsCarryCallPayload(t *testing.T) {
 		for _, op := range f.Ops {
 			want, isRc := wantStr[op.Kind]
 			if !isRc {
-				// The three helper symbols must never ride a plain
+				// The three helper symbols must never be emitted as a plain
 				// OpCallDirect anymore — that would silently dodge
 				// every pass that now matches structurally.
 				if op.Kind == OpCallDirect && (op.Str == "__fern_rc_inc" ||

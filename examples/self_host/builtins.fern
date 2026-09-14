@@ -2,7 +2,7 @@
 // REAL Fern module, instead of the hand-synthesised table in
 // parser.inject_builtin_enums / add_builtin_variant.
 //
-// Historically the self-host compiler conjured these decls in code: a
+// Historically the self-host compiler synthesised these decls in code: a
 // loop of `add_builtin_variant(structs, "JString", "string", "JsonValue")`
 // calls plus open-coded StructDecl literals for FileStat / ProcessResult /
 // HeaderMap / HttpRequest / HttpResponse. That "synthesise the AST by

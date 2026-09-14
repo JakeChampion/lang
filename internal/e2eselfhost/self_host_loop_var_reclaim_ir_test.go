@@ -96,7 +96,7 @@ function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => 
 	//
 	// Renamed a THIRD time, and the churn is still the point — see the enum row
 	// above, which has its own history of the same thing. A name that asserts a
-	// bug persists becomes a lie the moment the bug is fixed, and the test then
+	// bug persists becomes false the moment the bug is fixed, and the test then
 	// fails for the right reason while reading as a regression.
 	{
 		name: "string-concat-temps-reclaimed",
@@ -134,7 +134,7 @@ function main(): i32 {
 
 // TestSelfHostLoopVarReclaimIRX86_64 runs each case through the self-hosted
 // x86-64 IR driver, and cross-checks every case against the NATIVE backend
-// first. That cross-check is what makes a `want: 3` row honest: it asserts
+// first. That cross-check is what makes a `want: 3` row accurate: it asserts
 // native still answers 7 on the same source, so the row records a self-host
 // gap rather than quietly ratifying a shape neither compiler reclaims.
 func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {

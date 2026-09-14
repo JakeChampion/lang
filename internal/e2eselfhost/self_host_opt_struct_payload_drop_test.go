@@ -120,7 +120,7 @@ function main(): i32 {
 		{
 			// Result's Ok arm — the candidate is admitted for Ok/Err too, and the
 			// slot type Result[P, string] cannot name the payload struct, so the
-			// type has to ride in the drop record rather than be read back off the
+			// type has to be in the drop record rather than be read back off the
 			// slot.
 			name: "result_ok_struct_payload",
 			src: `struct P { xs: i32[], n: i32 }

@@ -4,7 +4,7 @@ import "core/cmp" as cmp;
 // `sort` / `sort_desc` over an f64[] (the retired sort_f64_asc / sort_f64_desc,
 // #5397): bottom-up merge sort, the floating-point exercise of the `Ord` sorts.
 // Covers ascending / descending order, input immutability, the single / empty
-// edge cases, and negatives. f64 arrays are scalar-payload, so this rides all
+// edge cases, and negatives. f64 arrays are scalar-payload, so this runs on all
 // four native backends and both self-host gates. The Go-side TestSortF64 pins
 // the native backends; this is the migration-shaped companion.
 

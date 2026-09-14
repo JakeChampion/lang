@@ -15,7 +15,7 @@ import (
 // `tee_local`. The op constructor and its kind tag had existed since the IR was
 // written, but the only callers were unit drivers that build op lists and never
 // emit them — so fusing without adding the emitter arms would have rewritten real
-// code into an op every consumer drops on the floor, and the fixpoint could not
+// code into an op every consumer discards, and the fixpoint could not
 // have seen it (a stable miscompile reproduces itself perfectly).
 //
 // # Why most cases now expect NO local.tee
@@ -83,7 +83,7 @@ function callarg(x: i32): i32 {
     return y + x;
 }
 function main(): i32 { return callarg(6); }`, 18, false},
-	// Pointer-width values ride the same slots, and this is the shape whose tees
+	// Pointer-width values use the same slots, and this is the shape whose tees
 	// SURVIVE copy propagation — so it is the one that pins `local.tee` reaching
 	// the wasm backend, and the peek forms reaching the register backends.
 	{"tee-ptr-values", `function ptrs(s: string, xs: i32[]): i32 {

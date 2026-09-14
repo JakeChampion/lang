@@ -112,7 +112,7 @@ function main(): i32 {
 
 	// Control: an own var that reaches no container type (`tag[E](e: E): E`)
 	// compiled BEFORE the fix — `to_concrete_struct_ty` leaves a bare `E`
-	// alone, so nothing dangled. It now rides the fold instead, and must keep
+	// alone, so nothing dangled. It now goes through the fold instead, and must keep
 	// its value.
 	run(t, `struct Box[T] { v: T }
 function (b: Box[T]) tag[E](e: E): E { return e; }

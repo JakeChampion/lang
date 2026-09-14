@@ -2108,7 +2108,7 @@ func (r *rewriter) rewriteNestedFuncBody(params []ast.Param, body *ast.Block) {
 	r.localVars = prev
 }
 
-// rewriteExpr is the workhorse — checks every expression node for
+// rewriteExpr does most of the work — checks every expression node for
 // shapes that need a name rewrite.
 func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	if slot == nil || *slot == nil {

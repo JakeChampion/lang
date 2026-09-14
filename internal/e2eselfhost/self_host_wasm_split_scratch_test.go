@@ -195,7 +195,7 @@ func TestSelfHostWasmSplitScratchWasmIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostWasmSplitScratchIRX86_64 keeps the register path honest: it runs
+// TestSelfHostWasmSplitScratchIRX86_64 checks the register path: it runs
 // the same sources through an entirely different set of helpers, so it pins that
 // the wasm-side change moved nothing here and that the answers agree.
 func TestSelfHostWasmSplitScratchIRX86_64(t *testing.T) {

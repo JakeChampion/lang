@@ -51,7 +51,7 @@ function main(): i32 { return iter.sum(iter.range(1, 5)); }`},
 	// std/num.sum_iter[T: Add, I: iter.Iterator[T]] — a TWO bounded-param reducer
 	// where I instantiates to a module-mangled struct (`iter__ArrayIter[i32]`).
 	// Exercises the ';'-joined multi-param instantiation key (split_inst_key):
-	// a '__'-join would shatter the key on the embedded '__' of `iter__ArrayIter`
+	// a '__'-join would split the key on the embedded '__' of `iter__ArrayIter`
 	// and bind I to the bogus "iter". 4+5+6 = 15.
 	{"num-sum_iter", `import "core/iter";
 import "std/num";

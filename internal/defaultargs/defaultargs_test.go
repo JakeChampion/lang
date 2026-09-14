@@ -110,7 +110,7 @@ function main(): i32 { var n: i32 = 41; return f(1); }`,
 function main(): i32 { var n: i32 = 41; return f(1); }`,
 			wantName: "an array literal",
 		},
-		// Nesting one inside arithmetic must not smuggle it past either.
+		// Nesting one inside arithmetic must not carry it past either.
 		{
 			name: "field-access-under-arithmetic",
 			src: `struct Config { timeout: i32 }

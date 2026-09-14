@@ -22,15 +22,15 @@ import (
 // ADMITTING IT WAS ONLY HALF. With the credit granted the row went 800/200 →
 // 800/600 and stayed leaking, because lower_stmt_assign had no branch for the
 // class at all: a rebound reclaimable string[] fell through to emit_arr_store's
-// SHALLOW arr_dec, which frees the buffer and drops its element pointers on the
-// floor. The `var` re-declaration has driven emit_strarr_reclaim_store all
+// SHALLOW arr_dec, which frees the buffer and leaves its element pointers
+// unreleased. The `var` re-declaration has driven emit_strarr_reclaim_store all
 // along; the assign path is the sibling the rc-tuple and rc-enum rebinds each
 // had to open for themselves, one element kind over. Both halves are needed and
 // neither alone moves the row.
 //
 // The failure mode is an over-release rather than a leak — the store now frees
 // element boxes another holder could still reach — so the refused rows below
-// are load-bearing. Five shapes escape the array, bind an element out of it,
+// are essential. Five shapes escape the array, bind an element out of it,
 // rebind from a live local, rebuild from the array's own element, or store it
 // into a container; each reads its value back after 200 rounds of churn have
 // recycled the freelist, each stays pinned at its leaking count, and each

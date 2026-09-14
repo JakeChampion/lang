@@ -19,7 +19,7 @@ import (
 // call, `24 + plen + 1` bytes rounded to a freelist class, so the leak grew with
 // the PATH. That is what these legs read: the same program at two path lengths
 // must cost the same live bytes, which a per-call constant satisfies and a
-// per-call path copy cannot. Round-count independence rides along on every leg
+// per-call path copy cannot. Round-count independence is checked on every leg
 // that reaches zero — 20 rounds and 200 must cost the same — so a fix that
 // merely shrank the stranded block would still fail.
 

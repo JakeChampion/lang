@@ -332,7 +332,7 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
-// A literal with no i32 immediate to ride — either 64-bit width, or a u32,
+// A literal with no i32 immediate to hold it — either 64-bit width, or a u32,
 // whose range reaches past the immediate's sign bit — carries its SOURCE TEXT
 // instead, which is also how the AST lowering hands the same literal to the
 // backends, rather than through a parse and re-format.

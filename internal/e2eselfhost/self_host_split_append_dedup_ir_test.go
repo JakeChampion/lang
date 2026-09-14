@@ -79,7 +79,7 @@ func TestSelfHostSplitAppendDedupIRWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.name, err)
 			}
-			// Belt-and-braces: the module must define $__fern_arr_push exactly
+			// A redundant check: the module must define $__fern_arr_push exactly
 			// once (the bug emitted it twice).
 			if n := strings.Count(string(wat), "(func $__fern_arr_push "); n != 1 {
 				t.Errorf("%s: $__fern_arr_push defined %d times, want 1", tc.name, n)

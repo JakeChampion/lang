@@ -50,7 +50,7 @@ func TestSelfHostEmbedBundleAndSubstitution(t *testing.T) {
 // whether the program is a program at all; matching an exact message across
 // two compilers is a diagnostic-format comparison, not an asset one.
 //
-// The rejections carry the weight here. A missing asset that compiled into an
+// The rejections matter most here. A missing asset that compiled into an
 // empty string would be a program that builds, runs, and serves nothing —
 // which is exactly what an embedded stdlib must never do (#6643).
 func TestSelfHostEmbedMatchesNative(t *testing.T) {
@@ -77,7 +77,7 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		"z.txt":     []byte("ZZZ"),
 		"a.txt":     []byte("AAA"),
 		"sub/b.txt": []byte("BB"),
-		// The load-bearing asset, and the reason this bundle is written as
+		// The essential asset, and the reason this bundle is written as
 		// bytes: an interior NUL and a byte past 0x7f, which is what an image,
 		// a font or a wasm module looks like. Fern's `read_file` validates
 		// UTF-8 and refuses this file outright, so a walk built on it embeds
@@ -103,7 +103,7 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 	// draws the line in the same place, with os.Stat on the root and WalkDir's
 	// lstat below it; the self-host needed `lstat` (#7982) to draw it at all.
 	//
-	// The link that escapes the root is the load-bearing one: a walk that
+	// The link that escapes the root is the essential one: a walk that
 	// followed it would embed a file the user never put in the bundle.
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	if err := os.WriteFile(outside, []byte("SECRET"), 0o644); err != nil {

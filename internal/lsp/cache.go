@@ -16,7 +16,7 @@ import (
 // the working set for an LSP session is small (a handful of open
 // docs, plus history). 16 is enough to cover undo / redo trains
 // and a couple of recently-edited files without holding multi-MB
-// AST graphs hostage.
+// AST graphs in memory.
 type compileCache struct {
 	entries map[uint64]*compileEntry
 	order   []uint64

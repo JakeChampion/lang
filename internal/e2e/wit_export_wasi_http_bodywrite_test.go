@@ -64,7 +64,7 @@ function on_request(request: own IncomingRequest, response_out: own ResponseOutp
 	return;
 }`
 
-// TestExportWasiHttpHandlerBodyWriteServes is the body-write payoff: a
+// TestExportWasiHttpHandlerBodyWriteServes is the body-write case: a
 // bring-your-own handler writes "hi" to the response body via
 // output-stream.blocking-write-and-flush (a result<_, stream-error> return) and
 // `wasmtime serve` delivers it (200 + body "hi").

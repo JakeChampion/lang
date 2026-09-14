@@ -86,7 +86,7 @@ var nestedOptFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		// No binding at all (`Some(_)`). Pins that the credit rides the
+		// No binding at all (`Some(_)`). Pins that the credit depends on the
 		// declaration, not some use of the payload.
 		name: "unused_binding",
 		body: `        var o: Option[Option[i32]] = Some(Some(i));
@@ -241,7 +241,7 @@ var nestedOptHazardCases = []struct {
 }
 
 // TestSelfHostNestedOptionReclaimX86_64 is the leak gate. live_bytes == 0 with
-// allocs == frees is the load-bearing assertion: frees short of allocs is the
+// allocs == frees is the essential assertion: frees short of allocs is the
 // leak this closes, and frees ABOVE allocs would mean two paths claimed the same
 // box, which is a double free rather than a leak.
 //

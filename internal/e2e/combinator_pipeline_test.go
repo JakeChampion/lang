@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Fluent generic combinator pipeline — the headline ergonomic payoff of #2663:
+// Fluent generic combinator pipeline — the main ergonomic benefit of #2663:
 // generic receiver-method dispatch over the element type (`xs.map(...)`) plus
 // unannotated arrow-lambda return inference (#3360, `(x) => expr`) let
 // `xs.map(f).filter(g).fold(init, h)` read left-to-right instead of the old

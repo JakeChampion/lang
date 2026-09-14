@@ -26,7 +26,7 @@
 //      a parser that strips them cannot round-trip a value whose quotes are
 //      significant. Whitespace INSIDE the quotes is preserved either way.
 //
-// The load-bearing test is not a table of expected outputs. It is a sweep: for
+// The essential test is not a table of expected outputs. It is a sweep: for
 // each canonical input, whitespace is inserted at every position the grammar
 // tolerates it — before and after each name, each value, and each separator,
 // with both spaces and tabs — and every one of those variants must parse to
@@ -120,7 +120,7 @@ function serialize(cs: Cookie[]): string {
 
 // A stable rendering used for comparing parse results. `\x1f` and `\x1e` are
 // unit/record separators — control bytes that cannot appear in a cookie
-// name and would have to be deliberately smuggled into a value — so a
+// name and would have to be deliberately put into a value — so a
 // difference in this string is a real difference in the parse and never an
 // artefact of the delimiter colliding with the data.
 function render(cs: Cookie[]): string {

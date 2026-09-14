@@ -13,7 +13,7 @@
 // generate .fern between marker comments: the self-host language has
 // module-level `const` for scalars only, so a generated Fern table has to be
 // code rather than data, and a staleness test is what keeps the committed
-// output honest.
+// output up to date.
 package x86tbl
 
 // Cond is one 4-bit condition code together with every suffix spelling GNU as

@@ -71,7 +71,7 @@ func TestSelfHostEscapingAppendReuseIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostEscapingAppendReuseWasm is the wasm32 mirror (same shared irlower.fern
-// lowering, so the retain-on-append fix rides every backend).
+// lowering, so the retain-on-append fix reaches every backend).
 func TestSelfHostEscapingAppendReuseWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm escaping-append reuse e2e")

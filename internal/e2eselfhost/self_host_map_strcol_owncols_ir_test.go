@@ -65,7 +65,7 @@ function main(): i32 {
 	// The string-KEY twin: Map[string,i32] grown past its initial capacity.
 	// Deliberately no get_or/has lookups in the hot path: a computed string
 	// lookup key (`m.get_or("k" + "0", ..)`) leaks its concat temp per call —
-	// a separate, pre-existing string-temp gap that would drown this probe's
+	// a separate, pre-existing string-temp gap that would hide this probe's
 	// signal (the column-buffer grow-leak). m.len() reads allocate nothing.
 	{name: "strkey-grow", src: func(n string) string {
 		return `import "core/map";

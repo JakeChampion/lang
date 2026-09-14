@@ -1,6 +1,6 @@
 // Package arm64 is a Go-side ARM64 (AArch64) machine-code encoder:
 // one function per instruction form, each returning the 4-byte
-// fixed-width encoding as a uint32. It is the first brick of the
+// fixed-width encoding as a uint32. It is the first piece of the
 // native-binary path that aims to replace the GAS-text +
 // aarch64-linux-gnu-gcc shell-out in cmd/fern (Phase 3 of
 // docs/TOOLCHAIN-SELF-HOSTING.md).

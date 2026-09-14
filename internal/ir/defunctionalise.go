@@ -34,7 +34,7 @@
 //
 // The pass is conservative — anything it can't statically prove
 // to be monomorphic stays as-is. That's fine: indirect dispatch
-// keeps working and the perf win is just left on the table for
+// keeps working and the perf win is simply not realised for
 // those sites. Future work: full lambda-set tagged-union
 // dispatch for the 2..N flow cases.
 

@@ -90,7 +90,7 @@ func TestSelfHostGenEnumOfGenStructIRX86_64(t *testing.T) {
 			// FERN_STRICT_IR=1 turns a bail into a refusal naming its site, so
 			// this asks the question directly rather than inferring it from an
 			// output size. The byte count was the old proxy and it had drifted
-			// into a knife edge: user_enum_string emits 18007 bytes — it pulls
+			// too close: user_enum_string emits 18007 bytes — it pulls
 			// the string helpers its sibling does not — against a bound of
 			// 18000, so a module that lowers fine was read as a bail.
 			asm := runCaptureEnv(t, runner, driverBin, []byte(tc.src),

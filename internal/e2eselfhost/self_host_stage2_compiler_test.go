@@ -18,7 +18,7 @@ import (
 //
 // Stage 2 then feeds that single compiler a table of programs over
 // stdin and assembles + runs each emitted result, asserting the exit
-// code. This proves the self-hosted compiler isn't a one-trick
+// code. This proves the self-hosted compiler does more than emit
 // `return 7`: it correctly lowers arithmetic precedence, function
 // calls, conditionals, loops, and recursion.
 func TestSelfHostStage2Compiler(t *testing.T) {

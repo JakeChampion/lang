@@ -88,7 +88,7 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 			 }`,
 		},
 		{
-			// An i64 column rides the 8-byte slot, so a value past 2^31 must
+			// An i64 column occupies the 8-byte slot, so a value past 2^31 must
 			// survive the round trip rather than truncating.
 			"get_or-i64-elem",
 			`function main(): i32 {

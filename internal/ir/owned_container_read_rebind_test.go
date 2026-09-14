@@ -16,7 +16,7 @@ import (
 //
 // Asserted as a differential rather than an absolute count: the two functions
 // perform the same read into the same type, so whatever the lowering owes for
-// it, they owe the same. That keeps the test honest if the retain count for
+// it, they owe the same. That keeps the test valid if the retain count for
 // this shape ever changes for an unrelated reason.
 func TestOwnedContainerReadRebindsWithOneRetain(t *testing.T) {
 	const src = `

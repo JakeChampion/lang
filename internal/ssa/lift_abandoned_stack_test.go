@@ -41,7 +41,7 @@ func TestLiftDeadArmDoesNotShadowEarlierOperand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LiftFromIR: %v", err)
 	}
-	// Verify is the load-bearing assertion: the bug's signature is exactly a
+	// Verify is the essential assertion: the bug's signature is exactly a
 	// use its def does not dominate.
 	if err := Verify(out); err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -109,7 +109,7 @@ func TestLiftDeadBlockArmDoesNotShadowEarlierOperand(t *testing.T) {
 	}
 }
 
-// The counterpart that keeps the fix honest: a value pushed inside a void scope
+// The counterpart that keeps the fix correct: a value pushed inside a void scope
 // that FALLS THROUGH still flows out to the enclosing code. Truncating the
 // stack unconditionally at every scope close would discard a real operand —
 // which is what a first cut of this fix did, and TestLiftBlockLinear caught it.

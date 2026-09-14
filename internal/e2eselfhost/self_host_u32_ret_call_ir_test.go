@@ -20,7 +20,7 @@ import (
 // NOT for SIGN INTERPRETATION, so `id32(a) >> 25`, `p.get() >> 25`,
 // `id32(a) / 7`, and `p.get() > k` all lowered SIGNED. This is wasm-only: x86-64
 // / arm64 keep the u32 zero-extended in a 64-bit register, so a signed shift/div
-// already matched there. The fix rides the same i64_ret_fns registry as the
+// already matched there. The fix uses the same i64_ret_fns registry as the
 // i64/u64 return family (#5159), with a distinct ret flag '3' for u32 read only
 // by is_u32_ret_fn. Every value here has bit 31 set, so each case fails with the
 // signed opcode and passes with the unsigned one; expected values are the

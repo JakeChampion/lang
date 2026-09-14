@@ -164,7 +164,7 @@ function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i
 		// fieldread: `q.f` off a live sibling holder — the RewriteCtx shape.
 		// A ONCE bind, deliberately: a LOOP-carried rebind of the same field
 		// is a different axis (the rebind's cow skip strands per-iteration
-		// retains — load-bearing for spread carries, #6653) and would mask
+		// retains — required for spread carries, #6653) and would mask
 		// whether the READ itself is counted.
 		cells = append(cells, crmCell{
 			name: k.name + "__fieldread",

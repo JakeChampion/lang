@@ -165,7 +165,7 @@ function main(): i32 {
 	// block alloc, capture layout (ptrW-aware on arm64), closure
 	// call convention (x86 %r10 / arm64 x9), and OpMakeClosure /
 	// OpMakeEnv lowering. The bare-function `function_value` case
-	// above hits the no-capture path; this one rides the harder
+	// above hits the no-capture path; this one exercises the harder
 	// emit surface that historically has been a bug source.
 	"closure_capture": `
 function adder(n: i32): (i32) => i32 {
@@ -304,7 +304,7 @@ function main(): i32 {
 			body = body[:len(helper)+1+j]
 		}
 		// The below-heap guard computes 0x1000_0000 as 1 << 28 and skips
-		// anything lower. `lsl ... #28` is the load-bearing instruction;
+		// anything lower. `lsl ... #28` is the essential instruction;
 		// a regression to the old `#0x10000`-only guard drops it.
 		if !strings.Contains(body, "#28") {
 			t.Errorf("%s is missing the below-heap guard (no `lsl … #28` heap-base computation):\n%s", helper, body)

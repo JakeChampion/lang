@@ -80,7 +80,7 @@ function main(): i32 {
     if (pn([[1, 2], [30, 4]]) == (30 as i64)) { r = r + 16; }
     return r;
 }`}},
-	// f32 rides the f64 slot in the self-host (8 bytes where native uses 4).
+	// f32 occupies the f64 slot in the self-host (8 bytes where native uses 4).
 	// That is a footprint divergence, not a value one — this pins the values so
 	// the day the distinct f32 slot lands it cannot silently truncate them.
 	{"f32_values_roundtrip", map[string]string{"main.fern": `function main(): i32 {

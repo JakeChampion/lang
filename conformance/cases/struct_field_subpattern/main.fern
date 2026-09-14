@@ -26,7 +26,7 @@ struct P { x: i32, y: i32 }
 struct W { e: E, n: i32 }
 struct S { tag: string, n: i32 }
 
-// The headline: a literal field beside a plain binder field, with an
+// The main case: a literal field beside a plain binder field, with an
 // irrefutable sibling arm as the fallback.
 function lit(p: P): i32 {
     match (p) {

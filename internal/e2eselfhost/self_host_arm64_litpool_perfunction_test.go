@@ -18,7 +18,7 @@ import (
 // assembling, linking and RUNNING a fixture deliberately past the reach. That
 // catches a wrapped imm19 the in-process assemblers might mask; this catches a
 // missing flush on a three-function program with no toolchain, so the two are
-// complementary and this one is the cheaper first line of defence.
+// complementary and this one is the cheaper first check.
 //
 // Two properties, both of which the fix has to hold:
 //
@@ -30,13 +30,13 @@ import (
 //     executing its own pool bytes as instructions.
 //
 // Scanning stops at `_start`: the hand-written runtime helpers after it are one
-// block that legitimately rides the end-of-.text flush.
+// block that legitimately uses the end-of-.text flush.
 func TestSelfHostArm64LitPoolPerFunction(t *testing.T) {
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
 	// Each of big/masked/main holds a literal the pool must carry, so a missing
 	// flush shows up as a load pending across a function boundary. `0xff` is
-	// there to keep the fixture honest if the movz fast path widens again: it
+	// there to keep the fixture valid if the movz fast path widens again: it
 	// admits only the canonical decimal of a value in [0, 65535], so a hex
 	// literal reaches the pool whatever the threshold does.
 	const src = `function twice(n: i32): i32 { return n * 2; }

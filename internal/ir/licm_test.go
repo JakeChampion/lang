@@ -121,7 +121,7 @@ function scan(s: string): i32 {
 }
 
 // The multi-slot path: two distinct operands in one header take a slot each.
-// Also the pass's load-bearing structural property — the prologue it splices in
+// Also the pass's essential structural property — the prologue it splices in
 // is stack-net-zero. The differential suite cannot see this, because the interp
 // oracle runs pre-battery IR and so never meets the hoisted shape.
 func TestHoistLoopInvariantsGivesEachOperandItsOwnSlot(t *testing.T) {

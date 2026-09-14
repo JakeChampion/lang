@@ -8,7 +8,7 @@ import (
 
 // Index-of-fresh-array reclamation (stage-(c) value-consuming-op sibling). A
 // scalar index into a fresh array result — `mk(i)[1]` — loaded the element and
-// dropped the buffer on the floor, leaking it every iteration (160000 ->
+// left the buffer unreclaimed, leaking it every iteration (160000 ->
 // 1600000 in a loop). The Index lowering now stashes a fresh owned array
 // container (freshOwnedRcTempType — an array literal — or ownedCallResultType
 // — a fresh-returning call), indexes off the reload, then dec's it via the

@@ -11,7 +11,7 @@ import (
 // meaning exactly one thing: the discriminant is not a valid tag at all, so the
 // node has been freed and its storage reused.
 //
-// That distinction is load-bearing rather than tidy. #7948 is a use-after-free
+// That distinction is essential rather than tidy. #7948 is a use-after-free
 // on the wasm-hosted compiler which surfaces as `did not lower: unknown
 // expression`, and diagnosing it cost a bisection precisely because three
 // legitimate `ast.Expr` members (ExprMapLit, ExprFString, ExprUnknown) shared

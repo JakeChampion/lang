@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// pathchk is three checks wearing one name, and the corpus is built around
+// pathchk is three checks under one name, and the corpus is built around
 // telling them apart: the DEFAULT asks the filesystem (one `lstat`, and a
 // component walk only for a name that does not exist), `-p` never touches the
 // filesystem at all and holds the name to POSIX's minimums and its portable

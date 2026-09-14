@@ -132,7 +132,7 @@ func heavyBuildWeightMB() int {
 	return 4300
 }
 
-// The Go x86-64 emit of a self-host driver allocates hard: its LIVE heap
+// The Go x86-64 emit of a self-host driver allocates heavily: its LIVE heap
 // peaks ~2.6 GB (see emitMemLimitMB), but at the default GOGC the runtime
 // lets the heap double between collections, so the process peaked ~9 GB
 // RSS — over half the emit's footprint was garbage awaiting collection.

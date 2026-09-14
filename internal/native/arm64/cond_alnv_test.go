@@ -72,7 +72,7 @@ func TestCondAlNvRefusedOnInvertingAliases(t *testing.T) {
 	}
 }
 
-// TestEveryConditionSpellingAssembles keeps the table honest in the direction
+// TestEveryConditionSpellingAssembles keeps the table complete in the direction
 // the AL gap sat in: a spelling missing from condCodes is not a compile error
 // anywhere, it is just an instruction the assembler cannot take.
 func TestEveryConditionSpellingAssembles(t *testing.T) {

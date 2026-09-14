@@ -468,7 +468,7 @@ var fastLinkFlagVal string
 // Used for the NATIVE-Go-emitted DRIVER asm (driverLinkArgs / CachedDriverBin),
 // which is the only ~680 MB link and the source of the shard-link timeouts.
 // The small SELF-HOST-emitted program links (CachedLink / BuildBin) stay on bfd
-// because there is no CI-speed payoff for them — bfd links a few-KB `.s` in
+// because there is no CI-speed benefit for them — bfd links a few-KB `.s` in
 // milliseconds. (Self-host freestanding output USED to link INCORRECTLY under
 // lld — `string[][]` -> exit 253 vs bfd's 5 — but that was a codegen +
 // heap-layout bug, now fixed: issue #4081 made the self-host x86-64 backend
@@ -569,7 +569,7 @@ func CachedLink(t testing.TB, gcc, asm string) string {
 // driverLinkArgs/lld) is deliberate there: lld's win only ever showed on
 // huge inputs. Self-host output is lld-correct since #4081
 // (TestSelfHostLinkerAgnosticIRX86_64 gates it); bfd is just the
-// no-payoff default, not a correctness requirement.
+// no-benefit default, not a correctness requirement.
 //
 // HUGE links — the stage-2 self-compile of the whole compiler, ~450 MB of
 // asm — first try the in-process native assembler (nativeLinkX86) under a

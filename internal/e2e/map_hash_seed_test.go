@@ -31,7 +31,7 @@ package e2e
 //      to enable by default, and the usual objection to seeding a hash map.
 //      core/map iterates the insertion-ordered entry ARRAY, never the bucket
 //      table, so key order is seed-independent — and std/json's key-order
-//      preservation rides on the same property. The test pins order equality
+//      preservation relies on the same property. The test pins order equality
 //      across runs whose seeds differ, so the two facts are checked together
 //      rather than assumed to co-occur.
 //

@@ -23,7 +23,7 @@ var dynArrViewCases = []struct {
 	src      string
 	expected int
 }{
-	// The #4787 headline: an enum LOCAL as a dyn-array literal element,
+	// The #4787 main case: an enum LOCAL as a dyn-array literal element,
 	// iterated via `for x in xs` (whose desugar binds each element into a
 	// loop-var view). Add(4).show() = 5.
 	{"enum-local-elem-for",

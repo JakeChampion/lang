@@ -23,7 +23,7 @@ import (
 // function-shaped modules, so a script has no native oracle — script support is
 // a self-host driver feature.
 //
-// The route assertion is load-bearing twice over. It pins that these programs
+// The route assertion is essential twice over. It pins that these programs
 // take the IR path at all, and it pins the `-decide` fix that shipped with them:
 // the gate judged the RAW module, whose `main` the emit had not synthesised yet,
 // so `-decide` printed "ast" for a script that emit_module_ir_gated then lowered

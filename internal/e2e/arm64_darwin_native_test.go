@@ -146,7 +146,7 @@ function main(): i32 {
 		// connection, so the listener fd is deterministically read-ready and
 		// the only correct answer is its index. A stub returns -1 → exit 99.
 		//
-		// The leading -1 in the fd set is load-bearing, not padding. poll(2)
+		// The leading -1 in the fd set is essential, not padding. poll(2)
 		// ignores a negative fd by contract and std/tcp relies on that —
 		// it puts wasm_timer_pollable(...), which is -1 on native, straight
 		// into the set. kevent(2) does NOT ignore one; it fails that
@@ -236,7 +236,7 @@ function main(): i32 {
 // this was broken, which is the whole point of having both: AT_FDCWD is -100 on
 // Linux and -2 on XNU, the generator emitted the Linux value on both, and
 // openat IGNORES dirfd when the path is absolute. So every existing test — and
-// the `fern` driver itself, which builds absolute paths — sailed past a bug that
+// the `fern` driver itself, which builds absolute paths — missed a bug that
 // made `read_file("data.txt")` fail unconditionally on arm64-darwin.
 func TestArm64DarwinNativeReadFileRelative(t *testing.T) {
 	bin := buildFernCLI(t)

@@ -2,7 +2,7 @@
 // `a + b`, `(a + b) * (a - b)`, unary `-a` where the operands have type `T` and
 // `T`'s bound provides the op's trait method (`Num` = Add+Sub+Mul+Div, `Neg`)
 // desugar to `a.add(b)` / `a.neg()` etc., resolved through the bound — the same
-// deferred dispatch as `a.cmp(b)` for `T: Ord`. This is the payoff: generic
+// deferred dispatch as `a.cmp(b)` for `T: Ord`. This is the benefit: generic
 // numeric code reads with operators instead of explicit `.add` calls.
 import "std/num";
 function sum3[T: num.Num](a: T, b: T, c: T): T { return a + b + c; }       // nested (a+b)+c

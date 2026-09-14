@@ -25,7 +25,7 @@ import (
 // weighted accordingly.
 
 // countByteRef is the reference semantics, matching the interpreter builtin.
-// Both degenerate answers are honest counts rather than sentinels: an
+// Both degenerate answers are accurate counts rather than sentinels: an
 // out-of-range byte counts 0 because nothing can equal it, and an empty string
 // counts 0 because it has no bytes.
 func countByteRef(s string, b int) int {

@@ -94,7 +94,7 @@ function justify_line(words: string[], from: i32, to: i32, width: i32, last: boo
     //
     // Both accumulators below seed with `.to_owned()`. Without it `out` starts
     // as a borrowed alias of the array element, and the taint that correctly
-    // protects that element rides through every self-append, so none of the
+    // protects that element propagates through every self-append, so none of the
     // intermediate buffers are ever reclaimed (#6567 — 64 B a round, all three
     // backends). Copying at the seed says what is meant anyway: this buffer is
     // ours to grow.

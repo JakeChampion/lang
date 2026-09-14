@@ -566,7 +566,7 @@ function main(): i32 {
     if (sawField0) { return 57; }
     // A VALUE of that width lowers, in a slot of its own the way an i64 does;
     // only a RECORD construction needs the per-field store width, which this
-    // boundary withholds (declaration index -1). The narrower float rides the
+    // boundary withholds (declaration index -1). The narrower float occupies the
     // same slot, rounded to single precision where it is made.
     var wideVal = ssasem.Func { graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
         records: [], enums: [], calls: [] };
@@ -755,7 +755,7 @@ function main(): i32 {
     var spanDecl: i32 = 0 - 1;
     for o in spanLowered.ops { if (o.str == "W") { spanDecl = o.decl; } }
     if (irlower.decl_at_field_type(declTab, spanDecl, 0) != "i64") { return 120; }
-    // A constant with no signed i32 immediate to ride carries the literal's
+    // A constant with no signed i32 immediate to use carries the literal's
     // text instead; a narrow signed one carries none, and neither may carry both.
     var wideK = ssa.SFunc { name: "wk", nparams: 0, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
@@ -768,7 +768,7 @@ function main(): i32 {
     var narrowText = ssasem.Func { graph: wideK, values: [i32ty], params: [], result: i32ty,
         records: [], enums: [], calls: [] };
     if (ssaunits.plan(narrowText, []).why != "narrow constant carries text") { return 100; }
-    // A u32 rides the i32's slot but reaches past the immediate's sign bit, so
+    // A u32 occupies the i32's slot but reaches past the immediate's sign bit, so
     // it takes the text form at every value rather than at some of them.
     var u32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false };
     var u32Text = ssasem.Func { ...wideKFunc, values: [u32ty], result: u32ty };

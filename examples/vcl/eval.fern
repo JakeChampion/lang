@@ -689,7 +689,7 @@ function eval_unary(ctx: Ctx, t: runtime.Txn, sub: string, u: ast.UnExpr): EvalO
 // ----------------------------------------------------------- statements
 // The `call` nesting limit. VCL subroutines may call each other and
 // nothing in the grammar prevents a cycle, so the evaluator bounds the
-// depth rather than growing the stack until it dies.
+// depth rather than growing the stack until it overflows.
 function max_call_depth(): i32 {
   return 32;
 }

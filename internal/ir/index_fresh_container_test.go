@@ -9,7 +9,7 @@ import (
 // Indexing a FRESH owned array — `mk()[0]` — reclaims the container once the
 // element is loaded. That already held for a scalar element; an rc-tracked
 // POINTER element was excluded, because the loaded value aliases the buffer
-// about to be freed. Excluded meant the container was dropped on the floor:
+// about to be freed. Excluded meant the container was never released:
 // `mk_strs()[0].len()` leaked the spine and every element it did not extract,
 // 304 B a round with no plateau, where `var xs = mk_strs(); xs[0].len()` was
 // flat. The fix is the pair the fresh-container field read already uses

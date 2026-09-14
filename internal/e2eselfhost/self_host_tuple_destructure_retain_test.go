@@ -48,7 +48,7 @@ function main(): i32 {
 			want: 9, balance: true,
 		},
 		{
-			// The 8-byte-stride element kinds ride a different mark
+			// The 8-byte-stride element kinds use a different mark
 			// (mark_f64arr / mark_i64arr) but the same shallow dec, so they
 			// over-released identically and must be covered by the same gate.
 			name: "f64arr_bind_read",

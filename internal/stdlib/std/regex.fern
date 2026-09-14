@@ -103,7 +103,7 @@
 //
 // This comment used to add that a trailing `string` field made the self-host
 // IR span matcher crash on `(ab)+c` — "a struct-layout codegen subtlety" the
-// two-field shape side-stepped. That diagnosis was wrong, and the dodge never
+// two-field shape side-stepped. That diagnosis was wrong, and the workaround never
 // worked: `(ab)+c` and every other grouped pattern crashed at the two-field
 // shape too, and the cause was #6049 — two irlower reference-counting bugs
 // (an enum struct field stored into a container with no Perceus dup, and a
@@ -745,7 +745,7 @@ pub function regex_replace(pattern: string, text: string, repl: string): string 
 // text position in capture slot `s` (slot 2i = group i's start, 2i + 1 =
 // its end; group 0 is the whole match); `IMatch` accepts.
 //
-// ISplit's two targets ride in a single-field-struct payload (`RSplit`)
+// ISplit's two targets are carried in a single-field-struct payload (`RSplit`)
 // for the same reason RGroup does: the self-host compiler's variants are
 // single-payload (see RGroupData above), so a two-payload `ISplit(i32,i32)`
 // wouldn't construct/bind on the legacy AST self-host backend.
@@ -1203,7 +1203,7 @@ pub function regex_replace_all_groups(pattern: string, text: string, tmpl: strin
         var m: RCaps = all[mi];
         // A zero-width match has start == end == last-or-later; the bytes
         // between `last` and this match's start (including any byte a
-        // zero-width advance skipped) ride along in `seg`.
+        // zero-width advance skipped) are carried in `seg`.
         var seg: string = slice_unchecked(text, last, m.group_start(0)) + "";
         parts = parts.append(seg); total = total + seg.len();
         var rep: string = __rx_expand(tmpl, m);

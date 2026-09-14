@@ -25,7 +25,7 @@
 //   > out of the same place the emitter reads it would make the two agree by
 //   > construction.
 //
-// What keeps the copy honest is the audit in the direction it can be checked:
+// What keeps the copy correct is the audit in the direction it can be checked:
 // every name here must satisfy the emitter's own predicate (asm_modload_run
 // `-provided-audit`), so an entry naming a helper no backend emits fails a
 // test. The other direction — a helper the emitter gained and this file did

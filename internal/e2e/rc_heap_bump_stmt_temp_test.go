@@ -9,7 +9,7 @@ import (
 // Statement-temporary reclamation, stage (a): a discarded bare-ExprStmt
 // whose value is a FRESH owned rc temporary (a literal / string concat /
 // string slice) is now DEC'd at the statement boundary instead of being
-// OpDrop'd on the floor. Before this slice nothing reclaimed it — a bare
+// OpDrop'd and discarded. Before this slice nothing reclaimed it — a bare
 // `[i, i + 1];` or `a + b;` in a loop leaked its box every iteration
 // (unbounded), since emitVarReinitDropOld only sees DECLARED vars.
 // See docs/RC-PERCEUS-PLAN.md "Statement-temporary reclamation".

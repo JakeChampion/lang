@@ -251,8 +251,8 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             // Transient accept failure (EINTR-style) — keep
             // looping. Permanent failures (listener closed by
             // the kernel, FD exhaustion) will repeat the same
-            // -errno on every iteration; that's operator-
-            // action territory and the lang-side response is
+            // -errno on every iteration; that needs operator
+            // action, and the lang-side response is
             // the same as success here.
             continue;
         }

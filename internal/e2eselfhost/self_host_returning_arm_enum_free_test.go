@@ -114,7 +114,7 @@ function main(): i32 {
 }`
 
 // The MOVED-payload case, and the one that would dangle rather than leak if the
-// pending entry dropped the moved set on the floor. The arm binds the array
+// pending entry silently discarded the moved set. The arm binds the array
 // payload and RETURNS it, so `match_moved_rc_payloads` holds `Box#0` and the
 // deep-drop must skip that field's dec while still freeing the box — the caller
 // reads the buffer back afterwards, so a lost skip is a use-after-free, not a

@@ -110,7 +110,7 @@ function main(): i32 {
 		t.Errorf("__fn_string__starts_with is NOT emitted, but main calls it — the prune dropped a reachable function")
 	}
 
-	// The cliff detector. 69 with the prune, 958 without it.
+	// The ceiling check. 69 with the prune, 958 without it.
 	const ceiling = 300
 	if len(labels) > ceiling {
 		t.Errorf("self-host emitted %d functions for a program using one std/string method, ceiling %d — "+

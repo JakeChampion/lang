@@ -16,7 +16,7 @@ import (
 // the other half: does a shape still allocate in the COMPLEXITY CLASS it is
 // supposed to?
 //
-// That is the regression that actually hurts. The two most expensive stdlib
+// That is the regression that actually matters. The two most expensive stdlib
 // bugs found in the last pass were both asymptotic, not constant-factor: a
 // naive substring search that went quadratic on repetitive input (2.655s ->
 // 0.014s once fixed) and a merge sort that materialised a full copy of the
@@ -27,7 +27,7 @@ import (
 // `__heap_bump_bytes()` per shape and fail on exceeding it. That gate rots:
 // every legitimate change to a header size, a growth schedule, or the SSO
 // threshold moves every recorded number at once, so the budgets get re-recorded
-// in bulk without being read, and a real regression rides in with the batch.
+// in bulk without being read, and a real regression comes in with the batch.
 // Worse, the failure it reports ("42 KB, budget 39 KB") does not tell you
 // whether anything is actually wrong.
 //
@@ -922,7 +922,7 @@ function churn(n: i32): i32 {
 		// mean neither `occurrences == 1` nor a reassign holds — so every link
 		// copied the whole accumulated buffer. Rewritten as
 		// `s = s.emit(op)` the identical work was flat, which is what made it
-		// easy to walk past.
+		// easy to overlook.
 		//
 		// 80,000 appends could not be compiled at all: the arena filled
 		// (exit 125) somewhere past 13.7 GB. They now cost 28 MB.

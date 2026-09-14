@@ -73,7 +73,7 @@ func rspDeltaAtCalls(t *testing.T, asm, label string) []int {
 
 // Every call must execute with rsp 16-byte aligned — System V requires it, and
 // nothing in a small integer program faults when it is wrong, so it needs its
-// own gate rather than riding on the run tests (#8087).
+// own gate rather than relying on the run tests (#8087).
 func TestStackArgsKeepCallsAligned(t *testing.T) {
 	for _, n := range []int{6, 7, 8, 9, 12} {
 		callee := weightedSum("callee", n)

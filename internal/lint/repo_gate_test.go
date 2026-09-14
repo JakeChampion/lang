@@ -41,12 +41,12 @@ const tolerance = 0.05
 
 // tree is one body of first-party Fern source held to the limit.
 //
-// The numbers are the measured state, not a permission slip. Growth past
+// The numbers are the measured state, not an allowance. Growth past
 // `tolerance` FAILS. A shrink past it does not fail — it logs, asking for the
-// improvement to be banked. That asymmetry is deliberate: making an unrelated
+// improvement to be recorded. That asymmetry is deliberate: making an unrelated
 // PR red because it happened to simplify something is how a gate gets
 // disabled. A stale-low baseline only makes the gate stricter, so it is safe
-// in the direction it rots.
+// in the direction it goes stale.
 //
 // To exempt a single function instead, annotate the function — a
 // `// fern-lint: allow cyclomatic-complexity` comment above it, with a line
@@ -86,7 +86,7 @@ func over(measured, want int) bool {
 }
 
 // under reports whether measured has fallen below want by more than
-// tolerance — worth banking, never worth failing.
+// tolerance — worth recording, never worth failing.
 func under(measured, want int) bool {
 	return float64(measured) < float64(want)*(1-tolerance)
 }

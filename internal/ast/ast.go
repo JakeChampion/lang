@@ -1268,7 +1268,7 @@ var RcFreeEnabled = true
 
 // RcReuseEnabled gates the constructor-reuse (FBIP) layer specifically — the
 // self-overwrite reuse (tryStructReuseOverwrite / tryEnumReuseOverwrite) AND
-// the general reuse token (computeReuseSources, threaded drop→alloc). It rides
+// the general reuse token (computeReuseSources, threaded drop→alloc). It builds
 // ON top of RcFreeEnabled (reuse only makes sense when freeing), but is a
 // SEPARATE axis so the differential gate can pin reuse-on == reuse-off
 // byte-identical OUTPUT — isolating a reuse bug from a plain free bug. Default
@@ -1295,13 +1295,13 @@ var EnumRcPayloads = true
 // output; the reclaim is the only effect. Rolled out per param-type category
 // (enums first — immutable, so the inc can't disturb the in-place-mutation
 // semantics the borrow model exists for); a borrow-inference optimization that
-// keeps read-only non-escaping params borrowed rides on top in a later slice.
+// keeps read-only non-escaping params borrowed is added on top in a later slice.
 // On; the differential gate pins on == off byte-identical, so the reclaim is
 // the only effect.
 var OwnedByDefault = true
 
 // BorrowInferEnabled (Slice 2 / borrow inference, docs/OWNERSHIP-INFERENCE-PLAN.md)
-// is the optimization that rides on top of OwnedByDefault: a parameter that the
+// is the optimization that builds on top of OwnedByDefault: a parameter that the
 // escape analysis (inferParamEscapes) proves does NOT escape the callee is kept
 // BORROWED instead of owned — the caller skips the retain inc and the callee
 // skips the exit dec, since the value can't outlive the call frame and the
@@ -1338,7 +1338,7 @@ var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 // SanitizeEnabled is the single opt-in surface for the debug
 // memory-safety runtime (#5545) — the "sanitizer build" that turns the
 // scattered, individually-named heap detectors into one coherent mode.
-// Set it and the three heap checks below light up together:
+// Set it and the three heap checks below turn on together:
 //
 //	LeakCheckEnabled  — leak census at exit
 //	RcUnderflowTrap   — rc over-release (double free), reported + fatal
@@ -3076,7 +3076,7 @@ type Destructure struct {
 	// complete Destructure whose Init reads it, so every stage handles one
 	// level with the code it already had and recurses for the rest.
 	//
-	// A level per box is what the memory model wants anyway: the inner
+	// A level per box is what the memory model requires anyway: the inner
 	// tuple is its own rc-tracked allocation, so it needs its own temp,
 	// alias-inc, loop-reclaim and exit sweep. Flattening the levels into
 	// extra offset hops off one temp would leave the inner box unowned.

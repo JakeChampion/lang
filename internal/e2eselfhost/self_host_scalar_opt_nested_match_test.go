@@ -20,9 +20,9 @@ import (
 // than a widened lookup. `is_opt` is only ever set when
 // `!body_has_top_level_match`, so precise-drop takes the shape exactly when the
 // flat analysis cannot, and the flat analysis takes it exactly when precise-drop
-// stands down.
+// refuses it.
 //
-// Keeping that split is a territory boundary rather than a double-free guard, and
+// Keeping that split is a responsibility boundary rather than a double-free guard, and
 // the difference was measured rather than assumed: letting the flat analysis take
 // the nested shape too does NOT over-release here, because the precise drop zeroes
 // the slot and the second credit decs null. It is kept because two analyses

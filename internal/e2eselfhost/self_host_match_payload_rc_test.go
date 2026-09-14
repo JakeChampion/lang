@@ -15,7 +15,7 @@ import (
 // payload reclaims it at arm exit (an arr_dec), and the constructing function's
 // own exit-sweep decremented `r` too — a double owner over one +1, freeing the
 // buffer out from under the returned box. Benign until a later allocation reuses
-// the freed store, so it only bit when the extracted array was held live ACROSS
+// the freed store, so it only broke when the extracted array was held live ACROSS
 // an allocating call (gdb: `names[j]` came back as the allocator's 0x7979... filler,
 // faulting at the element's `movq 8(%rax)`).
 //

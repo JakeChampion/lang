@@ -18,7 +18,7 @@ import (
 // Every assertion here compares against the SAME kernel fact through a
 // second path, never against "non-empty": sysname is "Linux" on every
 // box in this fleet, so a helper that read the neighbouring field would
-// sail through a non-empty check. `uname -m` and Go's syscall.Uname are
+// pass a non-empty check. `uname -m` and Go's syscall.Uname are
 // that second path. The utsname probe (hostUtsname) reads uname(2) and
 // is linux-only: syscall.Utsname does not exist on the darwin target
 // (no uname syscall) and these legs cross-check kernels that answer it,

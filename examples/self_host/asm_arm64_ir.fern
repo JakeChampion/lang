@@ -39,7 +39,7 @@ import "./ircore";
 // (AAPCS scratch, dead across a frame access here) via sub first.
 // fr_sub_imm emits `dst = base - imm`, materialising the immediate in x17 (IP1,
 // AAPCS scratch, dead at every caller here) when it exceeds arm64's 12-bit
-// add/sub immediate ceiling (#4095). The IR path's large functions blow past it
+// add/sub immediate ceiling (#4095). The IR path's large functions exceed it
 // — irlower.lower_stmt has ~590 locals → a 4736-byte frame and frame-relative
 // offsets to match — which the AST emitter never hits (its frames stay under
 // 4 KiB). A single MOVZ covers up to 65535 (>8000 locals), far beyond any real
@@ -94,7 +94,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 22) { return "    sub x0, x0, x1\n"; }
     if (tag == 23) { return "    mul x0, x0, x1\n"; }
     // i32 signed division narrows its result back to 32 bits: the operands
-    // ride sign-extended in 64-bit regs, and the one quotient that overflows
+    // are held sign-extended in 64-bit regs, and the one quotient that overflows
     // i32 — INT_MIN / -1 = 2^31 — is representable in the 64-bit register, so
     // without the sxtw it stayed positive instead of wrapping to INT_MIN like
     // native, interp, and the x86 IR path's guarded div (#4329). sdiv itself
@@ -115,7 +115,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     // shifts used to emit the bare x-form, so a count >= 32 wrapped mod 64
     // instead of mod 32 (#4330). Mirror asm_ir.fern's fix: mask the count to 5
     // bits BUT keep the 64-bit shift, so the operand's slot extension is
-    // preserved — a u32 rides zero-extended (bit 63 = 0) and an i32
+    // preserved — a u32 is held zero-extended (bit 63 = 0) and an i32
     // sign-extended (bit 63 = bit 31), and `asr`/`lsr`/`lsl` on the full
     // register does the right thing for both. (A w-form `asr` would fill from
     // bit 31, corrupting a u32 `>>` — which lowers through shr_s — whose bit 31
@@ -540,46 +540,18 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [crc, box] (the box on top) -> the incoming CRC-32
         // with the string's bytes folded in.
         //
-        // SCALAR (§3.4 step 1), and nothing below the IR is in the way:
-        // arm64_native.fern encodes pmull and pmull2 (#9189). What is missing
-        // is a MEASUREMENT — the self-hosted compiler hashes nothing, so no
-        // workload here asks for the second fold — and §3.4 puts the scalar
-        // lowering in every backend before any of them is vectorised.
+        // A CALL rather than an inline body: the fold is ~150 instructions
+        // and wants one definition, not one per call site. The helper is
+        // emitted once under the "crc32_cksum" need, the shape the float
+        // transcendentals already use.
         //
         // The box is popped FIRST because it is the second operand: the crc
         // was pushed before it. Every other kernel in this family pops its
         // string last, which is exactly the shape a port copies wrong.
-        //
-        // The polynomial lives in w2 rather than an `and #imm`: 0x04C11DB7 is
-        // not a bitmask immediate, so there is no immediate form to reach for.
-        // `asr w4, w1, #31` selects it from the sign bit, which is what keeps
-        // the eight bit steps branchless.
-        //
-        // sxtw before the push because the result is a signed i32 whose top
-        // bit is live — a zero-extended 0x80000000 would read back out of the
-        // 64-bit slot as +2147483648.
-        var clo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var cc_scan: string = clo.name;
-        var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
-        var cc_bit: string = clo2.name;
-        var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
-        var cc_done: string = clo3.name;
-        s = clo3.state;
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-        s = s.write("    ldr x1, [sp], #16\n");
-        s = s.write("    mov x5, x0\n    add x6, x0, x3\n");
-        s = s.write("    movz w2, #0x1db7\n    movk w2, #0x04c1, lsl #16\n");
-        s = s.write(cc_scan + ":\n");
-        s = s.write("    cmp x5, x6\n    b.ge " + cc_done + "\n");
-        s = s.write("    ldrb w4, [x5]\n    lsl w4, w4, #24\n    eor w1, w1, w4\n");
-        s = s.write("    mov w7, #8\n");
-        s = s.write(cc_bit + ":\n");
-        s = s.write("    asr w4, w1, #31\n    and w4, w4, w2\n");
-        s = s.write("    lsl w1, w1, #1\n    eor w1, w1, w4\n");
-        s = s.write("    sub w7, w7, #1\n    cbnz w7, " + cc_bit + "\n");
-        s = s.write("    add x5, x5, #1\n    b " + cc_scan + "\n");
-        s = s.write(cc_done + ":\n    sxtw x1, w1\n    str x1, [sp, #-16]!\n");
+        s = s.need("crc32_cksum");
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    bl __fern_crc32_cksum\n");
+        s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
         return s;
     }
     if (o.kind_tag == 227) {  // ascii_run
@@ -951,7 +923,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 92 || o.kind_tag == 94 || o.kind_tag == 95) {  // arr_push, arr_push_i64, arr_push_f64
             // [arr, val] -> grown array. __fern_arr_push(x0=arr, x1=val) -> x0.
-            // arm64 array slots are 8 bytes, so i64/u64/f64 elements ride the SAME
+            // arm64 array slots are 8 bytes, so i64/u64/f64 elements use the SAME
             // helper (x1 holds the full 8-byte value); only wasm needs a distinct
             // 8-byte-stride push.
             s = s.mark_arr_push();
@@ -1260,7 +1232,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             }
         } else if (o.kind_tag == 221) {  // popcount
             // arm64's hardware popcount is SIMD-side: `cnt` counts per BYTE,
-            // `addv` sums the byte lanes. So the value rides through v0. A
+            // `addv` sums the byte lanes. So the value goes through v0. A
             // write to a SIMD register zeroes the lanes above it, so the
             // 32-bit form's `fmov s0, w0` leaves the upper four bytes zero and
             // the same 8-byte count serves both widths.
@@ -1420,12 +1392,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.need("wasm_pollable_drop");
         } else if (o.kind_tag == 191) {  // wasm_block
             // [p] -> __fern_wasm_block(x0=p) -> 0 (native shim; no pollable to wait
-            // on, a deadline rides poll(2)) in x0.
+            // on, a deadline uses poll(2)) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_block\n    str x0, [sp, #-16]!\n");
             s = s.need("wasm_block");
         } else if (o.kind_tag == 192) {  // wasm_poll
             // [pollables ptr] -> __fern_wasm_poll(x0=ptr) -> -1 (native shim; no
-            // real pollables, readiness rides poll(2)) in x0.
+            // real pollables, readiness uses poll(2)) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_poll\n    str x0, [sp, #-16]!\n");
             s = s.need("wasm_poll");
         } else if (o.kind_tag == 193) {  // tcp_connect
@@ -1933,7 +1905,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
         } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,
             // unlike struct_set). One 8-byte str for EVERY element kind (i32 / i64 /
-            // f64 / pointer all ride the operand stack as 8 bytes), so width is
+            // f64 / pointer all occupy 8 bytes on the operand stack), so width is
             // ignored here — only wasm distinguishes it. Tuple constructor-reuse writer.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(o.i32_imm * 8) + "]\n");
         } else if (o.kind_tag == 141) {  // struct_set_shape
@@ -2004,7 +1976,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // low 32 bits, so e.g. 1e12 wrapped instead of clamping (#4332).
             // Unsigned (`f64 as u32`): fcvtzu w0 saturates over [0, u32::MAX]
             // (NaN / negative -> 0), and the w-dest zero-extends into x0 — no
-            // sxtw, a u32 rides zero-extended.
+            // sxtw, a u32 is held zero-extended.
             if (o.unsigned) {
                 s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzu w0, d0\n    str x0, [sp, #-16]!\n");
             } else {
@@ -2491,7 +2463,7 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     // close_needs carries i32_lcm → i32_gcd, so marking lcm alone would
     // still emit gcd's body; both are marked for symmetry with the x86
     // pair in asm_ir.
-    // __fern_map_find's body rides the maps bundle; a call to it from
+    // __fern_map_find's body is in the maps bundle; a call to it from
     // __fern_map_delete's Fern body must pull that bundle in, since call_direct
     // does not imply a need.
     if (o.str == "__fern_map_find") { s = s.need("maps"); }
@@ -2716,7 +2688,7 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
     // .S label struct_make / dyn_dispatch use, so pointer identity
     // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
     // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
-    // value rides the operand stack (which __fern_alloc preserves)
+    // value stays on the operand stack (which __fern_alloc preserves)
     // across the alloc, so the hit path reloads it as the Some payload.
     s = s.mark_heap();
     var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
@@ -2774,7 +2746,7 @@ function emit_arm64_op_i32_to_f64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
     // conversions, so each case is one instruction: scvtf for signed,
     // ucvtf for unsigned, from a w-source at 32 bits and an x-source at
     // 64. The old unconditional `scvtf d0, x0` was right for i32 / u32 /
-    // i64 (the 32-bit cases ride the slot correctly extended) but read a
+    // i64 (the 32-bit cases are stored in the slot correctly extended) but read a
     // u64 >= 2^63 as negative — u64::MAX converted to -1.0 (#6051, the
     // register sibling of the wasm fix in #5992).
     if (o.width == 64) {
@@ -3671,7 +3643,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     }
     // Each region's begin label repeats the `.align 8` its blocks are emitted
     // under, so the label lands ON the first block rather than on the padding
-    // before it — `.align n` is 2^n, so that is 256 bytes of skid, and a walk
+    // before it — `.align n` is 2^n, so that is 256 bytes of slack, and a walk
     // starting in it reads zeroes as a block header.
     if (reloc) { s = s.write("    .align 8\n.Lfern_sbox_begin:\n"); }
     if (s.string_lits.len() > 0) {
@@ -4015,7 +3987,7 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
         s = s.write(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop\n");
     }
     // __fern_wasm_block(x0 = p) -> 0: no native pollable to wait on (a deadline
-    // rides poll(2)'s timeout arg), so blocking is a 0 no-op. Portability shim
+    // uses poll(2)'s timeout arg), so blocking is a 0 no-op. Portability shim
     // for the reactor's with_deadline.
     if (s.has_need("wasm_block")) {
         s = s.write(".globl __fern_wasm_block\n");
@@ -4026,7 +3998,7 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
         s = s.write(".size __fern_wasm_block, .-__fern_wasm_block\n");
     }
     // __fern_wasm_poll(x0 = pollables) -> -1: no real native pollables (readiness
-    // rides poll(2) directly), so nothing is ready; ignores its array arg.
+    // uses poll(2) directly), so nothing is ready; ignores its array arg.
     // Portability shim for the wasm reactor's poll.
     if (s.has_need("wasm_poll")) {
         s = s.write(".globl __fern_wasm_poll\n");
@@ -4150,7 +4122,7 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
         // a fresh buffer, a Tier-2 op needing the raw-memory primitives.) str_trim
         // is also Fern now (rt_src_str_trim) but gated on its own str_trim need,
         // emitted in the migrated-helpers section below — a zero-copy slice, so it
-        // no longer rides the str_search bundle.
+        // no longer belongs to the str_search bundle.
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), s.struct_decls, s);
         // str_to_upper / str_to_lower are now Fern too (rt_src_str_to_upper/_lower
         // via the raw-memory intrinsics) but gated on their own str_case need,
@@ -4400,7 +4372,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
 // both a stale 1 in a recycled block and an allocator that happens to hand a
 // separate buffer the block right after its box would read as fused, and the
 // consequence is not a fault but a block returned to the freelist ONCE where it
-// was taken twice — a phantom leak standing in front of whatever is really
+// was taken twice — a phantom leak that hides whatever is really
 // wrong. The value spells 7351 in its high half; asm_ir.fused_marker is the
 // x86-64 sibling and the two must agree only with themselves, never across
 // backends.
@@ -4710,7 +4682,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // __fern_str_box(x0 = data, x1 = len) -> x0 = box (rc-HEADERED, #2649 Option A
     // A1b). Block = [rc=1@base, fused=0@base+4, data@base+8, len@base+16] (24B,
     // freelist class 3); box = base+8, so data@box+0 / len@box+8 are UNCHANGED
-    // (every string consumer is untouched) and rc@box-8 rides the SAME 32-bit rc
+    // (every string consumer is untouched) and rc@box-8 is the SAME 32-bit rc
     // word arrays use (__fn___fern_rc_is_unique / rc_inc read [ptr,#-8]). Freed by
     // the rc-aware __fn___fern_str_free at rc==1.
     //
@@ -6060,7 +6032,7 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 // the op site never learns which body it got: param[0] (cmd) is at [sp],
 // param[1] (args) at [sp, #16], param[2] (stdin) at [sp, #32] on entry.
 //
-// The ABI-identical syscalls ride darwinize's number remap (close 57→6,
+// The ABI-identical syscalls go through darwinize's number remap (close 57→6,
 // read 63→3, write 64→4, exit 93→1, dup3 24→dup2 90, execve 221→59,
 // wait4 260→7). The BSD WIFEXITED/WTERMSIG status encoding matches Linux, so
 // the decode below is the same one the Fern helper does.
@@ -6536,7 +6508,7 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = emit_rt_fs(s, darwin);
         // subprocess (#2649) is Fern on arm64 Linux and hand-written on Darwin
         // (see emit_rt_subprocess). Need-gated on BOTH legs: the hand-asm used to
-        // ride the bare `heap` gate, so every allocating program carried ~400
+        // be gated on the bare `heap` gate, so every allocating program carried ~400
         // instructions nothing branched to — the same unconditional emission the
         // Reader bodies had (#6921).
         if (s.has_need("subprocess")) {
@@ -6844,6 +6816,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("float_transcendentals")) {
         s = emit_rt_float_transcendentals(s);
+    }
+    // The CRC fold. Its own gate rather than the heap one: a program that
+    // hashes a borrowed string allocates nothing, and would otherwise
+    // `bl __fern_crc32_cksum` with no definition anywhere in the link.
+    if (s.has_need("crc32_cksum")) {
+        s = emit_rt_crc32_cksum(s);
     }
 
     // Command-line args. Mirror of asm.fern.
@@ -7475,6 +7453,198 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("arr_i32_min_max_opt")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), s.struct_decls, s);
     }
+    return s;
+}
+
+// emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
+// the string box folded into the running CRC-32 that cksum(1) prints (poly
+// 0x04C11DB7, MSB first, unreflected, no final complement).
+//
+// The pmull fold, register for register the native arm64 backend's kernel.
+// pmull/pmull2 multiply the low and high doublewords, so the fold constants
+// sit as K2 in element 0 and K1 in element 1 — the opposite order from the
+// x86-64 twin, where an immediate selects the halves instead.
+//
+// No constant pool: rev64 + ext does the 16-byte reverse in registers and the
+// fold constants are built with movz/movk and inserted with `ins`. That is not
+// stylistic — this assembler encodes neither adrp nor `ldr q`, which a probe
+// of every instruction the kernel needs established before any of it was
+// written. ld1/st1 carry the block loads for the same reason.
+//
+// `.arch_extension aes` is for the EXTERNAL toolchain only: pmull's .1q form
+// is FEAT_PMULL, which GNU as does not enable at its default architecture even
+// though the declared baseline has it. An extension directive rather than a
+// whole `.arch` because this emitter declares none, and adding a feature
+// cannot take one away from the code around it.
+//
+// FOUR accumulators, 64 bytes a step: one chain runs at the multiply's
+// latency rather than its throughput.
+//
+// x1 is the string BOX, not an SSO string — this emitter's strings are two
+// words, [data@0, len@8].
+function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .arch_extension aes\n");
+    s = s.write("    .global __fern_crc32_cksum\n");
+    s = s.write("    .type __fern_crc32_cksum, %function\n");
+    s = s.write("__fern_crc32_cksum:\n");
+    s = s.write("    stp x29, x30, [sp, #-64]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    mov w10, w0\n");
+    s = s.write("    ldr x6, [x1, #8]\n");
+    s = s.write("    ldr x7, [x1]\n");
+    s = s.write("    mov x8, x7\n");
+    s = s.write("    add x9, x7, w6, uxtw\n");
+    s = s.write("    mov w0, w10\n");
+    s = s.write("    sub x11, x9, x8\n");
+    s = s.write("    cmp x11, #16\n");
+    s = s.write("    b.lo .Lcrc32_tail\n");
+    s = s.write("    movz w12, #0x5605\n");
+    s = s.write("    movk w12, #0xe8a4, lsl #16\n");
+    s = s.write("    movz w13, #0xcd4c\n");
+    s = s.write("    movk w13, #0xc5b9, lsl #16\n");
+    s = s.write("    movi v2.2d, #0\n");
+    s = s.write("    ins v2.d[0], x12\n");
+    s = s.write("    ins v2.d[1], x13\n");
+    s = s.write("    ld1 {v0.16b}, [x8]\n");
+    s = s.write("    rev64 v0.16b, v0.16b\n");
+    s = s.write("    ext v0.16b, v0.16b, v0.16b, #8\n");
+    s = s.write("    lsl x14, x10, #32\n");
+    s = s.write("    movi v1.2d, #0\n");
+    s = s.write("    ins v1.d[1], x14\n");
+    s = s.write("    eor v0.16b, v0.16b, v1.16b\n");
+    s = s.write("    mov w0, wzr\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    sub x11, x9, x8\n");
+    s = s.write("    cmp x11, #112\n");
+    s = s.write("    b.lo .Lcrc32_fold1\n");
+    s = s.write("    ld1 {v6.16b}, [x8]\n");
+    s = s.write("    rev64 v6.16b, v6.16b\n");
+    s = s.write("    ext v6.16b, v6.16b, v6.16b, #8\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    ld1 {v7.16b}, [x8]\n");
+    s = s.write("    rev64 v7.16b, v7.16b\n");
+    s = s.write("    ext v7.16b, v7.16b, v7.16b, #8\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    ld1 {v16.16b}, [x8]\n");
+    s = s.write("    rev64 v16.16b, v16.16b\n");
+    s = s.write("    ext v16.16b, v16.16b, v16.16b, #8\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    movz w12, #0x8b11\n");
+    s = s.write("    movk w12, #0xe622, lsl #16\n");
+    s = s.write("    movz w13, #0x794c\n");
+    s = s.write("    movk w13, #0x8833, lsl #16\n");
+    s = s.write("    movi v17.2d, #0\n");
+    s = s.write("    ins v17.d[0], x12\n");
+    s = s.write("    ins v17.d[1], x13\n");
+    s = s.write(".Lcrc32_fold4:\n");
+    s = s.write("    sub x11, x9, x8\n");
+    s = s.write("    cmp x11, #64\n");
+    s = s.write("    b.lo .Lcrc32_combine\n");
+    s = s.write("    pmull2 v3.1q, v0.2d, v17.2d\n");
+    s = s.write("    pmull v4.1q, v0.1d, v17.1d\n");
+    s = s.write("    eor v0.16b, v3.16b, v4.16b\n");
+    s = s.write("    ld1 {v5.16b}, [x8]\n");
+    s = s.write("    rev64 v5.16b, v5.16b\n");
+    s = s.write("    ext v5.16b, v5.16b, v5.16b, #8\n");
+    s = s.write("    eor v0.16b, v0.16b, v5.16b\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    pmull2 v3.1q, v6.2d, v17.2d\n");
+    s = s.write("    pmull v4.1q, v6.1d, v17.1d\n");
+    s = s.write("    eor v6.16b, v3.16b, v4.16b\n");
+    s = s.write("    ld1 {v5.16b}, [x8]\n");
+    s = s.write("    rev64 v5.16b, v5.16b\n");
+    s = s.write("    ext v5.16b, v5.16b, v5.16b, #8\n");
+    s = s.write("    eor v6.16b, v6.16b, v5.16b\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    pmull2 v3.1q, v7.2d, v17.2d\n");
+    s = s.write("    pmull v4.1q, v7.1d, v17.1d\n");
+    s = s.write("    eor v7.16b, v3.16b, v4.16b\n");
+    s = s.write("    ld1 {v5.16b}, [x8]\n");
+    s = s.write("    rev64 v5.16b, v5.16b\n");
+    s = s.write("    ext v5.16b, v5.16b, v5.16b, #8\n");
+    s = s.write("    eor v7.16b, v7.16b, v5.16b\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    pmull2 v3.1q, v16.2d, v17.2d\n");
+    s = s.write("    pmull v4.1q, v16.1d, v17.1d\n");
+    s = s.write("    eor v16.16b, v3.16b, v4.16b\n");
+    s = s.write("    ld1 {v5.16b}, [x8]\n");
+    s = s.write("    rev64 v5.16b, v5.16b\n");
+    s = s.write("    ext v5.16b, v5.16b, v5.16b, #8\n");
+    s = s.write("    eor v16.16b, v16.16b, v5.16b\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    b .Lcrc32_fold4\n");
+    s = s.write(".Lcrc32_combine:\n");
+    s = s.write("    pmull2 v3.1q, v0.2d, v2.2d\n");
+    s = s.write("    pmull v4.1q, v0.1d, v2.1d\n");
+    s = s.write("    eor v0.16b, v3.16b, v4.16b\n");
+    s = s.write("    eor v0.16b, v0.16b, v6.16b\n");
+    s = s.write("    pmull2 v3.1q, v0.2d, v2.2d\n");
+    s = s.write("    pmull v4.1q, v0.1d, v2.1d\n");
+    s = s.write("    eor v0.16b, v3.16b, v4.16b\n");
+    s = s.write("    eor v0.16b, v0.16b, v7.16b\n");
+    s = s.write("    pmull2 v3.1q, v0.2d, v2.2d\n");
+    s = s.write("    pmull v4.1q, v0.1d, v2.1d\n");
+    s = s.write("    eor v0.16b, v3.16b, v4.16b\n");
+    s = s.write("    eor v0.16b, v0.16b, v16.16b\n");
+    s = s.write(".Lcrc32_fold1:\n");
+    s = s.write("    sub x11, x9, x8\n");
+    s = s.write("    cmp x11, #16\n");
+    s = s.write("    b.lo .Lcrc32_reduce\n");
+    s = s.write("    pmull2 v3.1q, v0.2d, v2.2d\n");
+    s = s.write("    pmull v4.1q, v0.1d, v2.1d\n");
+    s = s.write("    eor v0.16b, v3.16b, v4.16b\n");
+    s = s.write("    ld1 {v5.16b}, [x8]\n");
+    s = s.write("    rev64 v5.16b, v5.16b\n");
+    s = s.write("    ext v5.16b, v5.16b, v5.16b, #8\n");
+    s = s.write("    eor v0.16b, v0.16b, v5.16b\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    b .Lcrc32_fold1\n");
+    s = s.write(".Lcrc32_reduce:\n");
+    s = s.write("    rev64 v0.16b, v0.16b\n");
+    s = s.write("    ext v0.16b, v0.16b, v0.16b, #8\n");
+    s = s.write("    add x15, x29, #48\n");
+    s = s.write("    st1 {v0.16b}, [x15]\n");
+    s = s.write("    mov x16, xzr\n");
+    s = s.write(".Lcrc32_red:\n");
+    s = s.write("    cmp x16, #16\n");
+    s = s.write("    b.hs .Lcrc32_tail\n");
+    s = s.write("    ldrb w17, [x15, x16]\n");
+    s = s.write("    lsl w17, w17, #24\n");
+    s = s.write("    eor w0, w0, w17\n");
+    s = s.write("    mov w12, #8\n");
+    s = s.write("    movz w13, #0x1db7\n");
+    s = s.write("    movk w13, #0x04c1, lsl #16\n");
+    s = s.write(".Lcrc32_redbit:\n");
+    s = s.write("    asr w14, w0, #31\n");
+    s = s.write("    and w14, w14, w13\n");
+    s = s.write("    lsl w0, w0, #1\n");
+    s = s.write("    eor w0, w0, w14\n");
+    s = s.write("    sub w12, w12, #1\n");
+    s = s.write("    cbnz w12, .Lcrc32_redbit\n");
+    s = s.write("    add x16, x16, #1\n");
+    s = s.write("    b .Lcrc32_red\n");
+    s = s.write(".Lcrc32_tail:\n");
+    s = s.write("    cmp x8, x9\n");
+    s = s.write("    b.hs .Lcrc32_ret\n");
+    s = s.write("    ldrb w17, [x8]\n");
+    s = s.write("    lsl w17, w17, #24\n");
+    s = s.write("    eor w0, w0, w17\n");
+    s = s.write("    mov w12, #8\n");
+    s = s.write("    movz w13, #0x1db7\n");
+    s = s.write("    movk w13, #0x04c1, lsl #16\n");
+    s = s.write(".Lcrc32_tailbit:\n");
+    s = s.write("    asr w14, w0, #31\n");
+    s = s.write("    and w14, w14, w13\n");
+    s = s.write("    lsl w0, w0, #1\n");
+    s = s.write("    eor w0, w0, w14\n");
+    s = s.write("    sub w12, w12, #1\n");
+    s = s.write("    cbnz w12, .Lcrc32_tailbit\n");
+    s = s.write("    add x8, x8, #1\n");
+    s = s.write("    b .Lcrc32_tail\n");
+    s = s.write(".Lcrc32_ret:\n");
+    s = s.write("    ldp x29, x30, [sp], #64\n");
+    s = s.write("    ret\n");
+    s = s.write("    .size __fern_crc32_cksum, .-__fern_crc32_cksum\n");
     return s;
 }
 
@@ -9121,7 +9291,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     → getentropy (random_i32), nanosleep → select (sleep_ms), and
 //     the whole of subprocess, whose pipe() and fork() both report a
 //     second value in x1 that no __syscall* op can see. A THIRD
-//     shape rides the generic `__syscall3` op (#2649): its number is an
+//     shape uses the generic `__syscall3` op (#2649): its number is an
 //     operand rather than a literal, so the Fern runtime source bakes in
 //     the target's number and darwinize only rewrites the number
 //     register + trap — see the `ldr x8, [sp], #16` rule below. The

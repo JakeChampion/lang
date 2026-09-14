@@ -719,7 +719,7 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 // against its immediate field width. Truncating silently (the previous
 // behaviour) turns an over-long branch into a jump to an unrelated
 // address — a miscompile that only shows up at driver/self-compile
-// scale, where .text outgrows the ±1 MB imm19 span. Loud errors keep
+// scale, where .text outgrows the ±1 MB imm19 span. Explicit errors keep
 // the assembler's "error, never miscompile" contract.
 //
 // The imm26 (b/bl) case is handled before it gets here on the layout

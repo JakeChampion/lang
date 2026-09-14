@@ -17,7 +17,7 @@ import (
 //     every overwrite, stranded a buffer.
 //   - `get` retains unconditionally, and only a BINDING balanced that. Every
 //     borrowing consumer — `.len()`, `==`, a concat operand, a call argument
-//     — dropped the retained reference on the floor, on all three backends.
+//     — left the retained reference unreclaimed, on all three backends.
 //
 // The probes are those six spellings measured apart, because that is what
 // separates the two causes: pre-fix x86-64 leaked on all six and arm64 / wasm

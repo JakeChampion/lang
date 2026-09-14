@@ -174,7 +174,7 @@ function main(): i32 {
 }
 
 // TestSelfHostNestedMatchBorrowHazardsX86_64 — the scrutinee is a borrow, and it
-// must launder nothing else. Every other use of the name is still judged by the
+// must exempt nothing else. Every other use of the name is still judged by the
 // unchanged walker, so an alias, a return or a call argument refuses the whole
 // candidate; and an arm binding that escapes is refused a gate earlier by
 // `opt_body_binding_escapes`.

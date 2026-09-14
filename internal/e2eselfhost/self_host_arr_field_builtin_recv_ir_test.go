@@ -47,7 +47,7 @@ var arrFieldBuiltinRecvCases = []struct {
 	{"field-min", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [5, 2, 9] }; match (h.xs.min()) { Some(m) => { return m; }, None => { return 90; } } }`, 2},
 	{"field-max", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [5, 2, 9] }; match (h.xs.max()) { Some(m) => { return m; }, None => { return 90; } } }`, 9},
 	{"field-min-empty", `struct H { xs: i32[] } function main(): i32 { var e: i32[] = []; var h: H = H { xs: e }; match (h.xs.min()) { Some(_) => { return 1; }, None => { return 42; } } }`, 42},
-	// u8[] rides the same full-32-bit element slot as i32[], so a byte-buffer
+	// u8[] uses the same full-32-bit element slot as i32[], so a byte-buffer
 	// field reduces through the same helper.
 	{"u8-field-sum", `struct B { bs: u8[] } function main(): i32 { var b: B = B { bs: [1 as u8, 2 as u8, 3 as u8] }; return b.bs.sum(); }`, 6},
 	{"param-field-sum", `struct H { xs: i32[] } function total(h: H): i32 { return h.xs.sum(); } function main(): i32 { var h: H = H { xs: [4, 5, 6] }; return total(h); }`, 15},

@@ -9,7 +9,7 @@
 // keys (which compare the declared receiver-type spelling) can recover "i64" /
 // "u32" / "u64" at a call site. Actual codegen width lives in asmcore's `Ty`.
 // The integer-shaped scalars, plus `char`. `is_char` marks a Unicode scalar
-// value (#5629): it rides an i32 slot, so it shares this variant and stays
+// value (#5629): it occupies an i32 slot, so it shares this variant and stays
 // interchangeable with i32 under type_eq — but it dispatches its own method
 // surface (std/unicode declares seven `char`-receiver methods), which is what
 // the flag is read for. Replaces a dead `tag` filler field that nothing read.
@@ -154,7 +154,7 @@ pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
 }
 
-// A code point rides an i32 slot and dispatches its own method surface, so it
+// A code point occupies an i32 slot and dispatches its own method surface, so it
 // spells itself only at the one width and signedness that slot has.
 function char_spelling(i: TypeI32): string {
   if (i.width == 32 && !i.unsigned) { return "char"; }

@@ -99,7 +99,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, verdict: "leaky",
 		},
 		{
-			// HEAP-FREE, returning main: the report rides $_start's
+			// HEAP-FREE, returning main: the report goes through $_start's
 			// $proc_exit and must link with no allocator emitted.
 			name: "heapfree_return",
 			src:  `function main(): i32 { return 7; }`,

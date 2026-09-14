@@ -57,7 +57,7 @@ func TestSelfHostContainerRetainIR(t *testing.T) {
 		// the deep-free paths that own fresh elements stay correct.
 		{"fresh-element-not-retained", `function main(): i32 { var t = ([1, 2, 3], 99); return t.0[2] + 4; }`, 7},
 		// The RC counters are read by a module that allocates NOTHING an op
-		// reports (a scalar-capture closure). rc_runtime_helpers rides the heap
+		// reports (a scalar-capture closure). rc_runtime_helpers depends on the heap
 		// gate, so without pulling it in for a counter read the emitted core
 		// called a function it never defined.
 		{"scalar-closure-reads-counter", `function main(): i32 { var n: i32 = 5; var f = (x: i32): i32 => { return x + n; }; return f(37) + __rc_underflow_count(); }`, 42},

@@ -10,7 +10,7 @@
 // It is deliberately a SECOND record rather than a shared one: the point
 // of a verifier is to disbelieve the compiler, and reading a signature
 // out of the same place the emitter reads it would make the two agree by
-// construction. What keeps it honest instead is
+// construction. What keeps it correct instead is
 // TestProvidedSigsAgreeWithWasmRuntime, which compares every entry
 // against the wasm backend's helper registry and fails on a
 // disagreement.

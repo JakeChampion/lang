@@ -24,7 +24,7 @@ import (
 // to the gcc half.)
 func TestNativeLinkX86MatchesGccLink(t *testing.T) {
 	t.Parallel()
-	// env() is load-bearing here: the natively-linked drivers read
+	// env() is essential here: the natively-linked drivers read
 	// FERN_CACHE_DIR / FERN_SELFHOST_NO_REUSE via env(), and the native
 	// assembler once mis-encoded __fern_env's `cmp byte ptr [rdi], 61`
 	// ('=' scan) as a dword compare, so env() always returned None on the
@@ -155,7 +155,7 @@ func linkX86BothWays(t *testing.T, src string) (string, int) {
 }
 
 // The arm64 sibling of TestNativeLinkX86MatchesGccLink: the same program
-// (env() included — see the x86 test's comment for why it is load-bearing)
+// (env() included — see the x86 test's comment for why it is essential)
 // emitted by the arm64 backend, linked by nativeLinkArm64 and by aarch64
 // gcc, must run with identical stdout and exit code. Skips without the
 // aarch64 toolchain; CI's arm64 lane runs it natively.

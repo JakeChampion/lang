@@ -142,7 +142,7 @@ function concrete_container(t: typeinfo.Type): boolean {
 // A closure body's ENVIRONMENT: the box the lambda lift builds, the body's
 // address in slot 0 and the captures after it. It is typed as a record of
 // its own — `__env$<body>` with the capture types as its arguments — because
-// a record's fields ride the slots an array's elements do: a shape word where
+// a record's fields occupy the slots an array's elements do: a shape word where
 // the array keeps its length, then one word per field. So a capture is read
 // as a field projection and a box's captures are walked by the record's own
 // drop helper, while the box itself stays the word array every call through

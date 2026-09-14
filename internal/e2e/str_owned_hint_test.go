@@ -10,7 +10,7 @@ import (
 
 // A borrowed `str` never silently promotes to an owned `string` — that rule is
 // deliberate. What was missing is the way out: the diagnostics restated the two
-// type names and stopped, leaving a `str` at an owning sink with nowhere to go.
+// type names and stopped, leaving a `str` at an owning sink with no way to fix it.
 // `.to_owned()` is the materialiser, named in the checker's own comments and
 // used throughout the stdlib, and now named in the message.
 //

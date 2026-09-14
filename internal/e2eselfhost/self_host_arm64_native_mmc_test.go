@@ -105,7 +105,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	// Pick programs spanning the emit surface: a trivial baseline
 	// + large programs with extensive stdlib transitive imports.
 	// The json + http suites OOM the native mmc at a 64-MiB heap
-	// (vs 512 MiB on x86), so they ride the gate at heap parity.
+	// (vs 512 MiB on x86), so they run in the gate at heap parity.
 	// The strings / string_prelude_migrated / process_assertions
 	// suites were once dropped for the args() rc-header corruption
 	// (argv strings allocated without an L2 header, so rc ops hit
@@ -146,7 +146,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 
 // firstDivergentLine returns the 1-based line number where `a` and `b` first
 // differ, or 0 when they are identical — the diagnostic that makes a
-// byte-identity failure readable instead of a wall of asm. It lived alongside
+// byte-identity failure readable instead of a full asm dump. It lived alongside
 // TestSelfHostStage2FixedPoint until that merged-bundle fixpoint retired with
 // the AST emitters (#3457 slice 5); this is its remaining caller.
 func firstDivergentLine(a, b []byte) int {

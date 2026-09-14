@@ -48,8 +48,8 @@ import (
 // regression.
 //
 // L IS NOT ONE OF THEM, and was briefly pinned at 44 as though it were. Native
-// reads 0 for L and always has, so 44 there was a self-host regression wearing the
-// argument-temp class's clothes: the frame owns `b` after `b = f(b, v)`,
+// reads 0 for L and always has, so 44 there was a self-host regression misread as the
+// argument-temp class: the frame owns `b` after `b = f(b, v)`,
 // `return f(b, v + 1)` hands back a result carrying its own count, and
 // emit_consumed_param_exit skipped the release because `b` was NAMED in the
 // returned expression. rc stayed at 2 with one owner and the caller's next append
@@ -57,7 +57,7 @@ import (
 // L is back to 0 and pinned there.
 //
 // The loop/lambda exclusion and the params-only restriction are both carried over
-// from native and are load-bearing; `grow_sole_exempt_names_of` says why.
+// from native and are required; `grow_sole_exempt_names_of` says why.
 type growSoleCase struct {
 	name    string
 	g       string

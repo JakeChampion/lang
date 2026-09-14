@@ -201,7 +201,7 @@ func TestVeneerRemapsLiteralsSymbolsAndLines(t *testing.T) {
 // earlier island. The hop-over `b` was a hand-encoded offset — the one
 // thing the index remap cannot correct — so the earlier island's hop
 // landed on its own `add x17, x17` and control fell into `br x17` with a
-// half-built address. Programs hung or died on a bogus pointer; found by
+// half-built address. Programs hung or crashed on a bogus pointer; found by
 // running the arm64 corpus under FERN_ARM64_VENEER_REACH, where
 // e2e's TestArm64VeneerForcedReach/float_to_string still reproduces the
 // original hang against the pre-fix assembler.

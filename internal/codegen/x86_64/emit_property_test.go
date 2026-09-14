@@ -151,7 +151,7 @@ function main(): i32 {
 	// block alloc, capture layout, closure call convention (%r10
 	// for the env ptr), and OpMakeClosure / OpMakeEnv lowering.
 	// The bare-function `function_value` case above hits the
-	// no-capture path; this one rides the harder emit surface
+	// no-capture path; this one exercises the harder emit surface
 	// that historically has been a bug source.
 	"closure_capture": `
 function adder(n: i32): (i32) => i32 {

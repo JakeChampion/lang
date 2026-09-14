@@ -87,7 +87,7 @@ function main(): i32 {
 }`, 0},
 	// NEGATIVE: `.trim()` returns a zero-copy VIEW over the receiver's buffer, so
 	// releasing the receiver leaves the result pointing at freed bytes. This is the
-	// case that makes str_borrowing_method load-bearing here rather than merely
+	// case that makes str_borrowing_method essential here rather than merely
 	// conservative: it exits 97 under a compiler that releases the receiver anyway.
 	{"str-fresh-receiver-trim-view-refused", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {

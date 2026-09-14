@@ -32,7 +32,7 @@ function main(): i32 {
     if (scalar_of(d) != 97) { return 2; }
     // Round trip through the integer and back.
     if (scalar_of(as_char(scalar_of(c))) != 97) { return 3; }
-    // A scalar outside the BMP still rides the i32 slot intact.
+    // A scalar outside the BMP still passes through the i32 slot intact.
     if (scalar_of(as_char(128512)) != 128512) { return 4; }
     if (scalar_of(as_char(1114111)) != 1114111) { return 5; }
     // char[] arrays: element type survives, indexes as a char.
@@ -79,7 +79,7 @@ func TestCharTypeArm64(t *testing.T) {
 // charUnicodeProgram pins std/unicode's `char` surface (#5629 slice 5) —
 // the first stdlib producer/consumer of the type.
 //
-// These are METHODS, not free functions, and that is load-bearing: a free
+// These are METHODS, not free functions, and that is essential: a free
 // `to_upper(c: char)` would collide with `to_upper(s: string)` in the same
 // module. The method form also makes the receiver TYPE carry the meaning,
 // which is the whole point of D2 — `c.to_upper()` and `s.to_upper()` are

@@ -5,14 +5,14 @@ import "github.com/jakechampion/lang/internal/ir"
 // Width resolution: deciding, for every op in a module, whether its result
 // occupies a full 64-bit machine register or only the low 32 bits.
 //
-// The distinction is load-bearing because the 64-bit backends store an i32
+// The distinction is essential because the 64-bit backends store an i32
 // sign-extended into its whole register, and re-establish that after each
 // arithmetic op (`sxtw` / `movsxd`). Applied to a MACHINE ADDRESS that mask is
 // destructive: any pointer above 0x7fffffff comes back negative and its loads
 // and stores land somewhere else. Addresses and i32 values share the SSA's
 // integer ops, so the width is what tells them apart, and the IR sizes an
 // address the same as an i32 everywhere except a call, where the result
-// classification rides on the op (ir.ResAddr / ResWide / ResNarrow).
+// classification is carried on the op (ir.ResAddr / ResWide / ResNarrow).
 
 // ResolveWidths fixes each op's result width across a whole module, for the
 // 64-bit backends (arm64 / x86-64). It seeds address-ness from what is known

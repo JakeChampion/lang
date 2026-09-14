@@ -11,7 +11,7 @@ import (
 // The synthesised `_start` calls main and DROPS its result, so a preview-1 host
 // sees exit 0 no matter what the program returned. That is the right shape for
 // preview-2 wrapping — `wasi:cli/run` carries only ok/err, which is why
-// PrintMainResult exists to smuggle the value out over stdout — but it is wrong
+// PrintMainResult exists to carry the value out over stdout — but it is wrong
 // for a preview-1 command, where proc_exit carries the full byte. The browser
 // playground runs exactly that shape: `web/wasi-shim.js` reports "exit 0" for a
 // program its own interpreter pane reports as "main() returned exit code 20".
@@ -47,7 +47,7 @@ func TestExitWithMainResultCarriesTheExitCode(t *testing.T) {
 		wantExit int
 		wantOut  string
 	}{
-		// The headline: a value the wasi:cli/run world cannot carry at all.
+		// The main case: a value the wasi:cli/run world cannot carry at all.
 		{"a-value-wider-than-ok-err", `function main(): i32 { return 42; }`, 42, ""},
 		// 0 must stay 0 — proc_exit(0) is a clean exit, not a failure.
 		{"zero-is-success", `function main(): i32 { return 0; }`, 0, ""},

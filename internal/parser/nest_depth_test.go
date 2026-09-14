@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Deeply nested input used to take the process down: recursive descent ran
+// Deeply nested input used to crash the process: recursive descent ran
 // out of goroutine stack, and a stack overflow is a fatal runtime error that
 // no recover() can turn back into a parse error. It surfaced as a nightly
 // FuzzCheck failure (#7941) — that target parses before it checks, so the
@@ -34,7 +34,7 @@ func TestDeepNestingIsADiagnosticNotACrash(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A crash here takes the test binary with it, so reaching the
+			// A crash here aborts the test binary, so reaching the
 			// assertion at all is most of what this proves.
 			_, err := Parse(tc.src)
 			if err == nil {

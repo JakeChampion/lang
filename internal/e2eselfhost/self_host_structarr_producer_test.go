@@ -86,7 +86,7 @@ function round(i: i32): i32 { var v: P[] = mk(); return v.len(); }` + structarrP
 			// The append-built producer, which the shared body proof admits for
 			// free. It is how a producer that computes its elements has to be
 			// written, so a literal-only registry would have left the common form
-			// leaking after the headline shape was fixed.
+			// leaking after the main shape was fixed.
 			name: "producer_append_built",
 			src: structarrProdDecl + `function mk(i: i32): P[] { var a: P[] = []; a = a.append(P { s: w("p"), n: i }); a = a.append(P { s: w("q"), n: i }); return a; }
 function round(i: i32): i32 { var v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,

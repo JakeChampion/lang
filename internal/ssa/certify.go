@@ -81,7 +81,7 @@ type CertifyReport struct {
 	// Unplaced is how many of the function's values `UnitsOf` could not
 	// classify — a call result with no ownership answer. Reported so a
 	// caller can hold the coverage floor rather than read a low leak
-	// count as a clean bill.
+	// count as a clean result.
 	Unplaced int
 
 	// Passes is how many sweeps the dataflow needed to settle.
@@ -339,7 +339,7 @@ func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]S
 				cur[o.Result.ID] = ownHolds
 			case UnitBorrowed:
 				// A borrow can still become a holder — a retain on one
-				// puts a unit in this function's hands — so it has to
+				// gives this function a unit — so it has to
 				// carry an explicit "holds nothing" rather than being
 				// absent: absent MEETS as the other side's claim, and a
 				// value retained on one path and not another would then
@@ -422,8 +422,8 @@ func applyCall(o *Op, cur map[int32]ownState, units Units, sigs map[string]Signa
 			case ir.RcRelease, ir.RcMove:
 				cur[root] = ownGone
 			case ir.RcRetain:
-				// A retain on a borrow puts a unit in this function's
-				// hands that nothing else will release for it.
+				// A retain on a borrow gives this function a unit
+				// that nothing else will release for it.
 				if units.origin[root] == UnitBorrowed && cur[root] != ownMaybe {
 					cur[root] = ownHolds
 				}

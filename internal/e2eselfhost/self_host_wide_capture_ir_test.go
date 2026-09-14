@@ -76,7 +76,7 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		{"two-wide-captures", outcome + "function check(): i32 { var a: i64 = 20 as i64; var b: i64 = 22 as i64; return run((): Outcome => { return Fail((a + b) as i32); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// Wide and narrow and pointer-shaped together: only the wide one is
-		// cellared, the rest ride the box slot directly as before.
+		// cellared, the rest use the box slot directly as before.
 		{"mixed-wide-narrow-pointer", outcome + "function check(): i32 { var a: i64 = 40 as i64; var n: i32 = 2; var s: string = \"xy\"; return run((): Outcome => { return Fail((a as i32) + n + s.len() - 2); }); }\nfunction main(): i32 { return check(); }", 42},
 
 		// The captured local is declared INSIDE an if-block, so its cell must be
@@ -92,7 +92,7 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		// into one of these cells: box_mutated_scalar_captures already boxes it
 		// into a SHARED cell (#5394), which is what it needs — the closure has to
 		// observe the post-write value. 42 proves the shared cell is still in
-		// play; a creation-time snapshot would answer 1.
+		// use; a creation-time snapshot would answer 1.
 		{"reassigned-wide-capture-stays-shared", outcome + "function main(): i32 { var a: i64 = 1 as i64; var g = (): Outcome => { return Fail(a as i32); }; a = 42 as i64; return run(g); }", 42},
 
 		// Direct-called bindings: no env box is built at all — the param-lift

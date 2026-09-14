@@ -10,7 +10,7 @@ import "testing"
 // LIVE entries, so nothing ever returned it: 16 B per delete hit on the two
 // boxing ABIs (#8493).
 //
-// The three rows are what identify it, and each kills a different explanation:
+// The three rows are what identify it, and each rules out a different explanation:
 //
 //   - a delete MISS is clean, so it is not the lookup box or anything about
 //     probing;

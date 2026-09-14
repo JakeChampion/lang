@@ -14,7 +14,7 @@ import (
 // The arm64 map runtime had no keyed-compare path at all. irlower threads the
 // derived equality symbol through every keyed map op (`map_key_eqfn` →
 // `Op.str`), and the x86-64 emitter loads it into %r8 for __fern_map_set /
-// _get / _has / _delete — but the arm64 emitter dropped it on the floor, so a
+// _get / _has / _delete — but the arm64 emitter discarded it, so a
 // struct key fell through to the STRING loop and `__fern_str_eq` read the key
 // box as a `{data, len}` string box.
 //

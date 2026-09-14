@@ -74,7 +74,7 @@ const selfHostDiffMinRunRatio = 0.85
 // to disagree with the interpreter today, one per line, each against its
 // tracking issue. Same contract as the fixture legs' files: a listed seed
 // that starts PASSING fails too, because an allowlist nobody prunes is
-// where bugs go to be forgotten.
+// where bugs get forgotten.
 const selfHostDiffKnownFile = "selfhost-diff-x86_64-known-divergences.txt"
 
 // selfHostDiffSeeds is this leg's corpus size — its own knob rather than the
@@ -171,7 +171,7 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 				// a wrong ANSWER, and a seed that no longer compiles cannot
 				// demonstrate that. Skipping there would let the row outlive
 				// whatever it described, unverified, which is the exact way an
-				// allowlist rots — so say the row is stale and make someone look.
+				// allowlist goes stale — so say the row is stale and make someone look.
 				if !isKnown {
 					t.Skipf("self-host coverage gap: %s", gap)
 				}

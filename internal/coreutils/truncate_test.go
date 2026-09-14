@@ -189,7 +189,7 @@ func truncateCases(t *testing.T) []invocation {
 	add(invocation{name: "the empty long option", args: []string{"--=x"}})
 	add(invocation{name: "an option after an operand permutes", args: []string{"f", "-x"}})
 	add(invocation{name: "getopt runs before the size is read", args: []string{"-s", "1p", "-x", "f"}})
-	// `--si` and `--s` are unique prefixes of `--size`, so each eats the
+	// `--si` and `--s` are unique prefixes of `--size`, so each takes the
 	// operand and the number it is then handed is the file name.
 	add(invocation{name: "size by two-letter prefix", args: []string{"--si", "f"}, seedTree: truncateHello})
 	add(invocation{name: "size by one-letter prefix", args: []string{"--s", "f"}, seedTree: truncateHello})

@@ -34,7 +34,7 @@ import (
 // was strictly worse on every count.
 //
 // Both directions are still pinned, and the Err-path case below is what makes
-// the widening honest rather than a green light: it takes the Err arm on half
+// the widening sound rather than a green light: it takes the Err arm on half
 // its iterations and asserts the exact split — every box freed, and precisely
 // the Err payloads stranded, nothing more.
 

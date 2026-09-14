@@ -79,7 +79,7 @@ function main(): i32 {
 		// __fern_rc_inc / __fern_rc_dec. While the scratch registers held four of
 		// the five callee-saved registers there was one home to steer into, so
 		// six registers were pushed around each of four calls and the traffic
-		// swallowed the whole win. It no longer does — 182 instructions against
+		// erased the whole win. It no longer does — 182 instructions against
 		// the stack machine's 193 — so the smaller-than assertion below covers
 		// the shape that was hardest for it.
 		{"call-heavy-loop-match", `enum Shape { Circle, Square, Triangle }

@@ -1,5 +1,5 @@
 // An `f32[]` PARAMETER is classified from its DECLARATION, not from a call
-// site. Both spellings of a float array ride the same 8-byte-stride f64
+// site. Both spellings of a float array use the same 8-byte-stride f64
 // element layout (a scalar `f32` already lowers to a wasm f64), but the
 // self-host lowering only recognised "f64[]" there, so an `f32[]` param was
 // classified as no array kind at all: `a[i]` emitted the default 4-byte
@@ -33,7 +33,7 @@ function main(): i32 {
     if (a < 3.9 || a > 4.1) { return 2; }
     var b: f32 = at(xs, 1);
     if (b < 2.4 || b > 2.6) { return 3; }
-    // The i32 import is load-bearing: it is what puts the param on the
+    // The i32 import is essential: it is what puts the param on the
     // declaration-driven path.
     if (width(xs).to_string() != "3") { return 4; }
     var bx: Box = Box { xs: [1.5, 2.5] };

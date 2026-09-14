@@ -799,7 +799,7 @@ pub function get[T](xs: T[], i: i32): Option[T] {
 }
 
 // `map(xs, f)` — fresh `U[]` with `f` applied to every element.
-// Empty → empty. The workhorse transform.
+// Empty → empty. The most common transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
     var out: U[] = [];
     for x in xs { out = out.append(f(x)); }
@@ -1342,7 +1342,7 @@ pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
 
 // `flat_map(xs, f)` — map each element to a `U[]` and concatenate the
 // results into one flat `U[]` (`map` then flatten). `f`'s return is the
-// array `U[]` (pointer-shaped), so it rides the same indirect-call path
+// array `U[]` (pointer-shaped), so it uses the same indirect-call path
 // as `map`/`filter`. `flat_map([1,2], dup)` with `dup(x) = [x, x]` →
 // `[1,1,2,2]`.
 pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {

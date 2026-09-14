@@ -39,7 +39,7 @@ func TestSelfHostRcMapGrowWasm(t *testing.T) {
 		// lookup is value-correct + detector clean.
 		{"map-grow-i32-keys", "function main(): i32 { var m = map_new_i32(2); var k = 0; while (k < 100) { m = m.insert(k, k); k = k + 1; } return m.get_or(50, -1) + m.get_or(70, -1) + __rc_underflow_count(); }", 120},
 		// A churn: build a growing map each iteration and drop it. The grow path
-		// reclaims old arrays so memory doesn't blow up; detector clean.
+		// reclaims old arrays so memory stays bounded; detector clean.
 		{"map-grow-churn", "function mk(): i32 { var m = map_new_i32(2); var k = 0; while (k < 30) { m = m.insert(k, k); k = k + 1; } return m.get_or(25, -1); } function main(): i32 { var n = 0; var k = 0; while (k < 5000) { n = mk(); k = k + 1; } return (n % 100) + __rc_underflow_count(); }", 25},
 		// String values that survive the array reallocation on grow.
 		{"map-grow-str-vals", "function main(): i32 { var m = map_new(2); m = m.insert(\"x\", 1); m = m.insert(\"y\", 2); m = m.insert(\"z\", 3); m = m.insert(\"w\", 4); return m.get_or(\"x\", -1) + m.get_or(\"w\", -1) + m.len() + __rc_underflow_count(); }", 9},

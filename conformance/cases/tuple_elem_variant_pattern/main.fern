@@ -22,7 +22,7 @@ enum Sh { A(i32), B, C(i32, i32) }
 enum Msg { Txt(string), Num(i32) }
 enum Wrap { P((Sh, i32)), Q }
 
-// The headline: a payloaded variant element beside a binder element, a
+// The main case: a payloaded variant element beside a binder element, a
 // payload-less one spelled with the empty parens, and a multi-payload one
 // beside a LITERAL element — the arm test that mixes both condition kinds.
 function classify(t: (Sh, i32)): i32 {

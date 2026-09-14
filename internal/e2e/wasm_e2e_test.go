@@ -53,7 +53,7 @@ var (
 // wasmtimePin is the wasmtime version this suite is verified against, and the
 // single place the number lives on the Go side. CI, devbox and the session
 // hook install it from mise.toml; TestWasmtimePinMatchesCI asserts the two
-// agree so this cannot drift into a lie.
+// agree so this cannot drift out of date.
 const wasmtimePin = "46.0.1"
 
 // wasmtimeVersion returns the version of the wasmtime on PATH, parsed out of
@@ -809,7 +809,7 @@ func TestWASMEprintBuiltin(t *testing.T) {
 // object that ptr-8 underflows into the static data segment, so retain
 // incremented a byte of the string literal being written (the 'g'
 // at offset 16 of "0123…gh" became 'h'). Position-dependent because it
-// only bit the literal sitting immediately below the bump heap.
+// only corrupted the literal sitting immediately below the bump heap.
 //
 // The sweep covers the boundary lengths from the bug report (8, 16,
 // 17, 18, 24, 30) plus a couple extra; all must round-trip byte-exact.
@@ -2763,7 +2763,7 @@ function main(): i32 {
 
 // __memcpy / __memset bridge functions: wat-shim wrappers
 // around wasm's bulk-memory `memory.copy` / `memory.fill`.
-// They're the unlock for migrating helpers that build /
+// They're what enables migrating helpers that build /
 // scan growable byte buffers (the json buffer family + map
 // runtime). This test exercises both via raw alloc + an
 // `as_bytes` slice view, then pokes through the slice's
@@ -4729,7 +4729,7 @@ function main(): i32 {
 }
 
 // `match` expression composes inside other expressions —
-// confirms it slots into a binary op without parse-time fight.
+// confirms it slots into a binary op without parse-time conflict.
 func TestWASMMatchExprComposesInExpr(t *testing.T) {
 	src := `function main(): i32 {
     var o: Option[i32] = Some(10);
@@ -7398,7 +7398,7 @@ function main(): i32 {
 
     // i32.const 127 -> 0x41 0xFF 0x00. 127 has bit-6 set, so the
     // sleb form needs a continuation byte; otherwise [0x7F] would
-    // decode to -1. This is the trap wasm hex dumps stumble into.
+    // decode to -1. This is where wasm hex dumps commonly go wrong.
     var c127: u8[] = inst.inst_i32_const(empty, 127);
     if (c127.len() != 3) { return 15; }
     if (c127[0] != 65u8) { return 16; }
@@ -11542,7 +11542,7 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 // component runnable via plain `wasmtime run prog.wasm`. No
 // `wasm-tools` shell-out involved. Closes the loop on the
 // preview-2 import migrations — for programs whose imports are
-// all migrated, the default `-target wasm32-wasi` now Just Works
+// all migrated, the default `-target wasm32-wasi` now works
 // without an adapter.
 func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -11764,7 +11764,7 @@ func TestWASMComponentGoEncoderRunsLangCore(t *testing.T) {
 // module bytes + the same single WASI import shape, both must
 // produce byte-identical output.
 //
-// This is the load-bearing guarantee that lets the production
+// This is the essential guarantee that lets the production
 // driver use either implementation interchangeably — and a
 // regression alarm if one is updated without the other.
 func TestWASMComponentGoLangByteEquivalence(t *testing.T) {
@@ -13463,7 +13463,7 @@ function main(): i32 {
     comp = component.put_alias_section_core_export_func(comp, 0u32, "alloc");
 
     // Type: () -> u32 (would-be string in a real lift, but u32 keeps
-    // the wasm-tools structural check happy without needing
+    // the wasm-tools structural check satisfied without needing
     // canonical-ABI lowering compatibility).
     var no_names: string[] = [];
     var no_valtypes: u8[] = [];

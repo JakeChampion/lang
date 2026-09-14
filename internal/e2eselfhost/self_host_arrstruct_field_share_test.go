@@ -34,7 +34,7 @@ import (
 // `respread` is the reason the underflow guard is asserted on every case here:
 // `P { ...q, … }` used to copy the buffer pointer into a third box with NO inc,
 // so three owners sat at rc 2 and granting the share took it to exit 99 at 600
-// allocs, 600 frees, live_bytes 0 — nothing in the census dissented. The base
+// allocs, 600 frees, live_bytes 0 — nothing in the census showed it. The base
 // copy now retains the array it carries and the copy is a counted holder like
 // the others, so the three walks hand off to the one that finds rc 1.
 //

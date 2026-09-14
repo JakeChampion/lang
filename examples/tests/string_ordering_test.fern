@@ -6,7 +6,7 @@ import "std/sort";
 // differing byte decides, and a string that is a prefix of another sorts
 // first. Not case-folded and not codepoint-ordered, so "Z" < "a".
 //
-// The last group is the load-bearing one: `core/cmp`'s `Ord for string` and
+// The last group is the essential one: `core/cmp`'s `Ord for string` and
 // `std/sort`'s `string_cmp` are both defined in terms of these operators, so
 // their three-way results must agree with them sign-for-sign. A divergence
 // here means the operator and the generic ordering have drifted apart.

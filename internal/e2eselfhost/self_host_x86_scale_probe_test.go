@@ -19,7 +19,7 @@ import (
 // not a miscompile, and the "150-fn → 85" figure came from a malformed test
 // program (f32/f64 reserved-keyword function names), not the assembler.
 //
-// To keep the signal honest this probe holds each program's result < 256 so
+// To keep the signal unambiguous this probe holds each program's result < 256 so
 // the exit code is unmasked, and cross-checks every size against gcc. Up to
 // 600 functions / ~124 KB asm the self-host output is exit-for-exit
 // identical to gcc — there is no O(n²)-label or fixup defect at scale.

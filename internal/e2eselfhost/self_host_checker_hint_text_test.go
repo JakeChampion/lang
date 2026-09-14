@@ -78,7 +78,7 @@ func slicesCompact(in []string) []string {
 
 // hintTextCase is one program whose diagnostic tells the reader what to
 // write. `spelling` is a fragment of that advice which must appear in the
-// native message — it keeps the corpus honest about why each row is here,
+// native message — it keeps the corpus explicit about why each row is here,
 // so a case cannot decay into pinning arbitrary prose.
 type hintTextCase struct {
 	name     string

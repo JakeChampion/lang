@@ -20,7 +20,7 @@ import (
 //
 // wasm_ir.route_normalized now normalises for BOTH the emitter and the `-decide`
 // probe, so the probe cannot report a verdict for a module the emitter does not
-// judge. The routing assertion below is the load-bearing half: a regression puts
+// judge. The routing assertion below is the essential half: a regression puts
 // scripts back on the emitter this all exists to delete, and the ANSWER would stay
 // correct, so only the route catches it.
 func TestSelfHostWasmScriptRoutesIR(t *testing.T) {

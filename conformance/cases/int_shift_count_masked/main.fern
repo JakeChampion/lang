@@ -7,7 +7,7 @@
 // ISA, so this is a place a language either states the rule or exports
 // the disagreement.
 //
-// The second claim rides along: `>>` propagates the sign for a signed
+// The second claim comes with it: `>>` propagates the sign for a signed
 // operand and fills with zeros for an unsigned one, which is the
 // difference between -4 and a very large positive number here.
 //

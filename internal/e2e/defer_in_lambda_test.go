@@ -29,7 +29,7 @@ func TestDeferInBlockExpr(t *testing.T) {
 		src  string
 		want int
 	}{
-		// The headline repro. The action has already run when f returns, so
+		// The main repro. The action has already run when f returns, so
 		// the cell reads 1 at the call site: 5*10 + 1. Firing at main's exit
 		// instead would leave 50.
 		{"arrow_lambda_block_body", `function main(): i32 {

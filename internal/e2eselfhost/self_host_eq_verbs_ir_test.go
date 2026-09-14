@@ -18,7 +18,7 @@ import (
 // for core/cmp, which the bare driver does not load — the same shape the
 // derive-Eq IR cases use) and a `match`-based Option unwrap.
 //
-// The `Eq` BOUND is load-bearing here, not decoration: the self-host
+// The `Eq` BOUND is essential here, not decoration: the self-host
 // monomorphiser only clones BOUNDED generics. An unbounded `[T]` erases
 // to a single pointer-compare clone, so `contains(["x","y","z"], "z")`
 // would compare string-box identities and miss the match. With `[T: Eq]`

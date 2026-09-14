@@ -133,7 +133,7 @@ pub struct Shown { v: i32 }
 }
 
 // Nothing close enough gets no suggestion — an unrelated name must not be
-// dressed up as a typo.
+// presented as a typo.
 func TestNoSuggestionWhenNothingIsClose(t *testing.T) {
 	lib := `pub function shown_fn(): i32 { return 1; }` + "\n"
 	err := loadWithLib(t, `import "./lib";`+"\n"+`function main(): i32 { return lib.zzzzzzqqqqq(); }`, lib)

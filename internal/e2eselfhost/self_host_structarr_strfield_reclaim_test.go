@@ -50,7 +50,7 @@ function main(): i32 {
 }`
 
 // TestSelfHostStructArrStrFieldReclaimX86_64 — the element string fields are
-// freed. allocs == frees is load-bearing: frees short of allocs is the leak this
+// freed. allocs == frees is essential: frees short of allocs is the leak this
 // closes; frees ABOVE allocs would mean the element walk's __struct_drop_<T> and
 // something else both claimed one string (a double free), which for a string is a
 // freelist corruption rather than a clean crash.

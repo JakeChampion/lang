@@ -12,7 +12,7 @@ import (
 // tagged-value runtime (release_JNull / …), and each lambda position has a
 // designed IR lowering whose artifacts the AST backend never produces:
 //
-//   - A no-capture lambda passed as a fn-typed CALL ARGUMENT rides the uniform
+//   - A no-capture lambda passed as a fn-typed CALL ARGUMENT uses the uniform
 //     env-box ABI (irlower.lift_inline_closures_expr): it is wrapped into an
 //     env-ignoring `<fn>$wrapN` trampoline boxed as [funcval], and the callee
 //     dispatches it env-first via call_indirect. This pass deliberately runs

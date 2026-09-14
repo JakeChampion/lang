@@ -14,7 +14,7 @@ import (
 // TestNativeLinkPlacesEhFrame is the end of the chain #7901 builds: the
 // emitter emits `.cfi_*`, the assembler renders them, and the IN-PROCESS
 // linker places the result — no gcc anywhere. Until this was wired, the
-// default path recorded the unwind data and dropped it on the floor, so the
+// default path recorded the unwind data and then discarded it, so the
 // only binaries carrying CFI were the ones built through `-cc gcc`.
 //
 // The image has no section headers, so readelf cannot decode it; the check

@@ -5,7 +5,7 @@ import "std/i32";
 import "core/cmp";
 
 // examples/tests/pmap_test.fern — pure-Fern coverage of std/pmap, the
-// persistent hash map (hash array mapped trie). The load-bearing
+// persistent hash map (hash array mapped trie). The essential
 // contracts exercised here are STRUCTURAL SHARING (a snapshot taken
 // before an update is unchanged after it), the trie invariants after
 // every kind of update (`is_valid`, including collapse on remove),

@@ -58,7 +58,7 @@
 //     `is_selinux_enabled()`, so on a kernel without SELinux this
 //     blocks the directive and not a mode.
 //   - `statfs` reports six counts and two limits and drops `f_type`,
-//     `f_fsid` and `f_frsize` on the floor (#9097), which are `-f`'s
+//     `f_fsid` and `f_frsize` (#9097), which are `-f`'s
 //     `%T` / `%t`, `%i` and `%S`. The default `-f` block and
 //     `-t -f` both carry them.
 //

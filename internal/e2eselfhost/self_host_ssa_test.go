@@ -212,7 +212,7 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		// the heap-copy spread, only the native/wasm emitters do.)
 		// A `match` on a non-enum (int-literal) scrutinee now lowers through
 		// SSA: the parser desugars it to an if/else-if chain (the same shape
-		// `switch` produces), so it rides the existing if / `==` lowering and
+		// `switch` produces), so it uses the existing if / `==` lowering and
 		// the round-trip evaluator computes its value directly.
 		{"literal-match", "function main(): i32 { var n = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }", 20},
 		// Still outside the subset → build_func bails (200). (Floats, struct

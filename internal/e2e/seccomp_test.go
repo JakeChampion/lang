@@ -343,7 +343,7 @@ func TestSeccompFilterDenies(t *testing.T) {
 // failure mode is not subtle: a syscall the filter forgot is a SIGSYS
 // kill, in someone's build, on whichever path nobody exercised. The
 // fixture corpus is the broadest body of real Fern programs there is, so
-// it is the honest evidence.
+// it is the strongest evidence.
 //
 // Each fixture runs twice — sandboxed and not — and must behave
 // identically. Comparing against the unsandboxed run rather than against

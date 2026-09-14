@@ -193,7 +193,7 @@ function round(i: i32): i32 {
 			// 400/400 and the name would be a lie if it stayed — the same rename
 			// the rc-log records for `string-concat-temps-still-leak`.
 			//
-			// It still earns its place, one direction over: it is now the row that
+			// It is still worth having, one direction over: it is now the row that
 			// fails if that credit is ever withdrawn.
 			name: "producer_local_now_credited",
 			src: structKeyP + `function mk(i: i32): P { var p: P = P { xs: [i, i + 1], s: w("p") }; return p; }
@@ -242,7 +242,7 @@ function round(i: i32): i32 {
 // Both assertions carry signal, and they catch opposite failures. The exit code
 // is the over-release detector: a doubly-released block returns to the freelist,
 // so `live_bytes` reads 0 through the double free and only
-// `__rc_underflow_count()` dissents. The alloc/free counts are the leak detector,
+// `__rc_underflow_count()` reports it. The alloc/free counts are the leak detector,
 // which the exit code cannot see — and which is where a site key that resolves to
 // NO credit shows up.
 func TestSelfHostStructCreditSiteKeyX86_64(t *testing.T) {

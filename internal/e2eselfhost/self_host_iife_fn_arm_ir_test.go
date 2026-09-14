@@ -112,7 +112,7 @@ var iifeFnArmCases = []struct {
 	// The arms now get the same `return <lambda>` desugar the worklist gives a
 	// source function, so each lifts through its local binding to a uniquely
 	// named `<fd>$iifeN$cloM` box. distinct-captures is the case that needs the
-	// names to differ; string-capture rides the env box's pointer slot.
+	// names to differ; string-capture occupies the env box's pointer slot.
 	{"capturing-arm-lambda", "function main(): i32 { var n: i32 = 7i32; var v2: (i32) => i32 = (if (true) { ((x: i32) => (x + n)) } else { ((x: i32) => 41i32) }); return v2(1i32) & 63i32; }", 8},
 	{"capturing-arms-distinct-captures", "function main(): i32 { var n: i32 = 7i32; var m: i32 = 20i32; var c: boolean = false; var v2: (i32) => i32 = (if (c) { ((x: i32) => (x + n)) } else { ((x: i32) => (x + m)) }); return v2(1i32) & 63i32; }", 21},
 	{"matchexpr-capturing-arms", "enum S { A, B } function main(): i32 { var n: i32 = 9i32; var e: S = S.B; var f: (i32) => i32 = (match (e) { A => ((x: i32) => (x + n)), B => ((y: i32) => (y * n)) }); return f(3i32) & 63i32; }", 27},

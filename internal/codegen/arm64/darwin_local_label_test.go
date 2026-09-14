@@ -98,7 +98,7 @@ func countOutsideStrings(asm, sub string) int {
 	return n
 }
 
-// TestDarwinCFIAssemblesWithMachOLabels is the payoff, and the reason #8065
+// TestDarwinCFIAssemblesWithMachOLabels is the main gate, and the reason #8065
 // was filed: with ELF's prefix the platform assembler rejects the epilogue
 // rule outright. The listing is the emitted Darwin prologue shape; the
 // emitter's own output goes through the same assembler in

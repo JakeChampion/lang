@@ -7,7 +7,7 @@ import "std/float" as float;
 // TestFloatHyperbolic pins these across interp / x86-64 / arm64 (wasmbin skips
 // libm exp, the same gap exp/log/sin carry); this is the migration-shaped
 // companion. Built on __exp_f64, which lowers on the self-host asm_ir path, so
-// this rides both self-host gates too.
+// this runs in both self-host gates too.
 
 function test_at_zero(): test.TestOutcome {
     if (!float_near((0.0).sinh(), 0.0)) { return test.fail("sinh 0"); }

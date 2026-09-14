@@ -18,7 +18,7 @@ func init() {
 // paths — a regular file is read from its END, in 8 KiB blocks for
 // lines, so every count has a case that crosses a block boundary and
 // a case fed through a pipe — and following. A follow case never ends
-// on its own: the harness plays the writer, firing each step once the
+// on its own: the harness acts as the writer, firing each step once the
 // output has reached it, and stops both sides after `limit` bytes; the
 // polling interval and `---disable-inotify` keep GNU on the same loop.
 // `--pid` is parsed here but not followed with (#8767).

@@ -18,7 +18,7 @@ func init() {
 // `-u` rename chain will collide with, a nested operand, and `src` —
 // 20,000 bytes of a fixed byte, which is what makes a RANDOM pass
 // comparable at all (see below).
-// varied returns n deterministic bytes that are all over the place, so a
+// varied returns n deterministic bytes that vary widely, so a
 // file written from them differs from one written from any other span of
 // them.
 func varied(n int) string {

@@ -143,7 +143,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// LC_DYLD_INFO_ONLY rebase opcode; without one the shape compare in the
 		// match fails, both arms fall through, and the synthesized fall-off-the-
 		// end block returns 0 (#6259). Only an EXECUTED binary catches that —
-		// the structural half of this test is happy either way — and only with
+		// the structural half of this test passes either way — and only with
 		// ASLR on, which is why running it under lldb reports a pass.
 		{"const_agg_union", `struct Add { l: i32, r: i32 }
 struct Lit { v: i32 }
@@ -155,7 +155,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// darwinKnownGaps names the cases this path does NOT yet handle, each with
 	// the reason. They are recorded rather than asserted so the lane is green
 	// on the gaps it cannot fix — but a listed case that starts working is a
-	// FAILURE telling you to delete its entry, so the list cannot rot into a
+	// FAILURE telling you to delete its entry, so the list cannot become a
 	// silent skip list (which is how the whole exec half of this test went
 	// unrun for as long as it did).
 	// Empty since #6917. Its one entry was udp_send, "returns 94, not the sent
@@ -191,9 +191,9 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 				// a compiler regression — but ONLY when the CLI never ran. If
 				// it produced a diagnostic it ran and failed, and skipping
 				// there hides exactly the class of bug this test exists for:
-				// #6042's arena death printed "heap arena exhausted" and was
+				// #6042's arena failure printed "heap arena exhausted" and was
 				// read as a skip on every Apple Silicon run. Split on the
-				// output: silent launch failure skips, a talking CLI fails.
+				// output: silent launch failure skips, a CLI with output fails.
 				if native && len(bytes.TrimSpace(out)) == 0 {
 					t.Skipf("self-host CLI did not launch (err=%v, no output)", err)
 				}

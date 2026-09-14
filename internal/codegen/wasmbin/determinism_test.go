@@ -5,7 +5,7 @@ package wasmbin
 // The op-level coverage in wasmbin_test.go and the run-under-wasmtime
 // coverage in build_test.go are thorough, but neither pins
 // *reproducibility*: that building the same source twice yields
-// byte-identical module bytes. That property is load-bearing here —
+// byte-identical module bytes. That property is essential here —
 // the self-host fixed-point gates assert byte-equal output across
 // compiler stages, and reproducible builds depend on it — and it is
 // exactly the property most at risk from nondeterminism leaking in

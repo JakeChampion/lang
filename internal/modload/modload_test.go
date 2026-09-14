@@ -1201,7 +1201,7 @@ function main(): i32 { return (5).my_method(); }`,
 // shape goes unresolved and the checker complains. The exact
 // diagnostic could improve (today it surfaces as a generic
 // "unresolved" rather than naming the missing import), but the
-// PRESENCE of a non-nil error is the load-bearing behaviour:
+// PRESENCE of a non-nil error is the required behaviour:
 // silently accepting the call would defeat module scoping.
 func TestMethodNotVisibleWithoutImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{

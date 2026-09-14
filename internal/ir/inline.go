@@ -193,7 +193,7 @@ func Inline(prog *Program) {
 // and 14,892 ops — +3.3% and +0.56% — where the unbudgeted general policy
 // produces 2.7x the assembly.
 //
-// Three properties keep it that cheap, and all three are load-bearing:
+// Three properties keep it that cheap, and all three are required:
 //
 //   - A LEAF callee contains no call of any kind, so splicing it creates no
 //     new call site. One walk is therefore a fixpoint — no equivalent of

@@ -292,7 +292,7 @@ pub function base_type_name(t: string): string {
 // across irlower, parser and checker.
 //
 // Three sites keep their own spelling because their length guard differs and
-// the difference is load-bearing at the edge: is_enum_like_name reaches its
+// the difference matters at the edge: is_enum_like_name reaches its
 // check only past an empty-string early return, and the two Map-key/value
 // spelling checks guard on `> 2` and `> 0`.
 pub function is_tuple_type_name(t: string): boolean {
@@ -385,8 +385,8 @@ pub function contains(haystack: string, needle: string): boolean {
 // parse_f64_bits converts a decimal float spelling to the i64 IEEE-754
 // bit pattern of the nearest double (round-to-nearest, ties-to-even). It
 // exists so the codegen emitters can lay down EXACT f64 bits (`.long`
-// halves) instead of a decimal `.double` directive, whose rounding is at
-// the mercy of the downstream assembler — GNU `as`, for one, rounds ties
+// halves) instead of a decimal `.double` directive, whose rounding is
+// decided by the downstream assembler — GNU `as`, for one, rounds ties
 // half-UP, so a literal on a ULP tie (e.g. 9007199254740993.0 = 2^53+1)
 // gets the wrong bits. Emitting the bits directly makes float output
 // assembler-independent (#5434, the emit-side sibling of SH-004).
@@ -670,7 +670,7 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
 // arr_push_cliff_report prints the process-wide rc==1 append-cliff count to
 // stderr when FERN_CLIFF_REPORT is set, and passes `code` through unchanged.
 //
-// This is the compiler's own dose of the medicine #6023 built for compiled
+// This is the compiler's own use of the counter #6023 built for compiled
 // PROGRAMS. __fern_arr_push_grow mutates in place only at rc == 1, so a stray
 // retain upstream makes every append in a threaded accumulator copy the whole
 // buffer — correct output, quadratic bytes moved. The counter reports the

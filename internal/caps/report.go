@@ -57,7 +57,7 @@ type Row struct {
 //   - A trait's default body counts at the package that DECLARED the
 //     trait, not the one that wrote the `impl` inheriting it: the
 //     effectful code is the trait author's. Adopting a trait would
-//     otherwise launder its capabilities onto the adopter (#8450).
+//     otherwise pass its capabilities onto the adopter (#8450).
 //
 // The result is deterministic: rows sort by package name, uses by
 // capability, and each chain is the first one a FIFO walk over the

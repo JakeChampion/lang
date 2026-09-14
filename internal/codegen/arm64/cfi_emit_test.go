@@ -198,7 +198,7 @@ func TestDarwinEmitsCFI(t *testing.T) {
 // name. The architecture half, because the cross-compiler is
 // `aarch64-linux-gnu-gcc` on an x86-64 host but plain `gcc` on an aarch64 one,
 // so a name-only lookup either misses the native tool or picks up the wrong
-// architecture's — the x86-64 sibling learned that on an aarch64 runner.
+// architecture's — the x86-64 sibling hit that on an aarch64 runner.
 //
 // The object-format half, because being aarch64 is not sufficient. On Apple
 // Silicon `clang` assembles aarch64 and targets Mach-O, then rejects

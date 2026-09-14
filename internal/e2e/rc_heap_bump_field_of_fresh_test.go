@@ -8,7 +8,7 @@ import (
 
 // Field-of-fresh reclamation (the FieldAccess sibling of index-of-fresh /
 // `.len()`). A scalar field access on a fresh struct/tuple result —
-// `mk(i).x` — loaded the field and dropped the box on the floor, leaking it
+// `mk(i).x` — loaded the field and left the box unreclaimed, leaking it
 // every iteration (struct 240000 -> 2400000 in a loop). The FieldAccess
 // lowering only saw declared-var targets; a fresh call / literal container
 // was orphaned.

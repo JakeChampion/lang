@@ -70,7 +70,7 @@ func BoxMutatedCaptures(prog *ast.Program, info *checker.Info) {
 // E049-read-only INSIDE the closure, but the ENCLOSING scope can still
 // reassign them after the closure is created — the interpreter (the oracle,
 // #2896) sees that new binding, so a compiled capture must share the cell by
-// reference too (#5301). The boxed pointer rides one cell slot exactly like a
+// reference too (#5301). The boxed pointer occupies one cell slot exactly like a
 // scalar: `x = v` becomes an in-place `x[0] = v` store through the shared
 // cell, and the cell OWNS that element: the IR's emitBoxedCellStore retains an
 // alias-shaped new value and releases the one it supersedes, so a rebinding

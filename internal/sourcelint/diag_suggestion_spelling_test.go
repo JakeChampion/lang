@@ -20,8 +20,8 @@ import (
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // There is no prelude, and `@derive` / `impl` resolve a trait by the name
-// as written, so a diagnostic that spells a bare `@derive(Eq)` sends the
-// reader straight into `error[E021]: @derive(Eq): unknown trait`. Four
+// as written, so a diagnostic that spells a bare `@derive(Eq)` gives the
+// reader only `error[E021]: @derive(Eq): unknown trait`. Four
 // messages did exactly that for a long time and nothing noticed (#6990):
 // the checker differential compares CODE SETS between the two compilers
 // and never their message text, so both were free to say the same wrong
@@ -63,7 +63,7 @@ func TestDiagnosticSuggestionsNameAQualifiedTrait(t *testing.T) {
 
 	// The native compiler: every non-test Go file that can print a
 	// diagnostic. Parsing rather than grepping is what keeps the check
-	// honest — `@derive(Trait, …)` shows up in a dozen doc comments, and
+	// correct — `@derive(Trait, …)` shows up in a dozen doc comments, and
 	// only a STRING can reach a user.
 	for _, dir := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {

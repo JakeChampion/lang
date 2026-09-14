@@ -6,7 +6,7 @@
 // every backend see only ordinary flat arms (the same shape if-let /
 // let-else already desugar to). These tests pin that the compiled x86-64
 // binary agrees with the interpreter oracle across the shapes the desugar
-// must get right: the headline `Some(Ok(n))`, a flat sibling arm, guards,
+// must get right: the main case `Some(Ok(n))`, a flat sibling arm, guards,
 // deep nesting, one-nested-plus-one-plain payload, the expression form,
 // the outer-`_` fallthrough (a payload matching no inner pattern must
 // run the outer wildcard body, not bail non-exhaustive), and a payload-less
@@ -23,7 +23,7 @@ var nestedPatternCases = []struct {
 	want int
 }{
 	{
-		// Headline: `Some(Ok(n))` binds n through two levels. Folds all three
+		// Main case: `Some(Ok(n))` binds n through two levels. Folds all three
 		// outcomes so one exit code exercises every arm.
 		name: "some_ok_headline",
 		src: `function g(o: Option[Result[i32, i32]]): i32 {
@@ -139,7 +139,7 @@ function main(): i32 { return g(Wrap(Ok2(5))) + g(Wrap(Err2)) * 10 + g(Bare) * 1
 	{
 		// A flat sibling of a nested arm is merged into the inner match as a
 		// wildcard, so a bare name there was a binder too — `Wrap(Err2)`
-		// beside `Wrap(Ok2(n))` swallowed `Wrap(Third)` and returned 9. The
+		// beside `Wrap(Ok2(n))` matched `Wrap(Third)` and returned 9. The
 		// empty parens are the spelling that tests the tag; this folds all
 		// three payloads so the exit code depends on which arm ran.
 		name: "merged_sibling_payloadless",
@@ -157,7 +157,7 @@ function main(): i32 { return g(Wrap(Ok2(5))) + g(Wrap(Err2)) * 10 + g(Wrap(Thir
 		want: 195, // 5 + 90 + 100
 	},
 	{
-		// A TUPLE sub-pattern in a payload slot (`Pr((a, b))`). It rides the
+		// A TUPLE sub-pattern in a payload slot (`Pr((a, b))`). It uses the
 		// same group-by-variant desugar variant sub-patterns use — the slot
 		// binds a temp and the inner match is a tuple match — so the only
 		// parser change was recognising `(` as a sub-pattern start. Folds a
@@ -241,7 +241,7 @@ func TestNestedPatternX86_64(t *testing.T) {
 }
 
 // TestNestedPatternWasm confirms the desugar is backend-agnostic by
-// running the headline + fallthrough cases through the wasm pipeline.
+// running the main + fallthrough cases through the wasm pipeline.
 func TestNestedPatternWasm(t *testing.T) {
 	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form", "payloadless_inner", "tuple_in_payload"} {
 		var tc = nestedPatternCasesByName(t, name)

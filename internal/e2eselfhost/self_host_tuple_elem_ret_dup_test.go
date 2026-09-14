@@ -89,7 +89,7 @@ function main(): i32 {
 			// Adversarial: the element passed ONWARD (`sink(src.1)`) is a
 			// composite return value, not the dup shape — rctuple_esc_expr
 			// still reads it as an escape... but sink borrows, so TUPB's
-			// verdict rides the call-arg tier, not this port. What this row
+			// verdict comes from the call-arg tier, not this port. What this row
 			// pins is the EXIT and free-safety either way.
 			name: "elem_onward_stays_sound",
 			src: `function sink(xs: i32[]): i32 { return xs.len(); }
@@ -114,7 +114,7 @@ function main(): i32 {
 			// the callee's caller keeps its refusal — a safe leak, pinned by
 			// frees so a silent widening moves a number. Measured 200/0/8000
 			// per 100 rounds: keep's box leaks (TUPB refused) and the element
-			// leaks with it — its bind-retain count rides out to the caller
+			// leaks with it — its bind-retain count goes out to the caller
 			// and back to rest at 1 inside the never-freed box.
 			name: "bind_spelling_stays_refused",
 			src: `function get(src: (i32, i32[])): i32[] {

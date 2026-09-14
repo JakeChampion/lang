@@ -12,7 +12,7 @@ import (
 // native-link parity gates run for real on one lane only, so a silent skip
 // there reports green while covering nothing.
 //
-// The flag became load-bearing when the bare-`gcc` fallback was gated to
+// The flag became essential when the bare-`gcc` fallback was gated to
 // x86-64 hosts. That gate is right — an aarch64 `gcc` cannot assemble what the
 // x86-64 backend emits — but it also means the x86_64 leg losing its compiler
 // now reads as a skip rather than as the assembler error it used to be.

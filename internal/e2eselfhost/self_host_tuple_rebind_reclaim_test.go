@@ -45,7 +45,7 @@ function main(): i32 {
 
 // TestSelfHostTupleRebindReclaimX86_64 — a rebound scalar-tuple local frees every
 // box it supersedes as well as its final value. allocs == frees is the
-// load-bearing assertion: frees short of allocs is the leak this closes, frees
+// essential assertion: frees short of allocs is the leak this closes, frees
 // ABOVE allocs would mean the rebind release and the scope-exit sweep both claimed
 // one box (a double free).
 func TestSelfHostTupleRebindReclaimX86_64(t *testing.T) {

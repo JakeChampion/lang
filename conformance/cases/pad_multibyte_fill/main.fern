@@ -9,7 +9,7 @@
 // The fill is now the first CHARACTER, repeated whole. A fill that does
 // not divide the padding leaves the remainder unfilled, so the result
 // can be up to one character short of the requested byte width; that is
-// the honest answer when the width is counted in bytes and the fill is
+// the correct answer when the width is counted in bytes and the fill is
 // not one byte wide.
 //
 // Single-byte fills — every caller in this repo — must be byte-for-byte

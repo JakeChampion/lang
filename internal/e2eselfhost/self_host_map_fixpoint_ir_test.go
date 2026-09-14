@@ -22,7 +22,7 @@ import (
 // Fixpoint contract: growth at N=50 == growth at N=5000, non-zero, under a
 // hard leak guard. The fixed-exit cases pin value-correctness churn and the
 // alias negative (`var x = m.insert(..)` must keep m EXCLUDED from reclaim —
-// the identity-smuggle UAF guard — while staying value-correct).
+// the identity-pass-through UAF guard — while staying value-correct).
 // self_host_map_reclaim_ir_test.go keeps the value-only reclaim cases; these
 // are the bump-scaling twins.
 var mapFixpointIRCases = []struct {

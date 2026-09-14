@@ -29,7 +29,7 @@ import "./util";
 
 // capabilities is the v1 vocabulary, sorted. Deliberately coarse (see the
 // brief): path- or host-level filtering is out of scope for v1. The sort is
-// load-bearing — analyze emits a row's uses in this order rather than sorting
+// required — analyze emits a row's uses in this order rather than sorting
 // them afterwards.
 pub function capabilities(): string[] {
     return ["env", "fs", "net", "random", "subprocess", "time"];

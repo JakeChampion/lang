@@ -5,7 +5,7 @@ import "std/i64" as i64m;
 // and std/i64.midpoint: the overflow-safe average (a & b) + ((a ^ b) >> 1),
 // rounded toward negative infinity. The naive (a+b)/2 overflows for large
 // same-sign operands (the classic binary-search bug); this form never does, so
-// the near-MAX cases are the crux. Scalar bit-ops, so this rides all four
+// the near-MAX cases are the crux. Scalar bit-ops, so this runs on all four
 // native backends and both self-host gates. The Go-side TestIntMidpoint pins
 // the native backends; this is the migration-shaped companion.
 

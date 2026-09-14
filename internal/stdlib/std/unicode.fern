@@ -648,7 +648,7 @@ function _is_lower_cp(cp: i32): boolean {
 // === The `char` surface ===
 //
 // A `char` is a Unicode scalar value, distinct in the checker from the
-// `i32` a byte rides in (#5629). These are METHODS rather than free
+// `i32` a byte is stored in (#5629). These are METHODS rather than free
 // functions because a free `to_upper(c: char)` would collide with
 // `to_upper(s: string)` above — and because `c.to_upper()` next to
 // `s.to_upper()` is exactly the point: the receiver TYPE says which of
@@ -1149,7 +1149,7 @@ pub function grapheme_count(s: string): i32 {
 // correct-by-default sibling of `reverse_bytes`. An accented letter or a
 // family emoji comes back intact rather than scrambled.
 //
-// `reverse_bytes` keeps its name and its place: it is the honest one,
+// `reverse_bytes` keeps its name and its place: it is the explicit one,
 // carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
     var gs: string[] = graphemes(s);
@@ -1214,7 +1214,7 @@ function _wb_next(s: string, i: i32): i32 {
 
 // _wb_break decides whether a word boundary falls before the current
 // code point, following the UAX #29 rules in their numbered order. As
-// with the grapheme rules the order is load-bearing: WB3 has to beat
+// with the grapheme rules the order is essential: WB3 has to beat
 // WB3a, and WB999 only speaks once every joining rule has declined.
 //
 // The two histories are deliberately separate. `raw_prev` is the code

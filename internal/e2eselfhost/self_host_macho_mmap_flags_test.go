@@ -45,7 +45,7 @@ func hasMovzImm(raw []byte, imm16 uint32) bool {
 // not Linux's 0x20, so 0x4022 asked for a FILE mapping with fd = -1: mmap
 // failed, the `b.mi` took the .Lalloc_oom trap, and EVERY arm64-darwin binary
 // the self-host compiler produced died "heap arena exhausted" (exit 137) on its
-// first allocation — a lie about the cause, since the arena was never mapped.
+// first allocation — misleading about the cause, since the arena was never mapped.
 //
 // This asserts the emitted bytes on any host, which matters because the runtime
 // half cannot run here: qemu speaks only the Linux ABI, and the one test that

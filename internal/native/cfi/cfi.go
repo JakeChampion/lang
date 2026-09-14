@@ -12,7 +12,7 @@
 //
 // and the Mach-O image of the same arm64 rules differs again (code
 // alignment 1, 8-byte pcrel pointers). Writing that three times is the
-// divergence class #7903 exists to kill, so the machinery lives here once and
+// divergence class #7903 exists to prevent, so the machinery lives here once and
 // each target supplies a Profile.
 //
 // Every profile is pinned from the platform assembler, never from the DWARF
