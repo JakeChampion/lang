@@ -54,7 +54,9 @@ struct State {
     // body is produced under, and `requests` the instances it asks for.
     template: boolean,
     binding: ssasem.Binding,
-    requests: Request[]
+    requests: Request[],
+    // The symbol this body defines: the declaration's name, or the instance's.
+    name: string
 }
 
 struct Value { s: State, id: i32 }
@@ -542,8 +544,19 @@ function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type)
     return define(s, ssasem.tuple_new(), ids, 0, "", built);
 }
 
+// A capture read out of a closure body's environment: `__env[k]` is the
+// record projection of field k, typed by the capture the lift wrote there.
+function environment_read(ix: ast.ExprIndex, container: Value, s: State): Value {
+    var caps: typeinfo.Type[] = semtypes.env_captures(s.values[container.id]);
+    var slot: i32 = 0;
+    if let ast.ExprNumber(n) = ix.index { if (decimal(n.text)) { slot = util.digits_to_i32(n.text); } }
+    if (slot < 1 || slot > caps.len()) { return refused(s, "environment projection"); }
+    return define(s, ssasem.record_get(), [container.id], slot, "c" + util.i32_to_string(slot), caps[slot - 1]);
+}
+
 function index(ix: ast.ExprIndex, s: State): Value {
     var container: Value = expr(ix.array, s, typeinfo.unchecked());
+    if (container.s.ok && semtypes.is_env(container.s.values[container.id])) { return environment_read(ix, container, container.s); }
     var at: Value = expr(ix.index, container.s, t_i32());
     s = at.s;
     if (!s.ok) { return at; }
@@ -1079,10 +1092,12 @@ function is_slice_call(name: string, c: ast.ExprCall): boolean {
 // environment parameter, and it joins the call table — a refused body refuses
 // its constructor the way a refused callee refuses its caller.
 //
-// The box is a fresh unit of this function's own, and its release is one
-// decrement with no walk of its slots: a function type names no capture for a
-// drop helper to be derived from, so a reference in a slot would be a unit
-// nothing owns. Every capture is therefore a VALUE.
+// The box is a fresh unit of this function's own, and it owns one unit of
+// every capture that is a reference: the body's environment record names
+// them (`semtypes.is_env`), so the constructor supplies them like a record's
+// fields and the box's release walks them by that record's own drop helper,
+// matched at run time against the address in slot 0 since a function type
+// names no capture.
 //
 // A counted PARAMETER is a consuming slot, and the type the box hands out
 // spells it (`ssasem.closure_type`), so a call through the box and the body's
@@ -1105,7 +1120,7 @@ function closure(body: string, c: ast.ExprCall, s: State): Value {
         contract = ssasem.instantiate_contract(contract, s.binding, vars);
         s = request(s, body, contract.name, s.binding);
     }
-    var caps: Captured = captures(c, s);
+    var caps: Captured = captures(c, s, ssasem.closure_captures(contract));
     s = caps.s;
     if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
     if (ssasem.find_contract(s.calls, contract.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
@@ -1114,14 +1129,17 @@ function closure(body: string, c: ast.ExprCall, s: State): Value {
 
 struct Captured { s: State, ids: i32[] }
 
-function captures(c: ast.ExprCall, s: State): Captured {
+// Each capture is produced at the type the body's environment declares for
+// its slot; the box takes one unit of every reference among them.
+function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
+    if (c.args.len() != types.len()) { return Captured { s: fail(s, "closure capture count"), ids: [] }; }
     var ids: i32[] = [];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = expr(c.args[i], s, typeinfo.unchecked());
+        var v: Value = expr(c.args[i], s, types[i]);
         s = v.s;
         if (!s.ok) { return Captured { s: s, ids: [] }; }
-        if (reference(s.values[v.id])) { return Captured { s: fail(s, "closure capture is a reference"), ids: [] }; }
+        if (!semtypes.equal(s.values[v.id], types[i])) { return Captured { s: fail(s, "closure capture type"), ids: [] }; }
         ids = ids.append(v.id);
         i = i + 1;
     }
@@ -1927,11 +1945,54 @@ function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bindin
     return resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
 }
 
+// A closure body's first parameter is the environment the lift hoisted it
+// with: `__env`, declared as a bare word array and read at the top of the body
+// as `var cap: T = __env[1 + i]`, one capture per slot in slot order. Those
+// leading reads name the captures, so the parameter is typed as the
+// environment record they describe (`semtypes.is_env`), and a body reading no
+// capture keeps the bare array.
+function is_closure_body(fd: parser.FuncDecl): boolean {
+    return fd.receiver_name.len() == 0 && fd.params.len() > 0 && fd.params[0].name == "__env";
+}
+
+function reads_env_slot(e: ast.Expr, slot: i32): boolean {
+    if let ast.ExprIndex(ix) = e {
+        if let ast.ExprIdent(id) = ix.array {
+            if let ast.ExprNumber(n) = ix.index { return id.name == "__env" && n.text == util.i32_to_string(slot); }
+        }
+    }
+    return false;
+}
+
+function env_captures(fd: parser.FuncDecl, scope: checker.Scope, template: boolean, b: ssasem.Binding): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    var at: checker.Scope = scope;
+    for st in fd.body {
+        var read: boolean = false;
+        if let ast.StmtVar(v) = st {
+            if (reads_env_slot(v.init, out.len() + 1)) {
+                read = true;
+                at = checker.bind_stmt(st, at);
+                out = out.append(resolved(checker.scope_type(at, v.name), template, scope, b));
+            }
+        }
+        if (!read) { return out; }
+    }
+    return out;
+}
+
+function env_type(fd: parser.FuncDecl, scope: checker.Scope, template: boolean, b: ssasem.Binding, name: string): typeinfo.Type {
+    var caps: typeinfo.Type[] = env_captures(fd, scope, template, b);
+    if (caps.len() == 0) { return typeinfo.TypeArray { elem: t_i32() }; }
+    return ssasem.env_type(name, caps);
+}
+
 function parameters(fd: parser.FuncDecl, s: State): State {
     var names: string[] = decl_param_names(fd);
     var at: i32 = 0;
     while (at < names.len()) {
         var ty: typeinfo.Type = bound_type(s, names[at], s.scope);
+        if (at == 0 && is_closure_body(fd)) { ty = env_type(fd, s.scope, s.template, s.binding, s.name); }
         if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved parameter type"); }
         var p: Value = define(s, 6, [], at, "", ty);
         s = bind(p.s, names[at], p.id);
@@ -1945,11 +2006,11 @@ function refuse(why: string): Produced {
     return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [] }, modes: [], template: false, key: "", requests: [] };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [] };
+        template: generic_decl(fd, scope), binding: binding, requests: [], name: name };
 }
 
 // ---- record schemas ---------------------------------------------------------
@@ -2002,6 +2063,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     if (semtypes.is_cell(t)) { return schema_of(semtypes.cell_elem(t), s, out); }
     if let typeinfo.TypeStruct(r) = t {
         if (semrecords.find(out.records, t) >= 0) { return out; }
+        if (semtypes.is_env(t)) { return env_entry(t, out); }
         return record_entry(t, r, s, out);
     }
     if let typeinfo.TypeUnion(u) = t {
@@ -2024,6 +2086,18 @@ function fields_of(sig: checker.StructSig): semrecords.Field[] {
         i = i + 1;
     }
     return fields;
+}
+
+// An environment's schema is its type: the address word, then one field per
+// capture, named by its slot the way `environment_read` projects it.
+function env_entry(t: typeinfo.Type, out: Schemas): Schemas {
+    var fields: semrecords.Field[] = [semrecords.Field { name: "code", ty: t_i32() }];
+    var i: i32 = 0;
+    for cap in semtypes.env_captures(t) {
+        i = i + 1;
+        fields = fields.append(semrecords.Field { name: "c" + util.i32_to_string(i), ty: cap });
+    }
+    return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields }) };
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
@@ -2116,7 +2190,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
 pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string): Produced {
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
-    var s: State = initial(fd, scope, contracts, binding);
+    var s: State = initial(fd, scope, contracts, binding, name);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     if (ssasem.is_func(s.result)) { return refuse("function value result"); }
@@ -2144,6 +2218,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
     var at: i32 = 0;
     while (at < names.len()) {
         var ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, scope, ssasem.unbound());
+        if (at == 0 && is_closure_body(fd)) { ty = env_type(fd, scope, generic, ssasem.unbound(), decl_key(fd)); }
         if (!semtypes.shaped(ty, false)) { return none; }
         params = params.append(ty);
         modes = modes.append(decl_param_mode(fd, at, ty));

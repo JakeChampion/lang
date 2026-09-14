@@ -132,6 +132,37 @@ function concrete_container(t: typeinfo.Type): boolean {
     return false;
 }
 
+// A closure body's ENVIRONMENT: the box the lambda lift builds, the body's
+// address in slot 0 and the captures after it. It is typed as a record of
+// its own — `__env$<body>` with the capture types as its arguments — because
+// a record's fields ride the slots an array's elements do: a shape word where
+// the array keeps its length, then one word per field. So a capture is read
+// as a field projection and a box's captures are walked by the record's own
+// drop helper, while the box itself stays the word array every call through
+// it expects.
+pub function env_prefix(): string { return "__env$"; }
+
+pub function is_env(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(s) = t { return prefixed(s.name, env_prefix()); }
+    return false;
+}
+
+pub function env_captures(t: typeinfo.Type): typeinfo.Type[] {
+    if let typeinfo.TypeStruct(s) = t { return s.args; }
+    return [];
+}
+
+// The body whose address the box's slot 0 holds.
+pub function env_body(t: typeinfo.Type): string {
+    if let typeinfo.TypeStruct(s) = t { return slice_unchecked(s.name, env_prefix().len(), s.name.len()) + ""; }
+    return "";
+}
+
+function prefixed(name: string, prefix: string): boolean {
+    if (name.len() <= prefix.len()) { return false; }
+    return slice_unchecked(name, 0, prefix.len()) == prefix;
+}
+
 // Cell[T] is the language's one mutable slot (docs/CELL-TYPE-PLAN.md): a
 // reserved name over a one-element box rather than a declared record, so its
 // element is read from the instantiation and an argless `Cell` names no layout.

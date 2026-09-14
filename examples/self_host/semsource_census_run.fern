@@ -8,6 +8,9 @@
 // chain, because that is the construct worth building next.
 //
 //   $ semsource_census_run <entry.fern>
+//
+// FERN_CENSUS_LIST=<leaf> also names every declaration refused at that leaf,
+// which is what a probe reads before building against a histogram row.
 import "std/io";
 import "./util";
 import "./lexer";
@@ -90,7 +93,16 @@ function template_stage(key: string, instances: semsource.Produced[], stages: St
 }
 
 // Every declaration's stage, and the leaf it stopped at.
+function listed_leaf(): string {
+    match (env("FERN_CENSUS_LIST")) {
+        Some(v) => { return v; },
+        None => { return ""; }
+    }
+    return "";
+}
+
 function report(merged: parser.Module, tab: irlower.StructTab): void {
+    var listed: string = listed_leaf();
     var built: semsource.Built = semsource.build_module(merged);
     var total: i32 = built.decls.len();
     var n_produced: i32 = 0;
@@ -113,6 +125,7 @@ function report(merged: parser.Module, tab: irlower.StructTab): void {
         if (!p.ok) {
             refusals = hist_bump(refusals, p.why);
             leaves = hist_bump(leaves, leaf(p.why));
+            if (listed != "" && leaf(p.why) == listed) { print("  refused " + merged.funcs[i].name + ": " + p.why); }
         } else {
             n_produced = n_produced + 1;
             var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };

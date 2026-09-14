@@ -333,22 +333,29 @@ Unsupported constructs refuse the whole function with a reason.
   parameter the body reads its captures through — so the body joins the call
   table and a refused one refuses its constructor exactly as a refused callee
   refuses its caller, and the address it names is a symbol the module defines.
-  The box is a fresh unit of the constructing function's own, released when
-  dead by the ordinary decrement. The capture COUNT is not checked: a contract
-  records the body's signature, not how many words it reads out of its
-  environment, and one lift writes both sides.
+  The box is a fresh unit of the constructing function's own, and it owns one
+  unit of every capture that is a reference.
 
-  Every capture is a VALUE. That release is one decrement with no walk of the
-  box's slots — a function type names no capture for a drop helper to be
-  derived from, and no static helper could serve a phi joining two bodies with
-  different layouts — so a counted capture would be a unit nothing owns. It is
-  refused ("closure capture is a reference"), which is where the payoff stops
-  anyway: a body capturing one reads it back out of the `i32[]` environment at
-  a type that is not the slot's and refuses on its own account. A wide capture
-  is refused at the physical layer for the reason a wide TUPLE element is —
-  the env box stores each slot through `op_arr_make` at width 32, the one
-  array construction here that is not written at its element's own width —
-  and the lift declines one before that.
+  The captures are named by the body's ENVIRONMENT RECORD. The lift hoists a
+  capturing body with `__env: i32[]` first and reads each capture at the top
+  of the body as `var cap: T = __env[1 + i]`, one per slot in slot order, so
+  those leading reads say what the box holds: the producer types the `__env`
+  parameter as `__env$<body>` with the capture types as its arguments
+  (`semtypes.is_env`), a record whose fields are the address word and then
+  one per capture. A record's fields ride the slots an array's elements do —
+  a shape word where the array keeps its length, then one word per field —
+  so `__env[k]` is the record projection of field `k` typed by the capture,
+  the constructor is checked against the same list (count and type, one lift
+  writes both sides), and the box's release walks the captures with the
+  record's own drop helper. A function type names no capture, so a box is
+  matched at run time: the drop compares slot 0 with the address of each
+  environment the function's schema table names and calls that helper, and a
+  box that matches none — one whose captures own nothing, or one built by an
+  AST-lowered caller, which lends its captures — is released alone. A wide
+  capture is refused at the physical layer for the reason a wide TUPLE
+  element is — the env box stores each slot through `op_arr_make` at width
+  32, the one array construction here that is not written at its element's
+  own width — and the lift declines one before that.
 
   Calling a bound name that holds one is `call_indirect`, environment-FIRST:
   the box, the written arguments, then the address out of slot 0. That is the
@@ -607,8 +614,8 @@ caller hands over, which is the row-less reading already.
 
 The producer does not yet admit the pointer integer width, the
 32-bit float, the remaining builtins, the struct and nested destructuring
-forms, a closure capturing a reference, or a generic method, so no production
-consumer is switched and no AST ownership analysis is deleted.
+forms, or a generic method, so no production consumer is switched and no AST
+ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
