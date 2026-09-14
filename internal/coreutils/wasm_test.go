@@ -69,6 +69,13 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "wc", stdin: "a\nb\n"},
 		{util: "wc", args: []string{"in.txt", "-"}, stdin: "q\n", preopen: true},
 		{util: "wc", args: []string{"-l", "nosuch"}},
+		// dd is the one utility here that WRITES a file, which on wasm
+		// is a preopened directory's `path_open` and then the write
+		// loop; its report lands on stderr, so the record counts are
+		// compared as well as the bytes.
+		{util: "dd", args: []string{"if=in.txt", "of=ddout", "bs=2", "status=noxfer"}, preopen: true},
+		{util: "dd", args: []string{"bs=3", "status=noxfer"}, stdin: "abcdefg"},
+		{util: "dd", args: []string{"if=nosuch", "status=noxfer"}, preopen: true},
 	}
 	for _, c := range cases {
 		name := c.util + " " + strings.Join(c.args, " ")

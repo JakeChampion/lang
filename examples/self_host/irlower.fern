@@ -56826,6 +56826,14 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
     // nonscalar-returning callee stays ineligible (its result would mistype
     // the enc) — struct-returning calls pass via the expr_struct_type gate,
     // and f64[]/i64[]-returning ones via el_typedarr_ok.
+    // `stdin()` / `stdout()` / `stderr()`: a handle IS its fd here, so the
+    // element is one scalar slot exactly as an i32-returning call's is. They
+    // are the only builtins that hand back a handle VALUE (every `open_*`
+    // wraps one in a Result), and without this a `return (stdout(), true)`
+    // bailed the whole module where `var w = stdout(); return (w, true)`
+    // lowered — the difference being nothing but whether the handle was
+    // named first (#9238).
+    var el_handle_ok: boolean = is_handle_builtin_call(el);
     var el_call_ok: boolean = false;
     match (el) {
         ast.ExprCall(scc) => {
@@ -56881,8 +56889,29 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
         },
         _ => {}
     }
-    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok && !el_call_ok && !el_cell_ok) { return false; }
+    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok && !el_call_ok && !el_cell_ok && !el_handle_ok) { return false; }
     return true;
+}
+
+// is_handle_builtin_call reports whether `e` is one of the three calls that
+// evaluate to a HANDLE rather than to a Result holding one: `stdin()`,
+// `stdout()` and `stderr()`. A handle is its descriptor on every target this
+// lowers for, so the value is one scalar slot.
+function is_handle_builtin_call(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                ast.ExprIdent(id) => {
+                    var n: string = lexical.source_name(id.name);
+                    return n == "stdin" || n == "stdout" || n == "stderr";
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // tuple_lit_ctor_eligible reports whether every element of tuple literal `tup` is
