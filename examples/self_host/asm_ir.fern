@@ -1242,6 +1242,13 @@ function fc_pio2_reduce(prefix: string): string {
 // fold's constants live in .rodata, and a label cannot be defined once per
 // call site. %rsi is the string BOX here, not an SSO string — this emitter's
 // strings are two words, [data@0, len@8].
+//
+// The three constants load with `movdqu` rather than `movdqa`, and that is
+// not a style choice: this emitter's data blob is placed EIGHT-byte aligned
+// after .text (`elf.fern`'s `elf_align8`), so a `.align 16` inside it aligns
+// the cursor within the blob and not the address. An aligned load of a
+// constant outside the loop buys nothing on any part this targets, and an
+// instruction stating a precondition the layout does not promise faults.
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .rodata\n");
     s = s.write("    .align 16\n");
@@ -1265,8 +1272,8 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl %edi, %eax\n");
     s = s.write("    cmpl $16, %edx\n");
     s = s.write("    jb .Lcrc32_tail\n");
-    s = s.write("    movdqa .Lcrc32_bswap(%rip), %xmm5\n");
-    s = s.write("    movdqa .Lcrc32_k1(%rip), %xmm2\n");
+    s = s.write("    movdqu .Lcrc32_bswap(%rip), %xmm5\n");
+    s = s.write("    movdqu .Lcrc32_k1(%rip), %xmm2\n");
     s = s.write("    movdqu (%rsi), %xmm0\n");
     s = s.write("    pshufb %xmm5, %xmm0\n");
     s = s.write("    movl %eax, %r11d\n");
@@ -1287,7 +1294,7 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pshufb %xmm5, %xmm8\n");
     s = s.write("    addq $48, %rsi\n");
     s = s.write("    subl $48, %edx\n");
-    s = s.write("    movdqa .Lcrc32_k4(%rip), %xmm9\n");
+    s = s.write("    movdqu .Lcrc32_k4(%rip), %xmm9\n");
     s = s.write(".Lcrc32_fold4:\n");
     s = s.write("    cmpl $64, %edx\n");
     s = s.write("    jb .Lcrc32_combine\n");
