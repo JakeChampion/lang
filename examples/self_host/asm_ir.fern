@@ -3079,6 +3079,35 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbx\n");
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
+        // __fern_buf_push_u64(%rdi = H, %rsi = v): append the eight bytes of
+        // v, least significant first.
+        s = s.write("__fern_buf_push_u64:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq %rsi, %r12\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq 16(%rbx), %rcx\n");
+        s = s.write("    cmpq %rcx, %rax\n");
+        s = s.write("    jbe .Lbufu64_fits\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write(".Lbufu64_fits:\n");
+        s = s.write("    movq (%rbx), %rdx\n");
+        s = s.write("    movq 8(%rbx), %rcx\n");
+        s = s.write("    addq %rcx, %rdx\n");
+        s = s.write("    movq %r12, (%rdx)\n");
+        s = s.write("    movq 8(%rbx), %rax\n");
+        s = s.write("    addq $8, %rax\n");
+        s = s.write("    movq %rax, 8(%rbx)\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
         // __fern_buf_len(%rdi = H) -> %rax = len.
         s = s.write("__fern_buf_len:\n");
         s = s.write("    movq 8(%rdi), %rax\n");
@@ -5690,7 +5719,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // helper's return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_strbuf_append\n    pushq %rax\n");
             s = s.need("strbuf");
-        } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
+        } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306) {  // the buf_* builder
             s = emit_ir_op_buf(o, s);
         } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
@@ -5975,6 +6004,8 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    call __fern_buf_push_range\n    pushq %rax\n");
     } else if (o.kind_tag == 294) {                           // buf_push_byte
         s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push_byte\n    pushq %rax\n");
+    } else if (o.kind_tag == 306) {                           // buf_push_u64
+        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_buf_push_u64\n    pushq %rax\n");
     } else if (o.kind_tag == 295) {                           // buf_len
         s = s.write("    popq %rdi\n    call __fern_buf_len\n    pushq %rax\n");
     } else if (o.kind_tag == 296) {                           // buf_take

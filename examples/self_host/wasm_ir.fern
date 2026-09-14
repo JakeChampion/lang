@@ -1463,6 +1463,7 @@ pub function module_uses_strbuf(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
     return module_emits_op_cached(cache, "buf_new") || module_emits_op_cached(cache, "buf_push")
         || module_emits_op_cached(cache, "buf_push_range") || module_emits_op_cached(cache, "buf_push_byte")
+        || module_emits_op_cached(cache, "buf_push_u64")
         || module_emits_op_cached(cache, "buf_len") || module_emits_op_cached(cache, "buf_take")
         || module_emits_op_cached(cache, "buf_free");
 }
@@ -4430,7 +4431,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // stack: strblock ptr -> copy its bytes onto the builder. Void helper
         // (consumes the arg); push a dummy i32 for the statement-level drop.
         parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
-    } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
+    } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306) {  // the buf_* builder
         parts = emit_wasm_buf_op(o, parts);
     } else if (o.kind_tag == 119) {  // strbuf_take
         // no args -> snapshot the builder into a fresh string box and reset it
@@ -7154,6 +7155,7 @@ function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
     if (o.kind_tag == 292) { return parts.append("    call $__fern_buf_push\n    i32.const 0\n"); }
     if (o.kind_tag == 293) { return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n"); }
     if (o.kind_tag == 294) { return parts.append("    call $__fern_buf_push_byte\n    i32.const 0\n"); }
+    if (o.kind_tag == 306) { return parts.append("    call $__fern_buf_push_u64\n    i32.const 0\n"); }
     if (o.kind_tag == 295) { return parts.append("    call $__fern_buf_len\n"); }
     if (o.kind_tag == 296) { return parts.append("    call $__fern_buf_take\n"); }
     return parts.append("    call $__fern_buf_free\n    i32.const 0\n");  // buf_free
@@ -7309,6 +7311,18 @@ pub function buf_helpers(): string {
     o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 1)))))\n";
     o = o + "    (i32.store8 (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $x))\n";
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 1))))\n";
+    // push_u64(H, v): append the eight bytes of v, least significant first.
+    // One i64.store where the byte form would be eight calls (#9221). The
+    // destination is wherever the builder's length left it, so it is
+    // unaligned as often as not, which wasm allows: the alignment immediate
+    // is a hint about the address, never a constraint on it.
+    o = o + "  (func $__fern_buf_push_u64 (param $h i32) (param $v i64)\n";
+    o = o + "    (local $len i32)\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.const 8)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 8)))))\n";
+    o = o + "    (i64.store (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $v))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 8))))\n";
     // len(H) -> the bytes accumulated so far.
     o = o + "  (func $__fern_buf_len (param $h i32) (result i32)\n";
     o = o + "    (i32.load (i32.add (local.get $h) (i32.const 4))))\n";

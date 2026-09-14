@@ -932,7 +932,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
 				case "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
-					"buf_len", "buf_take", "buf_free":
+					"buf_push_u64", "buf_len", "buf_take", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
 					needs.add(op.Str)
@@ -1157,6 +1157,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_byte":          {"__fern_buf_reserve"},
+	"buf_push_u64":           {"__fern_buf_reserve"},
 	"buf_free":               {"__fern_box_free"},
 	// The slice header is an rc1 block; as_bytes also promotes an inline
 	// string's bytes through the bare allocator.
@@ -2007,6 +2008,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildBufPushByteBody,
+	},
+	"buf_push_u64": {
+		// (h, v) → (). The eight bytes of v, least significant first.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: nil,
+		body:    buildBufPushU64Body,
 	},
 	"buf_len": {
 		// (h) → count.
@@ -4656,7 +4663,7 @@ func buildStrbufTakeBody(idxs map[string]uint32) []byte {
 
 // The capacity-carrying string builder (#8773) — `buf_new(cap)` /
 // `buf_push(b, s)` / `buf_push_range(b, s, lo, hi)` / `buf_push_byte(b, x)` /
-// `buf_len(b)` / `buf_take(b)` / `buf_free(b)`. Unlike the singleton strbuf
+// `buf_push_u64(b, v)` / `buf_len(b)` / `buf_take(b)` / `buf_free(b)`. Unlike the singleton strbuf
 // above there may be any number of builders live at once, so the state moves
 // out of the scratch words and into a control block the handle addresses.
 // Four i32 words on wasm32:
@@ -4944,6 +4951,31 @@ func buildBufPushByteBody(idxs map[string]uint32) []byte {
 	body = bufDst(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+}
+
+// buildBufPushU64Body assembles wasm bytes for buf_push_u64.
+//
+// Signature: (h i32, v i64) → (). Locals: $need (2).
+//
+// The destination is wherever the builder's length left it, so the store is
+// unaligned as often as not — which wasm allows: the alignment immediate is a
+// hint about the address, never a constraint on it.
+func buildBufPushU64Body(idxs map[string]uint32) []byte {
+	reserve := idxs["__fern_buf_reserve"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 2)
+	body = bufReserveCall(body, reserve, 0, 2)
+	body = bufDst(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI64Store(body, 3, 0)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Store(body, 2, 4)

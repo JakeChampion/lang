@@ -1852,7 +1852,7 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
-	case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len", "buf_take", "buf_free":
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
@@ -3615,6 +3615,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push_range"
 		case "buf_push_byte":
 			target = "__fern_buf_push_byte"
+		case "buf_push_u64":
+			target = "__fern_buf_push_u64"
 		case "buf_len":
 			target = "__fern_buf_len"
 		case "buf_take":
@@ -11351,6 +11353,37 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_buf_push_byte, .-__fern_buf_push_byte")
 
+	// __fern_buf_push_u64(H, v): append the eight bytes of `v`, least
+	// significant first. One store where eight buf_push_byte calls would
+	// be eight of everything (#9221).
+	g.line("")
+	g.line(".globl __fern_buf_push_u64")
+	g.line(".type __fern_buf_push_u64, @function")
+	g.label("__fern_buf_push_u64")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, 8")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbufu64_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbufu64_fits")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov qword ptr [rdi], r12")
+	g.emit("add qword ptr [rbx + 8], 8")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push_u64, .-__fern_buf_push_u64")
+
 	// __fern_buf_len(H) -> len
 	g.line("")
 	g.line(".globl __fern_buf_len")
@@ -12731,30 +12764,57 @@ func (g *generator) emitGetgroupsRuntime() {
 // emitRandomBytesRuntime emits `__fern_random_bytes(n)` —
 // allocates a fresh `u8[]` of n bytes via `__alloc_u8` (which
 // owns the header layout and the n==0 empty sentinel) and
-// fills it with kernel CSPRNG output via a single
-// `getrandom(buf, n, 0)` syscall (Linux x86-64 #318;
-// blocks at most very briefly until the urandom pool is
-// initialised; flags=0). Returns the data pointer.
+// fills it with kernel CSPRNG output from
+// `getrandom(buf, n, 0)` (Linux x86-64 #318; blocks at most
+// very briefly until the urandom pool is initialised;
+// flags=0). Returns the data pointer.
+//
+// The call LOOPS. getrandom returns how many bytes it wrote,
+// and for a request past one page it may write fewer and
+// return early when a signal arrives — or -EINTR having
+// written none. A single call would leave the tail of the
+// buffer as the allocator left it, which is zeros: silence
+// where a caller asked for randomness (#9221). A hard error
+// (EFAULT, EINVAL — neither reachable from this call shape)
+// ends the loop rather than spinning, because the signature
+// has nowhere to report one.
 func (g *generator) emitRandomBytesRuntime() {
+	const eintr = 4
 	g.line("")
 	g.line(".globl __fern_random_bytes")
 	g.line(".type __fern_random_bytes, @function")
 	g.label("__fern_random_bytes")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")     // n
-	g.emit("push r12")     // data ptr
+	g.emit("push rbx")     // bytes still wanted
+	g.emit("push r12")     // data ptr (the return value)
+	g.emit("push r13")     // write cursor
 	g.emit("mov ebx, edi") // rbx = n
 	g.emit("mov edi, ebx")
 	g.emit("call __alloc_u8")
 	g.emit("mov r12, rax") // r12 = data ptr
-	// getrandom(buf=r12, n=rbx, flags=0); a no-op write when
-	// n == 0 (the shared empty sentinel is never written).
-	g.emit("mov rdi, r12")
+	g.emit("mov r13, rax") // cursor starts at the front
+	// n == 0 leaves the shared empty sentinel untouched: the
+	// loop's own guard covers it.
+	g.label(".Lrandbytes_loop")
+	g.emit("test rbx, rbx")
+	g.emit("jz .Lrandbytes_done")
+	g.emit("mov rdi, r13")
 	g.emit("mov rsi, rbx")
 	g.emit("xor edx, edx")
 	g.emitSyscall(sysGetrandom)
+	g.emit("test rax, rax")
+	g.emit("jg .Lrandbytes_wrote")
+	g.emit(fmt.Sprintf("cmp rax, -%d", eintr))
+	g.emit("je .Lrandbytes_loop")
+	g.emit("jmp .Lrandbytes_done")
+	g.label(".Lrandbytes_wrote")
+	g.emit("add r13, rax")
+	g.emit("sub rbx, rax")
+	g.emit("jmp .Lrandbytes_loop")
+	g.label(".Lrandbytes_done")
 	g.emit("mov rax, r12")
+	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")

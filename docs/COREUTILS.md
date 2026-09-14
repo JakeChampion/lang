@@ -266,6 +266,14 @@ directory the guest was not given. Note for anyone running a utility by hand:
 `wasmtime run util.wasm -- --version` hands the `--` to the guest as
 `argv[1]`, which every utility rightly takes as the end of its options.
 
+Not every utility can be in the leg. `shred` does not BUILD for
+`wasm32-wasi`: `-f` makes an unwritable entry writable, which is `chmod`,
+which needs `fsmode` — a mode word no wasm host has — so E066 refuses it
+post-tree-shake. That is the same answer `sort --batch-size` gets, and for
+the same reason: the alternative is a `-f` that silently does not force.
+Writer.seek, the primitive shred is built on, is covered on both previews
+by `internal/e2e/handle_stat_seek_test.go` instead.
+
 ## Layout
 
 ```
@@ -685,6 +693,48 @@ were a strcmp per entry.
 | `date` | date -f 10000 lines | 83.31 ± 2.09 | 40.54 ± 2.19 | 13.61 ± 1.04 | 0.49× | 0.16× |
 | `date` | date -u -R | 0.35 ± 0.09 | 1.34 ± 0.15 | 2.20 ± 0.20 | 3.88× | 6.35× |
 | `date` | date --debug | 0.35 ± 0.09 | 1.34 ± 0.12 | 2.89 ± 0.21 | 3.87× | 8.33× |
+
+**shred, 2026-09-14**, the same host, its workloads file run alone (mean ±
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `shred` | shred one small file | 2.57 ± 0.97 | 3.62 ± 0.80 | 5.31 ± 1.04 | 1.41× | 2.07× |
+| `shred` | shred 200 small files | 490.77 ± 37.87 | 712.54 ± 26.95 | 1078.32 ± 38.24 | 1.45× | 2.20× |
+| `shred` | shred 200 small files in one run | 457.97 ± 42.49 | 451.79 ± 46.35 | 575.05 ± 50.54 | 0.99× | 1.26× |
+| `shred` | shred 4MiB default passes | 32.65 ± 4.73 | 42.18 ± 8.12 | 23.24 ± 2.19 | 1.29× | 0.71× |
+| `shred` | shred 4MiB -n 1 | 13.04 ± 1.75 | 16.02 ± 2.77 | 11.52 ± 1.47 | 1.23× | 0.88× |
+| `shred` | shred 4MiB -n 1 -z | 18.86 ± 2.91 | 24.25 ± 2.60 | 16.30 ± 1.45 | 1.29× | 0.86× |
+| `shred` | shred 4MiB -n 1 from a file source | 7.58 ± 1.10 | 16.78 ± 6.60 | 5.97 ± 1.76 | 2.21× | 0.79× |
+| `shred` | shred 4MiB -n 4 from a file source | 23.82 ± 2.53 | 42.83 ± 6.35 | 5.21 ± 0.79 | 1.80× | 0.22× |
+| `shred` | shred 4MiB -n 1 -x | 12.57 ± 1.62 | 15.69 ± 2.32 | 12.03 ± 1.65 | 1.25× | 0.96× |
+| `shred` | shred 200 sub-block files | 511.36 ± 58.51 | 507.14 ± 71.61 | 494.73 ± 25.57 | 0.99× | 0.97× |
+| `shred` | shred -u 200 small files | 492.70 ± 65.62 | 696.74 ± 39.89 | 846.74 ± 88.56 | 1.41× | 1.72× |
+| `shred` | shred -n 0 -u 200 small files | 349.06 ± 17.16 | 578.00 ± 74.66 | 567.56 ± 23.96 | 1.66× | 1.63× |
+| `shred` | shred -s 4096 of a 4MiB file | 7.70 ± 2.20 | 8.38 ± 1.67 | 9.07 ± 1.20 | 1.09× | 1.18× |
+
+Eleven of thirteen rows win and the other two are inside a σ on a workload
+whose reseeding forks 200 GNU `head`s per run; per file `shred.fern` makes 9
+syscalls against GNU's 41. Three measurements got it there, in order of what
+they were worth:
+
+- A PATTERN pass is at the write floor — 5.6 ms for 4 MiB against `dd`'s own
+  5.8 with the same `fdatasync` — once the pattern block is laid down ONCE per
+  pass with `repeat` instead of a byte at a time per block (34 ms to 5.6), and
+  once a random pass stops building a pattern block it throws away.
+- A RANDOM pass was the whole of what was left, and the cause was not shred:
+  `random_bytes` is one `getrandom(2)` per block and the kernel's generator
+  runs at 320 MB/s here — `dd if=/dev/urandom` costs the same 13 ms for
+  4 MiB — where GNU seeds ISAAC from /dev/urandom once and produces the rest
+  in userspace at about twice that. So the default source is now
+  `std/rand`'s seeded generator over `buf_push_u64` (#9221), which fills
+  4 MiB in 5.6 ms, and every random row moved from 0.61–0.69× to 1.23–1.29×.
+  A generator written in Fern could not have closed it before that primitive:
+  assembling the bytes cost 8 ns each through an array append and 5 ns
+  through `buf_push_byte`, both dearer than the syscall they would replace.
+- The block size is 60 KiB: a multiple of three, so every block starts at the
+  same point in a pattern's cycle and one block serves the pass, and of 4096,
+  so the writes stay aligned.
 
 Before this branch those rows read `join` 0.10x, `dircolors` 0.29x, `fmt`
 0.12x, `comm` 0.26x, `uniq` 0.55–0.86x, `seq 1 2 1000000` 0.88x (the
@@ -1411,6 +1461,18 @@ beside `access` and `write_file_exec` and is refused there — WASI has no
 file-mode creation mask, and `path_create_directory` has no mode either, which
 is the same fact twice. `docs/FREESTANDING-CORE.md` carries both.
 
+`buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
+bytes into the capacity-carrying builder in one store, little-endian, which is
+how every target holds a u64. It exists because a byte at a time is not fast
+enough to be worth having: a generator whose arithmetic costs 2.5 ms for 4 MiB
+of words spent 23 ms handing the bytes over one `buf_push_byte` call each, and
+35 ms through an array append. With it, `std/rand`'s `rng_fill` produces 4 MiB
+in 5.6 ms where `random_bytes` needs 15.3, which is what `shred`'s random
+passes are built on. Its SSA lowering in the self-hosted compiler is
+deliberately absent: that backend stores a string as one byte per EIGHT-byte
+word, so the single store would be eight and the op would lose its reason to
+exist — a module using it takes the IR path, which is the production default.
+
 What is deliberately NOT here: `create_dir_all` and `remove_dir_all`, which
 already existed. Neither is the primitive `mkdir(1)` or `rmdir(1)` needs —
 the first folds every EEXIST into `Ok(())` and cannot say whether it created
@@ -1418,6 +1480,29 @@ anything, the second drains a tree and ignores a missing target — and the
 errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
+
+**`shred -` is refused rather than shredding standard output.** GNU has three
+answers for the operand and which one is right depends on how fd 1 was
+OPENED: a regular file is overwritten, an append-only one is `cannot shred
+append-only file descriptor`, a pipe is `invalid file type`. Nothing here can
+ask that question — an `O_APPEND` handle stats and seeks exactly like a plain
+one — so the operand reports that the flags are unavailable on this system and
+exits 1. #9219 is the primitive (`w.flags()`, fcntl `F_GETFL`); the refusal
+goes away with it, and it is the only operand shape shred does not carry.
+
+**What a `shred` corpus can compare, and what nothing can.** GNU's pass
+SCHEDULE is drawn at random: two runs of `-n 10` over identical files disagree
+on both the order of the patterns and the SET of them, so `-v` output past the
+all-random range compares against nothing, GNU included. Every case in the
+corpus therefore stays at `-n 3` or below, where every pass is `random`, or at
+`-n 0`, where there are none. The BYTES are unrepeatable for the same reason
+except through `--random-source`, and there the whole content compares — which
+is what gates the write path, including the sweep GNU runs over a file about
+to grow: a file shorter than one block is overwritten at its own length first,
+once per pass and silently, and only then at the rounded-up length where the
+pass lines are, so an 11-byte file under `-n 2` is written 11, 11, 4096, 4096.
+That sweep is invisible to a source of one repeated byte, so the corpus seeds
+a second source whose every byte differs.
 
 **`expr`'s empty alternation branch inside a COUNTED repetition follows no
 branch order at all.** glibc demotes a branch that compiles to nothing — `expr
@@ -2058,9 +2143,9 @@ groups are the order of work. Each sub-issue names its group.
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` (their primitive is here: `w.seek(offset, whence)`, lseek on a
-  Writer, which is what writing at an offset without rewriting the file
-  needs) `stty`, `uptime` (done — no new primitive: the boot time and the
+  (its primitive is here: `w.seek(offset, whence)`, lseek on a Writer,
+  which is what writing at an offset without rewriting the file needs)
+  `shred` (done, on that same seek — see the divergences above) `stty`, `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
   clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
   `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:

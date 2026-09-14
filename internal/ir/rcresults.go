@@ -467,7 +467,8 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
 	"buf_push": true, "buf_push_range": true, "buf_push_byte": true,
-	"buf_free": true, "__fern_buf_reserve": true,
+	"buf_push_u64": true,
+	"buf_free":     true, "__fern_buf_reserve": true,
 
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,

@@ -1243,8 +1243,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.StringType{},
 	}
-	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_len /
-	// buf_take / buf_free (#8773) — the capacity-carrying string
+	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_push_u64 /
+	// buf_len / buf_take / buf_free (#8773) — the capacity-carrying string
 	// builder, the strbuf above without the singleton. A builder is a
 	// NUMBER, the address of its own control block, the way an open
 	// file is a descriptor: any number of them may be live at once and
@@ -1282,6 +1282,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_u64(h, v) — eight bytes at a time, LITTLE-endian, which is
+	// the byte order every target here has. It exists because a byte at a
+	// time is not fast enough to be worth having: a generator whose
+	// arithmetic costs 2.5 ms for 4 MiB of words spends 23 ms handing the
+	// bytes over one call each (#9221).
+	c.info.FuncSigs["buf_push_u64"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_len"] = &ast.FuncType{

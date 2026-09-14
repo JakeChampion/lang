@@ -11367,7 +11367,7 @@ function lower_target_name(name: string, s: LowerState): LowerState {
 // ordinary call path exactly as a wrong-arity `strbuf_append` does.
 function buf_builtin_arity(name: string): i32 {
     if (name == "buf_new" || name == "buf_len" || name == "buf_take" || name == "buf_free") { return 1; }
-    if (name == "buf_push" || name == "buf_push_byte") { return 2; }
+    if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") { return 2; }
     if (name == "buf_push_range") { return 4; }
     return 0 - 1;
 }
@@ -11378,24 +11378,47 @@ function buf_builtin_op(name: string): ir.Op {
     if (name == "buf_push") { return ir.op_buf_push(); }
     if (name == "buf_push_range") { return ir.op_buf_push_range(); }
     if (name == "buf_push_byte") { return ir.op_buf_push_byte(); }
+    if (name == "buf_push_u64") { return ir.op_buf_push_u64(); }
     if (name == "buf_len") { return ir.op_buf_len(); }
     if (name == "buf_take") { return ir.op_buf_take(); }
     return ir.op_buf_free();
 }
 
 // lower_call_buf lowers the arguments left to right and emits the op.
-// `buf_push` / `buf_push_range` / `buf_push_byte` / `buf_free` are statement
-// ops (they push a dummy the statement-level drop takes); `buf_new` /
-// `buf_len` / `buf_take` are value ops, and buf_take is str-tracked in
-// expr_is_str.
+// `buf_push` / `buf_push_range` / `buf_push_byte` / `buf_push_u64` /
+// `buf_free` are statement ops (they push a dummy the statement-level drop
+// takes); `buf_new` / `buf_len` / `buf_take` are value ops, and buf_take is
+// str-tracked in expr_is_str.
+//
+// `buf_push_u64`'s value is 64 bits WIDE, and the width has to be settled
+// here: wasm types its stack, so an i32 reaching an i64 parameter is a
+// module the host refuses to compile rather than a truncation nobody sees.
 function lower_call_buf(name: string, c: ast.ExprCall, s: LowerState): LowerState {
+    var wide: i32 = 0 - 1;
+    if (name == "buf_push_u64") { wide = 1; }
     var i: i32 = 0;
     while (i < c.args.len()) {
-        s = lower_expr(c.args[i], s);
+        if (i == wide) {
+            s = lower_arg_u64(c.args[i], s);
+        } else {
+            s = lower_expr(c.args[i], s);
+        }
         if (!s.ok) { return s; }
         i = i + 1;
     }
     return s.emit(buf_builtin_op(name));
+}
+
+// lower_arg_u64 lowers one argument that must arrive 64 bits wide. lower_i64
+// covers a wide literal, an `as u64` cast, a u64 slot and u64 arithmetic, and
+// bails on a 32-bit value; that one is re-lowered from the ORIGINAL state and
+// widened, the same speculative shape lower_opt_make_payload_exp uses.
+function lower_arg_u64(a: ast.Expr, s: LowerState): LowerState {
+    var w: LowerState = lower_i64(a, s);
+    if (w.ok) { return w; }
+    var n: LowerState = lower_expr(a, s);
+    if (!n.ok) { return n; }
+    return n.emit(ir.op_int_extend(true));
 }
 
 // lower_call_named lowers a call whose callee is a bare NAME — a user

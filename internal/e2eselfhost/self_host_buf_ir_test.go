@@ -34,6 +34,22 @@ var bufIRCases = []struct {
 	// buffer doubles several times. Reads s[250] ('y' = 121), well past every
 	// intermediate buffer, so a dropped byte in a grow-copy shows up.
 	{"grow-byte", `function main(): i32 { var b: usize = buf_new(16); var i: i32 = 0; while (i < 100) { buf_push(b, "xyz"); i = i + 1; } var s: string = buf_take(b); buf_free(b); return s[250] as i32; }`, ""},
+	// The eight-byte push (#9221). It carries a value 64 bits WIDE, which is
+	// the part the self-host has to get right beyond the store itself: wasm
+	// types its stack, so an i32 reaching the helper's i64 parameter is a
+	// module the host refuses rather than a truncation nobody sees. The
+	// constants are printable ASCII, which is what makes the ORDER readable —
+	// 0x4847464544434241 least-significant-byte-first is "ABCDEFGH".
+	{"push-u64", `function main(): i32 { var b: usize = buf_new(16); buf_push_u64(b, 0x4847464544434241); buf_push(b, "-"); buf_push_u64(b, 0x5a59585756555453); write(buf_take(b)); buf_free(b); return 0; }`, "ABCDEFGH-STUVWXYZ"},
+	// The value from ARITHMETIC rather than a literal, and a grow: 40 pushes
+	// of eight bytes out of a 16-byte reserve. Answers with the length and the
+	// last of the 320 bytes, so a short grow-copy shows up.
+	{"push-u64-grow", `function main(): i32 { var b: usize = buf_new(16); var v: u64 = 0; var k: i32 = 0; while (k < 8) { v = v * 256 + 65; k = k + 1; } var i: i32 = 0; while (i < 40) { buf_push_u64(b, v); i = i + 1; } var s: string = buf_take(b); buf_free(b); return s.len() / 10 + (s[319] as i32); }`, ""},
+	// An INLINE `as u64` at the parameter, which is the shape that has to
+	// reach lower_arg_u64's widening arm: a 32-bit value cast where the
+	// call is built, rather than a wide literal or a wide slot. Answers
+	// with the byte that landed, having checked the seven zeros above it.
+	{"push-u64-cast", `function main(): i32 { var b: usize = buf_new(16); var x: i32 = 66; buf_push_u64(b, x as u64); var s: string = buf_take(b); buf_free(b); if (s.len() != 8) { return 1; } var k: i32 = 1; while (k < 8) { if (s[k] as i32 != 0) { return 2; } k = k + 1; } return s[0] as i32; }`, ""},
 }
 
 // bufExpectedExit returns the want exit code for an exit-code-checked case, or
@@ -44,6 +60,11 @@ func bufExpectedExit(name string) int {
 		return 5
 	case "grow-byte":
 		return 121
+	case "push-u64-grow":
+		// 320 bytes, every one of them 'A'.
+		return 32 + 65
+	case "push-u64-cast":
+		return 66
 	}
 	return -1
 }
