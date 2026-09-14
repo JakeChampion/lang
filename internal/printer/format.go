@@ -2308,6 +2308,11 @@ func formatType(t ast.Type) string {
 		return out + ") => " + formatType(x.Result)
 	case ast.SelfType:
 		return "Self"
+	case ast.ProjType:
+		// An associated-type projection (`Self::Item`). Without this arm the
+		// switch fell through to "" and `-fmt` wrote `function get(self: Self): ;`
+		// — output that does not parse. See docs/ASSOCIATED-TYPES.md.
+		return formatType(x.Base) + "::" + x.Name
 	case ast.DynTraitType:
 		return x.String()
 	case ast.HandleType:
