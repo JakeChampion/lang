@@ -430,6 +430,33 @@ Unsupported constructs refuse the whole function with a reason.
   `call_indirect` this boundary emits describes each slot as one, and a
   funcref type is structural on wasm.
 
+- `Map[string, V]` at a NARROW SCALAR `V` — the runtime hash map, at the one
+  shape whose release this boundary can state. `__fern_map_free_ks` releases
+  every key in the string column and frees the scalar value column and the box;
+  a reference value column would be freed whole, dropping boxes its elements
+  still name, and a key column that is not strings is one that release does not
+  walk. Both are refused ("unsupported map shape").
+
+  A map's unit is LINEAR. Its box on the register backends is the raw
+  `{keys, vals}` pair that helper frees, with no reference count in it, so a
+  plan that would RETAIN one is refused ("map unit is not shared") — the one
+  rule in physical RC that reads the plan rather than the graph. Every ordinary
+  use moves: `m = m.insert(k, v)` leaves the receiver dead at the insert.
+
+  The vocabulary is `map_new(cap)`, `insert` (spelled `set` too, as the AST
+  lowering admits both), `has` and `get_or`. An insert takes the receiver's
+  unit and the KEY's, which the key column owns until the map is released;
+  `kconsume` tells the runtime to hold that unit rather than retain it and to
+  release the key an overwrite supersedes, and `owncols` makes the map the sole
+  owner of both column buffers so a grow frees the one it replaced. A lookup
+  borrows both operands and answers a scalar the map goes on owning. The rest
+  of the map surface — a delete, the columns, an iteration — is not here.
+
+  A map names no element in its construction, so the DESTINATION is the only
+  place its shape is written: `map_new(2)` at an annotated binding or a
+  contract's parameter produces, and one reaching a slot that spells no shape
+  is refused.
+
 - `Cell[T]`, the language's one mutable slot, as a VALUE and a declared field.
   It is a nominal name over a one-element box rather than a declared record —
   no declaration names it, and what it holds is one slot of its element — so
@@ -651,9 +678,10 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the `Map` builtins, the struct and nested
-destructuring forms, or a generic method, so no production consumer is
-switched and no AST ownership analysis is deleted.
+The producer does not yet admit the struct and nested destructuring forms or
+a generic method, so no production consumer is switched and no AST ownership
+analysis is deleted. Those forms appear nowhere in the self-hosted compiler,
+so nothing in it refuses for want of them.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -723,6 +751,21 @@ path the earlier leaves had moved one step further in. That leaf was the
 checker's, not the boundary's: the spelling resolved to unknown, so every
 declaration naming it was unresolved before any contract was read.
 
+The map vocabulary crosses as above (`map_tally`, `map_words`, `map_eat` /
+`map_hand` in the executable fixture, `seen_twice` and `flagged` in the print
+fixture): a map built and grown in a loop over fresh, borrowed and element
+keys, one key inserted twice so an overwrite releases the key it supersedes,
+and a map handed to a callee that takes its unit. It was the last leaf, and
+closing it took the count to every function the compiler has.
+
+`ssasem.type_key` had no arm for a map, so one spelled what the fall-through
+leaf does — `bool` — and `Map[string, i32]`, `Map[string, boolean]` and a
+boolean would have shared one drop helper and one instance name the moment
+maps crossed. A `char` spelled the same way, for the same reason: every
+integer predicate here excludes it. Both have keys of their own now, and the
+rejects fixture pins that a map and a boolean, and two maps of different
+value types, spell three.
+
 A closure's borrowed function capture crosses as above, worth +5 against the
 5 it held: `astwalk.splice_stmts_with_lambda` builds a lambda over two of its
 own function parameters, and its three callers came with it. The refusal it
@@ -732,11 +775,11 @@ A cell of a function value is refused with the elements now, which the rule
 had missed: a cell outlives the frame that filled it, so nothing it holds can
 be borrowed.
 
-Measured against the whole loaded self-hosted compiler, 7,813 of its 7,827
-functions produce, plan and physically lower, through 102 instances of its
-generic declarations. The three stages report the same number: neither the
-unit planner nor physical RC refuses anything a producer admitted, so every
-remaining refusal is a producer's.
+Measured against the whole loaded self-hosted compiler, **all 7,836 of its
+7,836 functions produce, plan and physically lower**, through 107 instances of
+its generic declarations. There is no leaf left, and no refusal of any kind:
+the producer admits every function the compiler has, and neither the unit
+planner nor physical RC refuses anything it admits.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
 module tree the way the production compiler does and counts the stage each
@@ -751,7 +794,7 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The one leaf left is the `Map` vocabulary (14: `map_new` 10 and the `insert`
+The `Map` vocabulary was the last leaf (14: `map_new` 10 and the `insert`
 / `has` sites of `wasm_ir`); the closure env box, which stood at 482 captures and 84 bindings,
 is at zero, worth +564 across the environment record and the `own` a lambda's
 binding spells. Callees with no semantic contract are 47, none of them a

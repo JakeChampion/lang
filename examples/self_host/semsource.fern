@@ -914,11 +914,65 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
     return define(s, ssasem.cell_set(), [recv.id, v.id], 0, "", t_void());
 }
 
+// A map's methods: `insert` (spelled `set` too, as the AST lowering admits
+// both) hands over the receiver's unit and the key's and takes the map back;
+// `has` and `get_or` read through borrowed operands and answer a scalar. The
+// rest of the map surface — a delete, the columns, an iteration — is outside
+// this boundary.
+function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    var t: typeinfo.Type = s.values[recv.id];
+    if (!ssasem.is_supported_map(t)) { return refused(s, "unsupported map shape"); }
+    if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) { return map_write(c, recv, s, t); }
+    if (fa.field == "has" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_has(), t_bool()); }
+    if (fa.field == "get_or" && c.args.len() == 2) { return map_read(c, recv, s, t, ssasem.map_get_or(), ssasem.map_value(t)); }
+    return refused(s, "unsupported call target");
+}
+
+// The key's unit joins the map's key column, which releases it when the map
+// is released — so a view, whose bytes belong to a source the map may outlive,
+// is refused here as it is at an array element.
+function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type): Value {
+    var k: Value = expr(e, s, ssasem.map_key(t));
+    if (!k.s.ok) { return k; }
+    if (ssasem.is_view(k.s.values[k.id])) { return refused(k.s, "view element escapes its source"); }
+    if (!semtypes.equal(k.s.values[k.id], ssasem.map_key(t))) { return refused(k.s, "map key type"); }
+    return k;
+}
+
+function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Value {
+    var k: Value = map_key_value(c.args[0], s, t);
+    s = k.s;
+    if (!s.ok) { return k; }
+    var v: Value = expr(c.args[1], s, ssasem.map_value(t));
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (!semtypes.equal(s.values[v.id], ssasem.map_value(t))) { return refused(s, "map value type"); }
+    return define(s, ssasem.map_insert(), [recv.id, k.id, v.id], 0, "", t);
+}
+
+// A lookup borrows the map and the key and answers a scalar the map goes on
+// owning: `has` takes the key alone, `get_or` a default of the value type.
+function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
+    var k: Value = map_key_value(c.args[0], s, t);
+    s = k.s;
+    if (!s.ok) { return k; }
+    var ids: i32[] = [recv.id, k.id];
+    if (c.args.len() == 2) {
+        var d: Value = expr(c.args[1], s, ssasem.map_value(t));
+        s = d.s;
+        if (!s.ok) { return d; }
+        if (!semtypes.equal(s.values[d.id], ssasem.map_value(t))) { return refused(s, "map value type"); }
+        ids = ids.append(d.id);
+    }
+    return define(s, kind, ids, 0, "", result);
+}
+
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
 function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
     if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
+    if (ssasem.is_map(s.values[recv.id])) { return map_method(c, fa, recv, s); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
@@ -977,6 +1031,19 @@ function cell_construction(c: ast.ExprCall, s: State, expected: typeinfo.Type): 
     if (!semtypes.concrete(elem, false)) { return refused(s, "unresolved cell element type"); }
     if (ssasem.is_view(elem)) { return refused(s, "view element escapes its source"); }
     return define(s, ssasem.cell_new(), [v.id], 0, "", typeinfo.TypeStruct { name: "Cell", args: [elem] });
+}
+
+// `map_new(cap)` builds an empty hash map sized for `cap` entries. The map
+// carries no element the call names, so the shape is the destination's — the
+// only place it is written — and a call with none is refused rather than
+// guessed at.
+function map_construction(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    if (!ssasem.is_supported_map(expected)) { return refused(s, "unsupported map shape"); }
+    var cap: Value = expr(c.args[0], s, t_i32());
+    s = cap.s;
+    if (!s.ok) { return cap; }
+    if (!is_i32(s.values[cap.id])) { return refused(s, "map capacity type"); }
+    return define(s, ssasem.map_new(), [cap.id], 0, "", expected);
 }
 
 // `slice_unchecked(s, start, end)` reads a window of a string's bytes. The box
@@ -1236,6 +1303,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (is_slice_call(name, c)) { return string_slice(c, s); }
     if (name == "cell_new" && c.args.len() == 1) { return cell_construction(c, s, expected); }
+    if (name == "map_new" && c.args.len() == 1) { return map_construction(c, s, expected); }
     // The lambda lift's closure constructor names no declaration of its own:
     // it is the marker left where a capturing inline lambda — or a bare
     // function name at a function-typed argument — was written, carrying the
