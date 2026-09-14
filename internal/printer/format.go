@@ -1775,7 +1775,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 					if i == lhs {
 						f.b.WriteByte('_')
 					} else {
-						f.formatExpr(a, precLowest)
+						f.writeCallArg(x, i, a)
 					}
 				}
 				f.b.WriteByte(')')
@@ -1794,7 +1794,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 					if i > 0 {
 						f.b.WriteString(", ")
 					}
-					f.formatExpr(a, precLowest)
+					f.writeCallArg(x, i+1, a)
 				}
 				f.b.WriteByte(')')
 			}
@@ -1810,7 +1810,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			f.formatExpr(a, precLowest)
+			f.writeCallArg(x, i, a)
 		}
 		f.b.WriteByte(')')
 	case *ast.Index:
@@ -2322,4 +2322,18 @@ func formatType(t ast.Type) string {
 		return "own " + x.Resource
 	}
 	return ""
+}
+
+// writeCallArg emits one call argument, restoring the `name = ` prefix of a
+// NAMED argument. Args carries them in source order with the names alongside in
+// ArgNames; dropping the names rewrote `mk(b = 1, a = 9)` as `mk(1, 9)`, which
+// binds the values to the OTHER parameters — `-fmt` silently changed what the
+// program computed. (defaultargs reorders and clears ArgNames before the
+// checker, so only the printer ever sees them.)
+func (f *formatter) writeCallArg(x *ast.Call, i int, a ast.Expr) {
+	if i < len(x.ArgNames) && x.ArgNames[i] != "" {
+		f.b.WriteString(x.ArgNames[i])
+		f.b.WriteString(" = ")
+	}
+	f.formatExpr(a, precLowest)
 }
