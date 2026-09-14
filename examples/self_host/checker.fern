@@ -8542,7 +8542,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
   for fd in funcs {
     if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
       var noargs: string[] = [];
-      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "" });
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", assoc_names: noargs, assoc_values: noargs });
     }
   }
   return out;
@@ -13297,7 +13297,12 @@ function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
 // Self -> impl_type via the same parser.subst_self finalize_impl_method used on
 // the impl side) must equal the impl method's params + return, or it's a
 // mismatch (native E021 "wrong signature").
-function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string, trait_generic: boolean): boolean {
+// `impls` is needed because the TRAIT side of the comparison still spells its
+// associated types as projections (`Self::Item`): the parser resolves the impl
+// method's copy, so the requirement must be resolved the same way before the
+// two are compared, or every associated-type impl reads as a signature
+// mismatch. Native does the same in its conformance pass (resolveProjWith).
+function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string, trait_generic: boolean, impls: parser.ImplInfo[]): boolean {
   if (trait_generic) {
     return true;
   }
@@ -13320,13 +13325,13 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
   }
   var i: i32 = 1;
   while (i < req.params.len()) {
-    var want: string = parser.subst_self(req.params[i].type_name, impl_type);
+    var want: string = parser.resolve_proj_in_type(parser.subst_self(req.params[i].type_name, impl_type), impls);
     if (want != impl_fn.params[i - 1].type_name) {
       return false;
     }
     i = i + 1;
   }
-  if (parser.subst_self(req.ret_type, impl_type) != impl_fn.ret_type) {
+  if (parser.resolve_proj_in_type(parser.subst_self(req.ret_type, impl_type), impls) != impl_fn.ret_type) {
     return false;
   }
   return true;
@@ -13370,6 +13375,19 @@ function e021_diags(mod: parser.Module): util.Diag[] {
             out = out.append(dg("E021", "impl " + im.trait_name + " for " + im.impl_type + " also requires `impl " + elem + " for " + im.impl_type + "` (supertrait of " + im.trait_name + ")"));
           }
         }
+        // Associated types: an impl must bind EXACTLY the trait's set — every
+        // one the trait declares, and nothing it does not. Mirrors native's
+        // conformance pass. See docs/ASSOCIATED-TYPES.md.
+        for at_req in trait_req.assoc_types {
+          if (!name_in(at_req, im.assoc_names)) {
+            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im.impl_type + " must bind associated type \"" + at_req + "\" (`type " + at_req + " = …;`)"));
+          }
+        }
+        for at_bound in im.assoc_names {
+          if (!name_in(at_bound, trait_req.assoc_types)) {
+            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im.impl_type + " binds associated type \"" + at_bound + "\" which the trait does not declare"));
+          }
+        }
         var reqs: string[] = trait_req.methods;
         var sigs: parser.FuncDecl[] = trait_req.req_sigs;
         var tgen: boolean = e021_trait_is_generic(mod, im.trait_name);
@@ -13384,7 +13402,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
-            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type, tgen)) {
+            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type, tgen, mod.impls)) {
               out = out.append(dg("E021", im.impl_type + "." + reqs[ri] + " has the wrong signature for trait " + im.trait_name));
             }
           }
@@ -13686,7 +13704,92 @@ function e021_dyn_target(type_name: string): string {
   while (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
     t = slice_unchecked(t, 0, t.len() - 2);
   }
+  // An associated-type PIN list (`dyn Holder[Item = i32]`) or a generic
+  // instantiation (`dyn Greet[i32]`) trails the trait name in brackets. The
+  // trait NAME is what classifies, so drop it — the pins are read separately
+  // by e021_dyn_pin_names. See docs/ASSOCIATED-TYPES.md.
+  var cut: i32 = e021_bracket_open(t + "");
+  if (cut > 0) {
+    t = slice_unchecked(t, 0, cut);
+  }
   return t + "";
+}
+
+// e021_bracket_open returns the index of the `[` opening the trailing bracket
+// group of `t`, or -1 when `t` does not end in one.
+function e021_bracket_open(t: string): i32 {
+  if (t.len() < 2 || t[t.len() - 1] != b']') { return 0 - 1; }
+  var bal: i32 = 0;
+  var i: i32 = t.len() - 1;
+  while (i >= 0) {
+    if (t[i] == b']') { bal = bal + 1; }
+    else if (t[i] == b'[') {
+      bal = bal - 1;
+      if (bal == 0) { return i; }
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// e021_dyn_pin_names returns the associated-type names a dyn spelling PINS.
+// Inside the bracket an entry with an `=` is a pin (`Item = i32`); a bare entry
+// is a positional generic argument and names nothing. Empty for `dyn T`.
+function e021_dyn_pin_names(type_name: string): string[] {
+  var out: string[] = [];
+  if (type_name.len() < 5 || slice_unchecked(type_name, 0, 4) != "dyn ") { return out; }
+  var t: string = slice_unchecked(type_name, 4, type_name.len()) + "";
+  var open: i32 = e021_bracket_open(t);
+  if (open < 0) { return out; }
+  var inner: string = slice_unchecked(t, open + 1, t.len() - 1) + "";
+  var start: i32 = 0;
+  var depth: i32 = 0;
+  var i: i32 = 0;
+  while (i <= inner.len()) {
+    var at_end: boolean = i == inner.len();
+    var is_sep: boolean = at_end;
+    if (!at_end) {
+      var c: u8 = inner[i];
+      if (c == b'[') { depth = depth + 1; }
+      if (c == b']') { depth = depth - 1; }
+      if (c == b',' && depth == 0) { is_sep = true; }
+    }
+    if (is_sep) {
+      var seg: string = slice_unchecked(inner, start, i) + "";
+      var eq: i32 = 0 - 1;
+      var j: i32 = 0;
+      while (j < seg.len()) {
+        if (seg[j] == b'=' && eq < 0) { eq = j; }
+        j = j + 1;
+      }
+      if (eq > 0) {
+        out = out.append(util.trim(slice_unchecked(seg, 0, eq) + ""));
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// e021_object_unsafe_assoc returns the reason `trait_name` cannot be used as
+// the given dyn spelling because an associated type is left unpinned, or "".
+// Behind `dyn` the concrete type is erased, so an unpinned associated type —
+// and any `Self::Item` projection in a method signature — has nothing to
+// resolve against at the call site. See docs/ASSOCIATED-TYPES.md.
+function e021_object_unsafe_assoc(mod: parser.Module, trait_name: string, dyn_spelling: string): string {
+  var pins: string[] = e021_dyn_pin_names(dyn_spelling);
+  for trait_req in mod.trait_reqs {
+    if (trait_req.trait_name == trait_name) {
+      for at in trait_req.assoc_types {
+        if (!name_in(at, pins)) {
+          return "associated type \"" + at + "\" is not pinned — write `dyn " + trait_name + "[" + at + " = ...]`";
+        }
+      }
+      return "";
+    }
+  }
+  return "";
 }
 
 // e021_dyn_locals_of collects the dyn TARGET of every `var` annotation in a
@@ -13703,9 +13806,12 @@ function e021_dyn_target(type_name: string): string {
 function e021_dyn_local_at(st: ast.Stmt, own a: string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
-      var t: string = e021_dyn_target(v.type_name);
-      if (t.len() > 0) {
-        return a.append(t);
+      // The full annotation is kept, not just the trait name: the pin list in
+      // `dyn Holder[Item = i32]` is part of the spelling and the
+      // associated-type rule needs it. Callers take the name with
+      // e021_dyn_target.
+      if (e021_dyn_target(v.type_name).len() > 0) {
+        return a.append(v.type_name);
       }
       return a;
     },
@@ -13747,6 +13853,10 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
         if (pm.len() > 0) {
           out = out.append(dg("E021", "trait " + pt + " is not object-safe: method \"" + pm + "\""));
         }
+        var pa: string = e021_object_unsafe_assoc(mod, pt, param.type_name);
+        if (pa.len() > 0) {
+          out = out.append(dg("E021", "trait " + pt + " is not object-safe: " + pa + ", so it cannot be used as `dyn " + pt + "`"));
+        }
       }
     }
     var rt: string = e021_dyn_target(fn.ret_type);
@@ -13755,11 +13865,20 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
       if (rm.len() > 0) {
         out = out.append(dg("E021", "trait " + rt + " is not object-safe: method \"" + rm + "\""));
       }
+      var ra: string = e021_object_unsafe_assoc(mod, rt, fn.ret_type);
+      if (ra.len() > 0) {
+        out = out.append(dg("E021", "trait " + rt + " is not object-safe: " + ra + ", so it cannot be used as `dyn " + rt + "`"));
+      }
     }
-    for lt in e021_dyn_locals_of(fn.body) {
+    for lspell in e021_dyn_locals_of(fn.body) {
+      var lt: string = e021_dyn_target(lspell);
       var lm: string = e021_object_unsafe_method(mod, lt);
       if (lm.len() > 0) {
         out = out.append(dg("E021", "trait " + lt + " is not object-safe: method \"" + lm + "\""));
+      }
+      var la: string = e021_object_unsafe_assoc(mod, lt, lspell);
+      if (la.len() > 0) {
+        out = out.append(dg("E021", "trait " + lt + " is not object-safe: " + la + ", so it cannot be used as `dyn " + lt + "`"));
       }
     }
   }
