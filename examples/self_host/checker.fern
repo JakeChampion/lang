@@ -576,8 +576,12 @@ function int_result(lt: typeinfo.Type, rt: typeinfo.Type, le: ast.Expr, re: ast.
 }
 
 // wider_int: of two settled integer types, the one with the wider width; the
-// left one when they agree or either is not an integer.
+// left one when they agree or either is not an integer. The pointer width
+// is the widest: `usize + i32` is address arithmetic and stays a usize, as
+// native's commonIntegerWidth has it, whatever the sentinel's number.
 function wider_int(lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
+  if (is_usize(lt)) { return lt; }
+  if (is_usize(rt)) { return rt; }
   match (lt) {
     typeinfo.TypeI32(li) => {
       match (rt) {
