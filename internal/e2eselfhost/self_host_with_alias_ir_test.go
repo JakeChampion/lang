@@ -146,11 +146,15 @@ function main(): i32 { var f = update; var xs = [1, 2]; var old = xs; xs = f(xs)
 function update(own xs: i32[], n: i32): i32[] { xs = xs.with(0, n); return xs; }
 function churn(): i32 { var xs = [1, 2, 3]; var before: i64 = __heap_bump_bytes(); var i = 0; while (i < 32) { xs = update(xs, i); i = i + 1; } if (xs[0] != 31 || xs[1] != 2 || xs[2] != 3) { return 1; } if (__heap_bump_bytes() != before) { return 2; } return 0; }
 function main(): i32 { if (churn() != 0 || churn() != 0) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+	// The function type spells the consuming slot, so `apply` and `update`
+	// agree on who releases the argument — and the caller hands over a value
+	// it owns. Written `(i32[]) => i32[]` the two disagreed: the call lent a
+	// reference the callee released.
 	{"own-caller-higher-order", `@noinline
 function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
 @noinline
-function apply(f: (i32[]) => i32[], xs: i32[]): i32[] { return f(xs); }
-function main(): i32 { var xs = [1, 2]; var next = apply(update, xs); if (next[0] != 9 || xs[0] != 1 || xs[1] != 2) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function apply(f: (own i32[]) => i32[], own xs: i32[]): i32[] { return f(xs); }
+function main(): i32 { var next = apply(update, [1, 2]); if (next[0] != 9 || next[1] != 2) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	{"own-caller-lifetime-parameter-alias", `@noinline
 function keep(own xs: i32[]): i32[] { var alias = xs; return alias; }
 function churn(): i32 { var i = 0; while (i < 32) { var xs = [1, 2]; xs = keep(xs); if (xs[0] != 1 || xs[1] != 2) { return 1; } i = i + 1; } return 0; }

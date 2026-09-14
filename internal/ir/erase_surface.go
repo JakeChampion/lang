@@ -215,7 +215,7 @@ func eraseStr(t ast.Type) ast.Type {
 		for i := range x.Params {
 			params[i] = eraseStr(x.Params[i])
 		}
-		return &ast.FuncType{Params: params, Result: eraseStr(x.Result)}
+		return &ast.FuncType{Params: params, ParamOwn: x.ParamOwn, Result: eraseStr(x.Result)}
 	case ast.StructType:
 		if len(x.Args) == 0 {
 			return x

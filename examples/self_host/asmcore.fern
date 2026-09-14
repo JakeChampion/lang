@@ -5262,7 +5262,7 @@ struct UnkScan { where: string, skip_bare_return: boolean, errs: util.Diag[] }
 // Every variant is spelled out rather than wildcarded so a new statement or
 // expression kind fails E030 here and gets a decision about what it reports,
 // not a silent pass — the property the hand-written walks these replace had.
-function unknown_error_stmt_at(st: ast.Stmt, a: UnkScan): UnkScan {
+function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
     match (st) {
         ast.StmtReturn(r) => {
             match (r.value) {
@@ -5291,7 +5291,7 @@ function unknown_error_stmt_at(st: ast.Stmt, a: UnkScan): UnkScan {
     return a;
 }
 
-function unknown_error_expr_at(e: ast.Expr, a: UnkScan): UnkScan {
+function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
     match (e) {
         ast.ExprUnknown(u) => {
             if (a.skip_bare_return) { return UnkScan { ...a, skip_bare_return: false }; }

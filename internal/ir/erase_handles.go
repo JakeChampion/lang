@@ -97,7 +97,7 @@ func eraseHandle(t ast.Type) ast.Type {
 		for i := range x.Params {
 			params[i] = eraseHandle(x.Params[i])
 		}
-		return &ast.FuncType{Params: params, Result: eraseHandle(x.Result)}
+		return &ast.FuncType{Params: params, ParamOwn: x.ParamOwn, Result: eraseHandle(x.Result)}
 	case ast.StructType:
 		if len(x.Args) == 0 {
 			return x

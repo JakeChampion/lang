@@ -93,10 +93,11 @@ func TestAppendReceiverParamArgTempReleasedAndResultCredited(t *testing.T) {
 	for _, ptrW := range []int{4, 8} {
 		credited := arrayReleasesIn(t, appendRecvCredited, round, ptrW)
 		refused := arrayReleasesIn(t, appendRecvRefused, round, ptrW)
-		if credited != refused+3 {
+		if credited != refused+1 {
 			t.Errorf("ptrW=%d: round releases %d array references against the refused "+
-				"control's %d, want +3 (the `[]` temp after the call, `ys` at its "+
-				"declaration and at exit)", ptrW, credited, refused)
+				"control's %d, want +1 (the `[]` temp after the call; `ys` releases at "+
+				"its declaration and at exit under both, since the scalar `i` no longer "+
+				"taints the binding)", ptrW, credited, refused)
 		}
 		p := lowerSourceWith(t, appendRecvCredited+"\n"+round+"\nfunction main(): i32 { return round(1); }", ptrW)
 		for _, op := range findFunc(p, "round").Ops {
@@ -113,7 +114,8 @@ func TestAppendReceiverParamArgTempReleasedAndResultCredited(t *testing.T) {
 // A LIVE caller local at the position keeps value semantics by the #4873
 // bracket (the callee's grow copies at rc 2), so the result is fresh and the
 // binding is creditable; the local itself is not a temp and is not released
-// here — `a`'s two releases more than the control, no temp release.
+// here — no temp release, so the release count matches the control and the
+// bracket inc is what this shape turns on.
 func TestAppendReceiverParamLiveLocalResultCredited(t *testing.T) {
 	round := `function round(i: i32): i32 {
     var g: i32[] = [1, 2, 3];
@@ -122,9 +124,10 @@ func TestAppendReceiverParamLiveLocalResultCredited(t *testing.T) {
 }`
 	credited := arrayReleasesIn(t, appendRecvCredited, round, 8)
 	refused := arrayReleasesIn(t, appendRecvRefused, round, 8)
-	if credited != refused+2 {
+	if credited != refused {
 		t.Errorf("round releases %d array references against the refused control's %d, "+
-			"want +2 (`a` at its declaration and at exit; `g` is a live local, not a temp)",
+			"want the same count: `a` releases at its declaration and at exit under both "+
+			"(the scalar `i` taints neither binding), and `g` is a live local, not a temp",
 			credited, refused)
 	}
 	p := lowerSourceWith(t, appendRecvCredited+"\n"+round+"\nfunction main(): i32 { return round(1); }", 8)

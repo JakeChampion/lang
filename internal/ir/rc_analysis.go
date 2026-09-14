@@ -2975,7 +2975,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 										// what it is rebound to afterwards — an
 										// owned value the exit sweep must still
 										// release.
-										if own := b.info.OwnFuncs[id.Name]; pi < len(own) && own[pi] {
+										if own := b.calleeOwnFlags(id.Name); pi < len(own) && own[pi] {
 											continue
 										}
 										tainted[aid.Name] = true
@@ -3253,6 +3253,16 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// stored into a container is escape-tainted at the sink.
 		return false
 	case *ast.Ident:
+		// A SCALAR name holds no buffer, so its borrow taint says nothing
+		// about a result built beside it — the same reasoning the literal
+		// case below states, for the name form. Every non-`own` parameter is
+		// borrow-tainted, so without this an `i32` parameter handed to a call
+		// alongside an owned one taints the result and the owned value loses
+		// its reclaim: `acc = visit(n, acc)` leaked one accumulator per call
+		// where `acc = visit(acc)` did not.
+		if t := b.exprType(x); t != nil && !ast.IsPointerType(t) {
+			return false
+		}
 		return tainted[x.Name]
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
 		// A scalar literal aliases nothing, so a fresh owned result whose only
@@ -3792,8 +3802,8 @@ func (b *builder) computeMovedLocals() map[string]bool {
 					if !ok {
 						return true
 					}
-					flags, isOwn := b.info.OwnFuncs[id.Name]
-					if !isOwn {
+					flags := b.calleeOwnFlags(id.Name)
+					if len(flags) == 0 {
 						return true
 					}
 					for i := 0; i < len(x.Args) && i < len(flags); i++ {
@@ -8677,11 +8687,13 @@ func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
 			if !isID {
 				return true
 			}
-			if _, isLocal := b.locals[callee.Name]; isLocal {
-				return true // shadowed by a local — not a direct call
-			}
-			flags, isOwn := b.info.OwnFuncs[callee.Name]
-			if !isOwn {
+			// A call through a function-typed LOCAL consumes at the slots
+			// its TYPE spells `own` — the only declaration such a call has
+			// — so it claims the transfer exactly as a named `own` callee
+			// does. Reading only the named table here left the argument
+			// paying a compensating retain nothing spends.
+			flags := b.calleeOwnFlags(callee.Name)
+			if len(flags) == 0 {
 				return true
 			}
 			for i := 0; i < len(call.Args) && i < len(flags); i++ {
@@ -8772,11 +8784,8 @@ func (b *builder) computeSelfReassignOwnMoves() {
 		if !isID {
 			return true
 		}
-		if _, isLocal := b.locals[callee.Name]; isLocal {
-			return true // shadowed by a local — not a direct call
-		}
-		flags, isOwn := b.info.OwnFuncs[callee.Name]
-		if !isOwn {
+		flags := b.calleeOwnFlags(callee.Name)
+		if len(flags) == 0 {
 			return true
 		}
 		for i := 0; i < len(call.Args) && i < len(flags); i++ {

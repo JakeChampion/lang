@@ -1051,7 +1051,7 @@ func substTypeByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substTypeByName(x.Result, sub)}
+		out := &ast.FuncType{Result: substTypeByName(x.Result, sub), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substTypeByName(p, sub))
 		}
@@ -1101,7 +1101,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substituteType(x.Result, sub)}
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
@@ -1499,7 +1499,7 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: rewriteType(x.Result, info, into)}
+		out := &ast.FuncType{Result: rewriteType(x.Result, info, into), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, rewriteType(p, info, into))
 		}
