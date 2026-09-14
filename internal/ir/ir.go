@@ -14967,6 +14967,23 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __crc32_cksum(crc, s) — the same runtime-helper-call shape. The scalar
+	// operand comes FIRST here, so ArgTypes leads with a number and the
+	// string's two-slot expansion on arm64 and wasm lands second; a backend
+	// that assumed the family's usual string-first order would read the
+	// incoming CRC as a pointer.
+	if id.Name == "__crc32_cksum" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_crc32_cksum", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.NumberType{}, ast.StringType{}}}})
+			return nil
+		}
+	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
 	// above, and ArgTypes is load-bearing here for the same reason: `string`
 	// is two operand slots on arm64 and wasm, one on x86-64.

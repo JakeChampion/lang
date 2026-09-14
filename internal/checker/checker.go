@@ -1502,6 +1502,29 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __crc32_cksum(crc, s) → i32: `s` folded into the running CRC-32 that
+	// cksum(1) prints — polynomial 0x04C11DB7, MSB first, no reflection, and
+	// no final complement (std/hash's Cksum does the length fold and the
+	// complement in finish()). The seventh fused SIMD kernel
+	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one: every
+	// sibling starts from nothing each call, where this one threads a state
+	// word in and out so a chunked stream and a one-shot call agree.
+	//
+	// The variant is in the name on purpose. This is not CRC-32 in general —
+	// the reflected zlib/Castagnoli forms are different functions over the
+	// same-looking polynomial — and a kernel that took the polynomial as an
+	// operand could not fold, since the fold constants are derived from it at
+	// build time.
+	//
+	// An empty string returns `crc` unchanged, which makes the streaming
+	// identity hold for a zero-length chunk.
+	c.info.FuncSigs["__crc32_cksum"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{Width: 32, Signed: true},
+			ast.StringType{},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __mismatch(a, ao, b, bo, n) → i32: the offset of the first byte where
 	// a[ao..ao+n) and b[bo..bo+n) differ, or n when they are equal. The fifth
 	// fused SIMD kernel, and the comparison one the other four left out

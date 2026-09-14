@@ -2729,10 +2729,11 @@ function x86_gas_vshift_op(mnem: string): i32 {
         _ => { return 0 - 1; }
     }
 }
-// x86_gas_is_sse38: the 66 0F 38 Op /r forms with an xmm destination (SSE4.1, inside the Haswell baseline).
+// x86_gas_is_sse38: the 66 0F 38 Op /r forms with an xmm destination. SSSE3 and SSE4.1, both well inside the declared x86-64-v3 baseline.
 function x86_gas_is_sse38(mnem: string): boolean { return x86_gas_sse38_op(mnem) >= 0; }
 function x86_gas_sse38_op(mnem: string): i32 {
     match (mnem) {
+        "pshufb" => { return 0; },
         "ptest" => { return 23; },
         "pmulld" => { return 64; },
         "pminsb" => { return 56; },

@@ -1030,6 +1030,41 @@ func New() *Interp {
 		}
 		return Number(int32(sum)), nil
 	}}
+	// __crc32_cksum(crc, s): `s` folded into the running CRC-32 cksum(1)
+	// prints. The oracle for the seventh fused kernel
+	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one — the
+	// state goes in and comes back, so chunking must not change the answer.
+	//
+	// Bit-at-a-time on purpose. The compiled backends fold sixteen bytes at a
+	// step with a carry-less multiply and the interpreter is the thing that
+	// says what those folds owe, so it spells the definition (poly 0x04C11DB7,
+	// MSB first, no reflection) rather than a table that would have to be
+	// trusted in its own right.
+	i.Builtins["__crc32_cksum"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__crc32_cksum: expected 2 args, got %d", len(args))
+		}
+		n, ok := args[0].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__crc32_cksum: expected a number crc, got %T", args[0])
+		}
+		s, ok := args[1].(String)
+		if !ok {
+			return nil, fmt.Errorf("__crc32_cksum: expected a string, got %T", args[1])
+		}
+		crc := uint32(int32(n))
+		for _, c := range []byte(string(s)) {
+			crc ^= uint32(c) << 24
+			for k := 0; k < 8; k++ {
+				if crc&0x80000000 != 0 {
+					crc = (crc << 1) ^ 0x04C11DB7
+				} else {
+					crc <<= 1
+				}
+			}
+		}
+		return Number(int32(crc)), nil
+	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts

@@ -2879,9 +2879,7 @@ func emitMemchrHelper(w func(string, ...any)) {
 	// clean; `from` arrives as an i32 and the caller owes nothing about rdx's
 	// upper bits. One instruction, once.
 	w("\tmov edx, edx")
-	// Broadcast the needle across xmm1. movd + punpcklbw + punpcklwd + pshufd
-	// is the SSE2 splat; pshufb would be one instruction but is SSSE3, outside
-	// the declared baseline.
+	// Broadcast the needle across xmm1 with the SSE2 splat.
 	w("\tmovd xmm1, esi")
 	w("\tpunpcklbw xmm1, xmm1")
 	w("\tpunpcklwd xmm1, xmm1")
@@ -3097,8 +3095,7 @@ func emitCountByteHelper(w func(string, ...any)) {
 	w("\tcmp rsi, 255")
 	w("\tja .Lssa_count_ret")
 	w("\txor edx, edx")
-	// SSE2 splat of the needle across xmm1: pshufb would be one instruction
-	// but is SSSE3, outside the declared Haswell baseline.
+	// SSE2 splat of the needle across xmm1.
 	w("\tmovd xmm1, esi")
 	w("\tpunpcklbw xmm1, xmm1")
 	w("\tpunpcklwd xmm1, xmm1")
