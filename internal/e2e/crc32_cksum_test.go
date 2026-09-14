@@ -117,6 +117,16 @@ func TestX86_64Crc32Cksum(t *testing.T) {
 	})
 }
 
+func TestArm64Crc32Cksum(t *testing.T) {
+	runCrc32CksumCorpus(t, func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
 // The wasm leg runs the same corpus against a bit-at-a-time body rather than a
 // fold — wasm has no carry-less multiply — so this is where the corpus proves
 // the DEFINITION and the native kernels agree, not just that two folds agree
