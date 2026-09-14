@@ -12766,7 +12766,7 @@ pub function parse_option_payload(t: string): string {
 //
 // Only a direct `f(...)` callee counts, which is what the WASI categories are
 // spelled as; a method call reaches its receiver's type, not a name here.
-function call_name_of(e: ast.Expr, acc: Map[string, boolean]): Map[string, boolean] {
+function call_name_of(e: ast.Expr, own acc: Map[string, boolean]): Map[string, boolean] {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {

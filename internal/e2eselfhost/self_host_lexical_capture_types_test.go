@@ -37,7 +37,7 @@ import "./lexer";
 import "./lexical";
 import "./parser";
 import "./typeinfo";
-function add_lambda(e: ast.Expr, out: ast.ExprLambda[]): ast.ExprLambda[] {
+function add_lambda(e: ast.Expr, own out: ast.ExprLambda[]): ast.ExprLambda[] {
     if let ast.ExprLambda(lm) = e { return out.append(lm); }
     return out;
 }

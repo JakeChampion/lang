@@ -108,7 +108,7 @@ function ts_arith_method(name: string): boolean {
 // spelled out rather than wildcarded so a new expression kind fails E030 here
 // and gets a reachability decision, not a silent empty contribution — the
 // soundness property the hand-written walk this replaces had.
-function ts_name_of(e: ast.Expr, acc: string[]): string[] {
+function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
         ast.ExprBinary(b) => {
@@ -155,12 +155,12 @@ function ts_name_of(e: ast.Expr, acc: string[]): string[] {
 
 // ts_names_expr appends every name `e` could REFERENCE (idents, field/method
 // names, operator-dispatch methods) to `acc`. Duplicates are fine.
-function ts_names_expr(e: ast.Expr, acc: string[]): string[] {
+function ts_names_expr(e: ast.Expr, own acc: string[]): string[] {
     return astwalk.fold_expr(e, acc, ts_name_of);
 }
 
 // ts_names_stmt appends every name `st` could reference to `acc`.
-function ts_names_stmt(st: ast.Stmt, acc: string[]): string[] {
+function ts_names_stmt(st: ast.Stmt, own acc: string[]): string[] {
     return astwalk.fold_stmt(st, acc, ts_name_of);
 }
 

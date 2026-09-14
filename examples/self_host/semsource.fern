@@ -226,7 +226,8 @@ function erase_within(t: typeinfo.Type, scope: checker.Scope): typeinfo.Type {
     if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: erase(a.elem, true, scope) }; }
     if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: erase_list(tup.elements, scope) }; }
     if let typeinfo.TypeFunc(fn) = t {
-        return typeinfo.TypeFunc { ...fn, param_types: erase_list(fn.param_types, scope), ret_type: erase(fn.ret_type, true, scope) };
+        var erased_params: typeinfo.Type[] = erase_list(fn.param_types, scope);
+        return typeinfo.TypeFunc { ...fn, param_types: erased_params, param_own: typeinfo.own_flags(fn.param_own, erased_params), ret_type: erase(fn.ret_type, true, scope) };
     }
     if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: erase(m.key, true, scope), value: erase(m.value, true, scope) }; }
     if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: erase_list(r.args, scope) }; }
@@ -1068,22 +1069,20 @@ function is_slice_call(name: string, c: ast.ExprCall): boolean {
 // The box is a fresh unit of this function's own, and its release is one
 // decrement with no walk of its slots: a function type names no capture for a
 // drop helper to be derived from, so a reference in a slot would be a unit
-// nothing owns. Every capture is therefore a VALUE. A counted parameter is
-// refused for the reason an indirect call lends every reference it is handed:
-// a function type cannot spell `own` — but it CAN spell an erased type
-// variable, and that slot is the one consuming position it has.
+// nothing owns. Every capture is therefore a VALUE.
+//
+// A counted PARAMETER is a consuming slot, and the type the box hands out
+// spells it (`ssasem.closure_type`), so a call through the box and the body's
+// own declaration agree on who releases the argument. The ENVIRONMENT
+// parameter is the box itself, lent like any receiver and absent from the type
+// the box hands out, so a counted one there is a promise nothing can state.
 function closure(body: string, c: ast.ExprCall, s: State): Value {
     var at: i32 = ssasem.find_contract(s.contracts, body);
     if (at < 0) { return refused(s, "call target has no semantic contract: " + body); }
     var contract: ssasem.Contract = s.contracts[at];
     if (!ssasem.closure_env(contract)) { return refused(s, "closure environment parameter"); }
-    var mi: i32 = 0;
-    while (mi < contract.modes.len()) {
-        // An ERASED slot is the one a function type CAN spell as consuming.
-        if (contract.modes[mi] == ssaunits.counted_mode() && !semtypes.erased(contract.params[mi])) {
-            return refused(s, "function value consumes an argument");
-        }
-        mi = mi + 1;
+    if (contract.modes.len() > 0 && contract.modes[0] == ssaunits.counted_mode()) {
+        return refused(s, "function value consumes its environment");
     }
     var ids: i32[] = [];
     var i: i32 = 0;
@@ -1160,7 +1159,7 @@ function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
         ids = ids.append(v.id);
         i = i + 1;
     }
-    var why: string = ssasem.instantiation_error(bound);
+    var why: string = ssasem.instantiation_error(contract, bound);
     if (why != "") { return refused(s, why); }
     if (ssasem.find_contract(s.calls, contract.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
     return define(s, ssasem.call(), ids, 0, contract.name, ssasem.substitute(contract.result, bound));

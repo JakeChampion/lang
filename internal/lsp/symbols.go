@@ -147,8 +147,10 @@ func funcDeclSig(fd *ast.FuncDecl) *ast.FuncType {
 		return nil
 	}
 	params := make([]ast.Type, 0, len(fd.Params))
+	owns := make([]bool, 0, len(fd.Params))
 	for _, p := range fd.Params {
 		params = append(params, p.Type)
+		owns = append(owns, p.Own)
 	}
-	return &ast.FuncType{Params: params, Result: fd.ReturnType}
+	return &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fd.ReturnType}
 }

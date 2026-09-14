@@ -2144,6 +2144,30 @@ func (p *parser) parseUnionMember() (ast.StructType, error) {
 	return st, nil
 }
 
+// parenListIsFuncParams reports whether the `(` the cursor sits just past
+// opens a FUNCTION TYPE's parameter list — that is, whether an `=>` follows
+// the matching `)`. Only there does a leading `own` mark a consuming slot;
+// anywhere else it keeps its resource-handle meaning.
+func (p *parser) parenListIsFuncParams() bool {
+	depth := 1
+	for i := p.i; i < len(p.tokens); i++ {
+		t := p.tokens[i]
+		if t.Kind != lexer.Punct {
+			continue
+		}
+		switch t.Text {
+		case "(":
+			depth++
+		case ")":
+			depth--
+			if depth == 0 {
+				return i+1 < len(p.tokens) && p.tokens[i+1].Kind == lexer.Punct && p.tokens[i+1].Text == "=>"
+			}
+		}
+	}
+	return false
+}
+
 func (p *parser) parseType() (ast.Type, error) {
 	return p.parseTypeArrow(true)
 }
@@ -2228,14 +2252,29 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 		// `function f(): (i32, string)` parse as a multi-return
 		// tuple without a trailing-comma rule.
 		p.advance()
+		// `own T` at a parameter of a function type marks a CONSUMING
+		// slot: the reference handed over there is the callee's to
+		// release. `own R` is ALSO a resource-handle type, so the
+		// marker is only read when this list is a function type's —
+		// decided by looking ahead to the `=>` past the matching `)`.
+		ownMarkers := p.parenListIsFuncParams()
 		var elems []ast.Type
+		var owns []bool
 		if !p.match(lexer.Punct, ")") {
 			for {
+				isOwn := false
+				if ownMarkers && p.peek().Kind == lexer.Ident && p.peek().Text == "own" &&
+					p.i+1 < len(p.tokens) && !(p.tokens[p.i+1].Kind == lexer.Punct &&
+					(p.tokens[p.i+1].Text == "," || p.tokens[p.i+1].Text == ")")) {
+					isOwn = true
+					p.advance()
+				}
 				pt, err := p.parseType()
 				if err != nil {
 					return nil, err
 				}
 				elems = append(elems, pt)
+				owns = append(owns, isOwn)
 				if _, ok := p.accept(lexer.Punct, ","); !ok {
 					break
 				}
@@ -2249,7 +2288,7 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			if err != nil {
 				return nil, err
 			}
-			base = &ast.FuncType{Params: elems, Result: ret}
+			base = &ast.FuncType{Params: elems, ParamOwn: ast.OwnFlags(owns, len(elems)), Result: ret}
 		} else if len(elems) >= 2 {
 			base = ast.TupleType{Elems: elems}
 		} else if len(elems) == 1 {
@@ -2828,6 +2867,12 @@ func (p *parser) firstParamLooksTyped(idx int) bool {
 	if isIdent(idx) && isPunct(idx+1, "@") {
 		idx += 2
 	}
+	// `own x: T` — the consuming-parameter modifier, contextual exactly as
+	// on a declaration: an ident after `own` means the modifier, a `:` means
+	// `own` is the parameter's own name.
+	if isIdent(idx) && p.tokens[idx].Text == "own" && isIdent(idx+1) {
+		idx++
+	}
 	switch {
 	case isPunct(idx, "("):
 		// `(a, b): (T, U)` — the annotation colon follows the matching `)`.
@@ -2899,6 +2944,14 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 				}
 				continue
 			}
+			// Contextual `own` (consuming) parameter, spelled as on a
+			// declaration: `own x: T` marks it, `own: T` is a parameter
+			// NAMED own.
+			lamOwn := false
+			if p.match(lexer.Ident, "own") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+				p.advance()
+				lamOwn = true
+			}
 			pname, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
@@ -2910,7 +2963,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), NamePos: pname.Pos, Type: ptype})
+			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), NamePos: pname.Pos, Type: ptype, Own: lamOwn})
 			if !p.moreElems(")") {
 				break
 			}

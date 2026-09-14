@@ -168,6 +168,10 @@ function print_params_with(params: ast.ParamDecl[], pats: string[]): string {
     var pi: i32 = 0;
     while (pi < params.len()) {
         if (pi > 0) { out = out + ", "; }
+        // `own` is checked, not decorative, at a lambda's and a nested
+        // declaration's parameters as much as a top-level one's: dropping it
+        // makes a consuming visitor stop matching the fold's function type.
+        if (params[pi].own) { out = out + "own "; }
         if (pi < pats.len() && pats[pi].len() > 0) {
             out = out + pats[pi];
         } else {

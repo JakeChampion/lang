@@ -190,7 +190,48 @@ type TupleType struct {
 }
 type FuncType struct {
 	Params []Type
-	Result Type
+	// ParamOwn marks the parameter slots this function type CONSUMES: a
+	// caller hands its reference over and does not release it, and the
+	// callee reclaims it. An unset (or short) slice means every slot is
+	// lent, which is what a type written without `own` means. It is part
+	// of the type: `(own i32[]) => i32` and `(i32[]) => i32` are distinct,
+	// so a consuming function cannot be reached through a lending type.
+	ParamOwn []bool
+	Result   Type
+}
+
+// OwnAt reports whether parameter i of this function type is consuming.
+func (f *FuncType) OwnAt(i int) bool {
+	return i >= 0 && i < len(f.ParamOwn) && f.ParamOwn[i]
+}
+
+// AnyOwn reports whether this function type consumes any parameter.
+func (f *FuncType) AnyOwn() bool {
+	for _, o := range f.ParamOwn {
+		if o {
+			return true
+		}
+	}
+	return false
+}
+
+// OwnFlags returns the per-parameter consuming flags padded to n, or nil
+// when no slot consumes. Constructors use it so a type that owns nothing
+// keeps a nil slice and compares equal to one built without the field.
+func OwnFlags(flags []bool, n int) []bool {
+	any := false
+	for _, o := range flags {
+		if o {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return nil
+	}
+	out := make([]bool, n)
+	copy(out, flags)
+	return out
 }
 
 // StructType is a nominal reference to a top-level `struct`
@@ -636,7 +677,7 @@ func SubstSelf(t Type, self Type) Type {
 		for i, pt := range tt.Params {
 			params[i] = SubstSelf(pt, self)
 		}
-		return &FuncType{Params: params, Result: SubstSelf(tt.Result, self)}
+		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self)}
 	case ProjType:
 		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
 	default:
@@ -999,6 +1040,9 @@ func (f *FuncType) String() string {
 	for i, p := range f.Params {
 		if i > 0 {
 			out += ", "
+		}
+		if f.OwnAt(i) {
+			out += "own "
 		}
 		// A param type can be nil when an upstream inference step
 		// bailed out (e.g. `use x <- f()` whose callback type the
@@ -1763,7 +1807,7 @@ func Equal(a, b Type) bool {
 			return false
 		}
 		for i := range x.Params {
-			if !Equal(x.Params[i], y.Params[i]) {
+			if !Equal(x.Params[i], y.Params[i]) || x.OwnAt(i) != y.OwnAt(i) {
 				return false
 			}
 		}

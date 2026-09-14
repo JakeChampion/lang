@@ -32,17 +32,19 @@ and both admit only a value that is PASSED THROUGH to `return`. The
 accompanying invariant is that an erased slot is pointer-shaped or i32 and
 may not carry a bare wide scalar.
 
-**A function value lends its arguments and owns its result.** A function type
-spells no `own`, and `irlower.make_wrap_named_func` enforces it by stripping
-`own` from a counted array parameter when it builds the trampoline, so the
-trampoline re-acquires at its own direct call to the consuming target.
+**A function value lends its arguments it does not SPELL consuming.** A
+function type carries a per-parameter `own` mask — `(ast.Stmt, own T) => T` —
+and every slot it does not mark is lent. `irlower.make_wrap_named_func`
+mirrors the target's modes exactly, so a bare name reached through a
+trampoline hands the caller's unit straight through rather than re-acquiring
+at the trampoline's own direct call.
 
-Put together under the LENDING convention: each step of the fold is handed a
-unit of its own from the visitor and still holds the previous one, which
-nothing but the fold can see. Calling the erased result a unit makes the fold
-release a word it does not own at a scalar instantiation. Calling it no unit
-leaks it at the caller. There is no third answer available at the erased word
-itself.
+Under a LENDING convention each step of the fold would be handed a unit of its
+own from the visitor and still hold the previous one, which nothing but the
+fold can see. Calling the erased result a unit makes the fold release a word
+it does not own at a scalar instantiation. Calling it no unit leaks it at the
+caller. There is no third answer available at the erased word itself, which is
+why the slot has to be consuming instead.
 
 A second fact rules out answering this per-callee. The visitors the compiler
 actually passes disagree with each other, and one of them disagrees with
@@ -85,8 +87,10 @@ Where it lives:
   a function-typed parameter's erased slots bind through it, and one variable
   binds one type for the whole contract.
 - `ssaunits.call_value_supplied` is the ABI: an indirect call lends every
-  reference it is handed EXCEPT at a slot the function type spells with an
-  erased variable, which it consumes.
+  reference it is handed EXCEPT at a slot the function type spells CONSUMING —
+  `own T`, or an erased variable, which is consuming on its own account.
+  `ssasem.closure_type` builds that mask from the body's declared modes, so
+  the type a box hands out and the body inside it cannot disagree.
 
 ### What proves it, rather than assuming it
 
@@ -109,25 +113,42 @@ four targets under `FERN_LEAKCHECK` and the sanitizer, with a heap value held
 across the fold and read back after churn so an over-release is a wrong ANSWER
 and not just a balanced count.
 
-### What it does not cover, measured
+### The REFERENCE instantiation, and what it took
 
-A REFERENCE instantiation. The rule hands a unit to a function value, and a
-function value LENDS every argument it is given: the concrete visitor
-(`assign_target_of`, `annot_of_stmt`, `fwd_scan_stmt` …) is compiled with a
-BORROWED accumulator, and so is the `$wrapN` trampoline the lift builds around
-a bare function name — the print golden pins that trampoline's parameter at
-mode 2. Nothing releases the unit the fold hands over, so admitting it would
-leak one unit per visited node. `ssasem.instantiation_error` refuses it:
-**erased instantiation carries a unit**, 658 functions of the compiler's own
-sources.
+A variable bound to a reference is admitted exactly when every position it
+occupies CONSUMES it: the contract's own counted parameter, or a slot a
+function type spells `own`. One lending occurrence refuses the whole
+instantiation — the unit would reach it and nothing would release it —
+which is what `ssasem.instantiation_error` decides, from the CONTRACT rather
+than from the binding alone.
 
-Closing that needs the consuming convention END TO END — the visitor, the
-trampoline and the AST lowering's own function-value path — not only inside
-this boundary. It cannot be bought here one side at a time: giving the visitor
-an `own` accumulator while the AST-lowered fold still lends would free a unit
-the caller never handed over, and the AST path already leaks an `own` argument
-passed to a function value (`apply(eat, a)` for `eat(own xs: i32[])` frees
-nothing), so the two halves have to land together.
+That took the convention end to end rather than inside this boundary:
+
+- A function TYPE spells its consuming slots, so a consuming function value
+  and a lending one have different types and neither reaches the other's
+  position. The mask is part of the type everywhere it is compared — the
+  checker's assignability and inference, `semtypes.equal`, and `bind_within`,
+  which reads the flag against the slot the ARGUMENT carries so `own T` at a
+  variable bound to a SCALAR stays vacuous.
+- `own` on a scalar is normalised OUT of the type (`typeinfo.own_flags`
+  against the parameter types, re-applied on substitution and erasure),
+  because a scalar carries no unit to hand over. That is what lets one
+  generic body serve a scalar and a reference instantiation at once.
+- The visitors declare it: `own acc: T`, which makes `return acc` an identity
+  MOVE and `FwdScan { ...acc, hit: true }` a construction that drops the acc
+  it consumed. Both fall out of the parameter's mode with no annotation on the
+  body.
+- The trampoline mirrors the target's modes, so a bare NAME at a consuming
+  slot hands the unit through.
+- The AST lowering reads the mask off the callee's TYPE at an indirect call,
+  so the overwrite-dec, the transfer claim and the compensating retain agree
+  with the callee the same way they do at a direct call. Before that they
+  could not: `apply(eat)` for `eat(own xs: i32[])` freed the argument TWICE
+  and `apply(eat, a)` leaked it, neither spellable now.
+
+Measured on the compiler's own sources: 6597 produced functions before,
+7090 after, and the leaf that read **erased instantiation carries a unit**
+(693 functions) is gone.
 
 ## Option 2 — box every erased value
 

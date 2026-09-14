@@ -721,7 +721,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 // WIDENS the old hand-written walk onto a `defer` action's assignment and a
 // match-arm guard's nested lambda — shapes where the write previously landed
 // in a private copy — in the direction every other engine already answers.
-function lam_assign_targets(stmts: ast.Stmt[], acc: string[]): string[] {
+function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
     var a: string[] = acc;
     for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all); }
     return a;
@@ -746,14 +746,14 @@ function lam_assign_targets(stmts: ast.Stmt[], acc: string[]): string[] {
 // approximate what a lambda READS: a superset is safe here because the result
 // is intersected with the names the enclosing body actually reassigns, and
 // cellify_env only touches names bound in this scope.
-function ib_ident_of(e: ast.Expr, acc: string[]): string[] {
+function ib_ident_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
         _ => { return acc; }
     }
     return acc;
 }
-function ib_idents_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
+function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
     var a: string[] = acc;
     for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, ib_ident_of, astwalk.descend_all); }
     return a;
@@ -766,8 +766,7 @@ function ib_idents_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
 // Same walk as stmt_lambda_writes, and for the same reason: see its comment for
 // why it is the statement's OWN expressions and why it stops at a lambda.
 function lam_read_names(st: ast.Stmt): string[] {
-    var acc: string[] = [];
-    return astwalk.fold_stmt_own_pruned(st, acc, lam_read_of, not_lambda_expr);
+    return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, not_lambda_expr);
 }
 
 // body_assign_names: every name this body reassigns, at any depth. A name NOT
@@ -783,14 +782,14 @@ function body_assign_names(stmts: ast.Stmt[], acc: string[]): string[] {
 // assign_target_of is one statement's contribution to the reassignment scans:
 // an assignment's TARGET, a bare string on the statement that the expression
 // visitor is never handed.
-function assign_target_of(st: ast.Stmt, acc: string[]): string[] {
+function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
     match (st) {
         ast.StmtAssign(asg) => { return acc.append(asg.target); },
         _ => { return acc; }
     }
     return acc;
 }
-function reads_nothing(e: ast.Expr, acc: string[]): string[] { return acc; }
+function reads_nothing(e: ast.Expr, own acc: string[]): string[] { return acc; }
 
 // cellify_captures is the per-statement pre-pass every block driver runs before
 // evaluating a statement, and it applies both capture clauses:
@@ -830,20 +829,24 @@ function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
 // Only a lambda body contributes, so the walk stops at one: lam_assign_targets
 // already accounts for its whole body, and descending would re-scan it.
 function stmt_lambda_writes(st: ast.Stmt): string[] {
-    var acc: string[] = [];
-    return astwalk.fold_stmt_own_pruned(st, acc, lam_target_of, not_lambda_expr);
+    return astwalk.fold_stmt_own_pruned(st, no_names(), lam_target_of, not_lambda_expr);
 }
+
+// A fresh, empty name list. A fold's CONSUMING accumulator takes a value the
+// caller owns; a local initialised from a literal is not provably one, and a
+// call with no reference parameter is.
+function no_names(): string[] { return []; }
 
 // lam_target_of / lam_read_of are one node's contribution to the two scans —
 // the whole of each that is not the walk.
-function lam_target_of(e: ast.Expr, acc: string[]): string[] {
+function lam_target_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
         ast.ExprLambda(lm) => { return lam_assign_targets(lm.body, acc); },
         _ => { return acc; }
     }
     return acc;
 }
-function lam_read_of(e: ast.Expr, acc: string[]): string[] {
+function lam_read_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
         ast.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
         _ => { return acc; }

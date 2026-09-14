@@ -31,11 +31,11 @@ import "./lexer";
 import "./lexical";
 import "./parser";
 import "./util";
-function read_expr(e: ast.Expr, out: string): string {
+function read_expr(e: ast.Expr, own out: string): string {
     if let ast.ExprIdent(i) = e { return out + i.name + ";"; }
     return out;
 }
-function read_stmt(st: ast.Stmt, out: string): string {
+function read_stmt(st: ast.Stmt, own out: string): string {
     if let ast.StmtAssign(a) = st { return out + "=" + a.target + ";"; }
     return out;
 }

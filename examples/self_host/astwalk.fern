@@ -7,6 +7,13 @@ import "./util";
 // byte-identical copies of these; they now live here once. Imports
 // only parser, so any frontend module can depend on it.
 
+// The accumulator is CONSUMING: the fold hands its unit to the visitor at each
+// step and takes back the one the call returns, so exactly one unit is live at
+// every point and the fold releases nothing. The function type spells it —
+// `(ast.Expr, own T) => T` — which is what lets one body be correct whether T
+// binds a scalar or a reference; `docs/ERASED-GENERICS-RC.md` has the rule and
+// why no other answer is available at an erased word.
+//
 // fold_expr threads `acc` through every expression reachable from `e`, calling
 // `visit` on each node in pre-order before descending into its children. It is
 // the shared spine the hand-written per-consumer traversals collapse onto: a
@@ -16,7 +23,7 @@ import "./util";
 // `visit` reaches it as a nested named function closing over whatever context
 // the consumer needs — see collect_qualrefs_expr. An arrow lambda works too
 // since #6996; the named form is kept because it reads better at the call site.
-pub function fold_expr[T](e: ast.Expr, acc: T, visit: (ast.Expr, T) => T): T {
+pub function fold_expr[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T): T {
     return fold_expr_pruned(e, acc, visit, descend_all);
 }
 
@@ -24,7 +31,7 @@ pub function fold_expr[T](e: ast.Expr, acc: T, visit: (ast.Expr, T) => T): T {
 // reaches, in source order. The statement nodes themselves are visited by
 // fold_stmt_nodes, or by fold_stmt_spine when the consumer wants statements
 // alone — a binder name, an assignment target — and no expression at all.
-pub function fold_stmt[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): T {
+pub function fold_stmt[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T): T {
     return fold_stmt_pruned(st, acc, visit, descend_all);
 }
 
@@ -53,14 +60,14 @@ pub function descend_all(e: ast.Expr): boolean { return true; }
 // monomorphised, and a top-level generic one cannot be named as a value at all
 // (#7040, #7042). It captures nothing, so it lifts to a plain function —
 // measured identical to passing a top-level named no-op.
-pub function fold_expr_pruned[T](e: ast.Expr, acc: T, visit: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
-    return fold_expr_nodes(e, acc, (st: ast.Stmt, a: T) => a, visit, descend);
+pub function fold_expr_pruned[T](e: ast.Expr, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
+    return fold_expr_nodes(e, acc, (st: ast.Stmt, own a: T) => a, visit, descend);
 }
 
 // fold_stmt_pruned is fold_expr_pruned's statement half. `descend` gates the
 // expressions it reaches exactly as it does inside an expression tree.
-pub function fold_stmt_pruned[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
-    return fold_stmt_nodes(st, acc, (s: ast.Stmt, a: T) => a, visit, descend);
+pub function fold_stmt_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
+    return fold_stmt_nodes(st, acc, (s: ast.Stmt, own a: T) => a, visit, descend);
 }
 
 // fold_expr_nodes / fold_stmt_nodes are the walk itself, and the only copy of
@@ -73,7 +80,7 @@ pub function fold_stmt_pruned[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T
 // A consumer whose contribution is statement-shaped needs this pair: an
 // assignment TARGET and a `var` / `for` / match-arm BINDER are names carried on
 // the statement, not expressions the expression visitor can ever be handed.
-pub function fold_expr_nodes[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => T, visit_expr: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
+pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
     acc = visit_expr(e, acc);
     if (!descend(e)) { return acc; }
     match (e) {
@@ -150,7 +157,7 @@ pub function fold_expr_nodes[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =
     return acc;
 }
 
-pub function fold_stmt_nodes[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => T, visit_expr: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
+pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
     acc = visit_stmt(st, acc);
     match (st) {
         ast.StmtDefer(d) => { return fold_stmt_nodes(d.action, acc, visit_stmt, visit_expr, descend); },
@@ -210,7 +217,7 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) 
 //
 // Every variant is spelled out rather than wildcarded: a new statement kind
 // carrying a block should fail to compile here, not silently drop its body.
-pub function fold_stmt_spine[T](st: ast.Stmt, acc: T, visit: (ast.Stmt, T) => T): T {
+pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own T) => T): T {
     acc = visit(st, acc);
     match (st) {
         ast.StmtDefer(d) => { return fold_stmt_spine(d.action, acc, visit); },
@@ -260,7 +267,7 @@ pub function fold_stmt_spine[T](st: ast.Stmt, acc: T, visit: (ast.Stmt, T) => T)
 // A `defer`'s action is a child statement, so it contributes nothing at this
 // level. Every variant is spelled out rather than wildcarded: a new statement
 // kind should fail to compile here, not silently own no expressions.
-pub function fold_stmt_own[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): T {
+pub function fold_stmt_own[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T): T {
     return fold_stmt_own_pruned(st, acc, visit, descend_all);
 }
 
@@ -268,7 +275,7 @@ pub function fold_stmt_own[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): 
 // as fold_expr_pruned: `descend` decides whether a visited node's CHILDREN are
 // walked, which a consumer needs when one node's contribution already accounts
 // for its whole subtree.
-pub function fold_stmt_own_pruned[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T, descend: (ast.Expr) => boolean): T {
+pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
     match (st) {
         ast.StmtVar(v) => { return fold_expr_pruned(v.init, acc, visit, descend); },
         ast.StmtAssign(a) => { return fold_expr_pruned(a.value, acc, visit, descend); },
@@ -734,7 +741,7 @@ function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast
 
 // ident_of contributes one node's identifier READS. It is the whole of
 // collect_idents_expr that is not the walk.
-function ident_of(e: ast.Expr, acc: string[]): string[] {
+function ident_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
         ast.ExprLambda(lm) => { return collect_lambda_idents(lm, acc); },
@@ -755,11 +762,11 @@ function not_lambda(e: ast.Expr): boolean {
 
 // collect_idents_expr appends every identifier READ in `e` to `acc`
 // (with duplicates; consumers dedup when building capture lists).
-pub function collect_idents_expr(e: ast.Expr, acc: string[]): string[] {
+pub function collect_idents_expr(e: ast.Expr, own acc: string[]): string[] {
     return fold_expr_pruned(e, acc, ident_of, not_lambda);
 }
 
-function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.Expr, string[]) => string[]): string[] {
+function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
     for name in reads(e, []) {
         if (!util.has_str(bound, name)) { acc = acc.append(name); }
     }
@@ -770,7 +777,7 @@ function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.E
 // scope; a nested control-flow block cannot bind a name in its enclosing tail.
 // The callback lets the ordinary capture and fn-value-use collectors share the
 // scope rules while disagreeing on whether a direct named callee is a read.
-function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, string[]) => string[]): string[] {
+function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
             var init_bound: string[] = bound;
@@ -796,13 +803,21 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
         },
         ast.StmtFor(f) => {
             acc = scoped_reads(f.iter, bound, acc, reads);
-            var (used, inner_bound) = scoped_stmts_reads(f.body, append_bound_name(bound, f.var_name), acc, reads);
+            // append_bound_name and pattern_binders CONSUME the list they
+            // extend and can hand the very same buffer back, so a nested scope
+            // extends a fresh copy rather than this frame's borrow.
+            var loop_bound: string[] = [];
+            loop_bound = util.append_all(loop_bound, bound);
+            loop_bound = append_bound_name(loop_bound, f.var_name);
+            var (used, inner_bound) = scoped_stmts_reads(f.body, loop_bound, acc, reads);
             return used;
         },
         ast.StmtMatch(m) => {
             acc = scoped_reads(m.scrutinee, bound, acc, reads);
             for arm in m.arms {
-                var arm_bound: string[] = pattern_binders(arm.pattern, bound);
+                var arm_bound: string[] = [];
+                arm_bound = util.append_all(arm_bound, bound);
+                arm_bound = pattern_binders(arm.pattern, arm_bound);
                 if (arm.has_guard) { acc = scoped_reads(arm.guard, arm_bound, acc, reads); }
                 var (used, inner_bound) = scoped_stmts_reads(arm.body, arm_bound, acc, reads);
                 acc = used;
@@ -817,7 +832,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
     return acc;
 }
 
-function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], reads: (ast.Expr, string[]) => string[]): (string[], string[]) {
+function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): (string[], string[]) {
     for st in body {
         acc = scoped_stmt_reads(st, bound, acc, reads);
         if let ast.StmtVar(v) = st { bound = append_bound_name(bound, v.name); }
@@ -830,7 +845,7 @@ function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], re
 // before a later shadowing declaration, including reads in nested closures.
 // Capture consumers use this shared ordered walk before testing which free
 // names resolve to slots in the enclosing scope.
-pub function collect_lambda_idents(lm: ast.ExprLambda, acc: string[]): string[] {
+pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
     var bound: string[] = [];
     for param in lm.params { bound = append_bound_name(bound, param.name); }
     var (used, final_bound) = scoped_stmts_reads(lm.body, bound, acc, collect_idents_expr);
@@ -872,7 +887,7 @@ pub function subst_ident_expr(e: ast.Expr, from: string, to: string): ast.Expr {
 // SH-057). The target is always a bare name — index and field assigns desugar
 // to __set_index / __set_field calls carried in `value`. Duplicates are fine;
 // capture lists dedup.
-function assign_target_of(st: ast.Stmt, acc: string[]): string[] {
+function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
     match (st) {
         ast.StmtAssign(a) => { return acc.append(a.target); },
         _ => { return acc; }
@@ -884,7 +899,7 @@ function assign_target_of(st: ast.Stmt, acc: string[]): string[] {
 // duplicates. `not_lambda` stops the walk at a lambda because ident_of has
 // already accounted for its whole body; a `when` guard is walked like an arm
 // body, since a name read only there is still a name the closure must capture.
-pub function collect_idents_stmt(st: ast.Stmt, acc: string[]): string[] {
+pub function collect_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
     return fold_stmt_nodes(st, acc, assign_target_of, ident_of, not_lambda);
 }
 
@@ -894,7 +909,7 @@ pub function collect_idents_stmt(st: ast.Stmt, acc: string[]): string[] {
 // recognised as an enclosing local, so a lambda reading one reads as
 // capture-free: it takes the no-capture `$wrapN` lift and resolves the name
 // against the module instead of capturing it.
-pub function append_bound_name(acc: string[], name: string): string[] {
+pub function append_bound_name(own acc: string[], name: string): string[] {
     var start: i32 = 0;
     var depth: i32 = 0;
     var i: i32 = 0;
@@ -934,7 +949,7 @@ pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 // subtracting its bindings: a lambda's calls are part of what the artifact
 // executes, which is the question here, where free-variable analysis asks what
 // the enclosing scope must capture.
-function call_site_of(e: ast.Expr, want: string[], acc: CallSite[]): CallSite[] {
+function call_site_of(e: ast.Expr, want: string[], own acc: CallSite[]): CallSite[] {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -955,8 +970,8 @@ function call_site_of(e: ast.Expr, want: string[], acc: CallSite[]): CallSite[] 
 }
 
 // collect_calls_stmt appends every wanted call reachable from `st` to `acc`.
-pub function collect_calls_stmt(st: ast.Stmt, want: string[], acc: CallSite[]): CallSite[] {
-    function visit(e: ast.Expr, a: CallSite[]): CallSite[] { return call_site_of(e, want, a); }
+pub function collect_calls_stmt(st: ast.Stmt, want: string[], own acc: CallSite[]): CallSite[] {
+    function visit(e: ast.Expr, own a: CallSite[]): CallSite[] { return call_site_of(e, want, a); }
     return fold_stmt(st, acc, visit);
 }
 
@@ -972,7 +987,7 @@ pub function collect_calls_stmt(st: ast.Stmt, want: string[], acc: CallSite[]): 
 // the pattern themselves, which is the point: two answers to "what does this
 // pattern bind" is how at_binding came to be missing from one of them (#6993)
 // and the tuple binders from this one (#8607).
-pub function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
+pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
     match (p) {
         ast.PatVariant(pv) => {
             if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
@@ -1000,7 +1015,7 @@ pub function pattern_binders(p: ast.Pattern, acc: string[]): string[] {
 // loop variable, and the patterns of a `match`'s arms. Every one of them is
 // carried on the statement node, which is why this walk needs a statement
 // visitor and cannot be written over fold_stmt alone.
-function binders_of(st: ast.Stmt, acc: string[]): string[] {
+function binders_of(st: ast.Stmt, own acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => { return append_bound_name(acc, v.name); },
         ast.StmtFor(f) => { return append_bound_name(acc, f.var_name); },
@@ -1019,7 +1034,7 @@ function binders_of(st: ast.Stmt, acc: string[]): string[] {
 // Consumers subtract it from collect_idents_stmt's reads to get free variables,
 // so a name missing here is read as a capture of an enclosing local that does
 // not exist.
-pub function collect_bound_stmt(st: ast.Stmt, acc: string[]): string[] {
+pub function collect_bound_stmt(st: ast.Stmt, own acc: string[]): string[] {
     return fold_stmt_spine(st, acc, binders_of);
 }
 
@@ -1071,13 +1086,13 @@ function qualref_of(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
 
 // collect_qualrefs_expr appends every `<q>.<name>` in `e` whose qualifier `q`
 // is in `quals` (the module names in scope for the file being walked).
-pub function collect_qualrefs_expr(e: ast.Expr, quals: string[], acc: QualRef[]): QualRef[] {
-    function visit(n: ast.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
+pub function collect_qualrefs_expr(e: ast.Expr, quals: string[], own acc: QualRef[]): QualRef[] {
+    function visit(n: ast.Expr, own a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
     return fold_expr(e, acc, visit);
 }
 
 // collect_qualrefs_stmt is collect_qualrefs_expr's statement half.
-pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], acc: QualRef[]): QualRef[] {
-    function visit(n: ast.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
+pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualRef[]): QualRef[] {
+    function visit(n: ast.Expr, own a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
     return fold_stmt(st, acc, visit);
 }
