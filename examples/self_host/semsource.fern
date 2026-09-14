@@ -56,7 +56,11 @@ struct State {
     binding: ssasem.Binding,
     requests: Request[],
     // The symbol this body defines: the declaration's name, or the instance's.
-    name: string
+    name: string,
+    // Each parameter's declared mode, in order. A parameter's value id is its
+    // position, so this doubles as the answer to "is this value a parameter,
+    // and does this frame own it?".
+    modes: i32[]
 }
 
 struct Value { s: State, id: i32 }
@@ -1167,8 +1171,22 @@ function closure(body: string, c: ast.ExprCall, s: State): Value {
 
 struct Captured { s: State, ids: i32[] }
 
+// A captured FUNCTION value is borrowed rather than taken: the box holds the
+// address of another box whose captures only that box's own frame can walk, so
+// taking a unit of it would promise a release this frame cannot perform. The
+// borrow is sound exactly when the value's owner outlives every box built
+// here, and a borrowed parameter is such an owner — the caller holds it across
+// the whole call. A function value reaches a frame no other way that outlives
+// it: a function value result and an owning function parameter are both
+// refused, and a local closure dies with the frame that captures it.
+function lent_capture(s: State, id: i32, t: typeinfo.Type): boolean {
+    if (!ssasem.is_func(t)) { return true; }
+    return id < s.modes.len() && s.modes[id] == ssaunits.borrow_mode();
+}
+
 // Each capture is produced at the type the body's environment declares for
-// its slot; the box takes one unit of every reference among them.
+// its slot; the box takes one unit of every reference among them but the
+// function values, which it borrows.
 function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
     if (c.args.len() != types.len()) { return Captured { s: fail(s, "closure capture count"), ids: [] }; }
     var ids: i32[] = [];
@@ -1178,6 +1196,7 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
         s = v.s;
         if (!s.ok) { return Captured { s: s, ids: [] }; }
         if (!semtypes.equal(s.values[v.id], types[i])) { return Captured { s: fail(s, "closure capture type"), ids: [] }; }
+        if (!lent_capture(s, v.id, types[i])) { return Captured { s: fail(s, "captured function value is not a borrowed parameter"), ids: [] }; }
         ids = ids.append(v.id);
         i = i + 1;
     }
@@ -2044,9 +2063,10 @@ function parameters(fd: parser.FuncDecl, s: State): State {
         // is walked by the frame that built it, the only one whose schema
         // names the captures, so a parameter that would take the unit and
         // release the box here has no contract.
-        if (ssasem.is_func(ty) && decl_param_mode(fd, at, ty) == ssaunits.counted_mode()) { return fail(s, "owning function parameter"); }
+        var m: i32 = decl_param_mode(fd, at, ty);
+        if (ssasem.is_func(ty) && m == ssaunits.counted_mode()) { return fail(s, "owning function parameter"); }
         var p: Value = define(s, 6, [], at, "", ty);
-        s = bind(p.s, names[at], p.id);
+        s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
         at = at + 1;
     }
     return s;
@@ -2061,7 +2081,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [], name: name };
+        template: generic_decl(fd, scope), binding: binding, requests: [], name: name, modes: [] };
 }
 
 // ---- record schemas ---------------------------------------------------------
@@ -2215,12 +2235,11 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     var map: i32[] = trivial_phis(s.blocks, s.values.len());
     var f: ssasem.Func = renumber(s.blocks, map, s.values);
     var params: typeinfo.Type[] = [];
-    var modes: i32[] = [];
+    var modes: i32[] = s.modes;
     var at: i32 = 0;
     var nparams: i32 = decl_param_names(fd).len();
     while (at < nparams) {
         params = params.append(f.values[at]);
-        modes = modes.append(decl_param_mode(fd, at, f.values[at]));
         at = at + 1;
     }
     var named: typeinfo.Type[] = f.values.append(s.result);

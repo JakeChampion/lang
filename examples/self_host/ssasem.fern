@@ -1073,10 +1073,13 @@ function narrow_word(t: typeinfo.Type): boolean {
     return semtypes.concrete(t, false);
 }
 
-// A function value is a value and a parameter, never an element or a field:
-// releasing a container or a record walks its slots by their declared types,
-// and a function type names no captures for that walk to reach.
+// A function value is a value, a parameter and a closure's borrowed capture,
+// never an element or a field: releasing a container or a record walks its
+// slots by their declared types, and a function type names no captures for
+// that walk to reach. A cell is such a container, and outlives the frame that
+// filled it, so its element is refused with the rest.
 function nests_func(t: typeinfo.Type): boolean {
+    if (semtypes.is_cell(t)) { return holds_func(semtypes.cell_elem(t)); }
     if let typeinfo.TypeArray(a) = t { return holds_func(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for e in tup.elements { if (holds_func(e)) { return true; } }
@@ -1095,7 +1098,15 @@ function type_placement_error(t: typeinfo.Type): string {
 
 function field_placement_error(f: Func): string {
     for record in f.records {
-        for field in record.fields { if (holds_func(field.ty)) { return "function value is not a field"; } }
+        var env: boolean = semtypes.is_env(record.ty);
+        for field in record.fields {
+            if (!holds_func(field.ty)) { continue; }
+            // A closure box BORROWS a captured function value (semsource's
+            // lent_capture): the field is never walked, and the box it names
+            // is released by the frame that owns it.
+            if (env && is_func(field.ty)) { continue; }
+            return "function value is not a field";
+        }
     }
     for e in f.enums {
         for v in e.variants {

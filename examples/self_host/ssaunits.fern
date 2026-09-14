@@ -162,6 +162,10 @@ function construction(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new()
         || kind == ssasem.closure_new() || kind == ssasem.cell_new();
 }
+// The operand types a construction takes a unit of: every reference but a
+// function value, which it borrows.
+function taken(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_func(t); }
+
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || hands_out(kind);
 }
@@ -195,11 +199,13 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
     for dep in deps[value] { live = live.with(dep, true); }
     return live;
 }
-// A construction takes one unit per reference operand. A call takes one per
-// counted parameter; a borrowed parameter only reads the caller's unit. An
-// append or a with takes one for its receiver, which a receiver this function
-// does not own reaches by retaining; a cell write takes one for the element
-// it stores and reads the cell.
+// A construction takes one unit per reference operand, except a FUNCTION
+// value, which every construction that can hold one borrows: only a closure
+// box can, and it borrows its captures of that type (semsource's
+// lent_capture). A call takes one per counted parameter; a borrowed parameter
+// only reads the caller's unit. An append or a with takes one for its
+// receiver, which a receiver this function does not own reaches by retaining;
+// a cell write takes one for the element it stores and reads the cell.
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
     var counted: boolean[] = [];
@@ -214,7 +220,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     } else if (ins.kind_tag == ssasem.with()) {
         counted = [true, false, reference(f.values[ins.args[2]])];
     } else if (construction(ins.kind_tag)) {
-        for arg in ins.args { counted = counted.append(reference(f.values[arg])); }
+        for arg in ins.args { counted = counted.append(taken(f.values[arg])); }
     }
     var i: i32 = 0;
     while (i < counted.len()) {
