@@ -5,7 +5,7 @@ import "std/test";
 // examples/tests/array_reductions_test.fern — wider-int /
 // float array reductions.
 //
-// The per-width `sum_*` / `max_*` / `min_*` zoo std/array once
+// The per-width `sum_*` / `max_*` / `min_*` family std/array once
 // carried was retired (#5349) in favour of the generic bounded
 // verbs: `num.sum[T: Add + Zero]` and `cmp.max_of` /
 // `cmp.min_of[T: Ord]`. These cases pin the width-specific

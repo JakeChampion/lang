@@ -5610,7 +5610,7 @@ function main(): i32 {
 
 // E055: a bare statement whose whole expression is a value-returning
 // collection mutator silently discards the new collection (the CoW aliasing
-// footgun). It must be reassigned, or explicitly discarded with `var _ = …`.
+// bug). It must be reassigned, or explicitly discarded with `var _ = …`.
 func TestUnusedCollectionResultE055(t *testing.T) {
 	// A bare `arr.append(x);` discards the returned array → E055.
 	err := checkSource(t, `function main(): i32 {
@@ -6813,7 +6813,7 @@ function f(v: str): i32 { return consume(v) + borrow(v); }`
 
 // TestPointerReinterpretFromI32Rejected (E069, #5053) locks the rule that a
 // 32-bit-only value (`i32` / `u32`) reinterpreted as a pointer-shaped type
-// (`string`, an array, or a struct) via `as` is a truncation footgun — the
+// (`string`, an array, or a struct) via `as` is a truncation bug — the
 // high 32 bits of the address were lost when the value became i32, so the
 // recovered pointer is corrupt once the heap exceeds 4 GiB. A `usize` source
 // carries the full width and stays allowed (the stdlib's raw-block-to-handle

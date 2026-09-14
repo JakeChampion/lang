@@ -29,7 +29,7 @@ import (
 // carries the IR path's function-scoped `.Lir_main_` labels, which the AST
 // emitter (global `.L0`/`.L1` numbering) never produces.
 //
-// The negative cases are the ones with teeth: parity lowers as `n & 1`, not
+// The negative cases are the ones that catch it: parity lowers as `n & 1`, not
 // `n % 2`, because two's-complement AND yields 1 for a negative odd n where rem_s
 // yields -1 — an `== 1` test over rem_s would call -3 even.
 func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {

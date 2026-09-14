@@ -63,7 +63,7 @@ pub function one(): i32 { return b.one(); }`,
 
 // (c) An ungoverned middle imposes no ceiling: a has no capabilities
 // key in the root's manifest, so its grant of b stands (the phase-2
-// warn-and-allow story for a itself is unchanged and lives at the
+// warn-and-allow rule for a itself is unchanged and lives at the
 // enforcement layer, not here).
 func TestLoadAttenuationUngovernedMiddle(t *testing.T) {
 	root := writeTree(t, map[string]string{

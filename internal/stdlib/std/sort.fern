@@ -1,6 +1,6 @@
 // std/sort — comparator-driven and case-insensitive string sorts, the
 // `own`-consuming in-place i32 sorts, and the byte-lexicographic string
-// comparators. The per-width *monomorphic* sort zoo (`sort_i32_asc` /
+// comparators. The per-width *monomorphic* sort family (`sort_i32_asc` /
 // `sort_i64_asc` / `sort_u32_asc` / `sort_u64_asc` / `sort_f64_asc` and their
 // `_desc` mirrors, plus `sort_strings_asc` / `sort_strings_desc`) was retired
 // in #5397 in favour of `core/cmp`'s generic `sort[T: Ord]` / `sort_desc[T:

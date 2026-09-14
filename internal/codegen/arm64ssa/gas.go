@@ -1520,7 +1520,7 @@ func emitExpF64Helper(w func(string, ...any)) {
 // [sqrt2/2, sqrt2); f = m-1; s = f/(2+f). R is two INDEPENDENT chains in w = z^2
 // so they issue in parallel rather than as one 7-deep Horner. Domain-guarded:
 // without it log(0) returned -709.09 and log(-1) returned 0, because the bit
-// twiddling below happily extracts an exponent from 0 or +Inf.
+// twiddling below extracts an exponent from 0 or +Inf.
 func emitLogF64Helper(w func(string, ...any)) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)

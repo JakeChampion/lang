@@ -361,7 +361,7 @@ func TestConstPropMultiLoadCollapses(t *testing.T) {
 // i64 constants flow through locals the same way i32 constants
 // do. The fold pipeline collapses `var x: i64 = 7i64; return x +
 // 3i64` to a single OpConstI64 10 via the same tee + propagate +
-// fold dance.
+// fold sequence.
 func TestConstPropTracksI64(t *testing.T) {
 	p := lowerSource(t, `function f(): i64 {
 		var x: i64 = 7i64;

@@ -71,7 +71,7 @@ func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 
 // TestSelfHostIntToF64Arm64IR — CI-gated arm64 counterpart. arm64 has both
 // conversions, so the u64 case is one instruction (ucvtf) rather than x86's
-// halving dance, but the bug was identical: an unconditional `scvtf d0, x0`
+// halving sequence, but the bug was identical: an unconditional `scvtf d0, x0`
 // read u64::MAX as -1.0.
 func TestSelfHostIntToF64Arm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

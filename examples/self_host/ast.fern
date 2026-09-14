@@ -287,7 +287,7 @@ pub function expr_col(e: Expr): i32 {
 // SPELLINGS of that fn's own parameter types — the StmtVar-level sibling of
 // ParamDecl.fn_param_types, recorded for the same reason. parse_type_name
 // coarsens both annotations to the flat "fn" / "fn[]" tags, and `fn_ret` alone
-// only names half the signature; wasm needs the whole of it, because a funcref
+// only names half the signature; wasm needs all of it, because a funcref
 // type is structural and dispatching a `(f64) => f64` element through an
 // all-i32 `$fn1` is a runtime `indirect call type mismatch`.
 pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string, fn_param_types: string }

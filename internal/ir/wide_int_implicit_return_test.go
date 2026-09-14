@@ -65,7 +65,7 @@ func TestImplicitWideIntReturnIsI64(t *testing.T) {
 		"fall_i32": OpConstI32,
 		"fall_u32": OpConstI32,
 	}
-	// Both pointer widths: wasm (4) is where this bites, native (8) guards
+	// Both pointer widths: wasm (4) is where this shows, native (8) guards
 	// against fixing only the width that complained.
 	for _, ptrW := range []int{4, 8} {
 		ip, err := LowerWith(prog, info, ptrW)

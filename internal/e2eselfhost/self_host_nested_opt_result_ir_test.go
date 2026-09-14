@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// nestedOptResultIRCases close the last seam in the Option/Result nesting story: a
+// nestedOptResultIRCases close the last seam in Option/Result nesting: a
 // fully-matched `Option[Result[T, E]]` (the outer Some bound, then the inner Result
 // matched and its payload read) now lowers on the IR path. The bug was in
 // `some_opt_type`: for `var o: Option[Result[..]] = Some(Ok(x))` it inferred o's

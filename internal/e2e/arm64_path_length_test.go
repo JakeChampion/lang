@@ -11,7 +11,7 @@ import (
 // exactly 0 mod 16 bytes lands in a same-size bump-heap slot with
 // no zero pad, so without an explicit NUL terminator the kernel
 // reads past the intended end into whatever's at the next slot.
-// In the wild that next slot is usually the second argv string,
+// In practice that next slot is usually the second argv string,
 // concatenating two paths into one — openat sees a non-existent
 // path and the program silently fails.
 //

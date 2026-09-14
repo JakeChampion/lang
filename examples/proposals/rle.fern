@@ -5,7 +5,7 @@
 // wrong. A format built around an escape marker corrupts any input containing
 // the marker; a format with a one-byte count silently truncates a run of 300;
 // a format that assumes text mishandles 0x00. Each of those produces an
-// encoder that works beautifully on the examples its author tried.
+// encoder that works on the examples its author tried.
 //
 // So the format here is PackBits, which needs no escape byte at all: a header
 // of 0..127 introduces that many plus one LITERAL bytes, and a header of

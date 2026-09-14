@@ -17,7 +17,7 @@ import (
 // concurrently) can put two cold driver builds in their memory-peak phase
 // at once — two ~8 GB peaks stacked crosses the host's RAM and trips the
 // OOM killer (the exit-137 / "signal: killed" the project notes used to
-// paper over with an 8 GB swap file).
+// hide with an 8 GB swap file).
 //
 // buildMemLimiter is a weighted counting semaphore over an estimated-RSS
 // budget: each cold driver build acquires its estimated peak before it

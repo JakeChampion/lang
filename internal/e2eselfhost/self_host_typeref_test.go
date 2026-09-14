@@ -16,7 +16,7 @@ import "testing"
 // array_depth / is_tuple) so a tree that round-trips but decodes wrongly is
 // still caught. Function types need that structure half more than any other
 // shape: an unrecognised spelling survives whole as `base` and renders back
-// byte-identical, so `(A, B) => C` round-trips just as happily when it is not
+// byte-identical, so `(A, B) => C` round-trips just the same when it is not
 // understood at all — only the arg count and `is_fn` separate the two.
 //
 // It prints a deterministic report and exits with the round-trip failure count

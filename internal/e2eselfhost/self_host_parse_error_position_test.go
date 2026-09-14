@@ -202,7 +202,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"param-default-sentinel",
 			"function f(x: i32 = ;): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: in fn 'f': parser-side unknown: punct:; (1:21)"},
-		// Nested inside the default rather than being the whole of it, so the
+		// Nested inside the default rather than being all of it, so the
 		// fold is held to descending a default and not merely to testing its
 		// root node.
 		{"param-default-nested-sentinel",

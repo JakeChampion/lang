@@ -111,7 +111,7 @@ func TestInterpAsmReservedNameFn(t *testing.T) {
 // compileAndRunX86_64 assembles and links with gcc, which is the path #6022
 // broke: before the fix this failed to build at all
 // (`Error: .size expression for cs does not evaluate to a constant`) while the
-// in-process assembler built the same source happily.
+// in-process assembler built the same source.
 func TestX86_64AsmReservedNameFn(t *testing.T) {
 	out, code := compileAndRunX86_64(t, asmReservedNameFnSrc)
 	if code != 44 {

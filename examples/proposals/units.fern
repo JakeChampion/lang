@@ -4,7 +4,7 @@
 // Every quantity carries a dimension: a vector of exponents over the SI
 // base quantities (here length, mass, time). Conversion is only defined
 // between units of the SAME dimension, and that check is the point of the
-// app — a converter that will happily turn kilograms into seconds because
+// app — a converter that silently turns kilograms into seconds because
 // both are "just numbers" is the failure mode worth testing against.
 //
 // Multiplication ADDS exponents and division SUBTRACTS them, so the

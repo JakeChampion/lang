@@ -2008,7 +2008,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// contract" convention proc_fork uses. Shares the `proc` capability gate
 	// (native targets only). The interpreter cannot exec (it would replace
 	// the compiler process) and answers -38 / ENOSYS, matching proc_fork's
-	// degrade-at-runtime story.
+	// degrade-at-runtime contract.
 	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
@@ -9662,7 +9662,7 @@ func (c *checker) hasDropImpl(typeName string) bool {
 // pureCollectionMutators maps each value-returning collection mutator's
 // mangled lowering to its source-level spelling. These are the operations
 // that return a (possibly fresh) collection rather than mutating in place;
-// discarding their result is the aliasing footgun E055 closes.
+// discarding their result is the aliasing mistake E055 closes.
 var pureCollectionMutators = map[string]string{
 	"__method_Map_set":    "insert",
 	"__method_Map_delete": "without",
@@ -10116,7 +10116,7 @@ func (c *checker) needCoreMap(pos ast.Position) {
 //
 // The mapped-to name is the MECHANICAL migration — it compiles to what
 // the old name compiled to. Where the retirement exists to make a
-// hazard visible, `retiredHints` carries the other half of the story.
+// hazard visible, `retiredHints` carries the other half.
 var retiredNames = map[string]string{
 	"string_from_bytes": "string_from_bytes_unchecked",
 }
@@ -10623,7 +10623,7 @@ func (c *checker) checkCaptureCycleStores() {
 // literal — the checker knows what a literal captures because it just built
 // it. Every other right-hand side (an identifier, a call result, a container
 // holding one) is a value from somewhere else, and is judged by its type
-// alone. It earns its keep on the `if (flip) { g = (): T => …; }` shape, a
+// alone. It matters on the `if (flip) { g = (): T => …; }` shape, a
 // callback swapped on a flag, which the type test alone refuses.
 func (c *checker) freshLambdaCannotReach(v ast.Expr, decl *ast.Var, s *scope) bool {
 	lam, ok := v.(*ast.Lambda)
@@ -12674,7 +12674,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// partially inferred (e.g. variant constructor
 			// args only pin one of Result[T, E]'s two type
 			// params), refine using the destination type. See
-			// refineCallTypeArgsFromDest for the full story.
+			// refineCallTypeArgsFromDest for the full rule.
 			c.refineCallTypeArgsFromDest(n.Init, n.Type)
 		}
 		if n.Type == nil {
@@ -14712,7 +14712,7 @@ func (c *checker) errE040StructUninferred(p ast.Position, tp, name string) {
 // The split comes off the receiver hoist's own stamp rather than out of
 // the mangled name: with two traits providing one method name for one
 // type the loser is mangled `__method_<Type>__<Trait>__<name>`, and both
-// halves carry their own `__` module mangling, so no string surgery can
+// halves carry their own `__` module mangling, so no string rewriting can
 // find the seam.
 func callSiteName(fn *ast.FuncDecl) (display, spelling string) {
 	if fn.MethodRecv == "" || fn.MethodSimpleName == "" {
@@ -15126,7 +15126,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			switch n.Target.(type) {
 			case ast.ArrayType, ast.StringType, ast.StructType:
 				// A 32-bit-only source (i32 / u32 — NOT usize) reinterpreted as
-				// a pointer-shaped handle is the #5042 truncation footgun: the
+				// a pointer-shaped handle is the #5042 truncation bug: the
 				// high 32 bits of the address were already lost when the value
 				// became i32, so `k as string` / `k as T[]` / `k as Struct`
 				// recovers a corrupt pointer once the heap crosses 4 GiB
@@ -15535,7 +15535,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// already a string, rewrite it to `arg.to_string()` (the same
 		// desugar f-strings use) so the value is stringified through the
 		// Display trait before it reaches the string-only runtime helper.
-		// This removes the stringify-first dance (`print(x.to_string())`)
+		// This removes the stringify-first step (`print(x.to_string())`)
 		// at every call site. Wrong arg counts fall through to the normal
 		// path, which reports the arity error.
 		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {

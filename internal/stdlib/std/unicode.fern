@@ -1077,7 +1077,7 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 // input and materialising them as owned strings would be pure overhead.
 //
 // A WARNING WORTH HEEDING, and the reason this is opt-in: reaching for
-// the n-th grapheme is usually a design smell. It is O(n) to find, and
+// the n-th grapheme is usually a design mistake. It is O(n) to find, and
 // the answer is rarely what the problem actually needed. Prefer
 // iterating this result, or an operation that does not need to know
 // about clusters at all. Fern keeps `s.len()` in BYTES and `s[i]` a byte

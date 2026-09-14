@@ -8305,7 +8305,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// __fern_kcos(d0=r, |r| <= pi/4) → cos r.
 	//   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
 	//   cos = w + (((1-w) - hz) + z*(z*p))
-	// The (1-w)-hz dance recovers the bits 1-hz discarded; computing
+	// The (1-w)-hz rewrite recovers the bits 1-hz discarded; computing
 	// 1 - hz + z*z*p directly loses them and costs ~2 ulp.
 	g.line("")
 	g.label("__fern_kcos")
@@ -8488,7 +8488,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_log_f64")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
 	logNoScale := g.freshLabel("logNoScale")
-	// Domain guards. The bit-twiddling below happily extracts an exponent
+	// Domain guards. The bit-twiddling below extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage. log(-0) == log(0) ==
 	// -Inf, which the equality branch covers.
@@ -12341,7 +12341,7 @@ type statField struct {
 	load     string
 }
 
-// statFields is the whole of what differs between the two arm64
+// statFields is all that differs between the two arm64
 // environments once fstatat has run. Linux's asm-generic `struct stat`
 // is 128 bytes with 32-bit mode / nlink / uid / gid up front and the
 // three timestamps as pairs of 64-bit words from offset 72; Darwin's
@@ -14303,7 +14303,7 @@ type generator struct {
 	// intra-function `b .Lret_…` epilogue jumps overflow ("branch out of
 	// range"). Set false for such a function (see rcInlineMaxOps) so its rc
 	// ops fall back to the `bl` call form that already assembled — every
-	// normal function (all user code, and all but the one self-host monster)
+	// normal function (all user code, and all but the largest self-host function)
 	// keeps the inline win.
 	rcInlineOK bool
 	// usesStrInc / usesStrDec / usesCellFree gate the two-word
@@ -16393,7 +16393,7 @@ func (g *generator) emitStrLen2W(dstW, lenX string) {
 // same-16-byte-aligned allocations, so if `len` is 0 mod 16
 // (e.g. "examples/tests/strings_test.fern" is 32 bytes) the
 // byte after the path data is the first byte of the next
-// allocation. The kernel happily reads past the intended end
+// allocation. The kernel reads past the intended end
 // and openat sees a concatenated path, failing with ENOTDIR.
 //
 // Caller assumptions:

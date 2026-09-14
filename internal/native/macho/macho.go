@@ -16,7 +16,7 @@
 // one built by Apple's own ld64, which is how we know it is a platform rule
 // and not a defect here. There is no crash report and nothing in the system
 // log; the process exits 137, indistinguishable from an OOM kill. The
-// requirements, in the order they bite:
+// requirements, in the order they apply:
 //
 //   - MH_PIE. Without it the kernel refuses the image before dyld runs at all.
 //     ld64 cannot even produce a non-PIE arm64 executable — it warns "-no_pie

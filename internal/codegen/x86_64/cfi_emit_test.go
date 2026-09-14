@@ -168,7 +168,7 @@ func TestEmittedCFIDecodesAsUnwindData(t *testing.T) {
 // findX86Gcc locates a gcc that actually targets x86-64, verified by
 // assembling an Intel-syntax probe rather than by trusting the name.
 //
-// `gcc` on an aarch64 runner is the NATIVE aarch64 gcc, which happily
+// `gcc` on an aarch64 runner is the NATIVE aarch64 gcc, which
 // accepts the file and then reports "unknown mnemonic `push`" several
 // hundred times. This test did exactly that on test-units-aarch64 — the
 // only failure in 6460 — because it looked the tool up by name and I had

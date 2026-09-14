@@ -32,7 +32,7 @@ const repoLimit = lint.DefaultMaxComplexity
 // red-light main for whoever pushed the next rc commit — a gate nobody can
 // keep, which is the same failure as a limit nobody can meet.
 //
-// Five per cent absorbs that churn and still bites: one new 400-fork
+// Five per cent absorbs that churn and still fails: one new 400-fork
 // function is +2% of the excess on its own, and a ceiling past 500 fails.
 // The shape — a checked-in baseline with a tolerance, growth fatal, both
 // directions reported — is the one `scripts/ci-check-perf` and
@@ -65,7 +65,7 @@ type tree struct {
 	// (score - repoLimit) across every UNSUPPRESSED function above it.
 	//
 	// Deliberately not a COUNT of functions over the limit, which is the
-	// obvious metric and the wrong one: splitting a 472-fork monster into
+	// obvious metric and the wrong one: splitting a 472-fork function into
 	// ten readable 40-fork helpers takes that count from 1 to 10, so the
 	// gate would report the single most valuable refactor available as a
 	// regression and block it. Summed distance calls the same split what

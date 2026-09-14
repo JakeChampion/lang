@@ -14,7 +14,7 @@
 // Arithmetic / comparison / memory / conversion instructions
 // live in sibling packages (memory, numeric, convert) so this
 // file stays focused on the structural instructions a function
-// body's skeleton needs.
+// body's structure needs.
 //
 // Calling convention mirrors the Lang side: every encoder takes
 // a byte slice and appends. The block / loop / if forms emit

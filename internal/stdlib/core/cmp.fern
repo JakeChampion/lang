@@ -420,7 +420,7 @@ pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
 // max_of / min_of reduce an array to its largest / smallest element under
 // `Ord`, returning `Option[T]` — `None` for an empty array (there is no
 // extremum), `Some(x)` otherwise. The generic, any-`Ord`-type replacement for
-// std/array's per-width `max_i64` / `min_i64` / `max_u32` / … zoo (#4387
+// std/array's per-width `max_i64` / `min_i64` / `max_u32` / … family (#4387
 // item 2): one body dispatching `.cmp`, monomorphised per element type, so it
 // lowers on the self-host IR path like `sort` / `is_sorted`. On ties the first
 // extremal element wins (a strict `> 0` / `< 0` only replaces on a genuine
@@ -679,12 +679,12 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
 // sort returns a new array with `arr`'s elements in non-decreasing `Ord` order.
 // Generic over any `T: Ord` (incl. `@derive(Ord)` types) — the type-erased,
 // any-`Ord`-element replacement for std/sort's retired per-width `sort_i32_asc`
-// / `sort_i64_asc` / `sort_u32_asc` / `sort_f64_asc` / `sort_strings_asc` zoo
+// / `sort_i64_asc` / `sort_u32_asc` / `sort_f64_asc` / `sort_strings_asc` family
 // (#5397). The `T: Ord` bound monomorphises the `.cmp` compare per element type
 // on the self-host IR path — an `i32` element lowers to the scalar three-way, a
 // `u32` to the unsigned compare, a `string` to the lexicographic byte compare —
 // so a single body gives every width the direct scalar/dedicated compare the
-// zoo used to spell by hand.
+// family used to spell by hand.
 //
 // STABLE: equal elements keep their input order. Adaptive natural-run merge
 // sort — O(n) on sorted or reverse-sorted input, O(n log n) worst case. See

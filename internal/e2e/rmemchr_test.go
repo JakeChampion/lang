@@ -18,7 +18,7 @@ import (
 // boundary a vector body will later have.
 //
 // Shared with the forward corpus in spirit but NOT in code, because the two
-// differ in the one place a shared generator would paper over: `from` clamps
+// differ in the one place a shared generator would hide: `from` clamps
 // DOWN to len-1 here and UP to 0 there, so a negative `from` finds nothing
 // here and searches the whole string there.
 

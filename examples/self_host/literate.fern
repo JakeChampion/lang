@@ -423,8 +423,8 @@ pub function tangle_chunk(src: string, name: string): TangleResult {
 // ─── multi-file tangle ─────────────────────────────────────────────
 // A `file=PATH` fence is a *file-root*: its body becomes the module
 // PATH (expanding `<<ref>>` chunks like the `<<*>>` root). One document
-// can declare several, so a multi-module program is described as one
-// narrative and partitioned into modules. This mirrors the Go engine's
+// can declare several, so a multi-module program is written as one
+// document and partitioned into modules. This mirrors the Go engine's
 // `TangleFiles` / `EntryFile` (internal/literate/tanglefiles.go).
 
 // FilePiece is one body line of a `file=PATH` block, tagged with its

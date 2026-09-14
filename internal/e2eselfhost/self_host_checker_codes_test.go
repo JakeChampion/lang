@@ -2559,7 +2559,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// `sum` / `product` are the only array methods returning the ELEMENT
 		// itself, so they are the only ones whose return has to be recovered
 		// from the receiver rather than read off the declaration. The f64 rows
-		// are the ones with teeth: a substitution that resolved the element to
+		// are the ones that catch it: a substitution that resolved the element to
 		// i32 rather than to the receiver's own would pass every i32 row here
 		// and report nothing for `var x: i32 = f.sum()`.
 		{"array-product-ret-i32-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: i32 = a.product(); return x; }\n"},

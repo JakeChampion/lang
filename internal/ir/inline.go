@@ -77,7 +77,7 @@ const inlineLoopSizeLimit = 160
 //
 // The per-callee caps above bound each SITE; nothing bounds the SUM, and
 // on a program with thousands of small helpers the sum is the whole
-// story. Measured on the self-hosted compiler (2.70M ops, 5,285
+// cost. Measured on the self-hosted compiler (2.70M ops, 5,285
 // functions) emitting x86-64: unbudgeted inlining grew the assembly 2.70x
 // (106 MB -> 285 MB) and its emit 2.31x, for a 2-3% runtime LOSS
 // (docs/PERFORMANCE-AUDIT-2026-08.md §7 item 6). Capping whole-program
@@ -120,7 +120,7 @@ const inlineMaxUnitOps = 20000
 // loop inverts that. Measured at the same 24: text +0.62% instead of
 // -0.74%, because every partly-inlined helper has to stay, and `sort -n`
 // keeps a quarter of its win. So there is no loop-depth tier here; the
-// general policy (siteAllows) is where one earns its keep.
+// general policy (siteAllows) is where one is worth having.
 const inlineTinyLeafOps = 24
 
 // inlineTinyBudgetDivisor caps what the tiny-leaf mode may add to an

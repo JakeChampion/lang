@@ -11,7 +11,7 @@
 // The shape needs all of: a reassign-and-return branch, a guarded transfer
 // branch, a trailing fall-through return, and a further own hop inside the
 // callee — that is the arm64 in-process assembler's dispatch (`arm64_gas_emit`
-// -> `arm64_asm_bcond` -> `arm64_asm_fixup_or_patch`) reduced to its skeleton.
+// -> `arm64_asm_bcond` -> `arm64_asm_fixup_or_patch`) reduced to its bare shape.
 struct Asm { code: i32[], fixups: i32[] }
 
 function fixup(own a: Asm, at: i32): Asm {

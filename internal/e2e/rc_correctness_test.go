@@ -330,7 +330,7 @@ function main(): i32 {
 	{
 		// A loop element STORED into an accumulator array: movedLocals and
 		// bindingConfinedToArm (append is a retain sink per
-		// calleeRetainsAnyArg) refuse the borrow. Same story as the return
+		// calleeRetainsAnyArg) refuse the borrow. Same as the return
 		// case above: pinned as cross-backend value correctness with
 		// in-function container death and churn; the escape site takes its
 		// own transfer inc, so even a wrongly-taken borrow shows up as a
@@ -4232,7 +4232,7 @@ function main(): i32 {
 		// The same `.with` self-reassign reached through a LOCAL ALIAS of the
 		// borrowed param rather than the param itself, threaded recursively —
 		// the shape the self-host checker's e060_collect_dyn_locals is built
-		// from, and where #6057 was first caught in the wild (52 over-releases
+		// from, and where #6057 was first caught in practice (52 over-releases
 		// compiling parser.fern, 92 compiling checker.fern, while emitting
 		// byte-identical output).
 		//

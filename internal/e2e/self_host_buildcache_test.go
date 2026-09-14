@@ -22,7 +22,7 @@ package e2e
 // When set, the asm + linked-binary caches read from and write to it, so CI
 // `warm` jobs can pre-compile the self-host drivers once and the sharded test
 // jobs consume the artifacts instead of recompiling the ~35k-line compiler per
-// shard — the heavy, RAM/disk-hungry work that exhausts a hosted runner mid-
+// shard — the RAM- and disk-heavy work that exhausts a hosted runner mid-
 // shard ("received a shutdown signal"). Empty (the default, e.g. local
 // `go test`) leaves the in-process caches as the only layer. Content-addressed
 // by the same source-set / asm hash as the in-process caches, so a hit is

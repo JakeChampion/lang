@@ -471,7 +471,7 @@ func TestEnforceRandomUniversal(t *testing.T) {
 	}
 }
 
-// The freestanding target is the one that gives the tables teeth
+// The freestanding target is where the tables actually reject
 // (#6509). `log` / `now` / `random` are granted by all six hosted
 // descriptors, so gating them rejects nothing there; here every one of
 // them rejects.

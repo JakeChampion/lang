@@ -16,7 +16,7 @@ import (
 //
 // The struct's box is aliased (rc 2) while its buffer is not: only the box
 // holds a reference to `buf`, so the STRING is at rc 1 and a gate on the
-// string's uniqueness would happily grow it in place — mutating a value the
+// string's uniqueness would grow it in place — mutating a value the
 // second alias still reads through the old box, which the non-unique arm
 // leaves pointing at it.
 //

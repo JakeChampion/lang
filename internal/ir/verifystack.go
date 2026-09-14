@@ -11,7 +11,7 @@
 // polymorphic-stack treatment of unreachable code after a `br` or a
 // `return`. That is not a coincidence: the IR is a wasm-shaped stack
 // machine, so a stack-discipline break here is a module the wasm backend
-// cannot emit and a register allocator will silently paper over on the
+// cannot emit and a register allocator will silently hide on the
 // natives — which is how the closure-dispatch cluster (#5001 / #5007 /
 // #5009 / #5026) reached run time.
 //

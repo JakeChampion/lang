@@ -92,7 +92,7 @@ func TestMapStructUpdateReuseArm64(t *testing.T) {
 }
 
 // The rc probe, for the over-release direction: the value assertions above
-// only bite once the freed block has been recycled into something else, and a
+// only fail once the freed block has been recycled into something else, and a
 // `return T{ ...p, m: p.m.insert(…) }` — the return-position spread, the other
 // caller of emitStructUpdateReuse — is here too.
 const mapStructUpdateReuseRcProg = `

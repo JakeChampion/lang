@@ -18,7 +18,7 @@ import "math"
 //
 // Division + remainder skip folding when the RHS is zero — the
 // runtime owns that trap; constfold's job is to preserve
-// observable behaviour, not paper over it.
+// observable behaviour, not hide it.
 //
 // Comparisons fold to OpConstBool (Imm 0 / 1). The package
 // doesn't track types per Value yet, so downstream passes that

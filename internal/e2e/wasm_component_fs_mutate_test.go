@@ -397,7 +397,7 @@ function main(): i32 {
 // The write into the leaf is what makes this more than a syscall
 // smoke test — a walk that created only the last component, or that
 // mis-sliced a prefix, leaves a path write_file cannot reach. The
-// instance-type assertion pins the other half of the preview-2 story:
+// instance-type assertion pins the other half of the preview-2 contract:
 // create-directory-at must be declared for a program that only ever
 // creates directories, without dragging unlink-file-at along.
 func TestCmdLangComponentCreateDirAll(t *testing.T) {

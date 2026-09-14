@@ -8480,7 +8480,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // uninitialized stack garbage; when the leftover value happens to look
 // like a heap pointer (past the null / low-address / sentinel guards) it
 // decrements a random block's rc word — a layout-dependent heap
-// corruption. Observed in the wild as the self-host driver miscompiling
+// corruption. Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
 // .Lir_main_* label): irlower's alias_names_in_stmt binds its StmtAssign
 // arm payload as `a`, shadowing the `var a: string[]` accumulators bound
@@ -11103,7 +11103,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// high - low. Without it an oversized `high` materialised a
 		// view past the source, and the access-time `__slice_idx`
 		// check — which compares against the slice's own len —
-		// happily read out of bounds. (The parser reserves the
+		// read out of bounds. (The parser reserves the
 		// bare `a[:]` form, so at least one bound is present.)
 		if err := b.expr(n.Source); err != nil {
 			return err
@@ -12597,7 +12597,7 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 // The call case is what keeps `"n = " + n.to_string()` from leaking the
 // to_string buffer once per join: OpStrConcat borrows its operands and
 // copies out of them, so nothing else in the pipeline ever drops them.
-// It only bites above the 7-byte small-string threshold — shorter
+// It only shows above the 7-byte small-string threshold — shorter
 // results are inline-tagged and never allocated, which is why the leak
 // hid behind small numbers.
 func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
@@ -16754,7 +16754,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 //     `items: ident(p.items)`) holds a counted reference, so the freeing
 //     drop only reclaims the genuine last one (the field's own is_unique
 //     gate dec's a shared buffer instead of freeing it). An in-place
-//     `p.items.append(v)` is the same story from the other side: the grow
+//     `p.items.append(v)` is the same case from the other side: the grow
 //     leaves the buffer at rc 2, so this drop hands back exactly the count
 //     the box was holding. The drop is gated
 //     on the i32 is_unique result (not the raw token pointer) so the branch
@@ -18422,7 +18422,7 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 // argument: after this call returns, can anything still reachable name that
 // argument's buffer?
 //
-// It takes BOTH halves of the escape story, because neither is the question on
+// It takes BOTH halves of the escape question, because neither is the question on
 // its own:
 //
 //   - inferParamEscapes says the argument is not stored into a caller-visible

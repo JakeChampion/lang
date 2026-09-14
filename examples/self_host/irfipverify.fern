@@ -13,7 +13,7 @@
 //
 //   - `fip`             — zero fresh allocation ops. E053 already rejects every
 //     allocating construct, so an op found here is checker/IR drift and is
-//     reported as such rather than papered over.
+//     reported as such rather than hidden.
 //   - `fbip`            — every constructor site must be reuse-PAIRED with a
 //     donor box. A paired site lowers to a `__fern_alloc_reuse` call instead of
 //     the fresh constructor op, so the scan below counts exactly the un-paired

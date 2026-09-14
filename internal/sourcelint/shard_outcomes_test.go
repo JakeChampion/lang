@@ -98,7 +98,7 @@ func TestVerifyShardOutcomesFailureIsFatal(t *testing.T) {
 	}
 }
 
-// The tolerate dial covers VANISHED shards only — a reported failure stays
+// The tolerate setting covers VANISHED shards only — a reported failure stays
 // fatal regardless, which is the enforcement gap #5912 item 1 was filed for.
 func TestVerifyShardOutcomesFailureFatalEvenWhenTolerating(t *testing.T) {
 	m := allSuccess("x86_64", 3)
@@ -124,7 +124,7 @@ func TestVerifyShardOutcomesVanishedIsFatalByDefault(t *testing.T) {
 	}
 }
 
-// ...but it is the half with a policy dial, since a stochastic reclaim would
+// ...but it is the half with a policy setting, since a stochastic reclaim would
 // otherwise be a red build someone has to re-run.
 func TestVerifyShardOutcomesVanishedTolerated(t *testing.T) {
 	m := allSuccess("x86_64", 4)
@@ -163,7 +163,7 @@ func TestVerifyShardOutcomesSkippedIsNotATestFailure(t *testing.T) {
 	}
 }
 
-// It shares the vanished dial, because it is the same fact: no signal from
+// It shares the vanished setting, because it is the same fact: no signal from
 // this shard, and either cause can be a stochastic infrastructure event.
 func TestVerifyShardOutcomesSkippedTolerated(t *testing.T) {
 	m := allSuccess("x86_64", 4)

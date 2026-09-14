@@ -1440,7 +1440,7 @@ function main(): i32 {
 		t.Errorf("refused clone shape bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
 	}
 	// Measured: 2 units, and 2 for the clone form this replaced — the orphaned
-	// L boxes are the whole of it and both forms orphan the same ones.
+	// L boxes are all of it and both forms orphan the same ones.
 	if got := run(t, withPtr); got > 8 {
 		t.Errorf("pointer-element in-place .with bumped %d x 64 KiB, want <= 8 — the field's buffer is not being reused across stores", got)
 	}
