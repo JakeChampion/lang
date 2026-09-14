@@ -281,7 +281,7 @@ pub function (b: BufWriter) handle(): usize {
 
 // `(b).settle()` — flush if what has been pushed since the last flush has
 // reached the threshold. What a loop that pushed straight into `.handle()`
-// owes at the end of each line, in place of the check `write_string` does
+// must do at the end of each line, in place of the check `write_string` does
 // for itself.
 pub function (b: BufWriter) settle(): BufWriter {
   if (buf_len(b.buf) < b.cap) {

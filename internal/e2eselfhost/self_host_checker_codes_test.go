@@ -448,7 +448,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// for a type whose field (or enum variant payload) type does not
 		// implement the trait — no impl, no derive of its own, no method
 		// set — draws ONE positioned E021 at the deriving decl instead of
-		// the position-less per-field E043 garbage the ill-typed
+		// the position-less per-field E043 errors the ill-typed
 		// synthesized body used to surface. With the impl present the
 		// derive is clean; a two-field gap still reports a single error.
 		{"derive-field-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; return p.x; }\n", []string{"E021"}},
@@ -469,7 +469,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// Native never has that body, because it skips synthesis once the
 		// pre-check fires. The self-host now reaches the same end state
 		// from the other side: e021_derive_field_diags hands back the
-		// "Type.method" key of each derive it condemned, and the body loop
+		// "Type.method" key of each derive it rejected, and the body loop
 		// declines to check exactly those synthesised functions
 		// (derive_body_suppressed). Only synthesised methods sit at 0:0, so
 		// a user-written method of the same name is still checked.
@@ -495,9 +495,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"derive-json-field-broken", "trait Json { function to_json(self: Self): string; }\nstruct Bare { n: i32 }\n@derive(Json)\nstruct HasBare { b: Bare }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"derive-ord-field-broken", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Bare { n: i32 }\n@derive(Ord)\nstruct HasBare { b: Bare }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		// The ENUM path: derives are stamped on each variant, and the
-		// condemned key is the ENUM's name, not a variant's.
+		// rejected key is the ENUM's name, not a variant's.
 		{"derive-debug-enum-broken", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\n@derive(Debug)\nenum E { A(Bare), B(i32) }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
-		// Suppression is keyed to the condemned derive, not to E043 at
+		// Suppression is keyed to the rejected derive, not to E043 at
 		// large: a genuine bad field access is still reported, and so is a
 		// USER-written method of a derived trait's name (it sits at a real
 		// position, so it never matches a synthesised key).
@@ -940,7 +940,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-slice-unchecked-return", "function mk(): string { return \"ab\"; }\nfunction f(): str { var s: string = mk(); return slice_unchecked(s, 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		// E065 through a CALLEE that returns a view of one of its own
 		// parameters. Both checkers stopped their chase at a call, so a
-		// one-line identity function laundered the view past the rule; the
+		// one-line identity function carried the view past the rule; the
 		// per-function summary is what closes it. The last two rows are the
 		// precision controls: a callee that returns a DIFFERENT argument
 		// than the local-backed one, and one that views a param-backed
@@ -1782,7 +1782,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e063-return-owned-array-ok", "function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-slice-local-not-returned-ok", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s[0]; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E063 through a CALLEE that hands back a view of one of its own
-		// parameters — the same laundering route E065 has, in the sibling
+		// parameters — the same indirect route E065 has, in the sibling
 		// rule. The owned-array row is the one a slice-value chase misses:
 		// `a` passed straight in IS the storage, not a slice of it. The
 		// param row is the precision control.
@@ -1807,7 +1807,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// The E065 twin: a view of a string the CALLEE allocated. The
 		// param row and the literal row are the controls — a callee handing
 		// back its argument hands back storage that outlives the call, and
-		// a literal is immortal however many calls it is laundered through.
+		// a literal is immortal however many calls it is passed through.
 		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
@@ -1858,7 +1858,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e053-fbip-array-lit", "fbip function mk(): i32 {\n    var a = [1, 2];\n    return a[0];\n}\nfunction main(): i32 { return mk(); }\n", []string{"E053"}},
 		{"e053-fbip-concat", "fbip function j(a: string, b: string): string {\n    return a + b;\n}\nfunction main(): i32 { return 0; }\n", []string{"E053"}},
 		// The call rule is asymmetric: `fbip` may call `fip` or `fbip`, but a
-		// `fip` function may not lean on a `fbip` one — its claim is stronger.
+		// `fip` function may not call a `fbip` one — its claim is stronger.
 		{"e053-fbip-calls-fip-ok", "fip function g(): i32 { return 1; }\nfbip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", nil},
 		{"e053-fbip-calls-fbip-ok", "fbip function g(): i32 { return 1; }\nfbip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", nil},
 		{"e053-fip-calls-fbip", "fbip function g(): i32 { return 1; }\nfip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", []string{"E053"}},
@@ -2153,7 +2153,7 @@ func equalStrings(a, b []string) bool {
 // gate never runs the self-host CHECKER over the stdlib, so before teaching
 // checker.fern a rule that touches these shapes (e.g. tuple-type assignability,
 // builtin-method return types) add the relevant valid programs here: a
-// regression then fails loudly in this differential instead of lurking as a
+// regression then fails loudly in this differential instead of remaining a
 // latent false positive only triggered when someone runs the self-host checker
 // over real code.
 func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {

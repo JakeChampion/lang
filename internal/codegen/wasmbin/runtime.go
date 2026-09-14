@@ -4076,7 +4076,7 @@ func buildStrEqBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 	// Loop never falls through (every iteration ends in return
-	// or br 0), but wasm validation still wants a terminating
+	// or br 0), but wasm validation still requires a terminating
 	// instruction with the function's result type. `unreachable`
 	// satisfies the verifier without emitting a runtime const.
 	body = inst.InstUnreachable(body)
@@ -5434,7 +5434,7 @@ func buildCrc32CksumBody(idxs map[string]uint32) []byte {
 //
 // SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). internal/wasm/simd carries
 // loads, stores, splats, compares, bitwise and bitmask and NO ARITHMETIC at
-// all, so the extadd_pairwise/i32x4.add sequence this wants has no encoder yet
+// all, so the extadd_pairwise/i32x4.add sequence this needs has no encoder yet
 // — and §3.3a's rule, learnt on this very target, is to land the encodings
 // against wasm-tools first rather than assume a sub-opcode.
 //

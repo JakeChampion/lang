@@ -66,7 +66,7 @@ func mvHardlink(t *testing.T, dir, old, name string) {
 // mvTouch pins a file's timestamps. Every --update case needs them: the
 // two sides run seconds apart, so a fixture that took the wall clock
 // would have the source newer than the destination on one run and not on
-// the other, and the case would be a coin toss rather than a comparison.
+// the other, and the case would be random rather than a comparison.
 func mvTouch(t *testing.T, dir, name string, sec int64, nsec int64) {
 	t.Helper()
 	when := time.Unix(sec, nsec)
@@ -75,7 +75,7 @@ func mvTouch(t *testing.T, dir, name string, sec int64, nsec int64) {
 	}
 }
 
-// mvBasic is the workhorse fixture: two plain files, a directory holding
+// mvBasic is the main fixture: two plain files, a directory holding
 // one of their names, a symbolic link to a file, a dangling one, and a
 // symbolic link to a directory. `a` is the usual SOURCE and `b` the usual
 // occupied destination.
@@ -243,7 +243,7 @@ func mvBackupDirs(t *testing.T, dir string) {
 }
 
 // mvQuoting is the names whose diagnostics differ between quote, quotef
-// and quoteaf: a space, an apostrophe (which makes gnulib reach for
+// and quoteaf: a space, an apostrophe (which makes gnulib use
 // double quotes), a leading `~`, a newline, and one that is not valid
 // UTF-8.
 func mvQuoting(t *testing.T, dir string) {

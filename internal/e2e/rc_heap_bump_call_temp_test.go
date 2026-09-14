@@ -70,7 +70,7 @@ function main(): i32 {
 // corrupt: freeing it hands its block back to the freelist, the next
 // iteration reuses it, and the final content checks see garbage. It stays
 // correct because a Fern return is owned at the call site, so the borrowed
-// return was inc'd on the way out. Each borrowing consumer gets a turn.
+// return was inc'd on the way out. Each borrowing consumer is covered.
 const callTempConsumerUnderflowSrc = `function mk(s: string): string { return slice_unchecked(s, 0, 2) + "!"; }
 function pick(a: string, b: string): string {
     if (a.len() > 3) { return a; }

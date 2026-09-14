@@ -258,7 +258,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// reads back intact and the recipient's string content is right.
 		{"struct-string-field-corruption-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32; var c = N { id: 2, name: "wxyz" + "q" }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (u != 3) { return 90; } if (s != 66) { return 91; } if (c.name[0] != 119) { return 92; } return __rc_underflow(); }`, 0},
 		// MAP IDENTITY-CARRYING method hole (map_identity_escape): `mm.insert(1,1)`
-		// returns mm's OWN mapbox, and as a struct-lit field value it smuggled the
+		// returns mm's OWN mapbox, and as a struct-lit field value it carried the
 		// box past the borrow-only escape walk — the map reclaim then freed a box
 		// the program still reads through c.m (a SIGSEGV before the gate). Any
 		// insert/without use of a fresh map local now excludes it from reclaim
@@ -267,7 +267,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"map-callvalue-struct-field-value", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; return c.id + c.m.len(); }`, 4},
 		{"map-callvalue-struct-field-corruption-detector", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (s != 66) { return 91; } if (c.id + c.m.len() != 4) { return 92; } return __rc_underflow(); }`, 0},
 		// The own-param sibling (the shape that first surfaced the UAF while
-		// testing #5087): the struct with the smuggled mapbox flows through an
+		// testing #5087): the struct with the aliased mapbox flows through an
 		// `own` param donor site — value stays correct with the map excluded.
 		{"map-callvalue-own-param-field-value", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); var c = C { id: 10, m: mm.insert(1, 5) }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); var c0 = C { id: 3, m: m0.insert(1, 1) }; return f(c0); }`, 15},
 		// The `.without` sibling: its (Map, existed) tuple wraps the SAME mapbox,
@@ -778,7 +778,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// after the first match — the consumed-free never classifies it; the box (and its
 		// array) stays live, freed by the exit sweep. Value correct, detector 0.
 		{"rc-enum-used-after-match-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([3, 4]); var a = 0; match (x) { V(_) => { a = 1; }, N => { a = 0; }, } var b = 0; match (x) { V(_) => { b = 2; }, N => { b = 0; }, } if (a + b != 3) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
-		// In-arm consuming-match box reuse (FBIP), the marquee "functional but in-place"
+		// In-arm consuming-match box reuse (FBIP), the main "functional but in-place"
 		// win: `var y = match (x) { V(a, b) => W(a+1, b+1), W(c, d) => V(c, d) }` where x
 		// is a fresh, sole-owner, dead-after, non-escaping ALL-SCALAR enum box and EVERY
 		// arm constructs a SAME-SIZE scalar variant. x's box is reused IN PLACE

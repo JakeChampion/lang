@@ -16,7 +16,7 @@ import (
 // the existing (proven) code generator unchanged and turns its textual
 // output into bytes, validated byte-for-byte against aarch64-linux-gnu-as.
 //
-// Coverage grows brick by brick: labels, the no-op-for-.text
+// Coverage grows incrementally: labels, the no-op-for-.text
 // directives, the integer / bitfield / conditional / scalar-FP /
 // load-store (immediate, writeback, register and extended-register
 // offset, pairs, exclusives and barriers) instruction forms, and the
@@ -26,7 +26,7 @@ import (
 // converts, and ld1/st1/ld1r with post-indexing — across the .8b/.16b/
 // .4h/.8h/.2s/.4s/.2d arrangements each encoding actually has. Anything
 // not yet supported returns an explicit error (with the offending line)
-// rather than silently miscompiling — so coverage gaps are loud.
+// rather than silently miscompiling — so coverage gaps are reported.
 func Assemble(src string) ([]byte, error) {
 	a := NewAssembler()
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -2440,7 +2440,7 @@ func asmCondCmp(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
 		if imm < 0 || imm > 31 {
 			return fmt.Errorf("%s immediate %d out of range 0..31", mnem, imm)
 		}
-		// The immediate form: imm5 rides in the Rm field, bit 11 set.
+		// The immediate form: imm5 occupies the Rm field, bit 11 set.
 		insn |= 0x800 | ((uint32(imm) & regMask) << 16)
 	} else {
 		rm, err := parseReg(ops[1])
@@ -2934,7 +2934,7 @@ func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []str
 		return nil
 	}
 	if m.off < 0 || m.off%scale != 0 {
-		// Unscaled (LDUR/STUR) territory: a negative or non-size-aligned
+		// Unscaled (LDUR/STUR) case: a negative or non-size-aligned
 		// displacement, which the scaled unsigned form cannot encode. GNU as
 		// rewrites `str d0, [x12, #-8]` to `stur` silently, so accepting the
 		// `str`/`ldr` spelling here is matching the reference assembler rather
@@ -3502,7 +3502,7 @@ func asmFmov(a *Assembler, ops []string) error {
 	dstF, srcF := isFReg(ops[0]), isFReg(ops[1])
 	// `fmov Dd, #imm` — the FP-immediate form. The 8-bit VFP immediate
 	// encodes ±(1 + frac/16) × 2^E for frac in 0..15 and E in -3..4;
-	// anything outside that set is a loud error (GAS would materialise it
+	// anything outside that set is an explicit error (GAS would materialise it
 	// from a literal pool, which this single-section assembler doesn't do).
 	if dstF && strings.HasPrefix(ops[1], "#") {
 		rd, single, err := parseVReg(ops[0])

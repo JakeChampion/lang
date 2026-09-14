@@ -29,7 +29,7 @@ import (
 // keeps the one deep release.
 //
 // EVERY ROW IS GATED ON `__rc_underflow()`, NOT BYTES, and that is not
-// belt-and-braces here. Both intermediate states of this change balanced the
+// a redundant check here. Both intermediate states of this change balanced the
 // census perfectly while corrupting memory:
 //
 //	build                                   exit   census

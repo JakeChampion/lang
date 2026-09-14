@@ -42,7 +42,7 @@ import "std/sort";
 
 // `size` is i64 because `stat` reports it that way — a file is allowed to
 // be bigger than 2 GB, and narrowing here to save a cast would be the tool
-// lying about what it measured.
+// misreporting what it measured.
 struct Entry { name: string, size: i64, sum: i32 }
 
 // std/sort has no case-sensitive string sort — `sort_strings_asc_ci` folds

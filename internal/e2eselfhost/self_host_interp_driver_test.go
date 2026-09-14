@@ -178,7 +178,7 @@ var interpProgs = []struct {
 	{"slice-open-low", "function main(): i32 { var a = [10, 20, 30]; var b = a[:2]; return b[0] + b[1]; }", 30},
 	// C-style `for` with a non-`var` init (#4339 item 2): the self-host arm
 	// gated only on a `var` init, so an expression init (`i = 0`) or an empty
-	// init (`;`) fell into the `(k,v) in m` map arm and shredded. Now a
+	// init (`;`) fell into the `(k,v) in m` map arm and mis-parsed. Now a
 	// top-level `;` in the header marks a C-for and the init may be empty /
 	// `var` / expression. Both loops sum 0..3 => 6.
 	{"cfor-expr-init", "function main(): i32 { var i = 0; var s = 0; for (i = 0; i < 4; i = i + 1) { s = s + i; } return s; }", 6},
@@ -440,7 +440,7 @@ func interpDriverFiles(t *testing.T) map[string]string {
 	return files
 }
 
-// TestSelfHostInterpDriverX86_64 is the keystone of the inference
+// TestSelfHostInterpDriverX86_64 is the main test of the inference
 // overhaul: the self-hosted compiler compiles the self-hosted
 // INTERPRETER (interp.fern, whose Value union has VInt/VString/VFloat
 // all with field `v`). The resulting binary

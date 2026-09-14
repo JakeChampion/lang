@@ -120,7 +120,7 @@ function main(): i32 {
 // scalar-element array literal — the "ARR:" entries of the strict-fresh
 // registry, #4365): the returned rc=1 buffer is released with the shallow
 // rc-guarded __fern_rc_dec at the statement boundary (element-blind, scalar
-// elements ride the freed buffer). Native bounds this shape
+// elements live in the freed buffer). Native bounds this shape
 // (rc_heap_bump_discarded_call); the self-host leaked it until the ARR: arm.
 func stmtTempFreshCallArrBumpSrc(n string) string {
 	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }

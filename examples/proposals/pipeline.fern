@@ -9,7 +9,7 @@
 // payload, same everything. The difference is only visible in what ran.
 //
 // So every stage records itself in a trace it carries, and a failure carries
-// the trace as it stood when the stage gave up. "Stages after the failure did
+// the trace as it stood when the stage failed. "Stages after the failure did
 // not run" is then a property of the returned value, checkable directly, and
 // it is the load-bearing test here.
 //
@@ -37,7 +37,7 @@ import "std/string";
 // nothing can observe.
 struct Ctx { value: i32, ran: string[] }
 
-// A failure: which stage, why, and the trace as it stood when it gave up.
+// A failure: which stage, why, and the trace as it stood when it failed.
 struct Fault { step: string, why: string, ran: string[] }
 
 struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }

@@ -16,7 +16,7 @@ import (
 //
 // Soundness (byte-identical output, no over-release across the whole fixture
 // corpus) is the differential gate's job (rc_owned_by_default_test); this is the
-// peak-memory dividend, plus a focused over-release guard on the consume path.
+// peak-memory gain, plus a focused over-release guard on the consume path.
 
 func trmcConsumePeakSrc(n, div string) string {
 	return `enum List { Cons(i32, List), Nil }

@@ -96,7 +96,7 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	// Emit each module in FUNCTION WINDOWS, each its own process (fresh arena).
 	// Windows run on a bounded worker pool so the per-process parse floors
 	// overlap — the whole-compiler emit is CI-runnable this way, not a ~40-min
-	// serial slog. A window that still
+	// serial run. A window that still
 	// OOMs (137) is halved by its own worker (rare; the static window already
 	// clears the arena). Each job records its own plan lines; the plan is
 	// assembled in job order so it is deterministic regardless of interleaving.

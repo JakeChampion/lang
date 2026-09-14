@@ -11,7 +11,7 @@ import (
 
 // cfiSrc has three functions that survive to the emitter — recursion keeps
 // them from being folded into their callers, which a first version of this
-// test learned the hard way: with two straight-line helpers the program
+// test got wrong: with two straight-line helpers the program
 // emitted ONE function and the test would have passed while covering a single
 // prologue.
 const cfiSrc = `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }

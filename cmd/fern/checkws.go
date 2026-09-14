@@ -18,7 +18,7 @@ import (
 // Checking a package means type-checking its entry module — the `lib`
 // module its manifest names (default lib.fern), or `main.fern` for an
 // application member that has no lib. This is the workspace-wide check
-// the multi-package self-hosted compiler wants: one command validates
+// the multi-package self-hosted compiler needs: one command validates
 // lexer / parser / checker / codegen together.
 func runCheckTarget(arg, target string) error {
 	if arg == "-" {

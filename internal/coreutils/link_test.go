@@ -77,7 +77,7 @@ func linkCases(t *testing.T) []invocation {
 		{name: "extra operand with a newline", args: []string{"a", "b", "c\nd"}},
 
 		// Names whose quoting differs between quote and quotef: a space, an
-		// apostrophe (which makes gnulib reach for double quotes), a control
+		// apostrophe (which makes gnulib use double quotes), a control
 		// byte, and one that is not valid UTF-8.
 		{name: "names with a space", args: []string{"no such src", "no such dst"}, seedTree: linkTree},
 		{name: "names with an apostrophe", args: []string{"a'b", "c'd"}, seedTree: linkTree},

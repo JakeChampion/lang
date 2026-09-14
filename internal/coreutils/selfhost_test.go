@@ -19,7 +19,7 @@ import (
 //
 // It exists because nothing else compiles this tree with the self-host
 // compiler. The gate above uses the native binary, so `coreutils/lib/gnu.fern`
-// spent its whole life outside the self-host's reach: its getopt cursor returns
+// had never been within the self-host's reach: its getopt cursor returns
 // `(Option[OptMatch], Getopt)`, a tuple whose Option element carries a struct
 // payload, and the self-host tuple lowering refused that shape — every utility
 // declaring an option bailed the module (#8407). A gap like that is invisible
@@ -179,7 +179,7 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					// processes with no shared state; the two binary
 					// caches they read are mutex-guarded. A case that
 					// writes a corpus file — appending stdout to it,
-					// playing the writer a follow watches, or preparing a
+					// acting as the writer a follow watches, or preparing a
 					// tree and reading it back — is the exception: two of
 					// them on one file would see each other's bytes, so
 					// those run one at a time.

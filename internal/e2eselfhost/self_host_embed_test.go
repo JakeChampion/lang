@@ -50,7 +50,7 @@ func TestSelfHostEmbedBundleAndSubstitution(t *testing.T) {
 // whether the program is a program at all; matching an exact message across
 // two compilers is a diagnostic-format comparison, not an asset one.
 //
-// The rejections carry the weight here. A missing asset that compiled into an
+// The rejections matter most here. A missing asset that compiled into an
 // empty string would be a program that builds, runs, and serves nothing —
 // which is exactly what an embedded stdlib must never do (#6643).
 func TestSelfHostEmbedMatchesNative(t *testing.T) {

@@ -1094,7 +1094,7 @@ func TestHexLiteralValue(t *testing.T) {
 
 // Typed numeric literal suffixes: lexer captures the suffix, the
 // parser stamps Width / IsUnsigned at parse time so the checker
-// sees a non-polymorphic type from the get-go.
+// sees a non-polymorphic type from the start.
 func TestNumericLiteralSuffixes(t *testing.T) {
 	type want struct {
 		isFloat    bool

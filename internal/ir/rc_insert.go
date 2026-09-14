@@ -228,7 +228,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		// `c.get()` on a Cell[string]: emitCellGet RETAINS the slot's buffer
 		// unconditionally, so the expression yields an owned +1 reference. A
 		// BINDING balances it with its exit-sweep dec; every borrowing
-		// consumer drops it on the floor, which is what leaked one buffer per
+		// consumer discards it outright, which is what leaked one buffer per
 		// `c.get().len()`. Unlike ownedCallResultType's builtin exclusion,
 		// the retain here is emitted by this compiler at the read, so the
 		// reference is known to exist rather than assumed from a return
@@ -239,8 +239,8 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		// `m.get_or(k, d)` on a Map[K, string]: every lowering of the call
 		// retains the returned buffer so the caller co-owns it alongside
 		// the map's value column (isMapStringGetOr). A BINDING balances
-		// that with its exit-sweep dec; a borrowing consumer dropped it on
-		// the floor, which leaked one buffer per `m.get_or(k, d).len()`
+		// that with its exit-sweep dec; a borrowing consumer discarded it
+		// outright, which leaked one buffer per `m.get_or(k, d).len()`
 		// once the column walk started actually releasing its own
 		// reference. Same known-because-we-emitted-it argument as the Cell
 		// case above.
@@ -326,7 +326,7 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 // ownedCallResultType classifies an expression that is a direct call to a
 // USER function returning a pointer-shaped (rc-tracked) value — a fresh
 // struct / array / string / enum the callee owns. Two consuming sites reclaim
-// it (otherwise it's dropped on the floor and leaks every iteration):
+// it (otherwise it's discarded and leaks every iteration):
 //   - a discarded ExprStmt `mk(i);` (leaked 800 → 80000 in a loop) — dec'd
 //     in place via the is_unique-gated emitOwnedTempStackDrop;
 //   - a call ARG `take(mk(i))` / `outer(inner(i))` (leaked 800 → 80000 /
@@ -2000,8 +2000,8 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 		// A cycle is uncollectable by refcount and is supposed to LEAK
 		// rather than crash — what the generic env-only drop did before this
 		// thunk became reachable for such closures (#8545). E049 now refuses
-		// the store that builds one (#8440), so this arm is a belt on top of
-		// the checker's braces: the env block is still freed by the tail
+		// the store that builds one (#8440), so this arm is redundant with
+		// the checker's rule: the env block is still freed by the tail
 		// below, the captured closure is simply not touched.
 		if capturesAClosure(c.Type) {
 			off += slot

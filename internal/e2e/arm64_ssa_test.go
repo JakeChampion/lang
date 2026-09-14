@@ -373,7 +373,7 @@ function main(): i32 {
 			// rc.dec'd that. `f` is never called: building the closure is
 			// enough. Other capture orders did not crash only because their
 			// offset happened to land on the env pointer or on fn_idx (below
-			// the heap, so the rc guard swallowed it) — decrementing the wrong
+			// the heap, so the rc guard ignored it) — decrementing the wrong
 			// object rather than faulting.
 			name: "closure_scalar_then_pointer_capture",
 			src: `function main(): i32 {

@@ -51,7 +51,7 @@ const sanSelfHostCleanSrc = `function main(): i32 {
 // bump/leak heap"), so unlike the native leg NOTHING here is freed and
 // the census says so — which is the census being accurate about the
 // runtime it is measuring, not a divergence to hide. Exit code 42
-// rides through the report untouched.
+// passes through the report untouched.
 const sanSelfHostLeakSrc = `function main(): i32 {
     var a: usize = __alloc(60);
     var b: usize = __alloc(60);

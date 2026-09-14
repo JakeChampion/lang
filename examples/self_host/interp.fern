@@ -48,7 +48,7 @@ pub struct VBool { v: boolean }
 pub struct VString { v: string }
 // VFloat carries a 64-bit IEEE 754 float. Literals tagged
 // `is_float = true` by the parser produce a VFloat; arithmetic
-// + comparison operators on two VFloats stay in float-land.
+// + comparison operators on two VFloats stay on the float path.
 // Mixed i32/f64 isn't supported — explicit cast at the source
 // level would route through a future numeric coercion pass.
 pub struct VFloat { v: f64 }
@@ -2465,7 +2465,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // The capacity-carrying string builder (#8773) — `buf_new` reserves a
 // buffer and hands back its handle, the three pushes append to it,
 // `buf_len` reports what has accumulated, `buf_take` hands the bytes over
-// as a string and leaves the builder armed at its reserve, and `buf_free`
+// as a string and leaves the builder ready at its reserve, and `buf_free`
 // releases it. std/array's `join` and every std/io_buffered writer bottom
 // out here, so a stdlib-importing program reaches them constantly.
 //
@@ -2548,7 +2548,7 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
 }
 
 // The three handle-only builtins: the accumulated length, the take that
-// hands the bytes over and leaves the builder armed at its reserve, and the
+// hands the bytes over and leaves the builder ready at its reserve, and the
 // free that releases it.
 function call_buf_read(name: string, h: usize, args: Value[]): Value {
     if (args.len() != 1) { return v_err(name + ": expected 1 arg (b)"); }

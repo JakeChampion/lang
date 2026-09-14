@@ -165,7 +165,7 @@ func commonAffix(a, b string) int {
 }
 
 // FormatAvailable renders the embedded names for an error message, capped
-// so a bundle of hundreds does not bury the diagnostic that matters.
+// so a bundle of hundreds does not hide the diagnostic that matters.
 func (s *Set) FormatAvailable() string {
 	names := s.Names()
 	if len(names) == 0 {

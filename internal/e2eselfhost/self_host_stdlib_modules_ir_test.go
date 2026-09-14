@@ -72,13 +72,13 @@ function main(): i32 {
     return r; // 127
 }`},
 	// std/array's `xs.index_of(target)` → Option[i32] (#4387). On this path an
-	// i32[] receiver does NOT run the stdlib body: it rides a lowering intercept
+	// i32[] receiver does NOT run the stdlib body: it takes a lowering intercept
 	// to __fern_arr_i32_index_of_opt, with its scrutinee type coming from
 	// builtin_arr_opt_ret_type — so native and self-host can disagree on the
 	// return SHAPE while agreeing on every value, which is what this oracles.
 	// Three receivers, three lowerings: a local and a struct FIELD (both
 	// intercepted, the field one being the #6784 shape) and a string[] (not
-	// intercepted — the stdlib generic). `.contains` rides the raw -1 scan that
+	// intercepted — the stdlib generic). `.contains` uses the raw -1 scan that
 	// the intercept kept, so it is checked on the same receivers.
 	{"array-index-of", `import "std/array";
 struct H { xs: i32[] }

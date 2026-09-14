@@ -68,7 +68,7 @@ func chmodLink(t *testing.T, dir, target, name string) {
 	}
 }
 
-// chmodFlat is the workhorse: one file of each interesting starting mode and
+// chmodFlat is the main fixture: one file of each interesting starting mode and
 // one directory of each, so a single mode argument exercises the file rule
 // and the directory rule side by side.
 //

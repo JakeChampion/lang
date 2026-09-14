@@ -162,7 +162,7 @@ function round(i: i32): i32 {
 			want: 72,
 		},
 		{
-			// REFUSED: a call LAUNDERS the binder — it takes the string and
+			// REFUSED: a call PASSES THROUGH the binder — it takes the string and
 			// returns it, and the result is bound outward. The scalar-returning
 			// case above is admitted; this one is the reason that distinction
 			// has to be drawn on where the RESULT goes.

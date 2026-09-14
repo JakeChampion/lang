@@ -28,7 +28,7 @@ import (
 //     register backends' runtime helpers can be written in Fern; wasm has
 //     neither a raw address space nor syscalls. Unclassified, they reached
 //     instruction selection, which named an IR op nobody wrote (and, before
-//     #6981, emitted the op as a WAT comment the assembler then choked on).
+//     #6981, emitted the op as a WAT comment the assembler then failed on).
 //
 // Both drivers are exercised. The differential wasm_ir_run driver has rejected
 // subprocess since #4320, but the PRODUCTION wasm_run driver had no such gate

@@ -13,7 +13,7 @@ package modload_test
 // through b). docs/PRELUDE-TO-MODULES.md calls this the regression-prone path: the
 // loader has to recognise it's already loaded `c` and dedupe, rather
 // than combine its decls twice (which would produce a duplicate
-// `c__shared` in prog.Funcs and a "redeclared" explosion downstream).
+// `c__shared` in prog.Funcs and a "redeclared" error downstream).
 // The existing TestLoadComputesImportClosures covers a *linear* chain
 // (a→b→c); this pins the diamond shape where the second path to `c`
 // must be a no-op.

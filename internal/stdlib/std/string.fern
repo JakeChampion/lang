@@ -386,7 +386,7 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
     }
     if (i < 0) { return 0 - 1; }
 
-    // Tier 3b — budget blown, so the input is one of the adversarial shapes.
+    // Tier 3b — budget exhausted, so the input is one of the adversarial shapes.
     // Restart from scratch under the linear algorithm; a partial result cannot
     // be carried over, because the scan above ran right-to-left and Two-Way
     // runs left-to-right over the reversal.

@@ -13,7 +13,7 @@ import (
 // instead of re-lowering the whole module twice in the tail (the old
 // module_uses_maps / module_uses_heap passes — each a full extra lower_func
 // pass over every function, which on the ~1000-function self-host compiler
-// retained enough per-function ops to blow the bump heap and OOM the IR
+// retained enough per-function ops to exhaust the bump heap and OOM the IR
 // self-compile).
 //
 // The behavioural contract the fold must preserve: a program that uses a Map

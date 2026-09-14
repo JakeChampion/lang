@@ -52,7 +52,7 @@ func lnHardlink(t *testing.T, dir, old, name string) {
 	}
 }
 
-// lnBasic is the workhorse fixture: two plain files, a directory, a symlink
+// lnBasic is the main fixture: two plain files, a directory, a symlink
 // to a file and a dangling one. `a` is the usual TARGET and `b` the usual
 // occupied destination.
 func lnBasic(t *testing.T, dir string) {
@@ -216,7 +216,7 @@ func lnNotDir(t *testing.T, dir string) {
 }
 
 // lnQuoting is the names whose diagnostics differ between quote, quotef and
-// quoteaf: a space, an apostrophe (which makes gnulib reach for double
+// quoteaf: a space, an apostrophe (which makes gnulib use double
 // quotes), a leading `~`, and one that is not valid UTF-8.
 func lnQuoting(t *testing.T, dir string) {
 	t.Helper()

@@ -21,7 +21,7 @@ import (
 //
 // with `allocs=255 frees=255 live_bytes=0`, which is the trap: a doubly-released
 // block goes back to the freelist, so the byte count is clean and only
-// `__rc_underflow()` dissents. This is the same defect #7272 fixed for the tuple
+// `__rc_underflow()` reports it. This is the same defect #7272 fixed for the tuple
 // classes and #7292 for "STR:", one class over.
 //
 // What isolates it is a one-word rename. `param_rename` below is `param_alias`

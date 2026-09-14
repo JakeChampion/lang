@@ -236,7 +236,7 @@ function main(): i32 {
 // this was broken, which is the whole point of having both: AT_FDCWD is -100 on
 // Linux and -2 on XNU, the generator emitted the Linux value on both, and
 // openat IGNORES dirfd when the path is absolute. So every existing test — and
-// the `fern` driver itself, which builds absolute paths — sailed past a bug that
+// the `fern` driver itself, which builds absolute paths — missed a bug that
 // made `read_file("data.txt")` fail unconditionally on arm64-darwin.
 func TestArm64DarwinNativeReadFileRelative(t *testing.T) {
 	bin := buildFernCLI(t)

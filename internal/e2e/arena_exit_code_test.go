@@ -19,8 +19,8 @@ import (
 // failure in the program (usually a leak) that will happen again on the next
 // run; a SIGKILL means the HOST was short of RAM and the run should be retried
 // with a smaller budget. Telling them apart cost a manual investigation every
-// time, and three harness sites had given up and were treating any 137 as
-// infra — which silently swallowed genuine compiler regressions.
+// time, and three harness sites had defaulted to treating any 137 as
+// infra — which silently hid genuine compiler regressions.
 //
 // The value has to agree across FIVE emitters (two native backends, two
 // self-host register backends, and the strbuf bounds trap), and nothing else

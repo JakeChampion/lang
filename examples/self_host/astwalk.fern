@@ -941,7 +941,7 @@ pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 // The filter is not a convenience: the only callers look for a handful of names
 // across the whole bundle, and collecting every call first would allocate one
 // CallSite per call site in the program — on the compiler's own sources that is
-// the kind of pass that walks a self-compile into the arena wall. Matching
+// the kind of pass that exhausts the arena on a self-compile. Matching
 // during the walk keeps the allocation proportional to the hits, which is
 // normally none.
 //

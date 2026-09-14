@@ -158,7 +158,7 @@ func TestSelfHostAppendIndexedElemX86_64(t *testing.T) {
 				t.Errorf("%s: %s — more releases than allocations", tc.name, summary)
 			}
 			// The balanced rows are the contract: losing the destination's
-			// element walk puts three boxes back on the floor, and no digit
+			// element walk leaves three boxes unreleased again, and no digit
 			// moves when it happens.
 			if tc.balanced && live != 0 {
 				t.Errorf("%s: %s — want nothing live; the destination array stopped "+

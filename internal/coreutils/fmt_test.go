@@ -23,7 +23,7 @@ func init() {
 
 // fmtCases is fmt(1)'s corpus.
 //
-// The heart of it is the break chooser: a backward dynamic program whose
+// The main part of it is the break chooser: a backward dynamic program whose
 // cost function has seven terms, and the cases below are the invocations
 // that separate them from each other. A line's distance from the GOAL is
 // squared, a line costs a constant on top of that, the difference between

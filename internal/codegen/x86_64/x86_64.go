@@ -160,7 +160,7 @@ func (g *generator) emitSeccompRuntime() {
 	// CONFIG_SECCOMP_FILTER, or a seccomp-blocking sandbox we are
 	// already inside, returns an error and the program runs unhardened
 	// rather than refusing to start. Hardening that turns a working
-	// deployment into a boot loop would not survive contact with users,
+	// deployment into a boot loop would not be acceptable to users,
 	// and the compile-time capability system is still in force either
 	// way.
 	g.emit("ret")
@@ -439,7 +439,7 @@ func EmitWithSyscalls(prog *ast.Program, info *checker.Info, opts Options) (stri
 
 // EmitWithOptions runs treeshake, lowers to IR with ptrW=8,
 // then walks each surviving function emitting GAS-flavoured
-// AT&T assembly... no wait, Intel syntax. We deliberately use
+// assembly in Intel syntax, not AT&T. We deliberately use
 // Intel syntax (`.intel_syntax noprefix`) for readability —
 // the rest of the codebase's runtime asm is comparable to the
 // arm64 style (mnemonic dst, src), and Intel x86 syntax
@@ -7030,7 +7030,7 @@ func (g *generator) emitRctRuntime() {
 	g.label("__fern_rct_ev")
 	// rbp is saved for one reason only: the push count must stay EVEN
 	// or every `call` below lands on a misaligned stack. r15 made it
-	// odd; rbp is the honest partner because the hook reads through it.
+	// odd; rbp is the right choice because the hook reads through it.
 	saved := []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbx", "r12", "r13", "r14", "r15", "rbp"}
 	for _, r := range saved {
 		g.emit("push " + r)
@@ -10651,7 +10651,7 @@ func (g *generator) emitRmemchrRuntime() {
 // dispatch. Unlike lzcnt/tzcnt it FAULTS below that baseline rather than
 // silently decoding as something else, so a wrong assumption here is loud.
 //
-// No cursor, so no clamp. The two degenerate answers are both honest counts
+// No cursor, so no clamp. The two degenerate answers are both real counts
 // rather than sentinels: an out-of-range byte counts 0 because no byte can
 // equal it, and an empty string counts 0 because it has no bytes.
 func (g *generator) emitCountByteRuntime() {
@@ -12994,7 +12994,7 @@ func (g *generator) emitGetgroupsRuntime() {
 // and for a request past one page it may write fewer and
 // return early when a signal arrives — or -EINTR having
 // written none. A single call would leave the tail of the
-// buffer as the allocator left it, which is zeros: silence
+// buffer as the allocator left it, which is zeros: no entropy
 // where a caller asked for randomness (#9221). A hard error
 // (EFAULT, EINVAL — neither reachable from this call shape)
 // ends the loop rather than spinning, because the signature
@@ -15168,7 +15168,7 @@ func (g *generator) emitSignalDispositionReadRuntime() {
 	g.label("__fern_signal_disposition")
 	if g.entry != platforms.EntryProcess {
 		// Nothing can deliver a signal, so every one of them is at the
-		// default it was born with.
+		// default it started with.
 		g.emit("xor eax, eax")
 		g.emit("ret")
 		g.line(".size __fern_signal_disposition, .-__fern_signal_disposition")
@@ -15246,7 +15246,7 @@ func (g *generator) emitCreateSymlinkRuntime() {
 // reports no error, so the answer is only trustworthy when it is SHORTER
 // than the buffer. PATH_MAX is the kernel's own bound on a stored link
 // target, so a full buffer means the target is longer than any path can
-// be and the honest answer is ENAMETOOLONG rather than a truncated one.
+// be and the correct answer is ENAMETOOLONG rather than a truncated one.
 func (g *generator) emitReadLinkRuntime() {
 	g.line("")
 	g.line(".globl __fern_read_link")
@@ -15788,7 +15788,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emitStrLen("r12d", "rdi")
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 56]")
 	// The prefix names a directory, not a path: a '/' in it would
-	// steer the result out of the temp root, since the bytes are
+	// place the result outside the temp root, since the bytes are
 	// concatenated straight into "/tmp/<prefix>-<ns>".
 	g.emit("xor ecx, ecx")
 	g.label(".Ltd_sep")

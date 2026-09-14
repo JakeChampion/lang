@@ -12,7 +12,7 @@ import (
 // TestSelfHostDebugSymsFlag covers `fern-selfhost -target x86-64-linux -g` end to
 // end (#6637): a binary the self-host built, whose function names `nm` can
 // resolve. Before this, every self-host-built binary was anonymous — which
-// bit the project itself hardest, since the self-hosted compiler is the
+// cost the project itself most, since the self-hosted compiler is the
 // largest program it builds with itself and the one whose segfaults most
 // need a readable backtrace.
 //

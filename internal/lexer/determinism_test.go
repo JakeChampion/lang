@@ -7,7 +7,7 @@ package lexer
 // → interp) reads from the token stream it produces. Nondeterminism
 // here would propagate to every subsequent stage at once, and the
 // determinism guards added at every later layer (parser #1719,
-// modload #1708, ir, codegen, interp) would all light up at the
+// modload #1708, ir, codegen, interp) would all fire at the
 // same time on flaky failures.
 //
 // A linear scanner is normally deterministic by construction, but

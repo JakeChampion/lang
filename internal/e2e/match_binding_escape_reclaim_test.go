@@ -27,7 +27,7 @@ package e2e
 // reason is the taint above, which is why the fix is in the eligibility
 // analysis rather than at the move-vs-copy decision.
 //
-// The controls are load-bearing in the other direction. get_or_churn does the
+// The controls are essential in the other direction. get_or_churn does the
 // same work with no arm binding, and nonescape_churn keeps the binding local
 // (the #7144 shape); both were already flat, so a fix that simply freed more
 // aggressively would not be distinguishable from one that is correct. The

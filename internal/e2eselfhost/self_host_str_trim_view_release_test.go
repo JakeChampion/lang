@@ -120,7 +120,7 @@ function round(pre: string): i32 {
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
 	// A USER `.trim()` whose result ALIASES a field the receiver still owns.
 	// Nothing may credit it — this is what proves trim_str_init's receiver-type
-	// test carries its weight, since the heap cases above move either way.
+	// test is required here, since the heap cases above move either way.
 	{"str-trim-user-method-not-credited", strTrimPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) trim(): string { return h.name; }
 function trimmed(h: Holder): i32 { var t: string = h.trim(); return t.len() % 251; }

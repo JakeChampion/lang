@@ -164,7 +164,7 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // rescue's `nfuncs < 1500` cap below — a program whose modules share struct
 // types (three `ast__` types across the stage-2 compiler's units) hit
 // `symbol __fn___struct_drop_ast__ParamDecl is already defined`, which reads
-// like a memory wall and is not one. (The cap's OTHER reason IS memory, but for
+// like a memory limit and is not one. (The cap's OTHER reason IS memory, but for
 // a different program: see the bound's own comment.)
 //
 // So skip the whole definition, whatever its length. After a duplicate
@@ -606,7 +606,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
 // windows the per-process fixpoint does. A 100-func budget and a 300 KB
 // source-byte budget each set a minimum window count (the byte budget shards
 // modules of FEW but GIANT functions, e.g. asm_arm64, that the count alone emits
-// whole and blows the emit's peak); the window is funcs / ceil(max of the two).
+// whole and inflates the emit's peak); the window is funcs / ceil(max of the two).
 // nth_field_i32 reads the n-th ':'-separated field of `s` as an i32 (0-based).
 // The flat-unit list encodes each unit as "modIdx:wlo:whi"; digits_to_i32 stops
 // at the ':' on its own, so only the field offset has to be found.

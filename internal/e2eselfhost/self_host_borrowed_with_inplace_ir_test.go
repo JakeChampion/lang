@@ -15,7 +15,7 @@ import (
 // The gate it consulted (`aliased_names`, #3599) models local ALIASING — a name
 // bound to a second local, or stored into a container literal — and knows
 // nothing about ownership. A local bound from a struct field read has no local
-// alias at all, so it sailed through.
+// alias at all, so it passed the gate.
 //
 // SCOPE: the FIELD-READ shapes, the bare-ident REBIND shapes (#6170) —
 // `var heap = heap_in; heap = heap.with(…)` over a borrowed param, and

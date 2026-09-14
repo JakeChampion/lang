@@ -616,7 +616,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesMemcpy = true
 		g.usesIoError = true
 	}
-	// temp_dir's unique suffix rides the monotonic clock.
+	// temp_dir's unique suffix comes from the monotonic clock.
 	if g.usesTempDir {
 		g.usesMonotonicNs = true
 	}
@@ -1445,7 +1445,7 @@ func (g *generator) emitDataSections() {
 		g.line(`	.space 4096`)
 	}
 	if g.usesStrIdx {
-		// SSO inline strings ride in a 64-bit register and don't
+		// SSO inline strings are held in a 64-bit register and don't
 		// have a usable memory address until materialised. The
 		// __str_idx index helper spills inline values to this
 		// global scratch slot before computing `&scratch + idx`
@@ -4976,7 +4976,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("movi v2.2d, #0")
 	g.emit("ins v2.d[0], x12")
 	g.emit("ins v2.d[1], x13")
-	// A = reverse(first block); the crc rides the top 32 bits.
+	// A = reverse(first block); the crc occupies the top 32 bits.
 	g.emitCrc32LoadBlock("v0", "x8")
 	g.emit("lsl x14, x10, #32")
 	g.emit("movi v1.2d, #0")
@@ -6209,7 +6209,7 @@ func (g *generator) emitWasmTimerPollableRuntime() {
 }
 
 // emitWasmPollRuntime emits `__fern_wasm_poll(pollables)` — returns -1 on native
-// (no real pollables; native readiness rides poll(2) directly), ignoring its
+// (no real pollables; native readiness uses poll(2) directly), ignoring its
 // array arg. On wasm this symbol is the real wasi:io/poll.poll(list<pollable>)
 // multiplexer instead.
 func (g *generator) emitWasmPollRuntime() {
@@ -7153,7 +7153,7 @@ func (g *generator) emitStrBuilderRuntime() {
 // failure modes are EFAULT or EINVAL, neither of which can
 // happen here — we control both the clock id and the
 // buffer) would write -errno to x0, which we'd then
-// arithmetic-massage into nonsense — preferable to forking
+// arithmetically turn into nonsense — preferable to forking
 // the calling convention to return an Option.
 func (g *generator) emitNowUnixMsRuntime() {
 	g.line("")
@@ -11110,7 +11110,7 @@ func (g *generator) emitSignalDispositionReadRuntime() {
 	g.label("__fern_signal_disposition")
 	if g.entry != platforms.EntryProcess {
 		// Nothing can deliver a signal, so every one of them is still at
-		// the default it was born with.
+		// the default it started with.
 		g.emit("mov x0, #0")
 		g.emit("ret")
 		g.sizeDirective("__fern_signal_disposition")
@@ -14293,7 +14293,7 @@ type generator struct {
 	// with_deadline is portable.
 	usesWasmTimerPollable bool
 	// usesWasmPoll pulls in `__fern_wasm_poll` returning -1 on native (no real
-	// pollables; native readiness rides poll(2)) so std/async's wasm reactor
+	// pollables; native readiness uses poll(2)) so std/async's wasm reactor
 	// path is portable.
 	usesWasmPoll bool
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
@@ -15232,7 +15232,7 @@ func (g *generator) sizeDirective(name string) {
 
 // syscallExit emits `exit_group(retval)` (Linux) / `exit(retval)`
 // (Darwin). The exit syscall is what every fatal path in the
-// runtime reaches for — OOM, bounds traps, the OS-handoff at
+// runtime uses — OOM, bounds traps, the OS-handoff at
 // the end of `_start` / `_main`. x0 already holds the exit
 // value; the helper just sets the syscall register and traps.
 func (g *generator) syscallExit() {
@@ -15339,7 +15339,7 @@ func (g *generator) statSizeOff() int {
 }
 
 // adrpAdd emits the canonical AArch64 PC-relative
-// symbol-address pair, paving over the GNU-vs-Apple
+// symbol-address pair, handling the GNU-vs-Apple
 // relocation-syntax split:
 //
 //	ELF (Linux):
@@ -15530,7 +15530,7 @@ func (g *generator) emitStartRuntime() {
 	}
 	// The exit-time reports (leak summary #5362, coverage #5548) both run
 	// here, and either can be on alone or both together. main's return
-	// value parks in x19 (callee-save, and _start has no caller to
+	// value stays in x19 (callee-save, and _start has no caller to
 	// preserve it for; the report helpers themselves only touch
 	// caller-saved registers) so the exit code survives their syscalls.
 	if ast.LeakCheckEnabled || len(g.coverSites) > 0 {
@@ -15858,7 +15858,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// ±128 MiB; GNU `ld` auto-inserts long-branch veneers BETWEEN input sections but
 	// NOT within a single one, so a single `.text` larger than 128 MiB fails to link
 	// with `relocation truncated to fit` (the self-host compiler binary is ~133 MB
-	// and was right at that wall). Per-function sections let `ld` veneer every
+	// and was right at that limit). Per-function sections let `ld` veneer every
 	// cross-function call, lifting the limit to the ±4 GiB ADRP range. ELF/Linux
 	// only — the arm64-darwin Mach-O path links via clang+lld, which already inserts
 	// range-extension thunks within a section, and uses `__TEXT,__text` sections.
@@ -16836,7 +16836,7 @@ func countInstrs(text []byte) int {
 	return n
 }
 
-// reachCheckCondBranches keeps the direct `b.cond` / `cbz` form honest. The
+// reachCheckCondBranches checks the direct `b.cond` / `cbz` form's reach. The
 // function just emitted starts at byte `start` of the output. When the whole
 // body fits inside b.cond's reach, every branch in it reaches every label in it
 // whichever way it points and there is nothing to do — the case for all but a
@@ -17598,7 +17598,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// __fern_alloc clobbers x0..x14 (its bump/freelist body), so we
 		// CANNOT hold data / vtable in caller-save scratch across the
 		// `bl` the way x86-64 does with r10/r11 (which x86's __fern_alloc
-		// preserves). Park them in the callee-saved x19/x20 instead. The
+		// preserves). Keep them in the callee-saved x19/x20 instead. The
 		// two operands are on top of the operand stack, so pop them FIRST
 		// (into caller-save x9/x10 — plain loads, no call between), THEN
 		// save x19/x20 below the now-shorter operand stack and move the
@@ -19649,7 +19649,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 // closureCellSym names an OpConstFunc static closure-pair cell. On
 // darwin the label is assembler-local ("L" prefix) so it does NOT start
 // a linker atom — keeping the anonymous 8-byte rc header at [cell-8]
-// glued to the cell under ld64/ld-prime reordering (the same reason the
+// next to the cell under ld64/ld-prime reordering (the same reason the
 // string literals use .LStr_* labels in __TEXT,__const). ELF keeps the
 // plain named label.
 func (g *generator) closureCellSym(name string) string {
@@ -19717,7 +19717,7 @@ func (g *generator) emitCoverTable() {
 // silently shrink the total rather than show up as uncovered.
 //
 // Called from the _start epilogue and from the exit() builtin's
-// __fern_exit, both of which park the exit code in x19 across the call,
+// __fern_exit, both of which hold the exit code in x19 across the call,
 // so this and its two local subroutines touch caller-saved registers
 // only. The loop counter lives in the frame rather than in a register
 // for the same reason.

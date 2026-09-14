@@ -57,7 +57,7 @@ function scope_diff(want: checker.Scope, got: checker.Scope): string {
 
 // form_of names a statement's form for the coverage line. Enumerated rather
 // than wildcarded: a new ast.Stmt variant should land here as a missing arm,
-// which is the same news the two steppers need to hear.
+// which is the same signal the two steppers need.
 function form_of(st: ast.Stmt): string {
     match (st) {
         ast.StmtVar(_) => { return "StmtVar"; },

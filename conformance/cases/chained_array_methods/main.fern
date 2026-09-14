@@ -8,7 +8,7 @@
 // expr_is_i64arr each carried a clause saying `with`/`append` preserve the
 // receiver's element kind, and expr_is_arr_src / expr_is_strarr did not. So
 // an f64[] chain lowered while the identical i32[] chain refused. This case
-// exercises all four element kinds so the limbs cannot drift apart again.
+// exercises all four element kinds so the clauses cannot drift apart again.
 //
 // Sentinels are 251-253, above the `% 113` the success path returns.
 function scalars(i: i32): i32 {

@@ -10,7 +10,7 @@ import (
 // column already holds and discards the incoming one. The boxed ABIs (wasm,
 // arm64 two-word) released that key cell in freeDiscardedSetKeyCell; the
 // single-word x86-64 path, where the column holds the data pointer itself,
-// dropped the incoming reference on the floor — one heap key per overwrite.
+// left the incoming reference unreclaimed — one heap key per overwrite.
 //
 // Every key below is pushed past the SSO inline threshold so it has a buffer
 // to leak, and the suffix cycles through four values so most inserts are

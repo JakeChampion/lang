@@ -3214,7 +3214,7 @@ function main(): i32 {
 //
 // Bonus integration: fold + print proves the combined pipeline.
 // `print(fold(parse("1 + 2 * 3")))` should be "7" (the folded
-// Num spits out its value directly, no parens).
+// Num prints its value directly, no parens).
 func TestArm64PrinterInLang(t *testing.T) {
 	src := `
 import "std/i32";
@@ -3745,7 +3745,7 @@ function main(): i32 {
 
     // Idempotence — running fold on already-folded output is
     // a no-op. Real optimization loops run passes to fixpoint;
-    // a non-idempotent constfold blows out the loop.
+    // a non-idempotent constfold makes the loop run forever.
     var f3_again: Expr = fold(f3);
     if (!ast_eq(f3, f3_again)) { return 13; }
     var f2_again: Expr = fold(f2);
@@ -4950,7 +4950,7 @@ function main(): i32 {
 // Cursor passed via a single-element `i32[]` for in-place
 // mutation — lang's value semantics + lack of by-reference
 // params mean this is the cheapest "out parameter" shape
-// available. Will get prettier when generic Cell[T] /
+// available. Will get simpler when generic Cell[T] /
 // reference types land.
 //
 // Closes a meaningful self-host milestone: the AST visitor
@@ -5254,7 +5254,7 @@ function main(): i32 {
 
     // Method-call style on int: 0.to_string() — the dot
     // disambiguation lets the parser see int + dot + ident
-    // rather than a botched float consuming to_string.
+    // rather than a malformed float consuming to_string.
     var t6: Token[] = tokenize("0.to_string");
     if (t6.len() != 4) { return 600 + t6.len(); }
     match (t6[0]) {
@@ -10405,7 +10405,7 @@ function main(): i32 {
 // Two anonymous lambdas hoisted in the same converter session.
 // Both arrive at closureconv with origin name "lambda"; the
 // freshName counter used to key off `len(c.hoisted)` so both
-// hoists produced `__closure_lambda_1` and the assembler died
+// hoists produced `__closure_lambda_1` and the assembler failed
 // with "symbol already defined". Per-origin counting fixes it.
 func TestArm64NestedLambdaUniqueNames(t *testing.T) {
 	src := `function main(): i32 {

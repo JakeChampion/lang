@@ -2115,7 +2115,7 @@ pub function rt_src_temp_dir(t: string): string {
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (mode is
 // ignored without O_CREAT, so __syscall3 suffices), take a size HINT from fstat's
-// st_size (lseek lies on directories: EINVAL on tmpfs, the htree sentinel on
+// st_size (lseek is wrong on directories: EINVAL on tmpfs, the htree sentinel on
 // indexed ext4), read to EOF into a buffer that BECOMES the returned string
 // (RC-managed), close,
 // then the D9 gate (#5714): content that is not well-formed UTF-8 returns
@@ -4615,7 +4615,7 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
     // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
     // the `?` result fell through to i32 below, so `var o: Option[i32] =
     // f()?` (f: Result[Option[i32], i32]) was rejected E003 "initializer
-    // has type i32". Only bit the Option/struct payload case — a string /
+    // has type i32". Only broke the Option/struct payload case — a string /
     // array / scalar payload slipped through the lenient assignable check.
     if (u.op == "try_") {
         var ot: Ty = infer_expr_type(u.operand, s);
@@ -5017,7 +5017,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "str_reverse" || name == "str_replace"
         // The Option-returning array helpers box their result via
         // __fern_arr_box. Their call sites mark heap too, so this edge is
-        // byte-neutral through that door; it is what makes the closure right
+        // byte-neutral through that route; it is what makes the closure right
         // when the need is seeded from all_runtime_need_roots instead.
         || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
         || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
@@ -5038,7 +5038,7 @@ pub function runtime_need_deps(name: string): string[] {
         // not, so the two declarations of one edge disagreed and only the wrapper
         // carried it. Byte-neutral today, because every str_trim need is seeded
         // through that wrapper; the point is that the closure no longer depends on
-        // which door the need came in by.
+        // which route the need came in by.
         var dtrim: string[] = ["heap", "str_concat"];
         return dtrim;
     }
@@ -5720,7 +5720,7 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
 // rejects the chain with E038 per argument + E003 at the binding). The
 // self-host inference instead KEY-KINDS a bare ctor result by its NAME
 // (map_new = string-keyed, map_new_i32 = i32-keyed), so a chain whose key
-// arguments DISAGREE with the ctor's key kind sailed through check and the
+// arguments DISAGREE with the ctor's key kind was accepted by check and the
 // emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
 // map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
 // arg-taking map method (insert / get / get_or / has / without) whose chain
@@ -5867,7 +5867,7 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 //
 //   * check_call_arity — native E004, for driver paths that run no full
 //     checker gate (the wasm drivers), where an arg-count mismatch used to
-//     sail through the emitter and miscompile while the Go compiler rejects at
+//     pass through the emitter and miscompile while the Go compiler rejects at
 //     check time. Callers pass a fill_default_args_module'd module so omitted
 //     defaulted arguments don't read as mismatches.
 //   * check_undefined_calls — native E001. A callee naming nothing used to
@@ -6244,7 +6244,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
 //
 // The self-host parser's top-level loop dispatches on the declaration keywords
 // and lets everything else fall through to parse_stmt, which lands in
-// `top_stmts`. That bucket has two very different tenants:
+// `top_stmts`. That bucket has two very different cases:
 //
 //   - With NO `main`, it is the interpreter's SCRIPT mode: eval_module runs
 //     the statements in order and answers with the top-level `return`, which

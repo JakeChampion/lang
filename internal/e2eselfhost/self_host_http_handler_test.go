@@ -43,7 +43,7 @@ function main(): i32 {
 // shape symbol defined twice in one stream (the `.weak` merge only happens
 // across separate object files, not within one).
 //
-// TestSelfHostHttpHandlerServesX86_64 below takes it the rest of the way and
+// TestSelfHostHttpHandlerServesX86_64 below goes one step further and
 // serves real requests through it.
 func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
@@ -210,7 +210,7 @@ function main(): i32 {
 	})
 }
 
-// TestSelfHostHttpHandlerServesX86_64 is the end of the line for the flagship
+// TestSelfHostHttpHandlerServesX86_64 is the final step for the flagship
 // program: compiled by the SELF-HOSTED compiler, it answers real HTTP.
 //
 // It is the whole edge-handler stack at once — std/tcp's accept/recv/deadline

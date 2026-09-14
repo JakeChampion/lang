@@ -1258,7 +1258,7 @@ func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
 		}
 	}
 	// Spot-check the anchors the state machine keys on; a renumbering of
-	// the class IDs would sail past the round-trip above but not this.
+	// the class IDs would pass the round-trip above but not this.
 	for _, tc := range []struct {
 		cp    rune
 		class int

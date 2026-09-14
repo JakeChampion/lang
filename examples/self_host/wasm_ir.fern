@@ -78,7 +78,7 @@ pub function large_fl_cells(): i32 { return 2049; }
 // per-function LowerResult list in mod.funcs order. It is the cache the wasm IR
 // emit path threads through its two dozen collect / gate passes (str_values,
 // module_uses_*, module_emits_op_cached, field_reclaim_types, fn_value_table, …)
-// so a module is lowered a single time instead of once per pass — killing the
+// so a module is lowered a single time instead of once per pass — removing the
 // O(functions²) × O(passes) re-lowering that OOMed the self-host wasm compile of
 // large / many-function modules (#4652).
 //
@@ -9050,7 +9050,7 @@ function lc_bump_free(nexpr: string): string {
 
 // lc_report_and_exit_wrapper: `$__fern_lc_report` — the census summary on
 // stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line — plus
-// the `$proc_exit` wrapper that reports before dying, so BOTH exit paths
+// the `$proc_exit` wrapper that reports before exiting, so BOTH exit paths
 // (the exit() op and $_start) report through the one flag-gated definition;
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0 only: the component modes have no preview1 proc_exit and
@@ -9769,7 +9769,7 @@ pub function arr_push_wide(vty: string, sop: string): string {
 function preview1_imports(needs: string[]): string {
     var parts: string[] = [];
     if (leak_check_on()) {
-        // Census (#5362): the raw import steps aside so the flag-gated
+        // Census (#5362): the raw import is renamed so the flag-gated
         // reporting $proc_exit (lc_report_and_exit_wrapper) can define the
         // name every existing call site — the exit op and $_start — uses.
         parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit_raw (param i32)))\n");
@@ -10957,7 +10957,7 @@ pub function is_enum_type_name(structs: irlower.StructTab, mr_types: string[], n
 // so a `T[]` struct field of that element type is deep-released through
 // $__fern_arr_dec_ptr, walking raw scalars as pointers. `f32` and `u64` were
 // both missing: an `f32[]` field trapped (memory fault dereferencing 1.5) and
-// a `u64[]` field returned a silently wrong answer. It only bit a program with
+// a `u64[]` field returned a silently wrong answer. It only broke a program with
 // an `import`, since mr_types is empty without one.
 pub function is_primitive_type_name(name: string): boolean {
     return name == "i32" || name == "i64" || name == "f64" || name == "boolean"

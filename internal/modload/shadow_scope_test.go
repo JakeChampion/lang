@@ -7,7 +7,7 @@ package modload_test
 //
 //   - a `defer { … }` action is a BlockExpr, i.e. an expression, so nothing
 //     inside it was ever visited;
-//   - a match arm's `@` whole-value binding rides the arm rather than its
+//   - a match arm's `@` whole-value binding is stored on the arm rather than its
 //     Bindings list.
 //
 // Either one left the local out of the set, so the reference was mangled to

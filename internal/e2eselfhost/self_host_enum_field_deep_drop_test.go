@@ -111,7 +111,7 @@ var selfHostEnumFieldDeepDropCases = []struct {
 // on BOTH compilers, native as the oracle.
 //
 // FIVE rows leak without #8567's fix: the three defect rows and both guard rows.
-// The guards earn their name from the other direction — they are the rows an
+// The guards do their work in the other direction — they are the rows an
 // UNGATED or unbalanced walk would fail, and it would fail them as a changed
 // answer or an underflow rather than as a leak, which is why the exit code is
 // asserted alongside the verdict. The two controls are clean either way, and the

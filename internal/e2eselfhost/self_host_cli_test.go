@@ -1062,7 +1062,7 @@ function main(): i32 {
 		}
 	})
 
-	// #8738. `top_stmts` has two tenants and only one of them is a feature.
+	// #8738. `top_stmts` has two uses and only one of them is a feature.
 	// With NO `main` it is the interpreter's script mode — eval_module runs the
 	// statements and answers with the top-level `return`. With a `main`,
 	// eval_module calls that and returns before it ever looks at the bucket,
@@ -2384,7 +2384,7 @@ function main(): i32 {
 	})
 
 	// watbin's opcode table is the only thing between the emitter's WAT and a
-	// runnable `.wasm`, and a mnemonic missing from it takes down every program
+	// runnable `.wasm`, and a mnemonic missing from it breaks every program
 	// that reaches the instruction — `f64.reinterpret_i64` blocked anything
 	// calling `.to_string()` (#6607). These rows drive one program per opcode
 	// family through `-emit core-module`, so a table gap fails here rather than

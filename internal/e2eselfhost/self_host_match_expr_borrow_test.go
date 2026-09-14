@@ -93,7 +93,7 @@ function mkxs(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }
 			want: 3, allocs: 300, frees: 300,
 		},
 		{
-			// No alias in sight: a match expression over a plain local's field.
+			// No alias at all: a match expression over a plain local's field.
 			// The poisoning was never about the alias — the alias bind is just
 			// where the refusal became visible.
 			name: "match_expr_no_alias",

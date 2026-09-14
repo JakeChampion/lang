@@ -10,7 +10,7 @@ import (
 // RECEIVER is a fresh owned rc temporary — the canonical `(a + b).len()` —
 // now stashes the receiver and DECs it after the op. Before this slice the
 // length load (OpStrLen) consumed the concat's (data,len) and returned an
-// i32, dropping the buffer on the floor with nothing to dec it. Measured on
+// i32, leaving the buffer unreclaimed with nothing to dec it. Measured on
 // wasm: linear 1600 → 160000 → 1600000, no plateau (docs/RC-PERCEUS-PLAN.md
 // "Value-consuming ops"). The receiver is created solely for the call and is
 // dead after it (the i32 can't alias it), so reclaiming it is as safe as a

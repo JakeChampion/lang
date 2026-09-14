@@ -9,7 +9,7 @@ import (
 // `(i % 256) as u8` range-checked the 256 against u8 and refused it — the
 // canonical way to write a byte wrap, rejected.
 //
-// It only bit expressions with an UNSETTLED operand, which is what made it
+// It only broke expressions with an UNSETTLED operand, which is what made it
 // look arbitrary. `var x: i32 = …; (x % 256) as u8` was accepted all along
 // because x had already committed to i32; the same expression over a loop
 // variable was rejected because the variable had not. Whether an expression

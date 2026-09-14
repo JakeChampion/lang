@@ -12,7 +12,7 @@ import "github.com/jakechampion/lang/internal/ir"
 // and stores land somewhere else. Addresses and i32 values share the SSA's
 // integer ops, so the width is what tells them apart, and the IR sizes an
 // address the same as an i32 everywhere except a call, where the result
-// classification rides on the op (ir.ResAddr / ResWide / ResNarrow).
+// classification is carried on the op (ir.ResAddr / ResWide / ResNarrow).
 
 // ResolveWidths fixes each op's result width across a whole module, for the
 // 64-bit backends (arm64 / x86-64). It seeds address-ness from what is known

@@ -26,7 +26,7 @@ func TestEveryTargetComposes(t *testing.T) {
 }
 
 // No two capability PROFILES may carry the same set. Two that do are one
-// profile wearing two names — the state the four native targets were in
+// profile under two names — the state the four native targets were in
 // before they were collapsed, where adding a capability meant editing
 // the identical list four times and missing one was silent.
 //

@@ -208,7 +208,7 @@ func (b *builder) trmcNeutralStmt(s ast.Stmt) bool {
 		if !isIdent {
 			return false
 		}
-		// Rebinding a parameter would fight the loop's own advance.
+		// Rebinding a parameter would conflict with the loop's own advance.
 		for _, p := range b.fn.Params {
 			if p.Name == id.Name {
 				return false

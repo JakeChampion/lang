@@ -62,7 +62,7 @@ pub struct UnsetStmt { target: string, line: i32, col: i32 }
 // One arm of an if/elseif chain. `kw` is the keyword the arm was written
 // with — "if" for the first, and "elseif", "elsif", or "else if" for the
 // rest, all three of which VCL accepts and which the printer reproduces
-// rather than picking a favourite.
+// rather than normalising to one.
 pub struct IfArm { cond: Expr, body: Block, kw: string, line: i32, col: i32 }
 
 // The chain is FLAT: `arms` holds the `if` and every `elseif`, and

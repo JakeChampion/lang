@@ -31,7 +31,7 @@ import (
 //
 //	// CI-DARK: NAME — <reason>
 //
-// marker in its own file. The marker is not a rubber stamp — it is the
+// marker in its own file. The marker is not an exemption — it is the
 // enumerable list of "coverage we are knowingly not getting", which is the
 // thing that was impossible to produce before.
 var envGateRe = regexp.MustCompile(`os\.Getenv\("((?:RUN_|FERN_|DIFF_ORACLE_)[A-Z0-9_]+)"\)`)

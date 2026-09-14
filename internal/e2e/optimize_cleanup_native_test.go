@@ -2,7 +2,7 @@
 // now runs on the native x86-64 / arm64 backends, not just wasm. The Fold
 // emitter crash that used to block it is fixed (the array-index zero-extend),
 // and the fixpoint's old up-to-8× whole-program convergence snapshot is gone
-// (each sub-pass reports a changed bool), so it no longer balloons self-host
+// (each sub-pass reports a changed bool), so it no longer inflates self-host
 // build time.
 //
 // These pin the observable effect on native: constant expressions fold to a

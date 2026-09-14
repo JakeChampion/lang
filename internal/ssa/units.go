@@ -203,7 +203,7 @@ func addressShaped(o *Op) bool {
 		return true
 	case OpCall, OpCallIndirect, OpCallDyn:
 		// The one place `Op.Addr` is the best answer available: a
-		// provided callee's result classification rides on the op from
+		// provided callee's result classification is carried on the op from
 		// the IR, and a defined callee's comes from its own
 		// `ReturnAddr`. Both need `ResolveWidths` to have run — see
 		// LiftProgram, which runs it for exactly this reason.
@@ -268,7 +268,7 @@ func UnitsOf(f *Func, sigs map[string]Signature) Units {
 			// function returns or stores is routinely `alloc + N`
 			// rather than the allocation itself, and a walk that does
 			// not resolve that reports every such object as leaked
-			// while its own transfer is standing in front of it.
+			// while its own transfer is present in the function.
 			if base, ok := baseOf(o, defs, paramAddr); ok {
 				u.renamed[o.Result.ID] = base
 			}

@@ -106,7 +106,7 @@ function main(): i32 { return leaf.value() + 1; }`
 	// not "leaf". The bundler mangles the entry's namespace, so looking it up by
 	// source filename silently yields "" and every assertion below passes
 	// vacuously. Derived rather than hardcoded so a mangling change fails loudly
-	// here instead of quietly disarming the test.
+	// here instead of silently disabling the test.
 	entryVerdict := func(t *testing.T, got map[string]string) string {
 		t.Helper()
 		for ns, verdict := range got {
@@ -316,7 +316,7 @@ function main(): i32 { return leaf.value() + 5; }`), 0o644); err != nil {
 //
 // This is not a niceties test. At whole-compiler scale a build-on-miss link
 // lowers every uncached module in one process and exhausts the bump arena
-// (exit 137, which masquerades as a SIGKILL). Erroring instead keeps that
+// (exit 137, which looks like a SIGKILL). Erroring instead keeps that
 // failure unreachable by construction and gives the orchestrator an actionable
 // message rather than an opaque OOM.
 func TestSelfHostWasmLinkHitOnly(t *testing.T) {

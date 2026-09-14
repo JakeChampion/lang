@@ -196,7 +196,7 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
           opts = opts.insert(f.long, "true");
           j = j + 1;
         } else {
-          // A valued option swallows the token tail.
+          // A valued option consumes the token tail.
           var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
           if (glued.len() > 0) {
             return CliStep { opts: opts.insert(f.long, glued), next: i + 1, error: "" };
@@ -395,7 +395,7 @@ pub function (s: CliSpec) usage(): string {
 // CliSpec already describes — one source, no drift.
 // ============================================================
 // Escape a user string for roff text. Two vectors, both of which would
-// let help or about text smuggle a formatting request into the page:
+// let help or about text inject a formatting request into the page:
 //
 //   - a lone backslash introduces a roff escape sequence, so double
 //     every one (`replace` returns the receiver unchanged when there is

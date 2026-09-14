@@ -6,7 +6,7 @@ package ir
 // and the wasm builder all consume the *Program it produces, and the
 // self-host fixed-point gates assert byte-identical output across
 // compiler stages. Any nondeterminism introduced here propagates to
-// *all* backends at once — strictly worse than a per-backend wobble,
+// *all* backends at once — strictly worse than a per-backend divergence,
 // and harder to localize because it surfaces as simultaneous
 // multi-backend "mismatches".
 //

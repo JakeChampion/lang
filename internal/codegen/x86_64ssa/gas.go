@@ -2685,7 +2685,7 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 //
 // All four are SSE2, 16 bytes an iteration, the same block algorithms the
 // native backend and arm64ssa run (docs/ATLAS-PLATFORM-PLAN.md §3). What paid
-// for the vectorising was a net rather than a decision to go faster: the
+// for the vectorising was a gate rather than a decision to go faster: the
 // flat-vs-ssa ratio gate (#8069) named memchr as a 20x divergence the moment
 // the flat side got quicker, and the length sweep in gas_scan_lengths_test.go
 // is what makes a block kernel readable off the page — it walks every length
@@ -3130,7 +3130,7 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 }
 
 // emitCountByteHelper writes __fern_count_byte(s, byte) -> how many bytes of `s`
-// equal `byte`. No cursor, so no clamp; both degenerate answers are honest
+// equal `byte`. No cursor, so no clamp; both degenerate answers are real
 // counts rather than sentinels — an out-of-range byte counts 0 because nothing
 // can equal it, an empty string counts 0 because it has no bytes. Leaf.
 //

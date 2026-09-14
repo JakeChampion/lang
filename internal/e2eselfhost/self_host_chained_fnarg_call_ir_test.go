@@ -18,7 +18,7 @@ import (
 // from a bare code pointer and jumping to garbage. Binding the result to a
 // var first dodged it (a var-init IS walked), which is why the self-host
 // bootstrap never tripped it. Generic and non-generic callees both crashed;
-// the generic in the original report was a red herring.
+// the generic in the original report was not part of the trigger.
 //
 // Cases run through the single-program driver (no imports), covering the
 // crash shape, the non-generic sibling, an inline-lambda argument, a nested

@@ -16,7 +16,7 @@ import (
 // That made it look like a width bug rather than a missing tag: on wasm32 an f64
 // element came back wrong while a string element — a 4-byte pointer — survived.
 // The register backends give every slot 8 bytes and lost nothing, so only the
-// wasm leg lied. See docs/SELFHOST-TUPLE-ARRAY-LOCAL-TAGS.md.
+// wasm leg was wrong. See docs/SELFHOST-TUPLE-ARRAY-LOCAL-TAGS.md.
 //
 // Fixed at the SOURCE (arrtup_ret_fns / arrtup_ret_type populate the slot at the
 // binding) rather than per-consumer. Four sites read this tag; two already had an

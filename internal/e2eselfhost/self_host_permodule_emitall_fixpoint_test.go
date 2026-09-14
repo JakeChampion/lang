@@ -22,7 +22,7 @@ import (
 // emit-all runs a whole batch in ONE process, and each unit did TWO full
 // whole-module lowering passes (the eligibility pre-check + the emit). On the
 // self-host bump arena (no GC) those stack, so a unit peaked ~7.6 GB and a batch
-// of 8 marched the 8 GiB arena to exit-137 on the second batch. `-assume-eligible`
+// of 8 took the 8 GiB arena to exit-137 on the second batch. `-assume-eligible`
 // drops the redundant pre-check, ~halving each unit's arena advance, so the same
 // batch of 8 now fits. This test is that A/B made permanent: same batch size,
 // with `-assume-eligible`, must run green AND byte-identically (gen0 == gen1).

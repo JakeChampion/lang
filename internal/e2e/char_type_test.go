@@ -32,7 +32,7 @@ function main(): i32 {
     if (scalar_of(d) != 97) { return 2; }
     // Round trip through the integer and back.
     if (scalar_of(as_char(scalar_of(c))) != 97) { return 3; }
-    // A scalar outside the BMP still rides the i32 slot intact.
+    // A scalar outside the BMP still passes through the i32 slot intact.
     if (scalar_of(as_char(128512)) != 128512) { return 4; }
     if (scalar_of(as_char(1114111)) != 1114111) { return 5; }
     // char[] arrays: element type survives, indexes as a char.

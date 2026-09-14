@@ -5750,7 +5750,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 					w = 32
 				}
 				// An unsigned source converts from its unsigned
-				// magnitude: a u64 max rides as the bit pattern -1,
+				// magnitude: a u64 max is stored as the bit pattern -1,
 				// which a signed conversion would turn into -1.0
 				// instead of ~1.8e19 (the codegen backends' ucvtf /
 				// convert_i64_u result). Source type from InnerType.
@@ -5791,13 +5791,13 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	case *ast.BoolLit:
 		return Bool(x.Value), nil
 	case *ast.UnitLit:
-		// `()` carries no information; it rides the same zero every
+		// `()` carries no information; it is the same zero every
 		// backend stores in the payload slot.
 		return Number(0), nil
 	case *ast.StringLit:
 		return String(x.Value), nil
 	case *ast.CharLit:
-		// A `char` rides an i32 and a `u8` a byte; the interpreter's
+		// A `char` occupies an i32 and a `u8` a byte; the interpreter's
 		// Number covers both, exactly as it does for `n as char`.
 		return Number(x.Value), nil
 	case *ast.FString:
@@ -6248,7 +6248,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		//     Ok(v)   => v,   // Result-shape
 		//     Err(_)  => return expr,
 		//   }
-		// The early-return arms hop the enclosing function via
+		// The early-return arms exit the enclosing function via
 		// the tryOpEarlyReturn sentinel; callFunc catches it.
 		inner, err := i.evalExpr(x.Inner, env)
 		if err != nil {
@@ -6550,7 +6550,7 @@ func shiftCount(rn Number, width int) Number {
 // `trunc_sat_*` ops and the native backends' fcvtz / cvtt + fixup,
 // so a `f as i32` cast agrees on every backend. The width-32 result
 // is stored int32-truncated to match the interpreter's i32/u32
-// storage convention (unsigned values ride sign-extended; callers
+// storage convention (unsigned values are stored sign-extended; callers
 // reinterpret via uint32 at use). 2^63 / 2^64 are the first floats
 // at/above the signed-i64 / unsigned-u64 max, so the `>=` guards
 // keep the final Go conversion in range.
@@ -6577,7 +6577,7 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 		}
 		return int64(int32(t))
 	}
-	// unsigned. The max (2^32-1 / 2^64-1) rides as all-ones, which
+	// unsigned. The max (2^32-1 / 2^64-1) is stored as all-ones, which
 	// is -1 in the int64/int32-truncated storage the interpreter
 	// uses for u32/u64.
 	if t <= 0.0 {
@@ -6599,7 +6599,7 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 // codegen backends' int→int narrowing. An unsigned narrow
 // zero-extends (storing the true magnitude so a later widening
 // cast zero-extends); a signed narrow sign-extends. Width 64 is
-// identity (u64 rides as its bit pattern). Width 8 is always
+// identity (u64 is stored as its bit pattern). Width 8 is always
 // unsigned (u8 — i8 was retired in #4408).
 func narrowInt(v int64, width int, unsigned bool) int64 {
 	switch width {
@@ -6812,7 +6812,7 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		// (an unsigned value stores its true magnitude so a later
 		// widening `as i64` zero-extends rather than sign-extends),
 		// a signed narrow sign-extends. u64 has no positive int64
-		// form, so it rides as its bit pattern (handled by the op's
+		// form, so it is stored as its bit pattern (handled by the op's
 		// own uint64 view); width 64 here is identity.
 		signExtend := func(v Number) Number {
 			switch b.IntWidth {

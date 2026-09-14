@@ -866,7 +866,7 @@ pub function assert_eq_f32_rel(actual: f32, expected: f32, rel_tol: f32): TestOu
 
 // `assert_eq_f64_exact(actual, expected)` — bitwise-equal
 // floats. Use for f32_bits round-trip tests / canonical-NaN
-// checks where epsilons would smuggle bugs through. Most
+// checks where epsilons would hide bugs. Most
 // other callers want `_near`.
 pub function assert_eq_f64_exact(actual: f64, expected: f64): TestOutcome {
     if (actual == expected) { return Pass; }
@@ -2187,8 +2187,8 @@ pub function (r: TestRunner) bench_max_ms(name: string, iterations: i32, fn: () 
 // is strictly LESS than the deadline.
 //
 // Use `monotonic_ns` for the timestamps (not `now_unix_ms`)
-// so NTP-style wall-clock adjustments don't move the
-// goalposts mid-test.
+// so NTP-style wall-clock adjustments don't shift the
+// deadline mid-test.
 
 // `assert_elapsed_lt_ms(start_ns, max_ms)` — passes if the
 // elapsed time since `start_ns` (a `monotonic_ns()` stamp)
@@ -2595,7 +2595,7 @@ pub function assert_any_string(arr: string[], pred: (string) => boolean): TestOu
 // Membership: does `needle` appear in `arr`. Same idea as
 // the existing `assert_contains(haystack: string, needle:
 // string)` but lifted to typed arrays so callers don't
-// have to roll their own loop or smuggle the value through
+// have to roll their own loop or pass the value through
 // `assert_any_*` + a `== needle` lambda. The failure
 // message embeds the needle so the diagnostic is grep-able.
 

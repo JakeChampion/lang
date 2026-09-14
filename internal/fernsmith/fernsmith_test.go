@@ -128,12 +128,12 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 //
 // 256 seeds, not the differential oracle's 2048, and the gap is
 // deliberate: this walk costs ~29s here and ~3m50s at 2048, which does
-// not earn its place in the unit lane when the differential lane
+// not belong in the unit lane when the differential lane
 // already type-checks all 2048 as a precondition to running them. A
 // generator bug rare enough to need more than 256 seeds surfaces
 // there, not here — the lambda-body `?` bug did exactly that, on seeds
 // 680 / 1117 / 1759 with this test green. Widen it only if the
-// differential lane stops being the broader net.
+// differential lane stops being the broader sweep.
 func TestGenMainProducesRunnablePrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
@@ -1073,7 +1073,7 @@ func TestGenMainStaysFloatFree(t *testing.T) {
 // and "smaller corpus, bigger program" become easy to hit. So this needs
 // to be in place BEFORE the generator grows — a contract that silently
 // lapses leaves every future finding arriving as an unreduced program
-// with no shrinker to attack it.
+// with no shrinker to reduce it.
 //
 // # Why AST nodes and not source length
 //

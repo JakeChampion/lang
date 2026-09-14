@@ -277,7 +277,7 @@ function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
     return test.pass();
 }
 
-// The headline hazard, stated on its own so a failure names it directly.
+// The main hazard, stated on its own so a failure names it directly.
 function test_a_comment_marker_inside_a_literal_survives(): test.TestOutcome {
     var cases: string[][] = [
         ["var s = \"// not a comment\";", "var s = \"// not a comment\";"],

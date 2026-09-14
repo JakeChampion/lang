@@ -8,7 +8,7 @@ import (
 
 // Discarded owned call-result reclamation (statement-temp follow-up). A bare
 // `mk(i);` whose user-function result is a fresh struct / array / string /
-// enum dropped that allocation on the floor — nothing dec'd it, so a factory
+// enum left that allocation unreclaimed — nothing dec'd it, so a factory
 // call in a loop leaked every result (wasm: struct 800→80000, array
 // 1600→160000). Stage (a) excluded calls because a method call can alias its
 // receiver; this slice reclaims the result of a USER function (in FuncSigs,

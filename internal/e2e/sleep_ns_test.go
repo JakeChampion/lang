@@ -10,7 +10,7 @@
 // sleeps for the wrong length. So the probe measures.
 //
 // Every bound is ONE-SIDED. nanosleep may overshoot by any amount the
-// scheduler likes, so "not shorter than asked" is the only property the helper
+// scheduler chooses, so "not shorter than asked" is the only property the helper
 // owns; an upper bound would be a test of the machine's load.
 package e2e
 

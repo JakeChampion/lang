@@ -266,9 +266,9 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 // that are not about processes or the arena: a file descriptor to poll, a
 // permission bit to read or set, a C calling convention to call through, and a
 // user the process can be. Each of the first three was reachable on
-// wasm32-wasi until it exploded in the backend — `unknown callee
+// wasm32-wasi until it failed in the backend — `unknown callee
 // "write_file_exec"` mid-build for a program that type-checked (#7947) —
-// because each rode a capability the wasi profiles do grant.
+// because each was gated on a capability the wasi profiles do grant.
 //
 // `access` and the id builtins are on this list for a sharper reason than
 // "the backend has no lowering": neither WASI preview has a permission model

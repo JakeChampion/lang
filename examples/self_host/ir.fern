@@ -557,7 +557,7 @@ pub function op_crc32_cksum(): Op { return op0("crc32_cksum"); }
 // the source bytes.
 //
 // An op for op_memchr's reason — an op is what a backend can SUBSTITUTE — and
-// the substitution here is unusually lopsided, which is why it earns a second
+// the substitution here is unusually lopsided, which is why it justifies a second
 // kernel at all. The vector form needs no splat and, on x86-64 and wasm, no
 // compare either: pmovmskb / i8x16.bitmask gather the top bit of each byte,
 // which IS the question. arm64 pays for one compare (cmlt … #0) because NEON
@@ -1283,7 +1283,7 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 // len, cap, reserve), so any number of builders are live at once and they nest.
 // The buffer is allocated as a heap string already is, which is what makes
 // `buf_take` zero-copy: it stamps the length and hands the same pointer back as
-// a string, leaving the builder empty but still armed at its reserve. `buf_new`
+// a string, leaving the builder empty but still ready at its reserve. `buf_new`
 // pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
 // `buf_push_byte` / `buf_push_u64` / `buf_free` are statement ops (pushing a dummy so a
 // statement-level drop balances); `buf_len` and `buf_take` are value ops. All
@@ -1799,7 +1799,7 @@ pub function kind_count(): i32 { return 196; }
 // merge. It has now happened TWICE on the same pair of branches:
 // write_file_exec moved 224 -> 225 -> 226 as raw_arr_box then memchr
 // landed underneath it.
-// The COUNTS have their own version of this, and it bit three times in a
+// The COUNTS have their own version of this, and it broke three times in a
 // row on 266..272. Three branches were each cut from a base holding none
 // of the others' ops, so each moved ext_ok up from 59 — and git merged
 // those cleanly to a single number that was wrong every time. Nothing
@@ -2705,7 +2705,7 @@ pub function kind_name(id: i32): string {
 // stores push v back … so the operand stack stays balanced with the 'every
 // expr pushes one value' invariant". They live next to those constructors so
 // an op and its arity are declared in one place; irverifystack's corpus sweep
-// is what keeps them honest, since an arity one too small leaves a slot behind
+// is what keeps them correct, since an arity one too small leaves a slot behind
 // at the enclosing `end`, which is reported, not swallowed.
 //
 // Two consumers: the operand-stack verifier, and any pass that has to know
@@ -3977,7 +3977,7 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32): boolean[] {
 // version takes the whole `*Func` for exactly that reason (slotIsTwoWord).
 //
 // Tried and reverted, so the reason is measured rather than assumed. The STRING
-// representation is a red herring: the self-host's wasm string really is a single
+// representation is not the obstacle: the self-host's wasm string really is a single
 // pointer to a `[len@0][bytes@4]` block, so strings alone would make one `drop`
 // exact. `dyn Trait` is the shape that breaks it — an inline [data, vtable] pair,
 // TWO operand-stack values, which is the second arm of native's slotIsTwoWord.

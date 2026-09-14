@@ -178,7 +178,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// The three boxed-return Reader leaves (#2649). read_chunk and close
 		// were emitted UNCONDITIONALLY inside the arm64 heap block before the
 		// migration — `has_need("reader")` was never consulted on this backend —
-		// so every heap program carried two helpers it could not reach. They ride
+		// so every heap program carried two helpers it could not reach. They use
 		// the same need gate as x86-64's now, which is what makes them absent
 		// from a program that holds no Reader.
 		"read_line", "reader_read_chunk", "reader_close"} {
@@ -207,7 +207,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	if strings.Contains(asm, "\n__fern_monotonic_ns:") {
 		t.Error("the register-ABI hand-asm __fern_monotonic_ns is back on arm64 Linux")
 	}
-	// The clocks are heap-independent, so their scratch buffer cannot ride the
+	// The clocks are heap-independent, so their scratch buffer cannot share the
 	// fs runtime's gate — a pure-scalar timing program would reference a slot
 	// nothing defined. It is emitted by emit_rt_clock_and_print now.
 	if strings.Count(asm, "__fern_scratch: .skip 256") != 1 {
@@ -243,7 +243,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		t.Error("__raw_environ did not emit the arm64 envp load")
 	}
 	// write_file's O_CREAT mode arg makes it the __syscall4 user; its number
-	// load rides the same darwinize marker as __syscall3's. The argument pops
+	// load uses the same darwinize marker as __syscall3's. The argument pops
 	// mostly fold: each push reaches its pop across register-only lines, so the
 	// peephole reroutes the value through a `mov` ahead of the run (P7) and
 	// only the last argument's pop and the number's survive. The mode argument
@@ -371,7 +371,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"unlinkat", "472"},
 		{"O_WRONLY|O_CREAT|O_TRUNC", "1537"},
 		// fstat, which read_file sizes its buffer with. It was lseek (199)
-		// until #8265: lseek lies on directories (EINVAL on tmpfs, the htree
+		// until #8265: lseek is wrong on directories (EINVAL on tmpfs, the htree
 		// sentinel on indexed ext4), and no helper in this set issues it any
 		// more, so asserting its number asserted nothing.
 		{"fstat", "339"},

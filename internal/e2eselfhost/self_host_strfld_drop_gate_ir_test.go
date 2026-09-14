@@ -16,7 +16,7 @@ import (
 // body freed string fields of NON-admitted types too, while construction
 // never retained them: a string aliased into several such structs was an
 // uncounted reference the first element drop freed out from under the rest —
-// heap corruption. The shape below is the minimal form of what killed the
+// heap corruption. The shape below is the minimal form of what broke the
 // IR-routed merged-bundle self-compile (ir.Op's shared .str freed by
 // __struct_arr_elems_drop_ir__Op → __struct_drop_ir__Op): `esc` returns the
 // field (an escaping read → Rec is NOT admitted), `shared` is aliased into

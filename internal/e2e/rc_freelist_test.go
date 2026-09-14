@@ -513,7 +513,7 @@ function main(): i32 {
 // Phase 3 step-4: arrays free their buffer when rc hits 0 (flag-on).
 // This exercises __fern_drop_arr_ptr's tail-free + freelist reuse
 // across 50 build/drop cycles, and re-runs the whole rc-correctness
-// corpus with free actually happening — the use-after-free net for
+// corpus with free actually happening — the use-after-free guard for
 // the eventual flag flip.
 func TestX86_64ArrayDropFree(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, arrayDropFreeReuseSrc); code != 0 {

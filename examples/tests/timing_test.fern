@@ -3,12 +3,12 @@ import "std/test";
 // builtins (`now_unix_ms`, `monotonic_ns`, `sleep_ms`) and
 // the elapsed-time assertion helpers.
 //
-// The "completes within N ms" pattern is the bread-and-butter
+// The "completes within N ms" pattern is the standard shape
 // of perf-regression tests: stamp `monotonic_ns()` before the
 // operation, pass the stamp + deadline to `assert_elapsed_lt_ms`
 // after. Use `monotonic_ns` (not `now_unix_ms`) for the
-// timestamps so NTP-style clock adjustments don't move the
-// goalposts mid-test.
+// timestamps so NTP-style clock adjustments don't shift the
+// deadline mid-test.
 
 function test_now_unix_ms_advances(): test.TestOutcome {
     // Wall-clock reads at least don't go BACKWARDS (modulo NTP

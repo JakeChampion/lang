@@ -35,7 +35,7 @@ function main(): i32 {
         ai = ai + 1;
     }
     var mod: parser.Module = rundriver.parse_stdin("wasm_run");
-    // Call-arity gate (#4360): an arg-count mismatch used to sail through the
+    // Call-arity gate (#4360): an arg-count mismatch used to pass through the
     // wasm emitter and miscompile where the Go compiler rejects with E004.
     // Checked on a default-filled COPY so omitted defaulted args don't read
     // as mismatches; the emit input stays untouched.
@@ -59,7 +59,7 @@ function main(): i32 {
     // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
     // the raw/syscall floor #6946). The emit below runs this same gate, but only
     // on the emit path: the `-decide` probe returns before it, and answering
-    // "ir" or "ast" for a program neither path can compile would be a lie.
+    // "ir" or "ast" for a program neither path can compile would be wrong.
     var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
     if (unsupported.len() > 0) {
         eprint(wasm_ir.wasm_unsupported_message(unsupported));

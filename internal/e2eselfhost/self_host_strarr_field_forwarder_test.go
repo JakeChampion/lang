@@ -182,7 +182,7 @@ function main(): i32 {
 		},
 		{
 			// NEGATIVE CONTROL. `keep.get()[0]` binds an ELEMENT — the exact
-			// alias the scan exists to refuse, laundered through a call.
+			// alias the scan exists to refuse, reached through a call.
 			// A direct `keep.xs[0]` was already caught; this is the route that
 			// was not.
 			name: "forwarder_element_read",

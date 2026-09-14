@@ -1338,7 +1338,7 @@ var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 // SanitizeEnabled is the single opt-in surface for the debug
 // memory-safety runtime (#5545) — the "sanitizer build" that turns the
 // scattered, individually-named heap detectors into one coherent mode.
-// Set it and the three heap checks below light up together:
+// Set it and the three heap checks below turn on together:
 //
 //	LeakCheckEnabled  — leak census at exit
 //	RcUnderflowTrap   — rc over-release (double free), reported + fatal
@@ -3076,7 +3076,7 @@ type Destructure struct {
 	// complete Destructure whose Init reads it, so every stage handles one
 	// level with the code it already had and recurses for the rest.
 	//
-	// A level per box is what the memory model wants anyway: the inner
+	// A level per box is what the memory model requires anyway: the inner
 	// tuple is its own rc-tracked allocation, so it needs its own temp,
 	// alias-inc, loop-reclaim and exit sweep. Flattening the levels into
 	// extra offset hops off one temp would leave the inner box unowned.

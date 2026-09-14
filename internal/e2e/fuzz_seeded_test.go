@@ -6,7 +6,7 @@ package e2e
 // per mutation, 14 call sites). And a run is now REPRODUCIBLE: `fuzz_run`
 // draws one seed from the CSPRNG, names it in the failure diagnostic, and
 // `fuzz_run_seeded` replays that exact sequence — which is the difference
-// between a fuzz failure you can debug and one you can only stare at.
+// between a fuzz failure you can debug and one you cannot reproduce.
 //
 // The determinism assertion is the point of this test: two `fuzz_run_seeded`
 // calls with equal seeds must produce byte-identical diagnostics, including

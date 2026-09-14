@@ -16,7 +16,7 @@ import (
 // $__struct_drop_Inner body. Reclaim is proven by a memory-cap differential: a long
 // consume-by-match churn over a fresh `Full(Inner{items:[..]})` stays bounded under a
 // tight max-memory-size cap with trap-on-grow-failure (the payload buffer + boxes are
-// reclaimed onto the freelist and reused); a regression to the leak blows past the cap
+// reclaimed onto the freelist and reused); a regression to the leak exceeds the cap
 // and traps. The WAT assertion pins that the recursive $__struct_drop_Inner is emitted.
 func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

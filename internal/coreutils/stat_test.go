@@ -168,9 +168,9 @@ func statTree(t *testing.T) string {
 // mostly formats: every directive of each mode, then the flag / width /
 // precision grid over one directive of each of the three kinds (string,
 // unsigned, signed-with-a-fraction), then the scanner's own edges — an
-// unknown conversion, which prints `?` and swallows its byte, against an
+// unknown conversion, which prints `?` and consumes its byte, against an
 // unknown conversion UNDER `H` or `L`, which prints `?` and gives the byte
-// back, against `%%` wearing a modifier, which is fatal.
+// back, against `%%` carrying a modifier, which is fatal.
 //
 // The blocked directives (%w, %W, %C, and -f's %i, %S, %t, %T) are absent
 // and so are the four built-in layouts that carry them — the default

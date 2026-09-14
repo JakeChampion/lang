@@ -25,7 +25,7 @@ var updateDiagGolden = flag.Bool("update-diag-golden", false, "regenerate diagno
 // on synthetic Diagnostic structs, this exercises the real
 // parser/modload → checker → diag.Format pipeline, so an accidental change
 // to a message string, a code, a caret column, or a suggestion is caught as
-// a golden diff rather than sailing through (#4413 Rec §10). Each program is
+// a golden diff rather than passing unnoticed (#4413 Rec §10). Each program is
 // single-file (no imports) so the rendered filename is fully controlled by
 // the stable name passed to diag.Format below.
 var diagnosticGoldenCases = []struct {

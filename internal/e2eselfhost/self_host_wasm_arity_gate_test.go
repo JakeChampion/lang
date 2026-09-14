@@ -11,7 +11,7 @@ import (
 
 // TestSelfHostWasmArityGate pins #4360: an arg-count mismatch must REJECT on
 // the self-host wasm drivers (exit 1 + an E004 diagnostic on stderr, nothing
-// emitted), matching the Go compiler's check-time error — it used to sail
+// emitted), matching the Go compiler's check-time error — it used to pass
 // through the emitter and miscompile. The gate is asmcore.check_call_arity, a
 // conservative free-function arity slice: the accept cases pin that its
 // skip-rules (defaulted args, locals shadowing a function name, method calls)

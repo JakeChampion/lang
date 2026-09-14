@@ -17,7 +17,7 @@ import (
 // returns 1.5 where 4.5 is expected, with the compiler exiting 0 and
 // FERN_STRICT_IR=1 reporting nothing. Every other path is correct — native
 // interp, native x86-64, and the self-host's own x86-64 backend — so only the
-// wasm leg lies.
+// wasm leg is wrong.
 //
 // The erased-wide deferral gate is supposed to keep exactly this off the wasm IR
 // path. It missed the shape because it looks for a wide value passed BY VALUE
@@ -53,7 +53,7 @@ function main(): i32 {
 }`}, // 45
 }
 
-// erasedWideArrayRefuseCases keep the GATE honest after the promotion landed.
+// erasedWideArrayRefuseCases check the GATE still refuses after the promotion landed.
 // The promotion is guarded to single-typevar generics, so a two-typevar
 // `map[T, U](xs: T[], f)` at a wide element type is still erased — and must
 // still be REFUSED rather than miscompiled. Without a case here the gate could

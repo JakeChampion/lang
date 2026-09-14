@@ -253,7 +253,7 @@ function test_an_overrunning_task_falls_behind_without_overlapping(): test.TestO
 }
 
 // Drift is never negative: no scheduler starts a task before it is due. The
-// property that makes the number meaningful, and the first casualty of a
+// property that makes the number meaningful, and the first thing broken by a
 // signed subtraction written the wrong way round.
 function test_drift_is_never_negative(): test.TestOutcome {
     var ts: Task[] = tasks();

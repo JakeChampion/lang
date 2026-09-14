@@ -791,7 +791,7 @@ func GenMain(seed uint64) string {
 // helper (forward refs only — sidesteps self- and mutual-
 // recursion without a static check). Sets the generator's
 // profile to ProfileRunnable for the duration so nested
-// productions can't sneak f32 in through boolean comparisons.
+// productions can't introduce f32 through boolean comparisons.
 func (g *Generator) MainProgram() string {
 	prevProfile := g.profile
 	prevHelpers := g.helpers
@@ -1933,7 +1933,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		// `pick` is the three-arg variant. Both `a` and `b`
 		// recurse at type t so the checker's pairwise
 		// unification produces a single T. Use genericArg so
-		// type-ambiguous values like bare `None` get nudged
+		// type-ambiguous values like bare `None` get forced
 		// into a concrete form before the inference runs.
 		b.WriteString("pick(")
 		g.expr(b, sc, tBool, depth+1)

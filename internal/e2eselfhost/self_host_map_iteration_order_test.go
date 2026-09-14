@@ -20,7 +20,7 @@ import (
 //     after a `.without`.
 //   - The wasm backend kept keys at their probe slot and snapshotted by
 //     sweeping the slot table, so its `keys()` came out in HASH order. That one
-//     diverges on three plain inserts with no delete in sight.
+//     diverges on three plain inserts with no delete at all.
 //
 // The oracle is the interpreter, as everywhere else here: native is the
 // reference implementation, and the compilers must agree with it rather than

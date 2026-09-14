@@ -104,7 +104,7 @@ import (
 //     Following the deadcode-gate pattern, they are listed rather than silently
 //     skipped, each with the reason, so the lane is green and a NEW divergence
 //     fails. A listed fixture that starts PASSING also fails — an allowlist
-//     nobody prunes becomes a place bugs go to be forgotten.
+//     nobody prunes becomes a place bugs get forgotten.
 //
 // # One harness asymmetry to know about before filing a divergence
 //

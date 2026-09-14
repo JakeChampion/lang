@@ -10,8 +10,8 @@ import (
 )
 
 // u64ArrayIRCases widen the self-host IR subset to u64[] arrays. i64[] / f64[]
-// already rode the 8-byte-element path (op_arr_make_i64 + the i64arr element-width
-// mark); u64[] was deferred. The fix rides the SAME 8-byte path and marks the slot
+// already used the 8-byte-element path (op_arr_make_i64 + the i64arr element-width
+// mark); u64[] was deferred. The fix uses the SAME 8-byte path and marks the slot
 // u64 for UNSIGNED element arithmetic — and crucially is_i64_slot now excludes
 // array (pointer) slots, so a u64[] local stays an i32 pointer (the wasm verifier
 // rejects an i32 array pointer stored into an i64 local). u64[] as a struct field

@@ -302,7 +302,7 @@ type lexer struct {
 // is `ª`, category Lo) used to lex as an identifier while `café` (C3 A9 —
 // A9 is `©`) failed (#5628).
 //
-// Fern identifiers are ASCII-only, deliberately: it dodges the
+// Fern identifiers are ASCII-only, deliberately: it avoids the
 // confusable / bidi surface of UAX #31 (see docs/STRINGS-SOTA.md D11).
 // Non-ASCII text is still free inside string literals and comments, which
 // are scanned as raw bytes.

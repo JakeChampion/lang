@@ -355,7 +355,7 @@ func TestWasmBigIntDifferential(t *testing.T) {
 	}
 
 	// Checks are split across helper functions rather than inlined into main.
-	// Each `expr` needs temporaries, and 3600 of them in one body blows
+	// Each `expr` needs temporaries, and 3600 of them in one body exceeds
 	// wasm's per-function locals cap ("too many locals") before any of this
 	// module's code runs — a property of the generated harness, not of
 	// core/bigint.

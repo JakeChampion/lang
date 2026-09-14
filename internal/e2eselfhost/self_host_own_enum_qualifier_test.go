@@ -57,7 +57,7 @@ function main(): i32 { return lib.probe(5); }
 // entry point that resolves a real `import` graph and so the only one where
 // the imported module gets prefix-mangled at all.
 //
-// Two assertions, because the bug had two faces and one resolution behind
+// Two assertions, because the bug had two symptoms and one resolution behind
 // them. `-ir-probe` is the eligibility half: it reported
 // `lib__probe: BAIL lower call const_func` and `module: AST`. Emitting and
 // RUNNING the program is the other half plus the proof the arms still select:
@@ -114,7 +114,7 @@ func TestSelfHostOwnEnumQualifierX86_64(t *testing.T) {
 }
 
 // TestSelfHostOwnEnumQualifierCheckX86_64 is the same construct at the CHECKER
-// (checker_modload_run.fern), which is where #8650's second face showed: the
+// (checker_modload_run.fern), which is where #8650's second symptom showed: the
 // qualified arms of a match covering both variants each read as uncovered, so
 // a correct match drew one E030 per variant.
 //

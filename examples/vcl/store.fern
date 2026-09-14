@@ -23,8 +23,8 @@ import "std/i64";
 import "std/float";
 import "./runtime";
 
-// A decoding cursor: the offset reached, and whether decoding is still on
-// the rails.
+// A decoding cursor: the offset reached, and whether decoding is still
+// succeeding.
 struct Cur { at: i32, ok: boolean }
 
 function field(s: string): string {

@@ -86,7 +86,7 @@ func NewServer() *Server {
 type docState struct {
 	// uri names the document src belongs to. A workspace request can hand a
 	// docState built from the ENTRY file to a request naming another file, so
-	// src is only the right ruler for UTF-16 position conversion when this
+	// src is only the right text for UTF-16 position conversion when this
 	// matches (#8468); srcFor is the check.
 	uri   string
 	src   string

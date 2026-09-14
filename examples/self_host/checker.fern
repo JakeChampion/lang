@@ -7273,7 +7273,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // checker reports E058 in the `else` branch after the E011 check, so the
 // two never both fire on one statement).
 // loop_diags_in_exprs runs loop_diags over the statement lists one statement's
-// expressions hold, each with the scope it deserves. An ordinary lambda is a
+// expressions hold, each with the scope it needs. An ordinary lambda is a
 // scope: a label does not cross a function boundary and a `break` inside one is
 // E011, so it recurses with in_loop = false and no labels. A value block is not
 // — it is an if-/match-expression desugar that irlower inlines, so
@@ -10906,7 +10906,7 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
 
 // A slot where `own` says something: a reference, whose unit changes hands. A
 // SCALAR carries none, so `own` on one transfers nothing and there is no
-// affine discipline to police — a second mention of it is an ordinary read,
+// affine discipline to enforce — a second mention of it is an ordinary read,
 // not a use after move. A generic `own acc: T` reaches every instantiation,
 // and its scalar ones would otherwise report one.
 function ow_ownable_type(type_name: string): boolean {
@@ -12625,7 +12625,7 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
             }
             return out;
           }
-          // `fip` is the stronger claim and may only lean on other `fip`
+          // `fip` is the stronger claim and may only rely on other `fip`
           // callees; `fbip` may also call `fbip`, whose own construction sites
           // E068 verifies in turn.
           var callable: boolean = false;
@@ -14089,7 +14089,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
   // check (plus union-variant assignability) covers enums the same way
   // it covers `type X = A | B` aliases. The self-host's own source uses
-  // no enum decls, so this is inert on the bundle; it lights up
+  // no enum decls, so this is inert on the bundle; it enables
   // exhaustiveness for user / corpus enum matches.
   for ed in mod.enums {
     unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });

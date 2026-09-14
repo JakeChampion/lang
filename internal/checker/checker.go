@@ -1589,7 +1589,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// values into byte buffers (JSON / wire formats). No value
 	// conversion happens — the 32 bits on the operand stack carry
 	// through unchanged; the IR lowers both calls to a no-op once
-	// the type checker is happy.
+	// the type checker accepts them.
 	c.info.FuncSigs["f32_bits"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 32}},
 		Result: ast.NumberType{Width: 32, Signed: true},
@@ -5521,7 +5521,7 @@ func (dc *deriveConf) conforms(td *ast.TraitDecl, dn, tn string) bool {
 
 // deriveFieldGap returns the first (label, type) among the given
 // field/payload types that does NOT conform to trait td — the @derive
-// pre-check that replaces the position-less garbage a broken synthesised
+// pre-check that replaces the position-less errors a broken synthesised
 // body would surface (#5392). Types the check cannot name (arrays,
 // tuples, maps, closures — methodTypeName
 // fails) and type parameters of the deriving decl are skipped: the
@@ -9279,7 +9279,7 @@ func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
 // unifyArrayArg is unifyType at an argument position, with the same `T[]` →
 // `[T]` borrow folded in: a generic `[T]` parameter binds T from an owned
 // `T[]` argument and takes a full-range view of it, so a view-taking generic
-// is no more hostile to its callers than a concrete one.
+// is no harder for its callers than a concrete one.
 func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[string]ast.Type, own bool) bool {
 	if c.unifyType(want, got, sub) {
 		return true
@@ -9482,7 +9482,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	// runtime) need: they declare pointer params + result as usize so the
 	// full 8-byte address survives on arm64-darwin, and flow user-shaped
 	// pointer / integer values through without an `as` cast. Exposing this
-	// implicitly to USER code, though, turns usize into a wormhole that
+	// implicitly to USER code, though, turns usize into a bypass that
 	// launders i64→i32 narrowing and even string→struct reinterpretation
 	// past the type system. So gate it to stdlib context; user code must
 	// use an explicit `as` cast (the CastExpr machinery already allows the
@@ -10562,7 +10562,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	//
 	// Since E070 this decides no ACCEPTED program's meaning — an
 	// unannotated function is already rejected above. It is kept as ERROR
-	// RECOVERY, and it earns that keep: without it the function defaults to
+	// RECOVERY, and it is worth having: without it the function defaults to
 	// void and the void propagates, so one missing annotation becomes three
 	// errors, two of them pointing at innocent CALL SITES. Measured on
 	// `function greet() { return "hi"; } … greet().len()`:
@@ -11905,7 +11905,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		// would otherwise mark the receiver as a borrow; these are un-borrowed
 		// after the walk so the move is recorded.
 		dynConsumed := map[*ast.Ident]bool{}
-		// Lambda bodies are statements, not expression soup: neither walk
+		// Lambda bodies are statements, not expressions: neither walk
 		// below descends into one; walkNested takes them after both, in
 		// source order.
 		var lambdas []*ast.Lambda
@@ -13986,7 +13986,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 		armScope := newScope(s)
 		// A struct pattern reads fields by name, so it is the same access
 		// `s.field` is — the rule was enforced on field access, construction
-		// and var-destructure but not here, leaving two doors open (#8451).
+		// and var-destructure but not here, leaving two paths unchecked (#8451).
 		// A bare `S { .. }` binds nothing and stays legal as an existence
 		// test.
 		if len(arm.Bindings) > 0 {
@@ -14703,7 +14703,7 @@ func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
 // errE040GenericFuncAsValue reports a generic function named where a value
 // is expected. The eta-expansion in the hint is spelled from the decl's own
 // parameters, so it is the shape the user needs rather than a generic
-// gesture — inside a generic caller binding the same type parameter it is
+// suggestion — inside a generic caller binding the same type parameter it is
 // literally the fix, and elsewhere it shows which types have to be pinned.
 func (c *checker) errE040GenericFuncAsValue(p ast.Position, name string, fn *ast.FuncDecl) {
 	tps := strings.Join(fn.TypeParams, ", ")
@@ -15089,7 +15089,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// end — settling the whole binary at u8 range-checks the 256
 			// against u8 and rejects the canonical way to write a byte wrap.
 			//
-			// It only ever bit expressions with an UNSETTLED operand, which is
+			// It only ever affected expressions with an UNSETTLED operand, which is
 			// what made it look arbitrary: `var x: i32 = …; (x % 256) as u8`
 			// was accepted all along, because x had already committed, while
 			// `for i in … { (i % 256) as u8 }` was rejected, because the loop
@@ -15340,7 +15340,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// it is not implemented anywhere: ast.Ident carries no TypeArgs and
 		// monomorph's collectCalls only walks *ast.Call, so a generic named
 		// outside callee position is never queued. Until it exists this is
-		// a refusal with a code, not a miscompile with an apology.
+		// a refusal with a code, not a miscompile reported as a compiler bug.
 		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen {
 			c.errE040GenericFuncAsValue(n.P, n.Name, gf)
 			return nil
@@ -18184,7 +18184,7 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 	case *ast.Binary:
 		switch x.Op {
 		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
-			// Don't stomp a float-typed binary's resolved
+			// Don't overwrite a float-typed binary's resolved
 			// FloatWidth with an int width — happens when an
 			// int-cast surrounds a float multiply, e.g.
 			// `(frac * mult) as i64`. settleInt is fed the

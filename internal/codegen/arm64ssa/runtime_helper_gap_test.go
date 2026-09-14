@@ -78,7 +78,7 @@ func TestArmRunClockHelpers(t *testing.T) {
 // sleep_ms actually sleeps, and a non-positive argument returns without a
 // syscall. Both are read off monotonic_ns rather than the wall clock. The
 // bounds are one-sided on purpose: nanosleep may overshoot by any amount the
-// scheduler likes, so only the floor is a property of the helper.
+// scheduler chooses, so only the floor is a property of the helper.
 func TestArmRunSleepMs(t *testing.T) {
 	// elapsedBound builds main() = (monotonic_ns after sleep_ms(ms) - before)
 	// compared against limit, and returns the native exit code.

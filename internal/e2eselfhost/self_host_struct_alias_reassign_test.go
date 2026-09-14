@@ -43,7 +43,7 @@ import (
 //     return earlier (emit_field_reclaim_store and the snapshot paths take no
 //     alias_inc at all), so routing it through emit_arr_store silently dropped it
 //     while the credit was still granted. That produced exact native COUNT parity
-//     — 80/80 — with exit 99. Only __rc_underflow_count() dissented.
+//     — 80/80 — with exit 99. Only __rc_underflow_count() reported it.
 //
 // The string limb this slice left open is closed by the follow-up, and its gap row
 // left with it — self_host_str_alias_reassign_test.go owns that shape now, with the

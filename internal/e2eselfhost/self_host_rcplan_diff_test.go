@@ -194,7 +194,7 @@ function main(): i32 { return tup(("a", 2)); }`,
 			// move site (the self-host's var-bind array path consults
 			// moves_local_at and note_moved_elided's sweep skip pairs with
 			// it), so aliasBindIncs is anchored EMPTY — the first pinned
-			// divergence of the retain-plan table, burned down.
+			// divergence of the retain-plan table, closed.
 			name: "move-on-alias",
 			src: `function mv(): i32 {
 	var a: i32[] = [1, 2];
@@ -236,7 +236,7 @@ function main(): i32 { var a: i32[] = [4, 5]; return g(a); }`,
 			// mention both sides elide the transfer inc (the self-host's
 			// string clause consults moves_local_at, and the string sweep
 			// loop skips the elided source) — anchored agreement, the second
-			// aliasBindIncs divergence family burned down.
+			// aliasBindIncs divergence family closed.
 			name: "move-on-alias-string",
 			src: `function f(): i32 {
 	var s: string = "hi" + "!";
@@ -456,7 +456,7 @@ function main(): i32 { return f(); }`,
 			// site and copies the slot facts the deep free reads
 			// (tuple_elems / tup_elem_kinds), and the tuple sweep loops skip
 			// the elided source. Anchored agreement — the last aliasBindIncs
-			// move family burned down.
+			// move family closed.
 			// TUPLE alias bind, LIVE source: a closed divergence — the
 			// dead-alias cancellation's tuple limb elides the borrowed
 			// view's inc and its shallow "TUP:" box dec exactly as native
@@ -527,7 +527,7 @@ function main(): i32 { return f(); }`,
 			// the alias's box-only NODEEP marker so it inherits the source's
 			// deep field walk (the struct-specific release-role transfer),
 			// and the struct sweep loop skips the elided source. Anchored
-			// agreement — the third aliasBindIncs family burned down.
+			// agreement — the third aliasBindIncs family closed.
 			name: "move-on-alias-struct",
 			src: `struct P { xs: i32[], n: i32 }
 function f(): i32 {
@@ -814,7 +814,7 @@ function build(n: i32): Option[i32] {
 function main(): i32 { match (build(3)) { Some(v) => { return v; }, None => { return 0; } } }`,
 			// The move DECLINES here, so `v`'s eligibility is a real
 			// per-iteration reclaim, not inert bookkeeping — the plan grants
-			// it; the EMITTED sweep still rides the credit table until the
+			// it; the EMITTED sweep still uses the credit table until the
 			// plan promotion routes releases through freeEligible.
 			anchor: map[string]map[string]string{"build": {"movedLocals": "", "freeEligible": "v,vals", "lastUses": "v=2,vals=2"}},
 		},
@@ -1025,7 +1025,7 @@ function main(): i32 { return cb(); }`,
 			// OWN-PARAM donor function (#4356 slice 10): `bump(own d)` where a
 			// construction reuses d's box (own_param_reuse_sites). Both sides
 			// agree on freeEligible (c,d); NEITHER emits reuseSources — the
-			// self-host's own-param reuse rides own_param_reuse_sites (not the
+			// self-host's own-param reuse uses own_param_reuse_sites (not the
 			// reuseSources dump path), native doesn't pair PARAMS as donors —
 			// a documented agreement. The recipient c is precise-dropped at its
 			// last use by the self-host (the known placement class native

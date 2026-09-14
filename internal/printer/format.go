@@ -2131,7 +2131,7 @@ func (f *formatter) formatParamPattern(p ast.Param) {
 // formatDestructurePattern renders a destructuring pattern — `(a, (b, c))`
 // for a tuple, `Point { x: a, y }` for a struct — prefixed by `w @ ` when an
 // `@` binding names the whole value. `at` overrides the node's own AtName for
-// the parameter site, whose binding rides on the holder parameter instead.
+// the parameter site, whose binding is carried on the holder parameter instead.
 //
 // Every binding site renders through here. A site-local copy is how a struct
 // pattern came to reprint as the positional tuple form, silently rebinding by

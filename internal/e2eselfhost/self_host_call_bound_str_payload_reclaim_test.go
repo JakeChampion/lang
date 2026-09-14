@@ -19,7 +19,7 @@ import (
 // the .to_upper family, a named producer) — the "f" flag. That is exactly the
 // proof `__fern_str_free` needs, because op_opt_make stores the payload
 // UNCOUNTED: a fresh payload is sole-owned, an aliased one is not. Only the
-// flag was being dropped on the floor by the two name extractors, so lower_func
+// flag was being discarded by the two name extractors, so lower_func
 // could not see it; it is now seeded as "OPTFRESHF:<name>" beside the existing
 // "OPTFRESH:<name>".
 //

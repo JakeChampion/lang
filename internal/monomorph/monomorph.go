@@ -338,7 +338,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		rewriteGenericStructTypes(prog, info, structInsts)
 		// Append any structs the new pass found.
 		for _, k := range collectKeys(structInsts) {
-			// Enum instantiations (clone-needed generic enums, #3693) ride
+			// Enum instantiations (clone-needed generic enums, #3693) use
 			// the same `structInsts` map — instKey is type-agnostic and the
 			// decl kind is recovered by lookup. Build an EnumDecl clone for
 			// an enum key, a StructDecl clone otherwise.

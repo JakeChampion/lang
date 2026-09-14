@@ -92,8 +92,8 @@ func TestAmbientCapabilityReportsHandlerEffects(t *testing.T) {
 		},
 		{
 			// A local bound to the same name is not the builtin, and the
-			// parse tree carries no resolution to ask — so the rule holds
-			// its tongue rather than pointing at the wrong call.
+			// parse tree carries no resolution to ask — so the rule stays
+			// silent rather than pointing at the wrong call.
 			name: "a local shadowing the builtin is not reported",
 			src: `function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var eprint: (string) => void = plat.log;

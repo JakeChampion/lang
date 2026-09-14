@@ -15,11 +15,11 @@ import (
 //   - timer_fd(ms)             -> __fern_timer_fd: a CLOCK_MONOTONIC one-shot
 //     timerfd readable after `ms` ms.
 //   - wasm_timer_pollable(ns)  -> __fern_wasm_timer_pollable: -1 on native (a
-//     deadline rides poll(2)'s timeout arg).
+//     deadline is carried in poll(2)'s timeout arg).
 //   - wasm_pollable_drop(p)    -> __fern_wasm_pollable_drop: 0 on native (a
 //     pollable is just an fd; nothing to drop).
 //   - wasm_poll(pollables)     -> __fern_wasm_poll: -1 on native (no real
-//     pollables; readiness rides poll(2) directly). On wasm this is the real
+//     pollables; readiness uses poll(2) directly). On wasm this is the real
 //     wasi:io/poll.poll(list<pollable>) multiplexer.
 //
 // Two programs: (a) a with_deadline-shape readiness case — arm a 1 ms timerfd,

@@ -198,7 +198,7 @@ function to_u8(b: i32[]): u8[] {
 // Two things this fixes over the three-eprint sequence it replaces. `eprint`
 // appends its own newline, so "…does not yet support: " / entry / "\n" printed
 // the reason on its own line with a blank one after it, which read as an EMPTY
-// instruction and looked like the compiler could not say what it choked on
+// instruction and looked like the compiler could not say what it refused
 // (#6164). And only unknown[0] was printed: a module with twenty refusals
 // reported one, so each fix revealed the next.
 //
@@ -2526,7 +2526,7 @@ function run(): i32 {
     } else if (target == "arm64-darwin") {
         // Same arm64 code generator with the Darwin syscall builtins
         // (gettimeofday / getentropy) selected via the darwin flag;
-        // darwinize() reskins the emitter output into the Mach-O assembler
+        // darwinize() rewrites the emitter output into the Mach-O assembler
         // dialect (@PAGE/@PAGEOFF, _main entry, BSD syscalls). That GAS
         // text is then assembled + linked entirely in-process by
         // arm64_native: arm64_gas_program parses + selects instructions,

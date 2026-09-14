@@ -237,7 +237,7 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
     // funcs, structs, enums, consts and traits, and never touches TypeAlias.
     // Collecting them here would not just add pages native does not have — it
     // would advance the WALK, so an alias sitting above a documented
-    // declaration would eat the run that declaration is owed.
+    // declaration would consume the run that declaration is owed.
     return out;
 }
 

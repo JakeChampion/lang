@@ -42,7 +42,7 @@ function main(): i32 { return g(function (x: i32): i32 { return x + 1; }); }`,
 			t.Errorf("the anonymous `function` expression still parses:\n%s", src)
 			continue
 		}
-		// The code rides on the Error, not in its message — the CLI renders
+		// The code is carried on the Error, not in its message — the CLI renders
 		// it as `error[P006]` and `fern -explain P006` answers from it.
 		if got := firstCode(err); got != "P006" {
 			t.Errorf("want code P006, got %q: %v", got, err)

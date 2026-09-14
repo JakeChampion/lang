@@ -93,7 +93,7 @@ function self_checks(): i32 {
     if (took(split, 0, 5) != "near") { return 21; }
     // ...and the cursor lands past it, so nothing is handed out twice.
     if (ferndoc.take_doc(split, 0, 5).cursor != 2) { return 22; }
-    // The detached run is not resurrected by a later declaration either.
+    // The detached run is not claimed by a later declaration either.
     if (took(split, 2, 9) != "") { return 23; }
 
     // ---- 4. the cursor is the whole state ------------------------------

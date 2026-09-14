@@ -576,8 +576,8 @@ func seqCases(t *testing.T) []invocation {
 		{name: "equal width tiny to one long", args: []string{"-w", "1e-400", "1"}},
 		{name: "largest finite", args: []string{"1e4932", "1", "1e4932"}},
 		// A term of zero carries the LONG DOUBLE's sign, which exact
-		// decimal arithmetic cannot produce: 3 x 0.3 rounds to a hair
-		// above 0.9, so the term that lands on zero is a hair below it
+		// decimal arithmetic cannot produce: 3 x 0.3 rounds to just
+		// above 0.9, so the term that lands on zero is just below it
 		// and prints `-0.0`. The same sequence one step shorter cancels
 		// exactly and prints `0.0`.
 		{name: "zero term is negative", args: []string{"-f", "%.1f", "0.9", "-0.3", "0"}},

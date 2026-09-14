@@ -395,7 +395,7 @@ function rc_free_debug_on(): boolean {
 // both a stale 1 in a recycled block and an allocator that happens to hand a
 // separate buffer the block right after its box would read as fused, and the
 // consequence is not a fault but a block returned to the freelist ONCE where it
-// was taken twice — a phantom leak standing in front of whatever is really
+// was taken twice — a phantom leak hiding whatever is really
 // wrong. The value spells 7351 in its high half.
 function fused_marker(): i32 {
     return 1934589965;   // 0x734F800D
@@ -520,7 +520,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
     // bytes = words*8) via __fern_large_push instead of leaking. A leaked
     // buffer dies with the process in the per-window serial emit, but in the
     // single-process -per-module-emit-all mode it ACCUMULATES across the batch
-    // and blows the arena. %rbx/%r12/%r13 are callee-saved across the call.
+    // and exhausts the arena. %rbx/%r12/%r13 are callee-saved across the call.
     s = s.write(".L" + lbl + "_large:\n");
     s = s.write("    leaq -16(%rbx), %r8\n");       // base = arr - 16
     s = s.write("    leaq 0(,%rcx,8), %rsi\n");     // bytes = words*8
@@ -1041,14 +1041,14 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 // that allocates only SOMETIMES — __fern_arr_push, whose grow path allocates
 // and whose in-place path does not — cannot claim at its entry without
 // leaving a stale site behind on the fast path, to be consumed by the next
-// unrelated allocation and reported as a confident lie. Making that safe
+// unrelated allocation and reported as a false attribution. Making that safe
 // needs a save/restore protocol around each call rather than a single slot,
 // which is more invariant than the case warrants: append-growth attribution
 // already has an answer that needs no flag at all (break on the counter bump
 // in __fern_arr_push_grow and read the return address — see
 // docs/TEST-GATES.md). So a block grown by an append reports
 // `__fern_arr_push`, and the construction sites — where a leak is actually
-// born — report user code.
+// created — report user code.
 //
 // %rax is the scratch: it is dead at the entry of all three shims (each
 // RETURNS in %rax and reads nothing from it), and the prologue sits ahead of
@@ -7540,7 +7540,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var sm: parser.Module = ircore.script_normalized(mod);
     // The merged-bundle SIZE budget that stood here is gone with its twin in
     // eligible_core_known_impl — see the note there for why (#3425's large-tier
-    // freelist is fixed, and since #5972 the budget was a wall rather than a
+    // freelist is fixed, and since #5972 the budget was a refusal rather than a
     // fallback). So is the function-less refusal, for the reason given there.
     //
     // A main-less module is admitted now: emit_module_ir_unit's `_start` exits 0

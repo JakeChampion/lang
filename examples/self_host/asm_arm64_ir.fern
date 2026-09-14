@@ -39,7 +39,7 @@ import "./ircore";
 // (AAPCS scratch, dead across a frame access here) via sub first.
 // fr_sub_imm emits `dst = base - imm`, materialising the immediate in x17 (IP1,
 // AAPCS scratch, dead at every caller here) when it exceeds arm64's 12-bit
-// add/sub immediate ceiling (#4095). The IR path's large functions blow past it
+// add/sub immediate ceiling (#4095). The IR path's large functions exceed it
 // — irlower.lower_stmt has ~590 locals → a 4736-byte frame and frame-relative
 // offsets to match — which the AST emitter never hits (its frames stay under
 // 4 KiB). A single MOVZ covers up to 65535 (>8000 locals), far beyond any real
@@ -3671,7 +3671,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     }
     // Each region's begin label repeats the `.align 8` its blocks are emitted
     // under, so the label lands ON the first block rather than on the padding
-    // before it — `.align n` is 2^n, so that is 256 bytes of skid, and a walk
+    // before it — `.align n` is 2^n, so that is 256 bytes of slack, and a walk
     // starting in it reads zeroes as a block header.
     if (reloc) { s = s.write("    .align 8\n.Lfern_sbox_begin:\n"); }
     if (s.string_lits.len() > 0) {
@@ -4400,7 +4400,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
 // both a stale 1 in a recycled block and an allocator that happens to hand a
 // separate buffer the block right after its box would read as fused, and the
 // consequence is not a fault but a block returned to the freelist ONCE where it
-// was taken twice — a phantom leak standing in front of whatever is really
+// was taken twice — a phantom leak that hides whatever is really
 // wrong. The value spells 7351 in its high half; asm_ir.fused_marker is the
 // x86-64 sibling and the two must agree only with themselves, never across
 // backends.

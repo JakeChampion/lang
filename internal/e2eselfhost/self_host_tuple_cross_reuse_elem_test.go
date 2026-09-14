@@ -43,7 +43,7 @@ import (
 // defence for a bug that does not exist yet, and asserting it needs a unit on the
 // emitted branch, not a program.
 //
-// The recipient limb is the second half. emit_cross_tuple_reuse tagged c's slot
+// The recipient side is the second half. emit_cross_tuple_reuse tagged c's slot
 // from the element EXPRESSIONS, and elem_type_tag coarsens a scalar-array element
 // to the bare "i32" — so `(i32, i32[])` was recorded as "i32,i32" and the
 // type-driven deep free found no array child. It now prefers the declared tuple

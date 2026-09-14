@@ -18,7 +18,7 @@ import (
 // zero offset — and every one of those is a correct round trip. What must
 // not change is the instruction.
 //
-// This is the gate that makes the model load-bearing before any dispatch
+// This is the gate that proves the model works before any dispatch
 // arm consumes it. An operand kind the parser does not know refuses the
 // line here rather than silently reaching an arm as raw text.
 func TestInstRoundTripsThroughTheModel(t *testing.T) {

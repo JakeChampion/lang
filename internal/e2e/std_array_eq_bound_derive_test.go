@@ -9,7 +9,7 @@ import "testing"
 // module, so a body using the operator rejected the caller's own type with
 // "cannot compare values of type Point" — reported as a monomorph "compiler
 // bug" at a line inside the stdlib (#6846). `i32` / `string` elements resolve
-// the operator fine, which is why the whole family looked healthy.
+// the operator fine, which is why the whole family looked correct.
 //
 // One `derive(Eq)` program per verb; `i32` / `string` coverage for the same
 // verbs lives in their own suites.

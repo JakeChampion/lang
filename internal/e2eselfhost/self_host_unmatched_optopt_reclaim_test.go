@@ -29,12 +29,12 @@ import (
 // then on the Some tag __fern_rc_dec the PAYLOAD, then __fern_rc_dec the BOX. For
 // Option[Option[T]] the payload IS the inner option box — an rc-headered block
 // owning no pointer — so that flat dec is already its complete release. Only the
-// credit was missing, exactly as the Result spelling already rides the same
+// credit was missing, exactly as the Result spelling already uses the same
 // emitter.
 //
 // THE SCALAR-INNER GATE IS LOAD-BEARING, and it decides which RELEASE a shape
 // gets rather than whether it gets one. A flat dec frees the inner box but
-// nothing the box owns, so an rc inner payload must not ride it — that one takes
+// nothing the box owns, so an rc inner payload must not use it — that one takes
 // the guarded two-level walk instead (#7718, the `rc_inner_*` rows). Crediting a
 // slot under both tags would free the same box twice, which is why the two
 // collectors are disjoint by annotation: nested_opt_inner_freefn answers

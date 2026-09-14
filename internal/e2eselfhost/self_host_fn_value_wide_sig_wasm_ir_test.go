@@ -87,7 +87,7 @@ function main(): i32 { return apply((x: i32) => x * 2); }`},
 	// oracle-checked against the interpreter, so a row that regresses fails on
 	// its own, and the pair is what says the CAUSE was the name.
 	//
-	// The victim is always the inner binding — the outer one is what the lift
+	// The broken one is always the inner binding — the outer one is what the lift
 	// hoisted — so a probe that shadows the other way measures nothing.
 	{"shadowed-sig", `function apply(v: i64): i64 {
     var g: (i64) => i64 = (x: i64) => x * 2i64;

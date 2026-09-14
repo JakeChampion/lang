@@ -152,7 +152,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The refusal that keeps the local-built admission honest. `seeded` rebinds its
+	// The refusal that keeps the local-built admission narrow. `seeded` rebinds its
 	// local FROM A PARAMETER before appending, so the buffer it hands back is the
 	// caller's — reclaiming it at the read would free `live` out from under main.
 	// `body_unsafe_for_allow_ret` cannot catch this on its own (its assign arm reads

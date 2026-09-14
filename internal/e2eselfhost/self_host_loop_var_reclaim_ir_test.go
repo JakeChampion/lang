@@ -96,7 +96,7 @@ function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => 
 	//
 	// Renamed a THIRD time, and the churn is still the point — see the enum row
 	// above, which has its own history of the same thing. A name that asserts a
-	// bug persists becomes a lie the moment the bug is fixed, and the test then
+	// bug persists becomes false the moment the bug is fixed, and the test then
 	// fails for the right reason while reading as a regression.
 	{
 		name: "string-concat-temps-reclaimed",

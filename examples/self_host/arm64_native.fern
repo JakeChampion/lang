@@ -4599,7 +4599,7 @@ function arm64_gas_bad_unscaled2(mnem: string, ops: string[], lm: Arm64Mem): str
 }
 
 // stp/ldp: the register class (X/W/D) picks the offset scale, s-register
-// pairs are a loud gap, and the offset is range-checked here — the
+// pairs are a reported gap, and the offset is range-checked here — the
 // encoder masks it into imm7, so out of range would encode a different,
 // valid instruction.
 function arm64_gas_bad_pair(mnem: string, ops: string[], lm: Arm64Mem): string {
@@ -6559,7 +6559,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // `orr Xd, Xn, #imm` (logical immediate) — same verified-bitmask path
         // as `and #imm`. Without this branch the register dispatch read the
         // immediate token as a register, got -1, masked it to XZR, and
-        // silently encoded `orr Xd, Xn, xzr` — a no-op wearing the right
+        // silently encoded `orr Xd, Xn, xzr` — a no-op with the right
         // mnemonic. Register-form `orr` falls through to emit.
         if (mnem == "orr" && arm64_gas_third_is_imm(ops)) {
             var oimm: i64 = arm64_gas_imm64(ops[2]);

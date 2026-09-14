@@ -6,7 +6,7 @@ import "std/array";
 // walkthrough. Same shape as the base `r.fuzz` but on a
 // failure the harness minimises the offending input before
 // reporting, so the failure log shows a clean reproducer
-// rather than the wild mutated buffer that happened to fire.
+// rather than the unminimised mutated buffer that happened to fire.
 //
 // Properties here pass — the shrinker is exercised in the
 // failure-shape Go gate
@@ -23,8 +23,8 @@ function check_len_nonneg(input: u8[]): test.TestOutcome {
 
 // Property that holds: reversing the bytes twice is the
 // identity — checked directly on the `u8[]` input, no text
-// bridge needed. The fuzz_default_iterations loop puts the
-// byte-level mutator through its paces; if the round-trip
+// bridge needed. The fuzz_default_iterations loop exercises
+// the byte-level mutator thoroughly; if the round-trip
 // ever broke, the shrinker would localise the trigger to a
 // minimal byte sequence.
 function check_reverse_idempotent(input: u8[]): test.TestOutcome {

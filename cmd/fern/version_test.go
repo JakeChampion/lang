@@ -16,7 +16,7 @@ func TestVersionStringNamesBinaryGoAndPlatform(t *testing.T) {
 		t.Errorf("version output does not name the binary:\n%s", out)
 	}
 	// The Go version and platform are the next two questions anyone
-	// triaging a miscompile asks, so they travel with the commit.
+	// triaging a miscompile asks, so they are printed with the commit.
 	if !strings.Contains(out, runtime.Version()) {
 		t.Errorf("version output omits the Go version %q:\n%s", runtime.Version(), out)
 	}

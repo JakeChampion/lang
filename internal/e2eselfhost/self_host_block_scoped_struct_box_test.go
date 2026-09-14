@@ -13,7 +13,7 @@ import (
 // rounds on `S { xs: i32[], n: i32 }`, against 0 on native.
 //
 // Switching this class on wholesale SEGFAULTS the gen1 self-compile. The
-// culprit is NOT the other thirteen consumers of slot_is_reclaimable_struct;
+// cause is NOT the other thirteen consumers of slot_is_reclaimable_struct;
 // three fixpoint runs, one variable each, isolate it:
 //
 //	the sweep + entry-zeroing only, deep drop included   SEGFAULT (gen1)

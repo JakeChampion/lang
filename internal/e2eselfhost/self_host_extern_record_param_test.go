@@ -15,7 +15,7 @@ import (
 // record `@import` parameter (docs/WIT-BRING-YOUR-OWN.md): the self-hosted wasm
 // backend flattens a struct param to its fields. A self-host struct value is
 // [type-id@0][field@+4 in 4-byte slots], so the wrapper pushes one i32 per field
-// (no canonical memory pointer → no alignment wall, unlike arrays). Tested via
+// (no canonical memory pointer → no alignment constraint, unlike arrays). Tested via
 // the custom-provider harness: a `sum-point: func(p: record { x, y: s32 }) ->
 // s32` provider returns x+y. Mirror of the Go TestExternRecordParamCustomProvider.
 func TestSelfHostExternRecordParamCustomProvider(t *testing.T) {

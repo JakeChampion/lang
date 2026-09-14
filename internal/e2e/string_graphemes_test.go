@@ -36,7 +36,7 @@ function main(): i32 {
     // An odd indicator trails as its own cluster.
     if (unicode.grapheme_count(cp(127468) + cp(127463) + cp(127482)) != 2) { return 7; }
 
-    // Emoji ZWJ sequences are one cluster (GB11): a family is a family.
+    // Emoji ZWJ sequences are one cluster (GB11): a family emoji is one.
     var fam: string = cp(128104) + cp(8205) + cp(128105) + cp(8205) + cp(128103);
     if (unicode.grapheme_count(fam) != 1) { return 8; }
     // Profession emoji with a skin-tone modifier, likewise.

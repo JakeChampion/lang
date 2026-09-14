@@ -165,7 +165,7 @@ function main(): i32 {
 	// block alloc, capture layout (ptrW-aware on arm64), closure
 	// call convention (x86 %r10 / arm64 x9), and OpMakeClosure /
 	// OpMakeEnv lowering. The bare-function `function_value` case
-	// above hits the no-capture path; this one rides the harder
+	// above hits the no-capture path; this one exercises the harder
 	// emit surface that historically has been a bug source.
 	"closure_capture": `
 function adder(n: i32): (i32) => i32 {

@@ -226,8 +226,8 @@ function test_applying_the_script_reproduces_the_target(): test.TestOutcome {
     return test.pass();
 }
 
-// The other half of the pincer: the operations must cost what the number says.
-// A backtrace that wanders off the optimal path still reproduces the target —
+// The other half of the pair: the operations must cost what the number says.
+// A backtrace that leaves the optimal path still reproduces the target —
 // only the cost gives it away.
 function test_the_scripts_cost_equals_the_distance(): test.TestOutcome {
     var ps: string[] = pairs();

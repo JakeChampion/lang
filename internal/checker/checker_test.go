@@ -1188,7 +1188,7 @@ function main(): i32 { empty(); return 0; }`
 // prelude: stdlib methods are no longer in scope unless their module
 // is imported. A program that calls `.split` without `import
 // "std/string";` should get a clean type error rather than silently
-// resolving against a magic prelude.
+// resolving against an implicit prelude.
 // TestUseWithoutAnnotationDoesNotPanicFormatting guards the regression
 // where a `use x <- f()` with no binding annotation, whose callback
 // parameter type the checker couldn't infer (inferUseParam bails with
@@ -3159,7 +3159,7 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 // `__memcpy`, `__memset`) declare their pointer params + result as
 // `usize`. User code that wants to feed pointer-shaped values (string,
 // Map handles, T[], [T], structs) into them must now use an EXPLICIT
-// `as usize` / `as i32` cast — the implicit usize wormhole is gated to
+// `as usize` / `as i32` cast — the implicit usize bypass is gated to
 // stdlib context so it can't silently launder type confusion in user
 // code. See docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
 func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
@@ -3178,7 +3178,7 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 			t.Errorf("explicit-cast form should type-check: %q\ngot: %v", src, err)
 		}
 	}
-	// Implicit usize hop in user code: rejected (the closed wormhole).
+	// Implicit usize hop in user code: rejected (the bypass is closed).
 	for _, src := range []string{
 		// string -> usize with no cast
 		`function f(a: string, b: string, n: i32): i32 {
@@ -3353,7 +3353,7 @@ function main(): i32 { return 0; }`)
 // std/array's concrete-element verbs reach dispatch through it, and they
 // cannot move onto receivers until the self-hosted compiler lowers that form.
 // A receiver method and a convention-named function claim the same
-// `Array.<name>` key, so this asserts the route rather than blessing it.
+// `Array.<name>` key, so this asserts the route rather than endorsing it.
 func TestArrayMethodNamePatternStillDispatches(t *testing.T) {
 	prog, err := parser.Parse(`function __method_Array_ghost(xs: i32[]): i32 { return 0; }
 function main(): i32 { return 0; }`)
@@ -6149,7 +6149,7 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 		},
 		{
 			// With a parameter the old code did not crash, it mis-reported:
-			// Params[1:] ate the real argument and blamed the caller.
+			// Params[1:] dropped the real argument and blamed the caller.
 			name: "with-arg",
 			src: `trait Show { function show(x: i32): i32; }
 struct P { v: i32 }

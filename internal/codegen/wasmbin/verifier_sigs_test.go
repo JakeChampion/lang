@@ -14,7 +14,7 @@ import (
 // can drift, and a drifted entry is worse than no entry: it makes the
 // verifier report a defect in correct IR, or stay quiet on broken IR.
 //
-// This is the seam that keeps the two honest. Every helper both know
+// This is the seam that keeps the two in agreement. Every helper both know
 // about must agree on how many operand-stack slots the call consumes and
 // how many it leaves, at wasm's two-word string ABI. A helper whose
 // signature changes here fails until the verifier's copy is updated.

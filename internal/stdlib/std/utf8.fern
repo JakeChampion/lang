@@ -111,7 +111,7 @@ pub function char_from_i32(n: i32): Option[char] {
 // Takes a `char` (#5629). The range check stays even though `n as char`
 // now rejects an out-of-range LITERAL: a cast of a runtime i32 is still
 // unchecked by design, so a `char` reaching here can hold a surrogate or
-// an out-of-range value. This is the last line of defence for "the output
+// an out-of-range value. This is the final check for "the output
 // is always well-formed UTF-8".
 pub function utf8_encode(ch: char): string {
     var c: i32 = ch as i32;

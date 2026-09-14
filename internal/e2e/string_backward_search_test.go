@@ -79,11 +79,11 @@ function main(): i32 {
     if (!chk("abab", "ab")) { return 13; }
 
     // ADVERSARIAL: needle "aaa...ab" against "aaa...a". Every position walks
-    // the whole needle before mismatching, which is what blows the budget and
+    // the whole needle before mismatching, which is what exhausts the budget and
     // hands the search to the reverse Two-Way. Absent.
     var big: string = rep("a", 900);
     if (!chk(big, rep("a", 60) + "b")) { return 14; }
-    // Present, but near the FRONT -- so the backward scan burns its whole
+    // Present, but near the FRONT -- so the backward scan spends its whole
     // budget before it could ever reach the match, and the escalated search
     // has to find it.
     var hay: string = rep("a", 400) + "b" + rep("a", 400);

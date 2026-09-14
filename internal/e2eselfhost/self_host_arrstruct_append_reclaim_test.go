@@ -16,7 +16,7 @@ import (
 // same hole #6127 closed for the SHALLOW structarr class; this is the deep
 // sibling.
 //
-// Two things had to move together, and the second is the one that actually bit:
+// Two things had to move together, and the second is the one that broke it:
 //
 //   - the blunt not-reassigned exclusion becomes arrstruct_unsafe_for, which
 //     sanctions the self-append rebind and refuses every other reassignment;

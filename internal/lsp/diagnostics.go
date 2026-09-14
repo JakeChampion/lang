@@ -44,7 +44,7 @@ func toDiagnostic(src string, err error) Diagnostic {
 		d.Range = Range{Start: start, End: end}
 		// The Range already conveys position; strip the redundant
 		// "<kind> error at L:C: " prefix from the message body.
-		// Hinted suggestions ride inline so editors that don't
+		// Hinted suggestions appear inline so editors that don't
 		// render the related-information block still see them —
 		// saves a second protocol round-trip in the MVP.
 		d.Message = stripPositionPrefix(err.Error())
@@ -62,7 +62,7 @@ func toDiagnostic(src string, err error) Diagnostic {
 	if c, ok := err.(diag.Coded); ok {
 		d.Code = c.Code()
 	}
-	// A machine-applicable fix (diag.Suggestion, Rec §3) rides the
+	// A machine-applicable fix (diag.Suggestion, Rec §3) is carried on the
 	// diagnostic's data field; textDocument/codeAction turns it into
 	// a quickfix WorkspaceEdit (codeaction.go).
 	if sg, ok := err.(diag.Suggested); ok {

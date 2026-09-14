@@ -16,7 +16,7 @@ import (
 // block of N consecutive 4-byte slots (element i @ i*4, no type-id header), and
 // the canonical tuple flattens to one i32 per element in order — so the wrapper
 // (`extern_tuple_param_supported` gate) pushes `(i32.load (tuple + i*4))` per
-// element, no copy or alignment wall (it flattens to values, like records).
+// element, no copy or alignment constraint (it flattens to values, like records).
 // Tested via the custom-provider harness: a `sum-pair: func(p: tuple<s32, s32>)
 // -> s32` provider sums the pair; the self-host program builds (10, 32) and
 // checks 42. Mirror of the Go TestExternTupleParamCustomProvider.

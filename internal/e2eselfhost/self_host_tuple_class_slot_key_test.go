@@ -21,7 +21,7 @@ import (
 //
 // with `allocs=400 frees=400 live_bytes=0` throughout — a doubly-released block
 // goes straight back to the freelist, so the byte count is clean and the answer is
-// only wrong because the probe checks the counter. Nothing else dissents.
+// only wrong because the probe checks the counter. Nothing else disagrees.
 //
 // What isolated it was a one-word diff: renaming the second block's local to `u`,
 // changing nothing else, made the same program correct (and left the alloc counts

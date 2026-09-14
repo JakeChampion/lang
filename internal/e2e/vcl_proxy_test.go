@@ -87,7 +87,7 @@ func get(t *testing.T, url string) (string, http.Header) {
 	return string(body), resp.Header
 }
 
-// TestVCLProxyServesAndCaches is the end of the line for this example: a
+// TestVCLProxyServesAndCaches is the final gate for this example: a
 // policy, a real origin, and real HTTP through a real socket.
 func TestVCLProxyServesAndCaches(t *testing.T) {
 	if testing.Short() {

@@ -11,7 +11,7 @@ import (
 // An owned `T[]` lends into a borrowed `[T]` PARAMETER, the array-side
 // counterpart of the `str` → `string` borrow (#4813). Before #6798 the caller
 // had to spell `xs[0:xs.len()]`, which is why `[T]` appeared exactly once in
-// the whole stdlib: a view-taking API was hostile to its callers.
+// the whole stdlib: a view-taking API was awkward for its callers.
 func TestOwnedArrayLendsIntoViewParam(t *testing.T) {
 	cases := []struct {
 		name string

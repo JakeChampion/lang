@@ -12,7 +12,7 @@ import (
 //
 // This used to drive them through the legacy AST emitter (asm.fern) — the path
 // #4361 was filed against — by importing std/test unpruned so the merged module
-// busted asm_ir's 512-function IR budget and fell back. #3457 slice 5 deleted that
+// exceeded asm_ir's 512-function IR budget and fell back. #3457 slice 5 deleted that
 // emitter, so the mechanism is gone; the SUBJECT is not. The cases now import only
 // std/float, route "ir", and still oracle-check every result against the
 // interpreter, so what #4361 was actually about — std/float's method forms
@@ -45,7 +45,7 @@ var f64MethodCases = []struct {
 }
 
 // f64MethodSrc builds a minimal program calling an f64 method. std/test is NOT
-// imported any more: it was there only to bust the IR budget and reach the AST
+// imported any more: it was there only to exceed the IR budget and reach the AST
 // emitter, and pruned to std/float alone the module routes "ir".
 func f64MethodSrc(body string) string {
 	return "import \"std/float\";\nfunction main(): i32 { " + body + " }\n"

@@ -367,7 +367,7 @@ function escape_outer(n: i32): i32 {
     return bad;
 }
 
-// The sharpest one: the binding escapes AND the owning map is destroyed inside
+// The strictest one: the binding escapes AND the owning map is destroyed inside
 // the same arm, so the reclaim runs with the lookup's count as the only one left.
 function escape_map_dies(n: i32): i32 {
     var keep: i32[] = [0, 0];

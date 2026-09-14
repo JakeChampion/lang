@@ -304,7 +304,7 @@ function test_unexpand_moves_nothing(): test.TestOutcome {
 
 // The round trip that is actually true. `unexpand(expand(x)) == x` is NOT — a
 // run of spaces reaching a stop is indistinguishable from a tab — so the claim
-// is that the rendering survives the lossy hop.
+// is that the rendering survives the lossy step.
 function test_the_rendering_survives_the_round_trip(): test.TestOutcome {
     var lines: string[] = corpus();
     var ss: i32[] = stops();

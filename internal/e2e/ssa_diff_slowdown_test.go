@@ -34,7 +34,7 @@ const (
 	//
 	// so 8x sits above everything the backend costs today and far below the
 	// class of gap it is here to catch. LOWER it as those close; raising it to
-	// quiet a program is the move this gate exists to prevent.
+	// quiet a program is what this gate exists to prevent.
 	ssaDiffMaxSlowdown = 8.0
 
 	// ssaDiffMinAbsGap stops the ratio firing on process startup. A 5 ms

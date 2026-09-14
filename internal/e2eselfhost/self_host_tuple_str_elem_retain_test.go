@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// --- The bare-ident tuple element's retain, string limb (#7226) --------------
+// --- The bare-ident tuple element's retain, string half (#7226) --------------
 //
-// The array limb landed with the string one left open, and the string one was
+// The array half landed with the string one left open, and the string one was
 // the larger leak: 32 B/round unbounded, where the array's was 40 bounded.
 //
 //	(i32, string) from a bare ident   allocs=600 frees=200   live 6400 at 200 rounds
@@ -131,7 +131,7 @@ func tupStrElemCases() []tupStrElemCase {
 		{
 			// The tuple's last mention is not the final statement, so the precise
 			// drop-on-last-use claims the box instead of the exit sweep. It replays
-			// the same kinds list, so the string limb reaches it for free — but only
+			// the same kinds list, so the string half reaches it for free — but only
 			// because the list is what both consult.
 			name: "last_use_before_return",
 			src: tupStrElemW + `function round(i: i32): i32 {
@@ -235,7 +235,7 @@ func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 			// The element is EXTRACTED to a new local. rctuple_payload_escapes
 			// refuses a bare pointer extraction, and "string" is not a scalar type
 			// name, so the tuple never earns "TUPELEMOK:" — which also denies the
-			// interlock, since it is keyed on that credit. Both halves stand down
+			// interlock, since it is keyed on that credit. Both halves are denied
 			// together, which is what keeps them consistent.
 			name: "str_elem_extracted_local",
 			src: tupStrElemW + `function round(i: i32): i32 {

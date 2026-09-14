@@ -38,7 +38,7 @@ var _ diag.FileSetter = (*Error)(nil)
 // it can report many problems in one pass; the returned error (if any)
 // is a diag.Errors of every problem found.
 //
-// Comments captured by the lexer ride along on prog.Comments — the
+// Comments captured by the lexer are carried on prog.Comments — the
 // parser doesn't otherwise consume them, leaving the formatter (or
 // any other tooling pass) free to walk them in source order.
 func Parse(src string) (*ast.Program, error) {
@@ -3644,7 +3644,7 @@ func (p *parser) forHeaderPatternAhead() bool {
 // rule as `var (a, b) = e;` — one pattern path, so a nested element, a `_`
 // discard or an arity error behaves identically at both sites.
 //
-// The pattern rides on the ForEach node unlowered, because which loop it
+// The pattern is carried on the ForEach node unlowered, because which loop it
 // becomes depends on the iterand's TYPE and the parser has none: an array binds
 // the pattern against each element, a Map against each entry. The checker owns
 // that choice (checkPatternForEach), and swaps its lowering into the statement
@@ -3888,7 +3888,7 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 }
 
 // flatStmtArms maps the parsed alternatives one-to-one onto arms. Arms stay
-// flat and in source order at every stage: a nested payload rides on the arm
+// flat and in source order at every stage: a nested payload is carried on the arm
 // as Payloads, so a sub-pattern that fails falls to the NEXT ARM rather than
 // to whatever an inner match's wildcard happened to be (#7524).
 func flatStmtArms(raw []stmtRawArm) []*ast.MatchArm {

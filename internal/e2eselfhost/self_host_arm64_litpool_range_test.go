@@ -52,7 +52,7 @@ func litPoolFixture(nFuncs, nVars int) (src string, wantExit int) {
 // The arm64 IR emitter routes EVERY integer constant through `ldr xN, =V`,
 // but emitted no `.ltorg`, so GNU as had to place one module-wide pool at the
 // end of .text. That works only while .text stays inside the LDR-literal
-// reach. It had stopped being true by a hair: measured on the commit before
+// reach. It had stopped being true narrowly: measured on the commit before
 // the fix, the checker driver's .text was 1,043,608 bytes with its first
 // literal load 1,043,492 bytes from the pool — 5,080 bytes (~1,270
 // instructions) under the 1,048,572-byte limit. Any change that grew the

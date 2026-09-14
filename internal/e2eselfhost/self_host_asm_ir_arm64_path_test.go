@@ -676,7 +676,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"i32-pow-helper", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`},
 		// gcd / lcm: helper-backed like pow, and the only pair whose helper body
 		// calls ANOTHER helper (lcm's Fern source calls `.gcd()`). arm64 is where
-		// that bit first, because its per-module unit path emits lcm's body
+		// that broke first, because its per-module unit path emits lcm's body
 		// unconditionally — see the lowering comment in irlower and #5940.
 		{"i32-gcd-helper", `function main(): i32 { var n: i32 = 48; return n.gcd(18); }`},
 		{"i32-gcd-negative", `function main(): i32 { var n: i32 = 0 - 48; return n.gcd(18); }`},

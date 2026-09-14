@@ -21,7 +21,7 @@
 //
 // The DWARF `.file` / `.loc` directives live here too: both assemblers record
 // them identically, and a row type each side defined for itself is the
-// drift class #7903 exists to kill.
+// drift class #7903 exists to prevent.
 package gasstr
 
 import (

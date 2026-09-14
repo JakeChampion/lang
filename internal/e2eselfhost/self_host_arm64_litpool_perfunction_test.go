@@ -18,7 +18,7 @@ import (
 // assembling, linking and RUNNING a fixture deliberately past the reach. That
 // catches a wrapped imm19 the in-process assemblers might mask; this catches a
 // missing flush on a three-function program with no toolchain, so the two are
-// complementary and this one is the cheaper first line of defence.
+// complementary and this one is the cheaper first check.
 //
 // Two properties, both of which the fix has to hold:
 //

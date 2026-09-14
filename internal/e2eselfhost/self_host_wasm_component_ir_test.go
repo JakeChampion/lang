@@ -89,7 +89,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// A WIDE first local. This lowers like any other, but it emits
 		// "(local i64 i32 …" rather than "(local i32 …", which is exactly the
 		// shape a first-type-specific discriminator misses — kept as a row so
-		// the probe itself stays honest.
+		// the probe itself stays correct.
 		{"noio-wide-local", false, `function main(): i32 { var n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
 		// A no-I/O core may not exit: mode 1 has no proc_exit to call and no
 		// wasi:cli/exit to shim it over. This used to fall back to the AST
@@ -101,7 +101,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
 
 		// Mode 2 — stdout. The $fd_write shim serves every writer, so print /
-		// write / print_int / putchar all ride the same two imports.
+		// write / print_int / putchar all use the same two imports.
 		{"io-write", true, `function main(): i32 { write("hi"); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		{"io-print-int", true, `function main(): i32 { print_int(42); return 0; }`, true,

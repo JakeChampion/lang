@@ -2273,7 +2273,7 @@ pub function count_blocks(f: SFunc): i32 { return f.blocks.len(); }
 // rather than a value of its operands' width. Comparisons and the logical
 // connectives are width-collapsing (i64 operands still give an i32 result), so
 // compute_widths must NOT propagate 64-bit width through them — only through the
-// arithmetic / bitwise ops whose result rides its operands' width.
+// arithmetic / bitwise ops whose result takes its operands' width.
 pub function binop_is_cmp(op: string): boolean {
     return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "&&" || op == "||";
 }
