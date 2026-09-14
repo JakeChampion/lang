@@ -2,6 +2,7 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -55,16 +56,20 @@ func niceCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(inv invocation) { cases = append(cases, inv) }
 	probe := niceProbe(t)
-	nice := func(n int) *int { return &n }
 
 	// ---- reading the niceness ----
 	add(invocation{name: "no arguments prints the niceness"})
 	add(invocation{name: "dashdash alone still prints", args: []string{"--"}})
-	// A nonzero value is what separates a correct read from one that
-	// forwards Linux's biased answer: at niceness 5 the bias reads as 15.
-	add(invocation{name: "the niceness is the one it was started at", nice: nice(5)})
-	add(invocation{name: "a negative niceness is read as negative", nice: nice(-1)})
-	add(invocation{name: "the niceness at the top of the range", nice: nice(19)})
+
+	// A nonzero STARTING niceness cannot come from the harness: setting
+	// one means moving process-global (and on Linux per-thread) state that
+	// an unprivileged runner cannot move back, so it races the other cases
+	// and ratchets. It comes from a wrapper instead — GNU `nice` raising
+	// the value for a child, which needs no privilege — and the cases that
+	// need it are the two below plus
+	// TestNiceReadsTheNicenessItWasStartedAt.
+	add(invocation{name: "the adjustment adds to a raised niceness", args: []string{"-n", "4", probe, "-n", "5", probe}})
+	add(invocation{name: "lowering from a raised niceness", args: []string{"-n", "8", probe, "-n", "-3", probe}})
 
 	// ---- -n ----
 	add(invocation{name: "an adjustment and a command", args: []string{"-n", "5", probe}})
@@ -75,7 +80,6 @@ func niceCases(t *testing.T) []invocation {
 	add(invocation{name: "a plus sign is allowed", args: []string{"-n", "+5", probe}})
 	add(invocation{name: "leading zeros are decimal, not octal", args: []string{"-n", "007", probe}})
 	add(invocation{name: "the default adjustment is 10", args: []string{probe}})
-	add(invocation{name: "the adjustment adds to the current niceness", nice: nice(4), args: []string{"-n", "5", probe}})
 
 	// ---- the obsolescent -N form ----
 	add(invocation{name: "a bare number is an adjustment", args: []string{"-5", probe}})
@@ -108,13 +112,9 @@ func niceCases(t *testing.T) []invocation {
 	add(invocation{name: "int min saturates", args: []string{"-n", "-2147483648", probe}})
 	add(invocation{name: "past the width saturates", args: []string{"-n", "99999999999999999999", probe}})
 	add(invocation{name: "past the width saturates negative", args: []string{"-n", "-99999999999999999999", probe}})
-	// A sum that would overflow if the adjustment were added before the
-	// clamp rather than after.
-	add(invocation{name: "int max from a raised niceness", nice: nice(7), args: []string{"-n", "2147483647", probe}})
 
 	// ---- lowering, which needs privilege ----
 	add(invocation{name: "lowering the niceness", args: []string{"-n", "-3", probe}})
-	add(invocation{name: "lowering from a raised niceness", nice: nice(8), args: []string{"-n", "-3", probe}})
 
 	// ---- the adjustment grammar's refusals ----
 	add(invocation{name: "a word is not an adjustment", args: []string{"-n", "abc", "/bin/true"}})
@@ -167,7 +167,6 @@ func niceCases(t *testing.T) []invocation {
 	// takes. Only the read path writes anything, so only it can reach
 	// this.
 	add(invocation{name: "stdout full", stdout: stdoutFull})
-	add(invocation{name: "stdout full at a raised niceness", nice: nice(5), stdout: stdoutFull})
 	add(invocation{name: "stdout closed", stdout: stdoutClosed})
 	// A command to exec writes nothing itself, so a full stdout is the
 	// COMMAND's problem and nice still execs.
@@ -199,25 +198,27 @@ func niceExecTree(t *testing.T) string {
 	return dir
 }
 
-// The corpus cases that name a `nice` compare two implementations against
-// each other, so a harness field that silently did nothing would leave both
-// sides printing whatever the suite inherited and every one of them would
-// pass having proved nothing. This is what says the field works, and it says
-// it the way uptime's load-average test does: against the machine rather than
-// against the reference.
+// The read at a NONZERO niceness, which no corpus case can reach on its own:
+// two implementations agreeing at the 0 the suite inherits proves nothing,
+// because that is exactly the value a broken read produces by accident.
+// Linux's getpriority answers the nice value BIASED by 20, so a helper that
+// forwards the syscall's answer prints 20 at an inherited 0 and 15 at 5, and
+// one that applies the correction twice prints -20 and -5.
 //
-// It also pins the read itself. 5 is deliberately not 0: Linux's getpriority
-// answers the nice value BIASED by 20, so a helper that forwards the
-// syscall's answer prints 15 here and 20 at the inherited 0 — and only the
-// nonzero case tells those apart.
+// The starting value comes from GNU `nice` raising it for a child. RAISING
+// needs no privilege and the value dies with the child, so unlike moving the
+// harness process's own niceness this neither races the other cases nor
+// needs a restore that an unprivileged runner cannot perform.
 func TestNiceReadsTheNicenessItWasStartedAt(t *testing.T) {
+	ref := referenceBin(t, "nice")
 	for _, want := range []int{5, 12, 19} {
-		inv := invocation{name: "nice", nice: &want}
-		got := inv.run(t, fernBin(t, "nice"), "nice")
-		if got.exit != 0 {
-			t.Fatalf("nice at niceness %d: %s, stderr %q", want, got.how(), got.stderr)
+		cmd := exec.Command(ref, "-n", strconv.Itoa(want), fernBin(t, "nice"))
+		cmd.Env = baseEnv()
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("nice at niceness %d: %v", want, err)
 		}
-		if printed := strings.TrimRight(string(got.stdout), "\n"); printed != strconv.Itoa(want) {
+		if printed := strings.TrimRight(string(out), "\n"); printed != strconv.Itoa(want) {
 			t.Errorf("nice printed %q at niceness %d, want %d", printed, want, want)
 		}
 	}

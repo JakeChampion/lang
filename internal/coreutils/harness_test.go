@@ -162,21 +162,6 @@ type invocation struct {
 	// — it is the one under which `mkdir d` is 0777 — so the field is a
 	// pointer and `withMask` writes it.
 	umask *int
-	// nice is the scheduling priority the child inherits, for the one
-	// utility whose whole answer is that number. `nice` with no COMMAND
-	// prints the niceness it was started at, and 0 — whatever the suite
-	// inherits — is exactly the value a broken read would produce by
-	// accident: Linux's getpriority answers the nice value BIASED by 20,
-	// so a helper that forwards it says 20 where the truth is 0 and 15
-	// where the truth is 5. A case that names a NONZERO value is what
-	// tells the two apart.
-	//
-	// Like the mask, it is process-global state a child inherits at fork,
-	// so a case naming one runs with every other case excluded (the same
-	// maskLock) and the value is put back before the next one starts.
-	// It is also per-THREAD on Linux, so the run holds its OS thread for
-	// the whole of the set / fork / restore — see applyNice.
-	nice *int
 	// ownership puts each entry's uid and gid into the tree comparison.
 	// Off by default, and deliberately: an id is one more thing that can
 	// differ between two machines for reasons that are not the utility's,
@@ -345,7 +330,7 @@ func (inv invocation) prep(t *testing.T) {
 	// side excludes it from that window and still lets prepares run
 	// concurrently with each other. Not reentrant, and never called from
 	// inside run(), which takes the same lock.
-	defer holdMask(nil, nil)()
+	defer holdMask(nil)()
 	inv.prepare(t)
 }
 
@@ -752,8 +737,8 @@ var maskLock sync.RWMutex
 // case naming 0777 that created its working directory under it produced a
 // 0000 directory, which is invisible as root and `permission denied` for
 // everyone else, so the whole matrix passed here and failed on CI.
-func holdMask(mask, nice *int) func() {
-	if mask == nil && nice == nil {
+func holdMask(mask *int) func() {
+	if mask == nil {
 		maskLock.RLock()
 		return maskLock.RUnlock
 	}
@@ -771,47 +756,10 @@ func applyMask(mask *int) func() {
 	return func() { syscall.Umask(previous) }
 }
 
-// applyNice sets the case's niceness around the child and returns the
-// restore. The caller already holds the write side of maskLock.
-//
-// PRIO_PROCESS is a misnomer on Linux: the nice value is per-THREAD, and
-// there is no per-process form. A Go goroutine may be moved to another
-// OS thread at any call, and exec.Cmd forks from whichever thread the
-// caller is on — so without locking the thread, the value is set on one
-// thread and the child is forked from another, which inherits the
-// untouched value. That failed the way a race does rather than the way a
-// bug does: cases read each other's niceness, and the two SIDES of one
-// case read different values.
-//
-// Going back DOWN also needs privilege, so the restore can fail where
-// the set did not. Both are why the exclusion is held for the whole run:
-// an unprivileged suite leaves the thread at the raised value, and no
-// other case may read it.
-func applyNice(nice *int) func() {
-	if nice == nil {
-		return func() {}
-	}
-	runtime.LockOSThread()
-	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
-	if err != nil {
-		runtime.UnlockOSThread()
-		return func() {}
-	}
-	previous := 20 - raw
-	if err := syscall.Setpriority(syscall.PRIO_PROCESS, 0, *nice); err != nil {
-		runtime.UnlockOSThread()
-		return func() {}
-	}
-	return func() {
-		_ = syscall.Setpriority(syscall.PRIO_PROCESS, 0, previous)
-		runtime.UnlockOSThread()
-	}
-}
-
 // run executes `bin` with argv[0] = argv0 and reports what happened.
 func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	t.Helper()
-	defer holdMask(inv.umask, inv.nice)()
+	defer holdMask(inv.umask)()
 	cmd := exec.Command(bin)
 	cmd.Path = bin
 	cmd.Args = append([]string{argv0}, inv.args...)
@@ -857,7 +805,6 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	// below only reads and chmods, neither of which a mask touches, so
 	// restoring at the end of the run is soon enough.
 	defer applyMask(inv.umask)()
-	defer applyNice(inv.nice)()
 	cmd.Stdin = strings.NewReader(inv.stdin)
 	if inv.tty {
 		pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)

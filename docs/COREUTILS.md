@@ -56,18 +56,19 @@ with every other case excluded and the mask is restored before the next starts;
 every other case holds the read side of the same lock and they still run
 concurrently, which the self-host leg needs.
 
-A case may also name a `nice`, for the one utility whose whole answer is that
-number. `nice` with no COMMAND prints the niceness it was started at, and the
-0 the suite inherits is exactly the value a broken read produces by accident —
-Linux's `getpriority` answers the nice value BIASED by 20, so a helper that
-forwards it says 20 where the truth is 0 — which is why the cases that matter
-name a nonzero one. It rides the same lock as the mask, and one thing more:
-`PRIO_PROCESS` is a misnomer on Linux, where the nice value is PER-THREAD with
-no per-process form, so the run holds its OS thread across the set, the fork
-and the restore. Without that the value is set on one thread and the child
-forked from another, which reads the untouched one — and it failed the way a
-race does, with cases reading each other's niceness and the two SIDES of one
-case disagreeing.
+A case CANNOT name a starting niceness, and the reason generalises to any
+process-global state the harness cannot put back. `nice` with no COMMAND
+prints the niceness it was started at, and the 0 the suite inherits is
+exactly the value a broken read produces by accident — Linux's `getpriority`
+answers the nice value BIASED by 20, so a helper that forwards it says 20
+where the truth is 0. But RAISING the harness process's own niceness is
+one-way for an unprivileged runner: lowering it back needs privilege, so the
+restore fails, the value ratchets, and the self-host leg's parallel cases read
+each other's. (`PRIO_PROCESS` is a misnomer too — the value is per-THREAD on
+Linux with no per-process form — so even the set does not reliably reach the
+child.) The starting value comes from a WRAPPER instead: GNU `nice` raising it
+for a child, which needs no privilege and dies with the child. See
+`TestNiceReadsTheNicenessItWasStartedAt`.
 
 A case may also name a `mask`, for the one utility whose correct answer
 differs run to run: `mktemp`'s whole output is a run of random characters.
