@@ -96,7 +96,8 @@ const (
 
 // WASI preview-1 `fdflags` bits for path_open.
 const (
-	wasiFdflagAppend int32 = 0x01
+	wasiFdflagAppend   int32 = 0x01
+	wasiFdflagNonblock int32 = 0x04
 )
 
 // buildBuildIoErrorBody assembles __build_io_error, closed over the
@@ -692,6 +693,10 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, alloc, 16)
+	})
 
 	// open-at(preopen, path-flags=1 symlink-follow, path_buf,
 	//   path_byte_len, open-flags=0, descriptor-flags=1 read, rb)
@@ -1256,6 +1261,10 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 14)
 
 	body = emitPreopenCachedP2(body, getDirs, 4, 9)
+	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 17)
+		return buildWriteFileErr(b, buildIoErr, allocRc1, 17)
+	})
 
 	// open-at(preopen, 1, path_buf, path_byte_len, create|truncate, write, rb)
 	body = inst.InstLocalGet(body, 9)
@@ -1537,6 +1546,275 @@ func buildOpenBody(idxs map[string]uint32, oflags int32, rights int64, fdflags i
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildOpenWithBody is buildOpenBody for open_reader_with /
+// open_writer_with, whose flags word is the third param: bit 0 is
+// preview 1's own CREATE oflag, and bit 1 shifted up is its NONBLOCK
+// fdflag, so both translate without a branch. Locals are buildOpenBody's
+// shifted up one for the extra param (slots 3..11).
+func buildOpenWithBody(idxs map[string]uint32, write bool) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
+	buildIoErr := idxs["__build_io_error"]
+	pathOpen := idxs["wasi_path_open"]
+	rights := wasiRightFdRead | wasiRightFdSeek
+	if write {
+		rights = wasiRightFdWrite | wasiRightFdSeek
+	}
+
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3)
+	body = emitStrNormalize(body, idxs, 0, 1, 9, 10, 11)
+
+	body = inst.InstI32Const(body, preopenDirfd)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstLocalGet(body, 2) // oflags = flags & CREATE
+	body = inst.InstI32Const(body, wasiOflagCreate)
+	body = numeric.InstI32And(body)
+	body = inst.InstI64Const(body, rights)
+	body = inst.InstI64Const(body, rights)
+	body = inst.InstLocalGet(body, 2) // fdflags = (flags & 2) << 1 = NONBLOCK
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Shl(body)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, pathOpen)
+	body = inst.InstLocalTee(body, 4)
+
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, buildIoErr)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, allocRc1)
+		body = inst.InstLocalTee(body, 8)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, 7)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 5)
+
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 6)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 6)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstI32Store(body, 2, 0)
+
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalTee(body, 8)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 6)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+
+	locals := inst.PutLocalsOneGroup(nil, 9, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+func buildOpenReaderWithBody(idxs map[string]uint32) []byte { return buildOpenWithBody(idxs, false) }
+func buildOpenWriterWithBody(idxs map[string]uint32) []byte { return buildOpenWithBody(idxs, true) }
+
+// buildOpenReaderWithBodyP2 / buildOpenWriterWithBodyP2 are the preview-2
+// open_reader_with / open_writer_with: the reader and writer chains above
+// with the create bit read from the flags param (preview 2's open-flags
+// CREATE is bit 0 too). Preview 2 has no non-blocking spelling, so bit 1
+// is not read: its streams do not block the way a preview-1 fd can.
+// Locals leave 13 and 15 to buildReadFileErr: 3=rb, 4=path_buf,
+// 5=path_byte_len, 6=preopen, 7=fd, 8=stream, 9=box data, 10=Ok box,
+// 11=normalize scratch, 12=errno.
+func buildOpenReaderWithBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
+
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3)
+	body = emitStrNormalize(body, idxs, 0, 1, 4, 5, 11)
+	body = emitPreopenCachedP2(body, getDirs, 3, 6)
+	body = emitPreopenMissing(body, 6, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 12)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
+	})
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, 1) // descriptor-flags: read
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, openAt)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, idxs, 3, 12)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 12)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 7)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, readVia)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, descDrop)
+		body = appendErrnoFromErrorCode(body, idxs, 3, 12)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 12)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 8)
+	body = emitReaderBoxP2(body, alloc, 8, 7, 9)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalTee(body, 10)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 9)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+func buildOpenWriterWithBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocRc1 := idxs["__fern_alloc_rc1"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+	writeVia := idxs["wasi_descriptor_write_via_stream_p2"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
+
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3)
+	body = emitStrNormalize(body, idxs, 0, 1, 4, 5, 11)
+	body = emitPreopenCachedP2(body, getDirs, 3, 6)
+	body = emitPreopenMissing(body, 6, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 12)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
+	})
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, wasiP2OpenFlagCreate)
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, wasiP2DescFlagWrite)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, openAt)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, idxs, 3, 12)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 12)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 7)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, writeVia)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstCall(body, descDrop)
+		body = appendErrnoFromErrorCode(body, idxs, 3, 12)
+		body = buildReadFileErr(body, idxs, buildIoErr, allocRc1, 12)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 8)
+	// Writer struct as buildOpenWriteViaStreamBodyP2 builds it.
+	body = inst.InstI32Const(body, writerBoxBytes)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 9)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstLocalGet(body, 8)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstLocalGet(body, 7)
+	body = memory.InstI32Store(body, 2, 4)
+	body = emitWriterFieldsP2(body, 9, false)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalTee(body, 10)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 9)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 10)
+
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildOpenReaderBody — open with read-only rights and no
 // oflags. Returns Result[Reader, IoError].
 func buildOpenReaderBody(idxs map[string]uint32) []byte {
@@ -1575,6 +1853,10 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	// Normalize path → path_buf(3), path_byte_len(4).
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 16)
+	})
 	// open-at(preopen, path-flags=1, path_buf, path_byte_len,
 	//   open-flags=0, descriptor-flags=1 read, rb).
 	body = inst.InstLocalGet(body, 5)
@@ -1690,6 +1972,10 @@ func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []by
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 16)
+	})
 	// open-at(preopen, 1, path_buf, path_byte_len, openFlags, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)
@@ -1731,9 +2017,10 @@ func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []by
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Writer struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
-	// descriptor @ +12) — close drops both.
-	body = inst.InstI32Const(body, 16)
+	// Writer struct: the rc sentinel, then {stream handle, descriptor}
+	// — close drops both — and the three fields the seek keeps
+	// (wasi_writer_seek.go).
+	body = inst.InstI32Const(body, writerBoxBytes)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -1748,6 +2035,7 @@ func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []by
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 6)
 	body = memory.InstI32Store(body, 2, 4)
+	body = emitWriterFieldsP2(body, 8, false)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -1787,6 +2075,10 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 16)
+	})
 	// open-at(preopen, 1, path_buf, path_byte_len, create, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)
@@ -1827,9 +2119,10 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Writer struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
-	// descriptor @ +12) — close drops both.
-	body = inst.InstI32Const(body, 16)
+	// Writer struct: the rc sentinel, then {stream handle, descriptor}
+	// — close drops both — and the three fields the seek keeps
+	// (wasi_writer_seek.go).
+	body = inst.InstI32Const(body, writerBoxBytes)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -1844,6 +2137,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 6)
 	body = memory.InstI32Store(body, 2, 4)
+	body = emitWriterFieldsP2(body, 8, true)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -2230,6 +2524,9 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstReturn(body)
 		}
 		body = inst.InstEnd(body)
+		// The bytes landed: the file offset a later seek reports moves
+		// with them (wasi_writer_seek.go).
+		body = emitWriterAdvanceP2(body, 0, 8)
 		// cur += chunk_len
 		body = inst.InstLocalGet(body, 7)
 		body = inst.InstLocalGet(body, 8)

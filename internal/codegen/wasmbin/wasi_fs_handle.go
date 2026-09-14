@@ -15,6 +15,7 @@
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
@@ -80,6 +81,22 @@ func emitHandleResultOkI64(body []byte, allocRc1, valLocal, boxLocal uint32) []b
 	return inst.InstLocalGet(body, boxLocal)
 }
 
+// emitHandleResultOkI64U is the same for a count the host reported as an
+// i32: the payload slot is 64 bits wide whatever produced it, so the
+// value widens UNSIGNED — a byte count is never negative.
+func emitHandleResultOkI64U(body []byte, allocRc1, valLocal, boxLocal uint32) []byte {
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalTee(body, boxLocal)
+	body = inst.InstI32Const(body, 0) // tag = Ok
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, boxLocal)
+	body = inst.InstLocalGet(body, valLocal)
+	body = convert.InstI64ExtendI32U(body)
+	body = memory.InstI64Store(body, 3, 8)
+	return inst.InstLocalGet(body, boxLocal)
+}
+
 // buildFdStatBody assembles __fern_fd_stat on preview 1.
 //
 // Signature: (r) → i32 — heap-form Result[FileStat, IoError].
@@ -126,8 +143,11 @@ func buildFdStatBody(idxs map[string]uint32) []byte {
 
 // buildFdStatBodyP2 is the preview-2 __fern_fd_stat: descriptor.stat on
 // the descriptor the handle was opened on, projected by
-// projectDescriptorStatP2. A stdio handle owns no descriptor and answers
-// Unsupported.
+// projectDescriptorStatP2. A stdio handle owns no descriptor; it
+// answers the all-zero record a preview-1 host's fd_filestat_get gives
+// the same stream — not a file, not a directory, no size — so a
+// program asking whether its stdout is a regular file gets the same
+// answer on both.
 //
 // Locals after the param:
 //
@@ -146,9 +166,16 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eq(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstI32Const(body, errnoNoTsup)
-		body = inst.InstLocalSet(body, 6)
-		body = emitHandleResultErr(body, buildIoErr, allocRc1, 6, 7, 9)
+		body = allocFileStat(body, alloc, 8)
+		body = zeroFileStatFields(body, 8,
+			[]int32{ir.FileStat.IsFile, ir.FileStat.IsDir, ir.FileStat.Mode,
+				ir.FileStat.Nlink, ir.FileStat.UID, ir.FileStat.GID},
+			[]int32{ir.FileStat.Size, ir.FileStat.Dev, ir.FileStat.Rdev,
+				ir.FileStat.Ino, ir.FileStat.Blksize, ir.FileStat.Blocks,
+				ir.FileStat.Atime, ir.FileStat.AtimeNsec, ir.FileStat.Mtime,
+				ir.FileStat.MtimeNsec, ir.FileStat.Ctime, ir.FileStat.CtimeNsec})
+		body = emitResultOkPtr(body, allocRc1, 8, 9)
+		body = inst.InstReturn(body)
 	}
 	body = inst.InstEnd(body)
 
@@ -178,11 +205,18 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// buildReaderSeekBody assembles __fern_reader_seek on preview 1.
+// buildReaderSeekBody assembles __fern_reader_seek on preview 1, and
+// __fern_writer_seek with it: a handle there is its fd.
 //
 // Signature: (r, offset: i64, whence) → i32 — heap-form
 // Result[i64, IoError]. One fd_seek; the new offset comes back through
 // an 8-byte return area.
+//
+// The whence is checked before the host sees it. `fd_seek`'s whence is
+// an ENUM of three values in the witx, and wasmtime traps the guest on
+// anything else — "convert Whence: Invalid enum value Whence" — where
+// every native answers EINVAL, so an unguarded call turns a bad
+// argument into a dead process.
 //
 // Locals after the three params:
 //
@@ -194,6 +228,7 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	fdSeek := idxs["wasi_fd_seek"]
 
 	var body []byte
+	body = emitWhenceGuardP1(body, idxs, 2, 3, 5, 6)
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 4)
@@ -224,6 +259,42 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// emitWhenceGuardP1 is the same guard for the preview-1 body, whose
+// error arm carries no path and numbers its locals differently.
+func emitWhenceGuardP1(body []byte, idxs map[string]uint32, whenceLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+	body = inst.InstLocalGet(body, whenceLocal)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, errnoInval)
+		body = inst.InstLocalSet(body, errnoLocal)
+		body = emitHandleResultErr(body, idxs["__build_io_error"], idxs["__fern_alloc_rc1"], errnoLocal, errPtrLocal, boxLocal)
+	}
+	return inst.InstEnd(body)
+}
+
+// emitWhenceGuardP2 appends "if `whence` is not 0, 1 or 2 → EINVAL".
+// The compare is UNSIGNED so a negative whence is caught with the rest.
+//
+// A kernel takes two more — 3 and 4 are SEEK_DATA and SEEK_HOLE — and
+// the natives pass those through, but neither WASI preview has a notion
+// of a hole to seek to, and an emulated seek that quietly meant
+// SEEK_SET for them would answer a question nobody asked. Both
+// preview-2 seek bodies call this, so the two cannot drift.
+func emitWhenceGuardP2(body []byte, idxs map[string]uint32, whenceLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+	body = inst.InstLocalGet(body, whenceLocal)
+	body = inst.InstI32Const(body, 2)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, errnoInval)
+		body = inst.InstLocalSet(body, errnoLocal)
+		body = emitHandleResultErr(body, idxs["__build_io_error"], idxs["__fern_alloc_rc1"], errnoLocal, errPtrLocal, boxLocal)
+	}
+	return inst.InstEnd(body)
+}
+
 // buildReaderSeekBodyP2 is the preview-2 __fern_reader_seek. A stream
 // has no position to move, so the seek is: resolve the target from
 // whence (SEEK_CUR from the Reader's own count, SEEK_END from
@@ -244,6 +315,9 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	streamDrop := idxs["wasi_io_input_stream_drop"]
 
 	var body []byte
+	// The whence is checked before the handle is: `lseek(pipe, 0, 5)` is
+	// EINVAL where `lseek(pipe, 0, 0)` is ESPIPE.
+	body = emitWhenceGuardP2(body, idxs, 2, 3, 5, 6)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalTee(body, 7)

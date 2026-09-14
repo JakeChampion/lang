@@ -283,6 +283,8 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "open_writer", capability: "fs" },
         Gate { builtin: "open_appender", capability: "fs" },
         Gate { builtin: "open_exclusive", capability: "fs" },
+        Gate { builtin: "open_reader_with", capability: "fs" },
+        Gate { builtin: "open_writer_with", capability: "fs" },
         Gate { builtin: "stat", capability: "fs" },
         Gate { builtin: "lstat", capability: "fs" },
         Gate { builtin: "read_dir", capability: "fs" },
@@ -412,7 +414,7 @@ pub function core_builtins(): string[] {
             "map_new", "cell_new", "string_from_bytes_unchecked",
             "slice_unchecked",
             "strbuf_reset", "strbuf_append", "strbuf_take",
-            "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
+            "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64",
             "buf_len", "buf_take", "buf_free",
             "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
             "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop"];

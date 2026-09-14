@@ -2771,7 +2771,13 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Reader_close":      "__fern_reader_close_fd",
 	"__method_Reader_stat":       "__fern_fd_stat",
 	"__method_Reader_seek":       "__fern_reader_seek",
+	"__method_Writer_seek":       "__fern_writer_seek",
+	"__method_Reader_flags":      "__fern_reader_flags",
+	"__method_Writer_flags":      "__fern_writer_flags",
+	"__method_Reader_isatty":     "__fern_handle_isatty",
+	"__method_Writer_isatty":     "__fern_handle_isatty",
 	"__method_Writer_write":      "__fern_writer_write",
+	"__method_Writer_write_some": "__fern_writer_write_some",
 	"__method_Writer_close":      "__fern_writer_close",
 	"__method_Writer_stat":       "__fern_fd_stat",
 	"__method_Reader_fsync":      "__fern_fd_fsync",
@@ -2789,13 +2795,15 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	// in one shot; `open_reader` / `open_writer` / `open_appender` /
 	// `open_exclusive` return Reader / Writer values backed by a
 	// preview-1 fd.
-	"read_file":       "__fern_read_file",
-	"read_file_bytes": "__fern_read_file_bytes",
-	"write_file":      "__fern_write_file",
-	"open_reader":     "__fern_open_reader",
-	"open_writer":     "__fern_open_writer",
-	"open_appender":   "__fern_open_appender",
-	"open_exclusive":  "__fern_open_exclusive",
+	"read_file":        "__fern_read_file",
+	"read_file_bytes":  "__fern_read_file_bytes",
+	"write_file":       "__fern_write_file",
+	"open_reader":      "__fern_open_reader",
+	"open_writer":      "__fern_open_writer",
+	"open_appender":    "__fern_open_appender",
+	"open_exclusive":   "__fern_open_exclusive",
+	"open_reader_with": "__fern_open_reader_with",
+	"open_writer_with": "__fern_open_writer_with",
 
 	// Directory + metadata (#6208). `std/test` needs stat / read_dir /
 	// temp_dir / remove_dir_all to build at all — TestRunner.finish

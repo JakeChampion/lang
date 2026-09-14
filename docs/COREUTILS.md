@@ -250,6 +250,33 @@ compiles each utility once per process, without `-O` so the assert() checks
 stay live. When the corpus grows past what the unit lane should carry, it
 moves to a lane of its own; that is a workflow change, not a change here.
 
+### The wasm leg
+
+`TestWasmSmoke` compiles a handful of utilities for `wasm32-wasi`, runs them
+under wasmtime and holds them to the native build of the same source. It is
+not a parity gate — a dozen invocations, not a corpus — but before it nothing
+ran the tree on the wasm target, and the first run found three faults in the
+runtime rather than in any utility (#9070): `exit(n)` for `n > 1` trapped the
+host because `wasi:cli/exit` carries one bit, a stdio handle answered `stat`
+with Unsupported where a preview-1 host answers the all-zero record, and a
+path with no preopened directory trapped on a handle the host never issued
+instead of answering NotFound. Two things the leg does not compare by value:
+the exit status, which the host folds to 0 or 1, and anything under a
+directory the guest was not given. Note for anyone running a utility by hand:
+`wasmtime run util.wasm -- --version` hands the `--` to the guest as
+`argv[1]`, which every utility rightly takes as the end of its options.
+
+Not every utility can be in the leg. `shred` does not BUILD for
+`wasm32-wasi`: `-f` makes an unwritable entry writable, which is `chmod`,
+which needs `fsmode` — a mode word no wasm host has — so E066 refuses it
+post-tree-shake. That is the same answer `sort --batch-size` gets, and for
+the same reason: the alternative is a `-f` that silently does not force.
+Writer.seek, the primitive shred is built on, is covered on both previews
+by `internal/e2e/handle_stat_seek_test.go` instead. `dd`, built on the same
+seek and reaching no mode word, does build and is in the leg — the one
+utility there that WRITES a file, so the leg covers a preopened
+directory's `path_open` and the write loop behind it.
+
 ## Layout
 
 ```
@@ -632,6 +659,102 @@ ratios above 1 mean Fern is faster):
 | `sort` | sort a sorted 500k-line file | 135.28 ± 13.77 | 34.42 ± 2.87 | 30.34 ± 3.08 | 0.25× | 0.22× |
 | `sort` | sort -c a sorted 500k-line file | 21.07 ± 2.48 | 7.73 ± 1.03 | 14.75 ± 1.43 | 0.37× | 0.70× |
 | `sort` | sort -m two sorted files | 102.46 ± 8.16 | 30.01 ± 1.84 | 95.87 ± 9.29 | 0.29× | 0.94× |
+
+**sync, touch and date, 2026-09-14**, the same host, each utility's
+workloads file run alone (mean ± σ, ≥20 runs; ratios above 1 mean Fern
+is faster). Every `sync` and `touch` row and every single-invocation
+`date` row wins; the one loss is `date -f` over a file, where the
+grammar runs once a line. Its per-line cost is 54k retired instructions
+against GNU's roughly 30k, and it is the backend's indexed-byte floor
+across the lexer plus the parse state's struct copies, after the two
+larger costs were taken out: a tuple carrying a struct is boxed on every
+return (a `(boolean, Pc, i32)` from each grammar item cost 330
+instructions where returning the struct costs 55), and the word tables
+were a strcmp per entry.
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `sync` | sync | 0.37 ± 0.32 | 1.12 ± 0.21 | 2.01 ± 0.27 | 2.99× | 5.37× |
+| `sync` | sync one file | 0.45 ± 0.22 | 1.30 ± 0.23 | 2.13 ± 0.27 | 2.85× | 4.69× |
+| `sync` | sync -d one file | 0.42 ± 0.21 | 1.21 ± 0.29 | 2.09 ± 0.30 | 2.91× | 5.04× |
+| `sync` | sync -f one file | 0.71 ± 1.13 | 1.45 ± 0.26 | 2.40 ± 0.32 | 2.06× | 3.40× |
+| `sync` | sync 200 files in one run | 8.60 ± 1.19 | 9.44 ± 0.94 | 2.63 ± 0.32 | 1.10× | 0.31× |
+| `sync` | sync -f 200 files in one run | 18.05 ± 1.43 | 20.97 ± 4.31 | 20.88 ± 1.91 | 1.16× | 1.16× |
+| `sync` | sync 200 missing names | 0.90 ± 0.64 | 1.59 ± 0.26 | 2.12 ± 0.25 | 1.76× | 2.35× |
+| `touch` | touch one file | 0.46 ± 0.20 | 1.23 ± 0.24 | 2.18 ± 0.27 | 2.70× | 4.77× |
+| `touch` | touch 200 files in one run | 1.19 ± 0.23 | 1.69 ± 0.30 | 2.67 ± 0.35 | 1.42× | 2.24× |
+| `touch` | touch -d relative 200 files | 1.20 ± 0.22 | 1.69 ± 0.27 | 2.95 ± 0.37 | 1.41× | 2.45× |
+| `touch` | touch -t 200 files | 1.09 ± 0.19 | 1.59 ± 0.88 | 2.59 ± 0.40 | 1.46× | 2.38× |
+| `touch` | touch -r -d 200 files | 1.11 ± 0.23 | 1.58 ± 0.24 | 3.57 ± 0.41 | 1.42× | 3.23× |
+| `touch` | touch -a -m -h 200 files | 0.81 ± 0.17 | 1.49 ± 0.23 | 2.66 ± 0.38 | 1.84× | 3.28× |
+| `touch` | touch -c 200 missing names | 0.64 ± 0.18 | 1.27 ± 0.22 | 2.33 ± 0.33 | 1.98× | 3.65× |
+| `touch` | touch create and remove 10 files | 1.81 ± 0.27 | 2.46 ± 0.29 | 3.40 ± 0.41 | 1.36× | 1.88× |
+| `date` | date | 0.29 ± 0.07 | 1.32 ± 0.14 | 2.18 ± 0.19 | 4.56× | 7.55× |
+| `date` | date -d fixed | 0.30 ± 0.08 | 1.32 ± 0.13 | 2.21 ± 0.15 | 4.43× | 7.41× |
+| `date` | date -d relative | 0.41 ± 0.44 | 1.40 ± 0.24 | 3.02 ± 0.19 | 3.40× | 7.31× |
+| `date` | date every conversion | 0.31 ± 0.10 | 1.34 ± 0.20 | 2.23 ± 0.17 | 4.29× | 7.13× |
+| `date` | date -f 10000 lines | 83.31 ± 2.09 | 40.54 ± 2.19 | 13.61 ± 1.04 | 0.49× | 0.16× |
+| `date` | date -u -R | 0.35 ± 0.09 | 1.34 ± 0.15 | 2.20 ± 0.20 | 3.88× | 6.35× |
+| `date` | date --debug | 0.35 ± 0.09 | 1.34 ± 0.12 | 2.89 ± 0.21 | 3.87× | 8.33× |
+
+**dd has no row here yet, and the reason is a compiler bug rather than a
+workload.** Measured 2026-09-14 on the same host, 64 MiB of /dev/zero into
+/dev/null at `bs=64k`: 40.2 ms against GNU's 3.6 ms, with 37.6 ms of the
+40.2 in SYSTEM time. `strace -c` puts 33 ms of it inside `read`, at 32 µs a
+call where a bare Fern read/write loop over the same bytes takes under 1 µs
+and beats GNU outright (2.4 ms against 3.2). The difference is that dd's
+buffer is never reclaimed, so every record's read faults sixteen fresh pages
+in instead of reusing one block: `ru_minflt` 17,531 against 41, `ru_maxrss`
+69,760 kB for a copy that holds 64 KiB at a time. Three reference-counting
+leaks account for it, each bisected to a reproducer of its own — #9244 (a
+local aliasing a borrowed parameter, fixed), #9245 (the per-call Result box,
+once the failure arm binds its payload) and #9246 (`x = f(x)` where the
+callee can hand its argument back, which is `convert_record`'s
+`out = apply_case(out, …)`). `scripts/coreutils-bench.d/dd.sh` carries the
+workloads, so the row is one run away once those land; taking a number now
+would bake the leak into the table.
+
+**shred, 2026-09-14**, the same host, its workloads file run alone (mean ±
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `shred` | shred one small file | 2.57 ± 0.97 | 3.62 ± 0.80 | 5.31 ± 1.04 | 1.41× | 2.07× |
+| `shred` | shred 200 small files | 490.77 ± 37.87 | 712.54 ± 26.95 | 1078.32 ± 38.24 | 1.45× | 2.20× |
+| `shred` | shred 200 small files in one run | 457.97 ± 42.49 | 451.79 ± 46.35 | 575.05 ± 50.54 | 0.99× | 1.26× |
+| `shred` | shred 4MiB default passes | 32.65 ± 4.73 | 42.18 ± 8.12 | 23.24 ± 2.19 | 1.29× | 0.71× |
+| `shred` | shred 4MiB -n 1 | 13.04 ± 1.75 | 16.02 ± 2.77 | 11.52 ± 1.47 | 1.23× | 0.88× |
+| `shred` | shred 4MiB -n 1 -z | 18.86 ± 2.91 | 24.25 ± 2.60 | 16.30 ± 1.45 | 1.29× | 0.86× |
+| `shred` | shred 4MiB -n 1 from a file source | 7.58 ± 1.10 | 16.78 ± 6.60 | 5.97 ± 1.76 | 2.21× | 0.79× |
+| `shred` | shred 4MiB -n 4 from a file source | 23.82 ± 2.53 | 42.83 ± 6.35 | 5.21 ± 0.79 | 1.80× | 0.22× |
+| `shred` | shred 4MiB -n 1 -x | 12.57 ± 1.62 | 15.69 ± 2.32 | 12.03 ± 1.65 | 1.25× | 0.96× |
+| `shred` | shred 200 sub-block files | 511.36 ± 58.51 | 507.14 ± 71.61 | 494.73 ± 25.57 | 0.99× | 0.97× |
+| `shred` | shred -u 200 small files | 492.70 ± 65.62 | 696.74 ± 39.89 | 846.74 ± 88.56 | 1.41× | 1.72× |
+| `shred` | shred -n 0 -u 200 small files | 349.06 ± 17.16 | 578.00 ± 74.66 | 567.56 ± 23.96 | 1.66× | 1.63× |
+| `shred` | shred -s 4096 of a 4MiB file | 7.70 ± 2.20 | 8.38 ± 1.67 | 9.07 ± 1.20 | 1.09× | 1.18× |
+
+Eleven of thirteen rows win and the other two are inside a σ on a workload
+whose reseeding forks 200 GNU `head`s per run; per file `shred.fern` makes 9
+syscalls against GNU's 41. Three measurements got it there, in order of what
+they were worth:
+
+- A PATTERN pass is at the write floor — 5.6 ms for 4 MiB against `dd`'s own
+  5.8 with the same `fdatasync` — once the pattern block is laid down ONCE per
+  pass with `repeat` instead of a byte at a time per block (34 ms to 5.6), and
+  once a random pass stops building a pattern block it throws away.
+- A RANDOM pass was the whole of what was left, and the cause was not shred:
+  `random_bytes` is one `getrandom(2)` per block and the kernel's generator
+  runs at 320 MB/s here — `dd if=/dev/urandom` costs the same 13 ms for
+  4 MiB — where GNU seeds ISAAC from /dev/urandom once and produces the rest
+  in userspace at about twice that. So the default source is now
+  `std/rand`'s seeded generator over `buf_push_u64` (#9221), which fills
+  4 MiB in 5.6 ms, and every random row moved from 0.61–0.69× to 1.23–1.29×.
+  A generator written in Fern could not have closed it before that primitive:
+  assembling the bytes cost 8 ns each through an array append and 5 ns
+  through `buf_push_byte`, both dearer than the syscall they would replace.
+- The block size is 60 KiB: a multiple of three, so every block starts at the
+  same point in a pattern's cycle and one block serves the pass, and of 4096,
+  so the writes stay aligned.
 
 Before this branch those rows read `join` 0.10x, `dircolors` 0.29x, `fmt`
 0.12x, `comm` 0.26x, `uniq` 0.55–0.86x, `seq 1 2 1000000` 0.88x (the
@@ -1358,6 +1481,18 @@ beside `access` and `write_file_exec` and is refused there — WASI has no
 file-mode creation mask, and `path_create_directory` has no mode either, which
 is the same fact twice. `docs/FREESTANDING-CORE.md` carries both.
 
+`buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
+bytes into the capacity-carrying builder in one store, little-endian, which is
+how every target holds a u64. It exists because a byte at a time is not fast
+enough to be worth having: a generator whose arithmetic costs 2.5 ms for 4 MiB
+of words spent 23 ms handing the bytes over one `buf_push_byte` call each, and
+35 ms through an array append. With it, `std/rand`'s `rng_fill` produces 4 MiB
+in 5.6 ms where `random_bytes` needs 15.3, which is what `shred`'s random
+passes are built on. Its SSA lowering in the self-hosted compiler is
+deliberately absent: that backend stores a string as one byte per EIGHT-byte
+word, so the single store would be eight and the op would lose its reason to
+exist — a module using it takes the IR path, which is the production default.
+
 What is deliberately NOT here: `create_dir_all` and `remove_dir_all`, which
 already existed. Neither is the primitive `mkdir(1)` or `rmdir(1)` needs —
 the first folds every EEXIST into `Ok(())` and cannot say whether it created
@@ -1365,6 +1500,152 @@ anything, the second drains a tree and ignores a missing target — and the
 errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
+
+**What a `shred` corpus can compare, and what nothing can.** GNU's pass
+SCHEDULE is drawn at random: two runs of `-n 10` over identical files disagree
+on both the order of the patterns and the SET of them, so `-v` output past the
+all-random range compares against nothing, GNU included. Every case in the
+corpus therefore stays at `-n 3` or below, where every pass is `random`, or at
+`-n 0`, where there are none. The BYTES are unrepeatable for the same reason
+except through `--random-source`, and there the whole content compares — which
+is what gates the write path, including the sweep GNU runs over a file about
+to grow: a file shorter than one block is overwritten at its own length first,
+once per pass and silently, and only then at the rounded-up length where the
+pass lines are, so an 11-byte file under `-n 2` is written 11, 11, 4096, 4096.
+That sweep is invisible to a source of one repeated byte, so the corpus seeds
+a second source whose every byte differs.
+
+`-` is comparable too, and it is the one operand whose answer depends on how
+fd 1 was OPENED rather than on anything in the file: a pipe is `invalid file
+type`, an append-only descriptor is `cannot shred append-only file
+descriptor`, a closed one is `fcntl failed: Bad file descriptor`, and a plain
+writable file is overwritten in place — `-u` then truncating what it cannot
+unlink. `w.flags()` (#9219) is what tells those apart. The harness reaches all
+three through `stdoutPath` (an append-only fd 1) and `stdoutFile` (a writable
+one, whose whole content is what the case compares).
+
+**What an operand IS decides before any of that.** GNU refuses a FIFO, a
+socket and a TERMINAL with `<name>: invalid file type` and exit 1 — none has a
+length to rewind over — while a character or block DEVICE is overwritten like
+a file, which is what shred was written for. Measured, GNU 9.4: a FIFO with a
+reader held on it gives the refusal, a unix socket never reaches the question
+because its open answers ENXIO (`failed to open for writing: No such device or
+address`), a terminal gives the refusal whether it arrives as a name
+(`/dev/ptmx`, `/dev/pts/0`) or as `-` on a terminal fd 1, and `/dev/null` is
+written and exits 0 even though `fdatasync` on it answers EINVAL — GNU asks
+for a full `fsync`, is refused the same way, and carries on. The corpus gates
+all of it; the terminal is `w.isatty()` (#9229), which is the question a MODE
+cannot answer, since /dev/null and /dev/ptmx are both character devices and
+only one of them is written.
+
+`-f` is an open RETRY rather than an eager chmod, and gating it matters to the
+TREE rather than to the output: GNU makes the entry writable only after an
+open refused for the one reason a mode can fix, so `shred -f <dir>` reports
+`Is a directory` having changed nothing. Retrying on any error instead leaves
+the directory at 0200 on a run GNU performs cleanly.
+
+**A device's length is not in its stat**, and that is the whole of `shred`'s
+classic use. `st_size` is 0 for a block device, so GNU asks
+`lseek(0, SEEK_END)` and writes what that reports; when even that answers 0 —
+every character device — the length is unknown and it writes until a write
+FAILS, which on /dev/null never happens. Both are what `shred.fern` does.
+Measured by hand, since the harness cannot make a device and a case that does
+not terminate is not a case:
+
+```
+$ head -c 262144 /dev/urandom > img && losetup --find --show img
+/dev/loop0
+$ shred -n0 -z /dev/loop0 && tr -d '\0' < img | wc -c
+0                       # the whole 256 KiB, and fern's run leaves the same
+$ shred -n1 -v /dev/loop0        # one `pass 1/1 (random)...`, exit 0
+$ shred -n1 -v /dev/null         # writes forever; only `-s` makes it stop
+```
+
+The write ERROR in that family matches too, offset included:
+`<name>: error writing at offset 262144: No space left on device`. The offset
+is the byte the failing write stopped at, which for ENOSPC lands INSIDE a
+block, so counting the blocks handed to `w.write` could not produce it — the
+pass loop goes through `w.write_some` (#9231), one write and the count it
+returned, and adds that count before it builds the message. Measured both
+ways, byte for byte against GNU: a 256 KiB loop device asked for 400,000
+bytes, and a 256k tmpfs asked the same. Neither is a corpus case, because the
+harness mounts nothing.
+
+**What a `dd` corpus can compare, and what nothing can.** The third report
+line carries the elapsed time and a rate computed from it, so two correct
+implementations can never agree on it. A mask cannot reach it either — the
+harness masks stdout and the tree, never stderr, and the whole report is on
+stderr — so every case in the corpus names `status=noxfer` or `status=none`
+and the third line's SHAPE is pinned separately, on our own output
+(`TestDDTransferLine`). Everything else is comparable and it is most of dd:
+the two record-count lines, every byte of the output file, the operand
+grammar with its five diagnostics, and what each `conv=` does to the bytes.
+
+`status=progress` is the one place the durations are worth masking rather
+than avoiding. It writes one `\r`-prefixed transfer line per second, and
+the seconds THERE are a whole number: an elapsed 1.7 s reads `2 s`, so it
+rounds rather than truncates. A record that outlasts several seconds still
+produces one line, not one per second, because GNU's alarm handler only
+raises a flag that the copy loop reads at a record boundary — which is why
+this needs no signal handler to match, and `dd.fern` takes the same look at
+the same place. `TestDDProgress` drives both sides over a FIFO fed one byte
+and then another after a sleep, so the bytes at the tick are identical, and
+compares stderr with only the fractional durations rewritten.
+
+**dd's number grammar is not gnulib's.** On top of the block suffixes every
+utility here shares it adds `c` (1) and `w` (2), an `x` between two numbers
+that MULTIPLIES (`1kx2` is 2048, `2x3x4` is 24), and a trailing `B` that
+makes a count BYTES rather than blocks. Measured, GNU 9.4, because none of
+the four is stated precisely in the man page:
+
+- `c` and `w` take no `iB` form and no second multiplier, so `1ciB` and
+  `1kc` are refused while a bare `c` is 1 and `3w` is 6;
+- the `B` is read off a piece's END, which means the multiplier grammar's
+  own endings carry it — `count=1kB` is 1000 BYTES where `count=1k` is 1024
+  blocks, and `1KiB` is 1024 bytes — and a `B` left over after a number or
+  a block suffix is dropped, so `2B` is 2 and `1bB` is 512. One `B`
+  anywhere in the product marks the whole operand, so `1cx7Bx2` is 14
+  bytes. It reaches the same bit as `iflag=count_bytes` and its two
+  siblings;
+- a piece that is a single `0` in front of an `x` is WARNED about rather
+  than refused (`warning: '0x' is a zero multiplier; use '00x' if that is
+  intended`), once per piece, and the zero still wins — which for a block
+  size is then the invalid `bs=0`;
+- a value past INTMAX_MAX is a different line from a value that is not a
+  number: `invalid number: '1x': Value too large for defined data type`
+  against a bare `invalid number: 'q'`.
+
+`iseek` and `oseek` are aliases for `skip` and `seek`, so the pair is one
+operand for the last-wins rule: `skip=1 iseek=3` skips 3 and the reverse
+skips 1.
+
+`conv=fdatasync` on a descriptor with no data-only sync reports
+`fsync failed`, not `fdatasync failed`: EINVAL there is the descriptor
+saying it has no such call rather than a failure, so GNU promotes the
+request to a full `fsync` and reports THAT one's errno. /dev/null is where
+it shows.
+
+**What dd here does not do yet**, each an accepted-operand gap rather than a
+wrong answer — the name is refused as `invalid conversion` / `invalid
+input flag`, which is itself the divergence:
+
+- `conv=ascii`, `conv=ebcdic` and `conv=ibm` need the two EBCDIC tables
+  (#9240);
+- `conv=sparse` needs a write that punches a hole rather than writing NULs,
+  which is `w.seek` past the gap — the primitive is here, the accounting is
+  not (#9241);
+- `iflag`/`oflag` `direct`, `directory`, `dsync`, `sync`, `noatime`,
+  `nocache`, `noctty` and `nofollow` are all open-time bits, and Fern's
+  `open_reader_with` / `open_writer_with` flags word carries two: create
+  and non-blocking (#9242);
+- the SIGUSR1 report mid-copy needs a signal a program can OBSERVE, and
+  Fern has only the three disposition calls (`signal_send`,
+  `signal_ignore`, `signal_default`) — nothing that runs or records on
+  delivery (#9243);
+- `conv=excl` that CREATES its output leaves mode 0600 where GNU leaves
+  0666 through the umask, since Fern's exclusive open fixes the mode;
+  #9237 is the flags-word bit that closes it, and it is why the corpus
+  holds only the taken-name half of that case.
 
 **`expr`'s empty alternation branch inside a COUNTED repetition follows no
 branch order at all.** glibc demotes a branch that compiles to nothing — `expr
@@ -1448,6 +1729,15 @@ ordinary user — but the name asked about is two bytes longer, so a path within
 two bytes of PATH_MAX could answer ENAMETOOLONG where GNU's would not. Fern has
 no chdir builtin, and one was judged too narrow a reason to add it.
 
+**`date -s` cannot set the clock.** GNU parses the string and calls
+settime; Fern has no builtin that writes the system clock, so `date -s
+STRING` and the `date MMDDhhmm[[CC]YY][.ss]` operand form parse their
+argument exactly as GNU does — an invalid one is refused with the same
+message — and then print the date after `cannot set date: Operation not
+permitted`, which is what GNU prints without the privilege. The corpus
+holds only invalid spellings of both, since a valid one run by the
+root the suite runs as would move the machine's clock.
+
 **`df --sync` does not sync.** GNU calls `sync(2)` before it measures, so its
 numbers are post-writeback. Fern has no such builtin — no `sync`, `fsync` or
 `syncfs` in FuncSigs, and no flush-to-device on `Writer` — so `df.fern` accepts
@@ -1504,11 +1794,11 @@ so those bytes would be an invention and the corpus would be measuring it. The
 corpus therefore holds 414 cases over the format engine and none over the four
 layouts; they arrive with the primitives, and #8366 stays open until they do.
 
-`QUOTING_STYLE` is the second, smaller gap: GNU takes `%N`'s quoting style from
-it and `stat.fern` always uses the default shell-escape-always. It reaches `%N`
-and nothing else — the default block prints the name literally whatever the
-variable says. #9105 has the measurement and puts the remaining gnulib styles
-in `lib/gnu.fern`, where `ls` will want them too.
+`QUOTING_STYLE` reaches `%N` and nothing else, and only when the format as
+written holds the two bytes `%N`: `%-N`, an octal-escaped `%` and the default
+block never read it, `%%N` does. The ten gnulib styles live in `lib/gnu.fern`
+as `quote_style`, with `quoting_style_from_env` doing the ARGMATCH lookup and
+the `ignoring invalid value` warning, so `ls` can pick them up as is.
 
 **`mv` does not copy across filesystems.** GNU falls back to a recursive
 copy-then-unlink when `rename(2)` answers EXDEV. Measured, it preserves mode
@@ -1897,7 +2187,15 @@ write-failure cases (`yes >&-`, `> /dev/full`); source unable to learn its
 compile target (#8338), in `yes.fern`'s per-target block; and fstat/lseek on
 a DESCRIPTOR (#8713), which `cat` needs to refuse a closed fd 1 before it
 reads anything and `tail` needs to read a regular file from its end — landed
-as `r.stat()` / `w.stat()` / `r.seek()` on every backend. `hostid` wanted a
+as `r.stat()` / `w.stat()` / `r.seek()` on every backend, `w.seek()`
+beside them for the utilities that write at an offset, and `r.flags()` /
+`w.flags()` (#9219) for the one question a descriptor answers and a path
+cannot: what the handle was OPENED for — 1 readable, 2 writable, 4
+appending — which is how `shred -` tells an append-only standard output,
+which it must refuse, from a writable one, which it overwrites. `isatty` was
+the same shape one step further on: it took a descriptor NUMBER, so only the
+three stdio fds could be asked, and `shred` has to refuse a TERMINAL operand
+it opened by name — `r.isatty()` / `w.isatty()` (#9229) ask it of the handle. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
 on one backend. Group C's first four wanted three more the same way:
@@ -1978,8 +2276,11 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
-  `install` `touch` `truncate` (#9142) `mkfifo` (done) `mknod` (done)
-  `sync` (rename,
+  `install` `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
+  `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle
+  methods from #9181 and the non-blocking `open_reader_with` /
+  `open_writer_with` from #9197, which is what opens a FIFO with no
+  peer as GNU does) (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
   with #9059; `rename`, `chmod` and `set_file_times` have since reached
@@ -1990,9 +2291,14 @@ groups are the order of work. Each sub-issue names its group.
   every diagnostic before the context change; the change itself has no
   primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
-  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (strftime; the timezone half is `lib/tz.fern` now), `timeout` `nice`
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` `stty`, `uptime` (done — no new primitive: the boot time and the
+  (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
+  writing at an offset without rewriting the file needs; the operand
+  families it does NOT have are in the divergences above, each with its
+  own issue, and the biggest of them wants a signal a program can
+  OBSERVE rather than only dispose of, #9243)
+  `shred` (done, on that same seek — see the divergences above) `stty`, `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
   clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
   `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
@@ -2037,7 +2343,8 @@ groups are the order of work. Each sub-issue names its group.
   and calls `ftruncate(2)`, so it resizes a file whose MODE would refuse
   a fresh open, and `umask 222; truncate -s 5 new` succeeds there and
   fails here with `Permission denied`. `truncate(1)` therefore waits on
-  the descriptor form, which is the same surface `dd` and `shred` want.
+  the descriptor form; the handle methods `dd` and `shred` want —
+  `w.truncate(len)` and `w.seek(offset, whence)` — are both here.
 
   Neither WASI preview has a path-based set-size —
   `path_filestat_set_size` is not a preview-1 import, measured against

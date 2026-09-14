@@ -4,10 +4,13 @@ package interp
 
 import "syscall"
 
-// utimeOmit is UTIME_OMIT. `syscall.UtimesNano` hands the timespec array
-// to utimensat(2) verbatim on every platform that has one, so the
-// sentinel reaches the kernel unchanged here too.
-const utimeOmit = 1<<30 - 2
+// utimeOmit and utimeNow are UTIME_OMIT and UTIME_NOW. `syscall.UtimesNano`
+// hands the timespec array to utimensat(2) verbatim on every platform
+// that has one, so both sentinels reach the kernel unchanged here too.
+const (
+	utimeOmit = 1<<30 - 2
+	utimeNow  = 1<<30 - 1
+)
 
 // setFileTimes is utimensat(AT_FDCWD, path, times, flags) on a platform
 // whose `syscall` package exports neither the call nor its number.

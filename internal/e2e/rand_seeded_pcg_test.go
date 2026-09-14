@@ -167,6 +167,75 @@ function main(): i32 {
         d1 = d1 + 1;
     }
 
+    // rng_fill: the SAME stream rng_next gives, laid out eight bytes at a
+    // time with the first draw in the low half. The loop is written out in
+    // rng_fill for speed, so this is what keeps the two honest.
+    var fh: usize = buf_new(64);
+    var fst: i64 = rand.rng_fill(rand.rng_seed(4242 as i64), fh, 64);
+    var filled: string = buf_take(fh);
+    if (filled.len() != 64) { return 27; }
+    var dst: i64 = rand.rng_seed(4242 as i64);
+    var word: i32 = 0;
+    while (word < 8) {
+        var d1a = rand.rng_next(dst);
+        var d2a = rand.rng_next(d1a.0);
+        dst = d2a.0;
+        var halves: u32[] = [d1a.1, d2a.1];
+        var half: i32 = 0;
+        while (half < 2) {
+            var byte: i32 = 0;
+            while (byte < 4) {
+                var shift: u32 = (byte * 8) as u32;
+                var expect: i32 = ((halves[half] >> shift) & (255 as u32)) as i32;
+                if ((filled[word * 8 + half * 4 + byte] as i32) != expect) { return 28; }
+                byte = byte + 1;
+            }
+            half = half + 1;
+        }
+        word = word + 1;
+    }
+    // And the state it hands back is the state those 16 draws reached.
+    if (fst != dst) { return 29; }
+
+    // The stream does not depend on how the bytes are ASKED for: 32 then 32
+    // is 64, and a tail shorter than a word takes the low bytes of one more.
+    var ah = rand.rng_bytes(rand.rng_seed(4242 as i64), 32);
+    var bh = rand.rng_bytes(ah.0, 32);
+    var joined: string = ah.1 + bh.1;
+    if (joined.len() != 64) { return 30; }
+    var j2: i32 = 0;
+    while (j2 < 64) {
+        if (joined[j2] != filled[j2]) { return 31; }
+        j2 = j2 + 1;
+    }
+    var short = rand.rng_bytes(rand.rng_seed(4242 as i64), 3);
+    if (short.1.len() != 3) { return 32; }
+    var s3b: i32 = 0;
+    while (s3b < 3) {
+        if (short.1[s3b] != filled[s3b]) { return 33; }
+        s3b = s3b + 1;
+    }
+    if (rand.rng_bytes(rand.rng_seed(1 as i64), 0).1.len() != 0) { return 34; }
+    // Nothing asked for leaves the state untouched.
+    var idle: i64 = rand.rng_seed(5 as i64);
+    if (rand.rng_bytes(idle, 0).0 != idle) { return 35; }
+    if (rand.rng_fill(idle, fh, 0 - 1) != idle) { return 36; }
+    buf_free(fh);
+
+    // Seeded from the platform CSPRNG: two of them are not the same stream.
+    var os1 = rand.rng_bytes(rand.rng_seed_from_os(), 32);
+    var os2 = rand.rng_bytes(rand.rng_seed_from_os(), 32);
+    if (os1.1.len() != 32 || os2.1.len() != 32) { return 37; }
+    if (os1.1 == os2.1) { return 38; }
+    // And the bytes are not all the same one.
+    var flat: boolean = true;
+    var f2: i32 = 1;
+    while (f2 < 32) {
+        if (os1.1[f2] != os1.1[0]) { flat = false; }
+        f2 = f2 + 1;
+    }
+    if (flat) { return 39; }
+
     return 42;
 }
 `

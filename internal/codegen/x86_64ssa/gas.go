@@ -1938,6 +1938,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push":                      emitBufPushHelper,
 	"buf_push_range":                emitBufPushRangeHelper,
 	"buf_push_byte":                 emitBufPushByteHelper,
+	"buf_push_u64":                  emitBufPushU64Helper,
 	"buf_len":                       emitBufLenHelper,
 	"buf_take":                      emitBufTakeHelper,
 	"buf_free":                      emitBufFreeHelper,
@@ -1984,6 +1985,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push":                      {"__fern_buf_reserve"},
 	"buf_push_range":                {"__fern_buf_reserve"},
 	"buf_push_byte":                 {"__fern_buf_reserve"},
+	"buf_push_u64":                  {"__fern_buf_reserve"},
 	"buf_free":                      {"__fern_box_free"},
 }
 
@@ -3423,6 +3425,41 @@ func emitBufPushByteHelper(w func(string, ...any)) {
 	w("\tpop r12")
 	w("\tpop rbx")
 	w("\tjmp .Lssa_bufbyte_fits")
+}
+
+// emitBufPushU64Helper writes buf_push_u64(H, v): append the eight bytes of
+// v, least significant first. One store, where the byte form would be eight
+// calls (#9221).
+func emitBufPushU64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_u64"))
+	w("\tmov rax, [rdi + 8]")
+	w("\tadd rax, 8") // need
+	w("\tcmp rax, [rdi + 16]")
+	w("\tja .Lssa_bufu64_grow")
+	w(".Lssa_bufu64_fits:")
+	w("\tmov rcx, [rdi]")
+	w("\tadd rcx, [rdi + 8]")
+	w("\tmov qword ptr [rcx], rsi")
+	w("\tadd qword ptr [rdi + 8], 8")
+	w("\txor eax, eax")
+	w("\tret")
+	w(".Lssa_bufu64_grow:")
+	// Two callee-saved pushes plus the return address leave rsp 8 mod 16; the
+	// extra 8 realigns it for the call.
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tsub rsp, 8")
+	w("\tmov rbx, rdi")
+	w("\tmov r12, rsi")
+	w("\tmov rsi, rax")
+	w("\tcall %s", fnLabel("__fern_buf_reserve"))
+	w("\tmov rdi, rbx")
+	w("\tmov rsi, r12")
+	w("\tadd rsp, 8")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tjmp .Lssa_bufu64_fits")
 }
 
 // emitBufLenHelper writes buf_len(H) -> count. Leaf.

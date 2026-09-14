@@ -1,0 +1,381 @@
+// touch.fern — GNU-compatible `touch`.
+//
+//   touch [OPTION]... FILE...
+//
+// Each FILE gets its access and modification times set: to now, to
+// `-d STRING` through the date grammar in `lib/datetime`, to `-t
+// STAMP`'s `[[CC]YY]MMDDhhmm[.ss]`, or to `-r FILE`'s own times, which
+// `-d` then moves relative to. `-a` and `-m` pick one of the two
+// times; `-c` and `-h` stop the create; `-h` also aims at a symlink
+// itself. The obsolete `touch MMDDhhmm[YY] FILE...` form is honoured
+// where _POSIX2_VERSION says it should be, with GNU's warning.
+//
+// GNU opens each file for writing, creating it, and sets the times
+// through the descriptor; here the same open creates it and the times
+// are set by path, which resolves the same file. A FILE of `-` is
+// standard output, reached as /proc/self/fd/1: the one difference is a
+// closed stdout, which that path reports as missing where a descriptor
+// would report `Bad file descriptor`, so that case is answered as GNU
+// answers it.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/tz";
+import "./lib/datetime";
+
+function opt_time(): i32 {
+  return 1;
+}
+
+function opt_atime(): i32 {
+  return 2;
+}
+
+function opt_no_create(): i32 {
+  return 3;
+}
+
+function opt_date(): i32 {
+  return 4;
+}
+
+function opt_force(): i32 {
+  return 5;
+}
+
+function opt_no_deref(): i32 {
+  return 6;
+}
+
+function opt_mtime(): i32 {
+  return 7;
+}
+
+function opt_reference(): i32 {
+  return 8;
+}
+
+function opt_stamp(): i32 {
+  return 9;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
+  out = out + "Update the access and modification times of each FILE to the current time.\n";
+  out = out + "\n";
+  out = out + "A FILE argument that does not exist is created empty, unless -c or -h\n";
+  out = out + "is supplied.\n";
+  out = out + "\n";
+  out = out + "A FILE argument string of - is handled specially and causes touch to\n";
+  out = out + "change the times of the file associated with standard output.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "  -a                     change only the access time\n";
+  out = out + "  -c, --no-create        do not create any files\n";
+  out = out + "  -d, --date=STRING      parse STRING and use it instead of current time\n";
+  out = out + "  -f                     (ignored)\n";
+  out = out + "  -h, --no-dereference   affect each symbolic link instead of any referenced\n";
+  out = out + "                         file (useful only on systems that can change the\n";
+  out = out + "                         timestamps of a symlink)\n";
+  out = out + "  -m                     change only the modification time\n";
+  out = out + "  -r, --reference=FILE   use this file's times instead of current time\n";
+  out = out + "  -t STAMP               use [[CC]YY]MMDDhhmm[.ss] instead of current time\n";
+  out = out + "      --time=WORD        change the specified time:\n";
+  out = out + "                           WORD is access, atime, or use: equivalent to -a\n";
+  out = out + "                           WORD is modify or mtime: equivalent to -m\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Note that the -d and -t options accept different time-date formats.\n";
+  return out;
+}
+
+function ch_atime(): i32 {
+  return 1;
+}
+
+function ch_mtime(): i32 {
+  return 2;
+}
+
+// The two timestamps to set, each as seconds and nanoseconds. `now`
+// says the kernel's clock is written instead: a file's writer may set
+// its times to now where only its owner may set them to a value, so a
+// clock reading passed as a value would be refused on a file the
+// caller can write and does not own.
+struct Times { asec: i64, ansec: i64, msec: i64, mnsec: i64, now: boolean }
+
+function now(): Times {
+  var ns: i64 = now_ns();
+  var sec: i64 = ns / (1000000000 as i64);
+  var nsec: i64 = ns % (1000000000 as i64);
+  return Times { asec: sec, ansec: nsec, msec: sec, mnsec: nsec, now: true };
+}
+
+// `date_relative(text, sec, nsec, hint)` — `-d STRING` from a base
+// instant; a string the grammar refuses is fatal.
+function date_relative(text: string, sec: i64, nsec: i64, hint: i64): datetime.Result {
+  var r: datetime.Result = datetime.parse(text, sec, nsec, hint);
+  if (!r.ok) {
+    gnu.error("invalid date format " + gnu.quote(text));
+    exit(1);
+  }
+  return r;
+}
+
+// `touch_one(file, t, change, no_create, no_deref)` — one operand: the
+// open that creates it when it is missing, then the times.
+function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_deref: boolean): boolean {
+  var path: string = file;
+  var open_err: string = "";
+  var open_failed: boolean = false;
+  var eisdir: boolean = false;
+  if (file == "-") {
+    path = "/proc/self/fd/1";
+  } else if (!(no_create || no_deref)) {
+    // GNU's open: O_WRONLY | O_CREAT | O_NONBLOCK, 0666. The
+    // non-blocking bit is what lets a FIFO with no reader be touched,
+    // as an ENXIO the times by path then recover from, and a directory
+    // is EISDIR, which is not reported when the times still set.
+    match (open_writer_with(file, 3)) {
+      Ok(w) => {
+        match (w.close()) {
+          Some(_) => {},
+          None => {}
+        }
+      },
+      Err(e) => {
+        open_failed = true;
+        open_err = gnu.io_error_text(e);
+        eisdir = open_err == "Is a directory";
+      }
+    }
+  }
+  var flags: i32 = 0;
+  if (no_deref) {
+    flags = flags | 1;
+  }
+  if (t.now) {
+    flags = flags | 24;
+  }
+  if (change == ch_mtime()) {
+    flags = flags | 2;
+  } else if (change == ch_atime()) {
+    flags = flags | 4;
+  }
+  var utime_err: string = "";
+  match (set_file_times(path, t.asec, t.ansec, t.msec, t.mnsec, flags)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(e) => {
+      utime_err = gnu.io_error_text(e);
+    }
+  }
+  if (file == "-") {
+    // fd 1 has no /proc entry when it is closed, which a descriptor
+    // would report as EBADF.
+    if (utime_err == "No such file or directory") {
+      if (no_create) {
+        return true;
+      }
+      utime_err = "Bad file descriptor";
+    }
+  }
+  if (open_failed && !eisdir) {
+    gnu.error("cannot touch " + gnu.quotea(file) + ": " + open_err);
+    return false;
+  }
+  if (no_create && utime_err == "No such file or directory") {
+    return true;
+  }
+  gnu.error("setting times of " + gnu.quotea(file) + ": " + utime_err);
+  return false;
+}
+
+function pad2(v: i32): string {
+  if (v < 10) {
+    return "0" + v.to_string();
+  }
+  return v.to_string();
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("", "time", opt_time()));
+  opts = opts.append(gnu.flag("c", "no-create", opt_no_create()));
+  opts = opts.append(gnu.valued("d", "date", opt_date()));
+  opts = opts.append(gnu.valued("r", "reference", opt_reference()));
+  opts = opts.append(gnu.flag("h", "no-dereference", opt_no_deref()));
+  opts = opts.append(gnu.flag("a", "", opt_atime()));
+  opts = opts.append(gnu.flag("f", "", opt_force()));
+  opts = opts.append(gnu.flag("m", "", opt_mtime()));
+  opts = opts.append(gnu.valued("t", "", opt_stamp()));
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "touch", help_text(), 1);
+  var change: i32 = 0;
+  var no_create: boolean = false;
+  var no_deref: boolean = false;
+  var use_ref: boolean = false;
+  var ref_file: string = "";
+  var flex_date: string = "";
+  var has_flex: boolean = false;
+  var date_set: boolean = false;
+  var zone: tz.Zone = tz.local_zone();
+  var t: Times = now();
+  var hint: i64 = 0;
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_atime()) {
+          change = change | ch_atime();
+        } else if (m.id == opt_no_create()) {
+          no_create = true;
+        } else if (m.id == opt_date()) {
+          flex_date = m.value;
+          has_flex = true;
+        } else if (m.id == opt_no_deref()) {
+          no_deref = true;
+        } else if (m.id == opt_mtime()) {
+          change = change | ch_mtime();
+        } else if (m.id == opt_reference()) {
+          use_ref = true;
+          ref_file = m.value;
+        } else if (m.id == opt_stamp()) {
+          var pt: (boolean, i64, i64) = datetime.posixtime(m.value, 1 + 4 + 8, zone, t.asec, hint);
+          if (!pt.0) {
+            gnu.error("invalid date format " + gnu.quote(m.value));
+            exit(1);
+          }
+          hint = pt.2;
+          t = Times { asec: pt.1, ansec: 0, msec: pt.1, mnsec: 0, now: false };
+          date_set = true;
+        } else if (m.id == opt_time()) {
+          var names: string[] = ["atime", "access", "use", "mtime", "modify"];
+          var values: i32[] = [1, 1, 1, 2, 2];
+          change = change | gnu.argmatch_valued(m.value, names, values, "--time");
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (change == 0) {
+    change = ch_atime() | ch_mtime();
+  }
+  if (date_set && (use_ref || has_flex)) {
+    gnu.die_usage("cannot specify times from more than one source", 1);
+  }
+  if (use_ref) {
+    var got: boolean = false;
+    var st_a: i64 = 0;
+    var st_an: i64 = 0;
+    var st_m: i64 = 0;
+    var st_mn: i64 = 0;
+    var err: string = "";
+    if (no_deref) {
+      match (lstat(ref_file)) {
+        Ok(st) => {
+          got = true;
+          st_a = st.atime;
+          st_an = st.atime_nsec;
+          st_m = st.mtime;
+          st_mn = st.mtime_nsec;
+        },
+        Err(e) => {
+          err = gnu.io_error_text(e);
+        }
+      }
+    } else {
+      match (stat(ref_file)) {
+        Ok(st) => {
+          got = true;
+          st_a = st.atime;
+          st_an = st.atime_nsec;
+          st_m = st.mtime;
+          st_mn = st.mtime_nsec;
+        },
+        Err(e) => {
+          err = gnu.io_error_text(e);
+        }
+      }
+    }
+    if (!got) {
+      gnu.error("failed to get attributes of " + gnu.quotea(ref_file) + ": " + err);
+      exit(1);
+    }
+    t = Times { asec: st_a, ansec: st_an, msec: st_m, mnsec: st_mn, now: false };
+    date_set = true;
+    if (has_flex) {
+      if ((change & ch_atime()) != 0) {
+        var ra: datetime.Result = date_relative(flex_date, t.asec, t.ansec, hint);
+        hint = ra.hint;
+        t = Times { ...t, asec: ra.sec, ansec: ra.nsec };
+      }
+      if ((change & ch_mtime()) != 0) {
+        var rm: datetime.Result = date_relative(flex_date, t.msec, t.mnsec, hint);
+        hint = rm.hint;
+        t = Times { ...t, msec: rm.sec, mnsec: rm.nsec };
+      }
+    }
+  } else if (has_flex) {
+    var base: Times = now();
+    var r: datetime.Result = date_relative(flex_date, base.asec, base.ansec, hint);
+    hint = r.hint;
+    t = Times { asec: r.sec, ansec: r.nsec, msec: r.sec, mnsec: r.nsec, now: false };
+    date_set = true;
+    // `-d now` is the same as no -d, which lets a file that is
+    // writable but not owned still be touched; a string that merely
+    // happens to name this instant is told apart by asking again at
+    // another one.
+    if (change == (ch_atime() | ch_mtime()) && r.sec == base.asec && r.nsec == base.ansec) {
+      var other: i64 = base.asec ^ 1 as i64;
+      var again: datetime.Result = date_relative(flex_date, other, base.ansec, hint);
+      hint = again.hint;
+      if (again.sec == other && again.nsec == base.ansec) {
+        date_set = false;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  var first: i32 = 0;
+  // The obsolete `MMDDhhmm[YY]` form is valid only with two or more
+  // operands and only under an old POSIX.
+  if (!date_set && operands.len() >= 2 && gnu.posix2_version() < 200112 as i64) {
+    var pt: (boolean, i64, i64) = datetime.posixtime(operands[0], 2 + 16, zone, t.asec, hint);
+    if (pt.0) {
+      hint = pt.2;
+      t = Times { asec: pt.1, ansec: 0, msec: pt.1, mnsec: 0, now: false };
+      date_set = true;
+      match (env("POSIXLY_CORRECT")) {
+        Some(_) => {},
+        None => {
+          var f: tz.Civil = zone.local_fields(pt.1);
+          gnu.error("warning: 'touch " + operands[0] + "' is obsolete; use 'touch -t " + f.year.to_string() + pad2(f.month) + pad2(f.day) + pad2(f.hour) + pad2(f.min) + "." + pad2(f.sec) + "'");
+        }
+      }
+      first = 1;
+    }
+  }
+  if (!date_set) {
+    t = now();
+  }
+  if (first >= operands.len()) {
+    gnu.die_usage("missing file operand", 1);
+  }
+  var ok: boolean = true;
+  var i: i32 = first;
+  while (i < operands.len()) {
+    if (!touch_one(operands[i], t, change, no_create, no_deref)) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}

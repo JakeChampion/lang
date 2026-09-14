@@ -270,10 +270,13 @@ var rcInertBuiltins = map[string]bool{
 	"__method_MapIter_key": true, "__method_MapIter_value": true,
 
 	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
-	"__method_Reader_read_line": true, "__method_Reader_seek": true,
+	"__method_Reader_read_line": true, "__method_Reader_seek": true, "__method_Writer_seek": true,
+	"__method_Reader_flags": true, "__method_Writer_flags": true,
+	"__method_Reader_isatty": true, "__method_Writer_isatty": true,
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
+	"__method_Writer_write_some": true,
 
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
@@ -284,7 +287,7 @@ var rcInertBuiltins = map[string]bool{
 	// blocks, which is the wholesale-invalidation axis `__heap_release_to`
 	// is filed under above and not one this table answers.
 	"buf_new": true, "buf_push": true, "buf_push_range": true,
-	"buf_push_byte": true, "buf_len": true, "buf_take": true,
+	"buf_push_byte": true, "buf_push_u64": true, "buf_len": true, "buf_take": true,
 	"buf_free": true,
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
@@ -411,7 +414,12 @@ var rcInert = map[string]bool{
 	"__fern_idiv_u64": true, "__fern_irem_s32": true, "__fern_irem_s64": true,
 	"__fern_irem_u32": true, "__fern_irem_u64": true,
 	"cabi_realloc": true, "isatty": true, "poll": true,
-	"signal_default": true, "signal_ignore": true,
+	// The handle form of isatty reads the descriptor out of a box it
+	// borrows and answers 0/1: no count moves either way.
+	"__fern_handle_isatty": true,
+	// write_some borrows the string it writes and hands back a count.
+	"__fern_writer_write_some": true,
+	"signal_default":           true, "signal_ignore": true,
 	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
@@ -444,15 +452,17 @@ var rcInert = map[string]bool{
 	"__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__fern_open_appender": true,
 	"__fern_open_dir": true, "__fern_open_exclusive": true,
-	"__fern_open_reader": true,
-	"__fern_open_writer": true, "__fern_pow_f64": true, "__fern_print": true,
+	"__fern_open_reader": true, "__fern_open_reader_with": true,
+	"__fern_open_writer_with": true,
+	"__fern_open_writer":      true, "__fern_pow_f64": true, "__fern_print": true,
 	"__fern_putchar": true, "__fern_random_bytes": true,
 	"__fern_random_i32": true, "__fern_rc_underflow_count": true,
 	"__fern_read_byte": true, "__fern_read_dir": true,
 	"__fern_read_dir_raw": true, "__fern_read_file": true,
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,
-	"__fern_fd_stat": true, "__fern_reader_seek": true,
+	"__fern_fd_stat": true, "__fern_reader_seek": true, "__fern_writer_seek": true,
+	"__fern_reader_flags": true, "__fern_writer_flags": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
 	"__fern_reader_read_chunk": true, "__fern_reader_read_line": true,
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,

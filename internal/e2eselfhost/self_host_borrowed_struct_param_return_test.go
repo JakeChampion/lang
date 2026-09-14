@@ -15,13 +15,14 @@ import (
 // was the only one. rc 1 -> 0, freed, and the next __fern_arr_box handed the
 // same block to the following literal.
 //
-// The fix drops that dec — the slot's count transfers to q2, whose own sweep
-// frees the box — rather than adding the matching retain in the callee. The
-// retain is what native does and it is the wrong half to move here: a
-// materialised struct call result is released through an __fern_rc_is_unique
-// gate that a second count turns off, so retaining strands the box instead.
-// The conformance fixture alloc_flat_method_identity_return measures exactly
-// that and reports "grows".
+// The first fix dropped that dec — the slot's count transferred to q2, whose
+// own sweep freed the box. The handback is COUNTED now (#9203): the callee's
+// return path retains a bare borrowed struct param exactly as it does an
+// array one, q2 owns the count it holds, and the source's release at the
+// binding gives back the count the handback added where the two are one box
+// (emit_handback_identity_dec). A callee that hands the box back through a
+// LOCAL alias (`var st = s; … return st;`) is outside cnt_struct_ret_fns and
+// keeps the uncounted convention, which the identity release still answers.
 //
 // NOTHING ELSE CAUGHT THIS. The free is at rc 1, so the underflow counter
 // never trips, and the recycled block normally comes back field-identical

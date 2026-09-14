@@ -266,6 +266,94 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
+	// A counted handback in RECEIVER position — the fourth consumer that owes
+	// the result's release, after a binding, a discarded statement and an
+	// argument temp. `.val()` lets the receiver escape nowhere, so the count
+	// this frame owes goes back once the call returns.
+	{"recvident-chain-recv-flat", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function (b: Box) val(): i32 { return b.n; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().val()) % 251; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = rounds(200);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    acc = acc + rounds(5000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+	// The same over an rc-ARRAY field: the shallow dec leaves the buffer to the
+	// box's own drop, so the round still flattens.
+	{"recvident-chain-recv-array", `struct Box { tag: string, items: i32[] }
+function (b: Box) me(): Box { return b; }
+function (b: Box) total(): i32 { return b.items.len(); }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), items: [i, i + 1, i + 2] }; acc = (acc + b.me().total()) % 251; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = rounds(200);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    acc = acc + rounds(5000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+	// Two counted handbacks in a row: the inner result stands in the receiver
+	// position of a method that hands the receiver back COUNTED, so the outer
+	// call adds a count of its own and the inner's dec still leaves exactly one.
+	{"recvident-chain-recv-double", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function (b: Box) val(): i32 { return b.n; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().me().val()) % 251; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = rounds(200);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    acc = acc + rounds(5000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+	// A strict-fresh FREE producer under the same chain: counted_call_key reads
+	// a bare callee name too, so the receiver release is keyed the same way.
+	{"recvident-chain-recv-freecall", `struct Box { tag: string, n: i32 }
+function mk(i: i32): Box { return Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; }
+function (b: Box) me(): Box { return b; }
+function (b: Box) val(): i32 { return b.n; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = mk(i); acc = (acc + b.me().val()) % 251; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = rounds(200);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    acc = acc + rounds(5000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
 }
 
 // recvBorrowAllCases is the safety table plus the flatness table, for the

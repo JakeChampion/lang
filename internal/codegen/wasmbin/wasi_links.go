@@ -373,6 +373,10 @@ func buildCreateDirBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 4, 5, 10)
 	body = emitPreopenP2(body, alloc, getDirs, 3, 6)
+	body = emitPreopenMissing(body, 6, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 7)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 7, 0, 1, 8, 9)
+	})
 
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstLocalGet(body, 4)
@@ -414,6 +418,10 @@ func buildRemoveDirBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 9)
 	body = emitPreopenP2(body, alloc, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 6)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 6, 0, 1, 7, 8)
+	})
 
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 3)
@@ -458,6 +466,10 @@ func buildCreateLinkBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 13)
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 13)
 	body = emitPreopenP2(body, alloc, getDirs, 4, 9)
+	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 10)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 10, 2, 3, 11, 12)
+	})
 
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstI32Const(body, 0) // old-path-flags: no symlink-follow
@@ -499,6 +511,10 @@ func buildCreateSymlinkBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 13)
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 13)
 	body = emitPreopenP2(body, alloc, getDirs, 4, 9)
+	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 10)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 10, 2, 3, 11, 12)
+	})
 
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstLocalGet(body, 5)
@@ -548,6 +564,10 @@ func buildReadLinkBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 9)
 	body = emitPreopenP2(body, alloc, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 6)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 6, 0, 1, 7, 8)
+	})
 
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 3)

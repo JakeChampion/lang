@@ -10,12 +10,14 @@ import (
 // FERN_APPEND_REPORT: one line per `a = a.append(v)` self-reassign naming the
 // arr_push-vs-arr_push_owned verdict and the rule that decided.
 //
-// The verdict is the LEAK axis, not native `-append-report`'s copy-vs-in-place
-// one: a plain __fern_arr_push abandons the superseded buffer on a grow, and
-// that is where the self-built compiler's retention comes from (#7954). An
-// rctrace line attributes such a block to an address inside __fern_arr_push, so
-// every append in the program aggregates to one site and only the lowering can
-// say which source site chose which push.
+// The verdict is the OWNERSHIP axis, not native `-append-report`'s
+// copy-vs-in-place one: a plain __fern_arr_push leaves the superseded buffer to
+// its holders on a grow, and the store after it is what gives this frame's
+// reference back (an aliased local's cow-guarded release, a parameter's
+// ownership flag), which is where the self-built compiler's retention used to
+// come from (#7954). An rctrace line attributes such a block to an address
+// inside __fern_arr_push, so every append in the program aggregates to one site
+// and only the lowering can say which source site chose which push.
 //
 // Both verdicts are asserted, because the report's whole value is telling them
 // apart: a version that printed one string for every site would pass a
@@ -85,8 +87,9 @@ func TestSelfHostAppendReport(t *testing.T) {
 		// A fresh local nothing else references: the grow reclaims.
 		{"build", "owned", "xs", "sole owner"},
 		// A parameter: the buffer is the caller's, so the grow may not
-		// free it and the superseded generation leaks (#3457).
-		{"onparam", "LEAKS", "ys", "parameter target"},
+		// free it; the store's ownership flag releases the superseded
+		// generation this frame owns (#3457).
+		{"onparam", "shared", "ys", "parameter target"},
 	} {
 		var line string
 		for _, ln := range lines {
@@ -109,8 +112,8 @@ func TestSelfHostAppendReport(t *testing.T) {
 // self-reassign — a call argument, a var-init, a return.
 //
 // The axis differs from the self-reassign arm's and that is deliberate. There
-// the question is whether the superseded buffer LEAKS; here it is whether the
-// push COPIES, because a bracketed receiver cannot take the grow helper's
+// the question is whether the frame owns the buffer it grows; here it is
+// whether the push COPIES, because a bracketed receiver cannot take the grow helper's
 // in-place path (append_copy_recv_slot) and so always reallocates. Both print
 // under one prefix so a single grep sees every append a program makes.
 const exprAppendSrc = `function sink(xs: i32[]): i32 { return xs.len(); }

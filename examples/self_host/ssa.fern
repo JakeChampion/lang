@@ -134,6 +134,12 @@ pub function kind_id(name: string): i32 {
 // names cost kind_id / kind_name one test apiece. `binary` is the only other
 // kind starting with 'b' and it is six bytes, so the length guard separates
 // them without a second compare.
+//
+// `buf_push_u64` is deliberately absent. This backend stores a string as one
+// byte per EIGHT-byte word, so the single store the op exists for (#9221)
+// would be eight stores here and the op would lose its whole reason to be one.
+// An unknown callee bails calls_all_known, so a module using it takes the IR
+// path — the same answer wasm's SSA lowering gives the family entire.
 function buf_kind_id(name: string): i32 {
     if (name == "buf_new") { return 28; }
     if (name == "buf_push") { return 29; }
@@ -196,7 +202,8 @@ function semantic_kind_name(id: i32): string {
     var names: string[] = ["array_new", "tuple_new", "array_get", "tuple_get",
         "record_new", "record_get", "call", "variant_new", "variant_is",
         "variant_get", "variant_up", "variant_as", "length", "append", "slice",
-        "str_index", "cast", "str_as", "with", "closure_new", "call_value"];
+        "str_index", "cast", "str_as", "with", "closure_new", "call_value", "cell_new", "cell_get", "cell_set",
+        "map_new", "map_insert", "map_has", "map_get_or"];
     var at: i32 = 0 - id - 1;
     if (at < 0 || at >= names.len()) { return "invalid"; }
     return names[at];

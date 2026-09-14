@@ -1326,7 +1326,13 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_close":         emitReaderCloseHelper,
 	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
 	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
-	"__method_Reader_seek":          emitReaderSeekHelper,
+	"__method_Reader_seek":          emitSeekHelper("__method_Reader_seek", "rsk"),
+	"__method_Writer_seek":          emitSeekHelper("__method_Writer_seek", "wsk"),
+	"__method_Reader_flags":         emitFdFlagsHelper("__method_Reader_flags", "rfl"),
+	"__method_Writer_flags":         emitFdFlagsHelper("__method_Writer_flags", "wfl"),
+	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
+	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
+	"__method_Writer_write_some":    emitWriterWriteSomeHelper,
 	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
 	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
 	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
@@ -1336,6 +1342,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"sync":                          emitSyncHelper,
 	"open_appender":                 emitOpenAppenderHelper,
 	"open_exclusive":                emitOpenExclusiveHelper,
+	"open_reader_with":              emitOpenReaderWithHelper,
+	"open_writer_with":              emitOpenWriterWithHelper,
 	"stdin":                         emitStdHandleHelper("stdin", 0),
 	"stdout":                        emitStdHandleHelper("stdout", 1),
 	"stderr":                        emitStdHandleHelper("stderr", 2),
@@ -1352,6 +1360,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push":                      emitBufPushHelper,
 	"buf_push_range":                emitBufPushRangeHelper,
 	"buf_push_byte":                 emitBufPushByteHelper,
+	"buf_push_u64":                  emitBufPushU64Helper,
 	"buf_len":                       emitBufLenHelper,
 	"buf_take":                      emitBufTakeHelper,
 	"buf_free":                      emitBufFreeHelper,
@@ -2065,6 +2074,19 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitHandleIsattyHelper writes r.isatty() / w.isatty() -> 0/1: the free
+// isatty asked of the descriptor the handle holds, which a Reader and a
+// Writer keep at the same place (ptr+8 here, past the rc header). Leaf, and
+// a tail call, since the answer is isatty's own.
+func emitHandleIsattyHelper(name string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8
+		w("\tb %s", fnLabel("isatty"))
+	}
+}
+
 // emitWindowSizeHelper writes window_size(fd) -> Result[WinSize, IoError]:
 // one TIOCGWINSZ ioctl into an 8-byte `struct winsize`, whose two cell counts
 // widen into the record. The pixel pair the kernel fills beside them has no
@@ -2563,9 +2585,15 @@ func emitCPUCountHelper(w func(string, ...any)) {
 // kernel-CSPRNG bytes (getrandom(2), flags=0), in the __alloc_u8 box shape
 // (16-byte header; cap@-12, rc=1@-8, len@-4). Returns the data pointer in x0.
 // Leaf: it bump-allocates inline and the getrandom svc preserves all
-// registers but x0, so n (x9) and the data pointer (x10) survive the syscall
-// without callee-saved spills. No zero-fill: getrandom overwrites all n data
-// bytes. x0=n.
+// registers but x0, so the cursor and the data pointer survive the syscall
+// without callee-saved spills. x0=n.
+//
+// The call LOOPS. getrandom returns how many bytes it wrote, and for a
+// request past one page it may write fewer and return early when a signal
+// arrives — or -EINTR having written none. One call would leave the tail of
+// the buffer as the allocator left it, which is zeros: silence where the
+// caller asked for randomness (#9221). A hard error ends the loop rather
+// than spinning; the signature has nowhere to report one.
 func emitRandomBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("random_bytes"))
@@ -2585,12 +2613,26 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("\tmov w7, #1")
 	w("\tstur w7, [x10, #-8]") // rc = 1
 	w("\tstur w9, [x10, #-4]") // len = n
-	// getrandom(data, n, 0).
-	w("\tmov x0, x10")
-	w("\tmov x1, x9")
+	// getrandom(cursor, remaining, 0), until the buffer is full.
+	w("\tmov x11, x10") // write cursor
+	w("\tmov x12, x9")  // bytes still wanted
+	w(".Lssa_randbytes_loop:")
+	w("\tcbz x12, .Lssa_randbytes_done")
+	w("\tmov x0, x11")
+	w("\tmov x1, x12")
 	w("\tmov x2, #0")
 	w("\tmov x8, #278") // getrandom
 	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.gt .Lssa_randbytes_wrote")
+	w("\tcmn x0, #4") // -EINTR: nothing written, try again
+	w("\tb.eq .Lssa_randbytes_loop")
+	w("\tb .Lssa_randbytes_done")
+	w(".Lssa_randbytes_wrote:")
+	w("\tadd x11, x11, x0")
+	w("\tsub x12, x12, x0")
+	w("\tb .Lssa_randbytes_loop")
+	w(".Lssa_randbytes_done:")
 	w("\tmov x0, x10") // return data ptr
 	w("\tret")
 }
@@ -3000,6 +3042,122 @@ func emitOpenExclusiveHelper(w func(string, ...any)) {
 	emitOpenHandleHelper(w, "open_exclusive", "ox", 193, 384)
 }
 
+// emitOpenWithHelper writes open_reader_with / open_writer_with(path, flags)
+// -> Result[Reader|Writer, IoError]: emitOpenHandleHelper with the flags word
+// arriving in x1 rather than baked in — bit 0 is O_CREAT (64), bit 1
+// O_NONBLOCK (2048), on top of `access` (O_RDONLY 0 / O_WRONLY 1), mode 0666.
+// The word sits in x21 across the path copy. x0=path, x1=flags.
+func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
+	w("")
+	w("%s:", fnLabel(name))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tmov x19, x0") // path
+	w("\tmov x21, x1") // flags
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w7, #0")
+	w(".Lssa_%s_cp:", lbl)
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_%s_cpd", lbl)
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_%s_cp", lbl)
+	w(".Lssa_%s_cpd:", lbl)
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x20, x4") // pathz
+	// openat(AT_FDCWD, pathz, access | creat | nonblock, 0666).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov x2, #%d", access)
+	w("\ttbz x21, #0, .Lssa_%s_nc", lbl)
+	w("\torr x2, x2, #64") // O_CREAT
+	w(".Lssa_%s_nc:", lbl)
+	w("\ttbz x21, #1, .Lssa_%s_nb", lbl)
+	w("\torr x2, x2, #2048") // O_NONBLOCK
+	w(".Lssa_%s_nb:", lbl)
+	w("\tmov x3, #438")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	// A descriptor below 3 is moved up, as in emitOpenHandleHelper (#8823).
+	w("\tcmp x0, #3")
+	w("\tb.hs .Lssa_%s_hi", lbl)
+	w("\tmov x20, x0")
+	w("\tmov x1, #0") // F_DUPFD
+	w("\tmov x2, #3")
+	w("\tmov x8, #25") // fcntl
+	w("\tsvc #0")
+	w("\tstr x0, [sp, #-16]!")
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tldr x0, [sp], #16")
+	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	w(".Lssa_%s_hi:", lbl)
+	w("\tmov w9, w0")
+	emitWriterHandleAlloc(w, "x19", "w9")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
+	w("\tstr x19, [x0, #8]")
+	w("\tb .Lssa_%s_ret", lbl)
+	w(".Lssa_%s_err:", lbl)
+	w("\tneg x0, x0")  // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_%s_ret:", lbl)
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+func emitOpenReaderWithHelper(w func(string, ...any)) {
+	emitOpenWithHelper(w, "open_reader_with", "orw", 0)
+}
+
+func emitOpenWriterWithHelper(w func(string, ...any)) {
+	emitOpenWithHelper(w, "open_writer_with", "oww", 1)
+}
+
 // emitWriterWriteHelper writes __method_Writer_write(writer, data) ->
 // Option[IoError]: loop write(2) the whole single-word string to the handle's fd
 // (loaded from [writer+8]); return None on success, or map -errno through
@@ -3039,6 +3197,45 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tmov x19, x0") // IoError box
 	emitOptionBox(w, 0, "x19")
 	w(".Lssa_wrw_ret:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitWriterWriteSomeHelper writes __method_Writer_write_some(writer, s) ->
+// Result[i64, IoError]: ONE write(2) and the count it returned. The loop in
+// emitWriterWriteHelper above is what makes that count unobservable there —
+// a failure has forgotten what landed before it — and the count is output
+// for shred's failing-write offset and dd's record tally (#9231). Zero is a
+// real answer rather than an error.
+func emitWriterWriteSomeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Writer_write_some"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tldr w19, [x0, #8]")    // fd @ ptr+8
+	w("\tmov x20, x1")          // data ptr
+	w("\tldur w22, [x20, #-4]") // byte length
+	w("\tmov w0, w19")
+	w("\tmov x1, x20")
+	w("\tmov x2, x22")
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wrws_err")
+	w("\tmov x21, x0")
+	emitOptionBox(w, 0, "x21") // Ok(count)
+	w("\tb .Lssa_wrws_ret")
+	w(".Lssa_wrws_err:")
+	w("\tneg x19, x0") // errno (reuse x19; fd no longer needed)
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0")
+	emitOptionBox(w, 1, "x19") // Err(e)
+	w(".Lssa_wrws_ret:")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
@@ -3446,6 +3643,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push":                      {"__fern_buf_reserve"},
 	"buf_push_range":                {"__fern_buf_reserve"},
 	"buf_push_byte":                 {"__fern_buf_reserve"},
+	"buf_push_u64":                  {"__fern_buf_reserve"},
 	"buf_take":                      {"__alloc"},
 	"buf_free":                      {"__free"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
@@ -3498,8 +3696,16 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_stat":          {"__fern_io_error"},
 	"__method_Writer_stat":          {"__fern_io_error"},
 	"__method_Reader_seek":          {"__fern_io_error"},
+	"__method_Writer_seek":          {"__fern_io_error"},
+	"__method_Reader_flags":         {"__fern_io_error"},
+	"__method_Writer_flags":         {"__fern_io_error"},
+	"__method_Reader_isatty":        {"isatty"},
+	"__method_Writer_isatty":        {"isatty"},
+	"__method_Writer_write_some":    {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"open_exclusive":                {"__fern_io_error"},
+	"open_reader_with":              {"__fern_io_error"},
+	"open_writer_with":              {"__fern_io_error"},
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 	"__sin_f64":                     {"__rem_pio2_large"},
 	"__cos_f64":                     {"__rem_pio2_large"},
@@ -3585,8 +3791,16 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_stat":          true,
 	"__method_Writer_stat":          true,
 	"__method_Reader_seek":          true,
+	"__method_Writer_seek":          true,
+	"__method_Reader_flags":         true,
+	"__method_Writer_flags":         true,
+	"__method_Reader_isatty":        true,
+	"__method_Writer_isatty":        true,
+	"__method_Writer_write_some":    true,
 	"open_appender":                 true,
 	"open_exclusive":                true,
+	"open_reader_with":              true,
+	"open_writer_with":              true,
 	"stdin":                         true,
 	"stdout":                        true,
 	"stderr":                        true,
@@ -6081,10 +6295,11 @@ func emitChownAtHelper(w func(string, ...any)) {
 //
 // The two `struct timespec`s go on the stack in the kernel's order,
 // access time first. `flags` is Fern's word rather than the kernel's:
-// bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2 become UTIME_OMIT
-// in the nanosecond half of the timespec being skipped — an omit is a
-// sentinel value to utimensat, not a flag, and the seconds half is then
-// not read.
+// bit 0 becomes AT_SYMLINK_NOFOLLOW, bits 3 and 4 become UTIME_NOW and
+// bits 1 and 2 UTIME_OMIT in the nanosecond half of the timespec they
+// name — each is a sentinel value to utimensat, not a flag, and the
+// seconds half is then not read. Omit is written after now so that it
+// wins when both name one half.
 //
 // Non-leaf (calls __fern_io_error), so the path, the flags and the
 // address of the pair live in callee-saved registers across the copy.
@@ -6100,6 +6315,13 @@ func emitSetFileTimesHelper(w func(string, ...any)) {
 	w("\tmov x21, x5")     // flags
 	w("\tstp x1, x2, [sp]")
 	w("\tstp x3, x4, [sp, #16]")
+	w("\tmov x6, #1073741823") // UTIME_NOW
+	w("\ttbz x21, #3, .Lssa_sft_na")
+	w("\tstp xzr, x6, [sp]")
+	w(".Lssa_sft_na:")
+	w("\ttbz x21, #4, .Lssa_sft_nm")
+	w("\tstp xzr, x6, [sp, #16]")
+	w(".Lssa_sft_nm:")
 	w("\tmov x6, #1073741822") // UTIME_OMIT
 	w("\ttbz x21, #1, .Lssa_sft_a")
 	w("\tstp xzr, x6, [sp]")
@@ -7389,34 +7611,86 @@ func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 	}
 }
 
-// emitReaderSeekHelper writes __method_Reader_seek(handle, offset, whence)
-// -> Result[i64, IoError]: lseek(2) on the handle's fd, the new offset
-// back. A pipe answers ESPIPE, classified against an empty path.
-// x0=handle, x1=offset, x2=whence.
-func emitReaderSeekHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__method_Reader_seek"))
-	w("\tstp x29, x30, [sp, #-32]!")
-	w("\tmov x29, sp")
-	w("\tstr x19, [sp, #16]")
-	w("\tldr w0, [x0, #8]") // fd @ ptr+8; offset and whence are in place
-	w("\tmov x8, #62")      // lseek
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_rsk_err")
-	w("\tmov x19, x0")
-	emitOptionBox(w, 0, "x19")
-	w("\tb .Lssa_rsk_ret")
-	w(".Lssa_rsk_err:")
-	w("\tneg x19, x0") // errno
-	emitEmptyString(w, "x1")
-	w("\tmov x0, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
-	w("\tmov x19, x0")
-	emitOptionBox(w, 1, "x19")
-	w(".Lssa_rsk_ret:")
-	w("\tldr x19, [sp, #16]")
-	w("\tldp x29, x30, [sp], #32")
-	w("\tret")
+// emitSeekHelper writes `name`(handle, offset, whence) -> Result[i64,
+// IoError] for __method_Reader_seek and __method_Writer_seek: lseek(2) on
+// the handle's fd, the new offset back. A pipe answers ESPIPE, classified
+// against an empty path. `lp` prefixes the local labels so both can live
+// in one object. x0=handle, x1=offset, x2=whence.
+func emitSeekHelper(name, lp string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-32]!")
+		w("\tmov x29, sp")
+		w("\tstr x19, [sp, #16]")
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8; offset and whence are in place
+		w("\tmov x8, #62")      // lseek
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", lp)
+		w("\tmov x19, x0")
+		emitOptionBox(w, 0, "x19")
+		w("\tb .Lssa_%s_ret", lp)
+		w(".Lssa_%s_err:", lp)
+		w("\tneg x19, x0") // errno
+		emitEmptyString(w, "x1")
+		w("\tmov x0, x19")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		w("\tmov x19, x0")
+		emitOptionBox(w, 1, "x19")
+		w(".Lssa_%s_ret:", lp)
+		w("\tldr x19, [sp, #16]")
+		w("\tldp x29, x30, [sp], #32")
+		w("\tret")
+	}
+}
+
+// emitFdFlagsHelper writes Result[i64, IoError] for __method_Reader_flags
+// and __method_Writer_flags: fcntl(fd, F_GETFL) reduced to Fern's own three
+// bits — 1 readable, 2 writable, 4 appending. The kernel's access mode is a
+// VALUE in the low two bits (0 read-only, 1 write-only, 2 read-write), so
+// the two bits come out of two comparisons against it. `lp` prefixes the
+// local labels so both methods can live in one object. x0=handle.
+func emitFdFlagsHelper(name, lp string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-32]!")
+		w("\tmov x29, sp")
+		w("\tstr x19, [sp, #16]")
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8
+		w("\tmov x1, #3")       // F_GETFL
+		w("\tmov x2, #0")
+		w("\tmov x8, #25") // fcntl
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", lp)
+		w("\tand w2, w0, #3")
+		w("\tmov w19, #0")
+		w("\tcmp w2, #1")
+		w("\tb.eq .Lssa_%s_nord", lp)
+		w("\torr w19, w19, #1")
+		w(".Lssa_%s_nord:", lp)
+		w("\tcbz w2, .Lssa_%s_nowr", lp)
+		w("\torr w19, w19, #2")
+		w(".Lssa_%s_nowr:", lp)
+		w("\tmov w3, #1024") // O_APPEND (Linux; this backend has no Darwin target)
+		w("\ttst w0, w3")
+		w("\tb.eq .Lssa_%s_noap", lp)
+		w("\torr w19, w19, #4")
+		w(".Lssa_%s_noap:", lp)
+		emitOptionBox(w, 0, "x19")
+		w("\tb .Lssa_%s_ret", lp)
+		w(".Lssa_%s_err:", lp)
+		w("\tneg x19, x0") // errno
+		emitEmptyString(w, "x1")
+		w("\tmov x0, x19")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		w("\tmov x19, x0")
+		emitOptionBox(w, 1, "x19")
+		w(".Lssa_%s_ret:", lp)
+		w("\tldr x19, [sp, #16]")
+		w("\tldp x29, x30, [sp], #32")
+		w("\tret")
+	}
 }
 
 // emitLstatHelper writes lstat(path): emitStatHelper with AT_SYMLINK_NOFOLLOW
@@ -8365,6 +8639,37 @@ func emitBufPushByteHelper(w func(string, ...any)) {
 	w("\tadd x9, x9, x13")
 	w("\tstrb w2, [x9]")
 	w("\tadd x13, x13, #1")
+	w("\tstr x13, [x1, #8]")
+	w("\tmov x0, xzr")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitBufPushU64Helper writes buf_push_u64(H, v): append the eight bytes of
+// v, least significant first. One store, where the byte form would be eight
+// calls (#9221). The store is unaligned as often as not, which aarch64 takes
+// on normal memory.
+func emitBufPushU64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_u64"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tstr x1, [sp, #24]")
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, #8")
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufu64_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufu64_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x2, [sp, #24]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13")
+	w("\tstr x2, [x9]")
+	w("\tadd x13, x13, #8")
 	w("\tstr x13, [x1, #8]")
 	w("\tmov x0, xzr")
 	w("\tldp x29, x30, [sp], #32")

@@ -30,7 +30,7 @@ import "./constfold";
 import "./lexer";
 import "./parser";
 import "./typeinfo";
-function gather(e: ast.Expr, out: ast.ExprLambda[]): ast.ExprLambda[] {
+function gather(e: ast.Expr, own out: ast.ExprLambda[]): ast.ExprLambda[] {
     if let ast.ExprLambda(lm) = e { return out.append(lm); }
     return out;
 }

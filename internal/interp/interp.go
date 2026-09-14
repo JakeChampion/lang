@@ -12,6 +12,7 @@ package interp
 import (
 	"bytes"
 	cryptorand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -627,12 +628,13 @@ func New() *Interp {
 	i.Builtins["strbuf_append"] = &Builtin{Fn: builtinStrbufAppend}
 	i.Builtins["strbuf_take"] = &Builtin{Fn: builtinStrbufTake}
 	// buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
-	// buf_push_byte(b, x) / buf_len(b) / buf_take(b) / buf_free(b) — the
-	// capacity-carrying builder (see checker FuncSigs).
+	// buf_push_byte(b, x) / buf_push_u64(b, v) / buf_len(b) / buf_take(b) /
+	// buf_free(b) — the capacity-carrying builder (see checker FuncSigs).
 	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
+	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
 	i.Builtins["buf_free"] = &Builtin{Fn: builtinBufFree}
@@ -655,13 +657,21 @@ func New() *Interp {
 	i.Builtins["open_writer"] = &Builtin{Fn: builtinOpenWriter}
 	i.Builtins["open_appender"] = &Builtin{Fn: builtinOpenAppender}
 	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
+	i.Builtins["open_reader_with"] = &Builtin{Fn: builtinOpenReaderWith}
+	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
 	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
-	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinReaderSeek}
+	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
+	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
+	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
+	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
+	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
+	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
+	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
@@ -2653,6 +2663,74 @@ func builtinFdStat(i *Interp, args []Value) (Value, error) {
 	return resultOk(fileStatValue(info)), nil
 }
 
+// builtinFdFlags answers `r.flags()` / `w.flags()`: `fcntl(fd, F_GETFL)`
+// reduced to the three bits every target can answer — 1 readable,
+// 2 writable, 4 appending. The access mode is a VALUE rather than a pair
+// of bits in the kernel's word (0 read-only, 1 write-only, 2 read-write),
+// so the two bits come out of two comparisons against it.
+//
+// A stdio stream a test replaced with a buffer has no descriptor to ask
+// and answers Unsupported, the same refusal `stat` gives for it.
+func builtinFdFlags(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("flags: expected 1 arg")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	const fGetfl = 3
+	raw, _, errno := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), fGetfl, 0)
+	if errno != 0 {
+		return resultErr(classifyIoError("", errno)), nil
+	}
+	return resultOk(Number(fernHandleFlags(int(raw)))), nil
+}
+
+// builtinHandleIsatty answers `r.isatty()` / `w.isatty()` against the
+// descriptor the handle holds. Everything without one — a closed handle,
+// a stdio stream a test replaced with a buffer — is not a terminal,
+// which is the same "no" the free form gives for a descriptor that
+// cannot be a terminal.
+func builtinHandleIsatty(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("isatty: expected 1 arg")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return Bool(false), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return Bool(false), nil
+	}
+	return Bool(tty.IsTerminal(int(f.Fd()))), nil
+}
+
+// fernHandleFlags reduces an open(2) flag word to Fern's own three bits.
+func fernHandleFlags(raw int) int {
+	access := raw & 3
+	bits := 0
+	if access != 1 {
+		bits |= 1
+	}
+	if access != 0 {
+		bits |= 2
+	}
+	if raw&syscall.O_APPEND != 0 {
+		bits |= 4
+	}
+	return bits
+}
+
 // syncMethod is the shared body of `fsync` / `fdatasync` / `syncfs` on
 // both handle types: resolve the descriptor, make the call, and answer
 // `Option[IoError]` — None for success, the errno otherwise.
@@ -2714,12 +2792,13 @@ func builtinSync(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinReaderSeek answers `r.seek(offset, whence)`: lseek(2), with the
-// new offset back. A pipe answers ESPIPE, which reaches the caller as
-// `Other("Illegal seek")`, exactly as the compiled backends report it.
-func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
+// builtinHandleSeek answers `r.seek(offset, whence)` and `w.seek(offset,
+// whence)`: lseek(2), with the new offset back. A pipe answers ESPIPE,
+// which reaches the caller as `Other("Illegal seek")`, exactly as the
+// compiled backends report it.
+func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
-		return nil, fmt.Errorf("Reader.seek: expected 3 args")
+		return nil, fmt.Errorf("seek: expected 3 args")
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
@@ -2730,11 +2809,11 @@ func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
 	}
 	off, ok := args[1].(Number)
 	if !ok {
-		return nil, fmt.Errorf("Reader.seek: offset must be a number")
+		return nil, fmt.Errorf("seek: offset must be a number")
 	}
 	whence, ok := args[2].(Number)
 	if !ok {
-		return nil, fmt.Errorf("Reader.seek: whence must be a number")
+		return nil, fmt.Errorf("seek: whence must be a number")
 	}
 	if f == nil {
 		return resultErr(ioErrorOther("", syscall.ESPIPE)), nil
@@ -3389,12 +3468,15 @@ func builtinChownAt(_ *Interp, args []Value) (Value, error) {
 
 // The bits of set_file_times' `flags` word. They are Fern's own, not the
 // kernel's: AT_SYMLINK_NOFOLLOW is 0x100 on Linux and 0x20 on Darwin,
-// and the two omit bits are not a flags word at all — each is UTIME_OMIT
-// written into the nanosecond half of the timespec being skipped.
+// and the omit and now bits are not a flags word at all — each is
+// UTIME_OMIT or UTIME_NOW written into the nanosecond half of the
+// timespec it names.
 const (
 	timesNoFollow  = 1
 	timesOmitAtime = 2
 	timesOmitMtime = 4
+	timesNowAtime  = 8
+	timesNowMtime  = 16
 )
 
 // builtinSetFileTimes writes the access and modification timestamps of
@@ -3420,6 +3502,12 @@ func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
 	times := [2]syscall.Timespec{
 		{Sec: n[0], Nsec: n[1]},
 		{Sec: n[2], Nsec: n[3]},
+	}
+	if flags&timesNowAtime != 0 {
+		times[0] = syscall.Timespec{Nsec: utimeNow}
+	}
+	if flags&timesNowMtime != 0 {
+		times[1] = syscall.Timespec{Nsec: utimeNow}
 	}
 	if flags&timesOmitAtime != 0 {
 		times[0] = syscall.Timespec{Nsec: utimeOmit}
@@ -3678,6 +3766,35 @@ func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
 	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 }
 
+// builtinOpenReaderWith / builtinOpenWriterWith open under Fern's own
+// flags word: bit 1 creates (0666 through the umask), bit 2 is
+// O_NONBLOCK. The writer is O_WRONLY with neither O_TRUNC nor O_APPEND.
+func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
+	return openWithHelper(i, args, "Reader", os.O_RDONLY)
+}
+
+func builtinOpenWriterWith(i *Interp, args []Value) (Value, error) {
+	return openWithHelper(i, args, "Writer", os.O_WRONLY)
+}
+
+func openWithHelper(i *Interp, args []Value, structName string, access int) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("open_*_with: expected 2 args, got %d", len(args))
+	}
+	flags, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("open_*_with: expected number flags, got %T", args[1])
+	}
+	flag := access
+	if int(flags)&1 != 0 {
+		flag |= os.O_CREATE
+	}
+	if int(flags)&2 != 0 {
+		flag |= oNonblock
+	}
+	return openHelper(i, args[:1], structName, flag, 0o666)
+}
+
 func openHelper(i *Interp, args []Value, structName string, flag int, perm os.FileMode) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("open_*: expected 1 arg, got %d", len(args))
@@ -3889,6 +4006,46 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 		return optionSome(classifyIoError("", err)), nil
 	}
 	return optionNone(), nil
+}
+
+// builtinWriterWriteSome answers `w.write_some(s)`: one write and the
+// count it returned, rather than the loop `write` above hides.
+//
+// An io.Writer the interpreter is driving — a stdio stream a test
+// replaced with a buffer — reports what it took, which for a buffer is
+// always everything. The descriptor path is a real single write(2), so a
+// short write is a short write here too.
+func builtinWriterWriteSome(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Writer.write_some: expected 2 args")
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("Writer.write_some: content must be a string")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		w, werr := writerStream(i, args[0])
+		if werr != nil {
+			return nil, werr
+		}
+		n, e := w.Write([]byte(s))
+		if e != nil {
+			return resultErr(classifyIoError("", e)), nil
+		}
+		return resultOk(Number(n)), nil
+	}
+	n, e := syscall.Write(int(f.Fd()), []byte(s))
+	if e != nil {
+		return resultErr(classifyIoError("", e)), nil
+	}
+	return resultOk(Number(n)), nil
 }
 
 // builtinWriterTruncate answers `w.truncate(len)`: ftruncate(2) on the
@@ -4236,6 +4393,26 @@ func builtinBufPushByte(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_byte: expected number byte, got %T", args[1])
 	}
 	i.bufs[h] = append(b, byte(int64(x)&0xff))
+	return Void{}, nil
+}
+
+// builtinBufPushU64 appends the eight bytes of v, least significant first.
+func builtinBufPushU64(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("buf_push_u64: expected 2 args (b, v), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_u64", args[0])
+	if err != nil {
+		return nil, err
+	}
+	v, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_u64: expected number, got %T", args[1])
+	}
+	u := uint64(int64(v))
+	var eight [8]byte
+	binary.LittleEndian.PutUint64(eight[:], u)
+	i.bufs[h] = append(b, eight[:]...)
 	return Void{}, nil
 }
 

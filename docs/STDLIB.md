@@ -546,6 +546,26 @@ Value-semantic (they never mutate the input).
 - `choice(xs): Option[T]` — a random element (`None` when empty).
 - `sample(xs, k): T[]` — `k` elements without replacement, random order.
 
+Plus a seeded PCG32 generator for throughput or reproducibility, whose
+state is threaded by the caller (an `i64`). It is **not** cryptographic —
+two consecutive outputs pin the state — so never draw a token, a nonce or
+a key from it.
+
+- `rng_seed(seed): i64` — the initial state; equal seeds give equal
+  sequences on every backend. `rng_seed_from_os()` seeds from the platform
+  CSPRNG instead, for throughput without a reproducible run.
+- `rng_next(state): (i64, u32)`, `rng_below(state, n)` and
+  `rng_between(state, lo, hi)` — one draw and the advanced state; the
+  bounded forms are unbiased (Lemire).
+- `rng_fill(state, h, n): i64` — push `n` pseudorandom bytes onto the
+  capacity-carrying builder `h` and return the advanced state.
+  `rng_bytes(state, n): (i64, string)` is the same as a string. Eight
+  bytes leave per `buf_push_u64`, which is what makes this the fast way
+  to produce bulk randomness: 4 MiB costs 5.6 ms against `random_bytes`'
+  15.3 ms, because the kernel's generator is the slower of the two
+  (#9221). `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the
+  array helpers over the same generator.
+
 ### `std/semver`
 
 Semantic Versioning 2.0.0 (semver.org) — parse and precedence-compare.

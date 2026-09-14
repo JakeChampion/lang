@@ -898,6 +898,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
+	if g.usesHandleIsatty {
+		g.emitHandleIsattyRuntime()
+	}
+	if g.usesWriteSome {
+		g.emitWriterWriteSomeRuntime()
+	}
 	if g.usesWindowSize {
 		g.emitWindowSizeRuntime()
 	}
@@ -1035,6 +1041,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
+	}
+	if g.usesFdFlags {
+		g.emitFdFlagsRuntime()
 	}
 	if g.usesWriterTruncate {
 		g.emitWriterTruncateRuntime()
@@ -1302,6 +1311,10 @@ type generator struct {
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
+	// The same question asked of a Reader or a Writer, which needs
+	// `__fern_isatty` beside it.
+	usesHandleIsatty bool
+	usesWriteSome    bool
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
@@ -1547,6 +1560,7 @@ type generator struct {
 	usesLstat          bool
 	usesFdStat         bool
 	usesReaderSeek     bool
+	usesFdFlags        bool
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
@@ -1852,7 +1866,7 @@ func (g *generator) recordUse(target string) {
 		g.usesEprint = true
 	case "exit":
 		g.usesExit = true
-	case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len", "buf_take", "buf_free":
+	case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 		g.usesStrBuilder = true
 		// Every entry point but buf_len can reach the allocator, the
 		// copier and the freelist through __fern_buf_reserve, so pull the
@@ -1949,6 +1963,13 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "isatty":
 		g.usesIsatty = true
+	case "__method_Reader_isatty", "__method_Writer_isatty":
+		g.usesHandleIsatty = true
+		g.usesIsatty = true
+	case "__method_Writer_write_some":
+		g.usesWriteSome = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "window_size":
 		g.usesWindowSize = true
 		g.usesAlloc = true
@@ -1998,6 +2019,7 @@ func (g *generator) recordUse(target string) {
 		"__method_Writer_write",
 		"__method_Writer_close",
 		"open_reader", "open_writer", "open_appender", "open_exclusive",
+		"open_reader_with", "open_writer_with",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
 	case "__method_Reader_stat", "__method_Writer_stat":
@@ -2018,8 +2040,12 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "sync":
 		g.usesSync = true
-	case "__method_Reader_seek":
+	case "__method_Reader_seek", "__method_Writer_seek":
 		g.usesReaderSeek = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_flags", "__method_Writer_flags":
+		g.usesFdFlags = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Writer_truncate":
@@ -2296,6 +2322,13 @@ func (g *generator) emitStartRuntime() {
 		g.emit("mov [rip + __fern_envp], rdi")
 	}
 	g.emit(fmt.Sprintf("call %s", AsmFnName("main")))
+	// A `main` that returns nothing exits 0: eax holds whatever its last
+	// call left there otherwise, which made the status a stable fact
+	// about the emitted code rather than about the program (#9233). The
+	// wasm side already decided it this way (SynthCliRun).
+	if g.callReturnsVoid("main") {
+		g.emit("xor eax, eax")
+	}
 	// The exit-time reports (leak summary #5362, coverage #5548) both run
 	// here, and either can be on alone or both together. main's return
 	// value parks in rbx across them (callee-save, and _start has no
@@ -3614,6 +3647,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_buf_push_range"
 		case "buf_push_byte":
 			target = "__fern_buf_push_byte"
+		case "buf_push_u64":
+			target = "__fern_buf_push_u64"
 		case "buf_len":
 			target = "__fern_buf_len"
 		case "buf_take":
@@ -3784,8 +3819,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_syncfs"
 		case "sync":
 			target = "__fern_sync"
-		case "__method_Reader_seek":
+		case "__method_Reader_seek", "__method_Writer_seek":
 			target = "__fern_reader_seek"
+		case "__method_Reader_flags", "__method_Writer_flags":
+			target = "__fern_fd_flags"
+		case "__method_Reader_isatty", "__method_Writer_isatty":
+			target = "__fern_handle_isatty"
+		case "__method_Writer_write_some":
+			target = "__fern_writer_write_some"
 		case "__method_Writer_truncate":
 			target = "__fern_writer_truncate"
 		case "__method_Reader_close",
@@ -3801,6 +3842,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_open_appender"
 		case "open_exclusive":
 			target = "__fern_open_exclusive"
+		case "open_reader_with":
+			target = "__fern_open_reader_with"
+		case "open_writer_with":
+			target = "__fern_open_writer_with"
 		case "stdin":
 			target = "__fern_stdin"
 		case "stdout":
@@ -11343,6 +11388,37 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.line(".size __fern_buf_push_byte, .-__fern_buf_push_byte")
 
+	// __fern_buf_push_u64(H, v): append the eight bytes of `v`, least
+	// significant first. One store where eight buf_push_byte calls would
+	// be eight of everything (#9221).
+	g.line("")
+	g.line(".globl __fern_buf_push_u64")
+	g.line(".type __fern_buf_push_u64, @function")
+	g.label("__fern_buf_push_u64")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("mov rbx, rdi")
+	g.emit("mov r12, rsi")
+	g.emit("mov rax, qword ptr [rbx + 8]")
+	g.emit("add rax, 8")
+	g.emit("cmp rax, qword ptr [rbx + 16]")
+	g.emit("jbe .Lbufu64_fits")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, rax")
+	g.emit("call __fern_buf_reserve")
+	g.label(".Lbufu64_fits")
+	g.emit("mov rdi, qword ptr [rbx]")
+	g.emit("add rdi, qword ptr [rbx + 8]")
+	g.emit("mov qword ptr [rdi], r12")
+	g.emit("add qword ptr [rbx + 8], 8")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_buf_push_u64, .-__fern_buf_push_u64")
+
 	// __fern_buf_len(H) -> len
 	g.line("")
 	g.line(".globl __fern_buf_len")
@@ -12723,30 +12799,57 @@ func (g *generator) emitGetgroupsRuntime() {
 // emitRandomBytesRuntime emits `__fern_random_bytes(n)` —
 // allocates a fresh `u8[]` of n bytes via `__alloc_u8` (which
 // owns the header layout and the n==0 empty sentinel) and
-// fills it with kernel CSPRNG output via a single
-// `getrandom(buf, n, 0)` syscall (Linux x86-64 #318;
-// blocks at most very briefly until the urandom pool is
-// initialised; flags=0). Returns the data pointer.
+// fills it with kernel CSPRNG output from
+// `getrandom(buf, n, 0)` (Linux x86-64 #318; blocks at most
+// very briefly until the urandom pool is initialised;
+// flags=0). Returns the data pointer.
+//
+// The call LOOPS. getrandom returns how many bytes it wrote,
+// and for a request past one page it may write fewer and
+// return early when a signal arrives — or -EINTR having
+// written none. A single call would leave the tail of the
+// buffer as the allocator left it, which is zeros: silence
+// where a caller asked for randomness (#9221). A hard error
+// (EFAULT, EINVAL — neither reachable from this call shape)
+// ends the loop rather than spinning, because the signature
+// has nowhere to report one.
 func (g *generator) emitRandomBytesRuntime() {
+	const eintr = 4
 	g.line("")
 	g.line(".globl __fern_random_bytes")
 	g.line(".type __fern_random_bytes, @function")
 	g.label("__fern_random_bytes")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx")     // n
-	g.emit("push r12")     // data ptr
+	g.emit("push rbx")     // bytes still wanted
+	g.emit("push r12")     // data ptr (the return value)
+	g.emit("push r13")     // write cursor
 	g.emit("mov ebx, edi") // rbx = n
 	g.emit("mov edi, ebx")
 	g.emit("call __alloc_u8")
 	g.emit("mov r12, rax") // r12 = data ptr
-	// getrandom(buf=r12, n=rbx, flags=0); a no-op write when
-	// n == 0 (the shared empty sentinel is never written).
-	g.emit("mov rdi, r12")
+	g.emit("mov r13, rax") // cursor starts at the front
+	// n == 0 leaves the shared empty sentinel untouched: the
+	// loop's own guard covers it.
+	g.label(".Lrandbytes_loop")
+	g.emit("test rbx, rbx")
+	g.emit("jz .Lrandbytes_done")
+	g.emit("mov rdi, r13")
 	g.emit("mov rsi, rbx")
 	g.emit("xor edx, edx")
 	g.emitSyscall(sysGetrandom)
+	g.emit("test rax, rax")
+	g.emit("jg .Lrandbytes_wrote")
+	g.emit(fmt.Sprintf("cmp rax, -%d", eintr))
+	g.emit("je .Lrandbytes_loop")
+	g.emit("jmp .Lrandbytes_done")
+	g.label(".Lrandbytes_wrote")
+	g.emit("add r13, rax")
+	g.emit("sub rbx, rax")
+	g.emit("jmp .Lrandbytes_loop")
+	g.label(".Lrandbytes_done")
 	g.emit("mov rax, r12")
+	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
@@ -15155,10 +15258,12 @@ func (g *generator) emitChownAtRuntime() {
 //
 // The two `struct timespec`s are built on the stack in the order the
 // kernel reads them, access time first. `flags` is Fern's word rather
-// than the kernel's: bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2
-// become UTIME_OMIT written into the nanosecond half of the timespec
-// being skipped — an omit is not a flag to utimensat, it is a sentinel
-// value, and the seconds half is then ignored.
+// than the kernel's: bit 0 becomes AT_SYMLINK_NOFOLLOW, bits 3 and 4
+// become UTIME_NOW and bits 1 and 2 UTIME_OMIT, each written into the
+// nanosecond half of the timespec it names — neither is a flag to
+// utimensat, both are sentinel values, and the seconds half is then
+// ignored. Omit is written after now so that it wins when both name one
+// half.
 func (g *generator) emitSetFileTimesRuntime() {
 	g.line("")
 	g.line(".globl __fern_set_file_times")
@@ -15183,6 +15288,18 @@ func (g *generator) emitSetFileTimesRuntime() {
 	g.emit("mov [rbp - 88], rdx")
 	g.emit("mov [rbp - 80], rcx")
 	g.emit("mov [rbp - 72], r8")
+	// UTIME_NOW (1<<30 - 1) into the nanosecond half of whichever
+	// timespec the caller asked to set to the clock.
+	g.emit("test r14d, 8")
+	g.emit("jz .Lsft_na")
+	g.emit("mov qword ptr [rbp - 96], 0")
+	g.emit("mov qword ptr [rbp - 88], 1073741823")
+	g.label(".Lsft_na")
+	g.emit("test r14d, 16")
+	g.emit("jz .Lsft_nm")
+	g.emit("mov qword ptr [rbp - 80], 0")
+	g.emit("mov qword ptr [rbp - 72], 1073741823")
+	g.label(".Lsft_nm")
 	// UTIME_OMIT (1<<30 - 2) into the nanosecond half of whichever
 	// timespec the caller asked to leave alone.
 	g.emit("test r14d, 2")
@@ -15970,8 +16087,10 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 }
 
 // emitReaderSeekRuntime emits `__fern_reader_seek(handle_ptr, offset,
-// whence) → Result[i64, IoError]` — lseek(2) on the Reader's fd, the new
-// offset back. A pipe answers ESPIPE, classified against an empty path.
+// whence) → Result[i64, IoError]` — lseek(2) on the handle's fd, the new
+// offset back; a Reader and a Writer hold the fd at the same place, so
+// both seek methods land here. A pipe answers ESPIPE, classified against
+// an empty path.
 // System V: rdi = handle ptr, rsi = offset, edx = whence.
 func (g *generator) emitReaderSeekRuntime() {
 	g.line("")
@@ -16008,6 +16127,147 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_reader_seek, .-__fern_reader_seek")
+}
+
+// emitFdFlagsRuntime emits `__fern_fd_flags(handle_ptr) → Result[i32,
+// IoError]` — fcntl(fd, F_GETFL) reduced to Fern's own three bits: 1
+// readable, 2 writable, 4 appending. A Reader and a Writer hold the fd at
+// the same place, so both methods land here.
+//
+// The kernel's access mode is a VALUE in the low two bits (0 read-only,
+// 1 write-only, 2 read-write) rather than two independent flags, so the
+// two bits come out of two comparisons against it.
+// System V: rdi = handle ptr.
+func (g *generator) emitFdFlagsRuntime() {
+	const (
+		fGetfl   = 3
+		sysFcntl = 72
+		oAppend  = 0o2000 // Linux; there is no Darwin x86-64 target
+	)
+	g.line("")
+	g.line(".globl __fern_fd_flags")
+	g.line(".type __fern_fd_flags, @function")
+	g.label("__fern_fd_flags")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd
+	g.emit(fmt.Sprintf("mov esi, %d", fGetfl))
+	g.emit("xor edx, edx")
+	g.emitSyscall(sysFcntl)
+	g.emit("test rax, rax")
+	g.emit("js .Lfdfl_err")
+	// rbx = Fern's bits.
+	g.emit("mov ecx, eax")
+	g.emit("and ecx, 3")
+	g.emit("xor ebx, ebx")
+	g.emit("cmp ecx, 1")
+	g.emit("je .Lfdfl_nord")
+	g.emit("or ebx, 1")
+	g.label(".Lfdfl_nord")
+	g.emit("test ecx, ecx")
+	g.emit("jz .Lfdfl_nowr")
+	g.emit("or ebx, 2")
+	g.label(".Lfdfl_nowr")
+	g.emit(fmt.Sprintf("test eax, %d", oAppend))
+	g.emit("jz .Lfdfl_noap")
+	g.emit("or ebx, 4")
+	g.label(".Lfdfl_noap")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lfdfl_ret")
+	g.label(".Lfdfl_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lfdfl_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_fd_flags, .-__fern_fd_flags")
+}
+
+// emitWriterWriteSomeRuntime emits `__fern_writer_write_some(handle_ptr,
+// s) → Result[i64, IoError]` — ONE write(2) and the count it returned.
+// `__fern_writer_write` above is the same call in a loop, which is why
+// its Option cannot carry the count: a failure there has already
+// forgotten what landed before it.
+//
+// Zero is a real answer and not an error, so the Ok arm takes it
+// unchanged; the caller decides whether a stalled write is progress.
+// System V: rdi = handle ptr, rsi = string.
+func (g *generator) emitWriterWriteSomeRuntime() {
+	g.line("")
+	g.line(".globl __fern_writer_write_some")
+	g.line(".type __fern_writer_write_some, @function")
+	g.label("__fern_writer_write_some")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")   // fd, then the box payload
+	g.emit("push r12")   // data ptr
+	g.emit("push r13")   // length
+	g.emit("sub rsp, 8") // 8-byte scratch for emitStrDataPtr's SSO spill
+	g.emit("mov ebx, [rdi]")
+	// The length comes from the ORIGINAL tagged value; only then is the
+	// byte pointer taken, since an inline (SSO) string has to be spilled
+	// to the frame first.
+	g.emitStrLen("r13d", "rsi")
+	g.emitStrDataPtr("r12", "rsi", "[rbp - 32]")
+	g.emit("mov edi, ebx")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r13")
+	g.emitSyscall(1)
+	g.emit("test rax, rax")
+	g.emit("js .Lwws_err")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lwws_ret")
+	g.label(".Lwws_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lwws_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_writer_write_some, .-__fern_writer_write_some")
+}
+
+// emitHandleIsattyRuntime emits `__fern_handle_isatty(handle_ptr)` —
+// `isatty` on the descriptor a Reader or a Writer holds, which both keep
+// at the same place. One tail call, since the answer is the free form's.
+//
+// System V: rdi = handle ptr.
+func (g *generator) emitHandleIsattyRuntime() {
+	g.line("")
+	g.line(".globl __fern_handle_isatty")
+	g.line(".type __fern_handle_isatty, @function")
+	g.label("__fern_handle_isatty")
+	g.emit("mov edi, [rdi]") // fd
+	g.emit("jmp __fern_isatty")
+	g.line(".size __fern_handle_isatty, .-__fern_handle_isatty")
 }
 
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
@@ -16394,16 +16654,21 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.line(".size " + e.sym + ", .-" + e.sym)
 	}
 
-	// open_reader / open_writer / open_appender / open_exclusive.
+	// open_reader / open_writer / open_appender / open_exclusive, and the
+	// two `_with` forms whose flags word arrives in esi: bit 0 is O_CREAT
+	// (64), bit 1 O_NONBLOCK (2048), on top of the access mode in `flags`.
 	for _, e := range []struct {
-		sym   string
-		flags int
-		mode  int
+		sym       string
+		flags     int
+		mode      int
+		withFlags bool
 	}{
-		{"__fern_open_reader", 0, 0},
-		{"__fern_open_writer", oflagCreatTrunc, 0666},
-		{"__fern_open_appender", oflagCreatAppend, 0666},
-		{"__fern_open_exclusive", oflagCreatExcl, 0600},
+		{"__fern_open_reader", 0, 0, false},
+		{"__fern_open_writer", oflagCreatTrunc, 0666, false},
+		{"__fern_open_appender", oflagCreatAppend, 0666, false},
+		{"__fern_open_exclusive", oflagCreatExcl, 0600, false},
+		{"__fern_open_reader_with", 0, 0666, true},
+		{"__fern_open_writer_with", 1, 0666, true},
 	} {
 		g.line("")
 		g.line(".globl " + e.sym)
@@ -16415,11 +16680,15 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("push r12") // handle / errno scratch
 		g.emit("push r13") // path byte length
 		g.emit("push r14") // path byte pointer
-		// 5 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and buys:
+		// 5 pushes ⇒ rsp ≡ 8 mod 16; sub 40 realigns and buys:
 		//   [rbp-40] emitStrDataPtr inline-spill scratch
 		//   [rbp-48] the original path string value (io_error arg)
-		g.emit("sub rsp, 24")
+		//   [rbp-56] the flags word of a `_with` form
+		g.emit("sub rsp, 40")
 		g.emit("mov [rbp - 48], rdi")
+		if e.withFlags {
+			g.emit("mov [rbp - 56], esi")
+		}
 		// openat wants a NUL-terminated C string, and an SSO path is
 		// seven bytes in the register rather than a pointer at all, so
 		// the bytes are copied out before the syscall sees them.
@@ -16442,6 +16711,17 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
+		if e.withFlags {
+			g.emit("mov eax, [rbp - 56]")
+			g.emit("test eax, 1")
+			g.emit("jz .Lorw_nc_" + e.sym)
+			g.emit("or edx, 64") // O_CREAT
+			g.label(".Lorw_nc_" + e.sym)
+			g.emit("test eax, 2")
+			g.emit("jz .Lorw_nb_" + e.sym)
+			g.emit("or edx, 2048") // O_NONBLOCK
+			g.label(".Lorw_nb_" + e.sym)
+		}
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)
 		// The syscall has read pathz; return it before either result box.
@@ -16490,7 +16770,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
-		g.emit("add rsp, 24")
+		g.emit("add rsp, 40")
 		g.emit("pop r14")
 		g.emit("pop r13")
 		g.emit("pop r12")

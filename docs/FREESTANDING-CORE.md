@@ -237,11 +237,19 @@ rather than discovering:
     one, and the destination descriptor handed to `rename-at` is that same
     preopen. A kernel's `EXDEV` has no counterpart here; the failure is
     `ENOTCAPABLE` for the operand that left.
-  - **The omit and nofollow flags are honoured**, each in the preview's own
-    spelling: preview 1 clears an `fstflags` bit and passes `lookupflags` 0,
-    preview 2 passes the `new-timestamp` variant's `no-change` arm and clears
-    `path-flags`. So `touch -a` / `touch -m` / `touch -h` are expressible on
-    a component, unlike `chmod`.
+  - **`open_reader_with` / `open_writer_with` carry their flags word across
+    too**: the create bit is preview 1's own CREATE oflag and preview 2's
+    `create` open-flag, and the non-blocking bit is preview 1's NONBLOCK
+    fdflag. Preview 2 has no spelling for it and the bit is not read there:
+    its streams do not block the way a preview-1 descriptor can, and the
+    FIFO the bit exists for cannot be created on either preview (`mknod`
+    is refused, above).
+  - **The omit, now and nofollow flags are honoured**, each in the preview's
+    own spelling: preview 1 clears an `fstflags` bit or sets its `*_NOW`
+    sibling and passes `lookupflags` 0, preview 2 passes the `new-timestamp`
+    variant's `no-change` or `now` arm and clears `path-flags`. So `touch -a`
+    / `touch -m` / `touch -h` and a plain `touch` are expressible on a
+    component, unlike `chmod`.
 
 `chmod` is the third of that set and is refused there, by construction rather
 than by a missing case: no wasi profile grants `fsmode`, so E066 names it at
@@ -391,6 +399,51 @@ profile nor by `none`. A freestanding target could in principle honour `cabi` �
 calling convention is an ISA property, and nothing about a kernel forbids one — but
 `none` grants nothing at all by construction, and no backend emits for a freestanding
 target yet, so there is nothing to observe. Revisit it with #6510, not before.
+
+**A handle method reports only what its target can measure, and `flags()` is
+where that bit.** `r.flags()` / `w.flags()` (#9219) answer three bits about how
+the handle was OPENED — 1 readable, 2 writable, 4 appending — and stop there.
+O_NONBLOCK is the flag a caller reaches for next, and preview 2 has no spelling
+for it at all: `descriptor.get-flags` reports read, write and the three sync
+bits, so a CLEARED non-blocking bit there would be the `geteuid`-answers-0
+failure again — a claim nobody measured. The three that are reported are
+answerable on all three targets, though not from the same place: F_GETFL on the
+natives, the `fdstat` record's rights and APPEND fdflag on preview 1, and on
+preview 2 the handle's own construction plus the Writer box's append flag,
+because a descriptor there has no append bit — an appending Writer is one that
+was opened `append-via-stream`. That is also the method's limit: on an
+INHERITED stdio handle preview 2 can report what the handle is, not what the
+parent opened, the same boundary that makes `stat` answer the all-zero record
+there. No capability gates it, for the reason no handle method does: the
+Reader or Writer had to be obtained first, and `open_*` is where the
+filesystem capability is spent.
+
+**`isatty` on a handle is the free `isatty` with a different subject**, and it
+is classified the same way: ungated on every target, boolean rather than a
+Result, and false where there is nothing that could be a terminal. `r.isatty()`
+/ `w.isatty()` (#9229) exist because `isatty(fd)` takes a descriptor NUMBER and
+a handle from `open_*` surrenders none — so only fds 0, 1 and 2 could be asked,
+which is exactly the subject a program that opened a name does not have. On the
+natives and preview 1 the answer comes from the same place the free form's
+does (a terminal-attribute ioctl; `fd_fdstat_get`'s filetype on preview 1); on
+preview 2 it is the same constant no the free form gives, because a component
+has no fd table to interrogate. "Not a terminal" is the truthful answer on a
+target with no terminals, which is why neither form needs a capability and
+neither is refused by E066 — unlike `window_size`, where there is no truthful
+width for a terminal that does not exist.
+
+**`write_some` reports what one write moved**, and every target can answer
+that much. `w.write_some(s)` (#9231) is one `write(2)` and the count it
+returned, where `w.write(s)` is the same call in a loop and can only say
+whether the whole string landed — a failure there has already forgotten how
+much of it did, which is the fact GNU `shred` prints. Preview 1 answers from
+`fd_write`'s own `nwritten`. Preview 2 has no partial answer to relay:
+`blocking-write-and-flush` takes the chunk it is handed or fails, so
+`write_some` there writes at most 4096 bytes — the bound the looping helper
+beside it already chunks at — and reports that length, which keeps a caller
+that loops on the count making the same progress it would on a kernel. Zero
+is a real answer on all three rather than an error, so a caller that treats
+it as progress spins on every target equally.
 
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the

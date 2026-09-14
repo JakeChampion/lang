@@ -41,22 +41,28 @@ import (
 
 // The bits of set_file_times' `flags` word, and the WASI constants they
 // translate into. The Fern word is its own: preview 1 spells "leave this
-// one alone" as a missing `fstflags` bit and preview 2 as a
-// `new-timestamp` discriminant, and neither is a flag the caller could
-// have passed through.
+// one alone" as a missing `fstflags` bit and "the host's clock" as a
+// second bit per half, preview 2 spells both as a `new-timestamp`
+// discriminant, and none is a flag the caller could have passed through.
 const (
 	fsMetaNoFollow  = 1
 	fsMetaOmitAtime = 2
 	fsMetaOmitMtime = 4
+	fsMetaNowAtime  = 8
+	fsMetaNowMtime  = 16
 
-	// preview 1 `fstflags`: which of the pair the call writes.
-	wasiFstflagsAtim = 1
-	wasiFstflagsMtim = 4
+	// preview 1 `fstflags`: which of the pair the call writes, and
+	// whether from the value passed or the host's clock.
+	wasiFstflagsAtim    = 1
+	wasiFstflagsAtimNow = 2
+	wasiFstflagsMtim    = 4
+	wasiFstflagsMtimNow = 8
 	// preview 1 `lookupflags` / preview 2 `path-flags`: follow a final
 	// symlink.
 	wasiSymlinkFollow = 1
 	// preview 2 `new-timestamp` discriminants.
 	wasiTimestampNoChange = 0
+	wasiTimestampNow      = 1
 	wasiTimestampValue    = 2
 
 	// WASI errno `overflow`, the answer for a time the previews cannot
@@ -75,12 +81,12 @@ func emitTimesOverflowGuard(body []byte, idxs map[string]uint32, flagsLocal, err
 
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, errnoLocal)
-	for _, half := range []struct{ omitBit, secParam uint32 }{
-		{fsMetaOmitAtime, 2},
-		{fsMetaOmitMtime, 4},
+	for _, half := range []struct{ skipBits, secParam uint32 }{
+		{fsMetaOmitAtime | fsMetaNowAtime, 2},
+		{fsMetaOmitMtime | fsMetaNowMtime, 4},
 	} {
 		body = inst.InstLocalGet(body, flagsLocal)
-		body = inst.InstI32Const(body, int32(half.omitBit))
+		body = inst.InstI32Const(body, int32(half.skipBits))
 		body = numeric.InstI32And(body)
 		body = numeric.InstI32Eqz(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -209,14 +215,17 @@ func buildSetFileTimesBody(idxs map[string]uint32) []byte {
 	body = emitTimesOverflowGuard(body, idxs, 6, 10, 11, 12)
 	body = emitStrNormalize(body, idxs, 0, 1, 7, 8, 9)
 
-	// fstflags names which HALF of the pair the call writes; an
-	// omitted one simply is not named.
-	body = inst.InstI32Const(body, 0)
+	// fstflags names which HALF of the pair the call writes and whether
+	// from the value or the host's clock; an omitted one simply is not
+	// named, and omit is read last so that it wins over now.
+	body = inst.InstI32Const(body, wasiFstflagsAtim)
 	body = inst.InstLocalSet(body, 13)
-	body = emitFlagIf(body, 6, fsMetaOmitAtime, true, 13, wasiFstflagsAtim)
-	body = inst.InstI32Const(body, 0)
+	body = emitFlagIf(body, 6, fsMetaNowAtime, false, 13, wasiFstflagsAtimNow)
+	body = emitFlagIf(body, 6, fsMetaOmitAtime, false, 13, 0)
+	body = inst.InstI32Const(body, wasiFstflagsMtim)
 	body = inst.InstLocalSet(body, 15)
-	body = emitFlagIf(body, 6, fsMetaOmitMtime, true, 15, wasiFstflagsMtim)
+	body = emitFlagIf(body, 6, fsMetaNowMtime, false, 15, wasiFstflagsMtimNow)
+	body = emitFlagIf(body, 6, fsMetaOmitMtime, false, 15, 0)
 	body = inst.InstLocalGet(body, 13)
 	body = inst.InstLocalGet(body, 15)
 	body = numeric.InstI32Or(body)
@@ -273,6 +282,10 @@ func buildRenameBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 13)
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 13)
 	body = emitPreopenP2(body, alloc, getDirs, 4, 9)
+	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 10)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 10, 2, 3, 11, 12)
+	})
 
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstLocalGet(body, 5)
@@ -303,8 +316,8 @@ func buildRenameBodyP2(idxs map[string]uint32) []byte {
 // buildSetFileTimesBodyP2 is the preview-2 buildSetFileTimesBody:
 // get-directories → set-times-at.
 //
-// Preview 2 says "leave this one alone" with a `new-timestamp`
-// discriminant rather than a flags bit, and its `datetime` is the pair
+// Preview 2 says "leave this one alone" and "the host's clock" with a
+// `new-timestamp` discriminant rather than a flags bit, and its `datetime` is the pair
 // this builtin already takes — so the seconds go across untouched and
 // only the nanoseconds narrow to the u32 the record declares.
 //
@@ -324,12 +337,18 @@ func buildSetFileTimesBodyP2(idxs map[string]uint32) []byte {
 	body = emitTimesOverflowGuard(body, idxs, 6, 11, 12, 13)
 	body = emitStrNormalize(body, idxs, 0, 1, 8, 9, 14)
 	body = emitPreopenP2(body, alloc, getDirs, 7, 10)
+	body = emitPreopenMissing(body, 10, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 11)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 11, 0, 1, 12, 13)
+	})
 
 	body = inst.InstI32Const(body, wasiTimestampValue)
 	body = inst.InstLocalSet(body, 15)
+	body = emitFlagIf(body, 6, fsMetaNowAtime, false, 15, wasiTimestampNow)
 	body = emitFlagIf(body, 6, fsMetaOmitAtime, false, 15, wasiTimestampNoChange)
 	body = inst.InstI32Const(body, wasiTimestampValue)
 	body = inst.InstLocalSet(body, 16)
+	body = emitFlagIf(body, 6, fsMetaNowMtime, false, 16, wasiTimestampNow)
 	body = emitFlagIf(body, 6, fsMetaOmitMtime, false, 16, wasiTimestampNoChange)
 	body = inst.InstI32Const(body, wasiSymlinkFollow)
 	body = inst.InstLocalSet(body, 17)

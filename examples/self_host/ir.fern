@@ -100,6 +100,13 @@ pub function op_const_i64(v: i64): Op {
 // the register backends (wasm uses i64.extend_i32_s/u and i32.wrap_i64).
 pub function op_int_extend(unsigned: boolean): Op { return Op { decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" }; }
 pub function op_int_wrap(unsigned: boolean): Op { return Op { decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" }; }
+// The same two conversions FROM and TO the pointer width, which a `usize`
+// carries: 32 bits on wasm, where they are the i32 forms above, and the whole
+// 64-bit slot on the register backends, where an address already fills the
+// slot and the emitter moves nothing. `width` carries width_ptr() so the
+// emitter can tell them from the i32 forms, which mask.
+pub function op_int_extend_ptr(): Op { return Op { decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" }; }
+pub function op_int_wrap_ptr(): Op { return Op { decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" }; }
 // op_const_i64_text carries the literal's SOURCE TEXT (in `str`) rather than a
 // parsed i64, so the backends can splice it straight into a 64-bit immediate
 // (`movabsq $TEXT` / `ldr x0, =TEXT` / `i64.const TEXT`) without an i64
@@ -697,10 +704,17 @@ pub function op_chown_at(): Op { return op0("chown_at"); }
 // IoError]. Each timestamp is a whole second since the epoch plus a
 // nanosecond remainder, the shape `stat` hands back. `flags` is Fern's own
 // word, not the kernel's: 1 do not follow a final symlink, 2 leave the access
-// time alone, 4 leave the modification time alone. The two omit bits are
-// UTIME_OMIT sentinels in the timespec on Linux, absent attributes on Darwin
-// and cleared fstflags bits on wasm.
+// time alone, 4 leave the modification time alone, 8 and 16 set the access and
+// modification time to the clock. The omit and now bits are UTIME_OMIT and
+// UTIME_NOW sentinels in the timespec on Linux, absent or clock-read attributes
+// on Darwin and fstflags bits on wasm.
 pub function op_set_file_times(): Op { return op0("set_file_times"); }
+// `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
+// word, 1 create and 2 non-blocking, translated per target by the runtime
+// rather than baked into an immediate — and push the same
+// Result[Reader|Writer, IoError] box op_open_file does.
+pub function op_open_reader_with(): Op { return op0("open_reader_with"); }
+pub function op_open_writer_with(): Op { return op0("open_writer_with"); }
 // `hostname` takes no operands and pushes ONE fresh string box holding the
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
 // string on wasm, which has no host identity.
@@ -785,6 +799,12 @@ pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
 // `Writer.close()` reuses op_reader_close. The byte count is not reported:
 // native's signature has no channel for it (#7926).
 pub function op_writer_write(): Op { return op0("writer_write"); }
+// `write_some` [fd, str box] -> a fresh `Result[i64, IoError]` box: ONE
+// write(2) and the count it returned, where `writer_write` above loops until
+// the whole string is out and so can only report whether it all landed.
+// Backs `w.write_some(s)`; the count is what GNU shred's failing-write offset
+// and dd's record tally are made of (#9231).
+pub function op_write_some(): Op { return op0("write_some"); }
 // `open_file` [path box] -> a fresh `Result[Reader|Writer, IoError]` box:
 // NUL-terminate the path, openat(AT_FDCWD, path, flags, 0644), then Ok(fd) or
 // Err(io_error(errno, path)). `flags` is baked into the immediate so one op
@@ -1168,6 +1188,11 @@ pub function op_sync(): Op { return op0("sync"); }
 // `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
 // lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
 pub function op_reader_seek(): Op { return op0("reader_seek"); }
+// `fd_flags` pops [fd] and pushes Result[i64, IoError]: the handle's open
+// flags as Fern's own three bits (1 readable, 2 writable, 4 appending).
+// One op for both `r.flags()` and `w.flags()`, like reader_seek: a handle
+// is its fd on every target this lowers for.
+pub function op_fd_flags(): Op { return op0("fd_flags"); }
 // `writer_truncate` pops [fd, length] and pushes Option[IoError]: ftruncate(2)
 // on the handle. Backs `w.truncate(length)`. Distinct from `truncate` (273),
 // which resolves a PATH and checks write permission again — the descriptor's
@@ -1230,13 +1255,14 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 // `buf_take` zero-copy: it stamps the length and hands the same pointer back as
 // a string, leaving the builder empty but still armed at its reserve. `buf_new`
 // pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
-// `buf_push_byte` / `buf_free` are statement ops (pushing a dummy so a
+// `buf_push_byte` / `buf_push_u64` / `buf_free` are statement ops (pushing a dummy so a
 // statement-level drop balances); `buf_len` and `buf_take` are value ops. All
 // lower to each backend's __fern_buf_* helpers.
 pub function op_buf_new(): Op { return op0("buf_new"); }
 pub function op_buf_push(): Op { return op0("buf_push"); }
 pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
 pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
+pub function op_buf_push_u64(): Op { return op0("buf_push_u64"); }
 pub function op_buf_len(): Op { return op0("buf_len"); }
 pub function op_buf_take(): Op { return op0("buf_take"); }
 pub function op_buf_free(): Op { return op0("buf_free"); }
@@ -1958,6 +1984,7 @@ function kind_id_len8(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len8_a(name); }
     if (c == b'f' && name == "fd_fsync") { return 299; }
+    if (c == b'f' && name == "fd_flags") { return 307; }
     if (c == b'b') { return kind_id_len8_b(name); }
     if (c == b'c' && name == "chown_at") { return 275; }
     if (c == b'f' && name == "f32_bits") { return 14; }
@@ -2115,6 +2142,7 @@ function kind_id_len10(name: string): i32 {
     if (c == b't') { return kind_id_len10_t(name); }
     if (c == b'v' && name == "variant_is") { return 145; }
     if (c == b'w' && name == "write_file") { return 170; }
+    if (c == b'w' && name == "write_some") { return 308; }
     if (c == b'w' && name == "wasm_block") { return 191; }
     return 0;
 }
@@ -2191,6 +2219,7 @@ function kind_id_len12(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "arr_push_i64") { return 94; }
     if (c == b'a' && name == "arr_push_f64") { return 95; }
+    if (c == b'b' && name == "buf_push_u64") { return 306; }
     if (c == b'c' && name == "const_struct") { return 218; }
     if (c == b'f' && name == "fd_fdatasync") { return 300; }
     if (c == b'd' && name == "dyn_dispatch") { return 147; }
@@ -2268,6 +2297,8 @@ function kind_id_len16(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'm' && name == "mapiter_has_next") { return 134; }
     if (c == b's' && name == "struct_set_shape") { return 141; }
+    if (c == b'o' && name == "open_reader_with") { return 304; }
+    if (c == b'o' && name == "open_writer_with") { return 305; }
     return 0;
 }
 
@@ -2511,6 +2542,9 @@ function kind_name_4(id: i32): string {
     if (id == 201) { return "tcp_accept"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
+    if (id == 306) { return "buf_push_u64"; }
+    if (id == 304) { return "open_reader_with"; }
+    if (id == 305) { return "open_writer_with"; }
     if (id == 204) { return "syscall3"; }
     if (id == 205) { return "raw_scratch"; }
     if (id == 206) { return "syscall4"; }
@@ -2547,6 +2581,8 @@ function kind_name_4(id: i32): string {
     if (id == 240) { return "hostname"; }
     if (id == 241) { return "fd_stat"; }
     if (id == 242) { return "reader_seek"; }
+    if (id == 307) { return "fd_flags"; }
+    if (id == 308) { return "write_some"; }
     if (id == 243) { return "signal_ignore"; }
     if (id == 244) { return "signal_default"; }
     if (id == 245) { return "mismatch"; }
@@ -2708,7 +2744,7 @@ function pops1_io(t: i32): boolean {
         || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 243 || t == 244                                          // signal_ignore, signal_default
         || t == 277 || t == 279                                          // chdir, signal_disposition
-        || t == 241 || t == 250                                          // fd_stat, uname_field
+        || t == 241 || t == 250 || t == 307                              // fd_stat, uname_field, fd_flags
         || t == 299 || t == 300 || t == 301                              // fd_fsync, fd_fdatasync, fd_syncfs
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
@@ -2743,11 +2779,12 @@ function pops2_io(t: i32): boolean {
         || t == 237                                                      // access (path, mode)
         || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
         || t == 273                                                      // truncate (path, length)
+        || t == 304 || t == 305                                          // open_reader_with, open_writer_with (path, flags)
         || t == 281                                                      // writer_truncate (fd, length)
         || t == 285                                                      // signal_send (pid, sig)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
-        || t == 202 || t == 213                                          // writer_write, proc_exec
+        || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some
         || t == 278;                                                     // signal_mask (how, mask)
 }
 
@@ -2774,6 +2811,9 @@ function pops3(t: i32): boolean {
 // answers in one place rather than scattering seven tags across the pops1_* /
 // pops2_* predicates.
 function pops_buf(t: i32): i32 {
+    // buf_push_u64 arrived after the block had closed over 291-297, so it
+    // carries the next free id instead of extending it.
+    if (t == 306) { return 2; }
     if (t < 291 || t > 297) { return 0 - 1; }
     if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
     if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte
@@ -4387,10 +4427,11 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 169 || tag == 170) { return true; }
     // open_file boxes its Result[Reader|Writer, IoError] result (and the IoError
     // its error path builds), so it needs the heap runtime (#7758).
-    if (tag == 203) { return true; }
+    if (tag == 203 || tag == 304 || tag == 305) { return true; }
     // writer_write boxes its Option[IoError] result (and, on a failing write,
     // the IoError inside it), so it needs the heap runtime too (#7926).
-    if (tag == 202) { return true; }
+    // write_some boxes a Result[i64, IoError] the same way.
+    if (tag == 202 || tag == 308) { return true; }
     // read_file_bytes boxes the contents into a fresh u8[] + a Result wrapper.
     if (tag == 233) { return true; }
     // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path
@@ -4420,9 +4461,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 270) { return true; }
     // window_size boxes a fresh WinSize struct + a Result wrapper.
     if (tag == 276) { return true; }
-    // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError];
-    // writer_truncate boxes its Option[IoError].
-    if (tag == 241 || tag == 242 || tag == 281) { return true; }
+    // fd_stat boxes the same pair; reader_seek and fd_flags box their
+    // Result[i64, IoError]; writer_truncate boxes its Option[IoError].
+    if (tag == 241 || tag == 242 || tag == 281 || tag == 307) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
     if (tag == 177) { return true; }

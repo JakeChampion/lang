@@ -164,11 +164,12 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// A scalar enum constructed from a literal arg (`Keep(0)`) is tainted by
-// rhsTainted's conservative default and so isn't free-eligible — reuse
-// stays off. Documents the current eligibility boundary (safe: such
-// boxes leak under the baseline too, so skipping reuse loses nothing).
-func TestEnumReuseSkipsLiteralScalar(t *testing.T) {
+// A scalar enum rebuilt from a scalar local (`s = Fwd(i)`) reuses its box in
+// place under BOTH models. The scalar carries no buffer, so it taints nothing
+// (rhsTainted) and the binding stays free-eligible: the move model reuses
+// because there is no payload to release, and the rc model because the enum
+// counts its payloads.
+func TestEnumReuseScalarPayload(t *testing.T) {
 	const src = `enum Step { Fwd(i32), Bwd(i32) }
 function churn(n: i32): i32 {
     var s: Step = Fwd(0);
@@ -183,11 +184,11 @@ function main(): i32 { return churn(3); }`
 	prev := ast.EnumRcPayloads
 	defer func() { ast.EnumRcPayloads = prev }()
 
-	// Move model: a scalar-payload enum is not free-eligible, so the
-	// self-overwrite reuse is skipped.
+	// Move model: nothing in the box needs releasing, so the self-overwrite
+	// reuses it.
 	ast.EnumRcPayloads = false
-	if got := allocReuseCount(funcByName(lowerForTest(t, src), "churn")); got != 0 {
-		t.Errorf("move model: expected 0 reuse, got %d", got)
+	if got := allocReuseCount(funcByName(lowerForTest(t, src), "churn")); got == 0 {
+		t.Errorf("move model: expected the scalar-payload enum to reuse its box, got 0")
 	}
 
 	// EnumRcPayloads (Slice 1b): the enum now rc-counts its payloads, becoming

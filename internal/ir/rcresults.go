@@ -180,6 +180,8 @@ var rcResultOwned = map[string]bool{
 	"__fern_read_file_bytes":     true,
 	"__fern_write_file":          true,
 	"__fern_open_reader":         true,
+	"__fern_open_reader_with":    true,
+	"__fern_open_writer_with":    true,
 	"__fern_open_writer":         true,
 	"__fern_open_appender":       true,
 	"__fern_open_exclusive":      true,
@@ -194,6 +196,10 @@ var rcResultOwned = map[string]bool{
 	"__fern_fd_fdatasync":        true,
 	"__fern_fd_syncfs":           true,
 	"__fern_reader_seek":         true,
+	"__fern_writer_seek":         true,
+	"__fern_reader_flags":        true,
+	"__fern_writer_flags":        true,
+	"__fern_writer_write_some":   true,
 	"__fern_remove_file":         true,
 	"__fern_stat":                true,
 	"__fern_lstat":               true,
@@ -286,6 +292,10 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_write":      true, // __fern_writer_write
 	"__method_Writer_truncate":   true, // __fern_writer_truncate
 	"__method_Reader_seek":       true, // __fern_reader_seek
+	"__method_Writer_seek":       true, // __fern_writer_seek
+	"__method_Reader_flags":      true, // __fern_reader_flags
+	"__method_Writer_flags":      true, // __fern_writer_flags
+	"__method_Writer_write_some": true, // __fern_writer_write_some
 	"__method_Reader_stat":       true, // __fern_fd_stat
 	"__method_Writer_stat":       true, // __fern_fd_stat
 	"__method_Reader_fsync":      true, // __fern_fd_fsync
@@ -299,6 +309,8 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"write_file":                 true,
 	"write_file_exec":            true,
 	"open_reader":                true,
+	"open_reader_with":           true,
+	"open_writer_with":           true,
 	"open_writer":                true,
 	"open_appender":              true,
 	"remove_file":                true,
@@ -461,7 +473,8 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
 	"buf_push": true, "buf_push_range": true, "buf_push_byte": true,
-	"buf_free": true, "__fern_buf_reserve": true,
+	"buf_push_u64": true,
+	"buf_free":     true, "__fern_buf_reserve": true,
 
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,
@@ -487,8 +500,9 @@ var rcResultNonPointer = map[string]bool{
 	"__ptr_width":   true,
 	"__slice_range": true, "__fern_idiv_s32": true, "__fern_idiv_u32": true,
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
-	"process_alive": true,
-	"geteuid":       true, "getegid": true, "getuid": true, "getgid": true,
+	"__fern_handle_isatty": true,
+	"process_alive":        true,
+	"geteuid":              true, "getegid": true, "getuid": true, "getgid": true,
 	// The builder's handle is an opaque token indexing its own control
 	// block, not a counted header, and its length is a byte count — the
 	// two cases `rWord` cannot tell apart on its own.

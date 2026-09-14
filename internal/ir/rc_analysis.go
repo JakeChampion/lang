@@ -1394,6 +1394,10 @@ func pureReadReceiverBuiltin(name string) bool {
 //   - `w.write(s)` (__fern_writer_write) writes the bytes to the
 //     Writer's fd and returns a fresh Option[IoError] box holding an
 //     immortal IoError, neither of which can name the string;
+//   - `w.write_some(s)` (__fern_writer_write_some) is the same write with
+//     the loop taken out, and its Result holds a COUNT — a scalar, so
+//     there is even less for the string to be named by than in `write`'s
+//     error box;
 //   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
@@ -1422,6 +1426,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"write":                       {0},
 	"eprint":                      {0},
 	"__method_Writer_write":       {1},
+	"__method_Writer_write_some":  {1},
 	"string_from_bytes_unchecked": {0},
 	"__memchr":                    {0},
 	"__rmemchr":                   {0},
@@ -2979,7 +2984,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 										// what it is rebound to afterwards — an
 										// owned value the exit sweep must still
 										// release.
-										if own := b.info.OwnFuncs[id.Name]; pi < len(own) && own[pi] {
+										if own := b.calleeOwnFlags(id.Name); pi < len(own) && own[pi] {
 											continue
 										}
 										tainted[aid.Name] = true
@@ -3257,6 +3262,16 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// stored into a container is escape-tainted at the sink.
 		return false
 	case *ast.Ident:
+		// A SCALAR name holds no buffer, so its borrow taint says nothing
+		// about a result built beside it — the same reasoning the literal
+		// case below states, for the name form. Every non-`own` parameter is
+		// borrow-tainted, so without this an `i32` parameter handed to a call
+		// alongside an owned one taints the result and the owned value loses
+		// its reclaim: `acc = visit(n, acc)` leaked one accumulator per call
+		// where `acc = visit(acc)` did not.
+		if t := b.exprType(x); t != nil && !ast.IsPointerType(t) {
+			return false
+		}
 		return tainted[x.Name]
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
 		// A scalar literal aliases nothing, so a fresh owned result whose only
@@ -3796,8 +3811,8 @@ func (b *builder) computeMovedLocals() map[string]bool {
 					if !ok {
 						return true
 					}
-					flags, isOwn := b.info.OwnFuncs[id.Name]
-					if !isOwn {
+					flags := b.calleeOwnFlags(id.Name)
+					if len(flags) == 0 {
 						return true
 					}
 					for i := 0; i < len(x.Args) && i < len(flags); i++ {
@@ -7107,12 +7122,98 @@ func (b *builder) computeBorrowedAliases() {
 		b.rc.borrowSources[x] = true
 		return true
 	})
+	// Borrowed-parameter alias (#9244): `var y = p`, where p is a BORROWED
+	// parameter. Both legs above want an owned rc LOCAL as the source, so
+	// this shape fell between them: the Var lowering emitted the transfer
+	// inc (the site was not a proven borrowed view), and the exit sweep
+	// skipped the dec, because its string arm touches a local only when it
+	// is freeEligible and an alias never is. One reference leaked per
+	// call — for a read loop handing each block to a helper that aliases
+	// its parameter, that is the whole buffer, 64 MiB live after a 64 MiB
+	// copy, with the next read faulting in a fresh mapping rather than
+	// reusing the block.
+	//
+	// The cancellation is sound for the for-in leg's reason, one step
+	// stronger: the CALLER owns p across the whole call and nothing in
+	// this frame releases it — a borrowed parameter is not in the exit
+	// sweep, which the `Own` / owned-by-default / consumedParams refusals
+	// below are what establish. So y reads through a reference that is
+	// already held, and needs none of its own. Marking p a borrowSource is
+	// the other half: it refuses the precise drops and FBIP donorship, so
+	// a cancelled inc can never leave `.with` seeing rc == 1 and mutating
+	// the caller's buffer.
+	borrowedParam := map[string]bool{}
+	localNames := map[string]bool{}
+	for _, v := range b.info.Locals[b.fn] {
+		localNames[v.Name] = true
+	}
+	for i, p := range b.fn.Params {
+		if p.Own || b.paramOwnedByDefault(p.Type, i) || b.rc.consumedParams[p.Name] {
+			continue
+		}
+		// A local of the same name shadows the parameter somewhere in the
+		// body, and nothing here says which one an init reads.
+		if localNames[p.Name] || !rcTrackedSlotType(p.Type) {
+			continue
+		}
+		borrowedParam[p.Name] = true
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		src, ok := v.Init.(*ast.Ident)
+		if !ok || !borrowedParam[src.Name] {
+			return true
+		}
+		y, x := v.Name, src.Name
+		// The for-in desugar's own iterand alias is the leg below's
+		// business, whose element borrow is decided against the counts
+		// this one would change. Claiming it here would widen that
+		// optimisation as a side effect rather than fix the shape this
+		// leg is for.
+		if strings.HasPrefix(y, ast.ForEachIterPrefix) {
+			return true
+		}
+		if b.rc.borrowedAlias[y] || b.rc.borrowSources[y] {
+			return true
+		}
+		if !b.isOwnedRcLocal(y) {
+			return true
+		}
+		if reassigned[x] || reassigned[y] || scrutinee[x] || scrutinee[y] {
+			return true
+		}
+		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
+			return true
+		}
+		if b.rc.arraySetConsumed[x] || b.rc.arraySetConsumed[y] {
+			return true
+		}
+		if !b.localNameUnique(y) {
+			return true
+		}
+		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
+			return true
+		}
+		// `returned[y]` would refuse `return y.len()`, which hands out a
+		// scalar — aliasReturnsConfined is the same question asked of what
+		// the return VALUE carries, as the for-in leg asks it.
+		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
+			return true
+		}
+		b.rc.borrowedAlias[y] = true
+		b.rc.borrowedAliasSites[v] = true
+		b.rc.borrowSources[x] = true
+		return true
+	})
 	// For-in element borrow (#6888): the desugar's per-iteration element
 	// binding `var y = __foreach_iter_N[__foreach_idx_N]`
 	// (ast.DesugarForEachArray) reads an element the iterand array owns.
 	// When every use of y is a read THROUGH the value (bindingConfinedToArm
 	// over the whole body — a bind, store, capture, or unproven call all
-	// refuse; a return is admitted only in the shapes forinElemReturnsConfined
+	// refuse; a return is admitted only in the shapes aliasReturnsConfined
 	// names), y needs no reference of its own: the element stays alive
 	// because the container's buffer does.
 	//
@@ -7177,7 +7278,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
 			return true
 		}
-		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.forinElemReturnsConfined(y) {
+		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.aliasReturnsConfined(y) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true
@@ -7187,8 +7288,10 @@ func (b *builder) computeBorrowedAliases() {
 	})
 }
 
-// forinElemReturnsConfined reports whether every `return` that mentions the
-// for-in element y hands out nothing that outlives the iterand (#8178).
+// aliasReturnsConfined reports whether every `return` that mentions the
+// borrowed alias y hands out nothing that outlives the value y reads
+// through (#8178) — the for-in element's iterand, or the borrowed
+// parameter of the leg above.
 // bindingConfinedToArm reads a field or element projection of y as a borrow
 // wherever it stands; a return needs this second look because its value
 // leaves the frame, and the exit sweep on that path releases the iterand.
@@ -7209,12 +7312,26 @@ func (b *builder) computeBorrowedAliases() {
 // caller an uncounted element) and any other pointer-typed value built around
 // a projection of y — a fresh aggregate, a variant construction, a call
 // result, a slice view — whose counting this rule has not shown.
-func (b *builder) forinElemReturnsConfined(y string) bool {
+func (b *builder) aliasReturnsConfined(y string) bool {
 	retained := returnedAliasIsRetained(b.fn, b.pairForm, b.trmcFuncs)
 	ok := true
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		r, isRet := n.(*ast.Return)
 		if !isRet || r.Value == nil || !ok || !exprMentionsIdent(r.Value, y) {
+			return ok
+		}
+		// `return y.len()` is confined: the value is DEFINITELY scalar, so
+		// it cannot carry y, and the mention is an argument to a builtin
+		// whose contract states outright that it neither retains the
+		// argument nor hands it back. Both halves are needed. The scalar
+		// alone is not enough — a bare element handed to a USER callee in
+		// return position is the argument-death shape
+		// TestForinElemBorrowRefusesReturnEscapes pins as a refusal, and
+		// an unresolved generic return is where an identity return hides
+		// (resultCannotAliasArg's note). The builtin alone is not enough
+		// either: a pointer-typed result could be the argument.
+		if t := b.exprType(r.Value); t != nil && isDefinitelyScalar(t) &&
+			identOnlyBorrowedByBuiltin(r.Value, y) {
 			return ok
 		}
 		switch {
@@ -7225,6 +7342,52 @@ func (b *builder) forinElemReturnsConfined(y string) bool {
 		default:
 			t := b.exprType(r.Value)
 			ok = t != nil && !ast.IsPointerType(t)
+		}
+		return ok
+	})
+	return ok
+}
+
+// identOnlyBorrowedByBuiltin reports whether every mention of `name` in e
+// that identOnlyProjected would refuse is an argument to a BUILTIN whose
+// contract says the callee neither moves a count on it nor hands it back:
+// copyingBuiltinArg at that position, or a pure-read receiver at position 0.
+// A user callee never qualifies, however well its own escape oracle reads —
+// in return position the argument-death rule is what the refusal keeps
+// clear of.
+func identOnlyBorrowedByBuiltin(e ast.Expr, name string) bool {
+	excused := map[*ast.Ident]bool{}
+	ast.Walk(e, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FieldAccess:
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+				excused[id] = true
+			}
+		case *ast.Index:
+			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
+				excused[id] = true
+			}
+		case *ast.Call:
+			cid, ok := x.Callee.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			for i, a := range x.Args {
+				id, isID := a.(*ast.Ident)
+				if !isID || id.Name != name {
+					continue
+				}
+				if copyingBuiltinArg(cid.Name, i) || (i == 0 && pureReadReceiverBuiltin(cid.Name)) {
+					excused[id] = true
+				}
+			}
+		}
+		return true
+	})
+	ok := true
+	ast.Walk(e, func(n ast.Node) bool {
+		if id, isID := n.(*ast.Ident); isID && id.Name == name && !excused[id] {
+			ok = false
 		}
 		return ok
 	})
@@ -8681,11 +8844,13 @@ func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
 			if !isID {
 				return true
 			}
-			if _, isLocal := b.locals[callee.Name]; isLocal {
-				return true // shadowed by a local — not a direct call
-			}
-			flags, isOwn := b.info.OwnFuncs[callee.Name]
-			if !isOwn {
+			// A call through a function-typed LOCAL consumes at the slots
+			// its TYPE spells `own` — the only declaration such a call has
+			// — so it claims the transfer exactly as a named `own` callee
+			// does. Reading only the named table here left the argument
+			// paying a compensating retain nothing spends.
+			flags := b.calleeOwnFlags(callee.Name)
+			if len(flags) == 0 {
 				return true
 			}
 			for i := 0; i < len(call.Args) && i < len(flags); i++ {
@@ -8776,11 +8941,8 @@ func (b *builder) computeSelfReassignOwnMoves() {
 		if !isID {
 			return true
 		}
-		if _, isLocal := b.locals[callee.Name]; isLocal {
-			return true // shadowed by a local — not a direct call
-		}
-		flags, isOwn := b.info.OwnFuncs[callee.Name]
-		if !isOwn {
+		flags := b.calleeOwnFlags(callee.Name)
+		if len(flags) == 0 {
 			return true
 		}
 		for i := 0; i < len(call.Args) && i < len(flags); i++ {

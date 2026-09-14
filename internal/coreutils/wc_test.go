@@ -33,6 +33,15 @@ func wcCases(t *testing.T) []invocation {
 	one := wcFile(t, dir, "one", "x")
 	// 12345 bytes: five digits, so the width is visibly not 1.
 	big := wcFile(t, dir, "big", strings.Repeat("\x00", 12345))
+	// 10,000,000 bytes: eight digits, wider than the 7-column minimum a
+	// non-regular operand imposes, so the two rules are seen to combine.
+	wide := filepath.Join(dir, "wide")
+	if err := os.WriteFile(wide, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(wide, 10000000); err != nil {
+		t.Fatal(err)
+	}
 	empty := wcFile(t, dir, "e0", "")
 	words := wcFile(t, dir, "words", "  spaced  words  \nand\tmore\n")
 	spaced := wcFile(t, dir, "f name", "x\n")
@@ -43,6 +52,9 @@ func wcCases(t *testing.T) []invocation {
 		t.Fatal(err)
 	}
 	d := filepath.Join(dir, "d")
+	if err := os.Mkdir(filepath.Join(dir, "d:ir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// --files0-from lists, including the malformed ones.
 	names2 := wcFile(t, dir, "n2", f1+"\x00"+one+"\x00")
@@ -223,6 +235,28 @@ func wcCases(t *testing.T) []invocation {
 		{name: "stdout closed with no input", stdin: "", stdout: stdoutClosed},
 		{name: "stdout closed with a missing file", args: []string{missing}, stdout: stdoutClosed},
 		{name: "stdout full with many files", args: []string{f1, f1, f1}, stdout: stdoutFull},
+		// A colon is shell-safe in gnulib's plain quoting styles and special
+		// in quotef, which quotes for a diagnostic that puts one after the
+		// name; the two must not be conflated again.
+		{name: "missing file with a colon", args: []string{"no:such"}},
+		{name: "directory with a colon", args: []string{"d:ir"}},
+		// --- the width when stdin is a regular file -------------------------
+		// GNU fstats fd 0 for `-` and for no operand at all, so a redirected
+		// regular file sizes the columns and a pipe or a character device
+		// widens them to 7; a non-regular operand raises the minimum to 7
+		// but a wider regular total still wins.
+		{name: "redirected regular stdin", stdinPath: f1},
+		{name: "dash on a redirected regular stdin", args: []string{"-"}, stdinPath: f1},
+		{name: "file and dash on a redirected regular stdin", args: []string{f1, "-"}, stdinPath: big},
+		{name: "two counts on a redirected regular stdin", args: []string{"-lw"}, stdinPath: f1},
+		{name: "bytes only on a redirected regular stdin", args: []string{"-c"}, stdinPath: big},
+		{name: "total only on a redirected regular stdin", args: []string{"--total=only"}, stdinPath: f1},
+		{name: "chardev and dash on a redirected regular stdin", args: []string{"/dev/null", "-"}, stdinPath: f1},
+		{name: "dash on a chardev stdin and a file", args: []string{"-", big}, stdinPath: "/dev/null"},
+		{name: "dash on a chardev stdin and a wide file", args: []string{"-", wide}, stdinPath: "/dev/null"},
+		{name: "directory and a wide file", args: []string{d, wide}},
+		{name: "redirected directory stdin", stdinPath: d},
+		{name: "dash on a redirected directory stdin and a file", args: []string{"-", f1}, stdinPath: d},
 	}
 }
 

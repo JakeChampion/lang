@@ -63,6 +63,16 @@ type invocation struct {
 	// harness compares as stdout, restoring the file for the other
 	// side. It is how `cat f >> f` meets `input file is output file`.
 	stdoutPath string
+	// stdoutFile, when set, is opened O_WRONLY — no truncation, no
+	// append — as the child's fd 1, which is the `prog 1<> file` a
+	// shell writes when neither is wanted. Its whole CONTENT after the
+	// run is what the harness compares, because a utility handed a
+	// writable fd 1 may rewrite it in place rather than add to it:
+	// `shred -` overwrites standard output, and which of its three
+	// answers is right depends on the flags fd 1 carries, so the
+	// APPEND-only stdoutPath above cannot reach the case. The file is
+	// put back for the other side, as stdoutPath's is.
+	stdoutFile string
 	// follow drives a case whose child never exits on its own — a
 	// `tail -f`. The harness plays the writer: each step fires once
 	// `after` bytes of stdout have arrived, exactly `limit` bytes are
@@ -486,7 +496,10 @@ func gnuVersionOf(bin string) (string, error) {
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
 	first, _, _ := strings.Cut(string(out), "\n")
-	if !strings.Contains(first, "(GNU coreutils)") {
+	// `dd` is the one utility whose version line does not carry the word
+	// GNU — it says `dd (coreutils) 9.4` where every sibling says
+	// `(GNU coreutils)` — so both spellings are the package's.
+	if !strings.Contains(first, "(GNU coreutils)") && !strings.Contains(first, "(coreutils)") {
 		if len(out) == 0 && readErr != nil {
 			return "", fmt.Errorf("%s: %w", bin, readErr)
 		}
@@ -818,7 +831,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	switch inv.stdout {
 	case stdoutCaptured:
 		if inv.stdoutPath != "" {
-			out = inv.runToFile(t, cmd)
+			out = inv.runToFile(t, cmd, cmd.Dir)
+		} else if inv.stdoutFile != "" {
+			out = inv.runToRegularFile(t, cmd, cmd.Dir)
 		} else if len(inv.follow) > 0 {
 			out = inv.runFollow(t, cmd)
 		}
@@ -840,7 +855,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		cmd.Stdout = f
 		overran = inv.runBounded(cmd)
 	}
-	if inv.stdout != stdoutCaptured || inv.stdoutPath != "" || len(inv.follow) > 0 {
+	if inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 {
 		// Nothing more to read back: either the point is the reaction
 		// on stderr and in the exit status, or a runner above did it.
 	} else if inv.limit > 0 {
@@ -1146,30 +1161,70 @@ func (inv invocation) runBounded(cmd *exec.Cmd) bool {
 // runToFile runs cmd with fd 1 appended to inv.stdoutPath and returns
 // the bytes the run added to the file, with the file put back as it
 // was for the other side.
-func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd) []byte {
+func (inv invocation) runToFile(t *testing.T, cmd *exec.Cmd, workDir string) []byte {
 	t.Helper()
-	before, err := os.ReadFile(inv.stdoutPath)
+	path := childPath(inv.stdoutPath, workDir)
+	before, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v", inv.stdoutPath, err)
+		t.Fatalf("read %s: %v", path, err)
 	}
-	f, err := os.OpenFile(inv.stdoutPath, os.O_WRONLY|os.O_APPEND, 0)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
-		t.Fatalf("open stdout %s: %v", inv.stdoutPath, err)
+		t.Fatalf("open stdout %s: %v", path, err)
 	}
 	cmd.Stdout = f
 	_ = cmd.Run()
 	f.Close()
-	after, err := os.ReadFile(inv.stdoutPath)
+	after, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v", inv.stdoutPath, err)
+		t.Fatalf("read %s: %v", path, err)
 	}
-	if err := os.WriteFile(inv.stdoutPath, before, 0o644); err != nil {
-		t.Fatalf("restore %s: %v", inv.stdoutPath, err)
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatalf("restore %s: %v", path, err)
 	}
 	if !bytes.HasPrefix(after, before) {
-		t.Fatalf("%s was rewritten rather than appended to", inv.stdoutPath)
+		t.Fatalf("%s was rewritten rather than appended to", path)
 	}
 	return after[len(before):]
+}
+
+// childPath resolves a file name the way the CHILD would: a seeded-tree
+// case spells its paths relative to the working directory the harness
+// made, and a case that built its own tree passes an absolute one.
+func childPath(name, workDir string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	return filepath.Join(workDir, name)
+}
+
+// runToRegularFile runs cmd with fd 1 on inv.stdoutFile opened without
+// truncation or append, and returns the file's whole content afterwards,
+// with the file put back as it was for the other side. Unlike runToFile
+// there is no prefix to strip and none to require: the point of the mode
+// is a utility that REWRITES what it was given.
+func (inv invocation) runToRegularFile(t *testing.T, cmd *exec.Cmd, workDir string) []byte {
+	t.Helper()
+	path := childPath(inv.stdoutFile, workDir)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open stdout %s: %v", path, err)
+	}
+	cmd.Stdout = f
+	_ = cmd.Run()
+	f.Close()
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, before, 0o644); err != nil {
+		t.Fatalf("restore %s: %v", path, err)
+	}
+	return after
 }
 
 // runFollow runs a case that follows a file: the steps fire as the

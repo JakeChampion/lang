@@ -33,7 +33,7 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
-    return i.width == 32 || (i.width == 8 && i.unsigned) || i.width == 64;
+    return i.width == 32 || (i.width == 8 && i.unsigned) || i.width == 64 || (i.width == typeinfo.width_ptr() && i.unsigned);
 }
 
 // A value that fits the ONE i32-shaped word a tuple stores per element:
@@ -41,24 +41,24 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
 // no store width to be written at. An array's element ops each carry their
 // own width, and a record or variant field stores at the width its
 // declaration names, so neither has to narrow.
-function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_f64(t); }
+function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_float(t); }
 
 function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     return narrow_slot(t) && element_supported(t, f);
 }
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return !ssasem.is_view(t) && !semtypes.erased(t) && supported(t, f);
+    return !ssasem.is_view(t) && supported(t, f);
 }
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
 // scalar, one i32-shaped word for everything else. Only wasm packs the narrow
 // slot; the register backends give every element eight bytes and ignore the
 // width. The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take
-// the same ones; the f64 shares the width and differs in the load and store
-// wasm selects.
+// the same ones; a float shares the width and differs in the load and store
+// wasm selects, the f32 riding the f64's slot.
 function elem_width(t: typeinfo.Type): i32 {
-    if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
+    if (ssasem.is_wide(t) || ssasem.is_float(t)) { return 64; }
     return 32;
 }
 
@@ -85,17 +85,13 @@ function arr_set_op(elem: typeinfo.Type): ir.Op {
 // The sole-owner push, which reclaims the superseded buffer when it grows.
 function arr_push_op(elem: typeinfo.Type): ir.Op {
     if (ssasem.is_wide(elem)) { return ir.op_arr_push_owned_i64(); }
-    if (ssasem.is_f64(elem)) { return ir.op_arr_push_owned_f64(); }
+    if (ssasem.is_float(elem)) { return ir.op_arr_push_owned_f64(); }
     return ir.op_arr_push_owned();
 }
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void ride one word, a string is its own box, and a function
 // value is the env box its captures ride in.
-// An erased type variable is one i32-shaped word, and every unit of one is
-// moved rather than retained or released (ssaunits.erased_move_error), so it
-// needs no representation beyond that word: no slot class, no release helper.
 function supported_leaf(t: typeinfo.Type): boolean {
-    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
@@ -107,16 +103,17 @@ function supported_leaf(t: typeinfo.Type): boolean {
 // its element.
 function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (semtypes.is_cell(t)) { return walkable(semtypes.cell_elem(t), f); }
-    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
+    if let typeinfo.TypeStruct(r) = t { return (r.args.len() == 0 || semtypes.is_env(t)) && semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
     return false;
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (supported_leaf(t)) { return true; }
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
-    if let typeinfo.TypeFloat(_) = t { return ssasem.is_f64(t); }
+    if let typeinfo.TypeFloat(_) = t { return ssasem.is_float(t); }
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
+    if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
     return supported_nominal(t, f);
 }
 
@@ -127,6 +124,7 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeStruct(_) = t { return true; }
     if let typeinfo.TypeUnion(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
+    if let typeinfo.TypeMap(_) = t { return true; }
     return false;
 }
 
@@ -144,9 +142,15 @@ function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
 }
 
 function fields_have_children(fields: semrecords.Field[]): boolean {
-    for field in fields { if (reference(field.ty)) { return true; } }
+    for field in fields { if (walked(field.ty)) { return true; } }
     return false;
 }
+
+// The field types a record's release walks. A function value is the one
+// reference it does not: a closure box borrows its captures of that type, so
+// the box they name is released by the frame that owns it, which is the only
+// frame whose schema names the captures that release must walk.
+function walked(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_func(t); }
 
 // A string box is released by its own helper: its block starts before the
 // value, where an array's starts before the data words.
@@ -155,9 +159,14 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 // sentinel and takes the ordinary path otherwise, which is what makes one
 // release symbol correct on both the register backends and wasm (whose slices
 // copy, so the result is an ordinary counted box).
+// A map is freed whole by one helper rather than released by a count: its box
+// is a raw {keys, vals} pair on the register backends, with no count to read.
+// __fern_map_free_ks releases every key in the string column and frees the
+// scalar value column and the box.
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
+    if (ssasem.is_map(t)) { return "__fern_map_free_ks"; }
     return "__fern_rc_dec";
 }
 
@@ -190,11 +199,15 @@ function reserve(r: irlower.LowerResult, end: i32): irlower.LowerResult {
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if let typeinfo.TypeFunc(_) = t { return env_records(f).len() > 0; }
     if let typeinfo.TypeArray(a) = t { return reference(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for elem in tup.elements { if (reference(elem)) { return true; } }
     }
     if (semtypes.is_cell(t)) { return reference(semtypes.cell_elem(t)); }
+    // A map's own release walks its columns, and the uniqueness guard this
+    // answers would read a count its box does not carry.
+    if (ssasem.is_map(t)) { return false; }
     if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
     if let typeinfo.TypeUnion(_) = t {
         for v in variants_of(t, f) { if (fields_have_children(v.fields)) { return true; } }
@@ -202,11 +215,42 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     return false;
 }
 
+// The environments this function's schema table names whose captures own a
+// unit: the boxes a function value here may hold, each walked by its record's
+// own helper.
+function env_records(f: ssasem.Func): semrecords.Record[] {
+    var out: semrecords.Record[] = [];
+    for rec in f.records { if (semtypes.is_env(rec.ty) && fields_have_children(rec.fields)) { out = out.append(rec); } }
+    return out;
+}
+
+// A function value's static type names no captures, so its box is matched at
+// run time: slot 0 holds the body's address, and each environment this
+// function knows is tried against it. A box whose captures own nothing
+// matches none and is released alone. A box built in another frame is only
+// ever lent to this one — the producer refuses an owning function parameter
+// and a function value result — so the frame that walks a box to zero is
+// the frame whose schema names its captures.
+function drop_captures(r: irlower.LowerResult, slot: i32, f: ssasem.Func): irlower.LowerResult {
+    for rec in env_records(f) {
+        r = emit(r, ir.op_load_local(slot));
+        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, ir.op_arr_get(32));
+        r = emit(r, ir.op_const_func(0, semtypes.env_body(rec.ty)));
+        r = emit(r, ir.op_bin("eq", 0, false));
+        r = emit(r, ir.op_if(0));
+        r = helper(r, slot, drop_helper_name(rec.ty));
+        r = emit(r, ir.op_end());
+    }
+    return r;
+}
+
 function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     if (has_children(t, f)) {
         r = emit(r, ir.op_load_local(slot));
         r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
         r = emit(r, ir.op_if(0));
+        if let typeinfo.TypeFunc(_) = t { r = drop_captures(r, slot, f); }
         if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
         if (semtypes.is_cell(t)) { r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f); }
         if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
@@ -251,7 +295,7 @@ function drop_variant_fields(r: irlower.LowerResult, slot: i32, t: typeinfo.Type
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_variant_is(v.name));
             r = emit(r, ir.op_if(0));
-            r = drop_record_fields(r, slot, v.fields, scratch, f);
+            r = drop_record_fields(r, slot, v.fields, scratch, f, false);
             r = emit(r, ir.op_end());
         }
     }
@@ -301,14 +345,15 @@ function drop_tuple_fields(r: irlower.LowerResult, slot: i32, tup: typeinfo.Type
     return r;
 }
 
-function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irlower.LowerResult {
+function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean): irlower.LowerResult {
     var child: i32 = scratch;
     r = reserve(r, child + 1);
     var i: i32 = 0;
     while (i < fields.len()) {
-        if (reference(fields[i].ty)) {
+        if (walked(fields[i].ty)) {
             r = emit(r, ir.op_load_local(slot));
-            r = emit(r, ir.op_struct_get(i, 0));
+            if (env) { r = emit(r, ir.op_const_i32(i)); r = emit(r, ir.op_arr_get(32)); }
+            else { r = emit(r, ir.op_struct_get(i, 0)); }
             r = emit(r, ir.op_store_local(child));
             r = drop_value(r, child, fields[i].ty, child + 1, f);
         }
@@ -394,9 +439,9 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.Str
 }
 
 // The undeclared constructions whose wide operand is an ARRAY element, written
-// at the width its op carries.
+// at the width its op carries; a cell's slot is one.
 function wide_element_site(k: i32): boolean {
-    return kind_in([ssasem.array_new(), ssasem.append(), ssasem.with()], k);
+    return kind_in([ssasem.array_new(), ssasem.append(), ssasem.with(), ssasem.cell_new(), ssasem.cell_set()], k);
 }
 
 // The declaration a record or variant construction stores its fields
@@ -450,37 +495,7 @@ function named(t: typeinfo.Type): string {
 //
 // Distinct from the AST path's __struct_drop_<T>, which guards each nested
 // field itself and hands back the box. The two are not interchangeable.
-pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + type_key(t); }
-
-// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
-// nominal name: `Option[string]` releases a string where `Option[i32]`
-// releases nothing, so the two cannot share a drop helper. `$` separates the
-// arguments, as it does in a lifted lambda's symbol.
-function type_key(t: typeinfo.Type): string {
-    if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
-    if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
-    if let typeinfo.TypeArray(a) = t { return "arr$" + type_key(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t { return key_args("tup", tup.elements); }
-    return leaf_key(t);
-}
-
-function key_args(name: string, args: typeinfo.Type[]): string {
-    var out: string = name;
-    for a in args { out = out + "$" + type_key(a); }
-    return out;
-}
-
-function leaf_key(t: typeinfo.Type): string {
-    if (ssasem.is_view(t)) { return "str"; }
-    if (ssasem.is_string(t)) { return "string"; }
-    if (ssasem.is_i64(t)) { return "i64"; }
-    if (ssasem.is_u64(t)) { return "u64"; }
-    if (ssasem.is_u8(t)) { return "u8"; }
-    if (ssasem.is_u32(t)) { return "u32"; }
-    if (ssasem.is_f64(t)) { return "f64"; }
-    if (ssasem.is_integer(t)) { return "i32"; }
-    return "bool";
-}
+pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + ssasem.type_key(t); }
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
@@ -488,7 +503,7 @@ function leaf_key(t: typeinfo.Type): string {
 function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
-    if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f); }
+    if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f, semtypes.is_env(t)); }
     if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, 0, t, 1, f); }
     // The one value the caller's `drop` after the call discards.
     r = emit(r, ir.op_const_i32(0));
@@ -561,10 +576,26 @@ function types_error(f: ssasem.Func): string {
     return "";
 }
 
+// A map box carries no reference count on the register backends — it is the
+// raw {keys, vals} pair __fern_map_free_ks frees — so a unit of one cannot be
+// shared: every unit the plan supplies has to be a MOVE. A retain would
+// increment a word that is not a count.
+function shared_map_error(f: ssasem.Func, p: ssaunits.Plan): string {
+    for step in p.steps {
+        for supply in step.supplies {
+            if (supply.mode != ssaunits.retain_unit()) { continue; }
+            if (ssasem.is_map(f.values[supply.value])) { return "map unit is not shared"; }
+        }
+    }
+    return "";
+}
+
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
     var why: string = ssaunits.verify(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
+    if (why != "") { return why; }
+    why = shared_map_error(f, p);
     if (why != "") { return why; }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.
@@ -584,7 +615,7 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlow
 // one: its captures ride the same i32-shaped words an array element does.
 function builds(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(),
-        ssasem.append(), ssasem.with(), ssasem.closure_new()], k);
+        ssasem.append(), ssasem.with(), ssasem.closure_new(), ssasem.cell_new(), ssasem.cell_set()], k);
 }
 
 function kind_in(kinds: i32[], k: i32): boolean {
@@ -603,7 +634,7 @@ function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index()], k)
-        || variant_op(k);
+        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -625,20 +656,20 @@ function supported_op(k: i32): boolean { return value_op(k) || container_op(k); 
 // 64-bit slot and ignore the distinction.
 function result_kind(t: typeinfo.Type): i32 {
     if (ssasem.is_wide(t)) { return irlower.result_i64(); }
-    if (ssasem.is_f64(t)) { return irlower.result_f64(); }
+    if (ssasem.is_float(t)) { return irlower.result_f64(); }
     return irlower.result_i32();
 }
 
 function frame(f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = empty("");
     r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
-        result_kind: result_kind(f.result) };
+        name: f.graph.name, result_kind: result_kind(f.result) };
     var vi: i32 = 0;
     while (vi < f.values.len()) {
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
         if let typeinfo.TypeString(_) = f.values[vi] { r = irlower.LowerResult { ...r, str_slots: r.str_slots.append(vi) }; }
         if (ssasem.is_wide(f.values[vi])) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) }; }
-        if (ssasem.is_f64(f.values[vi])) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) }; }
+        if (ssasem.is_float(f.values[vi])) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) }; }
         vi = vi + 1;
     }
     return r;
@@ -706,19 +737,41 @@ function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerRes
     return r;
 }
 
-// The float operators are the stack IR's own float opcodes, at the one width
-// this boundary admits: arithmetic hands back an f64, a comparison the i32 the
-// boolean rides, and negation flips the sign bit. Nothing wraps.
-function float_scalar(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+// The float operators are the stack IR's own f64 opcodes: arithmetic hands
+// back an f64, rounded to single precision where the result is an f32, a
+// comparison the i32 the boolean rides, and negation flips the sign bit.
+// Nothing wraps.
+function float_scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == 10) { return emit(r, ir.op_funary("fneg")); }
-    return emit(r, ir.op_fbin(irlower.map_fbinop(ins.str)));
+    r = emit(r, ir.op_fbin(irlower.map_fbinop(ins.str)));
+    if (ssasem.is_f32(f.values[ins.result])) { return round_f32(r); }
+    return r;
+}
+
+// An f32 is the f64 on the stack rounded to single precision, which the
+// demote-and-promote pair applies.
+function round_f32(r: irlower.LowerResult): irlower.LowerResult {
+    r = emit(r, ir.op_f32_bits());
+    return emit(r, ir.op_f32_from_bits());
+}
+
+// Into a float: an integer converts at its width and signedness, the other
+// float width is already the f64, and an f32 destination rounds.
+function into_float(r: irlower.LowerResult, from: typeinfo.Type, to: typeinfo.Type): irlower.LowerResult {
+    if (!ssasem.is_float(from)) {
+        var bits: i32 = 32;
+        if (ssasem.is_wide(from)) { bits = 64; }
+        r = emit(r, ir.op_int_to_f64(bits, ssasem.is_unsigned_int(from)));
+    }
+    if (ssasem.is_f32(to)) { return round_f32(r); }
+    return r;
 }
 
 function scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.cast()) { return cast(r, f, ins); }
     if (ins.kind_tag == 9 && ssasem.is_text(f.values[ins.args[0]])) { return string_binary(r, ins); }
     if (ins.kind_tag == 10 && ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
-    if (ssasem.is_f64(f.values[ins.args[0]])) { return float_scalar(r, ins); }
+    if (ssasem.is_float(f.values[ins.args[0]])) { return float_scalar(r, f, ins); }
     var w: i32 = operand_width(f, ins);
     if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false)); }
     else { r = emit(r, ir.op_bin("sub", w, false)); }
@@ -755,18 +808,17 @@ function from_f64(to: typeinfo.Type): ir.Op {
 // separates. Crossing the 64-bit boundary is an explicit extend or wrap, and
 // the SOURCE's signedness is what an extension extends by: only the signed
 // 32-bit width fills the high half from a sign bit. Inside the narrow domain
-// the conversion is the destination's own mask. Into and out of the f64 is a
+// the conversion is the destination's own mask. Into and out of a float is a
 // real conversion: the convert at the operand's width and signedness, and the
-// truncation toward zero at the result's.
+// truncation toward zero at the result's; into the f32 the value is rounded
+// to single precision, and out of it to the f64 it is already the f64.
 function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var from: typeinfo.Type = f.values[ins.args[0]];
     var to: typeinfo.Type = f.values[ins.result];
-    if (ssasem.is_f64(to)) {
-        var bits: i32 = 32;
-        if (ssasem.is_wide(from)) { bits = 64; }
-        return emit(r, ir.op_int_to_f64(bits, ssasem.is_unsigned_int(from)));
-    }
-    if (ssasem.is_f64(from)) { return emit(r, from_f64(to)); }
+    if (ssasem.is_float(to)) { return into_float(r, from, to); }
+    if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
+    if (ssasem.is_usize(from)) { return emit(r, ir.op_int_extend_ptr()); }
+    if (ssasem.is_usize(to)) { return emit(r, ir.op_int_wrap_ptr()); }
     if (ssasem.is_wide(to)) {
         if (ssasem.is_wide(from)) { return r; }
         return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
@@ -796,9 +848,24 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
+    if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_wide(f.values[ins.result]))); }
     return field_get(r, f, ins);
+}
+
+// The map ops at the one shape this boundary admits: a string key column
+// (keykind 0, no derived equality symbol) over a narrow scalar value column
+// (widekind 0, no value pointerness, so no value retain or consume). An insert
+// is handed the key's unit, which `kconsume` tells the runtime to hold rather
+// than retain and to release when an overwrite supersedes it; `owncols` makes
+// the map the sole owner of both column buffers, so a grow frees the buffer it
+// replaced instead of leaking it.
+function map_op(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(0, "")); }
+    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(0, false, false, true, true, false, "", 0)); }
+    if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(0, "")); }
+    return emit(r, ir.op_map_get_or(0, "", 0));
 }
 
 // A field read at the width its type names. Every slot is 8 bytes on every
@@ -807,11 +874,19 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
 // half, and the schema this boundary verified the projection against is what
 // says so.
 function load_width(t: typeinfo.Type): i32 {
-    if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
+    if (ssasem.is_wide(t) || ssasem.is_float(t)) { return 64; }
     return 0;
 }
+// An environment record is the closure box, physically the word array the
+// lift builds: its field k is the box's slot k, read with the array op, since
+// only the register backends give a record's fields and an array's elements
+// the same stride.
 function field_get(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var t: typeinfo.Type = f.values[ins.result];
+    if (semtypes.is_env(f.values[ins.args[0]])) {
+        r = emit(r, ir.op_const_i32(ins.imm));
+        return emit(r, ir.op_arr_get(32));
+    }
     if (ssasem.is_wide(t)) { return emit(r, ir.op_struct_get_i64(ins.imm)); }
     return emit(r, ir.op_struct_get(ins.imm, load_width(t)));
 }
@@ -844,13 +919,14 @@ function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
 
 // A builtin union's box is a tag word and one payload word: the tag IS the
 // variant's position in the schema, so a test compares it and a projection
-// reads the single payload without a field index. The payloadless variant is
-// the one at position 1 — `op_opt_none` writes that tag itself — because
-// neither Some nor Ok is ever built without a payload.
+// reads the single payload without a field index. `op_opt_none` writes the
+// tag at position 1 itself; an Ok carrying `void` is the box at position 0
+// with a zero payload word, as the writers hand it back.
 function option_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irlower.LowerResult {
     var tag: i32 = variant_tag(f, whole, ins.str);
     if (ins.kind_tag == ssasem.variant_new()) {
-        if (ins.args.len() == 0) { return emit(r, ir.op_opt_none()); }
+        if (ins.args.len() == 0 && tag == 1) { return emit(r, ir.op_opt_none()); }
+        if (ins.args.len() == 0) { r = emit(r, ir.op_const_i32(0)); }
         return emit(r, ir.op_opt_make(tag));
     }
     if (ins.kind_tag == ssasem.variant_is()) {
@@ -875,6 +951,7 @@ function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) { return emit(r, ir.op_const_i64_text(ins.str)); }
     if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) { return emit(r, ir.op_const_i32_text(ins.str)); }
     if (ins.kind_tag == 1 && ssasem.is_f64(f.values[ins.result])) { return emit(r, ir.op_const_f64_text(ins.str)); }
+    if (ins.kind_tag == 1 && ssasem.is_f32(f.values[ins.result])) { return round_f32(emit(r, ir.op_const_f64_text(ins.str))); }
     if (ins.kind_tag == 5) { return emit(r, ir.op_const_str(ins.str)); }
     return emit(r, ir.op_const_i32(ins.imm));
 }
@@ -883,7 +960,7 @@ function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
 // the operand's own width or the two sides of the subtraction disagree; a
 // float has its own sign-flip opcode and pushes nothing.
 function negation_zero(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_f64(f.values[ins.args[0]])) { return emit(r, zero(f.values[ins.args[0]])); }
+    if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]])) { return emit(r, zero(f.values[ins.args[0]])); }
     return r;
 }
 
@@ -892,6 +969,7 @@ function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
 function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
+    if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { return emit(function_site(r, ins), ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { return emit(append_push(r, f, ins), ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
@@ -975,6 +1053,50 @@ function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
     return emit(r, ir.op_load_local(scratch));
 }
 
+// A cell is a one-element array box shared by every holder, built over the
+// one element it takes.
+function cell_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.cell_get()) { return cell_read(r, f, ins); }
+    if (ins.kind_tag == ssasem.cell_set()) { return cell_write(r, f, ins); }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, arr_make_op(semtypes.cell_elem(f.values[ins.result]), 1));
+    return emit(r, ir.op_store_local(ins.result));
+}
+
+// A read hands out a unit of the element: the slot is loaded and, for a
+// reference, retained, since a later write may release what the slot held
+// while the value read is still in hand.
+function cell_read(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = f.values[ins.result];
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, arr_get_op(elem));
+    r = emit(r, ir.op_store_local(ins.result));
+    if (reference(elem)) { r = helper(r, ins.result, "__fern_rc_inc"); }
+    return r;
+}
+
+// A write releases what the slot held, stores the unit it was supplied and
+// leaves the dummy a statement op leaves for the store of its void result.
+function cell_write(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = f.values[ins.args[1]];
+    if (reference(elem)) {
+        var old: i32 = f.graph.nvals;
+        r = reserve(r, old + 1);
+        r = emit(r, ir.op_load_local(ins.args[0]));
+        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, arr_get_op(elem));
+        r = emit(r, ir.op_store_local(old));
+        r = drop_value(r, old, elem, old + 1, f);
+    }
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, arr_set_op(elem));
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_store_local(ins.result));
+}
+
 // A closure value and the call through one. The value is the env box the
 // lambda lift builds: the body's address in slot 0, then the captures, which
 // is the layout `irlower.lower_call_named` gives the same `__mkclo$` marker.
@@ -1033,6 +1155,16 @@ function union_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "stat") { return Lowered { found: true, r: emit(r, ir.op_stat()) }; }
     if (ins.str == "lstat") { return Lowered { found: true, r: emit(r, ir.op_lstat()) }; }
     if (ins.str == "read_line") { return Lowered { found: true, r: emit(emit(r, ir.op_const_i32(0)), ir.op_read_line()) }; }
+    return outcome_builtin_site(r, ins);
+}
+
+// The builtins whose result is the outcome of a write: `Result[void, IoError]`.
+function outcome_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "write_file") { return Lowered { found: true, r: emit(r, ir.op_write_file()) }; }
+    if (ins.str == "write_file_exec") { return Lowered { found: true, r: emit(r, ir.op_write_file_exec()) }; }
+    if (ins.str == "create_dir_all") { return Lowered { found: true, r: emit(r, ir.op_create_dir_all()) }; }
+    if (ins.str == "remove_dir_all") { return Lowered { found: true, r: emit(r, ir.op_remove_dir_all()) }; }
+    if (ins.str == "remove_file") { return Lowered { found: true, r: emit(r, ir.op_remove_file()) }; }
     return Lowered { found: false, r: r };
 }
 
@@ -1042,18 +1174,92 @@ function union_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 function value_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "args") { return Lowered { found: true, r: emit(r, ir.op_args()) }; }
     if (ins.str == "putchar") { return Lowered { found: true, r: emit(r, ir.op_putchar()) }; }
+    if (ins.str == "f32_bits") { return Lowered { found: true, r: emit(r, ir.op_f32_bits()) }; }
     if (ins.str == "f32_from_bits") { return Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) }; }
     if (ins.str == "__rc_underflow_count") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) }; }
     if (ins.str == "__arr_push_shared_count") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) }; }
     if (ins.str == "__arr_push_shared_bytes") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_bytes()) }; }
+    return builder_builtin_site(r, ins);
+}
+
+// The string builder's ops: a handle is a value, and the statement ops push
+// the dummy a statement op pushes.
+function builder_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "buf_new") { return Lowered { found: true, r: emit(r, ir.op_buf_new()) }; }
+    if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
+    if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
+    if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
+    if (ins.str == "buf_push_u64") { return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) }; }
+    if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }
+    if (ins.str == "buf_take") { return Lowered { found: true, r: emit(r, ir.op_buf_take()) }; }
+    if (ins.str == "buf_free") { return Lowered { found: true, r: emit(r, ir.op_buf_free()) }; }
     return Lowered { found: false, r: r };
 }
 
-// A name neither half owns is a runtime helper with a symbol of its own, which
-// a direct call reaches.
+// The runtime intrinsics: each is the stack IR op the AST lowering emits for
+// the same call, so a contract here is only half the work — without the op the
+// name reaches the backends as a direct call to a symbol no runtime defines.
+function intrinsic_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    var kind: string = irlower.f64_math_builtin_kind(ins.str);
+    if (kind != "") { return Lowered { found: true, r: emit(r, ir.op_funary(kind)) }; }
+    if (ins.str == "__pow_f64") { return Lowered { found: true, r: emit(r, ir.op_fbin("fpow")) }; }
+    var bits: Lowered = bit_count_site(r, ins);
+    if (bits.found) { return bits; }
+    var mem: Lowered = raw_memory_site(r, ins);
+    if (mem.found) { return mem; }
+    return byte_scan_site(r, ins);
+}
+
+// One op per operand width, the width riding the op rather than the name.
+function bit_count_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "__clz32") { return Lowered { found: true, r: emit(r, ir.op_clz(32)) }; }
+    if (ins.str == "__ctz32") { return Lowered { found: true, r: emit(r, ir.op_ctz(32)) }; }
+    if (ins.str == "__popcount32") { return Lowered { found: true, r: emit(r, ir.op_popcount(32)) }; }
+    if (ins.str == "__clz64") { return Lowered { found: true, r: emit(r, ir.op_clz(64)) }; }
+    if (ins.str == "__ctz64") { return Lowered { found: true, r: emit(r, ir.op_ctz(64)) }; }
+    if (ins.str == "__popcount64") { return Lowered { found: true, r: emit(r, ir.op_popcount(64)) }; }
+    return Lowered { found: false, r: r };
+}
+
+// The raw-memory escape hatches. The byte load has no op of its own: it is the
+// two-operand raw load at a constant zero offset, which is also what keeps the
+// address at full pointer width.
+function raw_memory_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "__alloc") { return Lowered { found: true, r: emit(r, ir.op_alloc()) }; }
+    if (ins.str == "__alloc_u8") { return Lowered { found: true, r: emit(r, ir.op_alloc_u8()) }; }
+    if (ins.str == "__free") { return Lowered { found: true, r: emit(r, ir.op_free()) }; }
+    if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
+    if (ins.str == "__heap_bump_bytes") { return Lowered { found: true, r: emit(r, ir.op_heap_bump_bytes()) }; }
+    if (ins.str == "__heap_mark") { return Lowered { found: true, r: emit(r, ir.op_heap_mark()) }; }
+    if (ins.str == "__heap_release_to") { return Lowered { found: true, r: emit(r, ir.op_heap_release_to()) }; }
+    if (ins.str == "__memcpy") { return Lowered { found: true, r: emit(r, ir.op_memcpy()) }; }
+    if (ins.str == "__memset") { return Lowered { found: true, r: emit(r, ir.op_memset()) }; }
+    if (ins.str == "__load_u8") { return Lowered { found: true, r: emit(emit(r, ir.op_const_i32(0)), ir.op_raw_load8()) }; }
+    if (ins.str == "__load_i32") { return Lowered { found: true, r: emit(r, ir.op_load_i32()) }; }
+    if (ins.str == "__load_i64") { return Lowered { found: true, r: emit(r, ir.op_load_i64()) }; }
+    if (ins.str == "__load_ptr") { return Lowered { found: true, r: emit(r, ir.op_load_ptr()) }; }
+    if (ins.str == "__store_i32") { return Lowered { found: true, r: emit(r, ir.op_store_i32()) }; }
+    if (ins.str == "__store_i64") { return Lowered { found: true, r: emit(r, ir.op_store_i64()) }; }
+    if (ins.str == "__store_ptr") { return Lowered { found: true, r: emit(r, ir.op_store_ptr()) }; }
+    return Lowered { found: false, r: r };
+}
+
+// The byte scans over a lent string.
+function byte_scan_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "__sum_bytes") { return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) }; }
+    if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
+    if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
+    if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }
+    if (ins.str == "__mismatch") { return Lowered { found: true, r: emit(r, ir.op_mismatch()) }; }
+    return Lowered { found: false, r: r };
+}
+
+// A name no half owns is a runtime helper with a symbol of its own, which a
+// direct call reaches.
 function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     var done: Lowered = union_builtin_site(r, ins);
     if (!done.found) { done = value_builtin_site(r, ins); }
+    if (!done.found) { done = intrinsic_site(r, ins); }
     if (done.found) { return done.r; }
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
@@ -1196,7 +1402,7 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     // in irlower; grep that shape when adding one.
     var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name,
         ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
-         "FRESHSELF:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
+         "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
     if let typeinfo.TypeTuple(tup) = f.result {
         tuples = tuples.append(name);
         var flags: string = tuple_flags(tup);
@@ -1204,9 +1410,18 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     }
     if (scalar_array(f.result)) { arrays = arrays.append("ARROWN:" + name); }
     if (box_only_result(f)) { arrays = arrays.append(name); }
+    // The counted-return class ("CNTRET:") is read through two more fields of
+    // its own, so erasing the prefixed row alone would leave the caller still
+    // told the result carries a count: cnt_struct_ret_fns names the callee and
+    // cnt_handback_params its bare-returned positions. A result this boundary
+    // lowered carries the contract above instead — one counted reference whose
+    // release is the caller's — and an AST caller that ALSO gave back a
+    // handback's extra count would release twice. Both go with the row.
     var tiers: string[] = counted_tiers(f, modes);
     var borrows: string[] = borrow_rows(sg.borrowable_params, name, tiers);
     return irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays,
+        cnt_struct_ret_fns: without_rows(sg.cnt_struct_ret_fns, name, [""]),
+        cnt_handback_params: without_rows(sg.cnt_handback_params, name, [""]),
         param_counted: counted_rows(sg.param_counted, name, tiers),
         borrowable_params: borrows, borrow_bare: irlower.borrow_reg_bare_index(borrows) };
 }

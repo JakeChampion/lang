@@ -1,0 +1,1541 @@
+// dd.fern — GNU-compatible `dd`.
+//
+//   dd [OPERAND]...
+//
+// dd takes OPERANDS rather than options: `name=value`, in any order,
+// and a repeat of a name replaces the earlier one. Nothing here is a
+// `-x` flag, so `dd -n` is an unrecognized operand rather than an
+// unknown option, and `--help` / `--version` are the only two arguments
+// that are not `name=value` at all.
+//
+// ## The numbers
+//
+// Every count is gnulib's `xstrtoumax` over the multiplier suffixes —
+// `1b` is 512, `1kB` is 1000, `1K` and `1KiB` are 1024 — with one
+// addition dd makes on top: an `x` between two of them MULTIPLIES, so
+// `bs=1kx2` is 2048 and `count=2x3x4` is 24. A malformed number is
+// `invalid number: 'NNN'` and exits 1 before anything is opened.
+//
+// ## What the report says
+//
+//     0+1 records in
+//     0+1 records out
+//     10 bytes copied, 6.3384e-05 s, 158 kB/s
+//
+// The first two lines are FULL+PARTIAL record counts: a read that
+// returned fewer bytes than `ibs` is a partial record in, and a write
+// of fewer than `obs` is a partial record out. `status=noxfer` drops
+// the third line, `status=none` drops all of them, and the third line
+// is the one no test can compare — it carries a duration and a rate.
+import "std/string";
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "./lib/gnu";
+
+// ---- the operand names -----------------------------------------------------
+// `iseek` and `oseek` are pure aliases for `skip` and `seek`, so a run
+// naming both takes the LAST of the pair as it does for any other
+// repeat: `skip=1 iseek=3` skips 3 and `iseek=3 skip=1` skips 1.
+function op_names(): string[] {
+  return ["bs", "cbs", "conv", "count", "ibs", "if", "iflag", "iseek", "obs", "of", "oflag", "oseek", "seek", "skip", "status"];
+}
+
+// ---- conv= ------------------------------------------------------------------
+//
+// The flags are a SET: `conv=ucase,swab` is both, and a name that is
+// not one is `invalid conversion: 'NAME'`. Only the ones a caller can
+// observe here are listed; the EBCDIC pair and `sparse` need tables and
+// a hole-punching write that this build does not have yet.
+function conv_names(): string[] {
+  return ["block", "unblock", "lcase", "ucase", "swab", "sync", "excl", "nocreat", "notrunc", "noerror", "fdatasync", "fsync"];
+}
+
+function conv_bits(): i32[] {
+  return [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+}
+
+function conv_block(): i32 {
+  return 1;
+}
+
+function conv_unblock(): i32 {
+  return 2;
+}
+
+function conv_lcase(): i32 {
+  return 4;
+}
+
+function conv_ucase(): i32 {
+  return 8;
+}
+
+function conv_swab(): i32 {
+  return 16;
+}
+
+function conv_sync(): i32 {
+  return 32;
+}
+
+function conv_excl(): i32 {
+  return 64;
+}
+
+function conv_nocreat(): i32 {
+  return 128;
+}
+
+function conv_notrunc(): i32 {
+  return 256;
+}
+
+function conv_noerror(): i32 {
+  return 512;
+}
+
+function conv_fdatasync(): i32 {
+  return 1024;
+}
+
+function conv_fsync(): i32 {
+  return 2048;
+}
+
+// ---- iflag= / oflag= --------------------------------------------------------
+//
+// The three `_bytes` flags reinterpret `count`, `skip` and `seek` as
+// byte counts rather than block counts, and `fullblock` makes a short
+// read keep reading instead of counting as a partial record. `append`
+// is the one that changes the OPEN.
+function flag_names(): string[] {
+  return ["append", "count_bytes", "fullblock", "nonblock", "seek_bytes", "skip_bytes"];
+}
+
+function flag_bits(): i32[] {
+  return [1, 2, 4, 8, 16, 32];
+}
+
+function flag_append(): i32 {
+  return 1;
+}
+
+function flag_count_bytes(): i32 {
+  return 2;
+}
+
+function flag_fullblock(): i32 {
+  return 4;
+}
+
+function flag_nonblock(): i32 {
+  return 8;
+}
+
+function flag_seek_bytes(): i32 {
+  return 16;
+}
+
+function flag_skip_bytes(): i32 {
+  return 32;
+}
+
+// ---- status= ----------------------------------------------------------------
+function status_default(): i32 {
+  return 0;
+}
+
+function status_none(): i32 {
+  return 1;
+}
+
+function status_noxfer(): i32 {
+  return 2;
+}
+
+function status_progress(): i32 {
+  return 3;
+}
+
+function status_names(): string[] {
+  return ["none", "noxfer", "progress"];
+}
+
+// ---- settings ---------------------------------------------------------------
+struct Settings { in_name: string, out_name: string, have_in: boolean, have_out: boolean, ibs: i64, obs: i64, cbs: i64, count: i64, have_count: boolean, skip: i64, seek: i64, conv: i32, iflag: i32, oflag: i32, status: i32 }
+
+function settings_new(): Settings {
+  return Settings { in_name: "", out_name: "", have_in: false, have_out: false, ibs: 512 as i64, obs: 512 as i64, cbs: 0 as i64, count: 0 as i64, have_count: false, skip: 0 as i64, seek: 0 as i64, conv: 0, iflag: 0, oflag: 0, status: status_default() };
+}
+
+// ---- the number grammar -----------------------------------------------------
+//
+// One number per `x`-separated piece, multiplied together: `1kx2` is
+// 2048 and `2x3x4` is 24. A piece is `xstrtoumax` over the block
+// suffixes plus the two dd adds of its own — `c` is 1 and `w` is 2, so
+// `3w` is 6 and a bare `c` is 1 — and neither of those two takes the
+// `iB` form or a second multiplier, so `1ciB` and `1kc` are refused.
+//
+// A piece that is not a number at all, an empty piece (`1x`, `x2`, ``),
+// or a value past INTMAX_MAX makes the WHOLE operand invalid, quoted as
+// it was given. The two refusals are different lines:
+// `invalid number: 'q'` against
+// `invalid number: '1e99': Value too large for defined data type`.
+//
+// `positive` is what separates `bs=0` (invalid) from `count=0` (a run
+// that copies nothing): a block size has to be a size.
+//
+// A piece ending in `B` counts BYTES rather than blocks — a no-op on a
+// block size, and the `count_bytes` / `skip_bytes` / `seek_bytes` flag
+// on the three counts. The letter is read off the piece's END, so the
+// multiplier grammar's own endings carry it (`1kB` is 1000 bytes and
+// `1KiB` is 1024) and a `B` left over after a number or a block suffix
+// is dropped (`2B` is 2, `1bB` is 512). One `B` anywhere in the product
+// makes the whole operand a byte count, so `1cx7Bx2` is 14 bytes.
+struct Num { value: i64, status: i32, bytes: boolean }
+
+// `num_bad` is a piece that is not a number, `num_over` one whose value
+// does not fit; they are the two diagnostics bad_number chooses
+// between.
+function num_bad(): i32 {
+  return 1;
+}
+
+function num_over(): i32 {
+  return 2;
+}
+
+function piece_units(p: string): (u64, i32) {
+  if (p.len() == 0) {
+    return (0 as u64, 1);
+  }
+  var last: u8 = p[p.len() - 1];
+  if (last != b'c' && last != b'w') {
+    return gnu.parse_units(p);
+  }
+  var scale: u64 = 1 as u64;
+  if (last == b'w') {
+    scale = 2 as u64;
+  }
+  var head: string = slice_unchecked(p, 0, p.len() - 1) + "";
+  if (head.len() == 0) {
+    return (scale, 0);
+  }
+  var got: (u64, i32) = gnu.parse_number(head);
+  if (got.1 != 0) {
+    return got;
+  }
+  match (got.0.checked_mul(scale)) {
+    Some(m) => {
+      return (m, 0);
+    },
+    None => {
+      return (0 as u64, 3);
+    }
+  }
+}
+
+function parse_num(v: string, positive: boolean): Num {
+  var total: u64 = 1 as u64;
+  var bytes: boolean = false;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  var pieces: i32 = 0;
+  while (i <= v.len()) {
+    if (i == v.len() || v[i] == b'x') {
+      var piece: string = slice_unchecked(v, start, i) + "";
+      // A single zero in front of an `x` reads as the start of a hex
+      // literal, which this grammar has no notion of, so GNU says what
+      // the value really is rather than refusing it. `00x3` is the
+      // spelling that means it.
+      if (piece == "0" && i < v.len()) {
+        gnu.error("warning: '0x' is a zero multiplier; use '00x' if that is intended");
+      }
+      var marked: boolean = piece.len() > 0 && piece[piece.len() - 1] == b'B';
+      var got: (u64, i32) = piece_units(piece);
+      if (marked && gnu.count_malformed(got.1)) {
+        got = piece_units(slice_unchecked(piece, 0, piece.len() - 1) + "");
+      }
+      if (gnu.count_malformed(got.1)) {
+        return Num { value: 0 as i64, status: num_bad(), bytes: false };
+      }
+      if (gnu.count_overflow(got.1) || got.0 > 9223372036854775807 as u64) {
+        return Num { value: 0 as i64, status: num_over(), bytes: false };
+      }
+      match (total.checked_mul(got.0)) {
+        Some(m) => {
+          total = m;
+        },
+        None => {
+          return Num { value: 0 as i64, status: num_over(), bytes: false };
+        }
+      }
+      if (total > 9223372036854775807 as u64) {
+        return Num { value: 0 as i64, status: num_over(), bytes: false };
+      }
+      bytes = bytes || marked;
+      pieces = pieces + 1;
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if (pieces == 0) {
+    return Num { value: 0 as i64, status: num_bad(), bytes: false };
+  }
+  if (positive && total == 0 as u64) {
+    return Num { value: 0 as i64, status: num_bad(), bytes: false };
+  }
+  return Num { value: total as i64, status: 0, bytes: bytes };
+}
+
+// A `-` anywhere in the value is refused before the pieces are read:
+// strtoumax would take `-1` as a huge unsigned, and GNU's own check
+// rejects the sign first — `count=-1` is `invalid number: '-1'`, not
+// 18446744073709551615.
+function has_sign(v: string): boolean {
+  var i: i32 = 0;
+  while (i < v.len()) {
+    if (v[i] == b'-') {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function bad_number(v: string, status: i32): void {
+  var msg: string = "invalid number: " + gnu.quote(v);
+  if (status == num_over()) {
+    msg = msg + ": Value too large for defined data type";
+  }
+  gnu.error(msg);
+  exit(1);
+}
+
+function number_operand(v: string, positive: boolean): Num {
+  if (has_sign(v)) {
+    bad_number(v, num_bad());
+  }
+  var got: Num = parse_num(v, positive);
+  if (got.status != 0) {
+    bad_number(v, got.status);
+  }
+  return got;
+}
+
+// ---- the comma-separated sets ----------------------------------------------
+//
+// `conv=`, `iflag=` and `oflag=` are each a comma-separated list of
+// names from their own vocabulary, and each has its own wording for a
+// name that is not in it. An empty list is one empty NAME, which is
+// how `conv=` reports `invalid conversion: ''`.
+function parse_set(v: string, names: string[], bits: i32[], wording: string): i32 {
+  var out: i32 = 0;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= v.len()) {
+    if (i == v.len() || v[i] == b',') {
+      var name: string = slice_unchecked(v, start, i) + "";
+      var at: i32 = index_in(names, name);
+      if (at < 0) {
+        gnu.error("invalid " + wording + ": " + gnu.quote(name));
+        gnu.try_help(1);
+      }
+      out = out | bits[at];
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function index_in(names: string[], name: string): i32 {
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// ---- the operand scan -------------------------------------------------------
+//
+// `name=value`, and the FIRST `=` splits it: `of=a=b` writes to the
+// file called `a=b`. An argument with no `=` at all, or one whose name
+// is not an operand, is `unrecognized operand '<arg>'` — the whole
+// argument, not just the name. A repeated name replaces: the last
+// `if=` wins.
+//
+// `bs=` is not a third size beside `ibs` and `obs`: it SETS both, and
+// then also promises that a read and the write that follows it move in
+// one piece, which is what makes `bs=` differ from `ibs=N obs=N` on a
+// short read.
+struct Scan { s: Settings, bs_given: boolean }
+
+// A `B` on one of the three counts is the matching `*_bytes` flag, which
+// is also spellable as `iflag=count_bytes` and its two siblings. Both
+// reach the same bit, so a run naming both has named it once.
+function bytes_bit(n: Num, bit: i32): i32 {
+  if (n.bytes) {
+    return bit;
+  }
+  return 0;
+}
+
+function scan_operands(argv: string[]): Scan {
+  var s: Settings = settings_new();
+  var bs_given: boolean = false;
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    var eq: i32 = find_eq(a);
+    if (eq < 0) {
+      gnu.error("unrecognized operand " + gnu.quote(a));
+      gnu.try_help(1);
+    }
+    var name: string = slice_unchecked(a, 0, eq) + "";
+    var value: string = slice_unchecked(a, eq + 1, a.len()) + "";
+    if (index_in(op_names(), name) < 0) {
+      gnu.error("unrecognized operand " + gnu.quote(a));
+      gnu.try_help(1);
+    }
+    if (name == "if") {
+      s = Settings { ...s, in_name: value, have_in: true };
+    } else if (name == "of") {
+      s = Settings { ...s, out_name: value, have_out: true };
+    } else if (name == "bs") {
+      var b: Num = number_operand(value, true);
+      s = Settings { ...s, ibs: b.value, obs: b.value };
+      bs_given = true;
+    } else if (name == "ibs") {
+      var ib: Num = number_operand(value, true);
+      s = Settings { ...s, ibs: ib.value };
+    } else if (name == "obs") {
+      var ob: Num = number_operand(value, true);
+      s = Settings { ...s, obs: ob.value };
+    } else if (name == "cbs") {
+      var cb: Num = number_operand(value, true);
+      s = Settings { ...s, cbs: cb.value };
+    } else if (name == "count") {
+      var cn: Num = number_operand(value, false);
+      s = Settings { ...s, count: cn.value, have_count: true, iflag: s.iflag | bytes_bit(cn, flag_count_bytes()) };
+    } else if (name == "skip" || name == "iseek") {
+      var sn: Num = number_operand(value, false);
+      s = Settings { ...s, skip: sn.value, iflag: s.iflag | bytes_bit(sn, flag_skip_bytes()) };
+    } else if (name == "seek" || name == "oseek") {
+      var kn: Num = number_operand(value, false);
+      s = Settings { ...s, seek: kn.value, oflag: s.oflag | bytes_bit(kn, flag_seek_bytes()) };
+    } else if (name == "conv") {
+      s = Settings { ...s, conv: s.conv | parse_set(value, conv_names(), conv_bits(), "conversion") };
+    } else if (name == "iflag") {
+      s = Settings { ...s, iflag: s.iflag | parse_set(value, flag_names(), flag_bits(), "input flag") };
+    } else if (name == "oflag") {
+      s = Settings { ...s, oflag: s.oflag | parse_set(value, flag_names(), flag_bits(), "output flag") };
+    } else {
+      s = Settings { ...s, status: status_operand(value) };
+    }
+    i = i + 1;
+  }
+  return Scan { s: s, bs_given: bs_given };
+}
+
+function find_eq(a: string): i32 {
+  var i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] == b'=') {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function status_operand(v: string): i32 {
+  var at: i32 = index_in(status_names(), v);
+  if (at < 0) {
+    gnu.error("invalid status level: " + gnu.quote(v));
+    gnu.try_help(1);
+  }
+  return at + 1;
+}
+
+// ---- the counts the report prints ------------------------------------------
+//
+// A record IN is one read: full when it returned `ibs` bytes and
+// partial when it returned fewer. A record OUT is one write of `obs`
+// bytes, and the short flush at the end is the partial one. They are
+// counted separately because the two sizes need not match — `ibs=3
+// obs=4` over ten bytes is `3+1 records in` and `2+1 records out`.
+struct Counts { full_in: i64, part_in: i64, full_out: i64, part_out: i64, bytes: i64, truncated: i64 }
+
+function counts_new(): Counts {
+  return Counts { full_in: 0 as i64, part_in: 0 as i64, full_out: 0 as i64, part_out: 0 as i64, bytes: 0 as i64, truncated: 0 as i64 };
+}
+
+// ---- the byte conversions ---------------------------------------------------
+//
+// `conv=lcase` and `conv=ucase` are C-locale `tolower` / `toupper`: the
+// twenty-six ASCII letters and NOTHING else. A byte over 0x7F is not a
+// letter in this locale and reaches the output as it stands, invalid
+// UTF-8 included — a Unicode case mapping would rewrite `é` and replace
+// a stray 0xFF with U+FFFD, and for a utility whose whole job is to copy
+// BYTES that is corruption. Built once per run, since a table per record
+// is what made this the slowest thing in the program.
+function case_table(conv: i32): u8[] {
+  var t: u8[] = __alloc_u8(256);
+  var up: boolean = (conv & conv_ucase()) != 0;
+  var down: boolean = (conv & conv_lcase()) != 0;
+  var i: i32 = 0;
+  while (i < 256) {
+    var b: i32 = i;
+    if (up && i >= 97 && i <= 122) {
+      b = i - 32;
+    } else if (down && i >= 65 && i <= 90) {
+      b = i + 32;
+    }
+    t = t.with(i, b as u8);
+    i = i + 1;
+  }
+  return t;
+}
+
+function apply_case(piece: string, tab: u8[], conv: i32): string {
+  if ((conv & (conv_ucase() | conv_lcase())) == 0) {
+    return piece;
+  }
+  var n: i32 = piece.len();
+  var buf: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    buf = buf.with(i, tab[piece[i] as i32]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
+}
+
+// conv=swab exchanges every pair of bytes, and it pairs them across the
+// whole STREAM rather than within a record: a record of odd length holds
+// its last byte over to the next one, which is why ten bytes read three
+// at a time still come out `badcfehgji` — the same answer a single
+// ten-byte read gives. The byte only reaches the output unpaired when
+// the input ends holding it.
+struct Swab { held: boolean, byte: u8 }
+
+function swab_new(): Swab {
+  return Swab { held: false, byte: 0 as u8 };
+}
+
+// The output length is exact: one byte is carried over when the bytes
+// available — the record plus whatever was held — are an odd number and
+// this is not the last call.
+function apply_swab(sw: Swab, data: string, last: boolean): (Swab, string) {
+  var n: i32 = data.len();
+  var avail: i32 = n;
+  if (sw.held) {
+    avail = avail + 1;
+  }
+  var outlen: i32 = avail;
+  if (!last && avail - avail / 2 * 2 == 1) {
+    outlen = outlen - 1;
+  }
+  var buf: u8[] = __alloc_u8(outlen);
+  var out: Swab = sw;
+  var i: i32 = 0;
+  var j: i32 = 0;
+  if (out.held && n > 0) {
+    buf = buf.with(0, data[0]);
+    buf = buf.with(1, out.byte);
+    out = Swab { held: false, byte: 0 as u8 };
+    i = 1;
+    j = 2;
+  }
+  while (i + 1 < n) {
+    buf = buf.with(j, data[i + 1]);
+    buf = buf.with(j + 1, data[i]);
+    i = i + 2;
+    j = j + 2;
+  }
+  if (i < n) {
+    out = Swab { held: true, byte: data[i] };
+  }
+  if (last && out.held) {
+    buf = buf.with(j, out.byte);
+    out = Swab { held: false, byte: 0 as u8 };
+  }
+  return (out, string_from_bytes_unchecked(buf));
+}
+
+// conv=sync pads a short read out to `ibs`, with NULs normally and with
+// SPACES when a record conversion is in play — a block of spaces is a
+// short line there, where a block of NULs would be a line of them.
+function apply_sync(piece: string, s: Settings): string {
+  if (piece.len() as i64 >= s.ibs) {
+    return piece;
+  }
+  var pad: i32 = (s.ibs - piece.len() as i64) as i32;
+  var fill: u8 = 0 as u8;
+  if ((s.conv & (conv_block() | conv_unblock())) != 0) {
+    fill = 32 as u8;
+  }
+  var h: usize = buf_new(piece.len() + pad);
+  buf_push(h, piece);
+  var i: i32 = 0;
+  while (i < pad) {
+    buf_push_byte(h, fill as i32);
+    i = i + 1;
+  }
+  return buf_take(h);
+}
+
+// ---- the output side --------------------------------------------------------
+//
+// Without `bs=`, bytes are assembled into `obs`-sized blocks: the
+// records OUT are those writes, and whatever is left over at the end is
+// the one partial record. With `bs=` each input block is written as it
+// came, which is why a short read there is a short WRITE rather than a
+// byte or two held back for the next block.
+//
+// A short write is not an error and not a second record: the loop
+// finishes the block, exactly as GNU's does, and only a failing write
+// reports `error writing 'NAME': <strerror>`.
+struct Sink { w: Writer, buf: usize, held: i32, obs: i32, name: string, c: Counts, ok: boolean }
+
+function sink_new(w: Writer, name: string, obs: i32, c: Counts): Sink {
+  return Sink { w: w, buf: buf_new(obs * 2), held: 0, obs: obs, name: name, c: c, ok: true };
+}
+
+function write_full(k: Sink, data: string, partial: boolean): Sink {
+  var off: i32 = 0;
+  while (off < data.len()) {
+    var piece: string = data;
+    if (off > 0) {
+      piece = slice_unchecked(data, off, data.len()) + "";
+    }
+    match (k.w.write_some(piece)) {
+      Err(e) => {
+        gnu.error("error writing " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+        return Sink { ...k, ok: false };
+      },
+      Ok(n) => {
+        if (n == 0 as i64) {
+          off = data.len();
+        } else {
+          off = off + n as i32;
+        }
+      }
+    }
+  }
+  var c: Counts = k.c;
+  if (partial) {
+    c = Counts { ...c, part_out: c.part_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
+  } else {
+    c = Counts { ...c, full_out: c.full_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
+  }
+  return Sink { ...k, c: c };
+}
+
+// `sink_direct` is the `bs=` path: one write per input block, counted
+// full when it was a whole block and partial when the read was short.
+function sink_direct(k: Sink, data: string): Sink {
+  if (data.len() == 0) {
+    return k;
+  }
+  return write_full(k, data, data.len() < k.obs);
+}
+
+// `sink_push` is the assembling path: hold the bytes, and write every
+// time a whole `obs` block has accumulated.
+function sink_push(k: Sink, data: string): Sink {
+  var out: Sink = k;
+  var off: i32 = 0;
+  while (off < data.len()) {
+    var room: i32 = out.obs - out.held;
+    var take: i32 = data.len() - off;
+    if (take > room) {
+      take = room;
+    }
+    buf_push_range(out.buf, data, off, off + take);
+    out = Sink { ...out, held: out.held + take };
+    off = off + take;
+    if (out.held == out.obs) {
+      var block: string = buf_take(out.buf);
+      out = write_full(out, block, false);
+      out = Sink { ...out, held: 0 };
+      if (!out.ok) {
+        return out;
+      }
+    }
+  }
+  return out;
+}
+
+// The last, short block. Nothing held is nothing written — not a record
+// of zero bytes.
+function sink_flush(k: Sink): Sink {
+  if (k.held == 0) {
+    return k;
+  }
+  var block: string = buf_take(k.buf);
+  var out: Sink = write_full(k, block, true);
+  return Sink { ...out, held: 0 };
+}
+
+// ---- the input side ---------------------------------------------------------
+//
+// One `read_chunk` is one record, however few bytes it returned — which
+// is what makes `0+2 records in` the honest answer for a pipe that
+// dribbled two bytes at a time into a 4-byte block. `iflag=fullblock`
+// asks for the other reading: keep reading until the block is full or
+// the input ends, so the same two dribbles become `1+0`.
+struct Take { data: string, ok: boolean, eof: boolean }
+
+function read_record(r: Reader, s: Settings, want: i32, name: string): Take {
+  match (r.read_chunk(want)) {
+    Err(e) => {
+      gnu.error("error reading " + gnu.quote(name) + ": " + gnu.io_error_text(e));
+      return Take { data: "", ok: false, eof: true };
+    },
+    Ok(first) => {
+      if (first.len() == 0) {
+        return Take { data: "", ok: true, eof: true };
+      }
+      if ((s.iflag & flag_fullblock()) == 0 || first.len() == want) {
+        return Take { data: first, ok: true, eof: false };
+      }
+      return fill_block(r, s, want, name, first);
+    }
+  }
+}
+
+// `iflag=fullblock`: keep reading into the same record until it holds a
+// whole block. The end of the input stops it short, and that record is
+// the partial one.
+function fill_block(r: Reader, s: Settings, want: i32, name: string, first: string): Take {
+  var h: usize = buf_new(want);
+  buf_push(h, first);
+  var have: i32 = first.len();
+  while (have < want) {
+    match (r.read_chunk(want - have)) {
+      Err(e) => {
+        buf_free(h);
+        gnu.error("error reading " + gnu.quote(name) + ": " + gnu.io_error_text(e));
+        return Take { data: "", ok: false, eof: true };
+      },
+      Ok(more) => {
+        if (more.len() == 0) {
+          have = want;
+        } else {
+          buf_push(h, more);
+          have = have + more.len();
+        }
+      }
+    }
+  }
+  return Take { data: buf_take(h), ok: true, eof: false };
+}
+
+// ---- the copy ---------------------------------------------------------------
+//
+// `count` is a number of RECORDS unless `iflag=count_bytes` makes it a
+// number of bytes, and the same pair of readings applies to `skip` and
+// `seek` through their own flags.
+struct Run { c: Counts, status: i32, progressed: boolean }
+
+// One `\r`-prefixed transfer line per second of a `status=progress` run,
+// its seconds a whole number rather than the `%g` the final line prints.
+// GNU's tick is a one-second alarm whose handler only raises a flag, so
+// the line is written where the copy loop next looks at it; this one is
+// the same look at a block boundary, with no handler to install. A
+// record that takes longer than a second therefore produces ONE line
+// rather than one per second elapsed, on either implementation. No
+// newline: the next line overwrites this one, and the run's own report
+// writes the one that ends the last of them.
+// The seconds a progress line carries are ROUNDED, not truncated: an
+// elapsed 1.7 s reads `2 s` and 2.6 s reads `3 s`.
+function whole_seconds(ns: i64): i64 {
+  return (ns + 500000000 as i64) / (1000000000 as i64);
+}
+
+function progress_line(bytes: i64, sec: i64): void {
+  var w: Writer = stderr();
+  match (w.write("\r" + transfer_line(bytes, sec as f64))) {
+    Some(_) => {},
+    None => {}
+  }
+}
+
+function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64): Run {
+  var k: Sink = k0;
+  var st: Rec = rec_new(s.cbs as i32);
+  var sw: Swab = swab_new();
+  var records: i64 = 0 as i64;
+  var bytes_left: i64 = s.count;
+  var count_bytes: boolean = (s.iflag & flag_count_bytes()) != 0;
+  var status: i32 = 0;
+  var last_tick: i64 = started;
+  var progressed: boolean = false;
+  var tab: u8[] = case_table(s.conv);
+  while (true) {
+    if (s.have_count) {
+      if (count_bytes) {
+        if (bytes_left <= 0 as i64) {
+          break;
+        }
+      } else if (records >= s.count) {
+        break;
+      }
+    }
+    var want: i32 = s.ibs as i32;
+    if (s.have_count && count_bytes && bytes_left < s.ibs) {
+      want = bytes_left as i32;
+    }
+    var got: Take = read_record(r, s, want, in_name);
+    if (!got.ok) {
+      if ((s.conv & conv_noerror()) == 0) {
+        return Run { c: k.c, status: 1, progressed: progressed };
+      }
+      status = 1;
+      break;
+    }
+    if (got.eof) {
+      break;
+    }
+    var c: Counts = k.c;
+    if (got.data.len() as i64 == s.ibs) {
+      c = Counts { ...c, full_in: c.full_in + 1 as i64 };
+    } else {
+      c = Counts { ...c, part_in: c.part_in + 1 as i64 };
+    }
+    k = Sink { ...k, c: c };
+    records = records + 1 as i64;
+    bytes_left = bytes_left - got.data.len() as i64;
+    var conv1: (Swab, string) = convert_record(sw, tab, got.data, s, false);
+    sw = conv1.0;
+    var piece: string = conv1.1;
+    if (records_wanted(s)) {
+      var conv: (Rec, string) = apply_records(st, piece, s, false);
+      st = conv.0;
+      piece = conv.1;
+      k = sink_push(k, piece);
+    } else if (bs_given && !rewrites_bytes(s)) {
+      k = sink_direct(k, piece);
+    } else {
+      k = sink_push(k, piece);
+    }
+    if (!k.ok) {
+      return Run { c: k.c, status: 1, progressed: progressed };
+    }
+    if (s.status == status_progress()) {
+      var now: i64 = monotonic_ns();
+      if (now - last_tick >= 1000000000 as i64) {
+        last_tick = now;
+        progress_line(k.c.bytes, whole_seconds(now - started));
+        progressed = true;
+      }
+    }
+  }
+  // The byte a `conv=swab` is holding when the input ends has nothing
+  // to pair with, and reaches the output as it stands.
+  if (sw.held) {
+    var tailsw: (Swab, string) = apply_swab(sw, "", true);
+    sw = tailsw.0;
+    k = sink_push(k, tailsw.1);
+    if (!k.ok) {
+      return Run { c: k.c, status: 1, progressed: progressed };
+    }
+  }
+  // The line a record conversion is still holding when the input ends
+  // is a record too, so the flush comes before the last short write.
+  if (records_wanted(s)) {
+    var tail: (Rec, string) = apply_records(st, "", s, true);
+    st = tail.0;
+    k = sink_push(k, tail.1);
+    if (!k.ok) {
+      return Run { c: k.c, status: 1, progressed: progressed };
+    }
+  }
+  k = sink_flush(k);
+  if (!k.ok) {
+    return Run { c: k.c, status: 1, progressed: progressed };
+  }
+  var c: Counts = Counts { ...k.c, truncated: st.trunc };
+  return Run { c: c, status: status, progressed: progressed };
+}
+
+// The conversions that rewrite a record's bytes, in GNU's order: the
+// byte pairs first, then the case, then the padding that makes a short
+// record a whole one.
+function convert_record(sw: Swab, tab: u8[], data: string, s: Settings, last: boolean): (Swab, string) {
+  var out: string = data;
+  var state: Swab = sw;
+  if ((s.conv & conv_swab()) != 0) {
+    var swapped: (Swab, string) = apply_swab(state, out, last);
+    state = swapped.0;
+    out = swapped.1;
+  }
+  out = apply_case(out, tab, s.conv);
+  if ((s.conv & conv_sync()) != 0) {
+    out = apply_sync(out, s);
+  }
+  return (state, out);
+}
+
+// ---- the record conversions -------------------------------------------------
+//
+// `conv=block` and `conv=unblock` convert between LINES and fixed-width
+// records of `cbs` bytes, and neither can be done a read at a time: a
+// line spans reads, so the state is carried across them.
+//
+//   block:   each newline-terminated line becomes one cbs-sized record,
+//            padded with spaces and with the newline dropped. A line
+//            LONGER than cbs is cut to it and counted as a truncated
+//            record. A last line with no newline is still a record.
+//
+//   unblock: each cbs-sized record loses its trailing spaces and gains
+//            a newline. A record of nothing but spaces becomes a bare
+//            newline, and only TRAILING spaces go — `a b ` is `a b`.
+//
+// Neither is on unless `cbs` was given: `conv=block` alone copies the
+// bytes through, which is what GNU does with it.
+struct Rec { pend: usize, len: i32, drop: boolean, cbs: i32, trunc: i64 }
+
+function rec_new(cbs: i32): Rec {
+  return Rec { pend: buf_new(cbs + 1), len: 0, drop: false, cbs: cbs, trunc: 0 as i64 };
+}
+
+// One line out: the bytes held, padded with spaces to `cbs`.
+function rec_emit_block(st: Rec, out: usize): Rec {
+  var line: string = buf_take(st.pend);
+  buf_push(out, line);
+  var pad: i32 = st.cbs - line.len();
+  var i: i32 = 0;
+  while (i < pad) {
+    buf_push_byte(out, 32);
+    i = i + 1;
+  }
+  return Rec { ...st, len: 0, drop: false };
+}
+
+function conv_block_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
+  var out: usize = buf_new(data.len() + rc.cbs + 1);
+  var st: Rec = rc;
+  var i: i32 = 0;
+  while (i < data.len()) {
+    if (data[i] == b'\n') {
+      st = rec_emit_block(st, out);
+    } else if (st.drop) {
+      st = st;
+    } else if (st.len == st.cbs) {
+      st = Rec { ...st, drop: true, trunc: st.trunc + 1 as i64 };
+    } else {
+      buf_push_byte(st.pend, data[i] as i32);
+      st = Rec { ...st, len: st.len + 1 };
+    }
+    i = i + 1;
+  }
+  if (last && (st.len > 0 || st.drop)) {
+    st = rec_emit_block(st, out);
+  }
+  return (st, buf_take(out));
+}
+
+// One record out: the bytes held with their trailing spaces dropped,
+// and a newline.
+function rec_emit_unblock(st: Rec, out: usize): Rec {
+  var record: string = buf_take(st.pend);
+  var end: i32 = record.len();
+  while (end > 0 && record[end - 1] == b' ') {
+    end = end - 1;
+  }
+  buf_push_range(out, record, 0, end);
+  buf_push_byte(out, 10);
+  return Rec { ...st, len: 0 };
+}
+
+function conv_unblock_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
+  var out: usize = buf_new(data.len() + rc.cbs + 1);
+  var st: Rec = rc;
+  var i: i32 = 0;
+  while (i < data.len()) {
+    buf_push_byte(st.pend, data[i] as i32);
+    st = Rec { ...st, len: st.len + 1 };
+    if (st.len == st.cbs) {
+      st = rec_emit_unblock(st, out);
+    }
+    i = i + 1;
+  }
+  if (last && st.len > 0) {
+    st = rec_emit_unblock(st, out);
+  }
+  return (st, buf_take(out));
+}
+
+// Whether a conversion changes the LENGTH of a record, which is what
+// decides whether `bs=` still writes one block per read: swab holds a
+// byte back, sync pads one out, and the record conversions do both — so
+// the output goes through the obs assembly instead and the records OUT
+// stay obs-sized. That is why `bs=3 conv=swab` over ten bytes reports
+// `3+1 records out` rather than the `1+3` a per-record write gives. The
+// case conversions are NOT here: they rewrite bytes one for one, so a
+// per-record write gives the same counts and saves the assembly copy.
+function rewrites_bytes(s: Settings): boolean {
+  var mask: i32 = conv_swab() | conv_sync() | conv_block() | conv_unblock();
+  return (s.conv & mask) != 0;
+}
+
+// Whether a record conversion is in play at all, which needs both the
+// flag and a `cbs` to convert to.
+function records_wanted(s: Settings): boolean {
+  return s.cbs > 0 as i64 && (s.conv & (conv_block() | conv_unblock())) != 0;
+}
+
+function apply_records(st: Rec, data: string, s: Settings, last: boolean): (Rec, string) {
+  if ((s.conv & conv_block()) != 0) {
+    return conv_block_apply(st, data, last);
+  }
+  return conv_unblock_apply(st, data, last);
+}
+
+// ---- the report -------------------------------------------------------------
+//
+// Two lines always, a third unless `status=noxfer`, and none at all
+// under `status=none`. Nothing here carries the `dd: ` prefix a
+// diagnostic does — these are the run's own summary, not a complaint.
+//
+// The third line is the one line of this utility that NO test can
+// compare: it carries the elapsed time and a rate derived from it. The
+// corpus therefore runs every case under `status=noxfer` or
+// `status=none`, and the shape of the third line is pinned by a test of
+// its own rather than against GNU's own answer.
+function report(c: Counts, s: Settings, secs: f64): void {
+  if (s.status == status_none()) {
+    return;
+  }
+  eprint(c.full_in.to_string() + "+" + c.part_in.to_string() + " records in");
+  eprint(c.full_out.to_string() + "+" + c.part_out.to_string() + " records out");
+  if (c.truncated > 0 as i64) {
+    var word: string = " truncated records";
+    if (c.truncated == 1 as i64) {
+      word = " truncated record";
+    }
+    eprint(c.truncated.to_string() + word);
+  }
+  if (s.status == status_noxfer()) {
+    return;
+  }
+  eprint(transfer_line(c.bytes, secs));
+}
+
+// `N bytes copied, T s, R/s`, with the two human-readable spellings in
+// parentheses once the count reaches 1000 — GNU prints `10 bytes
+// copied` bare and `2048 bytes (2.0 kB, 2.0 KiB) copied`.
+function transfer_line(bytes: i64, secs: f64): string {
+  var out: string = bytes.to_string() + " bytes";
+  if (bytes >= 1000 as i64) {
+    out = out + " (" + human(bytes, 1000 as i64, "B") + ", " + human(bytes, 1024 as i64, "iB") + ")";
+  }
+  out = out + " copied, " + fmt_g(secs) + " s, ";
+  var rate: f64 = 0.0;
+  if (secs > 0.0) {
+    rate = bytes as f64 / secs;
+  }
+  return out + human_rate(rate) + "/s";
+}
+
+// One decimal place below ten, none at or above it, and the unit
+// letters in the order both scales use.
+function human(n: i64, base: i64, tail: string): string {
+  // The IEC prefix for 1024 is an uppercase K where the SI one for 1000
+  // is lower case: `2.0 kB, 2.0 KiB`.
+  var units: string[] = ["k", "M", "G", "T", "P", "E"];
+  if (base == 1024 as i64) {
+    units = ["K", "M", "G", "T", "P", "E"];
+  }
+  var v: f64 = n as f64;
+  var b: f64 = base as f64;
+  var i: i32 = 0;
+  while (v >= b && i < units.len()) {
+    v = v / b;
+    i = i + 1;
+  }
+  if (i == 0) {
+    return n.to_string() + " B";
+  }
+  return one_decimal(v) + " " + units[i - 1] + tail;
+}
+
+function human_rate(rate: f64): string {
+  var units: string[] = ["kB", "MB", "GB", "TB", "PB", "EB"];
+  var v: f64 = rate / 1000.0;
+  var i: i32 = 0;
+  while (v >= 1000.0 && i + 1 < units.len()) {
+    v = v / 1000.0;
+    i = i + 1;
+  }
+  return one_decimal(v) + " " + units[i];
+}
+
+// Below ten, one digit after the point; at or above it, none — and the
+// value is never rounded up into the next unit here, which is what
+// `999.95` would do with a naive round.
+function one_decimal(v: f64): string {
+  if (v >= 100.0) {
+    return (v.round() as i64).to_string();
+  }
+  if (v >= 10.0) {
+    return (v.round() as i64).to_string();
+  }
+  var scaled: i64 = (v * 10.0).round() as i64;
+  return (scaled / (10 as i64)).to_string() + "." + (scaled % (10 as i64)).to_string();
+}
+
+// `%g` for the seconds: six significant digits, fixed while the
+// exponent is in [-4, 6) and scientific outside it, with the trailing
+// zeros of the fraction dropped either way. `0.0505787` and
+// `6.3384e-05` are both this.
+function fmt_g(v: f64): string {
+  if (v == 0.0) {
+    return "0";
+  }
+  var exp: i32 = decimal_exponent(v);
+  if (exp < 0 - 4 || exp >= 6) {
+    var mant: f64 = v / pow10(exp);
+    return trim_zeros(mant.to_string_prec(5)) + "e" + exp_text(exp);
+  }
+  var prec: i32 = 5 - exp;
+  if (prec < 0) {
+    prec = 0;
+  }
+  return trim_zeros(v.to_string_prec(prec));
+}
+
+function decimal_exponent(v: f64): i32 {
+  var e: i32 = 0;
+  var x: f64 = v;
+  if (x < 0.0) {
+    x = 0.0 - x;
+  }
+  while (x >= 10.0) {
+    x = x / 10.0;
+    e = e + 1;
+  }
+  while (x < 1.0) {
+    x = x * 10.0;
+    e = e - 1;
+  }
+  return e;
+}
+
+function pow10(e: i32): f64 {
+  var out: f64 = 1.0;
+  var i: i32 = 0;
+  while (i < e) {
+    out = out * 10.0;
+    i = i + 1;
+  }
+  var j: i32 = 0;
+  while (j > e) {
+    out = out / 10.0;
+    j = j - 1;
+  }
+  return out;
+}
+
+// The exponent is always signed and always at least two digits, as C's
+// `%g` writes it: `6.3384e-05`, not `6.3384e-5`.
+function exp_text(e: i32): string {
+  var sign: string = "+";
+  var mag: i32 = e;
+  if (e < 0) {
+    sign = "-";
+    mag = 0 - e;
+  }
+  var digits: string = mag.to_string();
+  if (mag < 10) {
+    digits = "0" + digits;
+  }
+  return sign + digits;
+}
+
+function trim_zeros(s: string): string {
+  if (s.index_of(".") < 0) {
+    return s;
+  }
+  var end: i32 = s.len();
+  while (end > 0 && s[end - 1] == b'0') {
+    end = end - 1;
+  }
+  if (end > 0 && s[end - 1] == b'.') {
+    end = end - 1;
+  }
+  return slice_unchecked(s, 0, end) + "";
+}
+
+// ---- --help / --version -----------------------------------------------------
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPERAND]...\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Copy a file, converting and formatting according to the operands.\n";
+  out = out + "\n";
+  out = out + "  bs=BYTES        read and write up to BYTES bytes at a time (default: 512);\n";
+  out = out + "                  overrides ibs and obs\n";
+  out = out + "  cbs=BYTES       convert BYTES bytes at a time\n";
+  out = out + "  conv=CONVS      convert the file as per the comma separated symbol list\n";
+  out = out + "  count=N         copy only N input blocks\n";
+  out = out + "  ibs=BYTES       read up to BYTES bytes at a time (default: 512)\n";
+  out = out + "  if=FILE         read from FILE instead of stdin\n";
+  out = out + "  iflag=FLAGS     read as per the comma separated symbol list\n";
+  out = out + "  obs=BYTES       write BYTES bytes at a time (default: 512)\n";
+  out = out + "  of=FILE         write to FILE instead of stdout\n";
+  out = out + "  oflag=FLAGS     write as per the comma separated symbol list\n";
+  out = out + "  seek=N          (or oseek=N) skip N obs-sized output blocks\n";
+  out = out + "  skip=N          (or iseek=N) skip N ibs-sized input blocks\n";
+  out = out + "  status=LEVEL    the LEVEL of information to print to stderr;\n";
+  out = out + "                  'none' suppresses everything but error messages,\n";
+  out = out + "                  'noxfer' suppresses the final transfer statistics,\n";
+  out = out + "                  'progress' shows periodic transfer statistics\n";
+  out = out + "\n";
+  out = out + "N and BYTES may be followed by the following multiplicative suffixes:\n";
+  out = out + "c=1, w=2, b=512, kB=1000, K=1024, MB=1000*1000, M=1024*1024, xM=M,\n";
+  out = out + "GB=1000*1000*1000, G=1024*1024*1024, and so on for T, P, E, Z, Y, R, Q.\n";
+  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out = out + "If N ends in 'B', it counts bytes not blocks.\n";
+  out = out + "\n";
+  out = out + "Each CONV symbol may be:\n";
+  out = out + "\n";
+  out = out + "  block     pad newline-terminated records with spaces to cbs-size\n";
+  out = out + "  unblock   replace trailing spaces in cbs-size records with newline\n";
+  out = out + "  lcase     change upper case to lower case\n";
+  out = out + "  ucase     change lower case to upper case\n";
+  out = out + "  swab      swap every pair of input bytes\n";
+  out = out + "  sync      pad every input block with NULs to ibs-size; when used\n";
+  out = out + "            with block or unblock, pad with spaces rather than NULs\n";
+  out = out + "  excl      fail if the output file already exists\n";
+  out = out + "  nocreat   do not create the output file\n";
+  out = out + "  notrunc   do not truncate the output file\n";
+  out = out + "  noerror   continue after read errors\n";
+  out = out + "  fdatasync  physically write output file data before finishing\n";
+  out = out + "  fsync     likewise, but also write metadata\n";
+  out = out + "\n";
+  out = out + "Each FLAG symbol may be:\n";
+  out = out + "\n";
+  out = out + "  append    append mode (makes sense only for output; conv=notrunc suggested)\n";
+  out = out + "  count_bytes  treat 'count=N' as a byte count (iflag only)\n";
+  out = out + "  fullblock  accumulate full blocks of input (iflag only)\n";
+  out = out + "  nonblock  use non-blocking I/O\n";
+  out = out + "  seek_bytes  treat 'seek=N' as a byte count (oflag only)\n";
+  out = out + "  skip_bytes  treat 'skip=N' as a byte count (iflag only)\n";
+  out = out + "\n";
+  out = out + "Options are:\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+function usage(status: i32): void {
+  if (status == 0) {
+    gnu.write_out(help_text());
+    exit(0);
+  }
+  gnu.error(help_text());
+  exit(status);
+}
+
+// ---- the operands that are options ----------------------------------------
+//
+// `--help` and `--version` are recognized ANYWHERE in the argument list
+// and answer before anything is opened, so `dd if=x --help` prints the
+// usage. Any other `--name` is an unrecognized OPTION — the one
+// diagnostic here that does not say "operand", since a leading `-` is
+// how GNU tells the two apart. A bare `-` is an operand, and an
+// unrecognized one.
+function scan_options(argv: string[]): void {
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "--help") {
+      usage(0);
+    }
+    if (a == "--version") {
+      gnu.write_out(gnu.prog() + " (Fern coreutils) " + gnu.version() + "\n");
+      exit(0);
+    }
+    if (a.len() > 2 && a[0] == b'-' && a[1] == b'-') {
+      gnu.error("unrecognized option " + gnu.quote(a));
+      gnu.try_help(1);
+    }
+    i = i + 1;
+  }
+}
+
+// ---- opening the two ends ---------------------------------------------------
+//
+// `if=` missing is standard input and `of=` missing is standard output,
+// and neither is opened by name — which is also why `if=-` is a file
+// called `-` rather than standard input, as GNU's own open shows.
+//
+// The output open is the interesting one. GNU opens it
+// `O_WRONLY|O_CREAT` and then decides what to do about the LENGTH:
+// with `seek=` and no `conv=notrunc` it truncates at the seek offset,
+// so the bytes before the seek survive and everything after it is cut;
+// with neither it truncates to nothing; with `conv=notrunc` it leaves
+// the file as it found it. `conv=excl` and `conv=nocreat` change the
+// open itself, and `oflag=append` makes every write land at the end.
+function open_input(s: Settings): (Reader, boolean) {
+  if (!s.have_in) {
+    return (stdin(), true);
+  }
+  var flags: i32 = 0;
+  if ((s.iflag & flag_nonblock()) != 0) {
+    flags = 2;
+  }
+  match (open_reader_with(s.in_name, flags)) {
+    Err(e) => {
+      gnu.error("failed to open " + gnu.quote(s.in_name) + ": " + gnu.io_error_text(e));
+      return (stdin(), false);
+    },
+    Ok(r) => {
+      return (r, true);
+    }
+  }
+}
+
+function open_output(s: Settings): (Writer, boolean) {
+  if (!s.have_out) {
+    return (stdout(), true);
+  }
+  if ((s.conv & conv_excl()) != 0) {
+    match (open_exclusive(s.out_name)) {
+      Err(e) => {
+        gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+        return (stdout(), false);
+      },
+      Ok(w) => {
+        return (w, true);
+      }
+    }
+  }
+  if ((s.oflag & flag_append()) != 0) {
+    return open_out_appending(s);
+  }
+  var flags: i32 = 1;
+  if ((s.conv & conv_nocreat()) != 0) {
+    flags = 0;
+  }
+  if ((s.oflag & flag_nonblock()) != 0) {
+    flags = flags | 2;
+  }
+  match (open_writer_with(s.out_name, flags)) {
+    Err(e) => {
+      gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+      return (stdout(), false);
+    },
+    Ok(w) => {
+      return (w, true);
+    }
+  }
+}
+
+// `oflag=append` is O_APPEND, which `open_appender` is — plus the
+// O_CREAT `of=` wants anyway. Every write lands at the end whatever the
+// offset says, so `seek=` there moves nothing.
+function open_out_appending(s: Settings): (Writer, boolean) {
+  match (open_appender(s.out_name)) {
+    Err(e) => {
+      gnu.error("failed to open " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+      return (stdout(), false);
+    },
+    Ok(w) => {
+      return (w, true);
+    }
+  }
+}
+
+// ---- skip and seek ----------------------------------------------------------
+//
+// `skip=` moves the INPUT and `seek=` the output, both in blocks of
+// their own side's size unless the matching `_bytes` flag makes them
+// byte counts. A seekable input jumps; one that cannot seek — a pipe —
+// is read forward and the bytes thrown away, which is the only way to
+// skip a stream. When neither works the run says
+// `'NAME': cannot skip to specified offset` and carries on from where
+// it is, as GNU does, rather than failing.
+function skip_input(r: Reader, s: Settings): boolean {
+  var want: i64 = s.skip;
+  if (want <= 0 as i64) {
+    return true;
+  }
+  if ((s.iflag & flag_skip_bytes()) == 0) {
+    want = want * s.ibs;
+  }
+  match (r.seek(want, 0)) {
+    Ok(_) => {
+      return past_end(r, s, want);
+    },
+    Err(_) => {}
+  }
+  return drain(r, s, want);
+}
+
+// A seek PAST the end of a regular file is not an error — lseek takes
+// any offset — so the warning has to come from the length: `skip=10` on
+// a ten-byte file is silent and `skip=11` is not.
+function past_end(r: Reader, s: Settings, want: i64): boolean {
+  match (r.stat()) {
+    Ok(st) => {
+      if (st.is_file && want > st.size) {
+        cannot_skip(s);
+      }
+    },
+    Err(_) => {}
+  }
+  return true;
+}
+
+// The operand's own name, unquoted unless it needs it, and the PHRASE
+// GNU uses for the stream it was not given — which is quoted, because
+// it is not a file name.
+function cannot_skip(s: Settings): void {
+  if (!s.have_in) {
+    gnu.error(gnu.quote("standard input") + ": cannot skip to specified offset");
+    return;
+  }
+  gnu.error(gnu.quotef(s.in_name) + ": cannot skip to specified offset");
+}
+
+// The forward read a pipe needs. A short read is fine; the end of the
+// input before the offset is what GNU warns about.
+function drain(r: Reader, s: Settings, want: i64): boolean {
+  var left: i64 = want;
+  while (left > 0 as i64) {
+    var take: i32 = s.ibs as i32;
+    if (left < s.ibs) {
+      take = left as i32;
+    }
+    match (r.read_chunk(take)) {
+      Err(_) => {
+        cannot_skip(s);
+        return true;
+      },
+      Ok(piece) => {
+        if (piece.len() == 0) {
+          cannot_skip(s);
+          return true;
+        }
+        left = left - piece.len() as i64;
+      }
+    }
+  }
+  return true;
+}
+
+// The output side. `seek=` past the end of the file leaves a hole, and
+// without `conv=notrunc` the file is cut at the seek offset — so the
+// bytes BEFORE it survive and everything after is gone, which is what
+// separates `dd of=f seek=2` (a 5-byte file after three bytes are
+// written) from the same run with `conv=notrunc` (a 10-byte one).
+function seek_output(w: Writer, s: Settings, name: string): boolean {
+  var want: i64 = s.seek;
+  if ((s.oflag & flag_seek_bytes()) == 0) {
+    want = want * s.obs;
+  }
+  if (want > 0 as i64) {
+    match (w.seek(want, 0)) {
+      Err(e) => {
+        gnu.error("failed to seek in " + gnu.quote(name) + ": " + gnu.io_error_text(e));
+        return false;
+      },
+      Ok(_) => {}
+    }
+  }
+  if ((s.conv & conv_notrunc()) != 0) {
+    return true;
+  }
+  if (!s.have_out) {
+    return true;
+  }
+  match (w.truncate(want)) {
+    Some(_) => {
+      return true;
+    },
+    None => {}
+  }
+  return true;
+}
+
+// ---- main -------------------------------------------------------------------
+function main(): void {
+  var argv: string[] = args();
+  scan_options(argv);
+  var scan: Scan = scan_operands(argv);
+  var s: Settings = scan.s;
+  if ((s.conv & conv_block()) != 0 && (s.conv & conv_unblock()) != 0) {
+    gnu.error("cannot combine block and unblock");
+    exit(1);
+  }
+  var ri: (Reader, boolean) = open_input(s);
+  if (!ri.1) {
+    exit(1);
+  }
+  var wo: (Writer, boolean) = open_output(s);
+  if (!wo.1) {
+    exit(1);
+  }
+  var r: Reader = ri.0;
+  var w: Writer = wo.0;
+  if (!skip_input(r, s)) {
+    exit(1);
+  }
+  if (!seek_output(w, s, s.out_name)) {
+    exit(1);
+  }
+  var started: i64 = monotonic_ns();
+  var k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new());
+  var run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
+  var status: i32 = run.status;
+  // A `conv=fdatasync` the descriptor cannot answer becomes a full
+  // `fsync`: EINVAL there is the descriptor saying it has no data-only
+  // sync rather than a failure to report, which is why a run over
+  // /dev/null reports `fsync failed` and not `fdatasync failed`. Any
+  // other errno is the fdatasync's own.
+  var want_fsync: boolean = (s.conv & conv_fsync()) != 0;
+  if ((s.conv & conv_fdatasync()) != 0) {
+    match (w.fdatasync()) {
+      Some(e) => {
+        if (gnu.io_error_text(e) == "Invalid argument") {
+          want_fsync = true;
+        } else {
+          gnu.error("fdatasync failed for " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+          status = 1;
+        }
+      },
+      None => {}
+    }
+  }
+  if (want_fsync) {
+    match (w.fsync()) {
+      Some(e) => {
+        gnu.error("fsync failed for " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+        status = 1;
+      },
+      None => {}
+    }
+  }
+  var secs: f64 = (monotonic_ns() - started) as f64 / 1000000000.0;
+  if (run.progressed) {
+    eprint("");
+  }
+  report(run.c, s, secs);
+  if (s.have_out) {
+    w.close();
+  }
+  if (s.have_in) {
+    r.close();
+  }
+  exit(status);
+}

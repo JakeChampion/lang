@@ -597,6 +597,32 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_reader_seek")
+				case "__fern_writer_seek":
+					// (w, offset, whence) → i32 — lseek of the
+					// handle; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add("__fern_writer_seek")
+				case "__fern_reader_flags", "__fern_writer_flags":
+					// (h) → i32 — the handle's open flags as
+					// Fern's three bits; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add(callDirectAlias(op.Str))
+				case "__fern_handle_isatty":
+					// (h) → i32 — 0 / 1, and nothing to box.
+					needs.add("__fern_handle_isatty")
+				case "__fern_writer_write_some":
+					// (w, s_data, s_len) → i32 — one write and
+					// the count; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_writer_write_some")
 				case "__fern_writer_truncate":
 					// (w, length) → i32 — ftruncate of the
 					// handle; Option[IoError].
@@ -642,6 +668,18 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_open_exclusive")
+				case "__fern_open_reader_with":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_open_reader_with")
+				case "__fern_open_writer_with":
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_open_writer_with")
 				case "__fern_string_from_bytes":
 					// (bs: u8[]) → (data, len) — copies the byte
 					// array's payload into a fresh string. Inline
@@ -913,7 +951,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
 				case "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
-					"buf_len", "buf_take", "buf_free":
+					"buf_push_u64", "buf_len", "buf_take", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
 					needs.add(op.Str)
@@ -1138,6 +1176,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_byte":          {"__fern_buf_reserve"},
+	"buf_push_u64":           {"__fern_buf_reserve"},
 	"buf_free":               {"__fern_box_free"},
 	// The slice header is an rc1 block; as_bytes also promotes an inline
 	// string's bytes through the bare allocator.
@@ -1164,12 +1203,17 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_open_writer":       {"__wasi_errno_of_code"},
 	"__fern_open_appender":     {"__wasi_errno_of_code"},
 	"__fern_open_exclusive":    {"__wasi_errno_of_code"},
+	"__fern_open_reader_with":  {"__wasi_errno_of_code"},
+	"__fern_open_writer_with":  {"__wasi_errno_of_code"},
 	"__fern_reader_read_chunk": {"__wasi_errno_of_code"},
 	"__fern_fd_stat":           {"__wasi_errno_of_code"},
 	"__fern_fd_fsync":          {"__wasi_errno_of_code"},
 	"__fern_fd_fdatasync":      {"__wasi_errno_of_code"},
 	"__fern_fd_syncfs":         {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
+	"__fern_writer_seek":       {"__wasi_errno_of_code"},
+	"__fern_reader_flags":      {"__wasi_errno_of_code"},
+	"__fern_writer_flags":      {"__wasi_errno_of_code"},
 	"__fern_writer_truncate":   {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
@@ -1219,10 +1263,11 @@ var helperResultBoxCallers = []string{
 	"__fern_env", "__fern_read_line",
 	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file",
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
-	"__fern_open_exclusive",
+	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
 	"__fern_reader_close_fd", "__fern_writer_close",
-	"__fern_writer_write", "__fern_reader_read_line_fd",
-	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek",
+	"__fern_writer_write", "__fern_writer_write_some", "__fern_reader_read_line_fd",
+	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek", "__fern_writer_seek",
+	"__fern_reader_flags", "__fern_writer_flags",
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
@@ -1986,6 +2031,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufPushByteBody,
 	},
+	"buf_push_u64": {
+		// (h, v) → (). The eight bytes of v, least significant first.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: nil,
+		body:    buildBufPushU64Body,
+	},
 	"buf_len": {
 		// (h) → count.
 		params:  []byte{encode.ValtypeI32},
@@ -2665,6 +2716,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildOpenAppenderBody,
 	},
+	"__fern_open_reader_with": {
+		// (path_data, path_len, flags) → i32 — heap-form
+		// Result[Reader, IoError] under Fern's flags word: bit 0 CREATE,
+		// bit 1 NONBLOCK.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenReaderWithBody,
+	},
+	"__fern_open_writer_with": {
+		// (path_data, path_len, flags) → i32 — heap-form
+		// Result[Writer, IoError]: write rights, neither TRUNCATE nor
+		// APPEND, under the same flags word.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenWriterWithBody,
+	},
 	"__fern_open_exclusive": {
 		// (path_data, path_len) → i32 — heap-form
 		// Result[Writer, IoError]. Opens with CREATE + EXCLUSIVE, so a
@@ -2697,6 +2764,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriterWriteBody,
+	},
+	"__fern_writer_write_some": {
+		// (w, s_data, s_len) → i32 — heap-form
+		// Result[i64, IoError]: ONE fd_write and the count the
+		// host reported, where the helper above loops until the
+		// whole string has landed. See wasi_write_some.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterWriteSomeBody,
 	},
 	"__fern_reader_read_line_fd": {
 		// (r: i32) → i32 — heap-form Option[string]. Reads
@@ -2750,6 +2826,38 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderSeekBody,
+	},
+	"__fern_writer_seek": {
+		// (w, offset: i64, whence) → i32 — heap-form
+		// Result[i64, IoError]: lseek of the handle's fd, the same
+		// body as the Reader's on preview 1, where a handle is its
+		// fd; preview 2 has its own (wasi_writer_seek.go).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderSeekBody,
+	},
+	"__fern_reader_flags": {
+		// (r) → i32 — heap-form Result[i64, IoError]: the handle's
+		// open flags as Fern's three bits. See wasi_fd_flags.go.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdFlagsBody,
+	},
+	"__fern_writer_flags": {
+		// (w) → i32 — the same on preview 1, where a handle is its
+		// fd; preview 2 answers per handle kind (wasi_fd_flags.go).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdFlagsBody,
+	},
+	"__fern_handle_isatty": {
+		// (h) → i32 (0 / 1) — is the handle a terminal? Preview 1
+		// asks the same fd_fdstat_get question `isatty` does, since a
+		// handle there IS its fd; preview 2 has no fd table and
+		// answers no, as its free `isatty` does (wasi.go).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildIsattyBody,
 	},
 	"__fern_writer_truncate": {
 		// (w, length: i64) → i32 — heap-form Option[IoError]:
@@ -4609,7 +4717,7 @@ func buildStrbufTakeBody(idxs map[string]uint32) []byte {
 
 // The capacity-carrying string builder (#8773) — `buf_new(cap)` /
 // `buf_push(b, s)` / `buf_push_range(b, s, lo, hi)` / `buf_push_byte(b, x)` /
-// `buf_len(b)` / `buf_take(b)` / `buf_free(b)`. Unlike the singleton strbuf
+// `buf_push_u64(b, v)` / `buf_len(b)` / `buf_take(b)` / `buf_free(b)`. Unlike the singleton strbuf
 // above there may be any number of builders live at once, so the state moves
 // out of the scratch words and into a control block the handle addresses.
 // Four i32 words on wasm32:
@@ -4897,6 +5005,31 @@ func buildBufPushByteBody(idxs map[string]uint32) []byte {
 	body = bufDst(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = memory.InstI32Store8(body, 0, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+}
+
+// buildBufPushU64Body assembles wasm bytes for buf_push_u64.
+//
+// Signature: (h i32, v i64) → (). Locals: $need (2).
+//
+// The destination is wherever the builder's length left it, so the store is
+// unaligned as often as not — which wasm allows: the alignment immediate is a
+// hint about the address, never a constraint on it.
+func buildBufPushU64Body(idxs map[string]uint32) []byte {
+	reserve := idxs["__fern_buf_reserve"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 2)
+	body = bufReserveCall(body, reserve, 0, 2)
+	body = bufDst(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI64Store(body, 3, 0)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Store(body, 2, 4)

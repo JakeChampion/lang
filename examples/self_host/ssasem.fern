@@ -62,6 +62,13 @@ pub function str_as(): i32 { return 0 - 18; }
 pub function with(): i32 { return 0 - 19; }
 pub function closure_new(): i32 { return 0 - 20; }
 pub function call_value(): i32 { return 0 - 21; }
+pub function cell_new(): i32 { return 0 - 22; }
+pub function cell_get(): i32 { return 0 - 23; }
+pub function cell_set(): i32 { return 0 - 24; }
+pub function map_new(): i32 { return 0 - 25; }
+pub function map_insert(): i32 { return 0 - 26; }
+pub function map_has(): i32 { return 0 - 27; }
+pub function map_get_or(): i32 { return 0 - 28; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -112,6 +119,16 @@ pub function is_u64(t: typeinfo.Type): boolean {
 // The types that need a 64-bit slot of their own, which only wasm spells out.
 pub function is_wide(t: typeinfo.Type): boolean { return is_i64(t) || is_u64(t); }
 
+// The pointer-width unsigned integer: an address, riding the narrow slot,
+// which is the address's own width on every backend — 32 bits on wasm, the
+// whole 64-bit slot on the register backends. It converts to and from the
+// 64-bit integers and nothing else: an operator at it would run at the i32's
+// width on a register backend, which is not the address's.
+pub function is_usize(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == typeinfo.width_ptr() && i.unsigned && !i.is_char; }
+    return false;
+}
+
 // The integer types read without a sign bit. It is what a widening extends by
 // and which form of the sign-reading operators — the orderings, the right
 // shift, division and remainder — the operand takes.
@@ -124,13 +141,24 @@ pub function is_f64(t: typeinfo.Type): boolean {
     return false;
 }
 
+// The 32-bit float rides the f64's slot at single precision: every value of
+// the type is an f64 the f32 round-trip has already rounded, so the width is
+// a rounding applied wherever a value of the type is made — a constant, a
+// conversion, an operator's result — rather than a slot of its own.
+pub function is_f32(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeFloat(fl) = t { return fl.width == 32 && !fl.polymorphic; }
+    return false;
+}
+
+pub function is_float(t: typeinfo.Type): boolean { return is_f64(t) || is_f32(t); }
+
 // The integer types this vocabulary admits. An operator is written for one of
 // them at a time: both operands carry the same type and so does the result.
 // The checker auto-widens the narrower side of a mixed-width operator, but the
 // tree this producer reads is not rewritten with that conversion, so a mixed
 // operator is refused here rather than guessed at.
 pub function is_integer(t: typeinfo.Type): boolean {
-    return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t);
+    return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
 // A constant whose value has no i32 immediate to ride carries the literal's
@@ -167,15 +195,56 @@ pub function is_view(t: typeinfo.Type): boolean {
 // operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
 
+// A unicode scalar. Every integer predicate here excludes it, so without a key
+// of its own it spells what the fall-through leaf does.
+pub function is_char(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.is_char; }
+    return false;
+}
+
 // A function value: the env box a closure is carried in.
 pub function is_func(t: typeinfo.Type): boolean {
     if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
 }
 
+pub function is_map(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeMap(_) = t { return true; }
+    return false;
+}
+
+pub function map_key(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeMap(m) = t { return m.key; }
+    return typeinfo.unchecked();
+}
+
+pub function map_value(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeMap(m) = t { return m.value; }
+    return typeinfo.unchecked();
+}
+
+// The one map shape this boundary admits: a string KEY column over a NARROW
+// SCALAR value column. It is the shape __fern_map_free_ks releases — each key
+// through the string dec, the value column freed whole — and the shape whose
+// insert needs none of the value flags the runtime reads.
+pub function is_supported_map(t: typeinfo.Type): boolean {
+    if (!is_map(t)) { return false; }
+    if (!is_string(map_key(t))) { return false; }
+    var v: typeinfo.Type = map_value(t);
+    return is_bool(v) || (is_integer(v) && !is_wide(v));
+}
+
 pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
     if let typeinfo.TypeFunc(fn) = t { return fn.param_types; }
     return [];
+}
+
+// The CONSUMING slots a function type spells. A caller hands its unit over at
+// one of them and takes back nothing to release; every other reference
+// argument of a function value is lent.
+pub function func_param_own(t: typeinfo.Type, i: i32): boolean {
+    if let typeinfo.TypeFunc(fn) = t { return typeinfo.fn_own_at(fn, i); }
+    return false;
 }
 
 pub function func_result(t: typeinfo.Type): typeinfo.Type {
@@ -184,11 +253,23 @@ pub function func_result(t: typeinfo.Type): typeinfo.Type {
 }
 
 // A closure body's first parameter is the environment it reads its captures
-// out of: the box itself, an array of i32-shaped words.
+// out of: the box itself — a bare array of i32-shaped words when the body
+// captures nothing, and otherwise the environment record naming the captures
+// (`semtypes.is_env`).
 pub function closure_env(c: Contract): boolean {
     if (c.params.len() == 0) { return false; }
     if let typeinfo.TypeArray(a) = c.params[0] { return semtypes.equal(a.elem, env_word()); }
-    return false;
+    return semtypes.is_env(c.params[0]);
+}
+
+pub function env_type(body: string, captures: typeinfo.Type[]): typeinfo.Type {
+    return typeinfo.TypeStruct { name: semtypes.env_prefix() + body, args: captures };
+}
+
+// The captures a body's environment holds, in slot order after the address.
+pub function closure_captures(c: Contract): typeinfo.Type[] {
+    if (c.params.len() == 0) { return []; }
+    return semtypes.env_captures(c.params[0]);
 }
 
 function env_word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
@@ -197,9 +278,30 @@ function env_word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsign
 // environment parameter, which the box supplies rather than the caller.
 pub function closure_type(c: Contract): typeinfo.Type {
     var params: typeinfo.Type[] = [];
+    var owns: boolean[] = [];
     var i: i32 = 1;
-    while (i < c.params.len()) { params = params.append(c.params[i]); i = i + 1; }
-    return typeinfo.TypeFunc { param_types: params, ret_type: c.result, params_known: true };
+    while (i < c.params.len()) {
+        params = params.append(c.params[i]);
+        owns = owns.append(consuming_mode(c.modes, i, c.params[i]));
+        i = i + 1;
+    }
+    return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_type: c.result, params_known: true };
+}
+
+// The unit planner's three modes. ssaunits reads this module, so the constants
+// are spelled here and that pass's own accessors return them.
+pub function value_mode(): i32 { return 1; }
+pub function borrow_mode(): i32 { return 2; }
+pub function counted_mode(): i32 { return 3; }
+
+// A body's declared mode says what the box it is wrapped in promises: a counted
+// parameter is a CONSUMING slot, and the function type the box hands out has to
+// spell it or the two sides disagree about who releases the argument. A scalar
+// carries no unit, so `typeinfo.own_flags` drops the flag there whichever side
+// built it.
+function consuming_mode(modes: i32[], i: i32, t: typeinfo.Type): boolean {
+    if (i >= modes.len()) { return false; }
+    return modes[i] == counted_mode() && typeinfo.ownable(t);
 }
 
 function parameter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -239,7 +341,7 @@ function float_constant_error(ins: ssa.SInst): string {
 
 function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (ins.args.len() != 0) { return "constant arity"; }
-    if (ins.kind_tag == 1 && is_f64(result)) { return float_constant_error(ins); }
+    if (ins.kind_tag == 1 && is_float(result)) { return float_constant_error(ins); }
     if (ins.kind_tag == 1) { return integer_constant_error(ins, result); }
     if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
     if (ins.kind_tag == 5 && !is_string(result)) { return "string constant type"; }
@@ -457,7 +559,13 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var c: Contract = f.calls[at];
     if (!closure_env(c)) { return "closure environment parameter"; }
     if (!semtypes.equal(closure_type(c), result)) { return "closure signature"; }
-    for arg in ins.args { if (semtypes.needs_anchor(f.values[arg])) { return "closure capture is a reference"; } }
+    var caps: typeinfo.Type[] = closure_captures(c);
+    if (ins.args.len() != caps.len()) { return "closure capture count"; }
+    var i: i32 = 0;
+    while (i < caps.len()) {
+        if (!semtypes.equal(f.values[ins.args[i]], caps[i])) { return "closure capture type"; }
+        i = i + 1;
+    }
     return "";
 }
 
@@ -522,10 +630,17 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 }
 
 // The builtins this vocabulary admits: a container's length, one element
-// pushed onto an array or replaced in it, a window onto a string, and one of
-// its bytes.
+// pushed onto an array or replaced in it, a window onto a string, one of its
+// bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
-    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index();
+    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
+        || is_cell_op(kind) || is_map_op(kind);
+}
+
+pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
+
+pub function is_map_op(kind: i32): boolean {
+    return kind == map_new() || kind == map_insert() || kind == map_has() || kind == map_get_or();
 }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -533,7 +648,93 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
+    if (is_cell_op(ins.kind_tag)) { return cell_error(ins, f, result); }
+    if (is_map_op(ins.kind_tag)) { return map_error(ins, f, result); }
     return append_error(ins, f, result);
+}
+
+// A cell is the shared one-element box (docs/CELL-TYPE-PLAN.md). Its
+// construction takes the element's unit; a read hands out a unit of the
+// element rather than borrowing the slot, since a write may release what the
+// slot held while the value read is still in hand; a write takes the new
+// element's unit and gives nothing back, so it stands only as a statement.
+function cell_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == cell_new()) { return cell_construction_error(ins, f, result); }
+    if (ins.kind_tag == cell_get()) { return cell_read_error(ins, f, result); }
+    return cell_write_error(ins, f, result);
+}
+
+function cell_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "cell construction arity"; }
+    if (!semtypes.is_cell(result)) { return "cell construction type"; }
+    if (!semtypes.equal(semtypes.cell_elem(result), f.values[ins.args[0]])) { return "cell element type"; }
+    return "";
+}
+
+function cell_read_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "cell read arity"; }
+    var cell: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.is_cell(cell)) { return "cell read type"; }
+    if (!semtypes.equal(semtypes.cell_elem(cell), result)) { return "cell element type"; }
+    return "";
+}
+
+function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "cell write arity"; }
+    var cell: typeinfo.Type = f.values[ins.args[0]];
+    if (!semtypes.is_cell(cell)) { return "cell write type"; }
+    if (!semtypes.equal(semtypes.cell_elem(cell), f.values[ins.args[1]])) { return "cell element type"; }
+    if (!is_void(result)) { return "cell write result"; }
+    return "";
+}
+
+// The map is the runtime hash map at the one shape is_supported_map admits.
+// Construction is fresh; an insert takes a unit of the map and of the key,
+// which the key column owns until the map is released, and hands the map back
+// so the caller holds one owner at a time; a lookup borrows both and answers a
+// scalar, which the map goes on owning.
+function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == map_new()) { return map_construction_error(ins, f, result); }
+    if (ins.kind_tag == map_insert()) { return map_insert_error(ins, f, result); }
+    if (ins.kind_tag == map_has()) { return map_has_error(ins, f, result); }
+    return map_get_or_error(ins, f, result);
+}
+
+function map_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "map construction arity"; }
+    if (!is_supported_map(result)) { return "map construction type"; }
+    if (!is_i32(f.values[ins.args[0]])) { return "map capacity type"; }
+    return "";
+}
+
+function map_insert_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "map insert arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map insert type"; }
+    if (!semtypes.equal(m, result)) { return "map insert result"; }
+    return map_operand_error(m, f.values[ins.args[1]], f.values[ins.args[2]]);
+}
+
+function map_has_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "map has arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map has type"; }
+    if (!is_bool(result)) { return "map has result"; }
+    return map_operand_error(m, f.values[ins.args[1]], map_value(m));
+}
+
+function map_get_or_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "map get_or arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map get_or type"; }
+    if (!semtypes.equal(map_value(m), result)) { return "map get_or result"; }
+    return map_operand_error(m, f.values[ins.args[1]], f.values[ins.args[2]]);
+}
+
+function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo.Type): string {
+    if (!semtypes.equal(map_key(m), key)) { return "map key type"; }
+    if (!semtypes.equal(map_value(m), value)) { return "map value type"; }
+    return "";
 }
 
 function is_variant_op(kind: i32): boolean {
@@ -545,11 +746,12 @@ function is_variant_op(kind: i32): boolean {
 // is that variant.
 function needs_guard(kind: i32): boolean { return kind == variant_get() || kind == variant_as(); }
 
-// A contract carrying an erased position is a TEMPLATE, and the call site is
-// what instantiates it. Binding runs left to right over the arguments and is
-// structural, so a function-typed parameter's own erased slots bind through
-// it; one variable binds one type for the whole contract, and a second
-// position naming it must carry that same type.
+// A contract carrying a type VARIABLE (`typeinfo.TypeErased`) is a TEMPLATE,
+// and the call site is what instantiates it. Binding runs left to right over
+// the arguments and is structural, so a function-typed parameter's own
+// variable slots bind through it; one variable binds one type for the whole
+// contract, and a second position naming it must carry that same type. The
+// instance is a body of its own, produced under the binding and named by it.
 pub struct Binding { ok: boolean, why: string, names: string[], types: typeinfo.Type[] }
 
 pub function unbound(): Binding { return Binding { ok: true, why: "", names: [], types: [] }; }
@@ -561,29 +763,21 @@ function bound_at(b: Binding, name: string): i32 {
     return 0 - 1;
 }
 
-// What an erased variable may bind to: ONE machine word. A wide scalar has no
-// erased slot to ride in — the invariant `astwalk` states for its accumulator
-// and the wasm erased widening enforces — and a void binds nothing at all.
-// An erased argument binds an erased variable: that is a generic body handing
-// its own word on to another generic, which stays a word at every
-// instantiation.
-function instantiable(t: typeinfo.Type): boolean {
-    return semtypes.erased(t) || narrow_word(t);
-}
-
 pub function bind_type(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
-    if (semtypes.erased(want)) { return bind_variable(b, erased_name(want), got); }
-    if (semtypes.erased(got)) { return unbindable("erased argument at a concrete parameter"); }
+    if (semtypes.erased(want)) { return bind_variable(b, variable_name(want), got); }
+    if (semtypes.erased(got)) { return unbindable("type variable at a concrete parameter"); }
     return bind_within(b, want, got);
 }
 
-function erased_name(t: typeinfo.Type): string {
+function variable_name(t: typeinfo.Type): string {
     if let typeinfo.TypeErased(e) = t { return e.name; }
     return "";
 }
 
+// A variable binds a concrete type: the instance is produced at exactly that
+// type, so a void, an unknown or another template's variable binds nothing.
 function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
-    if (!instantiable(got)) { return unbindable("erased instantiation is not one word"); }
+    if (!semtypes.concrete(got, false)) { return unbindable("type variable binds no concrete type"); }
     var at: i32 = bound_at(b, name);
     if (at >= 0) {
         if (!semtypes.equal(b.types[at], got)) { return unbindable("erased variable binds two types"); }
@@ -592,83 +786,214 @@ function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
     return Binding { ...b, names: b.names.append(name), types: b.types.append(got) };
 }
 
+// Binding is structural: a variable inside a function type, a container or a
+// nominal type's arguments binds through it, against the same shape on the
+// argument's side.
 function bind_within(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
     if let typeinfo.TypeFunc(x) = want {
-        if let typeinfo.TypeFunc(y) = got {
-            if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) { return unbindable("call argument type"); }
-            var i: i32 = 0;
-            while (i < x.param_types.len()) {
-                b = bind_type(b, x.param_types[i], y.param_types[i]);
-                if (!b.ok) { return b; }
-                i = i + 1;
-            }
-            return bind_type(b, x.ret_type, y.ret_type);
-        }
-        return unbindable("call argument type");
+        if let typeinfo.TypeFunc(y) = got { return bind_callable(b, x, y); }
+        return mismatch();
     }
-    if (!semtypes.equal(want, got)) { return unbindable("call argument type"); }
+    if let typeinfo.TypeArray(x) = want {
+        if let typeinfo.TypeArray(y) = got { return bind_type(b, x.elem, y.elem); }
+        return mismatch();
+    }
+    if let typeinfo.TypeTuple(x) = want {
+        if let typeinfo.TypeTuple(y) = got { return bind_list(b, x.elements, y.elements); }
+        return mismatch();
+    }
+    if let typeinfo.TypeMap(x) = want {
+        if let typeinfo.TypeMap(y) = got { return bind_type(bind_type(b, x.key, y.key), x.value, y.value); }
+        return mismatch();
+    }
+    return bind_nominal(b, want, got);
+}
+
+function mismatch(): Binding { return unbindable("call argument type"); }
+
+function bind_nominal(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
+    if let typeinfo.TypeStruct(x) = want {
+        if let typeinfo.TypeStruct(y) = got { if (x.name == y.name) { return bind_list(b, x.args, y.args); } }
+        return mismatch();
+    }
+    if let typeinfo.TypeUnion(x) = want {
+        if let typeinfo.TypeUnion(y) = got { if (x.name == y.name) { return bind_list(b, x.args, y.args); } }
+        return mismatch();
+    }
+    if (!semtypes.equal(want, got)) { return mismatch(); }
+    return b;
+}
+
+// The consuming flags must agree, read against the slot the ARGUMENT actually
+// carries: `own T` at a variable this call binds to a scalar is vacuous, and
+// the scalar body spells no `own` there. At a reference the two must still
+// agree.
+function bind_callable(b: Binding, x: typeinfo.TypeFunc, y: typeinfo.TypeFunc): Binding {
+    if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) { return mismatch(); }
+    var i: i32 = 0;
+    while (i < x.param_types.len()) {
+        if (typeinfo.fn_own_at(x, i) && typeinfo.ownable(y.param_types[i]) != typeinfo.fn_own_at(y, i)) { return mismatch(); }
+        if (!typeinfo.fn_own_at(x, i) && typeinfo.fn_own_at(y, i)) { return mismatch(); }
+        b = bind_type(b, x.param_types[i], y.param_types[i]);
+        if (!b.ok) { return b; }
+        i = i + 1;
+    }
+    return bind_type(b, x.ret_type, y.ret_type);
+}
+
+function bind_list(b: Binding, want: typeinfo.Type[], got: typeinfo.Type[]): Binding {
+    if (want.len() != got.len()) { return mismatch(); }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        b = bind_type(b, want[i], got[i]);
+        if (!b.ok) { return b; }
+        i = i + 1;
+    }
     return b;
 }
 
 pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
     if (semtypes.erased(t)) {
-        var at: i32 = bound_at(b, erased_name(t));
+        var at: i32 = bound_at(b, variable_name(t));
         if (at >= 0) { return b.types[at]; }
         return t;
     }
     if let typeinfo.TypeFunc(fn) = t {
-        var params: typeinfo.Type[] = [];
-        for p in fn.param_types { params = params.append(substitute(p, b)); }
-        return typeinfo.TypeFunc { ...fn, param_types: params, ret_type: substitute(fn.ret_type, b) };
+        var params: typeinfo.Type[] = substitute_list(fn.param_types, b);
+        // The mask is renormalised against the SUBSTITUTED types: a variable
+        // bound to a scalar carries no unit there, so the slot stops being a
+        // consuming one and the instantiated type matches the callable a
+        // scalar body hands out.
+        return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: substitute(fn.ret_type, b) };
     }
+    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: substitute(a.elem, b) }; }
+    if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: substitute_list(tup.elements, b) }; }
+    if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: substitute(m.key, b), value: substitute(m.value, b) }; }
+    if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: substitute_list(r.args, b) }; }
+    if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { ...u, args: substitute_list(u.args, b) }; }
     return t;
 }
 
-// An erased position is CONSUMING: the caller hands over a unit and takes back
-// the one the call returns. What it is handed to must release what it consumed
-// — and at a REFERENCE instantiation that is a real release, which a function
-// value does not perform: every other reference argument of one is LENT, and a
-// body declaring otherwise is refused where it is boxed. So a reference
-// instantiation is refused here rather than admitted under a rule that leaks
-// one unit per step; a SCALAR one is the case where consuming and producing
-// are both no-ops, and an ERASED one is a generic passing its own word on.
-pub function instantiation_error(b: Binding): string {
-    var i: i32 = 0;
-    while (i < b.types.len()) {
-        if (semtypes.needs_anchor(b.types[i]) && !semtypes.erased(b.types[i])) { return "erased instantiation carries a unit"; }
-        i = i + 1;
-    }
-    return "";
+function substitute_list(ts: typeinfo.Type[], b: Binding): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for t in ts { out = out.append(substitute(t, b)); }
+    return out;
 }
 
-function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
-    var b: Binding = unbound();
-    var i: i32 = 0;
-    while (i < args.len()) {
-        b = bind_type(b, c.params[i], args[i]);
-        if (!b.ok) { return b; }
-        i = i + 1;
-    }
-    var why: string = instantiation_error(b);
-    if (why != "") { return unbindable(why); }
-    return b;
+// The variables a template's contract spells, in order of first occurrence
+// over its parameters and then its result: the order an instance's name lists
+// their bindings in.
+pub function contract_variables(c: Contract): string[] {
+    var out: string[] = [];
+    for p in c.params { out = variables(p, out); }
+    return variables(c.result, out);
 }
 
+function variables(t: typeinfo.Type, out: string[]): string[] {
+    if (semtypes.erased(t)) {
+        var name: string = variable_name(t);
+        for seen in out { if (seen == name) { return out; } }
+        return out.append(name);
+    }
+    if let typeinfo.TypeArray(a) = t { return variables(a.elem, out); }
+    if let typeinfo.TypeTuple(tup) = t { return variables_of(tup.elements, out); }
+    if let typeinfo.TypeFunc(fn) = t { return variables(fn.ret_type, variables_of(fn.param_types, out)); }
+    if let typeinfo.TypeMap(m) = t { return variables(m.value, variables(m.key, out)); }
+    if let typeinfo.TypeStruct(r) = t { return variables_of(r.args, out); }
+    if let typeinfo.TypeUnion(u) = t { return variables_of(u.args, out); }
+    return out;
+}
+
+function variables_of(ts: typeinfo.Type[], out: string[]): string[] {
+    for t in ts { out = variables(t, out); }
+    return out;
+}
+
+pub function binds_all(b: Binding, vars: string[]): boolean {
+    for v in vars { if (bound_at(b, v) < 0) { return false; } }
+    return true;
+}
+
+// An instance's symbol: the template's key, then the type each variable binds
+// in the contract's own order, `$`-separated the way a lifted lambda's is.
+pub function instance_name(key: string, b: Binding, vars: string[]): string {
+    var out: string = key;
+    for v in vars { out = out + "$" + type_key(b.types[bound_at(b, v)]); }
+    return out;
+}
+
+// The contract an instance honours: every variable substituted, and a
+// parameter whose variable bound a scalar carrying no unit, so its declared
+// mode drops to a value's.
+pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Contract {
+    var name: string = instance_name(c.name, b, vars);
+    var params: typeinfo.Type[] = [];
+    var modes: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.params.len()) {
+        var t: typeinfo.Type = substitute(c.params[i], b);
+        // An instance's environment names the instance, whose address the
+        // box's slot 0 holds.
+        if (i == 0 && semtypes.is_env(t)) { t = env_type(name, semtypes.env_captures(t)); }
+        params = params.append(t);
+        if (semtypes.needs_anchor(t)) { modes = modes.append(c.modes[i]); } else { modes = modes.append(value_mode()); }
+        i = i + 1;
+    }
+    return Contract { name: name, params: params, modes: modes, result: substitute(c.result, b) };
+}
+
+// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
+// nominal name: `Option[string]` releases a string where `Option[i32]`
+// releases nothing, so the two cannot share a drop helper, and a template's
+// instances are told apart by it. `$` separates the arguments, as it does in
+// a lifted lambda's symbol. A structural type's key starts with one, which no
+// declared name can, so an array of strings and a struct named `arr`
+// instantiated at a string never share a key.
+pub function type_key(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
+    if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
+    if let typeinfo.TypeArray(a) = t { return "$arr$" + type_key(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { return key_args("$tup", tup.elements); }
+    if let typeinfo.TypeFunc(fn) = t { return key_args("$fn", fn.param_types.append(fn.ret_type)); }
+    if let typeinfo.TypeMap(m) = t { return key_args("$map", [m.key, m.value]); }
+    return leaf_key(t);
+}
+
+function key_args(name: string, args: typeinfo.Type[]): string {
+    var out: string = name;
+    for a in args { out = out + "$" + type_key(a); }
+    return out;
+}
+
+function leaf_key(t: typeinfo.Type): string {
+    if (is_void(t)) { return "void"; }
+    if (is_view(t)) { return "str"; }
+    if (is_string(t)) { return "string"; }
+    if (is_i64(t)) { return "i64"; }
+    if (is_u64(t)) { return "u64"; }
+    if (is_u8(t)) { return "u8"; }
+    if (is_u32(t)) { return "u32"; }
+    if (is_usize(t)) { return "usize"; }
+    if (is_f64(t)) { return "f64"; }
+    if (is_f32(t)) { return "f32"; }
+    if (is_char(t)) { return "char"; }
+    if (is_integer(t)) { return "i32"; }
+    return "bool";
+}
+
+// A produced graph's contracts are instances: every parameter and the result
+// are exact types, and a call is held to them.
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var at: i32 = find_contract(f.calls, ins.str);
     if (at < 0) { return "missing call contract"; }
     var c: Contract = f.calls[at];
     if (ins.args.len() != c.params.len()) { return "call arity"; }
-    var args: typeinfo.Type[] = [];
-    for arg in ins.args { args = args.append(f.values[arg]); }
-    var b: Binding = instantiate(c, args);
-    if (!b.ok) { return b.why; }
     var i: i32 = 0;
-    while (i < args.len()) {
-        if (!semtypes.equal(substitute(c.params[i], b), args[i])) { return "call argument type"; }
+    while (i < ins.args.len()) {
+        if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) { return "call argument type"; }
         i = i + 1;
     }
-    if (!semtypes.equal(substitute(c.result, b), result)) { return "call result type"; }
+    if (!semtypes.equal(c.result, result)) { return "call result type"; }
     return "";
 }
 
@@ -699,8 +1024,8 @@ function float_op(op: string): boolean {
 // the conversion is a cast the source has to write. Operator overloads have
 // none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
-    if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
-    if (is_f64(left) && is_f64(right)) { return float_result(op, left); }
+    if (is_integer(left) && !is_usize(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
+    if (is_float(left) && semtypes.equal(left, right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
     return typeinfo.unchecked();
@@ -732,7 +1057,7 @@ function string_result(op: string): typeinfo.Type {
 // names, and what the source would mean by it is not the wrap this boundary
 // would emit.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-    if (op == "-" && (is_i32(operand) || is_i64(operand) || is_f64(operand))) { return operand; }
+    if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand))) { return operand; }
     if (op == "!" && is_bool(operand)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
@@ -744,23 +1069,27 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// A conversion between the integer types, or between one of the four 32- and
-// 64-bit ones and the f64. An integer conversion is the destination's own mask
-// or extension, which every width here has. A float conversion is a real
-// instruction either way — a convert into the float, a truncation toward zero
-// out of it — so it is not a reinterpretation of the slot, and only the widths
-// the backends have an opcode for are admitted: the byte has none, and reaches
-// the float through the i32 the source writes.
+// A conversion between the integer types, between one of the four 32- and
+// 64-bit ones and a float, or between the two float widths. An integer
+// conversion is the destination's own mask or extension, which every width
+// here has. A float conversion is a real instruction either way — a convert
+// into the float, a truncation toward zero out of it, a rounding to single
+// precision — so it is not a reinterpretation of the slot, and only the
+// widths the backends have an opcode for are admitted: the byte has none, and
+// reaches the float through the i32 the source writes.
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    if (is_usize(from)) { return is_wide(to); }
+    if (is_usize(to)) { return is_wide(from); }
     if (is_integer(from) && is_integer(to)) { return true; }
-    if (is_f64(to)) { return is_integer(from) && !is_u8(from); }
-    if (is_f64(from)) { return is_integer(to) && !is_u8(to); }
+    if (is_float(from) && is_float(to)) { return !semtypes.equal(from, to); }
+    if (is_float(to)) { return is_integer(from) && !is_u8(from); }
+    if (is_float(from)) { return is_integer(to) && !is_u8(to); }
     return false;
 }
 
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!is_integer(result) && !is_f64(result)) { return "cast result type"; }
+    if (!is_integer(result) && !is_float(result)) { return "cast result type"; }
     if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }
@@ -834,14 +1163,17 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
 }
 
 function narrow_word(t: typeinfo.Type): boolean {
-    if (is_func(t) || is_wide(t) || is_f64(t) || nests_func(t)) { return false; }
-    return semtypes.word(t, false);
+    if (is_func(t) || is_wide(t) || is_float(t) || nests_func(t)) { return false; }
+    return semtypes.concrete(t, false);
 }
 
-// A function value is a value and a parameter, never an element or a field:
-// releasing a container or a record walks its slots by their declared types,
-// and a function type names no captures for that walk to reach.
+// A function value is a value, a parameter and a closure's borrowed capture,
+// never an element or a field: releasing a container or a record walks its
+// slots by their declared types, and a function type names no captures for
+// that walk to reach. A cell is such a container, and outlives the frame that
+// filled it, so its element is refused with the rest.
 function nests_func(t: typeinfo.Type): boolean {
+    if (semtypes.is_cell(t)) { return holds_func(semtypes.cell_elem(t)); }
     if let typeinfo.TypeArray(a) = t { return holds_func(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for e in tup.elements { if (holds_func(e)) { return true; } }
@@ -860,7 +1192,15 @@ function type_placement_error(t: typeinfo.Type): string {
 
 function field_placement_error(f: Func): string {
     for record in f.records {
-        for field in record.fields { if (holds_func(field.ty)) { return "function value is not a field"; } }
+        var env: boolean = semtypes.is_env(record.ty);
+        for field in record.fields {
+            if (!holds_func(field.ty)) { continue; }
+            // A closure box BORROWS a captured function value (semsource's
+            // lent_capture): the field is never walked, and the box it names
+            // is released by the frame that owns it.
+            if (env && is_func(field.ty)) { continue; }
+            return "function value is not a field";
+        }
     }
     for e in f.enums {
         for v in e.variants {
@@ -897,12 +1237,12 @@ function schema_error(f: Func): string {
     if (why != "") { return why; }
     why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
     if (why != "") { return why; }
-    if (!semtypes.word(f.result, true)) { return "unresolved result type"; }
+    if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
     // A void value is what a call to a void contract defines, and nothing
     // reads it: every operator and container contract asks for a concrete
     // operand, so a read refuses there.
-    for t in f.values { if (!semtypes.word(t, true)) { return "unresolved value type"; } }
-    for t in f.params { if (!semtypes.word(t, false)) { return "unresolved parameter type"; } }
+    for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
+    for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }
     why = placement_error(f);
@@ -919,8 +1259,8 @@ function contracts_error(calls: Contract[]): string {
         if (c.name == "") { return "empty call contract name"; }
         if (find_contract(calls, c.name) != i) { return "duplicate call contract"; }
         if (c.modes.len() != c.params.len()) { return "call contract mode dimensions"; }
-        for t in c.params { if (!semtypes.word(t, false)) { return "unresolved call parameter type"; } }
-        if (!semtypes.word(c.result, true)) { return "unresolved call result type"; }
+        for t in c.params { if (!semtypes.concrete(t, false)) { return "unresolved call parameter type"; } }
+        if (!semtypes.concrete(c.result, true)) { return "unresolved call result type"; }
         i = i + 1;
     }
     return "";

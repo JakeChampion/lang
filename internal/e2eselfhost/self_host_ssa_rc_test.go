@@ -566,8 +566,8 @@ function main(): i32 {
     if (sawField0) { return 57; }
     // A VALUE of that width lowers, in a slot of its own the way an i64 does;
     // only a RECORD construction needs the per-field store width, which this
-    // boundary withholds (declaration index -1). The narrower float has no
-    // representation here at all.
+    // boundary withholds (declaration index -1). The narrower float rides the
+    // same slot, rounded to single precision where it is made.
     var wideVal = ssasem.Func { graph: dropGraph, values: [f64ty, i32ty], params: [f64ty], result: i32ty,
         records: [], enums: [], calls: [] };
     var wideValPlan = ssaunits.plan(wideVal, [1]);
@@ -577,7 +577,9 @@ function main(): i32 {
     if (wideValLowered.f64_slots.len() != 1 || wideValLowered.f64_slots[0] != 0) { return 110; }
     var f32ty: typeinfo.Type = typeinfo.TypeFloat { width: 32, polymorphic: false };
     var narrowVal = ssasem.Func { ...wideVal, values: [f32ty, i32ty], params: [f32ty] };
-    if (!refused(ssarc.lower(narrowVal, [1], ssaunits.plan(narrowVal, [1]), irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 111; }
+    var narrowValLowered = ssarc.lower(narrowVal, [1], ssaunits.plan(narrowVal, [1]), irlower.struct_tab_empty());
+    if (!narrowValLowered.ok) { eprint(narrowValLowered.why); return 111; }
+    if (narrowValLowered.f64_slots.len() != 1 || narrowValLowered.f64_slots[0] != 0) { return 111; }
     var floatElem = ssasem.Func { graph: ssa.SFunc { ...dropGraph, nvals: 2, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.array_new(), 1, [0], 0)], term: ret(1) }] },
         values: [f64ty, typeinfo.TypeArray { elem: f64ty }], params: [f64ty], result: typeinfo.TypeArray { elem: f64ty }, records: [], enums: [], calls: [] };
@@ -774,6 +776,37 @@ function main(): i32 {
     var u32Imm = ssasem.Func { ...u32Text, graph: ssa.SFunc { ...wideK,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(1, 0, [], 7)], term: ret(0) }] } };
     if (ssaunits.plan(u32Imm, []).why != "constant needs its literal text") { return 102; }
+    // A map's box is the raw {keys, vals} pair __fern_map_free_ks frees, with
+    // no reference count in it, so a unit of one is LINEAR: the graph below
+    // returns a borrowed map, which the return supplies by retaining.
+    var mapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: i32ty };
+    var mapFunc = ssasem.Func { graph: g, values: [mapTy], params: [mapTy], result: mapTy,
+        records: [], enums: [], calls: [] };
+    var mapPlan = ssaunits.plan(mapFunc, [2]);
+    if (!mapPlan.ok) { eprint(mapPlan.why); return 137; }
+    if (!refused(ssarc.lower(mapFunc, [2], mapPlan, irlower.struct_tab_empty()), "map unit is not shared")) { return 138; }
+    // The same graph over an OWNED map moves that unit, and the map is freed
+    // by its own helper rather than released by a count.
+    var ownMapPlan = ssaunits.plan(mapFunc, [3]);
+    if (!ownMapPlan.ok) { eprint(ownMapPlan.why); return 139; }
+    var ownMapLowered = ssarc.lower(mapFunc, [3], ownMapPlan, irlower.struct_tab_empty());
+    if (!ownMapLowered.ok) { eprint(ownMapLowered.why); return 140; }
+    for o in ownMapLowered.ops {
+        if (o.str == "__fern_rc_inc" || o.str == "__fern_rc_dec") { return 141; }
+    }
+    // A map whose VALUE column is a reference has no release: the column is
+    // freed whole, so a box its elements name would be dropped with it.
+    var strMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: strTy };
+    var strMapFunc = ssasem.Func { ...mapFunc, values: [strMapTy], params: [strMapTy], result: strMapTy };
+    if (ssaunits.plan(strMapFunc, [3]).why != "unsupported counted-unit type") { return 142; }
+    // A key that is not a string keys a column that release does not walk.
+    var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
+    var intMapFunc = ssasem.Func { ...mapFunc, values: [intMapTy], params: [intMapTy], result: intMapTy };
+    if (ssaunits.plan(intMapFunc, [3]).why != "unsupported counted-unit type") { return 143; }
+    // A map and a boolean spell different drop helpers: without a key of its
+    // own a map would key as the fall-through leaf does.
+    if (ssasem.type_key(mapTy) == ssasem.type_key(typeinfo.TypeBool { tag: 0 })) { return 144; }
+    if (ssasem.type_key(mapTy) == ssasem.type_key(strMapTy)) { return 145; }
     return 0;
 }
 `

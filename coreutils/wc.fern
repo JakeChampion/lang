@@ -401,8 +401,9 @@ function read_names(file: string): Job[] {
 // One input printing one count is never statted at all, so it never
 // pads; otherwise the sizes of the operands that ARE regular files are
 // summed and the width is that total's digits. An operand that stats
-// but is not a regular file has no size to contribute and forces the
-// 7-column default; one that fails to stat contributes nothing.
+// but is not a regular file has no size to contribute and raises the
+// minimum to the 7-column default; one that fails to stat contributes
+// nothing.
 function width_for(jobs: Job[], show: Show, total: i32): i32 {
   if (total == total_only()) {
     return 1;
@@ -410,18 +411,17 @@ function width_for(jobs: Job[], show: Show, total: i32): i32 {
   if (jobs.len() <= 1 && show_count(show) == 1) {
     return 1;
   }
+  var min: i32 = 1;
   var sum: i64 = 0 as i64;
   var i: i32 = 0;
   while (i < jobs.len()) {
-    if (jobs[i].path == "-") {
-      return 7;
-    }
-    match (stat(jobs[i].path)) {
+    match (job_stat(jobs[i].path)) {
       Ok(st) => {
-        if (!st.is_file) {
-          return 7;
+        if (st.is_file) {
+          sum = sum + st.size;
+        } else {
+          min = 7;
         }
-        sum = sum + st.size;
       },
       Err(_) => {}
     }
@@ -430,16 +430,37 @@ function width_for(jobs: Job[], show: Show, total: i32): i32 {
   var w: i32 = 1;
   var v: i64 = sum;
   while (v >= 10 as i64) {
-    w = w + 1;
     v = v / (10 as i64);
+    w = w + 1;
+  }
+  if (w < min) {
+    return min;
   }
   return w;
+}
+
+// `-` is fd 0, which GNU fstats rather than stats: a redirected regular
+// file sizes the columns, a pipe does not.
+function job_stat(path: string): Result[FileStat, IoError] {
+  if (path == "-") {
+    return stdin().stat();
+  }
+  return stat(path);
 }
 
 // `Done` — what one input produced: its counts, whether it was read at
 // all (a name that never opened prints no line), whether it failed, and
 // the writer the diagnostic was flushed through.
 struct Done { counts: Counts, counted: boolean, failed: boolean, w: io_buffered.BufWriter }
+
+// The name a diagnostic gives the input: the operand as typed, or
+// `'standard input'` for the stdin no operand named.
+function job_label(job: Job): string {
+  if (job.name.len() == 0) {
+    return gnu.quotef("standard input");
+  }
+  return gnu.quotef(job.path);
+}
 
 // `count_job(job, show, o)` — one input counted, its diagnostic
 // reported.
@@ -460,7 +481,7 @@ function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
         r = f;
       },
       Err(e) => {
-        w = gnu.error_out(w, gnu.quotef(job.path) + ": " + gnu.io_error_text(e));
+        w = gnu.error_out(w, job_label(job) + ": " + gnu.io_error_text(e));
         return Done { counts: zero_counts(), counted: false, failed: true, w: w };
       }
     }
@@ -486,7 +507,7 @@ function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
   var c: Counts = Counts { ...res.0, chars: res.0.bytes };
   match (res.1) {
     Some(e) => {
-      w = gnu.error_out(w, gnu.quotef(job.path) + ": " + gnu.io_error_text(e));
+      w = gnu.error_out(w, job_label(job) + ": " + gnu.io_error_text(e));
       return Done { counts: c, counted: true, failed: true, w: w };
     },
     None => {}

@@ -1243,8 +1243,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.StringType{},
 	}
-	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_len /
-	// buf_take / buf_free (#8773) — the capacity-carrying string
+	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_push_u64 /
+	// buf_len / buf_take / buf_free (#8773) — the capacity-carrying string
 	// builder, the strbuf above without the singleton. A builder is a
 	// NUMBER, the address of its own control block, the way an open
 	// file is a descriptor: any number of them may be live at once and
@@ -1282,6 +1282,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_u64(h, v) — eight bytes at a time, LITTLE-endian, which is
+	// the byte order every target here has. It exists because a byte at a
+	// time is not fast enough to be worth having: a generator whose
+	// arithmetic costs 2.5 ms for 4 MiB of words spends 23 ms handing the
+	// bytes over one call each (#9221).
+	c.info.FuncSigs["buf_push_u64"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["buf_len"] = &ast.FuncType{
@@ -1873,6 +1882,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// clobber of their target (#8776).
 	c.info.FuncSigs["open_exclusive"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// open_reader_with(path, flags) / open_writer_with(path, flags):
+	// the same two handles opened under a flags word of Fern's own,
+	// translated by each backend into the kernel's:
+	//
+	//	1  create the file when it is missing, mode 0666 through the umask
+	//	2  do not wait on the open (O_NONBLOCK)
+	//
+	// The writer never truncates and never appends: it is the plain
+	// O_WRONLY open a `touch` or a `dd` wants, where open_writer's
+	// truncation and open_appender's positioning are both wrong. The
+	// non-blocking bit is what lets a FIFO be opened with no peer, as
+	// `sync` and `touch` do: without it a reader's open waits for a
+	// writer and a writer's open waits for a reader. A writer's
+	// non-blocking open of a FIFO with no reader is ENXIO, the kernel's
+	// own answer. WASI preview 1 spells the bit as an fdflag and preview
+	// 2 has no spelling for it — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["open_reader_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_writer_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}
 	// now_unix_ms(): i64 — wall-clock milliseconds since the
@@ -2722,12 +2755,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	//	1  do not follow a final symlink (AT_SYMLINK_NOFOLLOW)
 	//	2  leave the access time as it is (UTIME_OMIT in atime_nsec)
 	//	4  leave the modification time as it is (UTIME_OMIT in mtime_nsec)
+	//	8  set the access time to the kernel's clock (UTIME_NOW in atime_nsec)
+	//	16 set the modification time to the kernel's clock (UTIME_NOW in mtime_nsec)
 	//
 	// The two omit bits are how `touch -a` and `touch -m` write one
 	// timestamp without disturbing the other: reading the other first
 	// and writing it back is a race, and it round-trips a value the
 	// caller never asked to set. A timestamp whose omit bit is set is
 	// not read, so passing 0 for both of its halves is fine.
+	//
+	// The two now bits are not a convenience over reading the clock:
+	// the kernel lets any writer of a file set its times to now, but
+	// only its owner set them to a value, so a plain `touch` that
+	// carried a clock reading would be refused on a file the caller
+	// can write and does not own. A now bit outranks nothing — an omit
+	// bit on the same half still wins, and that half is not read.
 	//
 	// Setting both omit bits does nothing and is not an error — that is
 	// `utimensat`'s own answer.
@@ -2903,7 +2945,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// function because a handle is not a number everywhere: on wasi
 	// preview 2 a Reader is an input-stream plus the descriptor it was
 	// opened on, and only the descriptor can answer. A stdio handle there
-	// has no descriptor and answers Err(Unsupported) (#8713).
+	// has no descriptor and answers the all-zero record a preview-1 host
+	// reports for the same stream (#8713, #9070).
 	fileStatResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.StructType{Name: "FileStat"}, ioErrType}}
 	registerStructMethod("Reader", "stat", nil, fileStatResult)
@@ -2911,12 +2954,93 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
 	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
 	// (`Other("Illegal seek")`), which is how a utility learns it must
-	// stream rather than jump to the end.
+	// stream rather than jump to the end. On a Writer opened for append
+	// the offset moves as lseek's does and the writes keep landing at
+	// the end, O_APPEND's rule on every target.
+	//
+	// Those three are the whole domain, and anything else is EINVAL on
+	// every target. A Linux kernel takes two more — 3 and 4 are
+	// SEEK_DATA and SEEK_HOLE — which the natives pass through and
+	// neither WASI preview can answer, so a program that wants a hole
+	// is target-specific and has to say so.
+	seekResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Reader", "seek",
-		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}},
-		ast.EnumType{Name: "Result", Args: []ast.Type{
-			ast.NumberType{Width: 64, Signed: true}, ioErrType}})
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	registerStructMethod("Writer", "seek",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	// flags() is fcntl(fd, F_GETFL) reduced to what every target can
+	// answer, as a word of Fern's own — the query side of the flags word
+	// `open_reader_with` / `open_writer_with` take:
+	//
+	//	1  the handle may be read
+	//	2  the handle may be written
+	//	4  writes land at the END of the file whatever the offset says
+	//
+	// Three bits and no more, because a fourth would have to be invented
+	// somewhere. O_NONBLOCK is the one a caller asks for next and it is
+	// the one preview 2 has no spelling for at all: its `get-flags`
+	// reports read / write / the three sync bits and nothing else, so a
+	// cleared bit there would be a claim nobody measured — the answer
+	// `geteuid` is refused for (docs/FREESTANDING-CORE.md). Append IS
+	// answerable on all three: F_GETFL on the natives, `fdstat`'s
+	// fs_flags on preview 1, and on preview 2 the Writer box's own
+	// append flag, which is where the fact lives there (a descriptor has
+	// no append bit; the STREAM was opened append-via-stream).
+	//
+	// What it exists for: a program handed a descriptor it did not open
+	// cannot otherwise tell an append-only stdout from a writable one,
+	// and the two want opposite handling — `shred -` overwrites the
+	// first and must refuse the second (#9219).
+	// The word is 64 bits wide for the same reason `seek`'s offset is:
+	// that is the payload shape every backend's Result box already
+	// carries for these handle methods (a 16-byte box, payload at +8).
+	// Three bits do not need it, and an i32 payload is a DIFFERENT box
+	// layout (8 bytes, payload at +4) that nothing else in this family
+	// emits — one hand-written helper per backend is not the place to
+	// introduce a second one.
+	flagsResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Reader", "flags", nil, flagsResult)
+	registerStructMethod("Writer", "flags", nil, flagsResult)
+	// isatty() is the free `isatty(fd)` asked of a handle instead of a
+	// descriptor number, and it exists because a handle surrenders no
+	// number: a program that opened a name can otherwise only ask the
+	// question of fds 0, 1 and 2.
+	//
+	// Boolean rather than a Result, exactly as the free form is: the
+	// question has no third answer, and "this is not a terminal" is the
+	// truthful reply on a target with no terminals at all, which is why
+	// neither form is gated (docs/FREESTANDING-CORE.md). A closed
+	// handle is not a terminal either.
+	//
+	// GNU `shred` is what wanted it — it refuses a terminal operand
+	// before writing, and the check has to happen on the handle it
+	// opened rather than on a name it could stat (#9229).
+	registerStructMethod("Reader", "isatty", nil, ast.BoolType{})
+	registerStructMethod("Writer", "isatty", nil, ast.BoolType{})
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+	// write_some(s) is ONE write(2) and the count it returned: the write
+	// may land in full, in part, or not at all, and the caller loops.
+	// `write` above is the same syscall with the loop inside it, which
+	// is what almost every caller wants — and what makes the count
+	// unobservable, since a failure there discards how much of it
+	// landed.
+	//
+	// That count is output. GNU `shred` names the offset a failing write
+	// stopped at (`error writing at offset 262144: No space left on
+	// device`), and for ENOSPC the failure lands INSIDE a block, so no
+	// caller counting whole blocks can reconstruct it (#9231). `dd` is
+	// the other: its record counts are about what each call moved.
+	//
+	// The count is the number of BYTES written, never negative and never
+	// more than the string's length. Zero is a real answer rather than
+	// an error — a pipe with no room and a device at its end both give
+	// it — so a caller that loops on it must make progress some other
+	// way or it spins.
+	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set
 	// to `len`, growing with a hole that reads as zeros or discarding the
@@ -2976,8 +3100,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// syncfs flushes the whole filesystem the handle lives on, not the
 	// handle's own file. Neither WASI preview has it — preview 1's
 	// `fd_sync` is per-descriptor and a preopen is a capability handle
-	// rather than a mount — so it answers `Err(Unsupported)` there, the
-	// way `stat` answers it for a preview-2 stdio handle (#8713).
+	// rather than a mount — so it answers `Err(Unsupported)` there.
 	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
 	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
 	// sync(): void — `sync(2)`, which schedules write-back of every
@@ -3704,10 +3827,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			continue
 		}
 		params := make([]ast.Type, len(fn.Params))
+		owns := make([]bool, len(fn.Params))
 		for i, p := range fn.Params {
 			params[i] = p.Type
+			owns[i] = p.Own
 		}
-		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, Result: fn.ReturnType}
+		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
 		if len(fn.TypeParams) > 0 {
 			// Track generic decls so the call-site inference path
 			// can spot them and the monomorphisation pass knows
@@ -4263,6 +4388,30 @@ func methodTypeName(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) 
 // trait, because the flat name doubles as the Info.FuncSigs key and two
 // traits offering the same method for one type would otherwise collide
 // there as well.
+// paramSig is the function TYPE of a declared parameter list: the declared
+// types, and the `own` flags that say which slots the callee consumes.
+// definitelyScalar reports whether t is a value with no reference identity —
+// so no refcount, and nothing for an ownership transfer to move. An unknown
+// or parametric type is NOT one: it may stand for a reference at some
+// instantiation.
+func definitelyScalar(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.CharType, ast.VoidType:
+		return true
+	}
+	return false
+}
+
+func paramSig(params []ast.Param, result ast.Type) *ast.FuncType {
+	types := make([]ast.Type, len(params))
+	owns := make([]bool, len(params))
+	for i, p := range params {
+		types[i] = p.Type
+		owns[i] = p.Own
+	}
+	return &ast.FuncType{Params: types, ParamOwn: ast.OwnFlags(owns, len(types)), Result: result}
+}
+
 func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string {
 	key := typeName + "." + name
 	if trait != "" {
@@ -6710,6 +6859,14 @@ type checker struct {
 	// E051) can require that arguments passed to an `own` parameter are owned
 	// values the caller can transfer.
 	ownFuncs map[string][]bool
+	// callOwnFlags is the consuming-parameter mask at each CALL, resolved
+	// from the callee's type — the only source a call through a function
+	// value has. Read by the call-site ownership guard, which runs after
+	// the body is checked.
+	callOwnFlags map[*ast.Call][]bool
+	// scalarArgs names the argument expressions whose checked type carries
+	// no reference, so a consuming position takes nothing from the caller.
+	scalarArgs map[ast.Expr]bool
 
 	// shadowedGenericCalls records the Call nodes whose callee name
 	// matches a module-level generic function but resolves to a value
@@ -7937,7 +8094,7 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProj(x.Result)}
+		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProj(p))
 		}
@@ -7988,7 +8145,7 @@ func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings)}
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
 		}
@@ -8164,7 +8321,7 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substByName(x.Result, sub)}
+		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substByName(p, sub))
 		}
@@ -8459,7 +8616,7 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		}
 		return out
 	case *ast.FuncType:
-		out := &ast.FuncType{Result: substituteType(x.Result, sub)}
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
@@ -8600,6 +8757,14 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			return false
 		}
 		for i := range e.Params {
+			// A consuming slot and a lending one promise opposite things of
+			// the same call, so neither stands in for the other — inference
+			// binds the type variable but never relaxes this. At a slot the
+			// argument shows to be a scalar nothing changes hands, so `own`
+			// there says nothing, as the self-host's own_flags reads it.
+			if e.OwnAt(i) != a.OwnAt(i) && !definitelyScalar(a.Params[i]) {
+				return false
+			}
 			if !c.unifyType(e.Params[i], a.Params[i], sub) {
 				return false
 			}
@@ -11324,6 +11489,26 @@ func traitSelfIsOwn(m ast.TraitMethod) bool {
 // suppresses, checker rejects a shape that then re-lands via another
 // path) or a leak/UAF (checker admits, rc still exit-decs) follows.
 func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, isID := call.Callee.(*ast.Ident)
+	if !isID {
+		return nil
+	}
+	return selfReassignOwnMoveArgWith(asn, ownFuncs[cid.Name])
+}
+
+// selfReassignOwnMoveArgWith is SelfReassignOwnMoveArg with the callee's
+// consuming mask already resolved, so a call through a function VALUE — whose
+// only declaration is its type — recognises the same shape a named callee
+// does. The IR's half of the agreement is callConsumesIdent, which reads that
+// mask through the same accessor.
+func selfReassignOwnMoveArgWith(asn *ast.Assign, flags []bool) *ast.Ident {
+	if len(flags) == 0 {
+		return nil
+	}
 	tid, ok := asn.Target.(*ast.Ident)
 	if !ok {
 		return nil
@@ -11334,10 +11519,6 @@ func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Id
 	}
 	cid, ok := call.Callee.(*ast.Ident)
 	if !ok {
-		return nil
-	}
-	flags, isOwn := ownFuncs[cid.Name]
-	if !isOwn {
 		return nil
 	}
 	// Count every occurrence of the target name in the RHS, excluding
@@ -11361,6 +11542,21 @@ func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Id
 		}
 	}
 	return nil
+}
+
+// selfReassignOwnMoveArg is SelfReassignOwnMoveArg with the consuming mask
+// resolved the way every other rule resolves it: from the declaration for a
+// named callee, and from the function TYPE for a call through a function
+// value.
+func (c *checker) selfReassignOwnMoveArg(asn *ast.Assign) *ast.Ident {
+	if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+		return arg
+	}
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	return selfReassignOwnMoveArgWith(asn, c.callOwnFlags[call])
 }
 
 // SupersededFieldOwnMoveArgs recognizes the #8186 field-move shape on a
@@ -11468,7 +11664,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// moved out of one would be read back by the caller.
 	borrowedParam := map[string]bool{}
 	for _, p := range fn.Params {
-		if p.Own {
+		// A scalar carries no reference, so `own` on one transfers nothing and
+		// there is no affine discipline to police. A generic `own acc: T`
+		// reaches every instantiation, and its scalar clones would otherwise
+		// report a second mention of the accumulator as a use-after-move.
+		if p.Own && !definitelyScalar(p.Type) {
 			owned[p.Name] = true
 		} else {
 			borrowedParam[p.Name] = true
@@ -11508,15 +11708,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	selfMoveArgs := map[ast.Expr]bool{}
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
+		if c.scalarArgs[e] {
+			return true
+		}
 		switch x := e.(type) {
 		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit:
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
 		case *ast.Ident:
-			return owned[x.Name] || selfMoveArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.FieldAccess:
-			return selfMoveArgs[e]
+			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
@@ -11562,13 +11765,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
 	// callees are conservatively skipped here — a later slice widens the guard.
 	guardCallArgs := func(x *ast.Call) {
-		id, ok := x.Callee.(*ast.Ident)
-		if !ok {
-			return
-		}
-		flags, isOwn := c.ownFuncs[id.Name]
+		flags, isOwn := c.callOwnFlags[x]
 		if !isOwn {
-			return
+			id, idOK := x.Callee.(*ast.Ident)
+			if !idOK {
+				return
+			}
+			if flags, isOwn = c.ownFuncs[id.Name]; !isOwn {
+				return
+			}
 		}
 		for i := 0; i < len(x.Args) && i < len(flags); i++ {
 			if flags[i] && !isOwnedExpr(x.Args[i]) {
@@ -11615,7 +11820,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			b := binding{wasOwned: owned[p.Name], wasBorrowed: borrowedParam[p.Name]}
 			b.wasMoved, b.hadMoved = moved[p.Name]
 			shadowed[p.Name] = b
-			if p.Own {
+			if p.Own && !definitelyScalar(p.Type) {
 				owned[p.Name] = true
 				delete(borrowedParam, p.Name)
 			} else {
@@ -11741,7 +11946,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					// builder code and blocks tracking owned locals. The method
 					// receiver (Args[0] when Method is set) keeps its own
 					// consume/borrow classification below.
-					flags := c.ownFuncs[id.Name]
+					// A callee reached through a function VALUE declares its
+					// consuming slots in its type, not in the own-func registry
+					// — so a use after `f(xs)` at such a slot is a use after
+					// move, exactly as it is for a declared own-func.
+					flags, isOwn := c.callOwnFlags[x]
+					if !isOwn {
+						flags = c.ownFuncs[id.Name]
+					}
 					for ai, arg := range x.Args {
 						if x.Method != nil && ai == 0 {
 							continue
@@ -11865,7 +12077,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				// (see selfMoveArgs). Checked before recordExprUses so
 				// guardCallArgs sees the admission.
 				if id, ok := asn.Target.(*ast.Ident); ok && !owned[id.Name] {
-					if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+					if arg := c.selfReassignOwnMoveArg(asn); arg != nil {
 						selfMoveArgs[arg] = true
 					}
 				}
@@ -12010,11 +12222,7 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
 		for _, fn := range localFns {
 			if c.mutualRecSiblings[fn.Name] {
-				sig := &ast.FuncType{Result: fn.ReturnType}
-				for _, p := range fn.Params {
-					sig.Params = append(sig.Params, p.Type)
-				}
-				s.names[fn.Name] = sig
+				s.names[fn.Name] = paramSig(fn.Params, fn.ReturnType)
 			}
 		}
 	} else {
@@ -14592,10 +14800,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	}
 	// Bind the function's name in the outer scope so subsequent code
 	// can call it.
-	sig := &ast.FuncType{Result: fn.ReturnType}
-	for _, p := range fn.Params {
-		sig.Params = append(sig.Params, p.Type)
-	}
+	sig := paramSig(fn.Params, fn.ReturnType)
 	outer.names[fn.Name] = sig
 
 	// Body scope: fresh root with the function's own params.
@@ -15890,8 +16095,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						substitutedParams[i] = substituteType(p, sub)
 					}
 					ft = &ast.FuncType{
-						Params: substitutedParams,
-						Result: substituteType(ft.Result, sub),
+						Params:   substitutedParams,
+						ParamOwn: ft.ParamOwn,
+						Result:   substituteType(ft.Result, sub),
 					}
 					methodSubResult = ft.Result
 				}
@@ -15960,6 +16166,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if cid, ok := n.Callee.(*ast.Ident); ok {
 			calleeOwnFlags = c.info.OwnFuncs[cid.Name]
 		}
+		// A call through a function VALUE has no declaration to read them
+		// from; the function type carries them (`(own T) => T`).
+		if len(calleeOwnFlags) == 0 && ft != nil {
+			calleeOwnFlags = ft.ParamOwn
+		}
+		// Record them for the call-site ownership guard, which runs after
+		// the body is checked and has no callee type of its own. A
+		// dispatch-rewritten method call is excluded: its receiver rides in
+		// Args[0] and the guard has never covered that shape.
+		if len(calleeOwnFlags) > 0 && !recvIsArg0 && n.Method == nil {
+			if c.callOwnFlags == nil {
+				c.callOwnFlags = map[*ast.Call][]bool{}
+			}
+			c.callOwnFlags[n] = calleeOwnFlags
+		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				c.setElemHintFor(n.Args[i], ft.Params[i])
@@ -15983,6 +16204,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.expectedType = nil
 			}
 			c.elemHint = nil
+			// A scalar argument carries no reference, so handing it to a
+			// consuming parameter transfers nothing and the ownership guard
+			// has nothing to check. Recorded here, where the argument's
+			// checked type is in hand.
+			if definitelyScalar(at) {
+				if c.scalarArgs == nil {
+					c.scalarArgs = map[ast.Expr]bool{}
+				}
+				c.scalarArgs[n.Args[i]] = true
+			}
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
 				// If the expected param is a bare type parameter that an
@@ -16774,11 +17005,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, name := range captureOrder {
 			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
 		}
-		ft := &ast.FuncType{Result: n.ReturnType}
-		for _, p := range n.Params {
-			ft.Params = append(ft.Params, p.Type)
-		}
-		return ft
+		return paramSig(n.Params, n.ReturnType)
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:

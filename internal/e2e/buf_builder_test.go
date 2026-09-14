@@ -103,6 +103,59 @@ function main(): i32 {
 }
 `
 
+// bufPushU64Probe exercises the eight-byte push (#9221): the byte ORDER (least
+// significant first, which is the order every target stores a u64 in), a value
+// with the high bit set so a sign-extension anywhere shows as 0xff filler, a
+// value that is computed rather than a literal, interleaving with the byte and
+// string pushes, and growth past the reserve.
+const bufPushU64Probe = `function main(): i32 {
+    var b: usize = buf_new(8);
+    buf_push_u64(b, 0x0807060504030201);
+    if (buf_len(b) != 8) { return 1; }
+    var s: string = buf_take(b);
+    var i: i32 = 0;
+    while (i < 8) {
+        if (s[i] as i32 != i + 1) { return 10 + i; }
+        i = i + 1;
+    }
+    buf_push_u64(b, 0xff00000000000080);
+    var t: string = buf_take(b);
+    if (t.len() != 8) { return 2; }
+    if (t[0] != 128) { return 20; }
+    if (t[7] != 255) { return 21; }
+    var z: i32 = 1;
+    while (z < 7) {
+        if (t[z] != 0) { return 30 + z; }
+        z = z + 1;
+    }
+    buf_push_byte(b, 65);
+    buf_push_u64(b, 0x1111111111111111);
+    buf_push(b, "z");
+    if (buf_len(b) != 10) { return 3; }
+    var mixed: string = buf_take(b);
+    if (mixed[0] != 65) { return 40; }
+    if (mixed[1] != 17) { return 41; }
+    if (mixed[8] != 17) { return 42; }
+    if (mixed[9] != 122) { return 43; }
+    var v: u64 = 1;
+    var k: i32 = 0;
+    while (k < 40) { v = v * 2; k = k + 1; }
+    buf_push_u64(b, v);
+    var pow: string = buf_take(b);
+    if (pow[5] != 1) { return 50; }
+    if (pow[4] != 0) { return 51; }
+    var n: i32 = 0;
+    while (n < 1000) { buf_push_u64(b, 0x0201010101010101); n = n + 1; }
+    if (buf_len(b) != 8000) { return 4; }
+    var big: string = buf_take(b);
+    if (big.len() != 8000) { return 5; }
+    if (big[7999] != 2) { return 60; }
+    if (big[7992] != 1) { return 61; }
+    buf_free(b);
+    return 0;
+}
+`
+
 // TestBufBuilder runs the builder probes on every backend the builtins reach:
 // the interpreter (the reference oracle), x86-64, arm64 and wasm. A builder is
 // a usize handle rather than a value of its own type, so the legs differ in
@@ -118,6 +171,7 @@ func TestBufBuilder(t *testing.T) {
 		{"all-builtins", bufBuilderProbe},
 		{"two-builders", bufTwoBuildersProbe},
 		{"nested", bufNestedProbe},
+		{"push-u64", bufPushU64Probe},
 	}
 	for _, p := range probes {
 		t.Run(p.name, func(t *testing.T) {

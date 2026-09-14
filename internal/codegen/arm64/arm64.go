@@ -588,7 +588,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
-		g.usesFdStat || g.usesReaderSeek || g.usesWriterTruncate ||
+		g.usesFdStat || g.usesReaderSeek || g.usesFdFlags || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
 		g.usesCreateDir || g.usesChdir || g.usesRemoveDir || g.usesCreateLink ||
 		g.usesCreateSymlink || g.usesReadLink || g.usesStatfs ||
@@ -1009,6 +1009,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
+	}
+	if g.usesFdFlags {
+		g.emitFdFlagsRuntime()
+	}
+	if g.usesHandleIsatty {
+		g.emitHandleIsattyRuntime()
 	}
 	if g.usesWriterTruncate {
 		g.emitWriterTruncateRuntime()
@@ -6854,6 +6860,39 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_buf_push_byte")
 
+	// __fern_buf_push_u64(H, v): append the eight bytes of `v`, least
+	// significant first. One store, where the byte form would be eight
+	// calls (#9221); unaligned as often as not, which aarch64 takes on
+	// normal memory.
+	g.line("")
+	g.line(".global __fern_buf_push_u64")
+	g.typeDirective("__fern_buf_push_u64")
+	g.label("__fern_buf_push_u64")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, #8")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufu64_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufu64_fits")
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x1, [x19, #8]")
+	g.emit("add x0, x0, x1")
+	g.emit("str x20, [x0]")
+	g.emit("add x1, x1, #8")
+	g.emit("str x1, [x19, #8]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_u64")
+
 	// __fern_buf_len(H) -> len
 	g.line("")
 	g.line(".global __fern_buf_len")
@@ -8673,10 +8712,34 @@ func (g *generator) emitRandomBytesRuntime() {
 		// Lives in `linuxOnlySysno` — `g.syscall("getrandom")`
 		// asserts at codegen time if it gets reached on Darwin
 		// (the if/else above is the inline Darwin branch).
-		g.emit("mov x0, x19")
-		g.emit("mov x1, x20")
+		//
+		// LOOPED, like the Darwin arm above but for a different
+		// reason: getrandom returns how many bytes it wrote, and
+		// for a request past one page it may write fewer and
+		// return early when a signal arrives — or -EINTR having
+		// written none. One call would leave the tail as the
+		// allocator left it, which is zeros: silence where the
+		// caller asked for randomness (#9221). A hard error ends
+		// the loop rather than spinning; the signature has
+		// nowhere to report one.
+		g.emit("mov x21, x19") // write cursor
+		g.emit("mov x22, x20") // bytes still wanted
+		g.label(".Lrb_loop")
+		g.emit("cbz x22, .Lrb_done")
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x22")
 		g.emit("mov x2, #0")
 		g.syscall("getrandom")
+		g.emit("cmp x0, #0")
+		g.emit("b.gt .Lrb_wrote")
+		g.emit("cmn x0, #4") // -EINTR: nothing written, try again
+		g.emit("b.eq .Lrb_loop")
+		g.emit("b .Lrb_done")
+		g.label(".Lrb_wrote")
+		g.emit("add x21, x21, x0")
+		g.emit("sub x22, x22, x0")
+		g.emit("b .Lrb_loop")
+		g.label(".Lrb_done")
 	}
 	g.emit("mov x0, x19") // return data ptr
 	g.emit("ldp x21, x22, [sp, #32]")
@@ -11156,8 +11219,10 @@ func (g *generator) emitMknodRuntime() {
 // (x0..x6) → Result[void, IoError].
 //
 // On Linux that is utimensat(AT_FDCWD, path, times, flags): two
-// `struct timespec`s on the stack, access time first, with UTIME_OMIT in
-// the nanosecond half of either one the caller asked to leave alone.
+// `struct timespec`s on the stack, access time first, with UTIME_NOW or
+// UTIME_OMIT in the nanosecond half of either one the caller asked to
+// set to the clock or to leave alone; omit is written last so that it
+// wins when both name one half.
 //
 // XNU has no utimensat syscall — libc builds it out of setattrlistat(2),
 // and so does this. The attribute list names only the timestamps that
@@ -11166,6 +11231,11 @@ func (g *generator) emitMknodRuntime() {
 // ATTR_CMN_ACCTIME (0x1000) — the reverse of the timespec order Linux
 // wants. Omitting both leaves an empty list, which setattrlistat accepts
 // and which does nothing, exactly as UTIME_OMIT on both halves does.
+// The attribute list has no "now" either, so a now bit reads
+// gettimeofday first and names that value, as libc does — and, as libc
+// does when both halves are now, sets FSOPT_UTIMES_NULL (0x40) in the
+// options, which is what makes the kernel ask for write access rather
+// than ownership.
 //
 // The two operands are read into the frame before the path copy: they
 // arrive in argument registers that NUL-terminating the path clobbers.
@@ -11189,6 +11259,28 @@ func (g *generator) emitSetFileTimesRuntime() {
 	g.emit("mov x20, x1") // path_len
 	g.emit("mov x23, x6") // flags
 	if g.darwin {
+		g.emit("tst x23, #24")
+		g.emit("b.eq .Lsft_clocked")
+		g.emit("stp x2, x3, [x29, #96]") // the operands, across the syscall
+		g.emit("stp x4, x5, [x29, #112]")
+		g.emit("add x0, x29, #128") // timeval buffer, before the attributes land there
+		g.emit("mov x1, #0")        // tz = NULL
+		g.emit("mov x16, #%d", darGettimeofday)
+		g.emit("svc #0x80")
+		g.emit("ldp x2, x3, [x29, #96]")
+		g.emit("ldp x4, x5, [x29, #112]")
+		g.emit("ldr x9, [x29, #128]")  // tv_sec (i64)
+		g.emit("ldr w10, [x29, #136]") // tv_usec (i32)
+		g.emit("mov x11, #1000")
+		g.emit("mul x10, x10, x11") // usec → nsec
+		g.emit("tbz x23, #3, .Lsft_now_m")
+		g.emit("mov x2, x9")
+		g.emit("mov x3, x10")
+		g.label(".Lsft_now_m")
+		g.emit("tbz x23, #4, .Lsft_clocked")
+		g.emit("mov x4, x9")
+		g.emit("mov x5, x10")
+		g.label(".Lsft_clocked")
 		g.emit("mov w9, #0")         // commonattr
 		g.emit("add x10, x29, #128") // buffer cursor
 		g.emit("tbnz x23, #2, .Lsft_no_m")
@@ -11216,9 +11308,17 @@ func (g *generator) emitSetFileTimesRuntime() {
 	} else {
 		g.emit("stp x2, x3, [x29, #96]")  // atime
 		g.emit("stp x4, x5, [x29, #112]") // mtime
-		// UTIME_OMIT (1<<30 - 2) in the nanosecond half is how
-		// utimensat is told to leave one of the pair alone; the
-		// seconds half is then not read.
+		// UTIME_NOW (1<<30 - 1) and UTIME_OMIT (1<<30 - 2) in the
+		// nanosecond half are how utimensat is told to set one of the
+		// pair to the clock or leave it alone; the seconds half is then
+		// not read.
+		g.emit("mov x9, #1073741823")
+		g.emit("tbz x23, #3, .Lsft_na")
+		g.emit("stp xzr, x9, [x29, #96]")
+		g.label(".Lsft_na")
+		g.emit("tbz x23, #4, .Lsft_nm")
+		g.emit("stp xzr, x9, [x29, #112]")
+		g.label(".Lsft_nm")
 		g.emit("mov x9, #1073741822")
 		g.emit("tbz x23, #1, .Lsft_a")
 		g.emit("stp xzr, x9, [x29, #96]")
@@ -11236,7 +11336,12 @@ func (g *generator) emitSetFileTimesRuntime() {
 		g.emit("add x3, x29, #128") // attribute buffer
 		g.emit("ldr x4, [x29, #160]")
 		g.emit("and x5, x23, #1") // FSOPT_NOFOLLOW
-		g.emit("mov x16, #524")   // setattrlistat
+		g.emit("and x9, x23, #30")
+		g.emit("cmp x9, #24") // both now, neither omitted
+		g.emit("b.ne .Lsft_opts")
+		g.emit("orr x5, x5, #0x40") // FSOPT_UTIMES_NULL
+		g.label(".Lsft_opts")
+		g.emit("mov x16, #524") // setattrlistat
 		g.emit("svc #0x80")
 		g.emit("b.cc .Lsft_done")
 		g.emit("neg x0, x0")
@@ -11943,6 +12048,87 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_reader_seek")
 	g.line(".ltorg")
+}
+
+// emitFdFlagsRuntime emits `__fern_fd_flags(handle_ptr)` in x0 →
+// Result[i64, IoError]: fcntl(fd, F_GETFL) reduced to Fern's own three
+// bits — 1 readable, 2 writable, 4 appending. A Reader and a Writer hold
+// the fd at the same place, so both methods land here.
+//
+// The kernel's access mode is a VALUE in the low two bits (0 read-only,
+// 1 write-only, 2 read-write) rather than two independent flags, so the
+// two bits come out of two comparisons against it. O_APPEND is one of
+// the bits Linux and XNU disagree about — 02000 against 0x8 — like the
+// open flags oflagWrite translates.
+func (g *generator) emitFdFlagsRuntime() {
+	const fGetfl = 3
+	oAppend := 0o2000
+	if g.darwin {
+		oAppend = 0x8
+	}
+	g.line("")
+	g.line(".global __fern_fd_flags")
+	g.typeDirective("__fern_fd_flags")
+	g.label("__fern_fd_flags")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("ldr w0, [x0]") // fd
+	g.emit("mov x1, #%d", fGetfl)
+	g.emit("mov x2, #0")
+	g.syscall("fcntl")
+	g.emit("tbnz x0, #63, .Lfdfl_err")
+	// w19 = Fern's bits, from the raw word in w0.
+	g.emit("and w2, w0, #3")
+	g.emit("mov w19, #0")
+	g.emit("cmp w2, #1")
+	g.emit("b.eq .Lfdfl_nord")
+	g.emit("orr w19, w19, #1")
+	g.label(".Lfdfl_nord")
+	g.emit("cbz w2, .Lfdfl_nowr")
+	g.emit("orr w19, w19, #2")
+	g.label(".Lfdfl_nowr")
+	g.emit("mov w3, #%d", oAppend)
+	g.emit("tst w0, w3")
+	g.emit("b.eq .Lfdfl_noap")
+	g.emit("orr w19, w19, #4")
+	g.label(".Lfdfl_noap")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // tag = 0 (Ok)
+	g.emit("str x19, [x0, #8]")
+	g.emit("b .Lfdfl_ret")
+	g.label(".Lfdfl_err")
+	g.emit("neg x19, x0")
+	g.emit("mov x0, x19")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lfdfl_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_fd_flags")
+	g.line(".ltorg")
+}
+
+// emitHandleIsattyRuntime emits `__fern_handle_isatty(handle_ptr)` in
+// x0 → 1 when the descriptor the handle holds is a terminal. A Reader
+// and a Writer keep it at the same place, so both methods land here, and
+// the answer is the free form's — one tail call.
+func (g *generator) emitHandleIsattyRuntime() {
+	g.line("")
+	g.line(".global __fern_handle_isatty")
+	g.typeDirective("__fern_handle_isatty")
+	g.label("__fern_handle_isatty")
+	g.emit("ldr w0, [x0]") // fd
+	g.emit("b __fern_isatty")
+	g.sizeDirective("__fern_handle_isatty")
 }
 
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
@@ -12855,19 +13041,42 @@ func (g *generator) emitReaderWriterRuntime() {
 	// __fern_open_appender(path) / __fern_open_exclusive(path) →
 	// Result[Reader|Writer, IoError].
 	// Each is a thin wrapper around `openat` + handle alloc + the
-	// Result-box build. Flags + mode differ per kind.
+	// Result-box build. Flags + mode differ per kind. The two `_with`
+	// forms take Fern's flags word after the path: bit 0 is O_CREAT and
+	// bit 1 O_NONBLOCK, each in the target's own spelling (64 / 2048 on
+	// Linux, 0x200 / 0x4 on XNU), on top of the access mode in `flags`.
+	oCreat, oNonblock := 64, 2048
+	if g.darwin {
+		oCreat, oNonblock = 0x200, 0x4
+	}
 	twoWord := ast.UseTwoWordStrings(8)
 	for _, e := range []struct {
 		sym, name string
 		flags     int
 		mode      int
+		withFlags bool
 	}{
-		{"__fern_open_reader", "open_reader", 0, 0},
-		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0666},
-		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0666},
-		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600},
+		{"__fern_open_reader", "open_reader", 0, 0, false},
+		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0666, false},
+		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0666, false},
+		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600, false},
+		{"__fern_open_reader_with", "open_reader_with", 0, 0666, true},
+		{"__fern_open_writer_with", "open_writer_with", 1, 0666, true},
 	} {
 		_ = e.name
+		// The flags word lives in a callee-saved register (x22 two-word,
+		// x21 one-word) across the path copy and becomes w2 here.
+		emitWithFlags := func(reg string) {
+			if !e.withFlags {
+				return
+			}
+			g.emit("tbz %s, #0, %s", reg, ".Lorw_nc_"+e.sym)
+			g.emit("orr w2, w2, #%d", oCreat)
+			g.label(".Lorw_nc_" + e.sym)
+			g.emit("tbz %s, #1, %s", reg, ".Lorw_nb_"+e.sym)
+			g.emit("orr w2, w2, #%d", oNonblock)
+			g.label(".Lorw_nb_" + e.sym)
+		}
 		g.line("")
 		g.line(".global " + e.sym)
 		g.typeDirective(e.sym)
@@ -12879,15 +13088,19 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("stp x29, x30, [sp, #-64]!")
 			g.emit("mov x29, sp")
 			g.emit("stp x19, x20, [sp, #16]")
-			g.emit("str x21, [sp, #32]")
-			g.emit("mov x19, x0")                       // path_data
-			g.emit("mov x20, x1")                       // path_len
+			g.emit("stp x21, x22, [sp, #32]")
+			g.emit("mov x19, x0") // path_data
+			g.emit("mov x20, x1") // path_len
+			if e.withFlags {
+				g.emit("mov w22, w2") // the flags word
+			}
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
 			// NUL-terminate for openat (see emitNulTermPath2W).
 			g.emitNulTermPath2W("x21", "x21", "x20")
 			g.emit("mov x0, #%d", g.atFdCwd())
 			g.emit("mov x1, x21")
 			g.emit("mov w2, #%d", e.flags)
+			emitWithFlags("w22")
 			g.emit("mov w3, #%d", e.mode)
 			g.syscall("openat")
 			g.emitFreeNulTermPath2W("x21", "x20")
@@ -12928,20 +13141,25 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("str w1, [x0]")
 			g.emit("str x21, [x0, #8]")
 			g.label(".Lorw2w_ret_" + e.sym)
-			g.emit("ldr x21, [sp, #32]")
+			g.emit("ldp x21, x22, [sp, #32]")
 			g.emit("ldp x19, x20, [sp, #16]")
 			g.emit("ldp x29, x30, [sp], #64")
 			g.emit("ret")
 			g.sizeDirective(e.sym)
 			continue
 		}
-		g.emit("stp x29, x30, [sp, #-32]!")
+		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("mov x19, x0")              // stash path
+		g.emit("str x21, [sp, #32]")
+		g.emit("mov x19, x0") // stash path
+		if e.withFlags {
+			g.emit("mov w21, w1") // the flags word
+		}
 		g.emit("mov x0, #%d", g.atFdCwd()) // AT_FDCWD
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
+		emitWithFlags("w21")
 		g.emit("mov w3, #%d", e.mode)
 		g.syscall("openat")
 		g.emit("tbnz x0, #63, %s", ".Lorw_err_"+e.sym)
@@ -12980,8 +13198,9 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("str w1, [x0]")
 		g.emit("str x19, [x0, #8]")
 		g.label(".Lorw_ret_" + e.sym)
+		g.emit("ldr x21, [sp, #32]")
 		g.emit("ldp x19, x20, [sp, #16]")
-		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
 		g.sizeDirective(e.sym)
 	}
@@ -13219,6 +13438,64 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.sizeDirective("__fern_writer_write")
+
+	// __fern_writer_write_some(writer_ptr, s) → Result[i64, IoError]:
+	// ONE write(2) and the count it returned. The loop above is what
+	// makes the count unobservable there — a failure has already
+	// forgotten what landed before it — and the count is output for
+	// `shred`'s failing-write offset and `dd`'s record tally (#9231).
+	//
+	// Zero is a real answer rather than an error, so the Ok arm takes
+	// whatever the kernel said.
+	g.line("")
+	g.line(".global __fern_writer_write_some")
+	g.typeDirective("__fern_writer_write_some")
+	g.label("__fern_writer_write_some")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("ldr w19, [x0]") // fd
+	if twoWord {
+		g.emitStrLen2W("w22", "x2")
+		g.emitStrDataPtr2W("x20", "x1", "x2", 48)
+	} else {
+		g.emit("mov x20, x1")
+		g.emitStrLen("w22", "x20")
+	}
+	g.emit("mov w0, w19")
+	g.emit("mov x1, x20")
+	g.emit("mov x2, x22")
+	g.syscall("write")
+	g.emit("tbnz x0, #63, .Lwws_err")
+	g.emit("mov x21, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // Ok
+	g.emit("str x21, [x0, #8]")
+	g.emit("b .Lwws_ret")
+	g.label(".Lwws_err")
+	g.emit("neg x22, x0")
+	g.emit("mov x0, x22")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w21, #1")
+	g.emit("str w21, [x0]") // Err
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lwws_ret")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_writer_write_some")
 
 	// __fern_close_fd_box(handle_ptr) → Option[IoError].
 	// Shared by Reader.close + Writer.close.
@@ -14119,6 +14396,8 @@ type generator struct {
 	usesLstat          bool
 	usesFdStat         bool
 	usesReaderSeek     bool
+	usesFdFlags        bool
+	usesHandleIsatty   bool
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
@@ -14961,6 +15240,15 @@ func (g *generator) emitStartRuntime() {
 		}
 	}
 	g.emit("bl %s", AsmFnName("main"))
+	// A `main` that returns nothing exits 0: x0 holds whatever its last
+	// call left there otherwise, which made the status a stable fact
+	// about the emitted code rather than about the program (#9233). The
+	// wasm side already decided it this way (SynthCliRun).
+	if m := g.funcs["main"]; m != nil {
+		if _, isVoid := m.ReturnType.(ast.VoidType); isVoid {
+			g.emit("mov x0, #0")
+		}
+	}
 	// The exit-time reports (leak summary #5362, coverage #5548) both run
 	// here, and either can be on alone or both together. main's return
 	// value parks in x19 (callee-save, and _start has no caller to
@@ -18528,7 +18816,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__fern_exit"
 			g.usesExit = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 			target = "__fern_" + target
 			g.usesStrBuilder = true
 			// Every entry point but buf_len can reach the allocator, the
@@ -18671,8 +18959,23 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "sync":
 			target = "__fern_sync"
 			g.usesSync = true
-		case "__method_Reader_seek":
-			// lseek(2) on the handle's fd → Result[i64, IoError].
+		case "__method_Reader_flags", "__method_Writer_flags":
+			target = "__fern_fd_flags"
+			g.usesFdFlags = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_isatty", "__method_Writer_isatty":
+			// No box and no IoError: the answer is one word.
+			target = "__fern_handle_isatty"
+			g.usesHandleIsatty = true
+			g.usesIsatty = true
+		case "__method_Writer_write_some":
+			target = "__fern_writer_write_some"
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_seek", "__method_Writer_seek":
+			// lseek(2) on the handle's fd → Result[i64, IoError]; a Reader
+			// and a Writer hold the fd at the same place.
 			target = "__fern_reader_seek"
 			g.usesReaderSeek = true
 		case "__method_Writer_truncate":
@@ -18708,6 +19011,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesIoError = true
 		case "open_exclusive":
 			target = "__fern_open_exclusive"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_reader_with":
+			target = "__fern_open_reader_with"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_writer_with":
+			target = "__fern_open_writer_with"
 			g.usesReaderWriter = true
 			g.usesAlloc = true
 			g.usesIoError = true

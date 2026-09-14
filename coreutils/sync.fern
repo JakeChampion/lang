@@ -1,0 +1,179 @@
+// sync.fern — GNU-compatible `sync`.
+//
+//   sync [OPTION] [FILE]...
+//
+// With no operand it is sync(2), which cannot fail. With operands each
+// FILE is opened and flushed through the descriptor: fsync by default,
+// fdatasync under -d, and syncfs — the whole file system the FILE lives
+// on — under -f. A FILE that cannot be opened, cannot be flushed, or
+// cannot be closed costs the status and not the run, and each of those
+// three has its own diagnostic.
+//
+// GNU opens `O_RDONLY | O_NONBLOCK`, falling back to `O_WRONLY |
+// O_NONBLOCK` and reporting the read-only errno when both fail; the
+// non-blocking bit is what lets it open a FIFO that has no writer, and
+// the flush then answers whatever the kernel says of a FIFO's
+// descriptor. This does the same through `open_reader_with` and
+// `open_writer_with`.
+import "std/string";
+import "./lib/gnu";
+
+function opt_data(): i32 {
+  return 1;
+}
+
+function opt_file_system(): i32 {
+  return 2;
+}
+
+// fsync, fdatasync, syncfs.
+function mode_file(): i32 {
+  return 0;
+}
+
+function mode_data(): i32 {
+  return 1;
+}
+
+function mode_file_system(): i32 {
+  return 2;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]...\n";
+  out = out + "Synchronize cached writes to persistent storage\n";
+  out = out + "\n";
+  out = out + "If one or more files are specified, sync only them,\n";
+  out = out + "or their containing file systems.\n";
+  out = out + "\n";
+  out = out + "  -d, --data             sync only file data, no unneeded metadata\n";
+  out = out + "  -f, --file-system      sync the file systems that contain the files\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  return out;
+}
+
+// `flush_reader` / `flush_writer(h, mode)` — the flush the mode names,
+// on an open handle. Reader and Writer carry the same three methods but
+// are two types, hence two functions.
+function flush_reader(r: Reader, mode: i32): Option[IoError] {
+  if (mode == mode_data()) {
+    return r.fdatasync();
+  }
+  if (mode == mode_file_system()) {
+    return r.syncfs();
+  }
+  return r.fsync();
+}
+
+function flush_writer(w: Writer, mode: i32): Option[IoError] {
+  if (mode == mode_data()) {
+    return w.fdatasync();
+  }
+  if (mode == mode_file_system()) {
+    return w.syncfs();
+  }
+  return w.fsync();
+}
+
+// `report(name, flushed, closed)` — the two per-operand diagnostics
+// after an open, each costing the status.
+function report(name: string, flushed: Option[IoError], closed: Option[IoError]): boolean {
+  var ok: boolean = true;
+  match (flushed) {
+    Some(e) => {
+      gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      ok = false;
+    },
+    None => {}
+  }
+  match (closed) {
+    Some(e) => {
+      gnu.error("failed to close " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      ok = false;
+    },
+    None => {}
+  }
+  return ok;
+}
+
+// `sync_arg(name, mode)` — open the operand read-only and non-blocking,
+// then write-only and non-blocking, flush it, close it. Both opens
+// failing reports the first errno.
+function sync_arg(name: string, mode: i32): boolean {
+  match (open_reader_with(name, 2)) {
+    Ok(r) => {
+      return report(name, flush_reader(r, mode), r.close());
+    },
+    Err(e) => {
+      match (open_writer_with(name, 2)) {
+        Ok(w) => {
+          return report(name, flush_writer(w, mode), w.close());
+        },
+        Err(_) => {
+          gnu.error("error opening " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+          return false;
+        }
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  // Declaration order is visible in the ambiguity list: `sync --=x`
+  // names these two, then help and version.
+  opts = opts.append(gnu.flag("d", "data", opt_data()));
+  opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));
+  var data: boolean = false;
+  var file_system: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "sync", help_text(), 1);
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_data()) {
+          data = true;
+        } else {
+          file_system = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (data && file_system) {
+    gnu.error("cannot specify both --data and --file-system");
+    exit(1);
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    if (data) {
+      gnu.error("--data needs at least one argument");
+      exit(1);
+    }
+    sync();
+    return 0;
+  }
+  var mode: i32 = mode_file();
+  if (data) {
+    mode = mode_data();
+  } else if (file_system) {
+    mode = mode_file_system();
+  }
+  var ok: boolean = true;
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    if (!sync_arg(operands[i], mode)) {
+      ok = false;
+    }
+    i = i + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}

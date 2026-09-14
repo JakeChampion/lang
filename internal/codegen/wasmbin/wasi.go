@@ -1878,8 +1878,16 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	// Preview 2 has no fd table to interrogate, so its `isatty` is a
-	// constant and imports nothing (see buildIsattyBodyP2).
+	// constant and imports nothing (see buildIsattyBodyP2). `flags()` is
+	// the same shape: preview 1 reads the fdstat record, preview 2
+	// answers from the handle itself (see wasi_fd_flags.go).
 	if helpers.set["isatty"] && !opts.Preview2WASI {
+		in.add("wasi_fd_fdstat_get")
+	}
+	if (helpers.set["__fern_reader_flags"] || helpers.set["__fern_writer_flags"]) && !opts.Preview2WASI {
+		in.add("wasi_fd_fdstat_get")
+	}
+	if helpers.set["__fern_handle_isatty"] && !opts.Preview2WASI {
 		in.add("wasi_fd_fdstat_get")
 	}
 	if helpers.set["__fern_random_i32"] {
@@ -2188,6 +2196,26 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_open")
 		}
 	}
+	if helpers.set["__fern_open_reader_with"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_read_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
+	}
+	if helpers.set["__fern_open_writer_with"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
+	}
 	if helpers.set["__fern_open_exclusive"] {
 		if opts.Preview2WASI {
 			// open_exclusive opens via get-directories → open-at(create,
@@ -2265,6 +2293,18 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_seek")
 		}
 	}
+	if helpers.set["__fern_writer_seek"] {
+		if opts.Preview2WASI {
+			// SEEK_END and an append Writer's SEEK_CUR need the size;
+			// the seek itself is a fresh write-via-stream at the target
+			// replacing the old stream.
+			in.add("wasi_descriptor_stat_p2")
+			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_io_output_stream_drop")
+		} else {
+			in.add("wasi_fd_seek")
+		}
+	}
 	if helpers.set["__fern_writer_truncate"] {
 		// The same set-size the path form borrows, on the handle's own
 		// descriptor rather than one this helper opens.
@@ -2274,7 +2314,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_filestat_set_size")
 		}
 	}
-	if helpers.set["__fern_writer_write"] {
+	if helpers.set["__fern_writer_write"] || helpers.set["__fern_writer_write_some"] {
 		if opts.Preview2WASI {
 			in.add("wasi_blocking_write_and_flush_p2")
 		} else {
@@ -2295,7 +2335,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			// A Reader owns a descriptor only when open_reader made it;
 			// stdin's carries noDescriptor, and a module without an
 			// opener has no chain for the drop to sit in.
-			if helpers.set["__fern_open_reader"] {
+			if helpers.set["__fern_open_reader"] || helpers.set["__fern_open_reader_with"] {
 				in.add("wasi_descriptor_drop_p2")
 			}
 			// The Reader holds an own<input-stream> handle; close drops it
@@ -2310,7 +2350,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			// Same as the Reader: only open_writer / open_appender /
 			// open_exclusive make a Writer that owns a descriptor.
 			if helpers.set["__fern_open_writer"] || helpers.set["__fern_open_appender"] ||
-				helpers.set["__fern_open_exclusive"] {
+				helpers.set["__fern_open_exclusive"] || helpers.set["__fern_open_writer_with"] {
 				in.add("wasi_descriptor_drop_p2")
 			}
 			// The Writer holds an own<output-stream> handle; close drops it.
@@ -2671,6 +2711,25 @@ func buildExitBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildExitBodyP2 is __fern_exit under wasi:cli/exit, whose argument
+// is a `result<_, _>` discriminant rather than a status: 0 is ok and
+// every other code is 1, the one bit of failure a preview-2 host
+// reports (the synthesised `_start` folds main's result the same way).
+// Passing the code through would trap the host on `exit(2)`.
+func buildExitBodyP2(idxs map[string]uint32) []byte {
+	procExit := idxs["wasi_proc_exit"]
+	var body []byte
+	if ast.LeakCheckEnabled {
+		body = inst.InstCall(body, idxs["__fern_lc_report"])
+	}
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstCall(body, procExit)
+	body = inst.InstUnreachable(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildLcReportBodyP2 assembles __fern_lc_report() for preview 2: the
 // same line, written through wasi:cli/stderr's output-stream instead of
 // fd 2. The handle is cached in the same slots __fern_eprint uses — it
@@ -2798,14 +2857,22 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
 	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
 	"__fern_fd_stat":             buildFdStatBodyP2,
+	"__fern_exit":                buildExitBodyP2,
 	"__fern_fd_fsync":            buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
 	"__fern_fd_fdatasync":        buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
 	"__fern_fd_syncfs":           buildFdSyncfsBody,
 	"__fern_reader_seek":         buildReaderSeekBodyP2,
+	"__fern_writer_seek":         buildWriterSeekBodyP2,
+	"__fern_reader_flags":        buildReaderFlagsBodyP2,
+	"__fern_writer_flags":        buildWriterFlagsBodyP2,
+	"__fern_handle_isatty":       buildIsattyBodyP2,
+	"__fern_writer_write_some":   buildWriterWriteSomeBodyP2,
 	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,
 	"__fern_open_appender":       buildOpenAppenderBodyP2,
+	"__fern_open_reader_with":    buildOpenReaderWithBodyP2,
+	"__fern_open_writer_with":    buildOpenWriterWithBodyP2,
 	"__fern_open_exclusive":      buildOpenExclusiveBodyP2,
 	"__fern_writer_write":        buildWriterWriteBodyP2,
 	"__fern_reader_close_fd":     buildReaderCloseFdBodyP2,
