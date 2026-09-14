@@ -143,7 +143,7 @@ func stageParseProbeTree(t *testing.T) string {
 // folded onto astwalk (#6993), so the fold is held to reproducing the exact
 // sequence rather than to whatever it happens to print.
 //
-// The load-bearing rows are the punct:; pair. A bare `return;` parses to the
+// The essential rows are the punct:; pair. A bare `return;` parses to the
 // sentinel ExprUnknown("punct:;") in the return's value slot and is exempt
 // there — and ONLY there: `var x: i32 = ;` plants the SAME sentinel in an
 // init slot and must stay diagnosed, and `return 1 + ;` plants it nested
@@ -202,7 +202,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"param-default-sentinel",
 			"function f(x: i32 = ;): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: in fn 'f': parser-side unknown: punct:; (1:21)"},
-		// Nested inside the default rather than being the whole of it, so the
+		// Nested inside the default rather than being all of it, so the
 		// fold is held to descending a default and not merely to testing its
 		// root node.
 		{"param-default-nested-sentinel",

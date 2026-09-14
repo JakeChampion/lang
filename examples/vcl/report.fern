@@ -2,7 +2,7 @@
 // report, shared by `vclrun` and by every compiled policy.
 //
 // A compiled policy is a program in its own right and needs the same
-// front door as the interpreter's driver: parse a method, a URL, optional
+// entry point as the interpreter's driver: parse a method, a URL, optional
 // headers, and run. Putting that here means the two cannot drift, and a
 // compiled policy's output can be diffed against the interpreter's
 // directly — which is exactly how the differential test checks that

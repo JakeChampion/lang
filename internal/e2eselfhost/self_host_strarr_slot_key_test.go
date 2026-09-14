@@ -21,7 +21,7 @@ import (
 //
 // with `allocs=255 frees=255 live_bytes=0`, which is the trap: a doubly-released
 // block goes back to the freelist, so the byte count is clean and only
-// `__rc_underflow()` dissents. This is the same defect #7272 fixed for the tuple
+// `__rc_underflow()` reports it. This is the same defect #7272 fixed for the tuple
 // classes and #7292 for "STR:", one class over.
 //
 // What isolates it is a one-word rename. `param_rename` below is `param_alias`
@@ -139,7 +139,7 @@ function main(): i32 { var b: i32[] = [7, 8, 9]; var t: i32 = 0; var i: i32 = 0;
 // TestSelfHostStrArrSlotKeyX86_64 — each string[] binding resolves the credit its
 // own binding earned.
 //
-// The exit code is the load-bearing assertion: an over-release does not move
+// The exit code is the essential assertion: an over-release does not move
 // live_bytes, so `__rc_underflow()` is the only thing that separates a correct
 // compiler from one that frees a live buffer. `fresh_only` carries the opposite
 // direction — it balances exactly, so a site key resolving to no credit fails

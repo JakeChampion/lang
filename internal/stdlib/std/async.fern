@@ -1,12 +1,12 @@
 // std/async — structured-concurrency combinators over `Future[T]`.
 //
-// This is the BLESSED async surface (docs/ASYNC-REDESIGN.md). It
+// This is the SUPPORTED async surface (docs/ASYNC-REDESIGN.md). It
 // replaces the `concurrent { … }` / `await` / `race` keyword surface
 // (a parser-side CPS transform) with plain library functions over one
 // abstraction — a `Future[T]`, a not-yet-ready value of type `T`. The
 // concurrency points are explicit (you call `gather` / `race`), the
 // model is colorless (no function coloring, no compiler transform),
-// and it has a real wasm story (it drives the universal `poll`
+// and it has a real wasm path (it drives the universal `poll`
 // builtin, not stackful green threads).
 //
 // PORTABILITY: every combinator compiles and runs on all backends.

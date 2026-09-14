@@ -179,7 +179,7 @@ type rcPlan struct {
 	// straight to C via the reuse token. The scrutinee's old payloads were MOVED
 	// into the arm bindings (reclaimed downstream), so unlike a general reuse C
 	// must NOT drop the box's old fields — this flag tells emitEnumNew to skip
-	// emitReuseOldFieldDrops. Rides on RcReuseEnabled. Filled by
+	// emitReuseOldFieldDrops. Gated on RcReuseEnabled. Filled by
 	// computeConsumingMatchReuse, which also records the ctor→scrutinee
 	// pairing in reuseSources (#4475).
 	consumingMatchReuse map[*ast.Call]bool
@@ -718,7 +718,7 @@ func returnsOwnBox(e ast.Expr, fresh map[string]bool, q *summaryTable[bool], ret
 			// counted either way — so the result is the function's box
 			// exactly when the receiver is. retained=false: the transfer inc
 			// covers the returned expression, which is the call, not its
-			// receiver, so a returned-alias receiver earns nothing from it.
+			// receiver, so a returned-alias receiver gains nothing from it.
 			return len(x.Args) > 0 && returnsOwnBox(x.Args[0], fresh, q, false, refused, ctorFresh)
 		}
 		return q.at(id.Name) || ctorFresh(x)
@@ -778,7 +778,7 @@ func freshLocalsIn(fn *ast.FuncDecl, q *summaryTable[bool], ctorFresh func(*ast.
 		for name := range fresh {
 			for _, rhs := range assigned[name] {
 				// retained=false: the transfer inc is emitted at RETURN
-				// sites only, so an assignment's RHS earns no credit from it.
+				// sites only, so an assignment's RHS gets no credit from it.
 				if !returnsOwnBox(rhs, fresh, q, false, isParam, ctorFresh) {
 					delete(fresh, name)
 					changed = true
@@ -2791,7 +2791,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				// and the mutation idioms that replaced them are the
 				// counted `.with` / functional-update stores handled
 				// above and at StructLit. Their taint arms were dead
-				// case-law and are deleted (#4399 sink 3).
+				// code and are deleted (#4399 sink 3).
 				//
 				// One Index target does reach lowering: BoxMutatedCaptures
 				// runs after the checker and rewrites a captured-and-
@@ -3064,7 +3064,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// the source buffer must stay live — freeing it at scope exit would
 			// reclaim memory the raw pointer still uses. Taint the cast source
 			// (escape unwraps any projection to the root local). This is the
-			// load-bearing guard that lets the scalar-arg untaint below stay
+			// essential guard that lets the scalar-arg untaint below stay
 			// safe: without it, untainting a literal / scalar-binary size arg
 			// would make an `__alloc_u8(...) as usize` buffer eligible and
 			// over-release it. Pointer→pointer casts keep rc tracking and are
@@ -3681,7 +3681,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// 240000 → 2400000 in a loop). A bare-local arm is still caught: the
 		// escape(arm.Body) in computeFreeEligible taints that local, so
 		// rhsTainted reads it back as tainted here and the match stays
-		// protected — same belt-and-suspenders as IfExpr.
+		// protected — same redundant check as IfExpr.
 		for _, arm := range x.Arms {
 			if b.rhsTainted(arm.Body, tainted) {
 				return true
@@ -5446,7 +5446,7 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 	// drops after a simple top-level use. That extension is
 	// only enabled for PRIMITIVE-element arrays (i32[] / f64[] / …): a
 	// dead `int[]` freed early is the clean peak-memory win (the
-	// headline two-KiB-array case) with no per-element rc to balance.
+	// main two-KiB-array case) with no per-element rc to balance.
 	//
 	// A pointer-element array (string[] / struct[] / T[][] / tuple[])
 	// is EXCLUDED from this nested placement: its deep drop dec's each
@@ -5454,7 +5454,7 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 	// the self-host driver's `entry_path = av[1]` / `root = av[2]` from
 	// `var av: string[] = args()`, last-used at `av[2]` inside an `if`)
 	// relies on the per-element retain/release balancing exactly on
-	// EVERY backend. On arm64 two-word heap strings that balance rides
+	// EVERY backend. On arm64 two-word heap strings that balance uses
 	// the native heap-string reclamation path the plan still defers
 	// (slice 5g, "arm64 native heap-string rc — verify on hardware"),
 	// so an early drop there corrupts under allocation-reuse pressure
@@ -9285,7 +9285,7 @@ func (b *builder) ctorRetainedOperands(n ast.Node, f func(ast.Expr)) {
 }
 
 // retainsCtorAliasedSource reports whether `e` is a container construction that
-// RETAINS a ctorAliasInced local — the shape whose drop order is load-bearing.
+// RETAINS a ctorAliasInced local — the shape whose drop order matters.
 //
 // Such a source cannot free itself. Being ineligible for the deep free, its own
 // release is the flat `__fern_rc_dec` in emitVarReinitDropOld and in the exit

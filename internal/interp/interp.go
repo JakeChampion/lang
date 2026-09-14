@@ -111,7 +111,7 @@ func (*Cell) String() string { return "<cell>" }
 // uses different digit budgets per width); the underlying
 // storage is float64 either way — for f32 we round-trip through
 // `float32` during arithmetic and at f32_bits boundary points
-// to keep the visible precision honest.
+// to keep the visible precision correct.
 //
 // The interp had no float values for most of its lifetime
 // (raw-memory ops in the Lang stdlib bodies couldn't be modeled
@@ -172,7 +172,7 @@ type Map struct {
 
 // clone returns an independent copy of the map (rc 0 — an unowned
 // temporary the binding store will retain to 1). Used by set/delete/
-// clear when the receiver is shared (rc > 1) so the mutation can't bleed
+// clear when the receiver is shared (rc > 1) so the mutation can't reach
 // into an aliased holder.
 func (m *Map) clone() *Map {
 	return &Map{
@@ -488,7 +488,7 @@ type Interp struct {
 	// Exiter is invoked by the `exit(code)` builtin. Defaults to
 	// os.Exit; tests override it to capture the requested code
 	// without actually killing the process. A non-returning
-	// function is expected — the interpreter has no story for
+	// function is expected — the interpreter has no path for
 	// resuming after an exit call.
 	Exiter func(code int)
 	// openFiles maps the `fd` field of a Reader / Writer Struct
@@ -984,7 +984,7 @@ func New() *Interp {
 	//
 	// It keeps __memchr's byte-range guard and drops its cursor: there is no
 	// `from`, so the only two answers a degenerate call can give are 0 for an
-	// out-of-range byte and 0 for an empty string, and both are the honest
+	// out-of-range byte and 0 for an empty string, and both are the accurate
 	// count rather than a sentinel.
 	i.Builtins["__count_byte"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 2 {
@@ -1421,7 +1421,7 @@ func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 // the native backends (a socket's readiness token IS its fd). It lets
 // std/async's `fetch_future` be portable; the interp has no real poll, so a
 // Pending future built from it never resolves (the in-interp `poll` stub
-// returns -1), exactly like the native/wasm portability story.
+// returns -1), exactly like the native/wasm portability rule.
 func builtinTcpPollable(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("tcp_pollable: expected 1 arg, got %d", len(args))
@@ -1609,7 +1609,7 @@ func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__int_to_string_u64: expected number neg, got %T", args[1])
 	}
-	// `Number` is int64 under the hood; treat as unsigned for
+	// `Number` is int64 underneath; treat as unsigned for
 	// the u64 / u32 callers by re-reading the bits via uint64.
 	out := strconv.FormatUint(uint64(int64(mag)), 10)
 	if int64(neg) != 0 {
@@ -1956,7 +1956,7 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 
 // cowTarget returns the map a mutating method should write to: the
 // receiver itself when it has at most one owner (mutate in place), or a
-// fresh copy when it is shared (rc > 1) so the mutation can't bleed into
+// fresh copy when it is shared (rc > 1) so the mutation can't reach into
 // an aliased holder. Mirrors core/map.fern's __map_cow_inplace.
 func cowTarget(m *Map) *Map {
 	if m.rc <= 1 {
@@ -2509,7 +2509,7 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	}
 	// A separator would let the prefix steer the directory out of the
 	// temp root. Rejected with the shape every backend's EINVAL takes,
-	// rather than laundering Go's own pattern error through
+	// rather than routing Go's own pattern error through
 	// classifyIoError, so the answer is identical on all of them.
 	if strings.ContainsRune(string(prefix), '/') {
 		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
@@ -5236,7 +5236,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		//
 		// Float belongs here: armMatchesScalar and valuesEqual have both
 		// handled it all along, and the compiled backends match a float
-		// scrutinee happily. Only this gate said otherwise, so a program
+		// scrutinee. Only this gate said otherwise, so a program
 		// the natives and wasm ran refused to interpret at all.
 		switch tag.(type) {
 		case Number, Float, Bool, String:
@@ -5750,7 +5750,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 					w = 32
 				}
 				// An unsigned source converts from its unsigned
-				// magnitude: a u64 max rides as the bit pattern -1,
+				// magnitude: a u64 max is stored as the bit pattern -1,
 				// which a signed conversion would turn into -1.0
 				// instead of ~1.8e19 (the codegen backends' ucvtf /
 				// convert_i64_u result). Source type from InnerType.
@@ -5791,13 +5791,13 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	case *ast.BoolLit:
 		return Bool(x.Value), nil
 	case *ast.UnitLit:
-		// `()` carries no information; it rides the same zero every
+		// `()` carries no information; it is the same zero every
 		// backend stores in the payload slot.
 		return Number(0), nil
 	case *ast.StringLit:
 		return String(x.Value), nil
 	case *ast.CharLit:
-		// A `char` rides an i32 and a `u8` a byte; the interpreter's
+		// A `char` occupies an i32 and a `u8` a byte; the interpreter's
 		// Number covers both, exactly as it does for `n as char`.
 		return Number(x.Value), nil
 	case *ast.FString:
@@ -6248,7 +6248,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		//     Ok(v)   => v,   // Result-shape
 		//     Err(_)  => return expr,
 		//   }
-		// The early-return arms hop the enclosing function via
+		// The early-return arms exit the enclosing function via
 		// the tryOpEarlyReturn sentinel; callFunc catches it.
 		inner, err := i.evalExpr(x.Inner, env)
 		if err != nil {
@@ -6550,7 +6550,7 @@ func shiftCount(rn Number, width int) Number {
 // `trunc_sat_*` ops and the native backends' fcvtz / cvtt + fixup,
 // so a `f as i32` cast agrees on every backend. The width-32 result
 // is stored int32-truncated to match the interpreter's i32/u32
-// storage convention (unsigned values ride sign-extended; callers
+// storage convention (unsigned values are stored sign-extended; callers
 // reinterpret via uint32 at use). 2^63 / 2^64 are the first floats
 // at/above the signed-i64 / unsigned-u64 max, so the `>=` guards
 // keep the final Go conversion in range.
@@ -6577,7 +6577,7 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 		}
 		return int64(int32(t))
 	}
-	// unsigned. The max (2^32-1 / 2^64-1) rides as all-ones, which
+	// unsigned. The max (2^32-1 / 2^64-1) is stored as all-ones, which
 	// is -1 in the int64/int32-truncated storage the interpreter
 	// uses for u32/u64.
 	if t <= 0.0 {
@@ -6599,7 +6599,7 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 // codegen backends' int→int narrowing. An unsigned narrow
 // zero-extends (storing the true magnitude so a later widening
 // cast zero-extends); a signed narrow sign-extends. Width 64 is
-// identity (u64 rides as its bit pattern). Width 8 is always
+// identity (u64 is stored as its bit pattern). Width 8 is always
 // unsigned (u8 — i8 was retired in #4408).
 func narrowInt(v int64, width int, unsigned bool) int64 {
 	switch width {
@@ -6812,7 +6812,7 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		// (an unsigned value stores its true magnitude so a later
 		// widening `as i64` zero-extends rather than sign-extends),
 		// a signed narrow sign-extends. u64 has no positive int64
-		// form, so it rides as its bit pattern (handled by the op's
+		// form, so it is stored as its bit pattern (handled by the op's
 		// own uint64 view); width 64 here is identity.
 		signExtend := func(v Number) Number {
 			switch b.IntWidth {

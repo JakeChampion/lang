@@ -41,9 +41,11 @@ function first[I: Iterator](it: I): I::Item {
   is known); `Self::Item` / `T::Item` once the base becomes concrete — at
   impl conformance, at a generic call site, or when the generic is
   monomorphised.
-- **Object safety**: a trait with associated types is **not** usable as
-  `dyn Trait` (a `dyn` value erases the concrete type, so the binding can't
-  be recovered). Rust's `dyn Trait<Item = T>` pinning is a follow-up.
+- **Object safety**: a trait with associated types is usable as a trait
+  object only when the `dyn` type PINS every one —
+  `dyn Holder[Item = i32]`. A `dyn` value erases the concrete type, so an
+  unpinned associated type has nothing to resolve against at the call site
+  and bare `dyn Holder` is E021.
 
 ## Implementation
 
@@ -66,11 +68,34 @@ type before codegen, so the IR / backends / interpreter never see one.
 - **monomorph**: `substituteType` carries `ProjType` (substituting the
   base); the checker re-check then resolves the now-concrete projection.
 
+## The self-host compiler
+
+The self-host implements the feature too, in a different shape because its
+declared types are SPELLINGS rather than a tree:
+
+- `::` is its own token. In expression position it is a path separator
+  equivalent to `.` (`at_path_sep` accepts either); in TYPE position the two
+  are not interchangeable — `mod.Type` is a module qualifier and `Base::Name`
+  a projection — so the lexer's old fold of `::` into `.` left them
+  indistinguishable.
+- A projection is the string `Base::Name`, and
+  `parser.resolve_assoc_projections` rewrites every one to the impl's binding
+  as a module pass. The bindings are syntactic (`type Item = i32;` on the
+  impl), so unlike native this needs no inference and runs in the parser.
+- The conformance comparison resolves BOTH sides: the impl method's copy is
+  already rewritten, so the trait's requirement must be too, or every
+  associated-type impl reads as a signature mismatch.
+
+`TestSelfHostAssocTypesDifferential` holds conformance, resolution and object
+safety to native's exact diagnostics.
+
+One divergence is deliberate and is NOT this feature's: where a projection has
+no binding, native also reports a cascading `E002 return type mismatch` against
+the unresolved type and the self-host does not. It declines that E002 for any
+unknown nominal return (`function f(): Nope { return 1; }`) — its documented
+zero-false-positive conservatism, and a separate convergence item.
+
 ## Scope / follow-ups
 
-- **`dyn Trait<Item = T>`** pinning (associated-type traits as trait objects).
 - **Associated-type bounds** (`type Item: Display;`).
 - **Associated-type defaults** (`type Item = i32;` in the trait).
-- **Self-host compiler** support (the self-host parser doesn't yet parse
-  `::` projections or `type` members; no stdlib uses associated types, so
-  the self-host bootstrap is unaffected).

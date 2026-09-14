@@ -15,7 +15,7 @@ import (
 // folded to 4_000_000_000 instead of the i32-wrapped -294_967_296 and a
 // following `< 0` test folded to the wrong answer. These helpers mirror
 // foldBinary (i32) / foldBinary64 (i64) in internal/ir/fold.go — the
-// blessed reference folder. See docs/ADVERSARIAL-REVIEW-2026-06.md (I1).
+// canonical reference folder. See docs/ADVERSARIAL-REVIEW-2026-06.md (I1).
 
 // negAtWidth negates v at the given integer width (wrapping at 32 bits
 // when not w64).

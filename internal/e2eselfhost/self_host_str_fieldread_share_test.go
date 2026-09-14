@@ -41,10 +41,10 @@ import (
 // drops only on the second (#6127). `blockscoped` is the row that would catch a
 // revoke-only change.
 //
-// TWO SHAPES STAY REFUSED, and both are load-bearing rather than decorative:
+// TWO SHAPES STAY REFUSED, and both are essential rather than decorative:
 //
 //   - `respread`: a `T { ...base }` copies every field pointer into a fresh box
-//     with NO inc, minting an uncounted third owner. Gated by FIELD TYPE
+//     with NO inc, creating an uncounted third owner. Gated by FIELD TYPE
 //     (LowerState.spread_sites), not by holder name, because the dangerous base
 //     can name a local with no slot yet when the share is decided.
 //   - `moved_ret`: no bind, so no marker flip, and the inc goes with the move
@@ -150,7 +150,7 @@ function round(i: i32): i32 {
 			want: 59, balance: true,
 		},
 		{
-			// REFUSED: the spread mints an uncounted third owner, so the share is
+			// REFUSED: the spread creates an uncounted third owner, so the share is
 			// declined and the pre-existing leak stands.
 			name: "respread",
 			src: strFieldReadDecl + `function round(i: i32): i32 {

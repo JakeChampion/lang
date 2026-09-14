@@ -673,7 +673,7 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	// staging scratch entirely — exactly when the restores do not write them.
 	// The allocator cannot put a result and a value live ACROSS the same call in
 	// one register (their intervals overlap), so this holds for every call; the
-	// check is what keeps that an optimisation rather than a load-bearing
+	// check is what keeps that an optimisation rather than depending on an
 	// assumption about a pass in another package.
 	if !inSaveSet(saved, in.Dst) && (in.Op != CallPair || !inSaveSet(saved, in.Dst2)) {
 		// System V returns in rax (tag) / rdx (payload), so delivering a pair into
@@ -755,7 +755,7 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 	)
 	// Preserve the caller-saved registers live across the call (see callLines).
 	saved := callSavedSet(in, numAlloc)
-	// The env pointer rides as the callee's final argument, so the argument
+	// The env pointer is passed as the callee's final argument, so the argument
 	// sequence is one longer than ArgLocs.
 	nArgs := len(in.ArgLocs) + 1
 	nStack := stackArgCount(nArgs)
@@ -865,7 +865,7 @@ func isDeadSelfMove(line string) bool {
 }
 
 // gpRegs maps an abstract register index to a physical register. The order is
-// load-bearing in one way: the last numScratch entries are the emitter's staging
+// essential in one way: the last numScratch entries are the emitter's staging
 // registers, so they must be CALLER-saved, leaving every callee-saved register
 // (rbx, r12–r15) inside the allocatable file. Staging is dead across a call and
 // costs nothing to lose, while a value the allocator homes in a callee-saved
@@ -1995,7 +1995,7 @@ var runtimeHelperDeps = map[string][]string{
 // routines in an rc-carrying program — `__fern_rc_inc` / `_dec` run once per
 // rc op — so a helper's entry address decides whether its body shares one
 // 32-byte instruction-fetch window. Letting that fall out of wherever the
-// preceding helper happened to end is a landmine: removing two subsumed
+// preceding helper happened to end is a hazard: removing two subsumed
 // instructions from an EARLIER helper doubled examples/bench/string_rfind_byte,
 // 61 ms to 122 ms, without changing one instruction that program runs (#8193).
 func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
@@ -2685,7 +2685,7 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 //
 // All four are SSE2, 16 bytes an iteration, the same block algorithms the
 // native backend and arm64ssa run (docs/ATLAS-PLATFORM-PLAN.md §3). What paid
-// for the vectorising was a net rather than a decision to go faster: the
+// for the vectorising was a gate rather than a decision to go faster: the
 // flat-vs-ssa ratio gate (#8069) named memchr as a 20x divergence the moment
 // the flat side got quicker, and the length sweep in gas_scan_lengths_test.go
 // is what makes a block kernel readable off the page — it walks every length
@@ -3130,7 +3130,7 @@ func emitCrc32CksumHelper(w func(string, ...any)) {
 }
 
 // emitCountByteHelper writes __fern_count_byte(s, byte) -> how many bytes of `s`
-// equal `byte`. No cursor, so no clamp; both degenerate answers are honest
+// equal `byte`. No cursor, so no clamp; both degenerate answers are real
 // counts rather than sentinels — an out-of-range byte counts 0 because nothing
 // can equal it, an empty string counts 0 because it has no bytes. Leaf.
 //
@@ -3360,7 +3360,7 @@ func emitBufReserveHelper(w func(string, ...any)) {
 // emitBufPushHelper writes buf_push(H, s): copy the single-word string's bytes
 // (length at [s-4]) onto the builder's tail, growing it first when they do not
 // fit. The fitting path needs no frame: __ssa_bcopy clobbers only its argument
-// registers, so H rides in r8 across it. Unused return is 0.
+// registers, so H is held in r8 across it. Unused return is 0.
 func emitBufPushHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("buf_push"))
@@ -4044,7 +4044,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tmov eax, 263") // unlinkat
 	w("\tsyscall")
 	w(".Lssa_rda_ok:")
-	// Result.Ok(()): the unit rides a payload slot like any other value, so
+	// Result.Ok(()): the unit occupies a payload slot like any other value, so
 	// this is the same 24-byte block the Err arm builds, tag 0.
 	ssaBumpAlloc(w, "rax", "24")
 	w("\tmov dword ptr [rax], 1") // rc = 1

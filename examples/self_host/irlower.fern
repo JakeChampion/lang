@@ -131,7 +131,7 @@ pub struct LocalInfo {
     // element slots.
     is_f64arr: boolean,
     // is_f32arr: an f32[]. DISPATCH-ONLY, like is_bool / is_boolarr: an f32[]
-    // rides the SAME 8-byte slot and stride as an f64[] here (is_f64arr is set
+    // occupies the SAME 8-byte slot and stride as an f64[] here (is_f64arr is set
     // too, and is_float_array_type_name deliberately maps both spellings onto
     // it), so no width, stride or rc decision reads this. What it buys is that
     // `a[i]` types as an f32 rather than an f64, so a method on the element
@@ -153,7 +153,7 @@ pub struct LocalInfo {
     // disagreed with the `bs[i]` spelling of the same read (#6305).
     is_bool: boolean,
     // is_boolarr: a boolean[]. Unlike its is_strarr / is_f64arr / is_i64arr
-    // siblings this is DISPATCH-ONLY — a boolean rides the same i32 slot and the
+    // siblings this is DISPATCH-ONLY — a boolean occupies the same i32 slot and the
     // same 4-byte element stride, so no width, stride or rc decision reads it.
     // What it buys is that `a[i]` types as a boolean rather than i32, so a
     // method on it keys "boolean.<m>": without it `bs.to_json()` rendered
@@ -167,7 +167,7 @@ pub struct LocalInfo {
     // is_fnarr: an array of BARE named-function values (`(() => T)[]`), as
     // opposed to is_closurearr's boxes — deliberately separate, because these
     // call through the plain call_indirect path, not env-first. The distinction
-    // bites at `.append(f)`: a bare 0-arg fn name appended to such a slot is a
+    // shows at `.append(f)`: a bare 0-arg fn name appended to such a slot is a
     // fn POINTER (const_func), not a `const`-style call. Without the flag the
     // appended `f` const-calls and stores its RESULT, so `fns[i]()` segfaults.
     is_fnarr: boolean,
@@ -686,7 +686,7 @@ pub struct FnSigs {
     grow_recv_fns: string[],
     // grow_field_positions: "<callee>|<idx>|<TypeName>|<field>,…" for the
     // PARAMETER positions whose struct argument's named field buffers the callee
-    // may grow in place. The declared type rides along because the bracket
+    // may grow in place. The declared type is included because the bracket
     // resolves each field index against it.
     grow_field_positions: string[],
 }
@@ -1796,7 +1796,7 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
 // a declaration at all (a for-in element, a match payload, a destructure key).
 // The severity of that is not a property of the class: it depends on whether the
 // aliased source has another owner. Where the class also LEAKS, the stray
-// release lands on a box nothing else claimed, no counter dissents, and the
+// release lands on a box nothing else claimed, no counter reports it, and the
 // census reads better than the correct program's — so the class looks benign
 // and becomes a double free the moment someone fixes the leak. Where the source
 // is released elsewhere it faults immediately. Both halves were measured across
@@ -1816,7 +1816,7 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
 //   - "OPTARR:"'s consuming-match analysis is per-block (#4357) and frees the
 //     value before the block ends, so a sweep claim on that half would be a
 //     second release. The no-match half is what carries the sweep credit.
-//   - "RCENUM:" is the same story one type over: the match-consumed half must
+//   - "RCENUM:" is the same case one type over: the match-consumed half must
 //     not be swept, so #6606 credited the no-match half separately as
 //     "RCENUMS:" instead of widening "RCENUM:". The two are appended against ONE
 //     entry, so they cannot end up keyed differently; the exact-vs-retired
@@ -2708,7 +2708,7 @@ pub function (s: LowerState) mark_fn_value_sidecars(i: i32, dyn_positions: strin
 // closure_init_opt_ret is the Option/Result return type of a closure-valued
 // initialiser, or "".
 //
-// The load-bearing case is the `__mkclo$<cloname>` env-box constructor, because
+// The essential case is the `__mkclo$<cloname>` env-box constructor, because
 // the lift runs BEFORE lowering: by the time a `var f = <lambda>` reaches here
 // its init is no longer an ExprLambda but that marker call, whose callee ident
 // is NOT a module function — `<cloname>` after the 8-char prefix is. Reading the
@@ -3352,7 +3352,7 @@ pub function expr_opt_elem_tag(e: ast.Expr, s: LowerState): string {
                         // pointer slot; the match arm marks the binding a
                         // closure local so `f(args)` dispatches env-first.
                         // elem_ty_is_f64slot, not `== "f64"`: an f32 payload
-                        // rides the same 8-byte slot, and spelling it literally
+                        // occupies the same 8-byte slot, and spelling it literally
                         // dropped the tag for one — which loses the payload type
                         // rather than widening it (#7756).
                         if (pt == "i32" || pt == "string" || pt == "i64" || elem_ty_is_f64slot(pt) || pt == "boolean" || pt == "clo") {
@@ -3417,7 +3417,7 @@ function opt_elem_tag_from_ty(ty: string, s: LowerState): string {
 }
 
 // opt_payload_struct_ok reports whether `pt` names a struct whose Option box may
-// ride one tuple slot: leak-safe, so the tuple leaks it exactly as a struct
+// occupy one tuple slot: leak-safe, so the tuple leaks it exactly as a struct
 // element or an Option[i32] element leaks — no rc traffic to get wrong. The
 // depth/visiting pair is threaded so a self-referential payload
 // (`Option[Node]` on `struct Node`) short-circuits rather than recursing.
@@ -3738,7 +3738,7 @@ pub function elem_type_tag(e: ast.Expr, s: LowerState): string {
         _ => {}
     }
     // f32 BEFORE f64, for expr_scalar_type's reason: an f32 value is also
-    // is_f64 (both ride the 8-byte slot), so without this an inferred f32
+    // is_f64 (both occupy the 8-byte slot), so without this an inferred f32
     // element is tagged "f64" and loses the width its method dispatch keys on
     // — the value stored is right, only `to_string` renders at f64 precision
     // (#7756).
@@ -3826,7 +3826,7 @@ pub function (s: LowerState) mark_cell_elem(slot: i32, elem: string): LowerState
     var out: LowerState = s.mark_cell(slot, elem);
     if (elem == "string") { return out.mark_strarr(slot, true); }
     if (elem == "i64" || elem == "u64") { return out.mark_i64arr(slot, true); }
-    // A scalar `f32` lowers to a wasm f64, so both float spellings ride the
+    // A scalar `f32` lowers to a wasm f64, so both float spellings occupy the
     // 8-byte-stride column. is_f64arr is the WIDTH driver; is_f32arr is a
     // dispatch-only overlay no cell path sets.
     if (elem == "f64" || elem == "f32" || elem == "float") { return out.mark_f64arr(slot, true); }
@@ -4218,7 +4218,7 @@ function get_or_recv_map_type(obj: ast.Expr, s: LowerState): string {
 
 // map_value_slot_tag maps a map's declared VALUE type onto the tuple-element tag
 // vocabulary, with the same normalisation elem_type_tag's own arms perform: u64
-// rides the "i64" slot, boolean / u8 / u32 the "i32" one, and f32 keeps its own
+// takes the "i64" slot, boolean / u8 / u32 the "i32" one, and f32 keeps its own
 // tag so its method dispatch does not render at f64 precision. "" for a V the
 // element machinery cannot carry in one tagged slot — an array, a struct, a
 // nested map, an unparseable or generic column.
@@ -4355,7 +4355,7 @@ function map_value_type_is_arr(vtype: string): boolean {
 // map_new → i32 default — see insert_value_is_ptr's note), so also treat a
 // 64-bit-width value EXPRESSION (`5000000007`, an i64/u64 local) as i64. Without
 // this the value lowered as op_const_i32 and TRUNCATED to 32 bits before the
-// 8-byte store (#5253 symptom 1). f64 values ride their own path, not this one.
+// 8-byte store (#5253 symptom 1). f64 values take their own path, not this one.
 function map_insert_val_is_i64(mtype: string, e: ast.Expr, s: LowerState): boolean {
     var vt: string = map_value_of(mtype);
     if (vt == "i64" || vt == "u64") { return true; }
@@ -4766,12 +4766,12 @@ pub function is_scalar_array_type(t: string): boolean {
 // 8-byte-element f64[]/i64[]. All store a pointer in the field slot, are owned
 // by the struct (a fresh array literal at construction — is_scalar_arr_field_
 // access bails the aliasing forms), and are deep-dropped on the struct's
-// reclamation. u32[] / the sub-word array ride the i32[] 4-byte element read
+// reclamation. u32[] / the sub-word array use the i32[] 4-byte element read
 // unchanged (each element lives in a full 32-bit slot, pre-wrapped by the `as
 // u8` cast at the producing site); their narrowness only affects arithmetic ON
-// a read element, not the field round-trip. char[] rides that same 4-byte read —
+// a read element, not the field round-trip. char[] uses that same 4-byte read —
 // a char IS an i32 value in an i32 slot (its element-kind dispatch is #7763,
-// separate from the field round-trip). u64[] rides the i64-width element
+// separate from the field round-trip). u64[] uses the i64-width element
 // dispatch through the "u64[]" field tag, like the u64 tuple element slice. NOT
 // used for enum payloads (those need the element-width mark, not a plain
 // mark_arr).
@@ -4786,7 +4786,7 @@ pub function is_leaksafe_array_field(t: string): boolean {
 }
 
 // is_float_array_type_name reports whether the declared type name `t` is a
-// FLOAT array — one whose elements ride the 8-byte-stride f64 layout that
+// FLOAT array — one whose elements use the 8-byte-stride f64 layout that
 // mark_f64arr tracks. Both `f64[]` and `f32[]` do: a scalar `f32` lowers to a
 // wasm f64, and the array-literal / Cell element paths already fold `f32` in
 // with `f64` (`celt == "f64" || celt == "f32"`). Spelling the pair once keeps
@@ -4797,7 +4797,7 @@ pub function is_float_array_type_name(t: string): boolean {
 }
 
 // is_subword_array_type reports whether `t` is a sub-32-bit integer-element
-// array (u8[]). This rides the SAME 4-byte-slot element
+// array (u8[]). This uses the SAME 4-byte-slot element
 // representation as i32[]: the self-host IR (like the AST emitter) stores each
 // element in a full 32-bit slot — op_arr_push / op_arr_get(32) round-trip the
 // value at 32-bit width, and the sub-word value is wrapped to its range by the
@@ -4865,7 +4865,7 @@ pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
 
 // is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
 // admitted array field type (scalar / struct / enum element). Its elements are
-// array POINTERS, so the outer buffer rides the same 4-byte-slot layout as an
+// array POINTERS, so the outer buffer uses the same 4-byte-slot layout as an
 // i32[] and needs no element-width dispatch. Nothing ever frees it:
 // __struct_drop_<T> classifies no arm for a `T[][]` field, so both the outer
 // buffer and every row leak with the struct — which is what makes a shallow
@@ -4886,7 +4886,7 @@ pub function is_nested_array_field_type(structs: StructTab, t: string): boolean 
 
 // arrarr_elem_kind_of_type: the inner element KIND a `T[][]` spelling records on
 // its slot — "i64" / "u64" / "f64" / "string", "arr" for a deeper nesting, or ""
-// when the element rides the 4-byte default (i32 and friends). "u64" stays
+// when the element uses the 4-byte default (i32 and friends). "u64" stays
 // DISTINCT from "i64" so a nested read `m[i][j]` chained in an unsigned op picks
 // shr_u / lt_u (#5206). Anything that is not a depth-2 array spelling answers "".
 pub function arrarr_elem_kind_of_type(t: string): string {
@@ -4988,10 +4988,10 @@ function arrarr_index_elem_kind(arr: ast.Expr, s: LowerState): string {
 }
 
 // is_leaksafe_payload reports whether a payload type is a leak-safe scalar/string.
-// u32 rides one full i32 slot exactly like i32 (no narrowing on read), so an
+// u32 occupies one full i32 slot exactly like i32 (no narrowing on read), so an
 // Option/Result box carrying a u32 stores / reads at the default 32-bit width
 // (op_opt_make / op_opt_payload) and the match binding marks the bound slot u32
-// so its `>>` is logical and its arithmetic wraps at 2^32. u64 rides the i64
+// so its `>>` is logical and its arithmetic wraps at 2^32. u64 occupies the i64
 // 8-byte slot: construction already tags a u64 arg "i64" (elem_type_tag's
 // infer_expr_width==64 path) so the box stores 8 bytes, and the match binding
 // reads via op_opt_payload_w(64) + marks the slot u64 (unsigned, 8-byte). The
@@ -4999,7 +4999,7 @@ function arrarr_index_elem_kind(arr: ast.Expr, s: LowerState): string {
 // zero-extension that currently differs across backends (a u8 read
 // mis-extends on wasm), so an Option/Result-of-it field is excluded here.
 function is_leaksafe_payload(p: string): boolean {
-    // f32 / `float` ride the f64 slot (elem_ty_is_f64slot) and are inline
+    // f32 / `float` occupy the f64 slot (elem_ty_is_f64slot) and are inline
     // scalars in the box with nothing to free, so they are leak-safe on the
     // same reasoning f64 is.
     return p == "i32" || p == "boolean" || p == "string" || p == "i64" || elem_ty_is_f64slot(p)
@@ -5316,7 +5316,7 @@ function enum_arr_field_share_read(fv: ast.Expr, cfft: string, s: LowerState): s
 // and dangles on the second.
 //
 // Hoisting the same read to a local (`var t = q.f; P { f: t }`) is already clean —
-// strfld_safe_operand forgives a direct field-read init and the #4768 read-side
+// strfld_safe_operand allows a direct field-read init and the #4768 read-side
 // retain counts it. This is that spelling written inline.
 //
 // That equivalence is a STRING fact and does not carry to `string[]`. The array
@@ -5600,13 +5600,13 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
     while (fi < structs.decls[decl_index].fields.len()) {
         var t: string = structs.decls[decl_index].fields[fi].type_name;
         // The ≤32-bit integer scalars (u32 + the sub-word u8)
-        // are leak-only and ride one i32 slot exactly like i32, so a struct
+        // are leak-only and occupy one i32 slot exactly like i32, so a struct
         // carrying them is leaf-safe and lowers (construction stores / field
         // read loads at the default 32-bit width; a sub-word cast wraps the
         // value before the store). The 64-bit-slot scalars (i64 / u64 / f64 /
         // f32 / float) are here too, on the same leak-only reasoning. `usize`
         // likewise: it is a raw machine word (a bare address, never an rc box),
-        // so it rides the default pointer slot and leaks with nothing to free —
+        // so it occupies the default pointer slot and leaks with nothing to free —
         // is_scalar_field_type has always called it a scalar. `char` is a code
         // point in one i32 slot, the same class the receiver gate already puts
         // it in.
@@ -5641,7 +5641,7 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // An array-of-struct field `X[]` (X a leak-safe struct): admitted
         // in leak mode (the array + its elements leak with the struct; a
         // recursive-drop follow-up frees them). The element's leaf-safety
-        // rides the SAME depth-bounded recursion so a cyclic `X[]` graph
+        // uses the SAME depth-bounded recursion so a cyclic `X[]` graph
         // hits the cap and bails.
         if (t.len() >= 3 && slice_unchecked(t, t.len() - 2, t.len()) == "[]") {
             var elt: str = slice_unchecked(t, 0, t.len() - 2);
@@ -8072,7 +8072,7 @@ pub function str_expr_ownership(e: ast.Expr, s: LowerState): i32 {
 // sole-owned heap string boxed at an allocation boundary — is being called. Each
 // is unambiguous by NAME (no operand-type inference needed), so it is admitted
 // regardless of the binding annotation (the un-annotated widening, mirroring the
-// tuple `(i, 1)` arc):
+// tuple `(i, 1)` case):
 //   - chr(n) / string_from_bytes_unchecked(a)           — alloc builtins, fresh box
 //   - str_to_upper/str_to_lower/str_repeat(s) — free-fn spellings, fresh copy
 //   - i32_to_string(n)                         — decimal-text builtin. Also Owned
@@ -8569,7 +8569,7 @@ function lower_sat_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerS
 // "max" / "zero" / "negone") at the operand type's width. A 64-bit constant
 // goes through op_const_i64_TEXT: every IR backend splices the literal text
 // into its 64-bit immediate (movabsq / ldr =N / i64.const) and never reads
-// op_const_i64's parsed i64_imm. An unsigned MAX rides its all-ones bit
+// op_const_i64's parsed i64_imm. An unsigned MAX is stored as its all-ones bit
 // pattern (-1), which the operand-width unsigned compares read back as 2^W-1;
 // a u32 one is re-zero-extended so the register backends hold it as 0xFFFFFFFF
 // rather than a sign-extended -1.
@@ -8629,7 +8629,7 @@ pub function chk_opt_type_tag(b: ast.ExprBinary, s: LowerState): string {
         return "Option[i64]";
     }
     if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return "Option[u32]"; }
-    // u8 has no distinct Option payload representation — it rides an i32 slot
+    // u8 has no distinct Option payload representation — it occupies an i32 slot
     // (op_opt_make stores the 4-byte wrapped value), so the Some(v) arm binds v
     // as i32; "Option[u8]" isn't a payload tag the arm reader recognises.
     return "Option[i32]";
@@ -8771,7 +8771,7 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
 // condition lower_sat_binary clamps on); the difference is only the
 // outcome — None vs Some(wrapped) instead of MIN/MAX/clamp.
 //
-// void-`if` + store-to-temp (the Option value rides oslot, a default,
+// void-`if` + store-to-temp (the Option value occupies oslot, a default,
 // un-i64-marked slot: a pointer, i32 on wasm and 64-bit on the register
 // backends). Mirrors the native desugar Binary.CheckedLowered — keep the
 // two in step.
@@ -8833,7 +8833,7 @@ function lower_checked_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lo
         if (b.op == "<<?") { p = chk_norm(kind, p); }
         p = p.emit(ir.op_store_local(sslot));
     }
-    // The Option result rides a default (un-i64-marked) pointer slot.
+    // The Option result occupies a default (un-i64-marked) pointer slot.
     var oname: string = "$chko" + util.i32_to_string(p.locals.len());
     p = p.add_local(oname);
     var oslot: i32 = p.slot_of(oname);
@@ -8953,7 +8953,7 @@ pub function map_binop(op: string): string {
 // `a + b` → `a.add(b)`, etc. (#2706, mirroring the native checker desugar at
 // checker.go:9723). Comparison / logical / bitwise ops are intentionally not
 // here: arithmetic is the Num-trait surface this covers, and `==`/`<` composite
-// overloads ride their own eq/cmp path. Returns "" for a non-arithmetic op.
+// overloads use their own eq/cmp path. Returns "" for a non-arithmetic op.
 pub function binop_overload_method(op: string): string {
     if (op == "+") { return "add"; }
     if (op == "-") { return "sub"; }
@@ -9488,7 +9488,7 @@ pub function arr_index_is_i64(arr: ast.Expr, s: LowerState): boolean {
             var fdt: string = field_arr_decl_type(s.frame.structs, oty, fa.field);
             // u64[] as well as i64[]: both are 8-byte elements, and the
             // ExprIdent arm above has always accepted both (is_u64_slot). This
-            // one is belt-and-braces rather than a fix — a `u64[]` field index
+            // one is redundant rather than a fix — a `u64[]` field index
             // already reads correctly, because ix_type_tag falls back to the
             // typed-IR `ix.ty` when this walk declines. Stating it here means
             // the answer no longer DEPENDS on that fallback holding.
@@ -9735,7 +9735,7 @@ pub function expr_is_f64(e: ast.Expr, s: LowerState): boolean {
     if (cf64e == "f64" || cf64e == "float") { return true; }
     // f32 is f64-SHAPED (stored 8-byte), so every f32 value is also f64 — made
     // explicit here (was implicit, and independently re-derived below). This is
-    // the load-bearing invariant the f32/f64 split rests on; keeping it a single
+    // the essential invariant the f32/f64 split rests on; keeping it a single
     // delegation removes the risk of the two walks drifting (typed-IR migration,
     // #5520). Byte-identity guards that it was already true.
     if (expr_is_f32(e, s)) { return true; }
@@ -10599,7 +10599,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             // already knew (#4801) while this arm did not, so every USE of an
             // i64 const bailed the module to the AST emitter. An i32-returning
             // const still falls to the widening path above via lower_expr, and a
-            // u64 one rides the same 8-byte call.
+            // u64 one uses the same 8-byte call.
             //
             // It routes through id_type_tag for the same reason ix_type_tag
             // reaches lower_i64's ExprIndex arm: this is the LOAD site, and a
@@ -11080,7 +11080,7 @@ function lower_variant_ctor_args(args: ast.Expr[], decl_idx: i32, selfrebind: st
     while (i < args.len()) {
         // An i64 payload field is an 8-byte i64 value (a bare integer literal
         // isn't self-evidently i64), so lower it via lower_i64; struct_make
-        // 64-bit-stores it. f64 / i32 / string / struct payloads ride lower_expr.
+        // 64-bit-stores it. f64 / i32 / string / struct payloads use lower_expr.
         if (struct_field_at_is_i64(st.frame.structs, decl_idx, i)) { st = lower_i64(args[i], st); }
         else { st = lower_expr(args[i], st); }
         if (!st.ok) { return st; }
@@ -11202,7 +11202,7 @@ function lower_opt_make_payload(tag: i32, arg: ast.Expr, s: LowerState): LowerSt
     // Perceus alias-inc for a payload that aliases a local: the Option/Result box
     // references the payload, so retain it (rc_inc) so the exit dec-sweep doesn't
     // free the source local out from under the box. Without it `Ok(names)` /
-    // `Some(items)` over-releases — a UAF that only bites once a later allocation
+    // `Some(items)` over-releases — a UAF that only shows once a later allocation
     // reuses the freed cell (the match-arm that extracts the payload already
     // reclaims it at arm exit, so construction must balance that with an inc).
     // Mirrors the enum-variant construction's alias-inc (#3720); only a bare ident
@@ -11226,7 +11226,7 @@ function lower_opt_make_payload(tag: i32, arg: ast.Expr, s: LowerState): LowerSt
         _ => {}
     }
     if (ptag == "i64") { return so.emit(ir.op_opt_make_w(tag, 64, true)); }
-    // elem_ty_is_f64slot, not `== "f64"`: an f32 payload rides the same 8-byte
+    // elem_ty_is_f64slot, not `== "f64"`: an f32 payload occupies the same 8-byte
     // slot, and the READ side already asks the helper — so spelling it literally
     // here stored the narrow 4-byte form under a wide read. On the register
     // backends that is invisible; wasm validates it and refuses the module
@@ -11823,7 +11823,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!sfb.ok) { return sfb; }
         return sfb.emit(ir.op_str_from_bytes());
     }
-    // slice_unchecked(s, a, b) — `s[a:b]` under its honest name (#5634):
+    // slice_unchecked(s, a, b) — `s[a:b]` under its explicit name (#5634):
     // the same [src, start, end] + str_slice ops as the ExprSlice string
     // arm, parked-view drain included, so the two forms cannot drift.
     if (cid.name == "slice_unchecked" && c.args.len() == 3) {
@@ -11851,7 +11851,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     // monotonic_ns() / now_unix_ms(): 0-arg i64 clock readings.
     // Each lowers to a dedicated op the IR backends emit as a
     // call into the same __fern_* runtime helper the AST path
-    // uses (no allocation; the i64 result rides %rax / x0).
+    // uses (no allocation; the i64 result is held in %rax / x0).
     if (cid.name == "monotonic_ns" && c.args.len() == 0) {
         return s.emit(ir.op_monotonic_ns());
     }
@@ -11987,7 +11987,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
             // lower_expr: an inline wide expression (`x as u64`, a shift, an
             // i64 literal) only materialises as a full 64-bit value on that
             // path. Using lower_expr made `__popcount64(7 as u64)` bail while
-            // the same call on a u64 LOCAL lowered, which is the tell -- the
+            // the same call on a u64 LOCAL lowered, which is the clue -- the
             // local had already been widened at its binding.
             var ba: LowerState = s;
             if (bw == 64) { ba = lower_i64(c.args[0], s); } else { ba = lower_expr(c.args[0], s); }
@@ -13077,7 +13077,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                    && expr_is_f64(c.args[ai], sc)) {
             // An f64 argument at a wasm erased (i64) param of a
             // WIDENED pass-through fn (flag '6'): reinterpret the f64
-            // bit pattern as i64 so it rides the uniform 8-byte slot
+            // bit pattern as i64 so it occupies the uniform 8-byte slot
             // (op_f64_bits — a no-op on the register backends, which
             // never reach here). #5464.
             sc = lower_expr(c.args[ai], sc);
@@ -13319,7 +13319,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     // stack (load → free → drop), so the call's result — live
     // beneath — is untouched; __fern_str_free is rc-aware and
     // is_unique-gated, so a retained box (impossible at a
-    // borrowable position, but belt-and-braces) only decs.
+    // borrowable position, but handled anyway) only decs.
     var lfi: i32 = 0;
     while (lfi < lat_slots.len()) {
         scr = scr.release(lat_slots[lfi], "__fern_str_free", "stashed-str-arg");
@@ -13818,7 +13818,7 @@ function lower_call_len(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState)
     // A FRESH string-concat receiver (`(a + b).len()`) allocates
     // a temp box the read would otherwise strand — the receiver-
     // position sibling of the discarded-statement concat reclaim
-    // (#4365; native's value-consuming-op arc bounds this shape).
+    // (#4365; native's value-consuming-op handling bounds this shape).
     // Stash the box in an unmarked scratch (the exit sweep is
     // is_arr_slot-gated, so it never double-frees it), read the
     // length, then release the temp with the rc-aware
@@ -14788,7 +14788,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     //
     // The receiver guard mirrors the `.len()` dispatch just below:
     // an array source that is NOT string[] / f64[] / i64[]. Those
-    // exclusions are load-bearing — the helper reads 8-byte i32 slots,
+    // exclusions are essential — the helper reads 8-byte i32 slots,
     // so admitting an f64[] would sum float bit patterns as integers.
     // xs.index_of(x) / xs.contains(x) on an i32[] — helper-backed like
     // sum/product, but with an ARGUMENT, so the operand order rule from
@@ -15567,7 +15567,7 @@ function emit_counted_result_release(st: LowerState, boxslot: i32): LowerState {
 // box and the dec frees nothing the caller goes on to read; or the only escape
 // is the bare `return self` ("RECVIDENT:") and the callee is itself a counted
 // member, so a handback arrives carrying its own added count and the one this
-// frame owes is still exactly one dec. A bare UNCOUNTED handback earns neither
+// frame owes is still exactly one dec. A bare UNCOUNTED handback matches neither
 // key and keeps its leak, which is the safe floor.
 function counted_recv_release_ok(key: string, s: LowerState): boolean {
     if (util.index_of_str(s.frame.sigs.recv_borrow_fns, key) >= 0) { return true; }
@@ -15935,7 +15935,7 @@ function lower_expr_index(ix: ast.ExprIndex, s: LowerState): LowerState {
     // mk an "ARR:"-registered producer — reclaims that container here
     // (#6491; see the section comment above lower_expr). The buffer is
     // spilled so the index expression can be lowered between the two
-    // reads of it, then released element-blind: every element rides the
+    // reads of it, then released element-blind: every element is stored in the
     // freed buffer and the loaded scalar is a copy.
     // The element is scalar BY CONSTRUCTION: an "ARR:" entry is only
     // issued for a callee whose return type is is_leaksafe_array_field,
@@ -15944,7 +15944,7 @@ function lower_expr_index(ix: ast.ExprIndex, s: LowerState): LowerState {
     // checker-stamped, and the emit-only drivers do not stamp it, so the
     // reclaim fired under `fern.fern` and silently declined under
     // `asm_run.fern`.
-    // The POINTER-element half rides the same spill, with a different
+    // The POINTER-element half uses the same spill, with a different
     // release: the loaded element ALIASES the buffer, so retain it and
     // then DEEP-free the container ("STRARR:", #6491). The retain is what
     // nets the extracted string to the one reference its destination
@@ -16024,7 +16024,7 @@ function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState, returning: boolean)
     if (tn == 0) { return s.fail(); }
     // Scalar, string, struct, and i32[] array elements are allowed (leak
     // mode: each is one pointer-or-scalar slot, stored pointer-safely).
-    // An i32[] element rides one slot as its data pointer; `t.N` recovers
+    // An i32[] element occupies one slot as its data pointer; `t.N` recovers
     // it via tuple_get, and array ops only need that pointer (no extra
     // element-tag plumbing — deliberately NOT broadening the shared
     // elem_type_tag, which feeds tuple destructure / arg sites too).
@@ -16044,7 +16044,7 @@ function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState, returning: boolean)
     // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
     // so the wasm backend stores each at the right width, and lower an
     // i64 element via lower_i64 (8-byte i64 value); f64 / i32 / string /
-    // struct elements ride lower_expr.
+    // struct elements use lower_expr.
     var tkinds: string = "";
     var ts: LowerState = s;
     var tj: i32 = 0;
@@ -16638,7 +16638,7 @@ function lower_expr_ident(id: ast.ExprIdent, s: LowerState): LowerState {
     // unknown / non-function ident (which the checker would already have
     // rejected) never miscompiles. Mirrors the retired x86 AST emitter's ExprIdent rule
     // (zero-arg receiver-less -> call; >0-arg -> boxed fn-value). A call
-    // through the resulting fn-value local rides the existing
+    // through the resulting fn-value local uses the existing
     // call_indirect path (the same one a "fn"-typed param uses).
     return s.emit(ir.op_const_func(0, id.name));
 }
@@ -16707,7 +16707,7 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
     if (idx < 0) { return s.fail(); }
     // A SCALAR field read off a fresh owned struct — `mk().k`, mk in the
     // strict-fresh registry — reclaims that box here, the index read's
-    // sibling (#6491). The deep field drop rides the same admission the
+    // sibling (#6491). The deep field drop is gated on the same admission the
     // discarded-`mk(i);` reclaim uses: the strict-fresh registry proves
     // the box sole-owns every field buffer, so __struct_drop_<T> cannot
     // double-free one. A type with no reclaimable field skips straight
@@ -17720,7 +17720,7 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     // early return and must run the SAME exit dec-sweep as StmtReturn, otherwise
     // every owned array / struct / string / tuple / map local live at the `?`
     // leaks — this was the only uncleaned return on the IR path (the stale
-    // comment above predated the RC arc). The failure box built just above sits
+    // comment above predated the RC work). The failure box built just above sits
     // on the operand stack; the sweep is net-zero on the stack (a load / dec /
     // drop triple per swept slot), so the box stays on top for op_return. The
     // `$try` temp holds the Option/Result box (forwarded unchanged on the Result
@@ -17829,7 +17829,7 @@ function owned_payload_builtin_ptype(e: ast.Expr, s: LowerState): string {
 }
 
 // owned_payload_free_helper: the release symbol for an owned builtin payload —
-// the memory-layout choice the release choke points insist stays with the site.
+// the memory-layout choice the release choke points require to stay with the site.
 // A string box's block starts at value-8 (__fern_str_free); an array buffer's at
 // data-16 (__fern_rc_dec).
 function owned_payload_free_helper(ptype: string): string {
@@ -17861,7 +17861,7 @@ function builtin_arr_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): 
 // resolvers only knew the BUILTIN array methods above, so an INLINE
 // `match (xs.gcd_all())` had no payload type and bailed the module — while
 // binding it first (`var o: Option[i32] = xs.gcd_all(); match (o)`) lowered,
-// the by-now-familiar tell that the gap is a missing result-type recovery
+// the by-now-familiar sign that the gap is a missing result-type recovery
 // rather than missing lowering.
 //
 // Keyed off the resolved helper NAME so it works for any array method the module
@@ -18360,7 +18360,7 @@ function iife_arm_returns_ident(arm: ast.MatchArm, name: string): boolean {
 // The i64/f64 payload slot is marked at width by the StmtMatch path (so the cast
 // reads the wide value and narrows, exactly as a statement-position `return (n as
 // i32)` does), but the RESULT temp stays i32 — letting an i64/f64-payload match-
-// EXPRESSION whose arms narrow the payload ride the i32 temp instead of bailing.
+// EXPRESSION whose arms narrow the payload use the i32 temp instead of bailing.
 function iife_arm_returns_narrowed_payload(arm: ast.MatchArm, name: string): boolean {
     var t: ast.Expr = iife_arm_tail_expr(arm);
     match (t) {
@@ -18439,7 +18439,7 @@ function iife_expr_mentions_ident(e: ast.Expr, name: string): boolean {
 }
 
 // iife_method_ret_i32 reports whether method `method` on a receiver of type `recv`
-// (a struct / enum) provably returns an i32 (or boolean — both ride the i32 temp).
+// (a struct / enum) provably returns an i32 (or boolean — both use the i32 temp).
 // Sound by EXCLUSION: a method registered as returning string / i64 / f64 / an array
 // / a tuple / a struct / an Option is rejected; anything else (an i32 / boolean
 // return) is admitted. The qualified key "<recv>.<method>" is how every *_ret
@@ -18566,7 +18566,7 @@ function iife_payload_arith_kind(e: ast.Expr, name: string, ft: string, kind: st
 }
 
 // iife_free_fn_ret_i32 reports whether free function `name` provably returns an
-// i32 (or boolean — both ride the i32 result temp). Sound by EXCLUSION, the
+// i32 (or boolean — both use the i32 result temp). Sound by EXCLUSION, the
 // free-function sibling of iife_method_ret_i32: a function registered as
 // returning string / i64 / f64 / an array / a tuple / a struct / an Option is
 // rejected; anything else (an i32 / boolean return) is admitted. Over-admission
@@ -18601,7 +18601,7 @@ function iife_arg_is_payload_borrow(arg: ast.Expr, name: string): boolean {
         // NEW value, so the payload is never the result identity — borrow-safe by
         // the same leak-safe reasoning as a direct read. This lets a nested-call
         // argument (`sum(id(t))`) and a `.len()` over a payload string-method
-        // result (`s.trim().len()`) ride the i32 result temp (#3498 follow-up).
+        // result (`s.trim().len()`) use the i32 result temp (#3498 follow-up).
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
@@ -18689,7 +18689,7 @@ function iife_borrow_leaf_i32(e: ast.Expr, name: string, ft: string, s: LowerSta
                     if (cfa.field == "len" && c.args.len() == 0 && iife_arg_is_payload_borrow(cfa.obj, name)) { return true; }
                     // Method on the PAYLOAD itself: `name.method()` on a struct /
                     // enum payload whose return is provably i32 (NOT in any wider-
-                    // result registry — a boolean return also rides the i32 temp).
+                    // result registry — a boolean return also uses the i32 temp).
                     // Args are not re-checked here: a non-borrow / non-lowerable arg
                     // bails the function in lowering.
                     match (cfa.obj) {
@@ -18712,7 +18712,7 @@ function iife_borrow_leaf_i32(e: ast.Expr, name: string, ft: string, s: LowerSta
                 // payload as a borrow argument, returning i32. The statement-form
                 // match already lowers this; admitting it lets the value-position
                 // match-EXPRESSION arm (`V(p) => g(p)`, recursive `Cons(h, t) => h +
-                // sum(t)`) ride the i32 result temp instead of bailing to AST (#3498).
+                // sum(t)`) use the i32 result temp instead of bailing to AST (#3498).
                 ast.ExprIdent(_) => { return iife_call_is_i32_borrow(c, name, ft, s); },
                 _ => {}
             }
@@ -18745,7 +18745,7 @@ function iife_borrow_subexpr_i32(e: ast.Expr, name: string, ft: string, s: Lower
     match (e) {
         ast.ExprBinary(b) => {
             // Comparison / logical ops yield an i32 boolean regardless of operand
-            // width (booleans ride the i32 slot). Arithmetic / bitwise ops are i32
+            // width (booleans occupy the i32 slot). Arithmetic / bitwise ops are i32
             // only when BOTH operands are provably i32 (an i64 operand widens the op).
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=" || b.op == "&&" || b.op == "||") { return true; }
             return iife_borrow_subexpr_i32(b.left, name, ft, s) && iife_borrow_subexpr_i32(b.right, name, ft, s);
@@ -18835,7 +18835,7 @@ function iife_payload_borrow_i32(ft: string, name: string, arm: ast.MatchArm, s:
 //     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
 function iife_payload_field_bindable(ft: string, name: string, arm: ast.MatchArm, res_kind: string, s: LowerState): boolean {
     if (ft == "i32") { return true; }
-    // u32 rides the same 32-bit payload slot as i32 — op_opt_make stores a 4-byte
+    // u32 occupies the same 32-bit payload slot as i32 — op_opt_make stores a 4-byte
     // wrapped value and the underlying StmtMatch path binds it at width, which is
     // why the STATEMENT form of the same match already lowers. Only this gate
     // named the width, so `match (a -? b) { Some(c) => c, … }` on u32 operands
@@ -19413,12 +19413,12 @@ function iife_payload_result_kind(m: ast.StmtMatch, s: LowerState): string {
 // analysis the IIFE path doesn't model. Scalars / strings / Option are NOT
 // composite here (they have their own kind-recovery / slot-typing paths).
 //
-// The array admission (#7686) takes the same leak-cleanly bargain the struct arm
+// The array admission (#7686) takes the same leak-cleanly trade-off the struct arm
 // takes, and needs it more: an arm may hand back a BORROWED payload
 // (`E.A(xs) => xs`, a buffer the enum box still owns) while a sibling arm builds
 // a FRESH one (`E.B => [i]`), and one temp carries both. The temp is therefore
 // marked BORROWED at the classification site, so the exit sweep never decs it —
-// releasing it would be the double-free the ELB tier fences. The fresh arm leaks
+// releasing it would be the double-free the ELB tier prevents. The fresh arm leaks
 // instead, which is the polarity this whole gate is built on. Scoped to
 // is_leaksafe_array_field: a string[] / struct-array element needs a deep walk
 // the borrowed temp cannot describe.
@@ -19688,7 +19688,7 @@ function lower_iife_match(m: ast.StmtMatch, s: LowerState, force_i64: boolean): 
         // A COMPOSITE result — a struct / nominal-enum / tuple value returned WHOLE
         // by every arm (a bare bound payload `V(q) => q`, q a leak-safe struct /
         // enum / tuple, and/or a fresh same-type construction `N => P { x: 0 }`).
-        // The result rides one pointer slot (store_local / load_local are pointer-
+        // The result occupies one pointer slot (store_local / load_local are pointer-
         // width on every IR backend), so the i32 temp already round-trips it; the
         // type tag here only NAMES the slot so a later `p.field` / `match (p)` /
         // `p.0` resolves. Recovered from the variant payload field / constructor
@@ -19708,8 +19708,8 @@ function lower_iife_match(m: ast.StmtMatch, s: LowerState, force_i64: boolean): 
             // owns while another builds a fresh buffer, and the exit sweep
             // cannot tell them apart at one slot. Borrowed opts it out of that
             // sweep, so the borrowed arm is safe and the fresh arm leaks —
-            // the bargain iife_type_is_composite is built on. The element-kind
-            // marks ride along so an 8-byte element reads at its own width.
+            // the trade-off iife_type_is_composite is built on. The element-kind
+            // marks carry over so an 8-byte element reads at its own width.
             if (iife_borrowable_array_result(comp_ty0, ts)) {
                 ts = ts.mark_arr(tslot, true);
                 ts = ts.mark_borrowed_arr(tslot, true);
@@ -20002,7 +20002,7 @@ function discardable_fresh_strarr_lit(arr: ast.ExprArray, s: LowerState): boolea
 // plain drop — the shallow scalar path frees only the outer box, orphaning
 // every inner (unbounded in a hot loop; native bounds it). __fern_arrarr_free
 // releases it whole: one rc-guarded arr_dec per inner buffer (scalar inners are
-// fully reclaimed by a single dec — elements ride the freed buffer), then the
+// fully reclaimed by a single dec — elements are stored in the freed buffer), then the
 // outer buffer. A bare-ident inner (`[[9], row]`) is EXCLUDED — it aliases a
 // live local the exit sweep also frees, so a deep free here would double-free;
 // such a literal keeps leaking-safe on the plain drop. String / struct / nested
@@ -20029,7 +20029,7 @@ function discardable_scalar_arrarr_lit(arr: ast.ExprArray, s: LowerState): boole
 // scalar-only box is single-level, so a shallow __fern_rc_dec fully reclaims it.
 function expr_scalar_leaf(e: ast.Expr, s: LowerState): boolean {
     // A TUPLE is a heap pointer (an rc-headered box), not a flat scalar — its
-    // box + any pointer elements need a deep drop, so it must NOT ride the
+    // box + any pointer elements need a deep drop, so it must NOT use the
     // shallow scalar-tuple / scalar-array discard (which would leak the inner
     // box). expr_is_arr_src / expr_is_str already exclude arrays / strings;
     // tuples slipped through because none of those match (#4365 nested-tuple).
@@ -21080,7 +21080,7 @@ pub struct VarTypes {
     is_str: boolean,
     is_strarr: boolean,
     is_f64arr: boolean,
-    // f32[] dispatch overlay, riding is_f64arr's slot — see LocalInfo.is_f32arr.
+    // f32[] dispatch overlay, sharing is_f64arr's slot — see LocalInfo.is_f32arr.
     is_f32arr: boolean,
     is_i64arr: boolean,
     is_bool: boolean,
@@ -21093,7 +21093,7 @@ pub struct VarTypes {
 }
 
 // slice_unchecked_call reports whether `e` is the builtin call
-// `slice_unchecked(src, a, b)` — the raw byte slice under its honest name
+// `slice_unchecked(src, a, b)` — the raw byte slice under its explicit name
 // (#5634), source/start/end in args[0]/[1]/[2]. It is the ONLY spelling the
 // frame path and the borrow scans admit: `s[a:b]` is the checked form and
 // yields an `Option[str]` box that escapes the expression.
@@ -21263,7 +21263,7 @@ function lower_str_slice_frame(e: ast.Expr, s: LowerState): LowerState {
 //
 // Every scratch slot is allocated BEFORE the first `if` opens: a value pushed
 // outside a block and consumed inside it is rejected by the wasm validator, and
-// the result rides its own slot so all three arms join on an empty stack. This
+// the result occupies its own slot so all three arms join on an empty stack. This
 // is emit_str_reclaim_store's void-if-plus-scratch shape, one level deeper.
 function lower_str_slice_checked(slc: ast.ExprSlice, s: LowerState): LowerState {
     var slvst: ArgStash = lower_view_borrowed_parked(slc.array, s);
@@ -21522,7 +21522,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // bare named fn emits const_func (the pointer) rather than const-
     // calling f. The empty-literal decl `var fns: (() => T)[] = []` is the
     // common shape; a closure-element literal stays is_closurearr (its
-    // appends ride the closure path), so the two flags don't overlap. The
+    // appends use the closure path), so the two flags don't overlap. The
     // all-named-fn literal `[f, g]` is handled by the early-return above
     // (which also marks is_fnarr). (#3574)
     sb = sb.mark_fnarr(slot, v.type_name == "fn[]" && !vt.is_closurearr);
@@ -21559,7 +21559,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     else if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
     // UNANNOTATED `var it = m.iter()` — recover MapIter[K, V] from the
     // RECEIVER's map type so the slot is typed exactly as the annotated form
-    // types it. The annotation was load-bearing before this: without it the
+    // types it. The annotation was required before this: without it the
     // slot stayed untyped and the first it.has_next() bailed the module, at
     // any value type (a Map[i32, i32] included).
     else if (v.type_name.len() == 0 && mapiter_type_of_iter_call(v.init, sb).len() > 0) {
@@ -21824,9 +21824,9 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // __fern_arrarr_free) + the option box before the store.
     // Both gated on !slot_nodeep: a "NODEEP:"-qualified Option slot is an ALIAS
     // (#7687). It owns no payload to deep-drop, and these helpers take no
-    // alias_inc — routing the bind through one drops the retain on the floor and
+    // alias_inc — routing the bind through one discards the retain and
     // leaves two slots decing a box with one count, which the census reads as a
-    // clean 200/200 and only __rc_underflow() dissents on. It falls through to
+    // clean 200/200 and only __rc_underflow() catches. It falls through to
     // emit_arr_store below, which emits the retain and a shallow dec of the
     // superseded box.
     if (slot_is_reclaimable_optarr(sb, slot) && !slot_nodeep(sb, slot)) {
@@ -21848,7 +21848,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // (rc=1) — an ALIASED string field would over-release (strdrop-two-alias), so
     // it falls through to the array-only path (string leak-safe). The exit sweep is
     // NOT widened (it can't see the construction site), so a non-fresh string still
-    // rides its existing balanced path; only this per-iteration reclaim is added.
+    // uses its existing balanced path; only this per-iteration reclaim is added.
     match (v.init) {
         ast.ExprStructLit(dsl) => {
             if (!dsl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
@@ -22417,7 +22417,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // (it carries its shape), a primitive/string element is heap-boxed via
     // op_dyn_box so it carries a shape pointer (docs/DYN-TRAITS.md
     // §4.2.3). lower_dyn_arg makes that per-element box/no-box choice; the
-    // boxed pointers then ride one array slot each, and the slot is bound
+    // boxed pointers then occupy one array slot each, and the slot is bound
     // is_arr with NO element struct type so `for x in xs` reads the loop
     // var as "unknown" → runtime shape dispatch (the §4.3 array tag fix).
     if (v.type_name.len() > 6 && slice_unchecked(v.type_name, 0, 4) == "dyn " && is_array_type_name(v.type_name)) {
@@ -22498,7 +22498,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // ident indirect-call path, not env-first) and do NOT mark_arr
                     // (the exit sweep must not dec the struct-owned buffer). Checked
                     // before the closure-array arm; field_access_is_closurearr also
-                    // declines a registered fnarr, so this ordering is belt-and-braces.
+                    // declines a registered fnarr, so this ordering is redundant.
                     if (field_access_is_fnarr(cfe.array, s)) {
                         var fes: LowerState = lower_expr(v.init, s);   // arr_get -> fn pointer
                         if (!fes.ok) { return fes; }
@@ -22559,7 +22559,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // returning a closure): the returned value is a closure BOX,
                     // so inner must dispatch env-first. Handles the ANNOTATED form
                     // (`var inner: fn = outer()`); the unannotated `var h = g()`
-                    // rides the RETCLO markers below.
+                    // uses the RETCLO markers below.
                     else if (s.is_closure_local(cid.name) && (v.type_name == "fn" || is_fn_payload_spelling(v.type_name))) { clo_init = true; }
                     // `var g = pick()` where pick returns a closure that ITSELF
                     // returns a closure (RETCLO2) — g is a closure local AND a
@@ -22756,7 +22756,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     var iaslot: i32 = iab.slot_of(v.name);
                     iab = iab.mark_arr(iaslot, true);
                     iab = iab.mark_i64arr(iaslot, true);
-                    // u64[] rides the i64[] 8-byte storage/read path; the
+                    // u64[] uses the i64[] 8-byte storage/read path; the
                     // extra u64 mark drives UNSIGNED arithmetic on a read
                     // element (is_arr && is_u64) — is_i64_slot excludes the
                     // (pointer) array slot, so the local stays i32-wide.
@@ -22971,7 +22971,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // deep free). Giving the alias the source's deep credit frees every
             // field or element twice; both were measured as exit 99 with
             // allocs == frees at live_bytes 0, so only __rc_underflow_count()
-            // dissented. See credit_alias_sites' callers in reclaimable_names_of.
+            // caught it. See credit_alias_sites' callers in reclaimable_names_of.
             var aid_slot: i32 = se.slot_of(id.name);
             if (se.is_arr_slot(aid_slot)) {
                 is_arr = true;
@@ -23024,7 +23024,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // ALL THREE tuple classes, because each is a state a credited source
             // can be in: a scalar tuple is "TUP:", an rc tuple "TUPRC:"/"TUPRCS:",
             // and an alias this very clause MOVED into holds "TUPRCS:" ALONE —
-            // the surgery below drops its "TUP:" row. Gating on fewer desynced
+            // the rewrite below drops its "TUP:" row. Gating on fewer desynced
             // the pair both ways: without "TUPRC:" the rc-tuple alias kept its
             // credit while the retain stopped firing (exit 99 on `var t: (i32,
             // i32[]) = (i, [i, i+1]); var v = t;`); without "TUPRCS:" the second
@@ -23052,7 +23052,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // Dead-alias cancellation, tuple limb (#4402 opt 1): a proven
                 // borrowed VIEW skips the retain, and bind_var_slot elides
                 // the alias slot's shallow "TUP:" box dec under the same
-                // predicate. No credit surgery: the source keeps its deep
+                // predicate. No credit rewrite: the source keeps its deep
                 // release at the exit sweep.
                 else if (!tuple_dead_alias_bind(v, se)) { alias_inc = true; }
             }
@@ -23101,7 +23101,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // DO NOT "HARDEN" __fern_rc_inc WITH A HEAP-BASE GUARD. It has only a
             // null, tagged-immediate and <0x10000 check where __fern_str_free also
             // compares against __fern_heap_base, and that asymmetry looks like an
-            // oversight. It is load-bearing: a scalar reaching rc_inc is a compiler
+            // oversight. It is essential: a scalar reaching rc_inc is a compiler
             // bug, and the missing guard is what turns it into an immediate SIGSEGV
             // instead of a silent no-op that corrupts eight bytes and returns. The
             // guard would not have prevented #7368 either — it would have hidden it,
@@ -23130,7 +23130,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // Dead-alias cancellation, struct limb (#4402 opt 1): a
                 // proven borrowed VIEW skips the retain, and bind_var_slot
                 // elides the alias slot's box-only sweep dec under the same
-                // predicate. No credit surgery: the source keeps its one
+                // predicate. No credit rewrite: the source keeps its one
                 // deep field walk at the exit sweep.
                 else if (!struct_dead_alias_bind(v, se)) { alias_inc = true; }
             }
@@ -23146,7 +23146,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // `Option[i32[]]` frees the element buffer under the surviving owner.
             //
             // No move-on-alias and no dead-alias cancellation here: both are
-            // credit surgery on classes whose release roles this pairing has
+            // credit rewrites on classes whose release roles this pairing has
             // measured, and neither is needed to close the leak. The bind
             // retains and the alias's box-only sweep gives it back on the same
             // path, which is the duplication contract this ladder is built on.
@@ -23504,7 +23504,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // f64[] tracking (element WIDTH for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
     var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name);
-    // f32[] rides is_f64arr's slot and stride; this only keys `a[i]`'s method
+    // f32[] shares is_f64arr's slot and stride; this only keys `a[i]`'s method
     // dispatch (LocalInfo.is_f32arr). From the annotation, or from a literal
     // whose first element is statically f32 when there is none.
     var is_f32arr: boolean = is_f64arr && (v.type_name == "f32[]" || expr_is_f32arr_src(v.init, se));
@@ -23808,7 +23808,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     // bind name[i] = tuple_get(i). Scalar / string / struct elements
     // (the same set the tuple LITERAL admits — a heap element bails the
     // init lowering, so it never reaches here).
-    // Split on TOP-LEVEL commas: a NESTED position rides as its own
+    // Split on TOP-LEVEL commas: a NESTED position appears as its own
     // parenthesised list (`"a,(b,c)"`), and its commas belong to that
     // level, not this one.
     var dnames: string[] = [];
@@ -23942,7 +23942,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         else if (util.is_tuple_type_name(dtag)) { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)).mark_tuple_type(dkslot, dtag); }
         // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
         // slot as an array (the op_tuple_get above read its pointer) so
-        // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
+        // `arr[i]` uses the 4-byte arr_get; a u32[] also marks u32 so a
         // read element's arithmetic wraps.
         else if (dtag == "i32[]" || dtag == "boolean[]" || dtag == "u32[]" || is_subword_array_type(dtag)) {
             dt = dt.mark_arr(dkslot, true);
@@ -23950,14 +23950,14 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         }
         // An 8-byte-element (f64[]/i64[]) or string[] array element
         // binds the slot as an array AND marks its element kind so a
-        // later `arr[i]` rides the width-marked arr_get(64) / arr_get_i64
+        // later `arr[i]` uses the width-marked arr_get(64) / arr_get_i64
         // (f64/i64) or the string read (string[]) — the read-side twin
         // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
         else if (is_float_array_type_name(dtag)) { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
         else if (dtag == "i64[]" || dtag == "u64[]") {
             dt = dt.mark_arr(dkslot, true);
             dt = dt.mark_i64arr(dkslot, true);
-            // u64[] rides the i64[] 8-byte storage/read path; the extra u64 mark
+            // u64[] uses the i64[] 8-byte storage/read path; the extra u64 mark
             // drives UNSIGNED arithmetic on a read element (the same pair the
             // annotated `var xs: u64[]` binding stamps).
             if (dtag == "u64[]") { dt = dt.mark_u64(dkslot, true); }
@@ -24221,7 +24221,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // A reclaimable string[] (#6407): the slot owns
                             // every element box, so overwriting one must
                             // release it — the bare arr_set below drops the old
-                            // pointer on the floor, and the exit sweep's
+                            // pointer, leaving it unreclaimed, and the exit sweep's
                             // element walk then never sees it. The stored value
                             // takes a reference of its own unless it is a fresh
                             // temp this frame already owns, so `a.with(3, a[5])`
@@ -24261,7 +24261,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             }
                             // i64[] / u64[] (8-byte element): lower the value as
                             // an i64 and grow via the 8-byte arr_push_i64. u64
-                            // rides the i64 width here — its unsigned-ness only
+                            // uses the i64 width here — its unsigned-ness only
                             // matters at scalar ops, not the raw 8-byte store.
                             if (s.is_i64arr_slot(slot) || (s.is_arr_slot(slot) && s.is_u64_slot(slot))) {
                                 var ap8: LowerState = s.emit(ir.op_load_local(slot));
@@ -24700,14 +24700,14 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // A reclaimable REBOUND string[] (`xs = [mk("y"), mk("z")]` / `xs = mkarr(i)`,
     // credited "SARR:"): free the superseded buffer AND its element boxes before
     // storing. Without this branch the rebind fell through to emit_arr_store's
-    // SHALLOW arr_dec, which drops the element pointers on the floor — the same
+    // SHALLOW arr_dec, which leaves the element pointers unreclaimed — the same
     // gap the rc-tuple and rc-enum rebinds below were opened for, one element
     // kind over. The `var` re-declaration has driven the deep helper all along;
     // only the assign path was missing.
     //
     // The self-`append` / self-`.with` rebinds do not reach here — they are
     // lowered above as in-place element stores — so the cow guard inside the
-    // helper is a backstop rather than the mechanism that keeps them safe.
+    // helper is a redundant guard rather than the mechanism that keeps them safe.
     // No alias_inc, for the reason the string case one line up gives: a rebuild
     // replaces the slot's value rather than sharing one. No `target_is_arr`
     // exclusion either: the target IS an array here, which is what makes this
@@ -25349,7 +25349,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     // (#6305).
     var elem_is_bool: boolean = s.is_boolarr_slot(aslot);
     var elem_is_f64: boolean = s.is_f64arr_slot(aslot);
-    // `for x in <u64[]>`: u64 rides the i64 64-bit domain (#2904), so the
+    // `for x in <u64[]>`: u64 uses the i64 64-bit domain (#2904), so the
     // element is read 8-byte (arr_get_i64, identical bytes to i64) but
     // the binding is marked u64 — mark_u64 makes is_i64_slot(x) true (so
     // x is i64-wide) AND is_u64_slot(x) true (so the body's compares /
@@ -25802,7 +25802,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // struct/tuple payload: read via op_opt_payload, bound
                         // is_arr + element kind below so `xs[i]` / `xs.append(v)`
                         // (clone) / `xs.len()` resolve. The 8-byte-element and
-                        // string/struct/enum-element arrays all ride one slot.
+                        // string/struct/enum-element arrays all occupy one slot.
                         var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
                             || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "u64[]" || ptag == "string[]"
                             || is_struct_array_field_type(ms.frame.structs, ptag) || is_enum_array_field_type(ms.frame.structs, ptag);
@@ -25810,7 +25810,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // is a `T[][]` — the fuzz-corpus shape). The outer
                         // buffer is a heap pointer at offset 8 exactly like the
                         // flat array payloads (its elements are array POINTERS,
-                        // riding the 4-byte-slot layout — see
+                        // using the 4-byte-slot layout — see
                         // is_nested_array_field_type); the bound slot
                         // additionally carries is_arrarr + the inner element
                         // kind so a nested read `seeds[i][j]` / `var row =
@@ -25914,7 +25914,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // like the u64 tuple destructure) so its compare / `>>`
                         // / div-rem are UNSIGNED in the i64 domain.
                         else if (ptag == "u64") { ms = ms.mark_u64(pbslot, true); }
-                        // f32 / `float` ride the same 8-byte slot as f64
+                        // f32 / `float` occupy the same 8-byte slot as f64
                         // (elem_ty_is_f64slot), so all three mark_f64. Only `f32`
                         // additionally marks f32, keying "f32.<m>" dispatch:
                         // `float` is the f64 alias, and tagging it f32 would round
@@ -26155,7 +26155,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         ms = ms.add_local(bname);
                         var bslot: i32 = ms.slot_of(bname);
                         // Read the payload at its width: an i64/u64 payload uses
-                        // struct_get_i64 (i64.load — u64 rides the i64 8-byte
+                        // struct_get_i64 (i64.load — u64 uses the i64 8-byte
                         // domain), everything else struct_get at the width
                         // struct_field_at_width gives the field. The u64 read MUST
                         // match the binding's mark_u64 below (is_i64_slot →
@@ -26203,7 +26203,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             // shr/div on a bit-31-set u32 diverges (x86 hides it).
                             ms = ms.mark_u32(bslot, true);
                         } else if (ev_ty == "f64" || ev_ty == "f32" || ev_ty == "float") {
-                            // f32 / float ride the f64 domain, matching the
+                            // f32 / float use the f64 domain, matching the
                             // 8-byte widened field the read above now recovers.
                             ms = ms.mark_f64(bslot, true);
                         } else if (ev_ty == "boolean") {
@@ -26411,7 +26411,7 @@ function match_scrut_is_map_get(m: ast.StmtMatch, s: LowerState): boolean {
 // arr_elem_kind classifies an array RECEIVER expression's element width for the
 // value-producing `.with` / `.append` clone helpers: "i64" (i64[]/u64[], 8-byte
 // integer store), "f64" (f64[], 8-byte float store), or "i32" (i32[]/string[]/
-// boolean[]/u32[]/…, the 4-byte-slot default — strings and structs ride the
+// boolean[]/u32[]/…, the 4-byte-slot default — strings and structs occupy the
 // pointer slot like an i32). Array-of-struct / -enum / -array receivers reach
 // here too, from the field-read clone and in-place paths: their elements are
 // pointers, so they take the same 4-byte slot as an i32.
@@ -26442,7 +26442,7 @@ function lower_with_by_count(kind: i32, obj: ast.Expr, idx: ast.Expr, val: ast.E
 
 // lower_plain_arr_with_store is the in-place `arr_set` behind `a = a.with(i, v)`
 // on a slot no counted path admits: the store assumes the slot is the sole
-// owner. i64[] / u64[] take the 8-byte element store (u64 rides the i64 width;
+// owner. i64[] / u64[] take the 8-byte element store (u64 uses the i64 width;
 // the raw store is signedness-agnostic), f64[] the 8-byte float one.
 function lower_plain_arr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: LowerState): LowerState {
     var ws: LowerState = s.emit(ir.op_load_local(slot));
@@ -26801,7 +26801,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
 // / `.with(i, v)` call when the per-function analysis admitted it (field_append_inplace_sites_of)
 // and the root's box type resolves here, which the move-out store needs; else "",
-// and the site takes the clone form. The second gate is defence in depth: the
+// and the site takes the clone form. The second gate is a redundant check: the
 // admitted receivers are depth-1 ident-rooted chains, whose root type resolves.
 function field_append_inplace_key(c: ast.ExprCall, recv: ast.Expr, s: LowerState): string {
     if (s.frame.field_append_inplace.len() == 0) { return ""; }
@@ -27182,7 +27182,7 @@ pub function emit_arr_share(se: LowerState, slot: i32, helper: string): LowerSta
 //
 // Both are closed by bracketing the receiver with a retain/release around the
 // push, which raises its rc and sends arr_push down its copy path — the callers
-// emit `emit_arr_share` either side. A struct-FIELD receiver dodges the whole
+// emit `emit_arr_share` either side. A struct-FIELD receiver avoids the whole
 // question by routing to the clone form (lower_arr_append_value).
 //
 // The exemption is s.frame.append_inplace (append_inplace_names_of), so the two sound
@@ -27213,7 +27213,7 @@ function append_copy_recv_slot(recv: ast.Expr, s: LowerState): i32 {
 //     return only a closure could still see the buffer.
 //
 // Name-keyed for the whole function, so one occurrence in any other position
-// withdraws the exemption for all of them. The return half is load-bearing:
+// withdraws the exemption for all of them. The return half is essential:
 // without it the compiler's own AST walkers (`return acc.append(id.name)` once
 // per visited node) copy the whole accumulated array per append — O(n²) bytes
 // in an arena that never reclaims them, which is what OOM-killed native's CI
@@ -27364,7 +27364,7 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 // — the growFieldBufs half of grow_param_flags_of, below; a local has no
 // caller to bracket, so only the runtime `__fern_rc_is_unique` gate applies.
 //
-// COUNTING is the safety net. The total occurrences of the root come from
+// COUNTING is the safeguard. The total occurrences of the root come from
 // astwalk.collect_idents_*, which walks everything; the excused-read walk here
 // classifies the ones it recognises. A site is admitted only when the two
 // agree, so an expression shape this walk does not know refuses the site
@@ -28621,7 +28621,7 @@ function emit_arrarr_reclaim_store(se: LowerState, slot: i32): LowerState {
 // buffer so both slots may release it and the refcount arbitrates (#7391),
 // exactly as emit_str_reclaim_store does for a string box. Without it a
 // credited alias routes here instead of emit_arr_store and the retain the
-// bind computed is dropped on the floor.
+// bind computed is discarded.
 function emit_strarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean): LowerState {
     var scratch: string = "$sarea" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
@@ -28685,7 +28685,7 @@ function lower_strarr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: Low
 // emit_arrstruct_with_store lowers `ps = ps.with(i, v)` for a slot whose ELEMENT
 // WALK is credited (slot_is_reclaimable_arrstruct). The struct sibling of
 // lower_strarr_with_store, and it exists for the same reason: `with` REPLACES, so
-// the bare arr_set drops the superseded element pointer on the floor and the exit
+// the bare arr_set leaves the superseded element pointer unreclaimed and the exit
 // sweep's walk never sees it again.
 //
 // Three steps, in this order:
@@ -28696,7 +28696,7 @@ function lower_strarr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: Low
 //     does not free a live one, and on `old != 0` for a never-written slot. Its
 //     field walk is rc-GATED: with the stored element counted, two owners can reach
 //     a walk, and two static walks free every field buffer twice (allocs == frees at
-//     live_bytes 0, only __rc_underflow_count() dissenting);
+//     live_bytes 0, only __rc_underflow_count() catching it);
 //   - store the new element.
 //
 // NOT reached on the cow path: an aliased or borrowed receiver routes to
@@ -28855,7 +28855,7 @@ function struct_enum_deep_reinit_eligible(structs: StructTab, sty: string): bool
 // struct_lit_all_enum_fields_fresh reports whether EVERY enum-typed field of the
 // struct literal `slit` is set from a FULLY-FRESH sole-owner variant constructor of
 // that exact enum — fresh_rcpayload_enum_init: a `V(args)` / bare `V` of the field's
-// declared enum whose array payloads ride the construction alias-inc AND whose
+// declared enum whose array payloads take the construction alias-inc AND whose
 // deep-drop-ok STRUCT payloads are fresh struct literals AND whose STRING payloads are
 // fresh literals/producers (variant_struct_payloads_fresh). Only then is the enum
 // field's box AND every rc payload one level down provably SOLE-OWNED by this struct
@@ -28898,7 +28898,7 @@ pub function struct_has_string_field(structs: StructTab, sty: string): boolean {
 // a struct literal is set from a FRESH, sole-owned heap string (expr_is_fresh_str
 // — a concat / fresh-producer call, NOT a bare ident / field copy / view). Only
 // then is deep-dropping the string field balanced (rc=1 → freed once), so the
-// literal's box can ride emit_struct_deep_reinit_store's __struct_drop. A non-fresh
+// literal's box can use emit_struct_deep_reinit_store's __struct_drop. A non-fresh
 // string field would be retained by an aliasing owner, so freeing it over-releases
 // (the strdrop-two-alias case). Missing / non-string field positions are skipped;
 // a struct with no string field returns true (vacuous — the caller pairs this with
@@ -29114,7 +29114,7 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
 // The box-only sibling of emit_field_reclaim_store, for a slot whose type routes
 // no field reclaim: a shallow __fern_rc_dec IS that box's whole release.
 //
-// Two guards, both load-bearing. __fern_rc_is_unique refuses a box a counted
+// Two guards, both essential. __fern_rc_is_unique refuses a box a counted
 // share still holds — a construction retain leaves the count above 1, and
 // freeing under it is a use-after-free rather than a leak — and is null-safe, so
 // the zeroed slot the first rebind supersedes is a no-op. The cow guard
@@ -29188,7 +29188,7 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
 // SOUNDNESS: fires ONLY when the init is a fresh no-base struct literal whose enum
 // fields are all FRESH variant ctors (struct_lit_all_enum_fields_fresh), so each
 // enum box + its payload is the struct box's sole owner (rc=1, no construction alias-
-// inc). A non-fresh (aliased) enum field is rejected at the gate and rides the leak-
+// inc). A non-fresh (aliased) enum field is rejected at the gate and takes the leak-
 // safe shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
 // the fresh literal makes old != new implicit, so no separate cow guard is needed.
 // The enum field box is itself null-guarded (op_variant_is reads the tag, so it would
@@ -29599,7 +29599,7 @@ function tuple_union_arg_freefn(arg: ast.Expr, s: LowerState): string {
 // its box arr_dec'd; scalar positions are skipped. SOUND only when the tuple holds a
 // counted reference to every position it dec's, which is what admission proves: a
 // direct array literal the tuple sole-owns, or — where the drop frees the tuple's own
-// box in the same breath (tuple_arg_payload_retained) — a bare ident the construction
+// box at the same time (tuple_arg_payload_retained) — a bare ident the construction
 // retained. It cannot skip a position the way the literal-driven helper does, so a
 // position holding an UNRETAINED alias must never reach it.
 function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], ttype: string): LowerState {
@@ -29721,7 +29721,7 @@ function tuple_arg_payload_fresh(ttype: string, arg: ast.Expr, structs: StructTa
 // element naming an rc-container local, making the tuple a second owner. The drop's
 // dec gives that retain back; the local's own sweep spends its own reference.
 //
-// Use it only where the drop frees the tuple's OWN box in the same breath (the
+// Use it only where the drop frees the tuple's OWN box at the same time (the
 // scope-exit sweep). The strict form stays the gate everywhere the payload outlives
 // the box or is reached without one — an Option's Some payload, an array-of-tuples
 // element — since there a mere counted reference is not enough to free by.
@@ -29865,7 +29865,7 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // Emitted as a per-type runtime helper __struct_drop_<T>(box) -> box, NEVER
 // inline: a single function can sweep many reclaimable struct locals at exit, and
 // a struct/enum-array field's deep-walk is a ~30-op loop — inlining it at every
-// sweep site exploded the native driver's per-function op arrays past the #3452
+// sweep site pushed the native driver's per-function op arrays past the #3452
 // heap on the large modules. A per-type helper (the body emitted once, the call
 // site ~3 ops) keeps the broad struct reclaim within the emit budget, exactly as
 // __field_reclaim_<T> already does for the consume-rebind path. All three backends
@@ -29976,7 +29976,7 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
 //     scalar ARRAY that a single rc_dec fully releases. String / nested-struct
 //     payloads are excluded because releasing one needs the per-construction
 //     freshness proof (variant_struct_payloads_fresh) the sweep cannot see, whereas
-//     an array payload rides the construction alias-inc, so a bare-ident payload is
+//     an array payload takes the construction alias-inc, so a bare-ident payload is
 //     retained and the dec only releases the dup.
 //   - the box at RUNTIME: __fern_rc_is_unique, which doubles as the null guard. A
 //     non-fresh enum field (bound from a live enum local, copied from a struct-lit
@@ -30786,7 +30786,7 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // belongs to the caller, which passes this result back in as its alias_ok.
 //
 // The tuple limbs are wired here too (#7750). Their move-on-alias credit
-// SURGERY — the "TUPRCS:" deep class migrates to the alias row at a move and
+// REWRITE — the "TUPRCS:" deep class migrates to the alias row at a move and
 // the alias's "TUP:" row is dropped — leaves a moved-into link holding
 // "TUPRCS:" alone, so the retain gate at the NEXT link has to recognise that
 // state as a credited source (slot_is_credited_tuple); it did not, which is
@@ -31385,7 +31385,7 @@ function stmt_unsafe_for_match_borrow(st: ast.Stmt, name: string, borrowable: st
             }
             return false;
         },
-        // The mode rides through the fallback too: a `var t = match (name) { … }`
+        // The mode carries through the fallback too: a `var t = match (name) { … }`
         // is a StmtVar, so it lands here, and dropping to the strict walker is
         // exactly how the match-EXPRESSION read lost its borrow reading.
         _ => { return stmt_unsafe_for_alias_vb(st, name, borrowable, recv_borrow, alias_ok, true); }
@@ -31916,13 +31916,13 @@ function struct_lit_precise_ok(structs: StructTab, slit: ast.ExprStructLit): boo
 // (emit_opt_payload_drop: op_opt_payload → payload dec → box dec);
 // "opt-structpayload:<P>" = an Option/Result whose payload is a struct with
 // rc-array fields (#6127 — emit_opt_struct_payload_drop: op_opt_payload →
-// __struct_drop_<P> → payload dec → box dec, the struct name riding in the kind);
+// __struct_drop_<P> → payload dec → box dec, the struct name carried in the kind);
 // "opt-payloadfree:<helper>"
 // = an Option/Result whose payload needs a release a plain rc-dec does not give
 // (#4355 string, #6495 string[] — emit_opt_payload_drop_via: op_opt_payload →
-// <helper> → box dec, the helper name riding in the kind); "enum-rcpayload:<E>"
+// <helper> → box dec, the helper name carried in the kind); "enum-rcpayload:<E>"
 // = an rc-payload user enum (emit_enum_variant_drops: runtime variant-dispatch deep-
-// drop of enum <E>, whose name rides in the kind). Carrying the kind lets the emission
+// drop of enum <E>, whose name is in the kind). Carrying the kind lets the emission
 // free a box whose type the slot alone can't classify — a Result box (Ok-vs-Err
 // payload ambiguous), an un-annotated enum box (no struct_type), or the enum name for
 // the variant deep-drop.
@@ -32064,7 +32064,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                 // A fresh rc-PAYLOAD user-enum (`var x = Poly([..])` — a variant carrying
                 // a leak-safe array or deep-drop-ok struct payload). Additionally no arm
                 // may bind an rc payload that escapes (enum_body_binds_rc_payload). The
-                // enum NAME rides in the kind ("enum-rcpayload:<Enum>") so
+                // enum NAME is carried in the kind ("enum-rcpayload:<Enum>") so
                 // emit_enum_variant_drops can dispatch the right variant deep-drop.
                 var rcenum_owner: string = "";
                 if (!is_lit && !is_opt && !is_rcopt && !is_optbox && !is_enum) {
@@ -32592,7 +32592,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // last value of every such block leaked — 396 of 400 freed on #6608's probe,
     // the n-1-of-n signature of a retired slot missing its credit. The drop zeroes
     // the slot, so a second sweep on another return edge routes here to the null
-    // guard — which is load-bearing (#7360): op_variant_is DEREFERENCES the box for
+    // guard — which is essential (#7360): op_variant_is DEREFERENCES the box for
     // its tag, so an entry-zeroed slot whose branch never ran faults without it.
     //
     // moved_elided is excluded for the reason the rc-tuple sweep above excludes
@@ -33014,7 +33014,7 @@ function stmt_scopes_bindings(st: ast.Stmt): boolean {
 // the block at runtime — every iteration of an enclosing loop), so the reuse
 // emitter releases its prior box (release_prior); the donor's zeroed slot is
 // re-bound next execution (emit_arr_store prior-release for the normal binding),
-// and the final box rides the exit sweep — one alloc + one free per execution,
+// and the final box is freed by the exit sweep — one alloc + one free per execution,
 // balanced. The analyses are block-scoped (self_overwrite / cross_reuse /
 // cross_tuple sites over `stmts`, dead-from-k within the block), so only
 // intra-block donors pair and no cross-execution read is stranded. The function
@@ -33194,7 +33194,7 @@ function xblock_scan_body(body: ast.Stmt[], b_stmts: ast.Stmt[], k: i32, structs
 // so the token is claimed at most once. Safety does not rest on that: the
 // consumer zeroes the donor's slot (emit_cross_struct_reuse), so a second claim
 // on one pass would read a null token and __fern_alloc_reuse would allocate
-// fresh. Exclusivity is what makes the second token sequence worth its code.
+// fresh. Exclusivity is what makes the second token sequence worth having.
 // Sequential recipients WITHIN one arm still share nothing — xblock_scan_body
 // threads `cons` across the arm's own statements.
 function xblock_pairings_for(b_stmts: ast.Stmt[], structs: StructTab, k: i32, so_bases: string[], consumed: string[], fresh_ret: string[]): string[] {
@@ -33520,7 +33520,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
         while (rk < rcopt.idxs.len()) {
             // blockable-only: a struct-literal payload's shallow drop relies on
             // the fn-level OPTSTRUCT machinery for its array FIELDS — claiming
-            // it here zeroes the slot and starves that machinery (leak).
+            // it here zeroes the slot so that machinery never runs (leak).
             if (rcopt.idxs[rk] == i && rcopt.blockable[rk]) {
                 var rslot: i32 = st.slot_of(rcopt.names[rk]);
                 if (rslot >= st.frame.n_params) {
@@ -33792,7 +33792,7 @@ function push_str_unique(xs: string[], s: string): string[] {
 // class the table hands each slot BOTH credits: the box takes the "TUP:" shallow
 // dec AND the "TUPRCS:" deep free, and is released twice. Measured as exit 99
 // (rc underflow) against 10 on native and interp, with `live_bytes=0` throughout
-// — only the underflow counter dissents. Renaming one of the two locals, and
+// — only the underflow counter reports it. Renaming one of the two locals, and
 // nothing else, made it correct.
 //
 // A `StmtVar` carries line and col, so `name@line:col` names the BINDING rather
@@ -33919,7 +33919,7 @@ function walk_stmt_escapes(st: ast.Stmt, acc: string[]): string[] {
 //
 // A string view `slice_unchecked(s, a, b)` is zero-copy: a 24-byte box
 // [rc=-1, data = src.data + start, len] sharing the source buffer. Sharing is
-// why it is born IMMORTAL (rc=-1, #4294) — freeing it would attack the middle
+// why it is born IMMORTAL (rc=-1, #4294) — freeing it would release the middle
 // of the source's allocation — and immortal is why it is never reclaimed, so a
 // slice in a loop costs one unreclaimable box per EVALUATION where native, which
 // has no box at all, allocates nothing.
@@ -35432,7 +35432,7 @@ function collect_fresh_rc_tuple_in_stmt(st: ast.Stmt, structs: StructTab, str_fr
 // still spends the local's reference. Refusing the mixed form left it in neither
 // class and so released NOTHING, box included: 120 B/round unbounded (#7281).
 // OPTTUP and the array-of-tuples element keep the strict tuple_arg_payload_fresh,
-// where the payload is freed without its own box in the same breath.
+// where the payload is freed without its own box at the same time.
 //
 // Requires the declaration's tuple ANNOTATION: the type is what the sweep frees by,
 // and an un-annotated binding gives it nothing to judge positions with.
@@ -35546,7 +35546,7 @@ function rctuple_type_of_decl(stmts: ast.Stmt[], name: string): string {
 // that takes the construction retain — the tuple sibling of
 // arrstruct_counted_field_share, and it exists for the same reason. The field
 // holds a COUNTED share (the ExprStructLit tuple arm inc'd the box), so reading
-// the store as an escape sinks the source's whole reclaim and the box is pinned
+// the store as an escape defeats the source's whole reclaim and the box is pinned
 // at the shared count forever: nobody reaches zero.
 //
 // Both releases are rc-aware, which is what makes granting this safe rather than
@@ -36355,7 +36355,7 @@ function stash_fresh_str_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i
 // __fern_str_view_free, not __fern_str_free: the latter skips an immortal rc by
 // design, so draining a slice receiver through it strands the box it was meant
 // to release. On wasm the same slot holds a payload-sized COPY with an ordinary
-// rc, and both helpers free it — the distinction only bites on the backends
+// rc, and both helpers free it — the distinction only matters on the backends
 // where a slice is zero-copy.
 function free_stashed_recv(s: LowerState, slots: i32[], view: boolean): LowerState {
     if (!view) { return free_stashed_str_args(s, slots); }
@@ -38047,7 +38047,7 @@ function str_fresh_ret_fns_round(funcs: parser.FuncDecl[], reg: string[]): strin
         //
         // A bare `str` return spelling never reaches here: parse_type_name
         // erases it to "string" outside `-fmt`, so both spellings key the same.
-        // Rides the str_fresh_ret_fns list under a prefix (the "ARRF:"
+        // Stored in the str_fresh_ret_fns list under a prefix (the "ARRF:"
         // convention — ':' can never appear in an identifier), so the bare-name
         // membership checks cannot match it and no registry field is added.
         if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0
@@ -38167,7 +38167,7 @@ function body_has_nonfresh_tuple_return(stmts: ast.Stmt[], body: ast.Stmt[], fre
 // #7667 idiom one mechanism over: rctuple_param_alias_bind_sites vets each
 // `var a = name` through the rc-tuple payload scan on the ALIAS's own name
 // (empty registries — any call-arg use refuses), so a dead-ended reader
-// alias no longer sinks the admission while an alias that hands a payload
+// alias no longer defeats the admission while an alias that hands a payload
 // out, chains, or is itself returned still does. The frame's second
 // reference dies with the frame; every admitted return path leaves the
 // caller owning exactly one reference either way. The tuple sibling of
@@ -38316,7 +38316,7 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         if (util.index_of_str(names, fn.name) >= 0) {
             out = out.append(fn.name);
             // #4365 (discarded rc-field tuple temps): also record the per-position
-            // deep-drop flags as an "ARRF:<name>|<flags>" entry riding the same
+            // deep-drop flags as an "ARRF:<name>|<flags>" entry in the same
             // list (a ':' can't appear in an identifier, so these never collide
             // with the bare-name membership checks above). lower_func re-seeds
             // them as "TUPRET:" reclaim entries for callees the body DISCARDS,
@@ -38338,7 +38338,7 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // map_builder_scalar_kind: `t` is a by-value scalar Map key/value type a
 // shallow __fern_map_free covers completely (the column buffers hold no
 // pointers, so freeing them frees everything). i64/u64/f64 are excluded —
-// wide keys ride cell-pointer boxing on some paths — as is everything
+// wide keys use cell-pointer boxing on some paths — as is everything
 // pointer-shaped.
 function map_builder_scalar_kind(t: string): boolean {
     return t == "i32" || t == "u32" || t == "boolean";
@@ -38417,7 +38417,7 @@ function map_builder_body_ok(fn: parser.FuncDecl): boolean {
 // self-host twin of #5096's returnsNoParamEscape map admission. A caller's
 // `var m: Map[..] = mk(i)` binding then earns the "MAP:" reclaim: the box is
 // provably fresh + sole-owned, the columns hold only scalars, so the shallow
-// __fern_map_free covers everything. Rides the tuple_fresh_ret_fns list (the
+// __fern_map_free covers everything. Stored in the tuple_fresh_ret_fns list (the
 // "ARRF:" precedent — ':' never appears in an identifier, so the entries
 // can't collide with bare-name membership checks); tuple_fresh_ret_fns_of
 // appends these itself so every backend's one threaded list carries them.
@@ -38478,7 +38478,7 @@ function collect_tuple_ret_shapes(stmts: ast.Stmt[], body: ast.Stmt[], acc: stri
 
 // tag_is_scalar_elem_array: a single-level array of by-value scalars
 // ("i32[]" / "u32[]" / "boolean[]" / "i64[]" / "u64[]" / "f64[]") — a buffer
-// one rc-guarded dec fully reclaims (elements ride the freed buffer). A
+// one rc-guarded dec fully reclaims (elements are stored in the freed buffer). A
 // nested "[][]" or pointer-element array (string[]) is NOT (its elements
 // would leak on a shallow free — those positions stay '0' / leak-mode).
 function tag_is_scalar_elem_array(tag: string): boolean {
@@ -38495,7 +38495,7 @@ function tag_is_scalar_elem_array(tag: string): boolean {
 // annotation types k a scalar-element array. Any 8-byte SCALAR element (i64 /
 // u64 / f64) declines the whole entry: op_tuple_get is offset-uniform, and a
 // wide scalar would shift the later positions on wasm's 4-byte slots. Pointer
-// elements (string / struct / nested tuple / Option) ride uniform slots, so
+// elements (string / struct / nested tuple / Option) occupy uniform slots, so
 // they are safe as '0' (leak-mode) positions — only their own boxes leak,
 // exactly today's floor.
 function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
@@ -38778,7 +38778,7 @@ function is_fresh_map_init(e: ast.Expr): boolean {
 }
 
 // collect_mapf_call_names: the BINDING-SITE keys of every `var m: Map[..] = mk(..)`
-// where mk is in the "MAPF:" registry (map_fresh_ret_fns_of, riding the
+// where mk is in the "MAPF:" registry (map_fresh_ret_fns_of, stored in the
 // tuple_fresh_ret list) — the callee provably returns a fresh sole-owned
 // scalar-column map, so the binding is as fresh as a local map_new. The
 // annotation is required (it is what marks the slot's map type for get_or
@@ -38868,7 +38868,7 @@ function collect_fresh_map_in_stmt(st: ast.Stmt, acc: string[]): string[] {
 // the map local `name`, found anywhere in `stmts` (nested if / while / for /
 // match bodies included); "" if unannotated or not found. `want_key` picks the
 // side — this was two functions differing only in which of map_key_of /
-// map_value_of they called, recursion skeleton and all.
+// map_value_of they called, recursion structure and all.
 function map_decl_type(stmts: ast.Stmt[], name: string, want_key: boolean): string {
     for stmt in stmts {
         match (stmt) {
@@ -39187,7 +39187,7 @@ function map_stmt_calls_method(st: ast.Stmt, name: string, methods: string[], fo
 // mutates in place and hands the same box back; without returns a
 // [map, existed] tuple wrapping it), so their RESULT flowing into any position
 // (a struct-lit field value, a tuple element, a call arg, a fresh bind) can
-// smuggle the box past the borrow-only escape walk — expr_unsafe_for treats a
+// carry the box past the borrow-only escape walk — expr_unsafe_for treats a
 // method RECEIVER as a borrow, so `C { m: mm.insert(1, 1) }` looked
 // non-escaping and the reclaim freed a mapbox the program still reads (the
 // map-call-as-struct-field UAF). Distinguishing an escaping result from a
@@ -39240,7 +39240,7 @@ function expr_map_identity_use(e: ast.Expr, name: string): boolean {
 // FAIL-CLOSED: an expression variant this walker doesn't model returns true
 // (treated as a mention), because its caller (is_map_selfcow_assign) uses
 // absence-of-mention as a soundness guarantee — a missed mention could
-// smuggle the reclaimed mapbox into a live structure (UAF), while a false
+// carry the reclaimed mapbox into a live structure (UAF), while a false
 // positive merely declines the reclaim (the pre-#4357 leak default).
 function map_expr_mentions_name(e: ast.Expr, name: string): boolean {
     match (e) {
@@ -39280,7 +39280,7 @@ function map_expr_mentions_name(e: ast.Expr, name: string): boolean {
 // is_map_selfcow_assign: `st` is the sanctioned COW self-reassign
 // `name = name.insert(k, v)` — target `name`, RHS a direct insert call whose
 // receiver is the bare ident `name`, and `name` appearing NOWHERE in the call
-// arguments (an arg occurrence could smuggle the box). The identity-carrying
+// arguments (an arg occurrence could carry the box out). The identity-carrying
 // result lands back in the SAME slot, so unlike every other identity use it
 // cannot leak the box past the escape walk — the native twin is
 // isSelfMapMutation + the computeFreshLocals cow carve-out (#5096).
@@ -39364,7 +39364,7 @@ function map_identity_escape_stmt(st: ast.Stmt, name: string): boolean {
             // is_map_selfcow_assign) is exempt: its identity-carrying result
             // lands back in the same slot, so no box escapes. The arg walk
             // inside is_map_selfcow_assign already rejected any occurrence of
-            // `name` in the arguments, so nothing here is smuggled either.
+            // `name` in the arguments, so nothing here is carried out either.
             if (is_map_selfcow_assign(st, name)) { return false; }
             return expr_map_identity_use(a.value, name);
         },
@@ -40039,7 +40039,7 @@ function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], params: ast.
                     // A variant CONSTRUCTION init (`var d: dyn T = V(args)`,
                     // #4351 slice 4): the enum box is a fresh rc-headered
                     // allocation per construction, so the sweep's shallow dec is
-                    // unconditionally sound — scalar payloads ride inside the
+                    // unconditionally sound — scalar payloads are inside the
                     // box; pointer payloads leak with it (safe-leak, same as the
                     // enum sweep elsewhere). The tag is the ENUM name (the sweep
                     // decs any non-struct, non-"string" tag). Unit variants
@@ -40741,7 +40741,7 @@ function struct_counted_share_expr(e: ast.Expr, name: string, structs: StructTab
                     // Without this the source walks its fields STATICALLY while the
                     // container's element walk is gated, and both free every buffer:
                     // 500/500 with allocs == frees at live_bytes 0, and only
-                    // __rc_underflow_count() dissenting.
+                    // __rc_underflow_count() catching it.
                     if (cfa.field == "with" && c.args.len() == 2) {
                         match (c.args[1]) {
                             ast.ExprIdent(wid) => { if (wid.name == name) { return true; } },
@@ -40764,7 +40764,7 @@ function struct_counted_share_expr(e: ast.Expr, name: string, structs: StructTab
             // while the enum's walk is rc-gated, so which of the two frees the
             // buffers depends on which sweep runs first: measured as exit 99 on a
             // live payload, with allocs == frees at live_bytes 0 and only
-            // __rc_underflow_count() dissenting. Gating both makes the order
+            // __rc_underflow_count() catching it. Gating both makes the order
             // irrelevant. No move test: a MOVED payload never reaches here, because
             // struct_box_sink_stored refuses that name its credit outright.
             var csv: string = "";
@@ -41885,7 +41885,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
-            // reassignment still sinks the credit outright.
+            // reassignment still defeats the credit outright.
             if (util.index_of_str(asts, "A|" + asts[asti]) >= 0) {
                 out = out.append("ARRSTRUCTA:" + asts[asti]);
             } else {
@@ -41905,7 +41905,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
     // body_unsafe_for gate below still proves non-escape before any is freed.
-    // A cnt_struct_ret_fns callee's binding rides along: its box is counted
+    // A cnt_struct_ret_fns callee's binding is included: its box is counted
     // whichever return produced it, and sinkshare_counted_handbacks below
     // gates its field walk for the case where that box is the argument's.
     fresh = collect_fresh_ret_call_names(body, body, params, structs, append_all(fresh_ret, cntret), struct_ret_fns, fresh);
@@ -42174,7 +42174,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // is fine, its iter is a scoped loop temp dead by the free).
     var maps: string[] = collect_fresh_map_names(body, []);
     // Also collect annotated bindings from REGISTERED map builders
-    // (`var m: Map[..] = mk(i)`, mk in the "MAPF:" registry riding
+    // (`var m: Map[..] = mk(i)`, mk in the "MAPF:" registry stored in
     // tup_fresh_ret — map_fresh_ret_fns_of): the callee provably returns a
     // fresh, sole-owned, scalar-column map, so the binding earns the same
     // "MAP:" credit as a local map_new — subject to every gate below
@@ -42320,7 +42320,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     out = reclaimable_credit(asrows, out);
     // Fresh `MyEnum[]` locals (#5474): `var xs: E[] = [E.A(..), E.B, ..]` — the enum
     // sibling of ARRTUP/ARRSTRUCT, and the last array-of-X element kind that had no
-    // element walk at all. Credited "ARRENUM:<local>#<Enum>", the enum riding the
+    // element walk at all. Credited "ARRENUM:<local>#<Enum>", the enum carried in the
     // entry because an `E[]` slot records its element type nowhere (see the ARRENUM
     // block). The escape gate is deliberately much tighter than its siblings' — only
     // `xs.len()` — because an element extraction here risks a double-free rather than
@@ -42958,16 +42958,16 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: StructTab, fnb
 //   - not a PARAMETER: the caller owns that box, and handing it back is the
 //     `return self` shape this whole registry exists to refuse.
 //   - never REASSIGNED, which is what makes the declaration's init the whole
-//     story rather than one of several possible final values.
+//     answer rather than one of several possible final values.
 //   - its init is itself strict-fresh, recursively — a literal, a forwarding
 //     call, or another such local. Fern requires declaration before use, so the
 //     chain walks strictly backwards and terminates.
 //
-// Then the escape gate, and the ALLOW_STRUCTRET variant is the load-bearing
+// Then the escape gate, and the ALLOW_STRUCTRET variant is the essential
 // choice: it forgives exactly one escape, the `return` that is the point of the
 // shape, and still flags an alias bind, a container store, a moved-out field or
 // a non-borrowable call argument. A second reference taken anywhere before the
-// return sinks the credit.
+// return defeats the credit.
 function struct_ret_local_is_frame_fresh(name: string, structs: StructTab, fnbody: ast.Stmt[], arr_fresh: string[], fwd: string[], fnparams: ast.ParamDecl[], sfok: string[]): boolean {
     if (local_decl_count(fnbody, name) != 1) { return false; }
     var pi: i32 = 0;
@@ -42978,7 +42978,7 @@ function struct_ret_local_is_frame_fresh(name: string, structs: StructTab, fnbod
     // A REASSIGNED local is admitted only when every assignment carries a
     // strict-fresh struct value itself: the box the return hands out is then
     // frame-fresh whichever write produced it, and the escape gates below
-    // still sink the credit if any reference was taken along the way. One
+    // still defeat the credit if any reference was taken along the way. One
     // write outside the classifier keeps the refusal — the final value's
     // provenance is unknowable to a flow-free scan. Without this arm the
     // ordinary rebuild-and-return producer freed nothing at all: the caller's
@@ -44061,7 +44061,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
     // from STRARR: so projection and field-freshness consumers do not widen.
     for nm in counted_strarr_returns_of(funcs, str_fresh) { out = out.append("SARRC:" + nm); }
     var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
-    // The string[] producers ride the same list under "SA:" so the strict-fresh
+    // The string[] producers are in the same list under "SA:" so the strict-fresh
     // walk can ask about either element kind without a second parameter; every
     // other consumer of this list looks up a bare name, which the prefix cannot
     // match. Only walked when the string-fresh registry was worth computing.
@@ -44104,7 +44104,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
             out = out.append(key);
         }
         // "ARR:<name>" entries (#4365): FREE functions returning a SCALAR-element
-        // array box this frame allocated. Rides this registry (prefix-multiplexed, the reclaimable_
+        // array box this frame allocated. Uses this registry (prefix-multiplexed, the reclaimable_
         // names convention) so the discarded-call reclaim in lower_stmt reads it
         // off LowerState with no new threading; every other consumer looks up bare
         // names / "<Base>.<method>" keys, which an "ARR:"-prefixed entry can never
@@ -44161,7 +44161,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
             out = out.append("STRUCTARRF:" + fn.name);
         }
         // "ARENUMF:<name>|<Enum>" — the array-of-ENUM sibling of the rows above.
-        // The enum rides the row because an `E[]` slot records its element type
+        // The enum is carried in the row because an `E[]` slot records its element type
         // nowhere, the same reason the "ARRENUM:" credit carries it.
         var aef: string = arrenum_producer_enum(fn, structs);
         if (aef.len() > 0) {
@@ -44380,7 +44380,7 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: St
                 // O(body) borrow check — keeping this per-function pass affordable
                 // on the large modules (the native-emit heap is at its limit, #3452).
                 var snap_init_ok: boolean = is_fresh_ret_binding(v.init, v.type_name, fresh_ret);
-                // A strict-fresh LITERAL init rides the same rebind reclaim when
+                // A strict-fresh LITERAL init uses the same rebind reclaim when
                 // this function's own bare row in the strict-fresh registry
                 // proves the whole rebuild-and-return shape: the row exists only
                 // if every return is strict-fresh, and a `return <name>` return
@@ -44514,7 +44514,7 @@ function enum_variant_scalar_payload(structs: StructTab, vname: string): boolean
 // leak-safe scalar array (is_leaksafe_array_field — i32[]/i64[]/f64[]/boolean[],
 // a single rc-headered box released by one __fern_rc_dec). String / nested-struct /
 // struct-array / map / option / tuple payloads bail. The widened in-arm match-reuse
-// admits these payloads: scalar fields ride the existing struct_get/struct_set
+// admits these payloads: scalar fields use the existing struct_get/struct_set
 // path, array fields are written via a cow-guarded drop (mirroring emit_arr_store /
 // emit_cross_struct_reuse) so an old donor array is released on replace and reused
 // in place on a same-slot move.
@@ -44681,7 +44681,7 @@ function type_is_scalar_option(tn: string): boolean {
 // by-value scalar in EVERY arm: `Option[<scalar>]`, or `Result[<scalar>,
 // <scalar>]`. Such a box owns no pointer at all, so ONE __fern_rc_dec is its
 // complete release whichever variant it happens to hold — which is what lets a
-// nested one ride the plain payload dec.
+// nested one use the plain payload dec.
 //
 // Result needs BOTH arms proved. The drop runs after the match and does not read
 // the tag, so an Err arm carrying a pointer would be stranded by the very same
@@ -44901,7 +44901,7 @@ function opt_box_init_type(v: ast.StmtVar, opt_fresh_reg: SigReg, fn_names: SigR
 // box was kept in the first place.
 //
 // Read on the SUCCESS and the ERROR payload both: an Err string has its own
-// release (the errstrs credit) and starving that is the same defect.
+// release (the errstrs credit) and leaving it nothing is the same defect.
 function optbox_shallow_payload_ok(pt: string, structs: StructTab): boolean {
     if (pt == "") { return true; }
     if (is_scalar_type_name(pt)) { return true; }
@@ -45413,7 +45413,7 @@ function consumed_optbox_frees(body: ast.Stmt[], reassigned: string[], structs: 
         match (body[vi]) {
             ast.StmtVar(v) => {
                 // The DEAD half: a fresh box this scope binds and never mentions
-                // again. Nothing claims such a local — every other release rides
+                // again. Nothing claims such a local — every other release comes from
                 // a consuming match or a last USE, and a value discarded without
                 // being looked at has neither, so it was the one shape that kept
                 // its block whatever its payload (#8806). The free lands right
@@ -45714,7 +45714,7 @@ function variant_struct_payloads_fresh(args: ast.Expr[], variant_name: string, s
 // enum's name, or "". Mirrors fresh_scalar_enum_init for the widened set. A
 // deep-drop-ok STRUCT payload must be a fresh struct literal and a STRING payload a
 // fresh literal/producer (variant_struct_payloads_fresh) so the match-site drop
-// can't double-free a local the payload aliases; array payloads ride the
+// can't double-free a local the payload aliases; array payloads take the
 // construction alias-inc and need no such gate.
 function fresh_rcpayload_enum_init(e: ast.Expr, structs: StructTab, str_fresh: string[], msites: string[], counted: boolean): string {
     match (e) {
@@ -46231,10 +46231,10 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     // The WALK runs under __fern_rc_is_unique, the dec unconditionally.
                     // At rc 1 — a fresh struct literal, or a payload the construction
                     // MOVED — the guard passes and this is the release it always was.
-                    // It earns its keep on a COUNTED payload, where the source local
+                    // It matters on a COUNTED payload, where the source local
                     // still holds a claim: two static walks free every field buffer
                     // twice, and the census cannot see it (allocs == frees at
-                    // live_bytes 0, only __rc_underflow_count() dissenting). Gated, the
+                    // live_bytes 0, only __rc_underflow_count() catches it). Gated, the
                     // walk belongs to whichever owner finds rc 1 and the dec hands the
                     // last one its turn, so sweep ORDER stops mattering.
                     st = st.emit(ir.op_load_local(slot));
@@ -47044,7 +47044,7 @@ function opt_stmt_binding_escapes(st: ast.Stmt, name: string, variant: string, s
 // the box's rc FIELDS as well, so it needs the stronger property: no field of the
 // binding is extracted whole. `match (o) { Some(p) => { held = p.xs; } … }` passes
 // the box-level gate — `p` itself never escapes — while handing `held` the buffer
-// the deep drop would free, a use-after-free the freelist happily hides.
+// the deep drop would free, a use-after-free the freelist hides.
 //
 // So this walker gates ONLY the deep-drop upgrade: a moved field downgrades the
 // drop back to the shallow box dec (today's sound leak), it never withdraws the
@@ -47593,7 +47593,7 @@ function opt_payload_deep_sty(ptype: string, structs: StructTab): string {
 // own (string / leak-safe scalar-array) — the only kinds lower_block's
 // per-nested-block pass may claim. A struct-literal payload's shallow box
 // dec relies on the surrounding OPTSTRUCT machinery to release its array
-// FIELDS; a block-level drop zeroes the slot and starves that machinery,
+// FIELDS; a block-level drop zeroes the slot and leaves that machinery nothing,
 // leaking the field buffers (the #5453 CI regression) — so struct payloads
 // stay fn-level-only, where the pass and the machinery agree.
 // `inners[i]` is nested_opt_inner_freefn's verdict: non-empty names the release
@@ -47831,7 +47831,7 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[],
                             // reason a leak-safe array is: the inner box holds a
                             // by-value scalar and nothing else, so one
                             // __fern_rc_dec is its COMPLETE drop and no
-                            // surrounding machinery is starved by the slot zero.
+                            // surrounding machinery is deprived by the slot zero.
                             blockable = blockable.append(cand.ptype == "string" || cand.ptype == "string[]"
                                 || is_leaksafe_array_field(cand.ptype) || type_is_scalar_union(cand.ptype)
                                 || innerf.len() > 0 || dsty.len() > 0);
@@ -49342,7 +49342,7 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
 // "AAC:" registry (opt_fresh_ret_fns_of proved every return of the callee is a
 // fresh arrarr literal, so the call result is rc=1 and solely owned here; the
 // self-host IR path has no return-transfer inc). `ofr` is the opt_fresh_ret
-// registry list the AAC:/AACS-flag entries ride in. Escape gates applied by
+// registry list the AAC:/AACS-flag entries are stored in. Escape gates applied by
 // reclaimable_names_of.
 function collect_fresh_arrarr_names(stmts: ast.Stmt[], ofr: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
@@ -50727,7 +50727,7 @@ function emit_optstruct_deep_free(se: LowerState, slot: i32, sty: string): Lower
     st = st.emit(ir.op_store_local(etslot));
     // rc-GATED: with a counted payload (`Some(p)`, p's own sweep still pending) two
     // static walks free every field buffer twice — allocs == frees at live_bytes 0,
-    // and only __rc_underflow_count() dissents. The walk belongs to whichever owner
+    // and only __rc_underflow_count() catches it. The walk belongs to whichever owner
     // finds rc 1; the dec below hands the last one its turn, so sweep order stops
     // mattering.
     st = emit_struct_field_drops_gated(st, etslot, true);
@@ -50774,7 +50774,7 @@ function emit_optstruct_reclaim_store(se: LowerState, slot: i32, sty: string): L
 // class fixes only the flat-scalar-array kind, which is the one the #6127 sweep
 // measures and the only one with no class at all.
 //
-// DISJOINTNESS is structural and load-bearing: this class credits ONLY names
+// DISJOINTNESS is structural and essential: this class credits ONLY names
 // that ARE reassigned, which is the exact complement of the gate every
 // consuming-match analysis applies. A name is therefore claimed by this class or
 // by those, never both, so no box is freed twice.
@@ -51220,7 +51220,7 @@ function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan
 // The payload of an `Option[Option[<scalar>]]` IS the inner option box — an
 // rc-headered block owning no pointer — so the emitter's existing payload dec is
 // its complete release. No new emitter and no deep walk; the credit was the only
-// missing piece, exactly as the Result widening above rides the same emitter.
+// missing piece, exactly as the Result widening above reuses the same emitter.
 //
 // type_is_scalar_union is the gate for the same reason it is elsewhere: a flat
 // dec frees the inner box but nothing the box owns, so an rc inner payload
@@ -51233,7 +51233,7 @@ function unmatched_optopt_ann_is(type_name: string): boolean {
 // The construction must ALLOCATE the inner box here rather than alias one the
 // caller owns: `Some(Some(x))`, `Some(None)`, or a bare `None`. A `Some(inner)`
 // of an existing local is refused — the family's usual freshness requirement,
-// and load-bearing for the same reason (the payload is stored uncounted).
+// and essential for the same reason (the payload is stored uncounted).
 function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
     match (e) {
         ast.ExprIdent(nid) => { return nid.name == "None"; },
@@ -52052,7 +52052,7 @@ function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
 
 // slot_is_reclaimable_optopt_rc: an `Option[Option[<rc payload>]]` local
 // credited "OPTOPTRC:" — released by emit_optopt_rc_deep_free rather than the
-// flat dec its scalar-inner sibling rides (#7718). Disjoint from "OPTARR:" by
+// flat dec its scalar-inner sibling uses (#7718). Disjoint from "OPTARR:" by
 // annotation: nested_opt_inner_freefn answers non-empty exactly where
 // type_is_scalar_union answers false.
 // slot_is_reclaimable_optopt_rebind: a MATCH-CONSUMED, reassigned nested-Option
@@ -52785,7 +52785,7 @@ function arrstruct_name_is_appended(stmts: ast.Stmt[], name: string, structs: St
 // ONLY as the bare-ident value of a field whose declared type takes the
 // construction alias-inc — the ExprStructLit ident arm in lower_expr, which
 // retains an array-of-struct field source unconditionally. The field therefore
-// holds a COUNTED share, and reading it as an escape sank the source's whole
+// holds a COUNTED share, and reading it as an escape cost the source its whole
 // reclaim: `var p: P = P { f: src, … }` left `src` with the generic buffer dec,
 // freeing the outer array while every element box and element array field
 // stranded. Measured 88 bytes per round on a one-element `Inner[]`, and only on
@@ -53273,7 +53273,7 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
             // The counted field share is not an element-payload escape either:
             // the field holds a counted reference to the SAME buffer, so the
             // elements' owned fields are reachable from exactly the two owners
-            // whose walks are both is_unique-gated. Refusing it here sank the
+            // whose walks are both is_unique-gated. Refusing it here denied the
             // credit even once arrstruct_unsafe_for admitted the share.
             if (arrstruct_counted_field_share(e, name, structs, msites)) { return 1; }
             return 0;
@@ -53917,7 +53917,7 @@ function arrenum_name_is_appended(stmts: ast.Stmt[], name: string, structs: Stru
 // The construction retains such a field — `is_array_type_name` covers `E[]` in the
 // ExprStructLit fallback arm, so the alias-inc fires even though the gate above it
 // names only scalar- and struct-arrays — so the field holds a COUNTED share, and
-// reading it as an escape sank the source's whole reclaim.
+// reading it as an escape cost the source its whole reclaim.
 //
 // Both releases are rc-gated, which is what makes granting this safe rather than a
 // double free: the holder's walk is __enum_arr_elems_drop_<E>, which is_unique-gates
@@ -54094,7 +54094,7 @@ function arrenum_append_built_enum(stmts: ast.Stmt[], name: string, tname: strin
 }
 
 // collect_fresh_arrenum_names returns "<local>#<Enum>" for every `var xs: E[] = [ctor, …]`
-// binding whose name is never reassigned. The enum rides the entry so the release side
+// binding whose name is never reassigned. The enum is in the entry so the release side
 // gets it without a slot column; the escape gate is applied by the caller, which owns
 // the whole function body (a nested binding's uses can sit in the enclosing tail).
 function collect_fresh_arrenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, body: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
@@ -54463,7 +54463,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
 // type this does not recognise keeps the struct out, which is the safe
 // direction and stays safe as the type system grows.
 //
-// `fn` rides the same argument as `string`: neither is a rc-ARRAY field (so
+// `fn` falls under the same argument as `string`: neither is a rc-ARRAY field (so
 // struct_has_reclaim_array_field still keeps this class disjoint from
 // ARRSTRUCT), and both are recovered rather than leaked when the type ALSO
 // routes field reclaim — the deep branch then walks each element through
@@ -54680,7 +54680,7 @@ function structs_reuse_compatible(structs: StructTab, dt: string, rt: string): b
 // scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64,
 // u64, and f64 (struct_get_i64 / struct_get width-64 on read; lower_i64+struct_set_i64
 // / lower_expr+struct_set width-64 on write, mirroring emit_enum_donor_reuse). u64
-// rides the i64 8-byte path: struct_field_width classifies a u64 field as 64-bit and
+// uses the i64 8-byte path: struct_field_width classifies a u64 field as 64-bit and
 // struct_field_is_i64 reports it i64, so the value round-trips at full width (no
 // truncation).
 function inarm_reuse_payload_type_ok(t: string): boolean {
@@ -55191,7 +55191,7 @@ function self_overwrite_reuse_sites(body: ast.Stmt[], structs: StructTab, fresh_
 // tryStructReuseOverwrite spread admission (#6124).
 //
 // The EMITTER needed no port. emit_self_overwrite_reuse already evaluates every
-// override value into a temp before any box surgery (its step 1), which is what
+// override value into a temp before any box rewrite (its step 1), which is what
 // makes an override that reads the base (`n: p.n + 1`) order-safe; the rebind
 // family's extra "no override value may reference d" gate is a property of how
 // its DONOR is proved dead, not of the emitter. What this family adds is the
@@ -55464,7 +55464,7 @@ function body_unsafe_for_enumfield(stmts: ast.Stmt[], name: string, borrowable: 
 // both were built, measured to change nothing, and dropped.
 //
 // The confinement proof is the whole safety argument, and its second half is
-// load-bearing: without the payload-escape check an alias that returns its
+// essential: without the payload-escape check an alias that returns its
 // match payload makes the source's deep release free a buffer the caller still
 // holds — measured as `__rc_underflow` firing where stock merely leaks, with a
 // perfectly balanced census either way.
@@ -55492,7 +55492,7 @@ function ef_unsafe_expr(e: ast.Expr, name: string, borrowable: string[], structs
         },
         // vb_borrow: a value block reached from here is walked with the
         // match-borrow reading, which is what a `var t = match (name) { … }`
-        // needs. The enum-FIELD forgiveness above does not ride into the block —
+        // needs. The enum-FIELD forgiveness above does not extend into the block —
         // that direction is conservative, so a field share written inside a value
         // block simply keeps the old refusal rather than gaining a wrong credit.
         _ => { return expr_unsafe_for_vb(e, name, borrowable, no_names(), true); }
@@ -55887,7 +55887,7 @@ function lower_stmt_or_self_assign_reuse(st: ast.Stmt, s: LowerState): LowerStat
 // The static escape walk proves d is sole-owner; the __fern_rc_is_unique
 // guard makes any FUTURE hole in that walk degrade instead of corrupting:
 //   1. every override value is evaluated into a temp (reads of d's old
-//      fields complete before any box surgery, on both branches);
+//      fields complete before any box rewrite, on both branches);
 //   2. reused = __fern_rc_is_unique(d); token = reused ? d : 0;
 //   3. box = __fern_alloc_reuse(token, nfields+1 slots) — the SAME block on the
 //      reuse path (same type -> the cap always fits), a fresh rc=1 arr-box
@@ -55917,7 +55917,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
             var nf: i32 = decl_field_count(s.frame.structs, slit.type_name);
             // 1. Evaluate every OVERRIDE value into a temp local FIRST (native
             //    tryStructReuseOverwrite step 1): the reads of d's old fields all
-            //    complete before any box surgery, on both branches.
+            //    complete before any box rewrite, on both branches.
             //    An `own` base's `f: d.f.append(x)` over a scalar-element array
             //    field is the exception (inplace[j]): on the reuse arm it pushes
             //    onto the field the box already owns, so it is evaluated PER ARM
@@ -56893,7 +56893,7 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
     // closure-returning fn / a closure-local ident — elem_type_tag's "clo"):
     // a leak-only heap box in one pointer slot, like a struct element.
     var el_clo_ok: boolean = elem_type_tag(el, s) == "clo";
-    // A `cell_new(v)` element: a cell IS a one-element array box, so it rides
+    // A `cell_new(v)` element: a cell IS a one-element array box, so it occupies
     // one pointer slot exactly as the array cases above do. A cell LOCAL was
     // already admitted through el_arr_ok / el_typedarr_ok (its slot is marked
     // is_arr), so only the direct constructor call was left bailing the whole
@@ -57670,7 +57670,7 @@ function emit_enum_cross_reuse(c_name: string, c_site: string, value: ast.Expr, 
 
 // --- in-arm consuming-match box reuse (FBIP) ---------------------------------
 //
-// The marquee Perceus "functional but in-place" win: `var y = match (x) { ... }`
+// The main Perceus "functional but in-place" win: `var y = match (x) { ... }`
 // where x is a fresh, sole-owner, dead-after, non-escaping ALL-SCALAR-payload enum
 // box consumed by THIS match-EXPRESSION, and EVERY arm constructs a NEW same-size
 // variant `W(...)`. Instead of allocating a fresh box per arm result, REUSE x's box
@@ -57852,7 +57852,7 @@ function inarm_reuse_match_ok(arms: ast.MatchArm[], enum_name: string, want: i32
                 if (!enum_variant_reuse_payload_ok(structs, pv.type_name)) { return false; }
                 // The matched variant's SCALAR payload fields are read into temps at
                 // their width. Admit i32 / u32 / boolean (plain i32 path) plus the
-                // 8-byte i64 / f64; an ARRAY payload field rides the leak-safe-array
+                // 8-byte i64 / f64; an ARRAY payload field uses the leak-safe-array
                 // path (read into a pointer temp, written via cow-guard). u64 is
                 // excluded for scalar fields (see inarm_reuse_payload_type_ok).
                 var nf: i32 = decl_field_count(structs, pv.type_name);
@@ -58579,7 +58579,7 @@ function trmc_neutral_stmt(st: ast.Stmt, fn: parser.FuncDecl): boolean {
         ast.StmtAssign(a) => {
             if (a.target.len() == 0) { return false; }
             for p in fn.params {
-                // Rebinding a parameter would fight the loop's own advance.
+                // Rebinding a parameter would conflict with the loop's own advance.
                 if (p.name == a.target) { return false; }
             }
             return is_scalar_type_name(trmc_local_type(fn.body, a.target));
@@ -59021,7 +59021,7 @@ struct TrmcCtx {
 //   end
 //   load result; return
 // A tail `if`/`else` nests both branches under an op_if, which is why the br
-// depths ride in TrmcCtx rather than being written as literals.
+// depths are carried in TrmcCtx rather than being written as literals.
 // hole-link(v): if (hole == 0) { result = v } else { hole.<tail_idx> = v } — the
 // hole's field index is one compile-time constant because trmc_hole_index gates
 // every cons leaf to the same payload position, so the link is a plain
@@ -59371,7 +59371,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
     // lower_i64, and the wasm signature carries (result i64))?
-    // u64 returns ride the same i64 64-bit path (only signedness of the value's
+    // u64 returns use the same i64 64-bit path (only signedness of the value's
     // own ops differs, already handled at the producing expression) (#2904).
     var ret_i64: boolean = fn.ret_type == "i64" || fn.ret_type == "u64";
     var ret_i64arr: boolean = fn.ret_type == "i64[]";
@@ -59391,10 +59391,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // marked f64 in the local table (so it loads/stores like any 8-byte value
     // and the wasm sig declares (param f64)); an f64 return lowers its value
     // expr (which the float ops already produce) and the wasm sig declares
-    // (result f64). The register backends need no ABI change (f64 rides the
+    // (result f64). The register backends need no ABI change (f64 occupies the
     // 8-byte slot). A METHOD with f64 in its signature IS lowered too now:
     // f64_ret_fns_of records methods keyed "<Type>.<method>", so the call site
-    // recovers the result's f64-ness (expr_is_f64's method case); f64 args ride
+    // recovers the result's f64-ness (expr_is_f64's method case); f64 args use
     // lower_expr like any f64 value. (i64 methods get the same treatment below.)
     // A string-returning function IS lowered: its body returns a string box (an
     // 8-byte pointer, like any value), and the call site tracks the result as a
@@ -59416,7 +59416,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     }
     // A tuple-returning function IS lowered when every element is scalar (i32 /
     // bool / i64 / f64) or string: the body returns a tuple box (an 8-byte
-    // pointer, like any value) whose elements ride uniform 8-byte slots, and a
+    // pointer, like any value) whose elements occupy uniform 8-byte slots, and a
     // call site recovers the element tags via sg.tuple_ret_fns (see tuple_ret_type)
     // to type `.N` / destructure — including the 8-byte i64.load/f64.load width
     // for an i64/f64 element (op_tuple_get_w in the `.N` and destructure paths).
@@ -59426,7 +59426,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // Only a BARE tuple return (`(A, B)`) is gated here. A tuple-ARRAY return
     // (`(A, B)[]`) starts with '(' too but is an array — it takes the generic
     // array move-on-return path (like P[] / string[]), so exclude array types
-    // (else tuple_elem_tags chokes on the trailing "[]" and wrongly bails).
+    // (else tuple_elem_tags mis-parses the trailing "[]" and wrongly bails).
     if (fn.ret_type.len() > 0 && fn.ret_type[0] == b'(' && !is_array_type_name(fn.ret_type)) {
         if (!tuple_elems_lowerable(fn.ret_type, structs)) {
             return lower_failed(fn, "returns tuple `" + fn.ret_type + "`, whose elements are not all lowerable");
@@ -59639,10 +59639,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         // (#5882). isf64 above already covers it via is_f64_scalar_type_name.
         isf32 = isf32.append(fn.params[i].type_name == "f32");
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
-        // the array itself rides the same 8-byte-stride layout every f64 array
+        // the array itself has the same 8-byte-stride layout every f64 array
         // literal in this (whole-module-IR) program uses, so passing one is safe.
         //
-        // `f32[]` rides the SAME 8-byte f64 layout — a scalar f32 param already
+        // `f32[]` uses the SAME 8-byte f64 layout — a scalar f32 param already
         // lowers to a wasm f64 (see assert_at_f32's `(param f64)`), and the
         // array-literal / cell paths already mark an f32 element type as
         // f64arr. Without it here, a declared `f32[]` param was classified as
@@ -59977,7 +59977,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // has no return-transfer inc, so ONLY registry-proven-fresh callees are
     // safe to free — an unproven callee keeps its prior safe-leak). Same
     // narrow-seeding rule as BORROW:/TUPRET:/MAPRET: above. The array
-    // sibling needs no seed — its "ARR:" strict-fresh entries already ride
+    // sibling needs no seed — its "ARR:" strict-fresh entries are already in
     // sg.return_fresh_struct_ret_fns in LowerState.
     var lrcs: string[] = [];
     var lrci: i32 = 0;
@@ -60464,7 +60464,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                     // The STRUCT-payload sibling of "opt-rcpayload" (#6127): the box at
                     // offset 8 is a struct whose rc-array fields the construction
                     // alias-inc'd, so __struct_drop_<T> runs before the box dec
-                    // (emit_opt_struct_payload_drop). The struct NAME rides in the kind,
+                    // (emit_opt_struct_payload_drop). The struct NAME goes in the kind,
                     // exactly as the enum name does for "enum-rcpayload:" — the slot type
                     // Option[P] names it, but a Result[P, E] does not.
                     s = emit_opt_struct_payload_drop(s, dslot, slice_unchecked(pk, 18, pk.len()));
@@ -60476,7 +60476,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                     // 24-byte string block by the ARRAY layout's size class on asm —
                     // wrong class, heap corruption), __fern_str_arr_free for a string[]
                     // (rc-dec frees the buffer and strands every element box). The
-                    // helper NAME rides in the kind, as the struct name does above.
+                    // helper NAME goes in the kind, as the struct name does above.
                     s = emit_opt_payload_drop_via(s, dslot, slice_unchecked(pk, 16, pk.len()));
                 } else if (dslot >= s.frame.n_params && pk.len() > 15 && slice_unchecked(pk, 0, 15) == "enum-rcpayload:"
                         && util.index_of_str(ecross.donors, pdrops.names[pi]) < 0) {
@@ -60486,7 +60486,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                     // from consumed_rcpayload_enum_frees) and no escaping arm payload
                     // binding (enum_body_binds_rc_payload). Deep-drop the runtime
                     // variant's rc payload then free the box (emit_enum_variant_drops
-                    // zeroes the slot too). The enum NAME rides in the kind after the
+                    // zeroes the slot too). The enum NAME goes in the kind after the
                     // "enum-rcpayload:" prefix (the slot type alone can't name it).
                     // SKIPPED when this enum local is an enum->enum cross-reuse DONOR
                     // (ecross.donors): emit_enum_cross_reuse recycles its box into the
@@ -60800,7 +60800,7 @@ pub function append_dyn_str_ret_fns(base: string[], trait_reqs: parser.TraitReq[
 // arithmetic (`d.v() + 1`) width-tracks as i32 (infer_expr_width's method arm
 // misses the "dyn <Trait>.<method>" key), so the add lowers 32-bit and
 // truncates the high word. Mirrors i64_ret_fns_of's "<key>|<retflag><paramflags>"
-// format (retflag '1' for an i64/u64 method — u64 rides the i64 path; '3' for a
+// format (retflag '1' for an i64/u64 method — u64 uses the i64 path; '3' for a
 // u32 method, whose result needs the same unsigned-op selection — #5245).
 pub function append_dyn_i64_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
     var out: string[] = base;
@@ -60820,7 +60820,7 @@ pub function append_dyn_i64_ret_fns(base: string[], trait_reqs: parser.TraitReq[
                 }
                 out = out.append("dyn " + tr.trait_name + "." + fn.name + "|1" + flags);
             }
-            // A u32-returning dyn method rides the '3' RETURN flag (is_u32_ret_fn):
+            // A u32-returning dyn method takes the '3' RETURN flag (is_u32_ret_fn):
             // `d.v() >> 1` on a `dyn Trait` receiver selects shr_u. Distinct from
             // the '1' i64/u64 case (u32 is 32-bit, so is_i64_ret_fn must exclude
             // it). u32 params flag '0' like every non-64-bit param. (#5245)
@@ -60844,7 +60844,7 @@ pub function append_dyn_i64_ret_fns(base: string[], trait_reqs: parser.TraitReq[
 // append_dyn_f64_ret_fns is the f64/f32-return sibling: an f64/f32 value
 // returned by a `dyn Trait` dispatch and chained (`d.f() + 0.5`) mis-lowers as
 // integer arithmetic on the float bits without a "dyn <Trait>.<method>" entry in
-// f64_ret_fns (expr_is_f64's method arm misses the key). f32 rides the f64 twin
+// f64_ret_fns (expr_is_f64's method arm misses the key). f32 uses the f64 twin
 // for value ops, so is_f64_scalar_type_name (which matches both) is the right
 // filter. Plain membership like f64_ret_fns_of (no flag suffix).
 pub function append_dyn_f64_ret_fns(base: string[], trait_reqs: parser.TraitReq[]): string[] {
@@ -60964,7 +60964,7 @@ function erased_expr_uses_any(e: ast.Expr, names: string[]): boolean {
 // erased_return_value_ok: is the returned expression a SAFE erased sink — a bare
 // erased-param ident (scalar pass-through), or a TUPLE literal whose elements are
 // each such (a tuple pass-through `pair(k,v):(K,V) { return (k,v); }`), or an
-// expression that doesn't touch the erased params at all? A wasm tuple rides a
+// expression that doesn't touch the erased params at all? A wasm tuple uses a
 // uniform 8-byte-per-element box, so widening each element to i64 and reading it
 // back at the concrete per-element width is layout-safe (#5464 tuple slice). A
 // non-tuple compound (a call/closure/arith/Some(k)/[k]) is NOT a safe sink here.
@@ -61419,7 +61419,7 @@ function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean, str_fres
 // ownership — see collect_try_str_binding_names), else "a" (box-free only;
 // the aliased payload keeps its sound leak). lower_func seeds each name as
 // the opt-fresh registry, which lower_try's consume-edge box
-// free can check eligibility from LowerState (rides the existing opt-fresh
+// free can check eligibility from LowerState (uses the existing opt-fresh
 // registry rather than a new field; the old 33-field pin is dead).
 // hoist_call_scrutinees rewrites `match (f(args)) { … }` — `f` a registered
 // fresh Option / Result / rc-enum producer — into
@@ -61427,7 +61427,7 @@ function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean, str_fres
 // release the BINDING form already has (consumed_rcpayload_option_frees,
 // consumed_rcpayload_enum_frees) covers the direct form too: a scrutinee is a
 // binding that happens to have no name. Runs before every analysis, so the
-// temp earns its credits like a written binding. A producer with a type
+// temp gets its credits like a written binding. A producer with a type
 // variable in its return keeps the direct form — the temp's annotation would
 // have to be resolved from the arguments.
 function hoist_call_scrutinees(stmts: ast.Stmt[], sg: FnSigs): ast.Stmt[] {
@@ -63467,7 +63467,7 @@ function fnfld_lookup(binds: string[], name: string): string {
 }
 
 // strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk,
-// which the struct[]/enum[]-field admission ("sarr:", #7067) rides — the read
+// which the struct[]/enum[]-field admission ("sarr:", #7067) reuses — the read
 // rule below is the same question for both, so one walk feeds both halves.
 // Marks a field unsafe when:
 //   - it is READ anywhere except as a bare `.len()` receiver — an indexed
@@ -63806,7 +63806,7 @@ function strarrfld_scan(e: ast.Expr, structs: StructTab, binds: string[], str_fr
                 // at the end of this iteration, so it lives in the loop-body scope
                 // rather than inside that branch.
                 var share_read: boolean = false;
-                // A struct-ARRAY / enum-ARRAY field rides the SAME scan (#7067):
+                // A struct-ARRAY / enum-ARRAY field uses the SAME scan (#7067):
                 // its element boxes are freed by __field_reclaim_<T>'s walk on a
                 // rebind, so the field is admitted only when every stored value
                 // is an array literal of FRESH elements — boxarr_lit_all_elems_fresh,
@@ -63851,7 +63851,7 @@ function strarrfld_scan(e: ast.Expr, structs: StructTab, binds: string[], str_fr
                     }
                     // A bare IDENT — a parameter or a live local. Admitting it
                     // is what turns the construction retain on for this type
-                    // (both ride struct_routes_field_reclaim), so the field
+                    // (both go through struct_routes_field_reclaim), so the field
                     // holds a counted reference rather than an uncounted alias
                     // and the drop's dec is balanced against it. Refusing it was
                     // the third leg of the circularity: unadmitted meant no
@@ -64170,21 +64170,21 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
     while (i <= tags.len()) {
         if (i == tags.len() || (depth == 0 && tags[i] == b',')) {
             var t: str = slice_unchecked(tags, start, i);
-            // The ≤32-bit integer scalars (u32 + the sub-word u8) ride
+            // The ≤32-bit integer scalars (u32 + the sub-word u8) occupy
             // one i32 slot exactly like i32 — a sub-word cast wraps the value BEFORE
             // the tuple store, and construction/access need no width plumbing
             // (verified round-trip on x86-64 + wasm). u64
-            // rides the i64 8-byte slot: construction already tags it "i64"
+            // occupies the i64 8-byte slot: construction already tags it "i64"
             // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
             // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
-            // `usize` rides the WIDTH-0 slot, the same one every pointer element
+            // `usize` occupies the WIDTH-0 slot, the same one every pointer element
             // (string / struct / array / …) uses: the register backends store and
             // load 8 bytes for every element kind, and on wasm32 a pointer IS the
             // i32 the width-0 store/load moves. So it needs no width plumbing of
             // its own — elem_type_tag leaves a usize expression on the "i32"
             // fallthrough and the `.N` / destructure reads take the plain
             // op_tuple_get, which is what the value wants at either pointer width.
-            // `char` rides that same width-0 slot as a code point, like i32.
+            // `char` occupies that same width-0 slot as a code point, like i32.
             var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "usize" || t == "char" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
             // A closure-box element ("clo" — a declared fn-typed element,
             // mapped by tuple_elem_tags) is a leak-only heap box in one
@@ -64216,17 +64216,17 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
             // was comma-naive.)
             if (!ok_elem && t.len() >= 8 && slice_unchecked(t, 0, 7) == "Result[") { ok_elem = true; }
             // A 4-byte scalar-array element (i32[] / boolean[] / u32[], plus the
-            // sub-word u8[] which rides the SAME i32[] 4-byte-slot
+            // sub-word u8[] which uses the SAME i32[] 4-byte-slot
             // representation) is a leak-only heap pointer stored in one tuple slot
             // — exactly like a string / struct element — so `.N` reads it via
             // op_tuple_get and the bind marks the slot an array (mark_arr), after
-            // which `t.N[i]` rides the 4-byte arr_get.
+            // which `t.N[i]` uses the 4-byte arr_get.
             if (!ok_elem && (t == "i32[]" || t == "boolean[]" || t == "u32[]" || is_subword_array_type(t))) { ok_elem = true; }
             // The 8-byte-element arrays (f64[]/i64[]/u64[]) and string[] are ALSO
             // just a heap pointer in the tuple slot — the element WIDTH/kind only
             // matters when reading an element (`t.N[i]`), not the tuple slot itself.
             // The destructure / `.N` bind marks the slot f64arr / i64arr (+ u64 for
-            // the unsigned spelling) / strarr so `t.N[i]` rides the width-marked
+            // the unsigned spelling) / strarr so `t.N[i]` uses the width-marked
             // arr_get(64) / arr_get_i64 / str read.
             if (!ok_elem && (is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "string[]")) { ok_elem = true; }
             // A struct-array (X[]) or enum-array (E[]) element is a heap pointer in
@@ -65142,7 +65142,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
             }
         }
     }
-    // "PASSTHRU:<fn>:<argidx>" markers ride the same list — a marker can never
+    // "PASSTHRU:<fn>:<argidx>" markers share the same list — a marker can never
     // collide with a function name, so every membership consumer is unaffected,
     // and the classifiers that ask whether a CALL yields a closure box can
     // recognise the generic passthrough that forwards one (expr_is_closure_elem,
@@ -65156,7 +65156,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): s
 // closure_and_fnptr_fns_of is the value threaded into a LowerState's closure_fns:
 // the closure-box-returning function names (closure_ret_fns_of) PLUS the
 // "FNPTR:<sty>.<field>" plain-fn-pointer-array field markers (fnptr_arr_fields_of).
-// Both ride one list — a marker can never collide with a function name, so the
+// Both share one list — a marker can never collide with a function name, so the
 // existing closure_fns consumers (membership tests) are unaffected, and the read
 // side's field_access_is_fnarr recovers the fn-pointer fields from it. Every
 // lower_func / lower_module call site that used to pass closure_ret_fns_of(funcs)
@@ -65167,7 +65167,7 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: StructT
     var i: i32 = 0;
     while (i < fp.len()) { out = out.append(fp[i]); i = i + 1; }
     // #5281: "RETCLO2:<fn>" markers for functions whose returned closure is
-    // ITSELF closure-returning (a `() => (() => T)` factory). Ride the same list
+    // ITSELF closure-returning (a `() => (() => T)` factory). Share the same list
     // as the FNPTR markers — a marker can't collide with a bare fn name, and the
     // membership consumers ignore it. `var g = pick()` reads this to mark g a
     // RETCLO local so a later `var h = g()` binds h a closure local (env-first).
@@ -66935,7 +66935,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
         }
         if (any) {
             out = borrow_reg_put(out, borrowable_key(fn), flags);
-            // The payload-aware "TUPB:" tier rides the same bucketed registry
+            // The payload-aware "TUPB:" tier uses the same bucketed registry
             // under a prefixed key (exact-length key match keeps it disjoint
             // from the bare names) — param_is_borrowable("TUPB:<callee>", i)
             // reads it.
@@ -66987,9 +66987,9 @@ function tuple_payload_borrow_flags(fn: parser.FuncDecl, boxflags: string): stri
 // rctuple_param_alias_bind_sites: alias binds of a tuple PARAM whose payloads
 // provably stay confined — the "TUPB:" flavor of param_alias_bind_sites. The
 // vet is the rc-tuple payload scan on the ALIAS's own name, never the plain
-// box walker: box-level vetting would bless `var x = src; return x.1;`, whose
+// box walker: box-level vetting would admit `var x = src; return x.1;`, whose
 // caller's TUPRCS deep free walks every rc position and frees the handed-out
-// element (the sanitizer-confirmed UAF that killed v1 of the tier). Scanning
+// element (the sanitizer-confirmed UAF that retired v1 of the tier). Scanning
 // the alias over the whole body with empty alias_ok also keeps a chained
 // alias (`var y = x`) and a reassigned alias refused. Empty registries only,
 // so the flag stays registry-independent for the interproc fixpoint.
@@ -67467,7 +67467,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
         row_bucket = row_bucket.append(util.hash_bucket("ELB:" + key, nb));
         fi = fi + 1;
     }
-    // The copying builtins ride the same rows so a rebuild keeps them; nothing
+    // The copying builtins go in the same rows so a rebuild keeps them; nothing
     // below rewrites an index past the function triples.
     for ck in copying_builtin_keys(funcs) {
         rows = rows.append(borrow_reg_record(ck, copying_builtin_flags(ck)));
@@ -67660,7 +67660,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // Free functions are keyed by bare name; methods (lowered now) by the
         // qualified "<BaseType>.<method>" the call site dispatches to (a "." never
         // appears in a bare name, so the key spaces don't collide).
-        // u64 rides the i64 64-bit signature path (it is i64-wide; only the
+        // u64 uses the i64 64-bit signature path (it is i64-wide; only the
         // signedness of its own ops differs, selected at the producing
         // expression). A u64 PARAM flags '1' like i64 (both route lower_i64; the
         // param slot carries its own u64-ness). The u64 RETURN flags '2' (i64 is
@@ -67688,7 +67688,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         var pj: i32 = 0;
         while (pj < fn.params.len()) {
             if (fn.params[pj].type_name == "i64" || fn.params[pj].type_name == "u64") { flags = flags + "1"; any = true; }
-            // An f64 PARAM flags '4'. It does not widen anything (f64 rides its
+            // An f64 PARAM flags '4'. It does not widen anything (f64 uses its
             // own lowering path, not lower_i64), so param_is_i64 — which matches
             // only '1' — never sees it; it exists so param_is_f64 can recover
             // the callee's float-ness at the call site and coerce an integer
@@ -68586,7 +68586,7 @@ pub function str_handback_ret_of(funcs: parser.FuncDecl[]): string[] {
 }
 
 // trmc_consume_fns_of scans for TRMC functions whose loop may consume its
-// scrutinee, as "<fn>|<matched param index>" (#5333). The index rides along
+// scrutinee, as "<fn>|<matched param index>" (#5333). The index is included
 // because the call site needs it to know WHICH argument to retain, and
 // recovering it there would mean re-deriving the match shape per call.
 pub function trmc_consume_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
@@ -68933,7 +68933,7 @@ pub function consumed_params_of(fn: parser.FuncDecl, reassigned: string[], struc
 //   - an `escaped` set distinct from `tainted` (rc_analysis.go:2216), which
 //     FeState does not have; native's owned-param credit reads `escaped`.
 //
-// The reachable prize is smaller than it looks: ownedByDefaultShapeIn
+// The reachable gain is smaller than it looks: ownedByDefaultShapeIn
 // (rc_caps.go:304) covers enum / struct / tuple only, so array, Map and string
 // params already agree with this seed.
 
@@ -69643,7 +69643,7 @@ function rc_fe_run(fn: parser.FuncDecl, reassigned: string[], structs: StructTab
         // alloc_flat shape) and then a bare string arg (`node(pre, mk(), n)`,
         // the StrArrFieldBufferRelease shape) each refused an entire fixture's
         // credits — and it is what lets #7553's aliased-param borrow reclaim
-        // the caller's local. It is load-bearing: pinned by the rc-plan case
+        // the caller's local. It is essential: pinned by the rc-plan case
         // `fe-string-param-alias` and by the leak matrix's
         // `str__fnscope__alias_param` cell, which is `clean clean` on both ISAs
         // (native is clean there through SSO, #7446) and passes its FERN_SANITIZE leg.
@@ -70359,7 +70359,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                     moved = rc_ml_construction_moves(a.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved, [], false);
                 },
                 ast.StmtReturn(r) => {
-                    // construction moves only (a bare `return x` rides
+                    // construction moves only (a bare `return x` uses
                     // move-on-return, a different mechanism/table).
                     moved = rc_ml_construction_moves(r.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved, [], false);
                 },
@@ -70724,11 +70724,11 @@ function str_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // struct_dead_alias_bind: the struct sibling — THE one predicate for the
 // struct limb, consulted by the ladder (skip the retain) and by bind_var_slot
 // (skip the alias slot's sweep dec). Under duplication the alias holds only
-// the BOX-ONLY "NODEEP:" release, so that box dec is the whole of what the
+// the BOX-ONLY "NODEEP:" release, so that box dec is all the
 // cancellation elides — the source keeps its one deep field walk at the exit
 // sweep, exactly as before. The slot facts are final: the source must be a
 // credited (non-param) struct slot, and a MOVE site takes the move path
-// (which does credit surgery this predicate must not preempt).
+// (which does credit rewrites this predicate must not preempt).
 function struct_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
         ast.ExprIdent(id) => {
@@ -70747,8 +70747,8 @@ function struct_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // tuple_dead_alias_bind: the tuple sibling — THE one predicate for the tuple
 // limb, consulted by the ladder and bind_var_slot. Under duplication the
 // alias holds only the shallow "TUP:" box dec (the deep "TUPRCS:" release
-// stays with the source), so that box dec is the whole of what the
-// cancellation elides — no credit surgery, and a MOVE site takes the move
+// stays with the source), so that box dec is all the
+// cancellation elides — no credit rewrite, and a MOVE site takes the move
 // path (which transfers the deep class) instead.
 function tuple_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
@@ -71607,7 +71607,7 @@ function str_own_word(o: i32): string {
 // of a string slot (`r <name>: <word>` -- the read-side str_expr_ownership,
 // which reflects the slot fact VERBATIM: an owned local reads owned).
 // Top-level statements only: the dump is a unit surface for the classifier +
-// accessor round-trip, not an analysis; nested-scope bindings ride the same
+// accessor round-trip, not an analysis; nested-scope bindings use the same
 // lower_var seeding, validated behaviour-identical by the fixpoint + run
 // gates. Registries follow rc_plan_dump's convention (module-local
 // str_ret_fns_of side-table; everything irrelevant empty).
@@ -71710,7 +71710,7 @@ pub function (s: LowerState) is_u64_ret_fn(name: string): boolean {
 }
 // is_u32_ret_fn reports whether `name` returns u32 (ret flag '3'), so a call to
 // it directly chained in an unsigned op (`f(a) >> 1`, `p.get() / 7`) selects the
-// unsigned form. u32 rides the same i64_ret_fns registry as i64 ('1') / u64
+// unsigned form. u32 uses the same i64_ret_fns registry as i64 ('1') / u64
 // ('2') — but its ret flag '3' is read by NOTHING else (is_i64_ret_fn accepts
 // only '1'/'2'; the param flags stay i64-only), so it never perturbs 64-bit
 // width or param lowering. wasm-only: x86-64 / arm64 keep the u32 zero-extended
@@ -72327,7 +72327,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
 // between them without types: a struct / enum key has no spelling at all and a
 // key set it cannot classify falls back to `map_new` — the STRING one either
 // way. The generic constructor arm reads the kind off that callee name, so the
-// BOX was built string-keyed and no per-insert kind could rescue it, the box
+// BOX was built string-keyed and no per-insert kind could correct it, the box
 // carrying its own. The recovered / declared `Map[K, V]` is the same authority
 // the annotated `var m: Map[K, V] = map_new(n)` binding already builds from.
 // #7001 (composite keys), #7438 (i32 keys the parser could not classify).
@@ -72470,7 +72470,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: StructTab): ir.Lowe
 // a call argument is hoisted to a fresh top-level function (__lam_<k>) and the
 // argument becomes a bare reference to it. That bare reference, at a "fn"-typed
 // param position, is exactly the function VALUE that closures slice 1 lowers via
-// const_func — so capture-free lambdas-as-callbacks ride the slice-1 machinery
+// const_func — so capture-free lambdas-as-callbacks use the slice-1 machinery
 // with no new IR ops. Capturing lambdas (and lambdas in positions this bounded
 // walk doesn't reach) are left as ExprLambda, so the module bails. A module
 // with no lifted lambda is returned UNCHANGED (so the
@@ -72578,7 +72578,7 @@ function lift_call_callee(c: ast.ExprCall, acc: LiftAcc, gfns: string[]): LiftEx
     return lift_call_arg(c.callee, acc, gfns);
 }
 
-// `$in_iife$` rides in `gfns` to carry "already inside a desugar's IIFE body"
+// `$in_iife$` is stored in `gfns` to carry "already inside a desugar's IIFE body"
 // down the walk. `gfns` is only ever read as `index_of_str(gfns, <a used
 // identifier>)` by lambda_has_no_captures, so a `$`-prefixed name cannot change
 // that answer — the collision guarantee `$lamret$` and `$wc$` also rely on.
@@ -72630,7 +72630,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
         },
         // A no-capture lambda in a TUPLE-element position (`((x) => {...}, 10)`)
         // hoists the same way — lift_call_arg turns it into a bare `__lam_N` fn-name
-        // (which lowers to a fn pointer), so `t.0(t.1)` rides the existing
+        // (which lowers to a fn pointer), so `t.0(t.1)` uses the existing
         // tuple-element fn-value call_indirect path. A capturing lambda element is
         // left in place (stays on AST).
         ast.ExprTuple(tu) => {
@@ -72649,7 +72649,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
         // hoist each lambda element to a top-level `__lam_N` (the same lift a
         // no-capture lambda ARGUMENT gets), so the array becomes one of bare
         // function-name idents -- which lower to a function-pointer array, and
-        // `fs[i](args)` rides the existing fn-pointer-array call_indirect path.
+        // `fs[i](args)` uses the existing fn-pointer-array call_indirect path.
         // A capturing lambda element is returned unchanged by lift_call_arg, so
         // the module bails.
         ast.ExprArray(arr) => {
@@ -72838,7 +72838,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
             // `return (x) => {...}` of a NO-CAPTURE lambda hoists to a
             // top-level `__lam_N` (via lift_call_arg, the same lift a no-capture
             // lambda argument / array element / struct-field value gets), so the
-            // return becomes a bare fn-name -> const_func, riding the existing
+            // return becomes a bare fn-name -> const_func, using the existing
             // "return a named function value" path. A capturing lambda is left in
             // place (so the module bails); a non-lambda value recurses
             // through lift_expr_walk unchanged. (Inline `return <lambda>` returns are
@@ -73247,7 +73247,7 @@ struct HoistResult { func: parser.FuncDecl, ok: boolean }
 // cap_slot_ok reports whether a capture of type `t` fits the env box's single
 // (32-bit-op / 8-byte) slot. In the self-host's `-no-pie -static` binary every
 // heap / code address fits in 32 bits, so a pointer-shaped capture (string,
-// array, struct, enum, Option/Result, tuple, map — and a fn value) rides the
+// array, struct, enum, Option/Result, tuple, map — and a fn value) occupies the
 // same 32-bit slot as an i32, exactly like a `string[]` element (which also uses
 // the 32-bit arr_get path). Only an 8-byte SCALAR (i64 / u64 / f64) needs a wide
 // slot the box doesn't carry, so those (and an unresolved "") still decline.
@@ -74503,7 +74503,7 @@ function fd_passes_boxed_fnarr_lit(fd0: parser.FuncDecl, callee: string, pidx: i
 // resolve a bare ident against the module function table has to check this
 // first (#6191, see try_fn_field_value).
 //
-// The body scan is not belt-and-braces: it is what covers CAPTURES. A lambda
+// The body scan is not redundant: it is what covers CAPTURES. A lambda
 // lifted to a `$clo` function reads each captured value through a synthesized
 // `var <cap> = __env[1+i]` at the top of its body, so inside the lifted
 // function a capture is a local `var`, not a parameter. `std/fuzz`'s receiver
@@ -75261,7 +75261,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
 // callee's fn-typed param (marked a closure local in lower_func) dispatches it
 // env-first. Running BEFORE the no-capture __lam_N lift means a no-capture
 // lambda / fn-name arg becomes a `__mkclo$…` marker the later lift leaves alone,
-// so the two arg representations never fight — there is one fn-arg shape, the box.
+// so the two arg representations never disagree — there is one fn-arg shape, the box.
 // Non-aggregate forms recurse so an array/struct nested inside them is still
 // reached; a bare lambda in any other position is left untouched (handled by the
 // other lift passes or kept on AST).
@@ -75694,7 +75694,7 @@ function lift_inline_closures_expr(e: ast.Expr, fd: parser.FuncDecl, funcs: pars
 
 // value_use_idents_expr collects every ident referenced in a VALUE position —
 // i.e. all idents EXCEPT the direct bare-name callee of a call `g(...)`. A
-// nested lambda's free vars all count (they ride the env box as values). Used to
+// nested lambda's free vars all count (they go in the env box as values). Used to
 // decide whether a fn-value `var` binding must be env-boxed: a var that is only
 // ever CALLED is left to closure_lift_one's cheaper direct-call lift; one used
 // as a value (passed, returned, stored, captured) is boxed into a uniform box.
@@ -75995,7 +75995,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
             // const) is env-boxed into a `__mkclo$<fd>$wrapN()` trampoline box
             // so the slot holds the SAME uniform env box every fn-value carries
             // (slice #3445 follow-up). Then `g(args)` / passing `g` as a
-            // fn-arg both ride the env-first call path (the slot is marked a
+            // fn-arg both use the env-first call path (the slot is marked a
             // closure local at lowering, recognising the `__mkclo$` init). A
             // non-fn-value init falls through to the ordinary aggregate walk.
             var bn: string = v.name;
@@ -76020,7 +76020,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                     // A var-bound lambda USED AS A VALUE (passed, returned,
                     // stored, captured) — not merely called — is env-boxed so
                     // its slot holds the uniform env box every fn-value carries;
-                    // `g(args)` then rides the env-first call path. A var only
+                    // `g(args)` then uses the env-first call path. A var only
                     // ever CALLED is left to closure_lift_one's cheaper
                     // direct-call lift (boxing it would pre-empt that and
                     // regress closure-calls-closure). try_fn_field_value boxes a
@@ -76176,7 +76176,7 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: Stru
 // collide with a user ident (the guarantee `$lamret$` and `$wc$` already rely
 // on), which is what lets the `.with` gate tell a by-reference capture cell from
 // a caller's array once the lift has turned both into plain array params
-// (#6185): the mode rides on the name, because ParamDecl carries no mode beyond
+// (#6185): the mode is carried in the name, because ParamDecl carries no mode beyond
 // `own` and a cell is neither owned nor borrowed.
 function mcap_cell_name(c: string): string { return "$cell$" + c; }
 
@@ -76603,7 +76603,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: S
 // the closure env box, i.e. whether a wide capture there needs a cell at all.
 // The one shape that cannot is `var f = <lambda>` where `f` is only direct-
 // called afterwards: the param-lift passes its captures as call arguments, no
-// box involved, and a wide scalar rides an argument fine. Every other shape —
+// box involved, and a wide scalar passes as an argument fine. Every other shape —
 // a returned lambda, a lambda in call-argument / array-element / struct-field
 // position, or a binding used as a value — goes through the box.
 function wcap_stmt_needs_env_box(stmts: ast.Stmt[], i: i32): boolean {
@@ -76634,7 +76634,7 @@ function box_wide_captures_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, gfns: s
         // A `var f = <lambda>` whose `f` is only ever DIRECTLY CALLED never
         // builds an env box: the param-lift hoists it to __lam_<k>(origparams…,
         // captures…) and threads the captures as call ARGUMENTS (#5301), which
-        // carries a wide scalar natively. Cellaring those would be pure damage —
+        // carries a wide scalar natively. Cellaring those would only do harm —
         // it broke `var f = () => base + 2000000000` over an i64 base, which had
         // always lowered. Same escape test box_mutated_scalar_captures uses.
         if (!wcap_stmt_needs_env_box(stmts, i)) {
@@ -77846,7 +77846,7 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
     // arrays — the earlier shape re-walked every function's statements
     // (grow_dying_passes_stmt + registry allocations) on EVERY round, which is
     // pure garbage under the leak-mode self-compile arena (#3425) and helped
-    // push the per-module-built compiler over the wall.
+    // push the per-module-built compiler over the arena limit.
     var e_fk: i32[] = [];
     var e_ck: i32[] = [];
     var e_argi: i32[] = [];
@@ -78070,7 +78070,7 @@ pub function grow_recv_fns_of(gflags: string[]): string[] {
 
 // grow_field_positions_of returns "<key>|<idx>|<TypeName>|<field>,…" for every
 // PARAMETER position a callee may grow the named field buffers of. The declared
-// type rides along because the caller-side bracket resolves each field index
+// type is included because the caller-side bracket resolves each field index
 // against it, and the argument's own tracked type can be absent at the call.
 pub function grow_field_positions_of(funcs: parser.FuncDecl[], gflags: string[]): string[] {
     var out: string[] = [];
@@ -78118,7 +78118,7 @@ pub function grow_reg_value(rows: string[], key: string): string {
 
 // grow_field_position_row returns "<TypeName>|<field>,<field>…" for a parameter
 // position whose struct argument's named field buffers the callee may grow, or
-// "". The declared type rides along because the bracket resolves the field
+// "". The declared type is included because the bracket resolves the field
 // index against it, and the argument's own tracked type can be absent.
 pub function grow_field_position_row(rows: string[], callee: string, idx: i32): string {
     var want: string = callee + "|" + util.i32_to_string(idx) + "|";
@@ -78296,7 +78296,7 @@ pub function emit_grow_field_bracket_dec(se: LowerState, slots: i32[]): LowerSta
 // WHOLE body, at a call no loop or lambda encloses, is dead at that call — so the
 // #4873 grow bracket need not force a full-buffer copy on it.
 //
-// Both of native's restrictions are carried over, and both are load-bearing:
+// Both of native's restrictions are carried over, and both are essential:
 //
 //   - The LOOP/LAMBDA exclusion. A single textual read inside a repeating construct
 //     is still many dynamic reads, and the next iteration would observe the previous
@@ -78815,7 +78815,7 @@ if (is_arr && !is_arrarr && arrarr_e == "") {
         // UNANNOTATED array-of-tuples from a CALL (`var ps = mk()` where
         // `mk(): (i32, f64)[]`). The literal arm above covers the inline
         // form; this is the same gap one step out, and it is the SOURCE of
-        // the missing tag rather than another place to paper over it —
+        // the missing tag rather than another place to hide it —
         // populating arrarr_e here serves every consumer that reads a tuple
         // tag off the slot, including `for p in ps`, which has no
         // ExprIndex node and so cannot use the per-consumer `.ty` fallback
@@ -78870,10 +78870,10 @@ var sli: i32 = 0;
 while (sli < snap_locals.len()) {
     var row: string = snap_locals[sli];
     var key: string = row;
-    // "SNAPSRC:<site>|<name>" rides along for seed_snapshot_local; the site it
+    // "SNAPSRC:<site>|<name>" is included for seed_snapshot_local; the site it
     // names still takes the rebind-release marker below.
     var is_src: boolean = row.len() > 8 && slice_unchecked(row, 0, 8) == "SNAPSRC:";
-    // "LASTUSE:<site>|<name>" rides along for release_last_use_source; the
+    // "LASTUSE:<site>|<name>" is included for release_last_use_source; the
     // site it names is the consumer's, not a credit.
     if (row.len() > 8 && slice_unchecked(row, 0, 8) == "LASTUSE:") {
         if (util.index_of_str(reclaim, row) < 0) { reclaim = reclaim.append(row); }
@@ -79542,7 +79542,7 @@ while (rti < rctups.len()) {
             // path, so a SINGLE-BIND rc-tuple was credited, entry-zeroed, and then
             // never released — allocs=200 frees=0 live_bytes=8000 per 100 rounds
             // with no reassignment anywhere. Three extra conditions on top of
-            // "TUPRC:", each load-bearing:
+            // "TUPRC:", each essential:
             //   - a tuple ANNOTATION, since the sweep frees by TYPE (it has no
             //     init literal at exit);
             //   - tuple_arg_payload_retained, so the tuple holds a counted
@@ -79891,7 +79891,7 @@ while (mi < maps.len()) {
         && !map_has_explicit_iter(body, mapnm)
         // Identity-carrying method hole (insert/without return the
         // receiver's own box — see expr_map_identity_use): any such use
-        // can smuggle the mapbox past the borrow-only escape walk, so it
+        // can carry the mapbox past the borrow-only escape walk, so it
         // excludes the map from reclaim.
         && !map_identity_escape(body, mapnm)) {
         out = out.append("MAP:" + maps[mi]);
@@ -80164,7 +80164,7 @@ while (sa2i < sarrs2.len()) {
     // structarr_unsafe_for validates each rebind individually and is
     // otherwise body_unsafe_for, so it subsumes both former checks.
     // "A|" rows are append-BUILT markers, not candidates.
-    // As above: site keys, with the "A|" marker riding the same key.
+    // As above: site keys, with the "A|" marker carried in the same key.
     var sanm: string = reclaim_site_name(sarrs2[sa2i]);
     if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
         && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
@@ -80245,7 +80245,7 @@ while (dai < darrs.len()) {
 // about, and neither takes the #7282 bind retain, which is credit-keyed on
 // slot_is_reclaimable_struct and so never fires for this class.
 //
-// No sweep, no deep drop and no alias credit ride along: "RETRE:" is read by
+// No sweep, no deep drop and no alias credit are included: "RETRE:" is read by
 // lower_stmt_assign alone.
 function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string, out: string[]): string[] {
     if (struct_bare_assigned_src(body, fnm)) { return out; }
@@ -80344,7 +80344,7 @@ while (i < fresh.len()) {
         // retained at the bind. Two deep drops free every field buffer twice:
         // measured as exit 99 on `var t: P = P { xs: [..] }; var v: P = t;`,
         // with allocs == frees at live_bytes 0, so only the underflow counter
-        // dissented.
+        // reported it.
         //
         // "NODEEP:" is exactly the marker for "keep this slot's free BOX-ONLY"
         // (#3425), so the alias takes the box dec and the source keeps the one
@@ -80533,7 +80533,7 @@ while (tprc < out.len()) {
     if (out[tprc].len() > 10 && slice_unchecked(out[tprc], 0, 10) == "TUPELEMOK:") {
         tup_ok = tup_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
     }
-    // The writer agreement rides across too: it is what decides whether a
+    // The writer agreement applies here too: it is what decides whether a
     // STRING position's release is emitted at all, and the assign-form
     // interlock in body_unsafe_for_tup_alias may only forgive an element whose
     // release it can count on.

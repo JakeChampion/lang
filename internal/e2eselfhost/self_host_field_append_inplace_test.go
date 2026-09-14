@@ -27,7 +27,7 @@ import (
 // SPARE CAPACITY is what makes an in-place grow possible at all, so each case
 // threads its container through several appends before the read it checks.
 //
-// `S { ...s, xs: s.xs.with(i, v) }` rides the same admission (#8419): the store
+// `S { ...s, xs: s.xs.with(i, v) }` uses the same admission (#8419): the store
 // lands in the field's own buffer, gated on the buffer's own count since
 // arr_set has no gate of its own, and the caller half brackets it exactly as
 // it brackets a grow. The `with-` cases below pin both halves for the store.
@@ -1440,7 +1440,7 @@ function main(): i32 {
 		t.Errorf("refused clone shape bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
 	}
 	// Measured: 2 units, and 2 for the clone form this replaced — the orphaned
-	// L boxes are the whole of it and both forms orphan the same ones.
+	// L boxes are all of it and both forms orphan the same ones.
 	if got := run(t, withPtr); got > 8 {
 		t.Errorf("pointer-element in-place .with bumped %d x 64 KiB, want <= 8 — the field's buffer is not being reused across stores", got)
 	}

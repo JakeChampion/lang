@@ -198,7 +198,7 @@ function to_u8(b: i32[]): u8[] {
 // Two things this fixes over the three-eprint sequence it replaces. `eprint`
 // appends its own newline, so "…does not yet support: " / entry / "\n" printed
 // the reason on its own line with a blank one after it, which read as an EMPTY
-// instruction and looked like the compiler could not say what it choked on
+// instruction and looked like the compiler could not say what it refused
 // (#6164). And only unknown[0] was printed: a module with twenty refusals
 // reported one, so each fix revealed the next.
 //
@@ -1468,7 +1468,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // on as top-level statements: the checker then reported E052 plus an E001
     // per parameter name, every one of them pointing AWAY from the cause.
     // Native stops at its parse error and prints only that, so reporting this
-    // alone is both the honest diagnostic and the code-set parity — anything
+    // alone is both the correct diagnostic and the code-set parity — anything
     // downstream of a declaration that did not parse is noise.
     if (report_decl_name_errors(merged)) { return 1; }
     if (report_parse_unknown_errors(merged)) { return 1; }
@@ -1554,7 +1554,7 @@ function file_readable(path: string): boolean {
 //
 // A document declaring `file=PATH` blocks tangles to one module per path,
 // each under a `// ==> path <==` banner, because a multi-module program is
-// one narrative and several files.
+// one document and several files.
 function run_tangle(path: string, out_path: string, chunk: string): i32 {
     var src: string = "";
     var ok: boolean = false;
@@ -2480,7 +2480,7 @@ function run(): i32 {
     if (!platforms.emits_code(target)) {
         // Native reports the same shape from its descriptor's NoBackend flag.
         // A freestanding target type-checks (against an empty capability set)
-        // and has nothing to lower with, so refusing here is the honest answer
+        // and has nothing to lower with, so refusing here is the correct answer
         // — the alternative is an artifact built for the wrong machine.
         eprint("fern: -target " + target + ": check-only — no backend emits for this target yet\n");
         return 2;
@@ -2526,7 +2526,7 @@ function run(): i32 {
     } else if (target == "arm64-darwin") {
         // Same arm64 code generator with the Darwin syscall builtins
         // (gettimeofday / getentropy) selected via the darwin flag;
-        // darwinize() reskins the emitter output into the Mach-O assembler
+        // darwinize() rewrites the emitter output into the Mach-O assembler
         // dialect (@PAGE/@PAGEOFF, _main entry, BSD syscalls). That GAS
         // text is then assembled + linked entirely in-process by
         // arm64_native: arm64_gas_program parses + selects instructions,

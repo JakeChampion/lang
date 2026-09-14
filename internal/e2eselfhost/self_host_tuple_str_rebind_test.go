@@ -12,7 +12,7 @@ import (
 // --- The STRING-position assign-form tuple rebind (#7226) --------------------
 //
 // `t = (k, u)` where the tuple's annotation puts a string at position 1. The
-// array limb of this rebind has released since #7929; the string limb was held
+// array half of this rebind has released since #7929; the string half was held
 // back because the element-kinds string is recorded ONCE, from the var site's
 // literal, and then replayed by every site that frees the box — the rebind
 // store, the scope-exit sweep, the precise drop. Those sites therefore replay it
@@ -39,7 +39,7 @@ type tupStrRebindCase struct {
 }
 
 func tupStrRebindCases() []tupStrRebindCase {
-	// The headline shape at two round counts. On the parent both fail with
+	// The main shape at two round counts. On the parent both fail with
 	// live_bytes 16000 and 32000 — exactly 2.0x per doubling, which is what
 	// separates this from a bounded strand.
 	repro := `@noinline
@@ -92,7 +92,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 		},
 		{
 			// Kinds "as": an array position and a string position in one tuple,
-			// both rebound. The two limbs release through one walk, so a kinds
+			// both rebound. The two halves release through one walk, so a kinds
 			// string that admitted only one character class would drop the other.
 			name: "str_and_arr_pos_rebind",
 			src: `@noinline
@@ -230,7 +230,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 }
 
 // TestSelfHostTupleStrRebindX86_64 — the admitted shapes balance exactly, and a
-// sanitizer leg re-runs each. allocs == frees is load-bearing in both
+// sanitizer leg re-runs each. allocs == frees is essential in both
 // directions: short is the leak this closes, above is a double free.
 func TestSelfHostTupleStrRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

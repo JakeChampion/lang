@@ -98,7 +98,7 @@ func TestVerifyShardOutcomesFailureIsFatal(t *testing.T) {
 	}
 }
 
-// The tolerate dial covers VANISHED shards only — a reported failure stays
+// The tolerate setting covers VANISHED shards only — a reported failure stays
 // fatal regardless, which is the enforcement gap #5912 item 1 was filed for.
 func TestVerifyShardOutcomesFailureFatalEvenWhenTolerating(t *testing.T) {
 	m := allSuccess("x86_64", 3)
@@ -124,7 +124,7 @@ func TestVerifyShardOutcomesVanishedIsFatalByDefault(t *testing.T) {
 	}
 }
 
-// ...but it is the half with a policy dial, since a stochastic reclaim would
+// ...but it is the half with a policy setting, since a stochastic reclaim would
 // otherwise be a red build someone has to re-run.
 func TestVerifyShardOutcomesVanishedTolerated(t *testing.T) {
 	m := allSuccess("x86_64", 4)
@@ -163,7 +163,7 @@ func TestVerifyShardOutcomesSkippedIsNotATestFailure(t *testing.T) {
 	}
 }
 
-// It shares the vanished dial, because it is the same fact: no signal from
+// It shares the vanished setting, because it is the same fact: no signal from
 // this shard, and either cause can be a stochastic infrastructure event.
 func TestVerifyShardOutcomesSkippedTolerated(t *testing.T) {
 	m := allSuccess("x86_64", 4)
@@ -366,7 +366,7 @@ func mustAtoi(t *testing.T, s string) int {
 // "exceeded its budget" vs "runner reclaim" by comparing the job's wall-clock
 // against a budget passed on the command line. If that number stops matching
 // the shard job's own timeout-minutes, the verdict silently inverts: a shard
-// that hit the wall gets reported as a reclaim (re-run it) or a reclaim gets
+// that hit its timeout gets reported as a reclaim (re-run it) or a reclaim gets
 // reported as an over-budget shard (rebalance it) — and picking the wrong one
 // is the whole confusion #6038 was filed about.
 func TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout(t *testing.T) {
@@ -447,7 +447,7 @@ func TestClassifyVanishedShardsIsAdvisory(t *testing.T) {
 
 // The three verdicts, against fixed durations. This is the whole value of the
 // classifier — a wrong verdict sends you to rebalance a partition when the
-// runner was reclaimed, or to re-run a shard that will hit the same wall — so
+// runner was reclaimed, or to re-run a shard that will time out again — so
 // it is tested against a saved jobs payload rather than live CI.
 func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "ci-classify-vanished-shards"))
@@ -511,7 +511,7 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 // The classifier tells "a setup step failed" from "the tests failed" by
 // comparing the failing step's name against a prefix it hard-codes. That
 // prefix names a step in the workflow, so a rename there would silently
-// return every infrastructure death to the "died on its own terms, READ ITS
+// return every infrastructure failure to the "died on its own terms, READ ITS
 // LOG" verdict this split exists to stop. Pin the two together.
 func TestClassifierTestStepPrefixMatchesWorkflow(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci-classify-vanished-shards"))

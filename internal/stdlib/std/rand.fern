@@ -78,7 +78,7 @@ pub function sample[T](xs: T[], k: i32): T[] {
 // and since the AST emitters were deleted a bail is a hard compile error).
 // std/sim is built on `Cell` and is currently uncompilable by the self-host
 // compiler for exactly this reason. Threading the state also happens to be
-// the honest shape for a value-semantic language: a generator that advances
+// the correct shape for a value-semantic language: a generator that advances
 // is a function from state to state.
 //
 // For the common case where you just want a shuffle from a seed, the

@@ -252,7 +252,7 @@ func calleeReturnsNothing(name string) bool {
 // against `internal/ir/verifystack.go`'s per op, so a mistake here
 // names itself instead of surfacing somewhere downstream.
 
-// twoWordType reports whether a value of type t rides two entries.
+// twoWordType reports whether a value of type t occupies two entries.
 func (l *lifter) twoWordType(t ast.Type) bool {
 	if l.in.PtrW == 0 {
 		return false

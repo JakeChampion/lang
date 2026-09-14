@@ -43,7 +43,7 @@ import (
 // measured at 0, and reverted; the fault is witnessed on both backends (exit 97
 // on x86-64, a trap on wasm) and is pinned by the last case below.
 //
-// The credit therefore rides `join_strarr_init`, which reads the receiver's
+// The credit therefore goes through `join_strarr_init`, which reads the receiver's
 // DECLARED type the way the `.to_string()` collector already does. Both read the
 // same name/type pair, which is harvested from the body's annotated `var`s AND
 // from the function's parameters — a parameter is a declaration too, it just
@@ -200,7 +200,7 @@ function main(): i32 {
 }`},
 	// A USER method named `join` whose result aliases a field the receiver still
 	// owns. Nothing may credit it, and this is what proves join_strarr_init's
-	// receiver-type test carries its weight: a compiler with a bare syntactic
+	// receiver-type test is required here: a compiler with a bare syntactic
 	// `field == "join"` in str_local_binding_is_fresh instead exits 97 here on
 	// x86-64 and traps on wasm, while the heap cases above go to 0 either way.
 	{"strarr-join-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }

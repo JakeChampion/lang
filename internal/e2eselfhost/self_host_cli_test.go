@@ -737,7 +737,7 @@ function main(): i32 {
 			4, "call __fn___fern_str_concat")
 	})
 
-	// A match arm's GUARD rides the ARM, not the statement's own expressions,
+	// A match arm's GUARD is stored on the ARM, not the statement's own expressions,
 	// so a rewrite that rebuilt arms field by field had to remember it —
 	// constfold's did not, and copied every guard through unfolded until it was
 	// routed through astwalk's map fold.
@@ -849,7 +849,7 @@ function main(): i32 {
 			"}\n", 1, 5)
 	})
 
-	// Through MONOMORPHISATION. The marker rides StmtIf.origin, and the passes
+	// Through MONOMORPHISATION. The marker is stored in StmtIf.origin, and the passes
 	// between the parser and the elision rebuild statements field by field —
 	// a copy site that omits `origin` drops it silently and only for cloned
 	// generics, which is the same shape as the async-function case above.
@@ -1062,7 +1062,7 @@ function main(): i32 {
 		}
 	})
 
-	// #8738. `top_stmts` has two tenants and only one of them is a feature.
+	// #8738. `top_stmts` has two uses and only one of them is a feature.
 	// With NO `main` it is the interpreter's script mode — eval_module runs the
 	// statements and answers with the top-level `return`. With a `main`,
 	// eval_module calls that and returns before it ever looks at the bucket,
@@ -2384,7 +2384,7 @@ function main(): i32 {
 	})
 
 	// watbin's opcode table is the only thing between the emitter's WAT and a
-	// runnable `.wasm`, and a mnemonic missing from it takes down every program
+	// runnable `.wasm`, and a mnemonic missing from it breaks every program
 	// that reaches the instruction — `f64.reinterpret_i64` blocked anything
 	// calling `.to_string()` (#6607). These rows drive one program per opcode
 	// family through `-emit core-module`, so a table gap fails here rather than
@@ -2407,7 +2407,7 @@ function main(): i32 {
 			stdout string
 		}{
 			// 0xbc-0xbf reinterprets + 0xb6 demote / 0xbb promote. The f32
-			// forms ride a demote/promote pair, since an f32 travels in an
+			// forms use a demote/promote pair, since an f32 travels in an
 			// f64 slot on wasm.
 			{"reinterpret-bits", `function main(): i32 {
     var x: f32 = 1.0 as f32;

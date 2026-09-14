@@ -20,7 +20,7 @@
 //
 // What a mocked capability RETURNS is fixed today: `now_ms` and
 // `elapsed_ns` answer 0, `env` answers None, `random_i32` answers 0, `log`
-// swallows the line, and `fetch` answers -1 — the value a real fetch gives
+// discards the line, and `fetch` answers -1 — the value a real fetch gives
 // for a host it could not reach, so a handler that already handles a failed
 // fetch handles a mocked one. Canned per-call responses are the next slice;
 // they want a second cell and a lookup, not a different shape.

@@ -84,7 +84,7 @@ function t_u8(): typeinfo.Type {
 }
 
 // `char` — a Unicode scalar value in an i32 slot (#5629). Width 32 because
-// that is the slot it rides; `is_char` is what distinguishes it.
+// that is the slot it occupies; `is_char` is what distinguishes it.
 function t_char(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: true, width: 32, unsigned: false };
 }
@@ -144,7 +144,7 @@ function lit_scalar_msg(text: string): string {
 // registered them under one name while calls looked them up under
 // another, so every classifier call reported a spurious E043.
 function int_label(t: typeinfo.TypeI32): string {
-  // `char` before the width ladder: it rides a 32-bit slot but registers and
+  // `char` before the width ladder: it occupies a 32-bit slot but registers and
   // dispatches its methods under "char" (std/unicode's seven), so labelling
   // it "i32" would look up a key nothing declares (#5629) — the same
   // register-here / look-up-there skew that took std/string off the IR path
@@ -179,7 +179,7 @@ function t_string(): typeinfo.Type {
 }
 
 // `str` — the borrowed-string view (#4813). The parser erases the SPELLING to
-// "string" (parse_type_name), so view-ness rides the sidecars (StmtVar.is_str,
+// "string" (parse_type_name), so view-ness is carried by the sidecars (StmtVar.is_str,
 // FuncDecl.ret_str); this constructor is how they re-enter the type system.
 // tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
 // tag-blind — a view IS a string box everywhere but at an owning sink, which
@@ -565,7 +565,7 @@ pub function type_debug(t: typeinfo.Type): string {
 }
 
 // is_integer reports whether `t` is an integer of ANY width or signedness.
-// `char` rides an i32 slot but is not an integer (#5629), so it is excluded.
+// `char` occupies an i32 slot but is not an integer (#5629), so it is excluded.
 //
 // The numeric operator rules want this rather than type_eq: native unifies
 // widths across `+`, `<`, `%` and friends (`c - n` with `c: i64`, `n: i32` is
@@ -656,7 +656,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeI32(ai) => {
       match (b) {
         typeinfo.TypeI32(bi) => {
-          // `char` is NOT an integer, even though it rides an i32 slot
+          // `char` is NOT an integer, even though it occupies an i32 slot
           // (#5629). The Go checker rejects both directions without an
           // explicit cast — that distinctness is the type's whole point,
           // since a byte and a code point sharing i32 is what made
@@ -1645,7 +1645,7 @@ function split_pattern_names(encoded: string): string[] {
 // be in scope. A destructuring `var` / `let` goes through
 // bind_destructure_names instead, which types each binding.
 //
-// A nested position rides in the same encoding as a parenthesised group
+// A nested position uses the same encoding as a parenthesised group
 // ("(a,b),s" for `for ((a, b), s) in xs`), so the split is depth-aware and
 // recurses: splitting on every comma bound "(a" and "b)" and left `a` and `b`
 // undefined (#8461).
@@ -2580,7 +2580,7 @@ function retired_collection_spelling(ns: string, method: string): string {
 }
 
 // scalar_module_for: the stdlib module carrying a scalar type's method surface,
-// "" for a type whose methods are not in one. u8 rides std/i32, not std/u32 —
+// "" for a type whose methods are not in one. u8 uses std/i32, not std/u32 —
 // every `pub function (b: u8) …` in the stdlib is declared there, so naming
 // std/u32 made the hint unfollowable.
 function scalar_module_for(t: typeinfo.Type): string {
@@ -2799,7 +2799,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   // `str` (#4813): a borrowed view never silently promotes to an owned
   // `string` — an owning sink must materialise a copy via .to_owned().
   // Checked BEFORE type_eq, which is deliberately tag-blind. The reverse
-  // direction (an owned string into a `str` slot) borrows freely and rides
+  // direction (an owned string into a `str` slot) borrows freely and goes through
   // the type_eq below. Argument positions re-allow the lend via
   // str_arg_borrow at their call sites, mirroring native argAssignable.
   if (is_str_view(from) && is_owned_string(to)) {
@@ -3254,7 +3254,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     return t_string();
   }
   // slice_unchecked(s, a, b) builtin — the byte slice s[a:b] under its
-  // honest name (#5634). Returns the borrowed `str` view, as native does
+  // accurate name (#5634). Returns the borrowed `str` view, as native does
   // (#7293), so an owning sink refuses it without .to_owned().
   if (!is_method && name == "slice_unchecked") {
     if (c.args.len() != 3) {
@@ -5903,7 +5903,7 @@ function mc_mentions_list(list: ast.Expr[], name: string): boolean {
 // target, which is a bare string on the statement rather than an expression and
 // so needs the statement visitor rather than the expression one.
 //
-// Both ride astwalk's node fold, so a new parser node is covered here the moment
+// Both use astwalk's node fold, so a new parser node is covered here the moment
 // astwalk covers it. The hand-written pair each ended in a `_ => false` arm,
 // which silently did not search whatever it did not name.
 function mc_mentions_expr(e: ast.Expr, name: string): boolean {
@@ -7273,7 +7273,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // checker reports E058 in the `else` branch after the E011 check, so the
 // two never both fire on one statement).
 // loop_diags_in_exprs runs loop_diags over the statement lists one statement's
-// expressions hold, each with the scope it deserves. An ordinary lambda is a
+// expressions hold, each with the scope it needs. An ordinary lambda is a
 // scope: a label does not cross a function boundary and a `break` inside one is
 // E011, so it recurses with in_loop = false and no labels. A value block is not
 // — it is an if-/match-expression desugar that irlower inlines, so
@@ -7933,7 +7933,7 @@ function lit_negated(signs: LitSign[], line: i32, col: i32): boolean {
 // suffix_range_diag: E047 for a typed-suffix integer literal outside its own
 // type's range. A suffix pins the type in the parser, so no destination ever
 // settles the literal and no other rule judges it. A quoted literal (`'a'`,
-// `b'0'`) rides the same node with its spelling in `raw` and is not a written
+// `b'0'`) uses the same node with its spelling in `raw` and is not a written
 // numeral, so it is left alone.
 function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
   var out: util.Diag[] = [];
@@ -8542,7 +8542,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
   for fd in funcs {
     if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
       var noargs: string[] = [];
-      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "" });
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", assoc_names: noargs, assoc_values: noargs });
     }
   }
   return out;
@@ -10906,7 +10906,7 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
 
 // A slot where `own` says something: a reference, whose unit changes hands. A
 // SCALAR carries none, so `own` on one transfers nothing and there is no
-// affine discipline to police — a second mention of it is an ordinary read,
+// affine discipline to enforce — a second mention of it is an ordinary read,
 // not a use after move. A generic `own acc: T` reaches every instantiation,
 // and its scalar ones would otherwise report one.
 function ow_ownable_type(type_name: string): boolean {
@@ -11065,7 +11065,7 @@ function ow_count_ident_list(list: ast.Expr[], name: string): i32 {
 }
 
 // ow_count_ident tallies how many times `name` appears as an identifier in an
-// expression. It rides astwalk's fold, so a new parser node is counted here the
+// expression. It uses astwalk's fold, so a new parser node is counted here the
 // moment astwalk reaches it; the hand-written version ended in a `_ => 0` arm
 // that silently did not look inside whatever it did not name.
 function ow_count_ident(e: ast.Expr, name: string): i32 {
@@ -12625,7 +12625,7 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
             }
             return out;
           }
-          // `fip` is the stronger claim and may only lean on other `fip`
+          // `fip` is the stronger claim and may only rely on other `fip`
           // callees; `fbip` may also call `fbip`, whose own construction sites
           // E068 verifies in turn.
           var callable: boolean = false;
@@ -13297,7 +13297,12 @@ function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
 // Self -> impl_type via the same parser.subst_self finalize_impl_method used on
 // the impl side) must equal the impl method's params + return, or it's a
 // mismatch (native E021 "wrong signature").
-function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string, trait_generic: boolean): boolean {
+// `impls` is needed because the TRAIT side of the comparison still spells its
+// associated types as projections (`Self::Item`): the parser resolves the impl
+// method's copy, so the requirement must be resolved the same way before the
+// two are compared, or every associated-type impl reads as a signature
+// mismatch. Native does the same in its conformance pass (resolveProjWith).
+function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string, trait_generic: boolean, impls: parser.ImplInfo[]): boolean {
   if (trait_generic) {
     return true;
   }
@@ -13320,13 +13325,13 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
   }
   var i: i32 = 1;
   while (i < req.params.len()) {
-    var want: string = parser.subst_self(req.params[i].type_name, impl_type);
+    var want: string = parser.resolve_proj_in_type(parser.subst_self(req.params[i].type_name, impl_type), impls);
     if (want != impl_fn.params[i - 1].type_name) {
       return false;
     }
     i = i + 1;
   }
-  if (parser.subst_self(req.ret_type, impl_type) != impl_fn.ret_type) {
+  if (parser.resolve_proj_in_type(parser.subst_self(req.ret_type, impl_type), impls) != impl_fn.ret_type) {
     return false;
   }
   return true;
@@ -13370,6 +13375,19 @@ function e021_diags(mod: parser.Module): util.Diag[] {
             out = out.append(dg("E021", "impl " + im.trait_name + " for " + im.impl_type + " also requires `impl " + elem + " for " + im.impl_type + "` (supertrait of " + im.trait_name + ")"));
           }
         }
+        // Associated types: an impl must bind EXACTLY the trait's set — every
+        // one the trait declares, and nothing it does not. Mirrors native's
+        // conformance pass. See docs/ASSOCIATED-TYPES.md.
+        for at_req in trait_req.assoc_types {
+          if (!name_in(at_req, im.assoc_names)) {
+            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im.impl_type + " must bind associated type \"" + at_req + "\" (`type " + at_req + " = …;`)"));
+          }
+        }
+        for at_bound in im.assoc_names {
+          if (!name_in(at_bound, trait_req.assoc_types)) {
+            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im.impl_type + " binds associated type \"" + at_bound + "\" which the trait does not declare"));
+          }
+        }
         var reqs: string[] = trait_req.methods;
         var sigs: parser.FuncDecl[] = trait_req.req_sigs;
         var tgen: boolean = e021_trait_is_generic(mod, im.trait_name);
@@ -13384,7 +13402,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
-            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type, tgen)) {
+            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type, tgen, mod.impls)) {
               out = out.append(dg("E021", im.impl_type + "." + reqs[ri] + " has the wrong signature for trait " + im.trait_name));
             }
           }
@@ -13686,7 +13704,92 @@ function e021_dyn_target(type_name: string): string {
   while (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
     t = slice_unchecked(t, 0, t.len() - 2);
   }
+  // An associated-type PIN list (`dyn Holder[Item = i32]`) or a generic
+  // instantiation (`dyn Greet[i32]`) trails the trait name in brackets. The
+  // trait NAME is what classifies, so drop it — the pins are read separately
+  // by e021_dyn_pin_names. See docs/ASSOCIATED-TYPES.md.
+  var cut: i32 = e021_bracket_open(t + "");
+  if (cut > 0) {
+    t = slice_unchecked(t, 0, cut);
+  }
   return t + "";
+}
+
+// e021_bracket_open returns the index of the `[` opening the trailing bracket
+// group of `t`, or -1 when `t` does not end in one.
+function e021_bracket_open(t: string): i32 {
+  if (t.len() < 2 || t[t.len() - 1] != b']') { return 0 - 1; }
+  var bal: i32 = 0;
+  var i: i32 = t.len() - 1;
+  while (i >= 0) {
+    if (t[i] == b']') { bal = bal + 1; }
+    else if (t[i] == b'[') {
+      bal = bal - 1;
+      if (bal == 0) { return i; }
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
+}
+
+// e021_dyn_pin_names returns the associated-type names a dyn spelling PINS.
+// Inside the bracket an entry with an `=` is a pin (`Item = i32`); a bare entry
+// is a positional generic argument and names nothing. Empty for `dyn T`.
+function e021_dyn_pin_names(type_name: string): string[] {
+  var out: string[] = [];
+  if (type_name.len() < 5 || slice_unchecked(type_name, 0, 4) != "dyn ") { return out; }
+  var t: string = slice_unchecked(type_name, 4, type_name.len()) + "";
+  var open: i32 = e021_bracket_open(t);
+  if (open < 0) { return out; }
+  var inner: string = slice_unchecked(t, open + 1, t.len() - 1) + "";
+  var start: i32 = 0;
+  var depth: i32 = 0;
+  var i: i32 = 0;
+  while (i <= inner.len()) {
+    var at_end: boolean = i == inner.len();
+    var is_sep: boolean = at_end;
+    if (!at_end) {
+      var c: u8 = inner[i];
+      if (c == b'[') { depth = depth + 1; }
+      if (c == b']') { depth = depth - 1; }
+      if (c == b',' && depth == 0) { is_sep = true; }
+    }
+    if (is_sep) {
+      var seg: string = slice_unchecked(inner, start, i) + "";
+      var eq: i32 = 0 - 1;
+      var j: i32 = 0;
+      while (j < seg.len()) {
+        if (seg[j] == b'=' && eq < 0) { eq = j; }
+        j = j + 1;
+      }
+      if (eq > 0) {
+        out = out.append(util.trim(slice_unchecked(seg, 0, eq) + ""));
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// e021_object_unsafe_assoc returns the reason `trait_name` cannot be used as
+// the given dyn spelling because an associated type is left unpinned, or "".
+// Behind `dyn` the concrete type is erased, so an unpinned associated type —
+// and any `Self::Item` projection in a method signature — has nothing to
+// resolve against at the call site. See docs/ASSOCIATED-TYPES.md.
+function e021_object_unsafe_assoc(mod: parser.Module, trait_name: string, dyn_spelling: string): string {
+  var pins: string[] = e021_dyn_pin_names(dyn_spelling);
+  for trait_req in mod.trait_reqs {
+    if (trait_req.trait_name == trait_name) {
+      for at in trait_req.assoc_types {
+        if (!name_in(at, pins)) {
+          return "associated type \"" + at + "\" is not pinned — write `dyn " + trait_name + "[" + at + " = ...]`";
+        }
+      }
+      return "";
+    }
+  }
+  return "";
 }
 
 // e021_dyn_locals_of collects the dyn TARGET of every `var` annotation in a
@@ -13703,9 +13806,12 @@ function e021_dyn_target(type_name: string): string {
 function e021_dyn_local_at(st: ast.Stmt, own a: string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
-      var t: string = e021_dyn_target(v.type_name);
-      if (t.len() > 0) {
-        return a.append(t);
+      // The full annotation is kept, not just the trait name: the pin list in
+      // `dyn Holder[Item = i32]` is part of the spelling and the
+      // associated-type rule needs it. Callers take the name with
+      // e021_dyn_target.
+      if (e021_dyn_target(v.type_name).len() > 0) {
+        return a.append(v.type_name);
       }
       return a;
     },
@@ -13747,6 +13853,10 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
         if (pm.len() > 0) {
           out = out.append(dg("E021", "trait " + pt + " is not object-safe: method \"" + pm + "\""));
         }
+        var pa: string = e021_object_unsafe_assoc(mod, pt, param.type_name);
+        if (pa.len() > 0) {
+          out = out.append(dg("E021", "trait " + pt + " is not object-safe: " + pa + ", so it cannot be used as `dyn " + pt + "`"));
+        }
       }
     }
     var rt: string = e021_dyn_target(fn.ret_type);
@@ -13755,11 +13865,20 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
       if (rm.len() > 0) {
         out = out.append(dg("E021", "trait " + rt + " is not object-safe: method \"" + rm + "\""));
       }
+      var ra: string = e021_object_unsafe_assoc(mod, rt, fn.ret_type);
+      if (ra.len() > 0) {
+        out = out.append(dg("E021", "trait " + rt + " is not object-safe: " + ra + ", so it cannot be used as `dyn " + rt + "`"));
+      }
     }
-    for lt in e021_dyn_locals_of(fn.body) {
+    for lspell in e021_dyn_locals_of(fn.body) {
+      var lt: string = e021_dyn_target(lspell);
       var lm: string = e021_object_unsafe_method(mod, lt);
       if (lm.len() > 0) {
         out = out.append(dg("E021", "trait " + lt + " is not object-safe: method \"" + lm + "\""));
+      }
+      var la: string = e021_object_unsafe_assoc(mod, lt, lspell);
+      if (la.len() > 0) {
+        out = out.append(dg("E021", "trait " + lt + " is not object-safe: " + la + ", so it cannot be used as `dyn " + lt + "`"));
       }
     }
   }
@@ -14089,7 +14208,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
   // check (plus union-variant assignability) covers enums the same way
   // it covers `type X = A | B` aliases. The self-host's own source uses
-  // no enum decls, so this is inert on the bundle; it lights up
+  // no enum decls, so this is inert on the bundle; it enables
   // exhaustiveness for user / corpus enum matches.
   for ed in mod.enums {
     unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });
@@ -16025,7 +16144,7 @@ function vb_placeholder_decl(v: ast.StmtVar): boolean {
 // vb_zero_of builds the declaration placeholder for a value local of type
 // `tag`. The integer widths carry their suffix: the local is declared
 // unannotated, so a bare `0` is what makes it an i32 — the width and the
-// signedness have nowhere else to ride, and the store the arms make is checked
+// signedness have nowhere else to be recorded, and the store the arms make is checked
 // against exactly this declaration.
 function vb_zero_of(tag: string): ast.Expr {
   if (tag == "string") {
@@ -16133,7 +16252,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
 //     does not hold; and a `var` inside the lambda supplies the destination
 //     annotation exactly as one outside does.
 //
-// The scope rides the accumulator unchanged: the walk never rebinds it, so
+// The scope is carried in the accumulator unchanged: the walk never rebinds it, so
 // every sibling reads the same one.
 function vb_expr(e: ast.Expr, s: Scope): ast.Expr {
   var (ne, ns, nh) = astwalk.map_expr_acc(e, s, vb_at_stmt, vb_at_expr);

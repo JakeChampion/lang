@@ -23,7 +23,7 @@ import (
 // Freeing it is safe because `__fern_str_free` heap-range-guards the data
 // pointer: the box is released and the `.rodata` bytes are left alone.
 //
-// The escape cases below are the load-bearing half. Soundness rests on
+// The escape cases below are the essential half. Soundness rests on
 // `strfld_reclaim_ok_types_of`, the whole-program read scan that already gates
 // the `k_str` dec — a type whose string field is read into a call argument or a
 // container store is excluded, so it is neither retained nor freed. That is the

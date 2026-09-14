@@ -24,7 +24,7 @@ import (
 //
 // Each program uses the method on a SINGLE element type: the folded-method
 // monomorphiser instantiates one clone per generic name, the same contract the
-// existing `map`/`filter`/`fold` array methods ride (a second distinct element
+// existing `map`/`filter`/`fold` array methods use (a second distinct element
 // type in one program is a separate, pre-existing limitation shared with them).
 // A non-`max`/`min` method name (`peak`) is used deliberately so the test
 // exercises the generic-method fold rather than the self-host AST emitter's

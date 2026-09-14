@@ -9,7 +9,7 @@ package ir
 //   - `fip`      — zero fresh allocation ops. E053 already rejects every
 //     allocating construct, so any op found here is checker/IR drift (a
 //     construct E053 believed heap-neutral that lowers to an alloc) and
-//     is deliberately surfaced as an E068 error rather than papered over.
+//     is deliberately surfaced as an E068 error rather than hidden.
 //   - `fbip`     — every constructor allocation site must be reuse-PAIRED
 //     with a donor box: the general pairing (computeReuseSources), the
 //     self-overwrite hooks (tryStructReuseOverwrite /

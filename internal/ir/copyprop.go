@@ -12,7 +12,7 @@
 // the body's only use of the param has been folded into the tee
 // itself, no later op references the slot at all.
 //
-// Concrete payoff: `dbl(7)` (where `dbl(x) { return x * 2; }`)
+// Concrete benefit: `dbl(7)` (where `dbl(x) { return x * 2; }`)
 // pipes through the optimisations as
 //
 //   inline:    const 7 ; store ; load ; const 2 ; mul ; return

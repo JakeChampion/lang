@@ -43,7 +43,7 @@ import (
 // Divergences are LISTED, not skipped — see the testdata file, and
 // selfhost-wasm-known-divergences.txt for the convention. A new divergence
 // fails, and a listed shape that comes back WITHIN bound also fails, because
-// an allowlist nobody prunes is where bugs go to be forgotten.
+// an allowlist nobody prunes is how bugs stay unnoticed.
 //
 // x86-64 only. The comparison is between COMPILERS, not between targets, so
 // running the same pair again under qemu-aarch64 costs minutes to re-answer a
@@ -64,7 +64,7 @@ type allocDiffCase struct {
 	// on per-churn KB. 1 in the denominator so a shape that reclaims fully on
 	// one side (0 KB) does not produce a division by zero — it makes a 0-vs-K
 	// split read as ratio K, which is the right severity for small K and
-	// correctly damning for large K.
+	// correctly severe for large K.
 	maxRatio int
 }
 
@@ -262,7 +262,7 @@ function churn(n: i32): i32 {
 // KB. Two identical churns, measured between: whatever the first failed to
 // give back is what the second has to allocate fresh.
 //
-// The metric rides the exit code rather than stdout because the self-host
+// The metric is reported in the exit code rather than stdout because the self-host
 // driver resolves no stdlib, so `.to_string()` is unavailable to it. That caps
 // the readable range at one byte, hence the 240 KB guard — a shape that leaks
 // past it reports 252 rather than silently wrapping into a plausible number.

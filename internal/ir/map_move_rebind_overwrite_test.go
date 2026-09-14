@@ -77,7 +77,7 @@ function main(): i32 { return churn(4); }
 	}
 }
 
-// The control that keeps the release honest. A rebind from a FRESH producer
+// The control that keeps the release correct. A rebind from a FRESH producer
 // that never mentions the local hands the slot a reference nobody else counts,
 // so the same-pointer arm must not exist at all — the pointers cannot be equal,
 // and a dec emitted there would be an over-release rather than dead code. This

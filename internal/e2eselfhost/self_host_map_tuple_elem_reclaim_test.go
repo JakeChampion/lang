@@ -89,7 +89,7 @@ var mapTupleElemFlatCases = []struct {
 	{
 		// Two maps in one tuple: two names, two boxes, two releases. The gate
 		// checks EVERY Map-typed position of the host, not just the one the
-		// call is about, so a second map cannot ride in on the first's proof.
+		// call is about, so a second map cannot rely on the first's proof.
 		name: "two_maps",
 		body: `        var a: Map[string, i32] = map_new(4);
         var b: Map[string, i32] = map_new(4);

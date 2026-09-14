@@ -13,7 +13,7 @@ import (
 // carries an rc word at [p-8] while tag@[p] and payload@[p+4] (every
 // p-relative access — match dispatch, `?` unwrap) are unchanged. Observed
 // through __fern_rc_is_unique: a fresh Some/Ok box is unique (rc==1). Counting
-// + the payload recursive release ride on this foundation in later slices.
+// + the payload recursive release build on this foundation in later slices.
 // (The io/extern option builders — read_file etc. — stay raw for now;
 // layout-only never sweeps options, so the mix is value-safe.)
 func TestSelfHostRcOptionBoxWasm(t *testing.T) {
@@ -43,7 +43,7 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// `?` unwrap reads the boxed Some payload / propagates the None box.
 		{"question-unwrap-intact", "function inner(): Option[i32] { return Some(40); } function outer(): Option[i32] { var x = inner()?; return Some(x + 2); } function main(): i32 { match (outer()) { Some(v) => { return v; }, None => { return 0; } } }", 42},
 		// A Some holding a heap string: payload intact through the boxed layout
-		// (the payload release rides on later slices; here just value + detector).
+		// (the payload release comes in later slices; here just value + detector).
 		{"some-string-payload-intact", "function main(): i32 { var s: string = \"ab\" + \"cd\"; var o = Some(s); match (o) { Some(v) => { return v.len() + __rc_underflow_count(); }, None => { return 0; } } }", 4},
 		// COUNTING milestone (free off): an owned option local is released (rc
 		// dec) at exit, value-correct + detector clean.

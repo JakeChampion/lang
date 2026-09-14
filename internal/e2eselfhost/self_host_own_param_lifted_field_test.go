@@ -29,7 +29,7 @@ import (
 //
 // Assertions are on the answer AND __rc_underflow_count(): this is a genuine
 // over-release, so the counter moves, unlike the #8198 family where the free is
-// at rc 1 and only the value dissents. The controls are the leak direction — a
+// at rc 1 and only the value disagrees. The controls are the leak direction — a
 // retain emitted where the local already owns its value strands the box, which
 // no exit code reports, so they are also run under FERN_LEAKCHECK by
 // TestSelfHostOwnParamLiftedFieldLeakCheck below.

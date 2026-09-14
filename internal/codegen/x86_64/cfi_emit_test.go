@@ -11,7 +11,7 @@ import (
 
 // cfiSrc has three functions that survive to the emitter — recursion keeps
 // them from being folded into their callers, which a first version of this
-// test learned the hard way: with two straight-line helpers the program
+// test got wrong: with two straight-line helpers the program
 // emitted ONE function and the test would have passed while covering a single
 // prologue.
 const cfiSrc = `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }
@@ -112,7 +112,7 @@ func TestPeepholeStillFiresWithCFI(t *testing.T) {
 	}
 }
 
-// TestPeepholeGateDetectsADeadJump keeps the check above honest: it must fail
+// TestPeepholeGateDetectsADeadJump proves the check above works: it must fail
 // on input that actually contains the pattern, or it proves nothing.
 func TestPeepholeGateDetectsADeadJump(t *testing.T) {
 	if _, found := jmpToNextLabel("\tjmp .L1\n.L1:\n\tret\n"); !found {
@@ -168,7 +168,7 @@ func TestEmittedCFIDecodesAsUnwindData(t *testing.T) {
 // findX86Gcc locates a gcc that actually targets x86-64, verified by
 // assembling an Intel-syntax probe rather than by trusting the name.
 //
-// `gcc` on an aarch64 runner is the NATIVE aarch64 gcc, which happily
+// `gcc` on an aarch64 runner is the NATIVE aarch64 gcc, which
 // accepts the file and then reports "unknown mnemonic `push`" several
 // hundred times. This test did exactly that on test-units-aarch64 — the
 // only failure in 6460 — because it looked the tool up by name and I had

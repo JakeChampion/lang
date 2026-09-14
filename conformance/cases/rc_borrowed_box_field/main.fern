@@ -4,7 +4,7 @@
 // `first` owns its `node` and `__struct_drop`'s k_enum arm decs it, so
 // `[first.node]` / `branches.append(nxt.node)` need a Perceus dup — otherwise
 // the array holds a freed cell and the NEXT allocation reuses it. This is
-// std/regex's `__rx_alt` reduced to its skeleton: the parser returns each
+// std/regex's `__rx_alt` reduced to its bare shape: the parser returns each
 // sub-tree in an `RParse` struct, so an alternation of multi-byte branches
 // built a tree whose enclosing group had landed on its own grandchild's cell.
 // `__rx_match` then recursed Grp -> Alt -> Grp until the stack ran out.

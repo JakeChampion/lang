@@ -333,7 +333,7 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) 
 //
 // `elem_ty` is stamped whether or not the bundle is empty. An unstamped empty
 // array literal has no element type for the checker or for irlower's slot
-// widths, which is the one place the stamp is load-bearing — but stamping it
+// widths, which is the one place the stamp is required — but stamping it
 // only there would make the empty bundle the odd case rather than the same one.
 function resolve_all(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
     if (c.args.len() != 0) {

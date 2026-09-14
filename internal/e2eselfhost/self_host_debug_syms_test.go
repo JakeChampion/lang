@@ -12,7 +12,7 @@ import (
 // TestSelfHostDebugSymsFlag covers `fern-selfhost -target x86-64-linux -g` end to
 // end (#6637): a binary the self-host built, whose function names `nm` can
 // resolve. Before this, every self-host-built binary was anonymous — which
-// bit the project itself hardest, since the self-hosted compiler is the
+// cost the project itself most, since the self-hosted compiler is the
 // largest program it builds with itself and the one whose segfaults most
 // need a readable backtrace.
 //
@@ -106,7 +106,7 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	// than one. That is the case an x86-only test cannot cover, and the
 	// reason the symtab layer takes the offset and vaddr from its caller.
 	//
-	// nm reads a foreign architecture happily, so the symbols are checked
+	// nm reads a foreign architecture, so the symbols are checked
 	// without needing qemu; execution stays x86-only above.
 	a64 := build(filepath.Join(dir, "a64.bin"), "-target", "arm64-linux", "-g")
 	a64Out, err := exec.Command("nm", a64).Output()

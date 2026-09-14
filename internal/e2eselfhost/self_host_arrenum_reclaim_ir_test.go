@@ -33,7 +33,7 @@ import (
 // so — unlike ARRTUP/ARRSTRUCT — the walk emits NO trailing __fern_rc_dec per element;
 // adding one double-frees every element.
 //
-// The element enum name rides the CREDIT ("ARRENUM:<local>#<Enum>") because an `E[]`
+// The element enum name is in the CREDIT ("ARRENUM:<local>#<Enum>") because an `E[]`
 // slot records its element type in neither arrarr_elem (populated only for `T[][]`, and
 // only for four scalar tags) nor struct_type.
 //

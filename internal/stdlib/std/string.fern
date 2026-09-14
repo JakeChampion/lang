@@ -386,7 +386,7 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
     }
     if (i < 0) { return 0 - 1; }
 
-    // Tier 3b — budget blown, so the input is one of the adversarial shapes.
+    // Tier 3b — budget exhausted, so the input is one of the adversarial shapes.
     // Restart from scratch under the linear algorithm; a partial result cannot
     // be carried over, because the scan above ran right-to-left and Two-Way
     // runs left-to-right over the reversal.
@@ -634,7 +634,7 @@ pub function (s: string) escape_c(): string {
 // `(s: string) escape_shell()` — POSIX-shell-safe quoting.
 // Wraps s in single quotes and replaces any interior `'`
 // with the standard close-quote / escaped-single-quote /
-// reopen-quote dance: `'` → `'\''`. The result can be
+// reopen-quote sequence: `'` → `'\''`. The result can be
 // concatenated into a shell command line without word
 // splitting or substitution.
 pub function (s: string) escape_shell(): string {
@@ -816,7 +816,7 @@ pub function (s: string) is_valid_identifier(): boolean {
 // accepts ONLY a run of 1..3 ASCII digits, so a leading sign
 // ("+1" / "-1"), embedded whitespace, or an empty octet is
 // rejected — the strict shape an IPv4 octet needs (parse_int
-// would happily read "+1" / "-1" as 1). (An earlier version of
+// would read "+1" / "-1" as 1). (An earlier version of
 // this note blamed a since-fixed parse_int i64-comparison bug;
 // parse_int("127") returns Some(127) on every backend today.)
 pub function (s: string) is_ipv4(): boolean {
@@ -871,7 +871,7 @@ pub function (s: string) is_email_like(): boolean {
 // shape check, like `is_email_like`; defer to a real URL
 // parser when one lands.
 pub function (s: string) is_url_like(): boolean {
-    var rest: str = "";
+    var rest: string = "";
     if (s.starts_with("https://")) {
         rest = s.remove_prefix("https://");
     } else if (s.starts_with("http://")) {
@@ -888,7 +888,7 @@ pub function (s: string) is_url_like(): boolean {
 // JSON validator — just a fast pre-flight check before
 // attempting a parse. Empty strings return false.
 pub function (s: string) is_json_like(): boolean {
-    var t: str = s.trim();
+    var t: string = s.trim();
     var n: i32 = t.len();
     if (n < 2) { return false; }
     var first: i32 = t[0] as i32;
@@ -2216,7 +2216,7 @@ function __fill_lead_len(b: i32): i32 {
 // wrote three copies of 0xC3 and handed back a `string` that was not
 // valid UTF-8 (#5634). A fill that does not divide `need` now leaves
 // the remainder unfilled instead — the result can be up to one
-// character short of `n`, which is the honest answer when the field
+// character short of `n`, which is the correct answer when the field
 // width is counted in bytes and the fill is not one byte wide.
 // Single-byte fills, which is every caller in this repo, are
 // unchanged: the character length is 1 and `need` is filled exactly.
@@ -2856,7 +2856,7 @@ pub function (s: string) count_matches(sub: string): i32 {
 // the adoption is total rather than a tier: unlike its three siblings there is
 // no cursor to clamp and no needle length to test, so there is no shape the
 // intrinsic answers differently. A byte outside 0..255 counts 0 in both, which
-// is the honest answer rather than a sentinel, so the guard the intrinsic
+// is the correct answer rather than a sentinel, so the guard the intrinsic
 // keeps for direct callers is unreachable from here.
 pub function (s: string) count_byte(b: i32): i32 {
     return __count_byte(s, b);

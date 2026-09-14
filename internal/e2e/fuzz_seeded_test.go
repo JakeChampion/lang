@@ -6,7 +6,7 @@ package e2e
 // per mutation, 14 call sites). And a run is now REPRODUCIBLE: `fuzz_run`
 // draws one seed from the CSPRNG, names it in the failure diagnostic, and
 // `fuzz_run_seeded` replays that exact sequence — which is the difference
-// between a fuzz failure you can debug and one you can only stare at.
+// between a fuzz failure you can debug and one you cannot reproduce.
 //
 // The determinism assertion is the point of this test: two `fuzz_run_seeded`
 // calls with equal seeds must produce byte-identical diagnostics, including
@@ -66,7 +66,7 @@ function main(): i32 {
     // A passing target passes at any seed.
     if (outcome_failed(fuzz.fuzz_run_seeded(seeds, 200, 7 as i64, always_pass))) { return 6; }
 
-    // Guard rails preserved.
+    // Guards preserved.
     if (!outcome_failed(fuzz.fuzz_run_seeded(seeds, 0, 1 as i64, always_pass))) { return 7; }
     var empty: u8[][] = [];
     if (!outcome_failed(fuzz.fuzz_run_seeded(empty, 10, 1 as i64, always_pass))) { return 8; }

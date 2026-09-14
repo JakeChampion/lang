@@ -14,7 +14,7 @@ import (
 // conversions (cvtsi2s*, cvtts*2si, cvts*2s*), aligned moves (movap*),
 // scalar loads/stores (movsd/movss), and roundsd. The packed-integer
 // vocabulary the vector kernels reach for — the carry-less multiply among it
-// — rides the same encoders.
+// — uses the same encoders.
 
 // sseOps are the two-operand "dst, src" forms encoded as
 // [prefix] [REX] 0F <op> /r, with ModRM.reg = dst and rm = src. The

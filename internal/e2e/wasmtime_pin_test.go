@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestWasmtimePinMatchesCI keeps the Go-side wasmtime pin honest.
+// TestWasmtimePinMatchesCI keeps the Go-side wasmtime pin correct.
 //
 // The version lives in two places that cannot import each other: mise.toml is
 // what CI (jdx/mise-action), scripts/devbox and the session hook install, and

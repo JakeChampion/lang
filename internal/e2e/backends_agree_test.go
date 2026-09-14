@@ -36,7 +36,7 @@ import (
 //     docs/DYN-TRAITS.md §4.1).
 //
 // A literal expectation is a weaker test, so the rule is narrow on purpose: a
-// feature the interpreter CAN model has no business skipping it.
+// feature the interpreter CAN model must not skip it.
 func backendsAgree(t *testing.T, src, want string) {
 	t.Helper()
 	t.Run("wasm32-wasi", func(t *testing.T) {

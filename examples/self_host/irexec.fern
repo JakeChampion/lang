@@ -763,7 +763,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: ir.LoweredF
         }
         else if (o.kind_tag == 9) {  // int_cast
             // Narrow the top of stack to the target int width
-            // (rides `o.str`), mirroring ir.op_int_cast and the register backends'
+            // (carried in `o.str`), mirroring ir.op_int_cast and the register backends'
             // `as_<ty>`. The lowering emits this after every i32 arithmetic op
             // (add/sub/mul/shl — the signed sibling of u32_wrap) and for `as`
             // casts, so the i32 evaluator must apply the same per-width wrap or

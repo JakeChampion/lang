@@ -166,7 +166,7 @@ func TestArm64ViewLendHeaderReclaim(t *testing.T) {
 	}
 }
 
-// wasm has no leak counter, so it rides the __heap_bump_bytes() high-water
+// wasm has no leak counter, so it uses the __heap_bump_bytes() high-water
 // probe: flat under reclaim, linear under a leak.
 func TestWASMViewLendHeaderReclaim(t *testing.T) {
 	prev := ast.RcFreeEnabled

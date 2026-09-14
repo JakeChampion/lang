@@ -196,7 +196,7 @@ func ioOpenCloseSrc(rounds int) string {
 // credits of its own, so it is admitted by a different predicate
 // (opt_box_init_type) and needs its own leg: `Result[Reader, IoError]` carries
 // no payload either side that anything deep-drops, so the box-only release is
-// the whole of it.
+// all of it.
 func ioOpenCloseBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     var i: i32 = 0;

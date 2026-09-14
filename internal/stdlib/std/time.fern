@@ -495,8 +495,8 @@ function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i3
 // `.is_valid()` to the caller.)
 //
 // Doesn't accept the lowercase `t` / `z` variants (RFC 3339
-// §5.6 allows them, but the canonical form dominates in the
-// wild and accepting both invites case-mismatch bugs in callers
+// §5.6 allows them, but the canonical form dominates in
+// practice and accepting both invites case-mismatch bugs in callers
 // comparing strings). Zone offsets `+HH:MM` / `-HH:MM` belong to
 // `instant_zoned_parse_rfc3339`.
 pub function instant_parse_rfc3339(s: string): Option[Instant] {
@@ -561,7 +561,7 @@ pub function instant_parse_rfc3339(s: string): Option[Instant] {
 // parse from `If-Modified-Since` — a fixed-width, always-GMT
 // stamp: `Sun, 06 Nov 1994 08:49:37 GMT`. Emitting and parsing
 // it is what lets an edge handler answer conditional requests and
-// set cache headers, the "killer use case" this module was built
+// set cache headers, the main use case this module was built
 // toward (#4388 item 5).
 // ============================================================
 

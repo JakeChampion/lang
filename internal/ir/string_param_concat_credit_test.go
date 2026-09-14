@@ -62,7 +62,7 @@ func TestStringParamComparedIsCounted(t *testing.T) {
 }
 
 // The direction whose failure mode is a use-after-free: one concat
-// occurrence does not launder a retaining one, because everyOccurrenceSafe
+// occurrence does not make a retaining one safe, because everyOccurrenceSafe
 // is all-or-nothing.
 func TestStringParamConcatAlongsideBareReturnStaysUncredited(t *testing.T) {
 	src := `function keep(p: string): string {

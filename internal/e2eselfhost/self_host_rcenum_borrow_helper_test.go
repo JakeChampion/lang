@@ -63,7 +63,7 @@ function main(): i32 {
 `
 
 // The reduction: no match, no helper, no use at all. It leaked identically, which
-// is what showed the missing credit was the whole story and the helper incidental.
+// is what showed the missing credit was the whole cause and the helper incidental.
 const rcenumNeverUsedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
 function main(): i32 {

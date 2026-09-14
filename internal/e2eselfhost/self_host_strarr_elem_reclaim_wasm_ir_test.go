@@ -100,7 +100,7 @@ function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "yes"},
 		// The same store where the holder ESCAPES the frame that owns the array
-		// — the shape the case above was written to fear, and the one that can
+		// — the shape the case above was written against, and the one that can
 		// actually fail. `build` returns the Box, so the retain is still live
 		// when `xs` sweeps: the walk runs, finds rc 2, and decs without touching
 		// an element. Every element is read back AFTER 20 churn frames have

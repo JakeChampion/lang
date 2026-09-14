@@ -40,7 +40,7 @@ import (
 // proof, which is what `refuses_rebind_aliasing_param` (an aliased rebind) and
 // `refuses_reassigned_escaping` (the escape gate) pin.
 //
-// THE REFUSALS ARE THE LOAD-BEARING HALF. A string payload is stored UNCOUNTED
+// THE REFUSALS ARE THE ESSENTIAL HALF. A string payload is stored UNCOUNTED
 // (`op_opt_make`) and a string assignment BORROWS, so the arm binding takes no
 // retain — which is why the credit is safe when the arm only reads, and why
 // freeing a payload the arm hands out would be a use-after-free rather than a
@@ -179,7 +179,7 @@ function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + ma
 		},
 		{
 			// REFUSED: reassigned AND the payload escapes. The escape gate must
-			// still bite once reassignment is admitted.
+			// still apply once reassignment is admitted.
 			name: "refuses_reassigned_escaping",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     var held: string = "";

@@ -178,7 +178,7 @@ var interpProgs = []struct {
 	{"slice-open-low", "function main(): i32 { var a = [10, 20, 30]; var b = a[:2]; return b[0] + b[1]; }", 30},
 	// C-style `for` with a non-`var` init (#4339 item 2): the self-host arm
 	// gated only on a `var` init, so an expression init (`i = 0`) or an empty
-	// init (`;`) fell into the `(k,v) in m` map arm and shredded. Now a
+	// init (`;`) fell into the `(k,v) in m` map arm and mis-parsed. Now a
 	// top-level `;` in the header marks a C-for and the init may be empty /
 	// `var` / expression. Both loops sum 0..3 => 6.
 	{"cfor-expr-init", "function main(): i32 { var i = 0; var s = 0; for (i = 0; i < 4; i = i + 1) { s = s + i; } return s; }", 6},
@@ -364,7 +364,7 @@ var interpProgs = []struct {
 	// mid-body read after the defer still sees the pre-defer value.
 	{"defer-not-eager-mid-body", "function main(): i32 { var r = 1; defer { r = 100; } var x = r + 1; if (x == 2) { return 2; } return 3; }", 2},
 	// Labeled break unwinds MULTIPLE loop levels (#4348 item 2): the
-	// resolve_labels-baked depth now rides the sig encoding (2+2d) and each
+	// resolve_labels-baked depth is now part of the sig encoding (2+2d) and each
 	// loop arm peels one level. Pre-fix the depth was ignored, `break outer`
 	// broke only the inner loop, and `outer: while (true)` hung forever.
 	{"labeled-break-two-level", "function main(): i32 { var s = 0; outer: while (true) { var i = 0; while (i < 10) { s = s + 1; if (s >= 11) { break outer; } i = i + 1; } } return s; }", 11},
@@ -440,7 +440,7 @@ func interpDriverFiles(t *testing.T) map[string]string {
 	return files
 }
 
-// TestSelfHostInterpDriverX86_64 is the keystone of the inference
+// TestSelfHostInterpDriverX86_64 is the main test of the inference
 // overhaul: the self-hosted compiler compiles the self-hosted
 // INTERPRETER (interp.fern, whose Value union has VInt/VString/VFloat
 // all with field `v`). The resulting binary

@@ -16,7 +16,7 @@ package printer
 // pins the fixed-point property directly by formatting twice and
 // asserting bytewise equality.
 //
-// Each case rides a different surface that has historically been a
+// Each case exercises a different surface that has historically been a
 // formatter bug source: indentation across nested blocks,
 // minimal-parens emission, comment preservation, multi-line decl
 // layouts (struct fields, fn params), and the various expression

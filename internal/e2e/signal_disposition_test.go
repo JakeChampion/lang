@@ -171,7 +171,7 @@ func TestInterpSignalDisposition(t *testing.T) {
 
 // TestWASMSignalDispositionIsANoOp: both calls must lower and run on wasm.
 //
-// Nothing in either WASI world can deliver a signal, so the honest answer is
+// Nothing in either WASI world can deliver a signal, so the correct answer is
 // to do nothing — the same shape as hostname() answering "" rather than
 // failing. What that leaves to assert is that the program still runs: the
 // calls have to lower, drop their argument, and leave the operand stack
@@ -233,7 +233,7 @@ func TestArm64SSASignalDisposition(t *testing.T) {
 // This is a hang, not a wrong answer. Go's runtime indexes a 65-entry sigtable
 // and `signal.Stop` outside it never returns — measured: 0..64 return, -1 / 65
 // / 99 deadlock — and `signal_default` reaches Stop through the Notify/Stop/
-// Reset dance that undoes an earlier Ignore. The compiled backends hand the
+// Reset sequence that undoes an earlier Ignore. The compiled backends hand the
 // number to rt_sigaction, get EINVAL and ignore it, which is the contract
 // `std/signal` documents. Found by review on #8792.
 //

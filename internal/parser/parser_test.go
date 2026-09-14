@@ -1094,7 +1094,7 @@ func TestHexLiteralValue(t *testing.T) {
 
 // Typed numeric literal suffixes: lexer captures the suffix, the
 // parser stamps Width / IsUnsigned at parse time so the checker
-// sees a non-polymorphic type from the get-go.
+// sees a non-polymorphic type from the start.
 func TestNumericLiteralSuffixes(t *testing.T) {
 	type want struct {
 		isFloat    bool
@@ -3326,7 +3326,7 @@ impl T for Self { function f(self: Self): void {} }`); err == nil {
 // after the (optionally-typed) binding, so an uninitialized declaration is a
 // parse error, never an implicit zero. (`let` is the separate refutable
 // let-else binding, not a plain declaration.) This is what closes
-// the "uninitialized-var read is silently zero" footgun (#4409 part 1) at
+// the "uninitialized-var read is silently zero" bug (#4409 part 1) at
 // the source level: a program can't even spell an uninitialized local, so
 // there is no read-before-init to diagnose. (Fall-off-end, #4409 part 2, is
 // pinned separately by the checker's E052 tests.)

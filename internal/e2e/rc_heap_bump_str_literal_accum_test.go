@@ -15,7 +15,7 @@ import (
 // pattern). A Binary init (`var s = "a" + ""`) reclaimed fine, so only the
 // literal-init shape was broken. The IR-layer guard (that the overwrite dec is
 // emitted, at both pointer widths) lives in internal/ir; this pins the
-// end-to-end heap payoff on wasm.
+// end-to-end heap benefit on wasm.
 //
 // The probe uses a CONSTANT-size overwrite (`s = p + "!"`, p a fixed 20-char
 // string) and measures the bump allocator's high-water via __heap_bump_bytes().

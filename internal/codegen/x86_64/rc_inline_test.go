@@ -39,7 +39,7 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 // TestRcOpsFallBackToCallInLargeFn pins the opt-2b fall-back: a function
 // whose IR-op count exceeds rcInlineMaxOps drops the inline sequence and
 // calls the (behaviour-identical) runtime helper instead, so the emitted
-// `.s` for the self-host compiler's ~9.75M-op lowering monster
+// `.s` for the self-host compiler's ~9.75M-op lowering function
 // (irlower__lower_expr) stays assemblable without ballooning `as`'s RSS.
 // The threshold is lowered here so a tiny function trips it — production
 // keeps the 1M default.

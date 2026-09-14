@@ -37,7 +37,7 @@ import (
 //     — 800/598/4832, still leaking). The shared escape gate expr_unsafe_for treats any
 //     ident operand of a binary op as an escape, so `pre` earns no credit. That gate
 //     backs every reclaim class, not just strings, so widening it is a cross-class change
-//     needing its own gating rather than a rider here.
+//     needing its own gating rather than part of this change.
 //   - A literal local that is the receiver of `.to_string()`. On a string receiver that
 //     call is the IDENTITY, so its result aliases the receiver's box and the concat-temp
 //     machinery frees that result as an inline-consumed temp; crediting the local too

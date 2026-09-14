@@ -10,13 +10,13 @@ import (
 
 // A borrowed `str` never silently promotes to an owned `string` — that rule is
 // deliberate. What was missing is the way out: the diagnostics restated the two
-// type names and stopped, leaving a `str` at an owning sink with nowhere to go.
+// type names and stopped, leaving a `str` at an owning sink with no way to fix it.
 // `.to_owned()` is the materialiser, named in the checker's own comments and
 // used throughout the stdlib, and now named in the message.
 //
 // The view here is `slice_unchecked`, which is what a `str` producer looks like
 // under O2 (docs/STR-VIEW-CONTRACT.md §5). `.trim()` used to stand in for it and
-// no longer can: it hands back an owned copy, so `var t: string = slice_unchecked(s, 0, 2);` is
+// no longer can: it hands back an owned copy, so `var t: string = s.trim();` is
 // simply legal now and tests nothing.
 //
 // The second half matters more than the first: a hint you cannot follow is

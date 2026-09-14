@@ -42,7 +42,7 @@ function gen_recv(stmts: string): string {
 }
 
 // --------------------------------------------------- variables are fields
-// The headline claim: a variable read is a struct field access. If this
+// The main claim: a variable read is a struct field access. If this
 // regressed to a table lookup the compiler would have bought nothing.
 function test_scalar_read_is_a_field_access(): test.TestOutcome {
   return test.assert_contains(gen_recv("set req.http.X = req.url; return (hash);"), "VString(t.req.url)");

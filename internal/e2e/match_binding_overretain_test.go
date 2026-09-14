@@ -80,7 +80,7 @@ import (
 // ONE ITERATION IS ENOUGH. Varying how many times the loop runs gives
 // __rc_get(cur) = 2 at one, two and three iterations (allocations 2, 3,
 // 4). The count is already wrong after a SINGLE arm execution, so the
-// cross-iteration dec-on-overwrite is a red herring — it only ever takes
+// cross-iteration dec-on-overwrite is not the cause — it only ever takes
 // the count from 2 back to 1. The alias-inc has no counterpart inside
 // the arm.
 //

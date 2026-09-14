@@ -13,13 +13,13 @@ import (
 
 // TestSelfHostX86ScaleProbe guards the self-hosted assembler at scale:
 // large (many-function) programs must assemble + run correctly, matching
-// gcc's assembly of the same .s. It also pins the lesson behind a retracted
+// gcc's assembly of the same .s. It also pins the finding behind a retracted
 // "assembler-at-scale bug": the earlier nfn=400 "failure" (exit 144, want
 // 400) was just the Unix 8-bit exit-code truncation (400 & 0xFF == 144),
 // not a miscompile, and the "150-fn → 85" figure came from a malformed test
 // program (f32/f64 reserved-keyword function names), not the assembler.
 //
-// To keep the signal honest this probe holds each program's result < 256 so
+// To keep the signal unambiguous this probe holds each program's result < 256 so
 // the exit code is unmasked, and cross-checks every size against gcc. Up to
 // 600 functions / ~124 KB asm the self-host output is exit-for-exit
 // identical to gcc — there is no O(n²)-label or fixup defect at scale.

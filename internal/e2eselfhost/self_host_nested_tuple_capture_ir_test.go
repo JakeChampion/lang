@@ -41,7 +41,7 @@ function g(): i32 {
 }
 function main(): i32 { return g(); }`},
 	// Direct capture of the intermediate tuple binding p (a (i32,i32) pointer
-	// riding the 32-bit env slot). h.f(1)=1+3+4+5=13, h.id=c=5 → 18.
+	// stored in the 32-bit env slot). h.f(1)=1+3+4+5=13, h.id=c=5 → 18.
 	{"direct-tuple-capture", `struct H { f: (i32) => i32, id: i32 }
 function g(): i32 {
 	var t: ((i32, i32), i32) = ((3, 4), 5);

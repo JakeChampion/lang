@@ -30,7 +30,7 @@ package ssa_test
 // an artifact: the verifier read the string ABI from a global the
 // lowering had already restored, so it modelled one-word against a
 // one-word lift. `ir.Func.TwoWordStr` carries the decision with the IR
-// instead, and the honest figure is 77.29% — the two-word gap that
+// instead, and the accurate figure is 77.29% — the two-word gap that
 // #7803 is about, which the column had been hiding.
 //
 // The 359 that remain on one-word are DEFINED callees that return void.

@@ -4,7 +4,7 @@ import "std/test";
 // examples/tests/sort_wider_test.fern — exercises core/cmp's generic
 // `sort` / `sort_desc` over the wider integer widths (i64, u32, u64),
 // the width-specific coverage that the retired per-width `sort_i64_asc`
-// / `sort_i64_desc` / `sort_u32_asc` / `sort_u64_asc` zoo used to carry
+// / `sort_i64_desc` / `sort_u32_asc` / `sort_u64_asc` family used to carry
 // (#5397). The `T: Ord` monomorphisation must still pick the UNSIGNED
 // compare for u32 / u64 (a near-u64-max sentinel sorts LAST, not first)
 // and the full-width signed compare for i64.

@@ -258,7 +258,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// reads back intact and the recipient's string content is right.
 		{"struct-string-field-corruption-detector", `struct N { id: i32, name: string } function main(): i32 { var d = N { id: 1, name: "ab" + "c" }; var u: i32 = d.name.len() as i32; var c = N { id: 2, name: "wxyz" + "q" }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (u != 3) { return 90; } if (s != 66) { return 91; } if (c.name[0] != 119) { return 92; } return __rc_underflow(); }`, 0},
 		// MAP IDENTITY-CARRYING method hole (map_identity_escape): `mm.insert(1,1)`
-		// returns mm's OWN mapbox, and as a struct-lit field value it smuggled the
+		// returns mm's OWN mapbox, and as a struct-lit field value it carried the
 		// box past the borrow-only escape walk — the map reclaim then freed a box
 		// the program still reads through c.m (a SIGSEGV before the gate). Any
 		// insert/without use of a fresh map local now excludes it from reclaim
@@ -267,7 +267,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"map-callvalue-struct-field-value", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; return c.id + c.m.len(); }`, 4},
 		{"map-callvalue-struct-field-corruption-detector", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (s != 66) { return 91; } if (c.id + c.m.len() != 4) { return 92; } return __rc_underflow(); }`, 0},
 		// The own-param sibling (the shape that first surfaced the UAF while
-		// testing #5087): the struct with the smuggled mapbox flows through an
+		// testing #5087): the struct with the aliased mapbox flows through an
 		// `own` param donor site — value stays correct with the map excluded.
 		{"map-callvalue-own-param-field-value", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); var c = C { id: 10, m: mm.insert(1, 5) }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); var c0 = C { id: 3, m: m0.insert(1, 1) }; return f(c0); }`, 15},
 		// The `.without` sibling: its (Map, existed) tuple wraps the SAME mapbox,
@@ -587,7 +587,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// sibling of the rc-payload-option precise drop. A `Poly([..])` (array-payload
 		// variant) with no top-level match and a borrow-only arm binding has its runtime
 		// variant deep-dropped + box freed (emit_enum_variant_drops) after the enclosing
-		// statement. The enum name rides in the "enum-rcpayload:<E>"
+		// statement. The enum name is carried in the "enum-rcpayload:<E>"
 		// kind. FIRING: f(5): x=Poly([10,20,30]), c=a[0]+a[2]=40, return 40+5=45.
 		{"enum-arr-precise-if-value", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { return f(5); }`, 45},
 		{"enum-arr-precise-if-detector", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 45) { return 99; } return __rc_underflow(); }`, 0},
@@ -778,7 +778,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// after the first match — the consumed-free never classifies it; the box (and its
 		// array) stays live, freed by the exit sweep. Value correct, detector 0.
 		{"rc-enum-used-after-match-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([3, 4]); var a = 0; match (x) { V(_) => { a = 1; }, N => { a = 0; }, } var b = 0; match (x) { V(_) => { b = 2; }, N => { b = 0; }, } if (a + b != 3) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
-		// In-arm consuming-match box reuse (FBIP), the marquee "functional but in-place"
+		// In-arm consuming-match box reuse (FBIP), the main "functional but in-place"
 		// win: `var y = match (x) { V(a, b) => W(a+1, b+1), W(c, d) => V(c, d) }` where x
 		// is a fresh, sole-owner, dead-after, non-escaping ALL-SCALAR enum box and EVERY
 		// arm constructs a SAME-SIZE scalar variant. x's box is reused IN PLACE
@@ -958,7 +958,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"iife-match-string-payload-detector", `enum E { V(string), N } function go(): i32 { var e: E = E.V("world"); var r = match (e) { V(s) => s.len(), N => 0 }; if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// ARROW LAMBDA (`(params): R => expr`) — the self-host parser now parses the
 		// concise arrow form into the SAME ExprLambda the verbose `function (params):
-		// R { return expr; }` produces, so it rides the existing lambda-lift + IR
+		// R { return expr; }` produces, so it reuses the existing lambda-lift + IR
 		// lowering with no codegen changes. Each case routes "ir" and is oracle-checked
 		// against the native interpreter.
 		// Non-capturing binding, called once: __lam_N(5) = 6.
@@ -997,7 +997,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// a still has 3 (1,2,3): b[3] + a.len() = 4 + 3 = 7.
 		{"append-value-field-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var s = Buf { xs: [1, 2, 3], n: 3 }; var t = Buf { xs: s.xs.append(4), n: s.n + 1 }; var r = t.xs[3] + s.xs.len() + t.n; if (r != 11) { return 99; } return __rc_underflow(); }`, 0},
 
-		// STRUCT-FIELD `.with` — the headline BAIL→ir flip: the pervasive immutable-
+		// STRUCT-FIELD `.with` — the main BAIL→ir flip: the pervasive immutable-
 		// update idiom `State { xs: s.xs.with(i, v), n: s.n }`. The base `s.xs` field
 		// is cloned (borrowed for the copy, not aliased), so the new struct owns a
 		// fresh array with NO alias-inc. `t.xs[1]` reads 99, `s.xs[1]` still reads 2
@@ -1082,7 +1082,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// arm must agree on the composite type (mismatched arms still bail).
 		//
 		// BARE STRUCT payload returned whole, used via `p.field`. The leak-safe
-		// struct pointer rides one slot; the temp + `p` are marked struct P.
+		// struct pointer occupies one slot; the temp + `p` are marked struct P.
 		{"iife-match-struct-payload-field-value", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { x: 7 }); var p: P = match (e) { V(q) => q, N => P { x: 0 } }; return p.x; }`, 7},
 		// The OTHER (constructor) arm is taken: the N-arm builds a fresh P, same type.
 		{"iife-match-struct-payload-other-arm", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.N; var p: P = match (e) { V(q) => q, N => P { x: 42 } }; return p.x; }`, 42},
@@ -1094,7 +1094,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// neither over-releases. Detector reads 0.
 		{"iife-match-struct-payload-detector", `struct P { x: i32 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { x: 7 }); var p: P = match (e) { V(q) => q, N => P { x: 0 } }; if (p.x != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// BARE ENUM payload returned whole, used via a nested `match (p)`. The inner
-		// enum pointer rides one slot; the temp + `p` are marked enum Inner.
+		// enum pointer occupies one slot; the temp + `p` are marked enum Inner.
 		{"iife-match-enum-payload-match-value", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function main(): i32 { var o: Outer = Outer.W(Inner.A(5)); var p: Inner = match (o) { W(q) => q, Z => Inner.B }; return match (p) { A(n) => n, B => 99 }; }`, 5},
 		// The Z-arm constructs a fresh Inner.B of the same enum type; nested match on it.
 		{"iife-match-enum-payload-other-arm", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function main(): i32 { var o: Outer = Outer.Z; var p: Inner = match (o) { W(q) => q, Z => Inner.B }; return match (p) { A(n) => n, B => 8 }; }`, 8},
@@ -1103,7 +1103,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// constructed arm over-releases. Detector reads 0.
 		{"iife-match-enum-payload-detector", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function go(): i32 { var o: Outer = Outer.W(Inner.A(5)); var p: Inner = match (o) { W(q) => q, Z => Inner.B }; var r = match (p) { A(n) => n, B => 99 }; if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// BARE TUPLE payload returned whole, used via `p.0` / `p.1`. The tuple pointer
-		// rides one slot; the temp + `p` are marked with the element tags.
+		// occupies one slot; the temp + `p` are marked with the element tags.
 		{"iife-match-tuple-payload-elem-value", `enum E { V((i32, i32)), N } function main(): i32 { var e: E = E.V((3, 4)); var p: (i32, i32) = match (e) { V(q) => q, N => (0, 0) }; return p.0 + p.1; }`, 7},
 		// UNANNOTATED tuple binding (the element tags come from the composite-result
 		// fallback, payload arm first).

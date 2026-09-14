@@ -15,7 +15,7 @@ import (
 // The gate it consulted (`aliased_names`, #3599) models local ALIASING — a name
 // bound to a second local, or stored into a container literal — and knows
 // nothing about ownership. A local bound from a struct field read has no local
-// alias at all, so it sailed through.
+// alias at all, so it passed the gate.
 //
 // SCOPE: the FIELD-READ shapes, the bare-ident REBIND shapes (#6170) —
 // `var heap = heap_in; heap = heap.with(…)` over a borrowed param, and
@@ -34,7 +34,7 @@ import (
 // (38, want 42) on all three backends.
 //
 // The cell now carries a `$cell$` name (box_rewrite_stmt), the same collision-
-// free marker `$wc$` uses for wide captures, so the mode rides on the name that
+// free marker `$wc$` uses for wide captures, so the mode is carried by the name that
 // ParamDecl has no field for. `borrowed_names_of` credits every other non-`own`
 // array param as a member, and the two cases are distinguishable at the gate.
 //

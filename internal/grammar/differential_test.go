@@ -1,4 +1,4 @@
-// The gate that keeps spec/grammar.ebnf honest.
+// The gate that keeps spec/grammar.ebnf accurate.
 //
 // A grammar nobody checks is fiction within a month, and Fern had no
 // grammar at all — the only description of its syntax was 5.9k lines of

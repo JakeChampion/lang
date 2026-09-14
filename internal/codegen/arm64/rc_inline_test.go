@@ -60,8 +60,8 @@ function main(): i32 { return h(P { xs: [7, 8] }); }`, Options{})
 // TestRcOpsFallBackToCallInLargeFn pins the opt-2b fall-back: a function
 // whose IR-op count exceeds rcInlineMaxOps drops the inline sequence and
 // calls the (behaviour-identical) runtime helper instead. On arm64 this is
-// load-bearing — inlining the ~1.66M rc ops of the self-host compiler's
-// lowering monster (irlower__lower_expr) pushes its body past aarch64's
+// essential — inlining the ~1.66M rc ops of the self-host compiler's
+// largest function (irlower__lower_expr) pushes its body past aarch64's
 // ±128 MB unconditional-branch reach and the epilogue `b .Lret_…` jumps
 // overflow ("branch out of range"). The threshold is lowered here so a tiny
 // function trips it; production keeps the 1M default.

@@ -9,14 +9,14 @@ import (
 // (rctuple_param_alias_bind_sites): a callee that binds `var x = src` and only
 // READS through the alias keeps its tuple param payload-borrowable, so the
 // caller's TUPRCS deep free survives. The vet is the rc-tuple payload scan on
-// the alias's own name — never the box walker, which would bless the handout
+// the alias's own name — never the box walker, which would admit the handout
 // shape below (the sanitizer-confirmed UAF that killed v1 of the tier).
 //
 // Every want is confirmed against BOTH oracles (bin/fern -interp and native
 // x86-64) — never read off the self-host run under test. Each case also
 // recompiles under FERN_SANITIZE=1 and must exit identically with no
 // over-release or use-after-free report (a leak report on a refused row is
-// the census's business): a wrongly-blessed handout trips the quarantine,
+// the census's business): a wrongly-admitted handout trips the quarantine,
 // not the census.
 
 type tupleAliasParamCase struct {
@@ -74,7 +74,7 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 		},
 		{
 			// The v1-killer must stay refused: the alias hands the rc element
-			// out, so blessing this site would have the caller's deep free
+			// out, so admitting this site would have the caller's deep free
 			// dangle every `out` the loop holds. The payload scan on x sees
 			// `return x.1` and refuses the site (ret_dup_ok=false on the
 			// alias vet — an unannotated alias slot could not retain), so
@@ -170,7 +170,7 @@ func TestSelfHostTupleAliasParamX86_64(t *testing.T) {
 			}
 
 			// Sanitize leg: same program, all three detectors on. Must exit
-			// identically and print no sanitizer report — a wrongly-blessed
+			// identically and print no sanitizer report — a wrongly-admitted
 			// alias shows up here as a quarantine hit, not in the census.
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
 			sanBin := buildBin(t, gcc, dir, "tupaliasparam_san_"+tc.name, sanAsm)

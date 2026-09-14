@@ -855,7 +855,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
                 }
                 return np + ")";
             }
-            // A TUPLE sub-pattern (`Pr((a, b))`) rides on tup_* rather than on
+            // A TUPLE sub-pattern (`Pr((a, b))`) is recorded on tup_* rather than on
             // nested, and binds nothing itself either — printing `head` here
             // dropped it and re-parsed as a payload-less arm, leaving the
             // desugar's `__nest_<l>_<c>_<d>` temp behind in its place.
@@ -983,7 +983,7 @@ function lit_cond_for(cond: ast.Expr, binder: string): ast.Expr {
 
 // print_tuple_elem renders ONE position of a tuple arm pattern, from the
 // element kinds build_tuple_match encodes: 0 = binder, 1 = `_`, 2 = literal,
-// 3 = variant sub-pattern, 4 = nested tuple (whose own encoding rides on
+// 3 = variant sub-pattern, 4 = nested tuple (whose own encoding is recorded on
 // elem_pats via p_tuple_carrier).
 function print_tuple_elem(kind: i32, bind: string, lit: ast.Expr, pat: ast.Pattern): string {
     if (kind == 1) { return "_"; }
@@ -2388,8 +2388,16 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     out = out + " ";
     if (id.trait_ref.len() > 0) { out = out + id.trait_ref + " for "; }
     out = out + id.type_ref;
-    if (id.methods.len() == 0) { return (out + " {}\n", f); }
+    // Same for an impl whose only members are associated-type bindings.
+    if (id.methods.len() == 0 && id.assoc_names.len() == 0) { return (out + " {}\n", f); }
     out = out + " {\n";
+    var abi: i32 = 0;
+    while (abi < id.assoc_names.len()) {
+        var abv: string = "";
+        if (abi < id.assoc_values.len()) { abv = id.assoc_values[abi]; }
+        out = out + indent_str(1) + "type " + id.assoc_names[abi] + " = " + abv + ";\n";
+        abi = abi + 1;
+    }
     var g: Fmt = f;
     var mi: i32 = 0;
     while (mi < id.methods.len()) {
@@ -2459,8 +2467,15 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
             spi = spi + 1;
         }
     }
-    if (td.methods.len() == 0) { return (out + " {}\n", f); }
+    // An associated-type-only trait is NOT empty: printing `{}` here would
+    // delete every `type Item;` the source wrote. See docs/ASSOCIATED-TYPES.md.
+    if (td.methods.len() == 0 && td.assoc_types.len() == 0) { return (out + " {}\n", f); }
     out = out + " {\n";
+    var ati: i32 = 0;
+    while (ati < td.assoc_types.len()) {
+        out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
+        ati = ati + 1;
+    }
     var g: Fmt = f;
     var mi: i32 = 0;
     while (mi < td.methods.len()) {
@@ -2506,7 +2521,7 @@ function print_type_alias(a: parser.TypeAlias): string {
 
 function print_import(im: parser.Import): string {
     // A `pub use "path".{a, b};` re-export is an import record too, and both
-    // its spelling and the `as` ALIAS are load-bearing: dropping either leaves
+    // its spelling and the `as` ALIAS are essential: dropping either leaves
     // every use of the bound name undefined, so it is data loss rather than a
     // style difference.
     if (im.is_reexport) {

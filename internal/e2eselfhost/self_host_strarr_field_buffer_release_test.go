@@ -32,7 +32,7 @@ import (
 //
 // The probes use SSO-short elements on purpose. A non-admitted field's element
 // boxes still leak — that is the admission's job, not this one's — so wide
-// elements would swamp the buffer in the measurement. With short ones the
+// elements would dominate the buffer in the measurement. With short ones the
 // buffer is the only heap object per round, and each case returns the MEASURED
 // bytes per round as its exit code: a regression reports its own size instead
 // of a bare "not zero". x86-64 and arm64 both read 56 before the fix; wasm
@@ -92,7 +92,7 @@ function main(): i32 {
 	// read, so "strfldok:arr:Node" holds and __fern_str_arr_free deep-frees the
 	// elements AND the buffer. Wide elements, bounded high-water — a shallow arm
 	// that shadowed the deep one would strand three element boxes per round and
-	// blow the 4 KB budget over the second 2000-iteration churn.
+	// exceed the 4 KB budget over the second 2000-iteration churn.
 	{"strarr-field-admitted-deep-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { var o: string[] = []; var i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }

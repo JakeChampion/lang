@@ -19,9 +19,9 @@ import (
 //
 // 120 B/round, unbounded, against `300/300 live=0` on native and interp. The
 // answers agreed throughout and `__rc_underflow_count()` was 0, so nothing but
-// the byte count dissented.
+// the byte count disagreed.
 //
-// The mix is the whole of it, and it falls between two classes that each handle
+// The mix is all of it, and it falls between two classes that each handle
 // one half. `tuple_lit_rc_reclaimable` admits a bare-ident element, so the tuple
 // is "TUPRC:" and out of "TUP:" (the two sets are kept disjoint). But "TUPRC:"
 // is consumed only by the StmtVar rebind path; the scope-exit sweep needs
@@ -38,7 +38,7 @@ import (
 // exactly that retain back while the local's own sweep spends its own reference.
 // tuple_arg_payload_retained is that weaker admission; tuple_arg_payload_fresh
 // stays the gate for an Option's Some payload and an array-of-tuples element,
-// where the payload is freed without its own box in the same breath.
+// where the payload is freed without its own box at the same time.
 //
 // The rebind and discarded-literal sites owed the same give-back and skipped it
 // for the same stale reason (emit_tuple_child_drops' bare-ident arm), so they
@@ -251,7 +251,7 @@ function round(i: i32): i32 {
 // Both assertions carry signal and they catch opposite failures. The exit code is
 // the over-release detector: a doubly-released block goes straight back to the
 // freelist, so `live_bytes` stays 0 through a double free and only
-// `__rc_underflow_count()` dissents. The byte balance is the leak detector, which
+// `__rc_underflow_count()` disagrees. The byte balance is the leak detector, which
 // the exit code cannot see.
 func TestSelfHostTupleMixedRcElemX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

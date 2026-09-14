@@ -22,7 +22,7 @@
 //     `+`→`.add()` rewrite has not run yet,
 //   * the method an array-method helper or an interposed collision provider was
 //     renamed away from (ts_kept_name), neither of which the syntax spells.
-// The collector rides astwalk's fold spine, so it reaches every Expr/Stmt
+// The collector uses astwalk's fold spine, so it reaches every Expr/Stmt
 // form the parser produces, and, unlike astwalk's capture analysis, does NOT
 // subtract lambda-local bindings — for reachability, keeping an extra
 // same-named function is harmless; dropping a referenced one is not.
@@ -238,7 +238,7 @@ function ts_arith_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
 // irlower.SigReg idiom. The set is probed once per name a kept body spells
 // and up to three times per pending function per round, against a set that
 // reaches ~12,000 names on the compiler compiling itself, so a miss scanning
-// the whole of it was most of this pass. Membership is the only question
+// all of it was most of this pass. Membership is the only question
 // asked, so a chain's order carries no meaning and a new name is pushed at
 // the front of its bucket.
 struct RefSet { names: string[], head: i32[], next: i32[] }

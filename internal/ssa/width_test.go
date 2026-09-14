@@ -184,7 +184,7 @@ func TestResolveWidthsPropagatesThroughPhi(t *testing.T) {
 // A pointer arrives in a parameter as often as it is allocated locally, and the
 // param's declared type is the only thing that says so — widthOfAstType reports
 // 32 for every pointer-shaped type, which is its stack-slot size, not its
-// register size. `usize` is the same story with an integer type.
+// register size. `usize` is the same case with an integer type.
 func TestResolveWidthsPropagatesFromPointerParams(t *testing.T) {
 	for _, ty := range []ast.Type{
 		ast.StringType{},

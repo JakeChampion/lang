@@ -22,7 +22,7 @@ import (
 // (struct_lit_all_enum_fields_fresh — `e: Poly([..])` with a fresh array payload), so
 // old's enum box + payload is sole-owned (rc=1, no construction alias-inc). A NON-fresh
 // (aliased bare-ident) enum field is retained + alias-inc'd by its owner, so freeing its
-// payload would double-release — such a struct is rejected at the gate and rides the
+// payload would double-release — such a struct is rejected at the gate and takes the
 // leak-safe shallow path (the ALIAS-SAFETY case proves __rc_underflow stays 0). The exit
 // sweep is deliberately NOT widened; only the per-iteration rebind reclaim is added, so
 // the once-off final-box payload leak stays bounded (the fixpoint is flat across N).
@@ -69,7 +69,7 @@ function main(): i32 {
 // A struct whose enum field is a bare IDENT (`e: shared`, shared a live enum local
 // across the loop) must NOT be deep-dropped — that would double-release shared's
 // payload. The gate (struct_lit_all_enum_fields_fresh) rejects the non-fresh field, so
-// the struct rides the leak-safe shallow path; __rc_underflow == 0 proves no over-
+// the struct takes the leak-safe shallow path; __rc_underflow == 0 proves no over-
 // release. acc = 100*7 (xs[0] per iter) + 7 (final match) = 707.
 const structEnumFieldAliasSafetySrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
@@ -90,7 +90,7 @@ function main(): i32 {
 // STRING payload (`m: Text(s)`, s a live string local): the freshness gate keys off
 // fresh_rcpayload_enum_init -> variant_struct_payloads_fresh, which rejects a non-fresh
 // STRING payload (not just array payloads — the array-only check would wrongly admit
-// this and __fern_str_free the aliased string). So the struct rides the leak-safe
+// this and __fern_str_free the aliased string). So the struct takes the leak-safe
 // shallow path; s stays live (read after the loop). acc = 100*5 (v.len per iter) + 5
 // (s.len after) = 505; __rc_underflow == 0 proves no over-release of s.
 const structEnumFieldStringPayloadAliasSrc = `enum Msg { Text(string), None }

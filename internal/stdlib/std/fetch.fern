@@ -110,7 +110,7 @@ pub function fetch_get(host_be: i32, port: i32, path: string): u8[] {
 // response — so None means exactly one thing: too slow. The deadline
 // covers the read phase; `tcp_connect` itself is still a blocking connect (no
 // non-blocking connect primitive yet), which on a reachable-but-dead
-// upstream fails fast but on a black-holed address is at the mercy of
+// upstream fails fast but on a black-holed address waits for the whole
 // the kernel SYN timeout. On interp the deadline degrades to blocking
 // reads (see `tcp_recv_deadline`).
 pub function fetch_raw_deadline(host_be: i32, port: i32, request: string, deadline_ms: i32): Option[u8[]] {

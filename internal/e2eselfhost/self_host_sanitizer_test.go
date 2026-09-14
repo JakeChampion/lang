@@ -16,7 +16,7 @@ import (
 // This backend's half of the mode is the leak census, the rc
 // over-release report, and the use-after-free quarantine (the
 // RcFreeDebug port — self_host_uaf_quarantine_test.go). One deliberate
-// gap versus native, an honest subset rather than silently-different
+// gap versus native, an acknowledged subset rather than silently-different
 // behaviour: no backtrace under the report (there is no __fern_report
 // equivalent here, so the message is the whole diagnostic). Recorded on
 // sanitize_on in asm_ir.fern.
@@ -50,8 +50,8 @@ const sanSelfHostCleanSrc = `function main(): i32 {
 // a documented no-op in this runtime (irlower.fern: "a no-op under the
 // bump/leak heap"), so unlike the native leg NOTHING here is freed and
 // the census says so — which is the census being accurate about the
-// runtime it is measuring, not a divergence to paper over. Exit code 42
-// rides through the report untouched.
+// runtime it is measuring, not a divergence to hide. Exit code 42
+// passes through the report untouched.
 const sanSelfHostLeakSrc = `function main(): i32 {
     var a: usize = __alloc(60);
     var b: usize = __alloc(60);

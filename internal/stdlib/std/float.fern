@@ -456,7 +456,7 @@ function __float_to_string_prec(n: f64, prec: i32): string {
 // `to_string_prec(prec)` — fixed-precision rendering with exactly
 // `prec` fractional digits (rounded half away from zero). The
 // precision-controlled counterpart to `to_string()`, for the
-// width/precision table-output story (issue #2684).
+// width/precision table output (issue #2684).
 pub function (n: f32) to_string_prec(prec: i32): string {
     return __float_to_string_prec(n as f64, prec);
 }
@@ -520,7 +520,7 @@ pub function (x: f64) sqrt(): f64 { return __sqrt_f64(x); }
 pub function (x: f64) log(): f64 { return __log_f64(x); }
 // `log2(x)` / `log10(x)` — logarithms in base 2 and base 10, derived from
 // the natural log by dividing by `ln(2)` / `ln(10)` (change-of-base). No new
-// primitive needed — they ride on the same `__log_f64` the wasm-IR backend
+// primitive needed — they use the same `__log_f64` the wasm-IR backend
 // already lowers. `log2(8)` is `3`, `log10(1000)` is `3`; `log2` of a power
 // of two and `log10` of a power of ten come out exact up to rounding.
 pub function (x: f64) log2(): f64 { return __log_f64(x) / 0.6931471805599453; }
@@ -543,7 +543,7 @@ pub function (x: f64) cos(): f64 { return __cos_f64(x); }
 pub function (x: f64) tan(): f64 { return __sin_f64(x) / __cos_f64(x); }
 // `sinh(x)` / `cosh(x)` / `tanh(x)` — the hyperbolic trig functions, built on
 // the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`) so — like
-// `exp2` / `log2` — they need no new primitive and ride the `__exp_f64` the
+// `exp2` / `log2` — they need no new primitive and reuse the `__exp_f64` the
 // wasm-IR backend already lowers. `sinh(0)` is `0`, `cosh(0)` is `1`,
 // `tanh(0)` is `0`, and the identity `cosh² - sinh² == 1` holds. `tanh` uses
 // the stable `(e²ˣ - 1)/(e²ˣ + 1)` form and saturates to `±1` past `|x| = 20`

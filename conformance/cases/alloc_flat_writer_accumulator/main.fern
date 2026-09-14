@@ -5,7 +5,7 @@
 // accumulator is released when the arm ends, so doubling the round count
 // cannot cost more fresh memory.
 //
-// `w.write(out)` is the load-bearing occurrence. The single-word string ABI
+// `w.write(out)` is the occurrence that matters. The single-word string ABI
 // taints a string local passed to a call it cannot see through, and
 // `__method_Writer_write` is a copying builtin — the bytes go to the fd and
 // nothing retains them. Without that credit `out` was not owned, so each

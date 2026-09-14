@@ -238,7 +238,7 @@ func TestSelfHostStrSliceBorrowIRArm64(t *testing.T) {
 
 // TestSelfHostStrSliceBorrowWasmIR is the wasm leg, where a slice COPIES rather
 // than viewing, so the residual per round is the view's own bytes and the source
-// reclaim is the whole of what these cases move.
+// reclaim is all these cases move.
 func TestSelfHostStrSliceBorrowWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string-slice borrow wasm IR e2e")

@@ -13,7 +13,7 @@ import (
 // irlower.lower_checked_binary emits the clamp condition lower_sat_binary
 // tests (the same per-backend-proven shape), then constructs `None` /
 // `Some(wrapped)` as a void-`if` + store-to-temp over op_opt_none /
-// op_opt_make — the Option rides a default (un-i64-marked) pointer slot, so
+// op_opt_make — the Option occupies a default (un-i64-marked) pointer slot, so
 // every self-host IR backend lowers it unchanged. Each program matches the
 // result and returns a distinctive exit code, mirroring the native oracle in
 // `internal/e2e/checked_arith_test.go`.
@@ -149,7 +149,7 @@ func TestSelfHostCheckedX86IR(t *testing.T) {
 }
 
 // TestSelfHostCheckedWasmIR pins the same cases on the wasm IR backend, where
-// the operand widths are native i32 / i64 and the Option rides an i32 pointer
+// the operand widths are native i32 / i64 and the Option occupies an i32 pointer
 // slot rather than a 64-bit register.
 func TestSelfHostCheckedWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

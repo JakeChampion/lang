@@ -28,7 +28,7 @@
 // reclamation passes cannot yet prove dead — see the leak classes in
 // docs/RC-PERCEUS-SELF-HOST-PORT.md — simply never reaches rc-zero, and
 // its `drop` never runs. `Drop` is a cleanup hook, not a guarantee; do
-// not hang correctness on it firing.
+// not depend on it for correctness.
 pub trait Drop {
     function drop(self: Self): void;
 }

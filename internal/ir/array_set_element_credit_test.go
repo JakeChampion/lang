@@ -50,7 +50,7 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// The refusal that keeps it sound: one counted store does not launder a
+// The refusal that keeps it sound: one counted store does not credit a
 // bare hand-out, because everyOccurrenceSafe is all-or-nothing.
 func TestStringParamSetThenReturnedBareStaysUncredited(t *testing.T) {
 	src := `function put(xs: string[], v: string): string {

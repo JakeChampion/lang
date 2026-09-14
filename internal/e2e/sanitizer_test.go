@@ -109,7 +109,7 @@ func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 }
 
 // runSanitizeArm64 is the arm64 sibling (qemu; SKIPs without the
-// aarch64 toolchain — rides CI).
+// aarch64 toolchain — runs in CI).
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
@@ -341,7 +341,7 @@ func TestX86_64SanitizeCleanRunIsSilent(t *testing.T) {
 	if allocs == 0 {
 		t.Error("expected a non-zero alloc count (one row per iteration)")
 	}
-	// The census stays honest with the quarantine on: a quarantined
+	// The census stays correct with the quarantine on: a quarantined
 	// block is accounted at its release, so precise drop still
 	// balances. Before that fix every freed array read as a leak.
 	if allocs != frees || live != 0 {
@@ -450,7 +450,7 @@ func TestX86_64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 	}
 }
 
-// --- arm64 legs (qemu; ride CI) ------------------------------------
+// --- arm64 legs (qemu; run in CI) ----------------------------------
 //
 // arm64 carries the whole mode: census, rc over-release report, and the
 // use-after-free quarantine. The two backends' diagnostics are the same

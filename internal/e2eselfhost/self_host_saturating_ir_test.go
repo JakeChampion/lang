@@ -55,7 +55,7 @@ var saturatingIRCases = []struct {
 	{"u64-sub-lo", `function main(): i32 { var m: u64 = 18446744073709551615; var n: u64 = 1; if ((n -| m) == 0) { return 17; } return 0; }`, 17},
 	{"u64-mul-hi", `function main(): i32 { var m: u64 = 18446744073709551615; var n: u64 = 2; if ((m *| n) == 18446744073709551615) { return 18; } return 0; }`, 18},
 
-	// u8 rides sub-i32 slots: the clamp is 255, and the saturated result is
+	// u8 occupies sub-i32 slots: the clamp is 255, and the saturated result is
 	// in range by construction so the wrap mask never has to run.
 	{"u8-add-hi", `function main(): i32 { var u: u8 = 250; var v: u8 = 10; if ((u +| v) == 255) { return 19; } return 0; }`, 19},
 	{"u8-sub-lo", `function main(): i32 { var u: u8 = 250; var v: u8 = 10; if ((v -| u) == 0) { return 20; } return 0; }`, 20},

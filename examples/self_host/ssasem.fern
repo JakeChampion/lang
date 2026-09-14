@@ -86,7 +86,7 @@ function is_i32(t: typeinfo.Type): boolean {
     return false;
 }
 
-// One unsigned byte. It rides an i32-shaped slot on every backend, so it costs
+// One unsigned byte. It occupies an i32-shaped slot on every backend, so it costs
 // no new physical representation; what distinguishes it is the range, which
 // each operator whose result can leave it wraps back.
 pub function is_u8(t: typeinfo.Type): boolean {
@@ -94,7 +94,7 @@ pub function is_u8(t: typeinfo.Type): boolean {
     return false;
 }
 
-// The unsigned 32-bit integer. Like the byte it rides an i32-shaped slot, but
+// The unsigned 32-bit integer. Like the byte it occupies an i32-shaped slot, but
 // over the whole 32-bit range, so a value past 2^31 fills the slot's sign bit
 // and every operator that reads one takes its unsigned form.
 pub function is_u32(t: typeinfo.Type): boolean {
@@ -119,7 +119,7 @@ pub function is_u64(t: typeinfo.Type): boolean {
 // The types that need a 64-bit slot of their own, which only wasm spells out.
 pub function is_wide(t: typeinfo.Type): boolean { return is_i64(t) || is_u64(t); }
 
-// The pointer-width unsigned integer: an address, riding the narrow slot,
+// The pointer-width unsigned integer: an address, occupying the narrow slot,
 // which is the address's own width on every backend — 32 bits on wasm, the
 // whole 64-bit slot on the register backends. It converts to and from the
 // 64-bit integers and nothing else: an operator at it would run at the i32's
@@ -132,16 +132,16 @@ pub function is_usize(t: typeinfo.Type): boolean {
 // The integer types read without a sign bit. It is what a widening extends by
 // and which form of the sign-reading operators — the orderings, the right
 // shift, division and remainder — the operand takes.
-pub function is_unsigned_int(t: typeinfo.Type): boolean { return is_u8(t) || is_u32(t) || is_u64(t); }
+pub function is_unsigned_int(t: typeinfo.Type): boolean { return is_u8(t) || is_u32(t) || is_u64(t) || is_usize(t); }
 
-// The 64-bit float. Like the i64 it rides a slot of its own that only wasm
+// The 64-bit float. Like the i64 it occupies a slot of its own that only wasm
 // spells out; its operators are the float opcodes, which never wrap.
 pub function is_f64(t: typeinfo.Type): boolean {
     if let typeinfo.TypeFloat(fl) = t { return fl.width == 64 && !fl.polymorphic; }
     return false;
 }
 
-// The 32-bit float rides the f64's slot at single precision: every value of
+// The 32-bit float occupies the f64's slot at single precision: every value of
 // the type is an f64 the f32 round-trip has already rounded, so the width is
 // a rounding applied wherever a value of the type is made — a constant, a
 // conversion, an operator's result — rather than a slot of its own.
@@ -161,7 +161,7 @@ pub function is_integer(t: typeinfo.Type): boolean {
     return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
-// A constant whose value has no i32 immediate to ride carries the literal's
+// A constant whose value has no i32 immediate to fit in carries the literal's
 // SOURCE TEXT instead, which the backends splice into an immediate of the
 // right width. The 64-bit types do not fit the immediate at all, and neither
 // does a u32 past 2^31 — so the u32 takes the text form at every value rather
@@ -318,7 +318,7 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // A narrow signed integer constant carries its value in the instruction's i32
 // immediate, and the physical form pushes it with no mask, so its type's range
 // has to hold HERE rather than be wrapped later. A constant with no such
-// immediate to ride (text_constant) carries the literal's SOURCE TEXT instead
+// immediate to fit in (text_constant) carries the literal's SOURCE TEXT instead
 // — the form the backends splice straight into an immediate of its own width,
 // and the one the AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
@@ -1024,7 +1024,8 @@ function float_op(op: string): boolean {
 // the conversion is a cast the source has to write. Operator overloads have
 // none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
-    if (is_integer(left) && !is_usize(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
+    if (is_usize(left) && semtypes.equal(left, right)) { return address_result(op, left); }
+    if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
     if (is_float(left) && semtypes.equal(left, right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     // A codepoint is compared, never ordered or added: native answers E009 to
@@ -1032,6 +1033,18 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
     if (is_char(left) && is_char(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
     return typeinfo.unchecked();
+}
+
+// An address supports the operators whose lowering does not read the operand
+// WIDTH, since the stack IR carries no binary at the pointer width: the
+// backends run add/sub/mul and the bitwise three on the whole register, and a
+// comparison on the whole register too. The shifts mask their count to the
+// operand width and div/rem select their register pair from it, so at the
+// narrow width both would truncate an address — those stay refused until a
+// pointer-width binary exists for the backends to resolve.
+function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
+    if (op == "/" || op == "%" || op == "<<" || op == ">>") { return typeinfo.unchecked(); }
+    return integer_result(op, t);
 }
 
 function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {

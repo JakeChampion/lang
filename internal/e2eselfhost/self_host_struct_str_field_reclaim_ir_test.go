@@ -156,7 +156,7 @@ function main(): i32 { var seed: i32 = useother("q"); if (seed < 0) { return 96;
 		"strarr-field-sibling-name-not-poisoned", 0)
 
 	// A BORROWED-PARAMETER store is admitted, and the retain is what makes that
-	// safe: the construction takes a reference (both ride
+	// safe: the construction takes a reference (both gated on
 	// struct_routes_field_reclaim), so `Esc`'s drop decs a count it owns instead
 	// of freeing the caller's array. This row was written when the store was
 	// REFUSED and asserted the caller's array survived anyway; it asserts the

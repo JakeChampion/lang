@@ -10,7 +10,7 @@ import (
 // --- An inferred f32 element keeps its width in elem_type_tag (#7756) --------
 //
 // `elem_type_tag` tested `expr_is_f64` with no `expr_is_f32` arm ahead of it. An
-// f32 value is also is_f64 — both ride the 8-byte slot — so an inferred f32
+// f32 value is also is_f64 — both occupy the 8-byte slot — so an inferred f32
 // element was tagged "f64" and lost the width its method dispatch keys on. The
 // stored value was right; only the RENDERING was wrong:
 //

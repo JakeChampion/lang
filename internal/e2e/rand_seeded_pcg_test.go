@@ -169,7 +169,7 @@ function main(): i32 {
 
     // rng_fill: the SAME stream rng_next gives, laid out eight bytes at a
     // time with the first draw in the low half. The loop is written out in
-    // rng_fill for speed, so this is what keeps the two honest.
+    // rng_fill for speed, so this is what keeps the two in agreement.
     var fh: usize = buf_new(64);
     var fst: i64 = rand.rng_fill(rand.rng_seed(4242 as i64), fh, 64);
     var filled: string = buf_take(fh);

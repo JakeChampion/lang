@@ -186,7 +186,7 @@ func TestArm64RemoveDirAllNestedTree(t *testing.T) {
 	}
 }
 
-// The arm64 headline pin for #5372: an unmodified examples/tests
+// The main arm64 pin for #5372: an unmodified examples/tests
 // TAP file must compile on the DEFAULT target through the full
 // CLI pipeline (modload + the in-process arm64 assembler) and
 // pass. std/test's TestRunner.finish() references

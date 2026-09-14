@@ -40,7 +40,7 @@ import (
 )
 
 // determinismMatrix favours the paths where a sort regression would
-// bite first: multiple generic functions, multiple type-arg
+// show first: multiple generic functions, multiple type-arg
 // instantiations per function, mixed scalar / array / string args,
 // and a generic struct sharing the same type parameter set.
 var determinismMatrix = map[string]string{

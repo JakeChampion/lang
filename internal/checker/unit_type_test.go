@@ -8,7 +8,7 @@ import (
 )
 
 // The unit value `()` is what makes `Result[void, E]` constructible, and
-// with it the whole errors-as-values story works for operations that have
+// with it the whole errors-as-values pattern works for operations that have
 // nothing to hand back: `?` propagates, `Ok(())` is the success case, and
 // the caller matches the same two arms as any other Result.
 func TestUnitValueChecks(t *testing.T) {

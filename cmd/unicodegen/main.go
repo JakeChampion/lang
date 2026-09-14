@@ -45,7 +45,7 @@
 //
 // Class tables — 2 fields (8 chars) per entry: lo | hi, inclusive.
 //
-// Correctness does not rest on the run-derivation being clever: `verify`
+// Correctness does not rest on the run-derivation being right: `verify`
 // below decodes the emitted tables for every code point in 0..MaxRune and
 // compares against the `unicode` package, failing the build on any
 // mismatch.
@@ -1258,7 +1258,7 @@ func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
 		}
 	}
 	// Spot-check the anchors the state machine keys on; a renumbering of
-	// the class IDs would sail past the round-trip above but not this.
+	// the class IDs would pass the round-trip above but not this.
 	for _, tc := range []struct {
 		cp    rune
 		class int
@@ -2046,7 +2046,7 @@ function _is_lower_cp(cp: i32): boolean {
 // === The ` + "`char`" + ` surface ===
 //
 // A ` + "`char`" + ` is a Unicode scalar value, distinct in the checker from the
-// ` + "`i32`" + ` a byte rides in (#5629). These are METHODS rather than free
+// ` + "`i32`" + ` a byte is stored in (#5629). These are METHODS rather than free
 // functions because a free ` + "`to_upper(c: char)`" + ` would collide with
 // ` + "`to_upper(s: string)`" + ` above — and because ` + "`c.to_upper()`" + ` next to
 // ` + "`s.to_upper()`" + ` is exactly the point: the receiver TYPE says which of
@@ -2494,7 +2494,7 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 // input and materialising them as owned strings would be pure overhead.
 //
 // A WARNING WORTH HEEDING, and the reason this is opt-in: reaching for
-// the n-th grapheme is usually a design smell. It is O(n) to find, and
+// the n-th grapheme is usually a design mistake. It is O(n) to find, and
 // the answer is rarely what the problem actually needed. Prefer
 // iterating this result, or an operation that does not need to know
 // about clusters at all. Fern keeps ` + "`s.len()`" + ` in BYTES and ` + "`s[i]`" + ` a byte
@@ -2566,7 +2566,7 @@ pub function grapheme_count(s: string): i32 {
 // correct-by-default sibling of ` + "`reverse_bytes`" + `. An accented letter or a
 // family emoji comes back intact rather than scrambled.
 //
-// ` + "`reverse_bytes`" + ` keeps its name and its place: it is the honest one,
+// ` + "`reverse_bytes`" + ` keeps its name and its place: it is the explicit one,
 // carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
     var gs: string[] = graphemes(s);
@@ -2631,7 +2631,7 @@ function _wb_next(s: string, i: i32): i32 {
 
 // _wb_break decides whether a word boundary falls before the current
 // code point, following the UAX #29 rules in their numbered order. As
-// with the grapheme rules the order is load-bearing: WB3 has to beat
+// with the grapheme rules the order is essential: WB3 has to beat
 // WB3a, and WB999 only speaks once every joining rule has declined.
 //
 // The two histories are deliberately separate. ` + "`" + `raw_prev` + "`" + ` is the code

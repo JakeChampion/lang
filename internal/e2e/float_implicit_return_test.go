@@ -11,7 +11,7 @@ package e2e
 //
 //	Invalid input WebAssembly code: type mismatch: expected f64, found f32
 //
-// That took out every program with an f64-returning `match` — which is most
+// That broke every program with an f64-returning `match` — which is most
 // programs handling `Option[f64]`, and therefore `std/test`, whose float
 // assertion family is built on exactly that shape (#6192). It is also why
 // TestArrayStatsWasm and TestArrayMedianRangeWasm skipped rather than ran.

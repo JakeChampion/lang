@@ -65,7 +65,7 @@ pub function (s: Sim) rng_state(): i64 {
 // sweep_seeds(n, prop) — run `prop(seed)` for seeds 1..n and return the
 // FIRST seed for which it returned false, or 0 when every seed passed.
 // The DST replay workflow in miniature: a failing property is a seed you
-// rerun under a debugger, not a flake you shrug at. Deliberately free of
+// rerun under a debugger, not a flake you ignore. Deliberately free of
 // std/test so any harness (or plain `main`) can call it.
 pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
     var s: i64 = 1;

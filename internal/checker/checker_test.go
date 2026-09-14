@@ -1001,7 +1001,7 @@ function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err !=
 // Operator overloading over a trait-bounded TYPE PARAMETER: `a + b` / `-a` where
 // `a`/`b` have type `T` and `T`'s bound provides the op's trait method desugars
 // to `a.add(b)` / `a.neg()` resolved via the bound — the #2706 generic-numeric
-// payoff. A type param whose bound lacks the method falls through to the usual
+// benefit. A type param whose bound lacks the method falls through to the usual
 // E009.
 func TestOperatorOverloadOverTypeParam(t *testing.T) {
 	const traits = `trait Add { function add(self: Self, o: Self): Self; }
@@ -1188,7 +1188,7 @@ function main(): i32 { empty(); return 0; }`
 // prelude: stdlib methods are no longer in scope unless their module
 // is imported. A program that calls `.split` without `import
 // "std/string";` should get a clean type error rather than silently
-// resolving against a magic prelude.
+// resolving against an implicit prelude.
 // TestUseWithoutAnnotationDoesNotPanicFormatting guards the regression
 // where a `use x <- f()` with no binding annotation, whose callback
 // parameter type the checker couldn't infer (inferUseParam bails with
@@ -3159,8 +3159,8 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 // `__memcpy`, `__memset`) declare their pointer params + result as
 // `usize`. User code that wants to feed pointer-shaped values (string,
 // Map handles, T[], [T], structs) into them must now use an EXPLICIT
-// `as usize` / `as i32` cast — the implicit usize wormhole is gated to
-// stdlib context so it can't silently launder type confusion in user
+// `as usize` / `as i32` cast — the implicit usize bypass is gated to
+// stdlib context so it can't silently carry type confusion in user
 // code. See docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
 func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 	// Explicit casts: type-check cleanly.
@@ -3178,7 +3178,7 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 			t.Errorf("explicit-cast form should type-check: %q\ngot: %v", src, err)
 		}
 	}
-	// Implicit usize hop in user code: rejected (the closed wormhole).
+	// Implicit usize hop in user code: rejected (the bypass is closed).
 	for _, src := range []string{
 		// string -> usize with no cast
 		`function f(a: string, b: string, n: i32): i32 {
@@ -3190,7 +3190,7 @@ func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
     var buf: i32 = __alloc(16);
     return buf;
 }`,
-		// the soundness exploit: i64 -> usize -> i32 laundering
+		// the soundness exploit: routing i64 -> usize -> i32
 		`function f(): i32 {
     var big: i64 = 5000000000i64;
     var p: usize = big;
@@ -3353,7 +3353,7 @@ function main(): i32 { return 0; }`)
 // std/array's concrete-element verbs reach dispatch through it, and they
 // cannot move onto receivers until the self-hosted compiler lowers that form.
 // A receiver method and a convention-named function claim the same
-// `Array.<name>` key, so this asserts the route rather than blessing it.
+// `Array.<name>` key, so this asserts the route rather than endorsing it.
 func TestArrayMethodNamePatternStillDispatches(t *testing.T) {
 	prog, err := parser.Parse(`function __method_Array_ghost(xs: i32[]): i32 { return 0; }
 function main(): i32 { return 0; }`)
@@ -5610,7 +5610,7 @@ function main(): i32 {
 
 // E055: a bare statement whose whole expression is a value-returning
 // collection mutator silently discards the new collection (the CoW aliasing
-// footgun). It must be reassigned, or explicitly discarded with `var _ = …`.
+// bug). It must be reassigned, or explicitly discarded with `var _ = …`.
 func TestUnusedCollectionResultE055(t *testing.T) {
 	// A bare `arr.append(x);` discards the returned array → E055.
 	err := checkSource(t, `function main(): i32 {
@@ -6149,7 +6149,7 @@ function main(): i32 { return pick(P { v: 42 }); }`,
 		},
 		{
 			// With a parameter the old code did not crash, it mis-reported:
-			// Params[1:] ate the real argument and blamed the caller.
+			// Params[1:] dropped the real argument and blamed the caller.
 			name: "with-arg",
 			src: `trait Show { function show(x: i32): i32; }
 struct P { v: i32 }
@@ -6600,7 +6600,7 @@ func TestStrMatchArmEscapeAllowed(t *testing.T) {
 
 // TestStrCalleeEscapeRejected: E065 through a callee that returns a view
 // of one of its own parameters. The chase used to stop at any call, so
-// wrapping the producer in a one-line identity function laundered the
+// wrapping the producer in a one-line identity function carried the
 // view past the rule — the hole the per-function summary closes. Every
 // shape below returns a pointer into a string reclaimed at exit.
 func TestStrCalleeEscapeRejected(t *testing.T) {
@@ -6615,7 +6615,7 @@ function (s: string) view(): str { return s; }
 		`function f(): str { var s: string = mk(); return id_view(slice_unchecked(s, 0, 1)); }`,
 		// two hops — the summary has to reach through hop2 to id_view
 		`function f(): str { var s: string = mk(); return hop2(slice_unchecked(s, 0, 1)); }`,
-		// a self-recursive laundering function: the fixpoint converges
+		// a self-recursive pass-through function: the fixpoint converges
 		// on it rather than looping
 		`function f(): str { var s: string = mk(); return rec(slice_unchecked(s, 0, 1), 3); }`,
 		// method form — the receiver is argument 0 of the hoisted
@@ -6623,7 +6623,7 @@ function (s: string) view(): str { return s; }
 		`function f(): str { var s: string = mk(); return s.view(); }`,
 		// the arm binding from the checked producer, handed to a callee
 		`function f(): str { var s: string = mk(); match (s[0:1]) { Some(v) => { return id_view(v); }, None => { return ""; } } }`,
-		// the laundered view parked in a local before the return
+		// the passed-through view parked in a local before the return
 		`function f(): str { var s: string = mk(); var t: str = id_view(slice_unchecked(s, 0, 1)); return t; }`,
 	} {
 		err := checkSource(t, decls+src)
@@ -6653,7 +6653,7 @@ function (s: string) view(): str { return s; }
 		`function f(): str { var s: string = mk(); return second(slice_unchecked(s, 0, 1), "lit"); }`,
 		// the callee returns a literal, viewing no argument at all
 		`function f(): str { var s: string = mk(); return lit_only(slice_unchecked(s, 0, 1)); }`,
-		// the laundered view is param-backed, so it outlives the callee
+		// the passed-through view is param-backed, so it outlives the callee
 		`function f(p: string): str { return id_view(slice_unchecked(p, 0, 1)); }`,
 		`function f(p: string): str { return p.view(); }`,
 	} {
@@ -6767,7 +6767,7 @@ function (s: string) own_copy(): string { return s + ""; }
 // TestSlicedTemporaryAllowed: the storage has to be THIS frame's. A callee
 // that hands back a parameter is handing back the caller's own storage,
 // which outlives the call, and a string literal is immortal however many
-// calls it is laundered through.
+// calls it is passed through.
 func TestSlicedTemporaryAllowed(t *testing.T) {
 	const decls = `function idarr(x: i32[]): i32[] { return x; }
 function idstr(s: string): string { return s; }
@@ -6813,7 +6813,7 @@ function f(v: str): i32 { return consume(v) + borrow(v); }`
 
 // TestPointerReinterpretFromI32Rejected (E069, #5053) locks the rule that a
 // 32-bit-only value (`i32` / `u32`) reinterpreted as a pointer-shaped type
-// (`string`, an array, or a struct) via `as` is a truncation footgun — the
+// (`string`, an array, or a struct) via `as` is a truncation bug — the
 // high 32 bits of the address were lost when the value became i32, so the
 // recovered pointer is corrupt once the heap exceeds 4 GiB. A `usize` source
 // carries the full width and stays allowed (the stdlib's raw-block-to-handle
@@ -6841,7 +6841,7 @@ func TestPointerReinterpretFromI32Rejected(t *testing.T) {
 	mustCode(`function f(k: i32): i32[] { return k as i32[]; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`struct P { x: i32 } function f(k: i32): P { return k as P; } function main(): i32 { return 0; }`, "E069")
 	mustCode(`function f(k: u32): string { return k as string; } function main(): i32 { return 0; }`, "E069")
-	// usize source is pointer-width — the honest promotion, still allowed.
+	// usize source is pointer-width — the correct promotion, still allowed.
 	mustOK(`function f(k: usize): string { return k as string; } function main(): i32 { return 0; }`)
 	mustOK(`function f(k: usize): i32[] { return k as i32[]; } function main(): i32 { return 0; }`)
 	// A plain numeric conversion (not a pointer reinterpret) is unaffected.
@@ -7344,7 +7344,7 @@ func TestByteDisplayGateAndDispatchAgree(t *testing.T) {
 	const displayTrait = `trait Display { function to_string(self: Self): string; }
 `
 	// A u32 impl does NOT make a byte printable — and the refusal is the
-	// honest E038 naming u8, not a dispatch failure blaming an import.
+	// correct E038 naming u8, not a dispatch failure blaming an import.
 	err := checkSource(t, displayTrait+
 		`impl Display for u32 { function to_string(self: Self): string { return "u32"; } }
 function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0; }`)

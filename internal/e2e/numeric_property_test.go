@@ -279,7 +279,7 @@ func interpStdout(t *testing.T, src string) string {
 // interpreter genuinely is not feature-complete: a gap skips the case instead
 // of failing. Every skip is counted against the floor in
 // TestNumericProperty_Differential, so a generator change that made most
-// programs unrunnable cannot read as a wall of skips nobody totals.
+// programs unrunnable cannot read as a mass of skips nobody totals.
 func interpStdoutOrSkip(t *testing.T, src string) string {
 	t.Helper()
 	return interpStdoutGap(t, src, true)
@@ -478,7 +478,7 @@ func buildNumComponent(t *testing.T, src string) string {
 // minSeedsRunPct is the share of generated seeds whose program must actually
 // reach the oracle. Measured at 100% on the current generator, so the floor has
 // no tuning problem; it exists because a generator change that made most
-// programs unmodellable would otherwise read as a wall of skips nobody totals,
+// programs unmodellable would otherwise read as a mass of skips nobody totals,
 // and the sweep would go on reporting PASS.
 const minSeedsRunPct = 80
 
@@ -491,7 +491,7 @@ func TestNumericProperty_Differential(t *testing.T) {
 
 	// Two floors, because they answer different questions. `ran` counts seeds
 	// that reached the interp oracle; the tally counts what each BACKEND leg
-	// then executed. The comment below used to be the whole story and is the
+	// then executed. The comment below used to be the whole check and is the
 	// #7400 hole: a backend leg skipping is its own sub-test, so it never
 	// counted against anything, and a host with no toolchain passed this
 	// sweep having compiled nothing.

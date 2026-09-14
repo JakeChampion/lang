@@ -59,7 +59,7 @@ function guarded(t: T2): i32 {
     return v;
 }
 
-// A string result rides the same value local as a pointer.
+// A string result occupies the same value local as a pointer.
 function as_string(t: T2): string {
     var s: string = match (t) {
         Pr((1, b)) => "one",

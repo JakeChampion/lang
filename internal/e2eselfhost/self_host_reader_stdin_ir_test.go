@@ -101,7 +101,7 @@ func TestSelfHostReaderStdinIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostReadAllStdinModloadIRX86_64 is the headline multi-module case: a
+// TestSelfHostReadAllStdinModloadIRX86_64 is the main multi-module case: a
 // program that imports std/io and calls io.read_all_stdin() now compiles through
 // the modload IR path (asm_load_run) — verified via -ir-probe reporting
 // "module: IR" for the program AND "io__read_all_stdin: ir" — and runs correctly

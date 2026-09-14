@@ -11,7 +11,7 @@ import (
 // encoders) — must lower to __fern_str_append, the in-place-when-unique
 // append, instead of OpStrConcat's unconditional allocate-and-copy-both.
 //
-// These pin the LOWERING decision target-independently; the runtime payoff
+// These pin the LOWERING decision target-independently; the runtime benefit
 // (allocation count, balance) is pinned end-to-end in
 // internal/e2e/rc_str_self_append_test.go.
 

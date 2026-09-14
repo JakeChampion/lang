@@ -90,7 +90,7 @@ func stmtTempStrConcatBumpSrc(n string) string {
 // inner arr_dec clobbers its box return register, the box is stashed in a scratch
 // local and re-loaded for the free (the exit sweep's slot-reload pattern) — a
 // naive box→drop→box chain double-freed the field buffer instead (the __rc_underflow
-// detector below has teeth for exactly that regression).
+// detector below catches exactly that regression).
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function main(): i32 {
@@ -120,7 +120,7 @@ function main(): i32 {
 // scalar-element array literal — the "ARR:" entries of the strict-fresh
 // registry, #4365): the returned rc=1 buffer is released with the shallow
 // rc-guarded __fern_rc_dec at the statement boundary (element-blind, scalar
-// elements ride the freed buffer). Native bounds this shape
+// elements live in the freed buffer). Native bounds this shape
 // (rc_heap_bump_discarded_call); the self-host leaked it until the ARR: arm.
 func stmtTempFreshCallArrBumpSrc(n string) string {
 	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }

@@ -88,7 +88,7 @@ func TestArm64RunTestsFallBackToNative(t *testing.T) {
 // compiler, once with the self-host one — and runs both corpora, which is a
 // ten-minute test binary. go test's default timeout is also ten minutes, so
 // without an explicit one the broadest package in the lane runs against a
-// wall nobody chose. A binary that wall kills reports the cases that were in
+// timeout nobody chose. A binary the timeout kills reports the cases that were in
 // flight as failures with NO output and an unknown elapsed: the lane names
 // tests that did not fail and never names the timeout.
 func TestUnitLaneSetsAnExplicitTestTimeout(t *testing.T) {

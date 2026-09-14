@@ -60,7 +60,7 @@ function main(): i32 { var a: A2 = A2.Wrap(1); var b: B2 = B2.Wrap(4); var r: i3
 	{"second-enum-only", `enum A9 { None, Xx(i32) }
 enum B9 { None, Yy(i32) }
 function main(): i32 { var b: B9 = B9.None; match (b) { B9.None => { return 4; }, _ => { return 1; } } }`},
-	// Shared name at different ordinals, so nothing can be riding on the
+	// Shared name at different ordinals, so nothing can depend on the
 	// two variants happening to sit at the same index.
 	{"shared-name-different-ordinals", `enum A5 { None, Xx(i32) }
 enum B5 { Yy(i32), None }

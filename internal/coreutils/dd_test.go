@@ -105,7 +105,7 @@ func ddCases(t *testing.T) []invocation {
 	//
 	// `c` is 1 and `w` is 2, neither takes the `iB` form or a second
 	// multiplier, and a `B` on the END of any piece makes the operand a
-	// BYTE count — which rides the multiplier grammar's own endings, so
+	// BYTE count — which attaches to the multiplier grammar's own endings, so
 	// `1kB` is 1000 bytes where `1k` is 1024 blocks.
 	add("suffix-c", "if=in10", "of=out", "bs=1", "count=1cx7", "status=noxfer")
 	add("suffix-c-bare", "if=in10", "of=out", "bs=1", "count=c", "status=noxfer")

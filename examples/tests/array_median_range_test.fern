@@ -6,7 +6,7 @@ import "std/array" as array;
 // TestArrayMedianRange pins these across interp / x86-64 / arm64 (the wasmbin
 // leg skips Option over a 64-bit payload, the gap avg_f64 / variance_f64
 // share); this is the migration-shaped companion. Option[f64] and sort_f64
-// lower on the self-host asm_ir path, so this rides both self-host gates too.
+// lower on the self-host asm_ir path, so this runs in both self-host gates too.
 
 function unwrap(o: Option[f64]): f64 {
     match (o) {

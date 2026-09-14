@@ -74,7 +74,7 @@ type invocation struct {
 	// put back for the other side, as stdoutPath's is.
 	stdoutFile string
 	// follow drives a case whose child never exits on its own — a
-	// `tail -f`. The harness plays the writer: each step fires once
+	// `tail -f`. The harness acts as the writer: each step fires once
 	// `after` bytes of stdout have arrived, exactly `limit` bytes are
 	// read in all, then the child is sent SIGTERM, which both sides die
 	// of. A step that never fires or bytes that never arrive end in
@@ -115,7 +115,7 @@ type invocation struct {
 	// harness's own. A case needs one when an operand has to be
 	// RELATIVE, which is the only way to spell uniq's output operand as
 	// `-c` or `+2` and see what POSIXLY_CORRECT does with it — and it is
-	// the whole of what `pwd` is about, where a path reached through a
+	// all `pwd` is about, where a path reached through a
 	// symbolic link is how the logical and physical answers differ.
 	dir string
 	// prepare runs immediately before each side starts, so a case for a
@@ -240,7 +240,7 @@ const followDeadline = 8 * time.Second
 
 // sigintSettle is how long a `sigint` case waits after the signal
 // before closing the read end, so a child that dies of SIGINT has done
-// so before the SIGPIPE that would otherwise be the cause of death.
+// so before the SIGPIPE that would otherwise have killed it instead.
 const sigintSettle = 250 * time.Millisecond
 
 func (st followStep) run(t *testing.T) {
@@ -1291,10 +1291,10 @@ func (inv invocation) snapshotFollowFiles(t *testing.T) func() {
 
 // readUpTo reads at most limit bytes from r, calling onData with the running
 // total after each chunk arrives, and gives up at followDeadline. The total
-// is the caller's only honest view of how much has arrived — a callback that
+// is the caller's only accurate view of how much has arrived — a callback that
 // tracks its own accumulator cannot see what readUpTo has already buffered.
 // The deadline is what keeps a child that has stopped writing without exiting
-// — a `tail -f` with nothing left to say — from blocking the whole package
+// — a `tail -f` with nothing left to write — from blocking the whole package
 // instead of failing its own case.
 func readUpTo(r *os.File, limit int, onData func(total int)) ([]byte, bool) {
 	type piece struct {
@@ -1492,7 +1492,7 @@ func linkGroup(info os.FileInfo, groups map[[2]uint64]int) int {
 
 // quote renders bytes readably: printable ASCII as itself, everything
 // else as an escape, so a difference in a NUL or a stray CR is visible
-// in the failure rather than swallowed by the terminal.
+// in the failure rather than lost in the terminal.
 func quote(b []byte) string {
 	var sb strings.Builder
 	sb.WriteByte('"')

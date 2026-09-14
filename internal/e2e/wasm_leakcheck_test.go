@@ -118,8 +118,8 @@ const wasmLeakBalancedSrc = `function main(): i32 {
 // wasmLeakRawSrc allocates two 64-byte blocks and frees neither, so the
 // census must read exactly 128 live bytes in 2 blocks. Raw __alloc
 // rather than a language-level shape on purpose: it is the one leak
-// whose exact size does not depend on how well rc reclamation is doing
-// this week.
+// whose exact size does not depend on the current state of rc
+// reclamation.
 const wasmLeakRawSrc = `function main(): i32 {
     var a: usize = __alloc(64);
     var b: usize = __alloc(64);

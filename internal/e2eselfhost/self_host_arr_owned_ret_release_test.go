@@ -436,8 +436,8 @@ function main(): i32 {
 	// strict-fresh literal. The registry used to refuse any reassignment, so
 	// the caller's binding earned no credit and the callee's rebind freed
 	// nothing: 240 B/round, frees=0 outright, where native balances both. The
-	// caller half rides the widened struct_ret_local_is_frame_fresh (all
-	// writes strict-fresh); the callee half rides the snapshot-local literal
+	// caller half goes through the widened struct_ret_local_is_frame_fresh (all
+	// writes strict-fresh); the callee half goes through the snapshot-local literal
 	// arm, vouched by the function's own strict-fresh registry row.
 	{"struct-producer-reassigned-local", `struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }

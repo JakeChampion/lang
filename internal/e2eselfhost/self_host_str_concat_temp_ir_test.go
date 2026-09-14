@@ -39,7 +39,7 @@ var strConcatTempIRCases = []struct {
 		6, -1, ""},
 	// Memory-safety at scale: a concat-chain temporary in a 5,000,000-iteration loop,
 	// non-escaping — the intermediate, the literal, and the final are all reclaimed,
-	// so the heap stays FLAT (a leak would explode it; a double-free would corrupt the
+	// so the heap stays FLAT (a leak would grow it; a double-free would corrupt the
 	// freelist and crash / return garbage). exit 0.
 	{"chain-churn-safe",
 		`function main(): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var k: i32 = 0; while (k < 5000000) { var r: string = pre + "x" + suf; t = (t + r.len()) % 7; k = k + 1; } return 0; }`,

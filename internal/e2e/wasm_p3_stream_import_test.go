@@ -60,7 +60,7 @@ var p3StreamConsumerCore = []byte{
 }
 
 // TestWasmP3StreamExportImport is the WASI Preview-3 `stream<T>` ACROSS-A-BOUNDARY
-// payoff, assembled through the Go composer (component.BuildStreamExportImportComponent):
+// case, assembled through the Go composer (component.BuildStreamExportImportComponent):
 // a nested producer exports `prod: async func() -> stream<u8>` (stream.new →
 // task.return the readable end → stream.write [10,20,12]), and a consumer
 // `canon lower async`-es that import, reads the returned stream handle,

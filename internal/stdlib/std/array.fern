@@ -508,7 +508,7 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // `avg_i64` / `avg_f64` and the running / statistical reductions
 // (`cumsum_f64`, `cumprod_f64`, `diff_f64`, `variance_f64`,
 // `stddev_f64`, …) that have no generic bounded equivalent. The
-// per-width `sum_*` / `max_*` / `min_*` zoo that once lived here was
+// per-width `sum_*` / `max_*` / `min_*` family that once lived here was
 // retired in favour of the generic bounded verbs
 // (`num.sum[T: Add + Zero]`, `cmp.max_of` / `cmp.min_of[T: Ord]`, #4387
 // item 2 / #5349); those cover i64 / u32 / u64 / f64 with the same
@@ -799,7 +799,7 @@ pub function get[T](xs: T[], i: i32): Option[T] {
 }
 
 // `map(xs, f)` — fresh `U[]` with `f` applied to every element.
-// Empty → empty. The workhorse transform.
+// Empty → empty. The most common transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
     var out: U[] = [];
     for x in xs { out = out.append(f(x)); }
@@ -1342,7 +1342,7 @@ pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
 
 // `flat_map(xs, f)` — map each element to a `U[]` and concatenate the
 // results into one flat `U[]` (`map` then flatten). `f`'s return is the
-// array `U[]` (pointer-shaped), so it rides the same indirect-call path
+// array `U[]` (pointer-shaped), so it uses the same indirect-call path
 // as `map`/`filter`. `flat_map([1,2], dup)` with `dup(x) = [x, x]` →
 // `[1,1,2,2]`.
 pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
@@ -1723,7 +1723,7 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] { return min_by(xs,
 // specific hand-written receivers. Each is READ-ONLY over its inputs
 // (no copy-on-write), so it is correct on the self-host IR path as well
 // as native; a *mutating* sort method (`xs.sorted()` → `cmp.sort`) is
-// deferred until the self-host RC copy-on-write story matches native.
+// deferred until the self-host RC copy-on-write matches native.
 // (Bounded-receiver generic methods: carried on the self-host IR path by
 // the same fold that already lowers `map`/`filter`/`fold`.)
 

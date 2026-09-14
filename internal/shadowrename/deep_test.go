@@ -446,7 +446,7 @@ func TestRenameTuplePatternBinderShadowsOuter(t *testing.T) {
 }
 
 // TestRenamePayloadSubPatternBinderShadowsOuter — `Has(Some(x))`: the binder
-// rides the payload SUB-PATTERN, not the arm's Bindings list, and must be
+// is carried in the payload SUB-PATTERN, not the arm's Bindings list, and must be
 // renamed all the same.
 func TestRenamePayloadSubPatternBinderShadowsOuter(t *testing.T) {
 	prog := runRename(t, `enum Holder { Has(Option[i32]), Nothing }

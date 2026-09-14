@@ -103,7 +103,7 @@ pub function json_encode(v: JsonValue): string {
     // Single shared `buf` and `i` across match arms — the
     // wasm emitter names locals by lang identifier, so
     // re-declaring a `var` in nested scopes collides
-    // (same footgun parse_float hit). Only one composite arm
+    // (same mistake parse_float hit). Only one composite arm
     // runs per call, so the shared `buf` needs no reset.
     var buf: u8[] = [];
     var i: i32 = 0;
@@ -293,7 +293,7 @@ struct __JsonParser {
     s: string,
     pos: i32,
     error: i32,
-    // Offset of the FIRST failure, or -1 while the parse is healthy.
+    // Offset of the FIRST failure, or -1 while the parse has not failed.
     // The cursor already threaded `pos`, so the position of a syntax
     // error was known at the point of failure and thrown away by
     // json_parse returning None — a malformed document reported that it
@@ -797,7 +797,7 @@ pub function json_parse(s: string): Option[JsonValue] {
 // Schema-directed JSON extraction helpers — Tier-C Rec §12
 // (docs/STDLIB-DESIGN-RESEARCH.md Rec §3) Phase 1.
 //
-// The full vision is `json_parse[T](bytes) → Result[T,
+// The full design is `json_parse[T](bytes) → Result[T,
 // JsonError]` where the compiler generates a per-struct walker
 // for each T. That needs a new IR pass to monomorphise + emit
 // per-T decoder code — multi-week. Phase 1 (this surface)

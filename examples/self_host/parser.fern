@@ -101,7 +101,7 @@ pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: st
 // Variants are captured as bare type-name strings — they
 // resolve to other struct decls in the same module (or to
 // primitives in a later milestone). The `pub` modifier is
-// optional and currently swallowed without ceremony, since
+// optional and currently consumed and discarded, since
 // the self-host pipeline doesn't yet distinguish exported
 // from private decls.
 pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32, is_pub: boolean }
@@ -138,7 +138,7 @@ pub struct Import { path: string, is_reexport: boolean, reexport_names: string[]
 // wasm" from a wasm_run `ast` verdict (it is eligible — the emitted module
 // called an undefined helper), and a third was made while fixing the second.
 // docs/TEST-GATES.md documents the trap in prose; a trap that careful readers
-// walk into repeatedly needs to announce itself at the point of use.
+// walk into repeatedly needs a warning at the point of use.
 //
 // Deliberately a WARNING, not an error, and deliberately not touching the exit
 // code: dozens of existing tests feed these drivers programs whose imports are
@@ -195,7 +195,7 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // a bounded type parameter may still call it through the trait.
 // provided is every method name the trait declares — abstract, defaulted, or
 // associated — the set a bound on a type parameter makes callable.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[] }
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -208,7 +208,7 @@ pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[
 // lost its `trait` blocks entirely and every `impl` of one then named a trait
 // the file no longer declared. A method's body is empty when it was written
 // abstract.
-pub struct TraitDecl { name: string, type_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean }
+pub struct TraitDecl { name: string, type_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean, assoc_types: string[] }
 
 // ImplDecl is an `impl` block as WRITTEN, retained for the formatter (#6783) for
 // the same reason TraitDecl is. parse_impl_decl desugars on the way in — each
@@ -222,7 +222,7 @@ pub struct TraitDecl { name: string, type_params: string[], supertraits: string[
 // already reads as the concrete impl type there, and a method's `self` receiver
 // is re-inserted as its first parameter at print time. `trait_ref` is "" for an
 // inherent `impl Type { … }`.
-pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32 }
+pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32, assoc_names: string[], assoc_values: string[] }
 
 // FieldLines records the source line of each FIELD of one struct, or of each
 // VARIANT of one enum, for the formatter alone. Both formatters force the
@@ -231,7 +231,7 @@ pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[]
 // self-host printed the one-liner instead and every such comment was re-emitted
 // above the NEXT declaration, where it documents the wrong thing (#6802).
 //
-// It rides beside Module for the reason TraitDecl does: 57 StructFieldDecl
+// It sits beside Module for the reason TraitDecl does: 57 StructFieldDecl
 // literals across the self-host would each have to carry a line none of them
 // reads.
 pub struct FieldLines { name: string, decl_line: i32, lines: i32[] }
@@ -301,7 +301,7 @@ function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: 
     return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
 }
 // e_unit_at builds the unit value `()`. Its payload is the constant 0 the
-// native compiler lowers its UnitLit to, and `()` rides along as the source
+// native compiler lowers its UnitLit to, and `()` is kept as the source
 // spelling so the printer writes the unit back rather than the decoded payload.
 function e_unit_at(line: i32, col: i32): ast.Expr {
     return ast.ExprNumber { text: "0", suffix: "", raw: "()", is_float: false, line: line, col: col };
@@ -700,7 +700,7 @@ function is_builder_mutation(c: ast.ExprCall, b: string): boolean {
 // `b.with(...)` into `b = b.append(...)`, recursing into every statement
 // container so a builder mutated inside a loop / branch is handled. A
 // builder call left unrewritten (e.g. inside a nested lambda, not descended
-// into) stays a discarded value-returning result and trips E055 — loud, not
+// into) stays a discarded value-returning result and trips E055 — reported, not
 // a silent lost write.
 function rewrite_builder_stmt(s: ast.Stmt, b: string): ast.Stmt {
     match (s) {
@@ -1071,7 +1071,7 @@ pub function resolve_labels_module(mod: Module): Module {
 // `for VAR in EXPR { body }` iter being the motivating case
 // (`for x in a {}` must read `a` + an empty block, not the empty
 // struct literal `a {}`). Set true only around the iter parse and
-// restored afterward; it rides through advance() so it stays in
+// restored afterward; it is carried through advance() so it stays in
 // force for the whole iter sub-expression, matching the Go
 // parser's noStructLit (which likewise blocks nested struct lits
 // in the iter — `for x in f(Foo{…})` is rejected on both).
@@ -1226,6 +1226,16 @@ function (p: Par) peek_punct(): string {
         _ => { return ""; }
     }
     return "";
+}
+
+// at_path_sep reports whether the cursor is on a path separator. `.` and `::`
+// are interchangeable in EXPRESSION position (`mod.f` / `mod::f`), so every
+// site that walks a dotted name accepts either. Type position is the
+// exception and does NOT use this: there `::` means an associated-type
+// projection and `.` a module-qualified name (docs/ASSOCIATED-TYPES.md).
+function (p: Par) at_path_sep(): boolean {
+    var pk: string = p.peek_punct();
+    return pk == "." || pk == "::";
 }
 function (p: Par) peek_keyword(): string {
     var t: lexer.Token = p.peek();
@@ -1995,7 +2005,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 if (p.peek_punct() == "{") {
                     match (base) {
                         ast.ExprIdent(bid) => {
-                            // The written instantiation rides on the literal's
+                            // The written instantiation is stored in the literal's
                             // type name under `-fmt`: dropping it re-infers the
                             // literal, so `Box[i64] { val: 42 }` came back as
                             // `Box { val: 42 }` and quietly became `Box[i32]`.
@@ -2041,7 +2051,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 p = p.advance();
                 base = e_index(base, idx_expr);
             }
-        } else if (pk == ".") {
+        } else if (pk == "." || pk == "::") {
             // Field access `obj.field`. Field is either an
             // ident (struct field) or a numeric literal
             // (tuple index — `.0`, `.1`, …). Both shapes
@@ -2194,7 +2204,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
             // Range-check a float literal where the token becomes a value, the
             // same point the Go parser hands the text to strconv.ParseFloat: a
             // magnitude f64 cannot hold is P002 on both engines, not a silent
-            // +Inf (#6842). The rejection rides an ExprUnknown, since the parser
+            // +Inf (#6842). The rejection uses an ExprUnknown, since the parser
             // has no error list, and still goes through parse_postfix so token
             // consumption is unchanged.
             // `-fmt` opts out (Par.verbatim): a reformat must return the text it
@@ -2294,7 +2304,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
                 var kwline: i32 = p.peek_line();
                 var kwcol: i32 = p.peek_col();
                 var look: Par = p.advance();
-                if (look.peek_punct() == ".") {
+                if (look.at_path_sep()) {
                     return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
                 }
             }
@@ -2602,7 +2612,7 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
 // zero_expr_for builds a throwaway value of scalar return-type `rt` for the
 // synthetic terminal return above.
 //
-// A 64-BIT integer width rides on the zero as a literal suffix. The value local
+// A 64-BIT integer width is carried on the zero as a literal suffix. The value local
 // is declared unannotated, so a bare `var v = 0` gives it an i32 slot and the
 // arm store `v = 5000000000i64` then has nowhere to go — the module bails with
 // "assignment to `…_r` from number literal". The narrower integer tags need no
@@ -2692,7 +2702,7 @@ function if_expr_rt(e: ast.Expr): string {
 // that cannot be narrowed: declaring i32 over it is the same contradiction
 // if_expr_rt was fixed to stop producing. Anything else keeps the then-branch's
 // tag, which is what parse_if_chain did unconditionally — it computed the else
-// branch's tag and dropped it on the floor, so width appearing only in the else
+// branch's tag and discarded it, so width appearing only in the else
 // branch was still lost (`if (c) { 6 } else { 5000000000 }`).
 function wider_rt(a: string, b: string): string {
     if (a == b) { return a; }
@@ -2863,7 +2873,7 @@ function with_sugar_origin(st: ast.Stmt, origin: string): ast.Stmt {
 }
 
 // p_tuple_carrier wraps a nested tuple element's encoding in a Pattern so it
-// can ride on elem_pats. The variant fields are inert — elem_kinds says 4, and
+// can be stored in elem_pats. The variant fields are inert — elem_kinds says 4, and
 // only the tup_* fields are read back.
 function p_tuple_carrier(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): ast.Pattern {
     var no_extra: string[] = [];
@@ -2909,7 +2919,7 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
             binds = binds.append("");
             lits = lits.append(e_bool(true));
             pats = pats.append(p_tuple_carrier(ne_kinds, ne_binds, ne_lits, ne_pats));
-        } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
+        } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::")) {
             // Variant sub-pattern: a binder is followed by `,` or `)`, so `(`
             // (payload list, empty for a payload-less variant) and `.` (a
             // `mod.` qualifier) both say variant unambiguously. The payload
@@ -3229,7 +3239,7 @@ function struct_field_variant_start(p: Par): boolean {
     var n: string = p.peek_ident();
     if (n.len() > 0 && n != "_") {
         var nx: string = p.peek_punct_at(1);
-        if (nx == "(" || nx == ".") { return true; }
+        if (nx == "(" || nx == "." || nx == "::") { return true; }
     }
     return false;
 }
@@ -3968,7 +3978,7 @@ function parse_match_expr(p: Par): IfChain {
     // bodies into build_tuple_match's done-flag chain, where an arm's `return`
     // leaves the enclosing function instead of yielding the expression's value.
     // That is the same shape the tuple- and struct-SCRUTINEE desugars above hit,
-    // so it takes the same cure: route the arm values through a value local
+    // so it takes the same fix: route the arm values through a value local
     // (see IfChain.value_local). A variant sub-pattern needs none of this — its
     // inner match is a StmtMatch, whose arm returns lower_iife_match rewrites.
     if (arms_have_tuple_subpattern(arms)) {
@@ -4178,7 +4188,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
         // of a callback lambda appended as CALL's last argument, and the block
         // returns CALL's result. `use n <- apply(41); <rest>` desugars to
         // `return apply(41, (n) => { <rest> });`. A nested `use` in <rest>
-        // recurses. Without this the line shredded (#4335).
+        // recurses. Without this the line mis-parsed (#4335).
         if (p.peek_keyword() == "use") {
             var uline: i32 = p.peek_line();
             var ucol: i32 = p.peek_col();
@@ -4334,7 +4344,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     // matches use `lexer.TokX(...)` throughout, so this is required
     // for the self-host parser to parse its own source. Same gap as
     // parse_type_name's qualified-name handling.
-    while (p.peek_punct() == ".") {
+    while (p.at_path_sep()) {
         p = p.advance();  // consume `.`
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
@@ -4387,7 +4397,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
         var bn: i32 = 0;
         while (p.peek_punct() != ")" && !p.at_end()) {
             if (p.peek_ident().len() > 0
-                && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
+                && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == "." || p.peek2_punct() == "::")) {
                 // The slot binds a synthetic temp and `nested` records the
                 // pattern the temp is matched against — the same shape the
                 // literal slot below uses, so a sub-pattern works at ANY
@@ -4405,7 +4415,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
                 bn = bn + 1;
             } else if (bn == 0 && p.peek_punct() == "(") {
                 // A TUPLE sub-pattern in the slot (`Pr((a, b))`). Pattern has
-                // no tuple case, so the elements ride on PatVariant and
+                // no tuple case, so the elements are stored on PatVariant and
                 // build_merged_arm turns them into a tuple inner match.
                 var (tk, tb, tl, tpp, tp) = parse_tuple_arm_pattern(p);
                 p = tp;
@@ -4547,7 +4557,7 @@ function arm_is_nested(arm: ast.MatchArm): boolean {
 // notion of arm-position nesting at all.
 // arms_take_flag_chain reports whether this arm list wants the done-flag
 // chain: some arm carries a payload sub-pattern, and none carries a TUPLE
-// sub-pattern. A tuple slot rides build_merged_arm's own tuple branch, which
+// sub-pattern. A tuple slot uses build_merged_arm's own tuple branch, which
 // wrap_payload_pats does not reproduce, so those keep the merge — they are
 // single-slot by construction and the merge expresses them correctly.
 function arms_take_flag_chain(arms: ast.MatchArm[]): boolean {
@@ -5146,7 +5156,7 @@ pub function stmts_mention(stmts: ast.Stmt[], name: string): boolean {
 }
 
 // parse_loop_stmt parses `loop { body }` — the canonical infinite loop —
-// and desugars it to `while (true) { body }` so it rides the existing
+// and desugars it to `while (true) { body }` so it uses the existing
 // StmtWhile IR lowering (block/loop/br_if) with no new node or emitter
 // arm. Kept in its own function so parse_stmt (already very large) doesn't
 // grow — an oversized function miscompiles on the native backend (#2720).
@@ -5187,7 +5197,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
         // none). Native accepts a `var` init, an expression init, or
         // an empty init/cond (`parser.go` parseFor); the self-host previously
         // gated only on a `var` init (#2820), so `for (i = 0; …)` / `for (;
-        // …)` fell into the map arm and shredded (#4339). The Stmt union has
+        // …)` fell into the map arm and mis-parsed (#4339). The Stmt union has
         // no C-style-for node, so desugar to a scoped while loop with a
         // first-iteration flag, so a `continue` re-runs STEP (matching C
         // semantics) instead of skipping it. Reuses if / while / break.
@@ -5291,7 +5301,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     if (at_pattern_head(p)) {
         var fp_line: i32 = p.peek_line();
         var fp_col: i32 = p.peek_col();
-        // The `@` binding rides on the DESTRUCTURE, which already names the
+        // The `@` binding is carried on the DESTRUCTURE, which already names the
         // temp holding the whole value after it — so the element local stays
         // synthetic and the printer has one rule for every pattern header:
         // a `$forpat_` element whose first body statement destructures it.
@@ -5348,7 +5358,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     // `__range(LOW, HIGH)` call — the same parser-internal-builtin
     // idiom as `__set_index` / `__set_field`. The checker binds the
     // loop var to i32 and irlower lowers it to a counted loop; the
-    // call shape rides through constfold / substitution / printing
+    // call shape goes through constfold / substitution / printing
     // for free (LOW, HIGH are ordinary i32 sub-expressions). The
     // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
     // instead, which irlower lowers with a `<=` (closed-interval)
@@ -5552,7 +5562,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         }
         var lam: ast.Expr = e_lambda(fr_func.params, fr_func.ret_type, fr_func.body);
         // `-fmt` records which of the two spellings was written, the way a
-        // struct destructure rides on the same field ("@sd:…"): both parse to a
+        // struct destructure uses the same field ("@sd:…"): both parse to a
         // lambda-valued local, so without the marker a nested declaration came
         // back as `var f = (…) => { … };`.
         if (p.verbatim) { return (s_var_at(fr_func.name, "@fndecl", lam, fr_func.line, fr_func.col), p); }
@@ -6373,7 +6383,7 @@ function ret_spelling_is_array(name: string): boolean {
 
 // fn_ret_admitted is the single rule for which RESULT spellings a fn type keeps
 // in its `fn_ret` sidecar. `r_is_arr` says the result is itself an array, which
-// rides on the separate ret_arr bit.
+// is recorded in the separate ret_arr bit.
 //
 // Struct and nominal-enum returns let a fn value resolve `g().field` and let
 // monomorphize rewrite a nested `match (cont(tok))` (#3640, #4722). `string`
@@ -6422,7 +6432,7 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
     // its own shape pointer); op_dyn_dispatch enumerates every module
     // method of the called name over its struct/prim receivers, so a
     // method from ANY trait in the set lands on the concrete impl. The
-    // trait set rides along on the op for the one case the name-keyed
+    // trait set is carried on the op for the one case the name-keyed
     // search cannot answer alone: two traits providing one method for
     // one type, where the second provider is emitted as
     // `<Type>.<Trait>.<m>` and only the trait picks it out
@@ -6579,7 +6589,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     if (is_fn && !top_comma && !(top_arrow && p.peek_punct() == "=>")) {
         // `-fmt` keeps the parenthesised signature: `fn[]` names neither
         // what the element takes nor what it returns, and the parens are
-        // load-bearing — `(string) => string[]` re-parses as ONE function
+        // essential — `(string) => string[]` re-parses as ONE function
         // returning `string[]`, so `((string) => string)[]` must keep them.
         if (p.verbatim) { return consume_array_suffix(p, tbuf); }
         // The coarse tag drops the signature, so recover the RESULT spelling
@@ -6608,7 +6618,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
         // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
         // array of closures. Record ret_arr when R is itself an
         // array (`(T) => U[]`): the tag stays the plain "fn" all
-        // consumers expect, but the bit rides along so lower_func can
+        // consumers expect, but the bit is still recorded so lower_func can
         // admit `for y in f(x)` (flat_map) onto the IR path.
         var (fnr_name, fnr_ret_arr, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
         var r_is_arr: boolean = ret_spelling_is_array(rr_name);
@@ -6631,7 +6641,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
         // returns, so a reformatted `cmp: (T, T) => i32` would lose
         // both (#6773). `fnr_name` is "fn" plus any trailing `[]`, and
         // native prints an array-of-closures as `(T) => R[]` — so the
-        // suffix rides on the end here too.
+        // suffix goes on the end here too.
         if (p.verbatim) {
             return (tbuf + " => " + rr_name + slice_unchecked(fnr_name, 2, fnr_name.len()), r_is_arr, fn_ret_ty, fnr_p);
         }
@@ -6745,7 +6755,7 @@ function rest_starts_with_array_suffix(s: string, from: i32): boolean {
 // parser, which resolves `(i32)` to `i32` wherever it occurs (#8800): the
 // list `(i32), i32` writes `i32, i32`, a nested `Option[(i32)]` writes
 // `Option[i32]`, and `((i32) => i32)` writes `(i32) => i32`. The parens are
-// load-bearing — and kept — when the group is a tuple (a top-level comma), a
+// essential — and kept — when the group is a tuple (a top-level comma), a
 // function parameter list (a `=>` follows its `)`), or an array-of-closure
 // whose suffix a kept group stops splitting.
 function canonicalise_type_args(s: string): string {
@@ -6805,12 +6815,18 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
     // process is OOM-killed. parser.fern itself is full of
     // `lexer.Token` field / param types, so this is required for the
     // self-host parser to parse its own source.
-    while (p.peek_punct() == ".") {
-        p = p.advance();  // consume `.`
+    while (p.at_path_sep()) {
+        // The separator is KEPT: in type position `.` and `::` are not
+        // interchangeable. `mod.Type` is a module qualifier, stripped to the
+        // bare name downstream; `Base::Name` is an associated-type projection
+        // (`Self::Item`) the checker resolves against the impl's binding.
+        // See docs/ASSOCIATED-TYPES.md.
+        var sep: string = p.peek_punct();
+        p = p.advance();
         var seg0: string = p.peek_ident();
         if (seg0.len() == 0) { seg0 = p.peek_keyword(); }
         if (seg0.len() == 0) { break; }
-        base = base + "." + seg0;
+        base = base + sep + seg0;
         p = p.advance();
     }
     // `str` -- the borrowed-string view type (#4813). The self-host ERASES
@@ -6818,7 +6834,7 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
     // native ir/erase_str.go choke point. A view lowers to exactly the
     // string box shape, so normalizing here keeps every downstream
     // `== "string"` dispatch site working unchanged. View-ness the checker
-    // enforces rides the sidecars recorded before this erasure
+    // enforces depends on the sidecars recorded before this erasure
     // (StmtVar.is_str, FuncDecl.ret_str -> checker t_str, #7293; the E065
     // view-escape chase). A qualified
     // `str.Foo` keeps its nominal spelling (the dot-chain above already
@@ -6867,12 +6883,20 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
         // `Option[()]` and leaving `=> i32` on the cursor — which then corrupts the
         // enclosing decl body into a StmtUnknown.
         if (pk == "=>") { inner = inner + " => "; p = p.advance(); prev_ident = false; continue; }
+        // An associated-type PIN inside a dyn bracket — `dyn Holder[Item = i32]`.
+        // Without this the loop breaks on the `=`, truncating the type and
+        // spilling `= i32]` onto the cursor. Matched after `=>`, which the
+        // lexer emits as one token. See docs/ASSOCIATED-TYPES.md.
+        if (pk == "=") { inner = inner + " = "; p = p.advance(); prev_ident = false; continue; }
         // A module-QUALIFIED generic arg, e.g. `Map[string, peg.Pattern]`. The
         // loop used to break on the `.`, truncating the type to `Map[string,
         // peg]` and leaving `.Pattern]` on the cursor — which corrupted the
         // whole `var` into a StmtUnknown, and `-fmt` wrote that back as
         // `/*unknown-stmt:missing = in var*/`.
-        if (pk == ".") { inner = inner + "."; p = p.advance(); prev_ident = false; continue; }
+        // `::` rides the same path: an associated-type projection nested in a
+        // generic arg (`Option[Self::Item]`) is collected verbatim, and the
+        // checker resolves it once the impl's binding is known.
+        if (pk == "." || pk == "::") { inner = inner + pk; p = p.advance(); prev_ident = false; continue; }
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
         if (seg.len() == 0) { break; }
@@ -7061,7 +7085,7 @@ pub function is_destr_marker(type_name: string): boolean {
 // native parser's parseParamPattern: the param becomes a holder of the
 // annotated type, and the returned ParamDestr carries the binding list the
 // caller prepends to the freshly-parsed body as an ordinary destructure
-// statement, so the whole feature rides the existing destructure lowering.
+// statement, so the whole feature uses the existing destructure lowering.
 // The holder is named by the `@` binder when one is written, else a synthetic
 // `__ptuple_<line>_<col>` uniqued by source position — the same name native
 // mints, so the two compilers stay in step.
@@ -7228,7 +7252,7 @@ function parse_type_param_list(p: Par): (TpList, Par) {
             while (go && !p.at_end()) {
                 var tname: string = "";
                 if (p.peek_ident().len() > 0) { tname = p.peek_ident(); p = p.advance(); }
-                if (p.peek_punct() == ".") {
+                if (p.at_path_sep()) {
                     p = p.advance();
                     if (p.peek_ident().len() > 0) { tname = tname + "." + p.peek_ident(); p = p.advance(); }
                 }
@@ -7511,7 +7535,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // to a CONCRETE container (`some1__i64(x: i64): Option[i64]`) makes every
         // backend lower it via the existing container path, so the wasm module no
         // longer bails. The bare-scalar-param gate excludes `map`/`filter`
-        // (ARRAY params — the wide value rides an i32 array pointer, never trips
+        // (ARRAY params — the wide value is behind an i32 array pointer, never trips
         // the erased-wide gate, and promoting them would over-monomorphise the
         // stdlib). `x: T` is bindable from the call arg, so the clone's T resolves.
         //
@@ -7526,7 +7550,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // stranded).
         if (all_tp_count == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
         // (c-arr) the ARRAY-param sibling: `reverse[T](xs: T[]): T[]`. The note
-        // above excluded these on the grounds that a wide value "rides an i32
+        // above excluded these on the grounds that a wide value "is behind an i32
         // array pointer, never trips the erased-wide gate" — half of which was
         // wrong. Nothing wide is passed by value, so the gate never fired, but
         // the ELEMENT width is erased too, and on wasm32 the callee then copies
@@ -7538,7 +7562,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // container spellings. That started as `feeds_wide_container`, then grew a
         // bare-typevar case for #6273 — and the spelling after that,
         // `pair_of[T](xs: T[]): (T, T)`, was wrong again, as was the `(i32, T)[]`
-        // of `array.enumerate`. Every one of them is the same defect wearing a
+        // of `array.enumerate`. Every one of them is the same defect with a
         // different return type, so the condition asks the question that actually
         // matters: does the CALL SITE have to know what came back?
         //
@@ -7852,7 +7876,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
             // Record-form variant `V { f: T, g: U }`. The payload fields keep the
             // positional `__ev` / `__ev<k>` marker names, so the layout and every
             // downstream `__ev` test match the positional form exactly; the written
-            // names ride alongside in variant_field_names for the checker, the
+            // names are also recorded in variant_field_names for the checker, the
             // printer, and the named-pattern resolution.
             p = p.advance();
             var rnum: i32 = 0;
@@ -7945,7 +7969,7 @@ function parse_pubuse(p: Par): (Import, Par) {
         lexer.TokString(s) => { path = s.value; p = p.advance(); },
         _ => { }
     }
-    if (p.peek_punct() == ".") { p = p.advance(); }
+    if (p.at_path_sep()) { p = p.advance(); }
     var names: string[] = [];
     if (p.peek_punct() == "{") {
         p = p.advance();
@@ -7968,7 +7992,7 @@ function parse_pubuse(p: Par): (Import, Par) {
 // EXPR — so the rest of the pipeline + the emitter reuse the existing
 // function machinery, and a bare `NAME` reference becomes a call.
 function parse_const_decl(p: Par): (FuncDecl, Par) {
-    // The const's own position and an is_const marker ride the desugared
+    // The const's own position and an is_const marker are stored on the desugared
     // FuncDecl. Both are needed downstream: printer.print_module skips decls
     // with no source position (that is how `@derive`'s synthesised methods stay
     // out of the output), and without the marker a const is indistinguishable
@@ -8645,7 +8669,7 @@ pub function split_top_commas(s: string): string[] {
 // Types are carried through the self-host compiler as flat STRINGS ("i32",
 // "Map[string, i32]", "Option[(string, string)]", "i32[]", …) that a dozen
 // downstream sites re-decode by hand — depth-tracking byte scans keyed on exact
-// separators ("[", "]", "(", ", "), off-by-one bracket surgery, and unsound
+// separators ("[", "]", "(", ", "), off-by-one bracket arithmetic, and unsound
 // "names never contain X" assumptions (asmcore ty_from_name / split_tuple_ret /
 // tuple_ret_tag_at, checker's six type_from_name* resolvers, wasm). Each is a
 // fresh chance to mis-read a nested generic or tuple.
@@ -8803,7 +8827,7 @@ pub function ref_is_fn_value(r: TypeRef): boolean {
 }
 
 // A parameter spelling may carry the CONSUMING marker `own T`: the callee
-// releases what it is handed there. It rides in the spelling because that is
+// releases what it is handed there. It is carried in the spelling because that is
 // where a declaration's parameter types are recorded, and parse_type_ref keeps
 // it in the base of the leaf it opens.
 pub function spelling_is_own(spelling: string): boolean {
@@ -9129,7 +9153,7 @@ function binds_to_key(tparams: string[], binds: MEnv): string {
         // Join multi-param instantiation keys with ';' (a char that never
         // appears in a type name) rather than '__': a per-param value can
         // itself be a module-mangled type (`iter__ArrayIter[i32]`) whose
-        // embedded '__' would make split_dunder shatter the key into the wrong
+        // embedded '__' would make split_dunder split the key into the wrong
         // arity (the documented multi-param limitation). split_inst_key splits
         // on ';' so each value stays intact; sanitize_key maps ';' -> '__' so
         // the emitted clone NAME is unchanged for the simple multi-param case.
@@ -9997,7 +10021,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                     // template there and mangled to a `util__append_all` no
                     // instantiation defines. Without this arm the expected type
                     // was never consulted for a qualified callee, so an
-                    // expected-type position could not rescue it either and the
+                    // expected-type position could not resolve it either and the
                     // module bailed on a dangling call (#7773).
                     ast.ExprFieldAccess(fac) => {
                         match (fac.obj) {
@@ -10629,7 +10653,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     // (split_inst_key), so a per-param module-mangled value (`iter__ArrayIter[i32]`,
     // from an Iterator-bounded reducer `sum_iter[T: Add, I: Iterator[T]]` over
     // `iter.of(xs)`) keeps its embedded '__' intact — split_dunder would have
-    // shattered it into the wrong arity and bound `I` to the bogus "iter".
+    // split it into the wrong arity and bound `I` to the bogus "iter".
     var cts: string[] = [key];
     if (tparams.len() != 1) { cts = split_inst_key(key); }
     var nparams: ast.ParamDecl[] = [];
@@ -10670,7 +10694,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
 // arg0) and DROPS the method decl; mono_expr's array-method arm rewrites
 // each `xs.m(ys)` call to `__arrm_m(xs, ys)`, and the existing
 // free-generic worklist clones one concrete `__arrm_m__<elem>` per
-// element type — so generic array methods ride the proven free-generic
+// element type — so generic array methods use the proven free-generic
 // monomorphiser instead of that i32 mis-dispatch.
 
 // looks_type_var reports whether `s` names a generic type variable: a
@@ -10703,7 +10727,7 @@ function looks_type_var(s: string): boolean {
 // unbounded `U`/`A` are erased). That is folded too: the receiver still
 // fixes the monomorphised `T`, and substituting `T := <elem>` makes
 // `xs[i].cmp(m)` resolve by ordinary concrete-type dispatch — exactly the
-// path the equivalent free generic `max[T: cmp.Ord](xs: T[])` already rides.
+// path the equivalent free generic `max[T: cmp.Ord](xs: T[])` already uses.
 // What stays excluded is a bounded EXTRA type param (a bounded `U` not
 // fixed by the receiver): `fd.type_params` may hold the receiver var alone.
 function is_generic_array_method(fd: FuncDecl): boolean {
@@ -10713,7 +10737,7 @@ function is_generic_array_method(fd: FuncDecl): boolean {
     if (!looks_type_var(elem)) { return false; }
     // The only bounded type param permitted is the receiver element var
     // itself (a bounded receiver); any other bounded param can't be erased
-    // and isn't fixed by the receiver, so it can't ride this fold.
+    // and isn't fixed by the receiver, so it can't use this fold.
     var k: i32 = 0;
     while (k < fd.type_params.len()) {
         if (fd.type_params[k] != elem) { return false; }
@@ -11881,7 +11905,7 @@ pub function monomorphize_structs(mod: Module): Module {
             var gd: StructDecl = gstructs[idx];
             // A single-type-param struct's key IS the one concrete arg verbatim
             // (which may itself be a mangled nested clone like `Box__i32`, so
-            // splitting on `__` would wrongly fracture it). A multi-param key is
+            // splitting on `__` would wrongly split it). A multi-param key is
             // the `__`-join of simple nominals and splits unambiguously.
             var cts: string[] = [key];
             if (gd.type_params.len() != 1) { cts = split_dunder(key); }
@@ -12078,7 +12102,7 @@ function ge_inst_of(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): GEInst {
 // (`(i32) => i32`) keys to `_i32_____i32` instead of dragging its parens /
 // spaces / `=>` into an unassemblable symbol. (The sibling `sanitize_key`
 // above handles only bracket/comma keys and is shared with fn/struct mangling,
-// so a fn-only transform stays out of its blast radius.)
+// so a fn-only transform stays out of its reach.)
 function fn_key_sanitize(s: string): string {
     var out: string = "";
     var i: i32 = 0;
@@ -13961,7 +13985,7 @@ function hl_capture_list(lam: ast.ExprLambda, own_name: string, enclosing: strin
 // arguments. Every other node is rebuilt verbatim around its rewritten
 // children, which is map_expr's contract, so nothing else is spelled here.
 //
-// Riding map_expr also stops the rebuild LOSING fields. The hand-written walk
+// Using map_expr also stops the rebuild LOSING fields. The hand-written walk
 // rebuilt through the e_* / s_* constructor helpers, which take only the
 // children and fill the rest with defaults — so a binary or unary inside a
 // lifted body came back with line 0, col 0 and an empty `ty`, and a `while`
@@ -14636,7 +14660,7 @@ function iter_range_args(iter: ast.Expr): ast.Expr[] {
 
 // dr_expr rewrites the range-fors living inside an EXPRESSION — in practice a
 // lambda body, which is a statement list no statement walk reaches. The generic
-// descent rides dl_expr_kids / dl_expr_with_kids so only the lambda case is
+// descent uses dl_expr_kids / dl_expr_with_kids so only the lambda case is
 // spelled out; those two report no children for a lambda precisely because a
 // lambda's children are statements, not expressions.
 function dr_expr(e: ast.Expr): ast.Expr {
@@ -15218,7 +15242,7 @@ function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
 // prints, and whether one was found. A WHITELIST of literal / unary / binary,
 // as native's nonConstReason is: a default is pasted into the CALL SITE, so a
 // name inside it resolves in the caller's scope (#8445), and a node this
-// function was never taught about is refused rather than waved through. A
+// function does not know about is refused rather than accepted. A
 // cast is an ExprUnary whose op is `as_<type>`, refused before its operand.
 pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
     match (e) {
@@ -15252,7 +15276,7 @@ pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
         ast.ExprMapLit(ml) => { return ("is not a constant expression", true); },
         ast.ExprFString(fs) => { return ("is not a constant expression", true); },
         // An ExprUnknown is a node the parser already refused — an
-        // out-of-range float literal rides one, and so does every `;` / `@`
+        // out-of-range float literal becomes one, and so does every `;` / `@`
         // sentinel. parse_unknown_errors_module walks parameter defaults and
         // reports each with its own P001 / P002 / P005, so E076 has nothing
         // left to say: a second complaint about the same token would name a
@@ -15664,7 +15688,7 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
             if (st2.len() >= 3 && st2[0] == b'[' && st2[st2.len() - 1] == b']') { return st2; }
             return "";
         },
-        // `t.N` on a tuple — the same lifted-lambda story (`() => t.0` over a
+        // `t.N` on a tuple — the same lifted-lambda case (`() => t.0` over a
         // captured tuple). me_tuple_elem_type already decodes a "(T0, T1)"
         // spelling depth-aware; reuse it rather than write a second decoder. A
         // non-numeric field is a struct field, which needs a struct table this
@@ -16238,7 +16262,7 @@ function elb_starts_nonneg(prev: ast.Stmt, idx: string): boolean {
 
 // elb_is_nonneg_int reports whether e is a non-negative integer literal. The
 // lexer tokenises `-1` as unary-minus over `1`, so a bare integer ExprNumber is
-// always non-negative; the leading-digit guard is belt-and-braces.
+// always non-negative; the leading-digit guard is a redundant extra check.
 function elb_is_nonneg_int(e: ast.Expr): boolean {
     match (e) {
         ast.ExprNumber(n) => {
@@ -16255,7 +16279,7 @@ function elb_is_nonneg_int(e: ast.Expr): boolean {
 // elb_assigns_stmts / elb_assigns_stmt report whether any `name = …` assignment
 // appears in the statement subtree. Assignments are always statements (the only
 // expr that carries statements is a lambda, which cannot assign the outer name),
-// so the walk rides the statement spine: statement lists at every depth, lambda
+// so the walk follows the statement spine: statement lists at every depth, lambda
 // bodies never.
 function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
     function vs(s: ast.Stmt, own hit: boolean): boolean {
@@ -16275,7 +16299,7 @@ function elb_assigns_stmts(stmts: ast.Stmt[], name: string): boolean {
 
 // elb_binds_stmts reports whether the statement subtree rebinds (declares /
 // shadows / iterates) `name` via a `var`, a `for` loop variable, or a match-arm
-// pattern binding. It rides the shared binder collector, which WIDENS the guard
+// pattern binding. It uses the shared binder collector, which WIDENS the guard
 // onto binders the hand-written walk never matched: a comma-joined destructure
 // binder ("i,x" against "i") and a match arm's `@` whole-value binder now
 // refuse the elision too — the safe direction for a gate.
@@ -16407,7 +16431,7 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
 // `[mk, mk2]` that would otherwise const-CALL each element through the generic
 // array lowering (storing `mk()` results), so a later `fns[i]()` calls an
 // integer as a code pointer and segfaults. (A >0-arg fn name already lowers to a
-// fn value, so only the 0-arg case needs this rescue.)
+// fn value, so only the 0-arg case needs this handling.)
 function cf_all_zero_arg_fn_elems(elems: ast.Expr[], funcs: FuncDecl[]): boolean {
     if (elems.len() == 0) { return false; }
     var i: i32 = 0;
@@ -16754,12 +16778,12 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // trait_spelling is the trait name AS WRITTEN, qualifier included
 // (`async.Driver`). `trait_name` is the resolved simple name, which is what
 // parse_module matches against the trait's default methods and what the
-// emitter needs — so the spelling rides beside it rather than replacing it.
+// emitter needs — so the spelling is kept beside it rather than replacing it.
 // Empty for an inherent impl, which has no trait.
 // bounds runs PARALLEL to type_params: both halves reach the synthesised
 // default through finalize_impl_method, so the bound cannot be left behind
 // as a local of the parse (#7224).
-pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], bounds: string[], method_names: string[], trait_spelling: string }
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, assoc_names: string[], assoc_values: string[] }
 
 // MethodClaim is claim_method_name's answer: the (possibly renamed) function,
 // and the claim table extended with the key it took.
@@ -17663,7 +17687,7 @@ function parse_derive_attr(p: Par): (string[], Par) {
             var tn: string = p.peek_ident();
             if (tn.len() == 0) { p = p.advance(); continue; }
             p = p.advance();
-            while (p.peek_punct() == ".") {
+            while (p.at_path_sep()) {
                 p = p.advance();
                 var seg: string = p.peek_ident();
                 if (seg.len() > 0) { tn = tn + "." + seg; p = p.advance(); }
@@ -17794,8 +17818,8 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // for everything downstream and wrong for anyone reporting what the source
     // said. Read the qualifier off the tokens BEFORE it is consumed.
     var first_spelling: string = "";
-    if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "." && p.peek_ident_at(2).len() > 0) {
-        first_spelling = p.peek_ident() + "." + p.peek_ident_at(2);
+    if (p.peek_ident().len() > 0 && (p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::") && p.peek_ident_at(2).len() > 0) {
+        first_spelling = p.peek_ident() + p.peek_punct_at(1) + p.peek_ident_at(2);
     }
     var (tnr_name, tnr_ret_arr, tnr_fn_ret, tnr_p) = parse_type_name(p);
     p = tnr_p;
@@ -17819,10 +17843,29 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
         impl_type = first_name;
     }
     if (p.peek_punct() == "{") { p = p.advance(); }
+    // Associated-type bindings this impl fixes (`type Item = i32;`), parallel
+    // arrays name -> bound type spelling. `Self` in the bound type resolves to
+    // the impl type, as it does in a method signature.
+    var assoc_names: string[] = [];
+    var assoc_values: string[] = [];
     while (!p.at_end()) {
         if (p.peek_punct() == "}") { break; }
         var kw: string = p.peek_keyword();
         if (kw == "pub") { p = p.advance(); kw = p.peek_keyword(); }
+        if (kw == "type") {
+            p = p.advance();
+            var ab_name: string = p.peek_ident();
+            if (ab_name.len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == "=") { p = p.advance(); }
+            var (ab_ty, ab_arr, ab_fnret, ab_p) = parse_type_name(p);
+            p = ab_p;
+            if (p.peek_punct() == ";") { p = p.advance(); }
+            if (ab_name.len() > 0) {
+                assoc_names = assoc_names.append(ab_name);
+                assoc_values = assoc_values.append(subst_self(ab_ty, impl_type));
+            }
+            continue;
+        }
         if (kw != "function") {
             // Defensive: don't stall on an unexpected token.
             p = p.advance();
@@ -17845,7 +17888,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // `impl Greet[i32] for P` records trait_name "Greet[i32]", never matches
     // the `Greet` trait, and its default methods are never synthesised (#4340).
     return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, impl_tbs, method_names, trait_spelling,
-            ImplDecl { trait_ref: trait_name, type_ref: impl_type, type_params: impl_tpl.tnames, bounds: impl_tpl.tbounds, methods: out, line: iline, col: icol },
+            ImplDecl { trait_ref: trait_name, type_ref: impl_type, type_params: impl_tpl.tnames, bounds: impl_tpl.tbounds, methods: out, line: iline, col: icol, assoc_names: assoc_names, assoc_values: assoc_values },
             p);
 }
 
@@ -18039,7 +18082,7 @@ function type_mentions_var(ty: string, name: string): boolean {
 // bare-typevar SCALAR param (`x: T`), the shape that carries a wide i64/f64 value
 // through an erased-generic call. Distinguishes `some1[T](x: T): Option[T]` /
 // `dup[T](x: T): T[]` (promote) from `map[T,U](xs: T[], …)` (an ARRAY param — the
-// wide value rides an i32 array pointer, not a bare scalar, so it never trips the
+// wide value is behind an i32 array pointer, not a bare scalar, so it never trips the
 // erased-wide gate and must stay erased to avoid over-monomorphising the stdlib).
 // has_bare_array_param reports whether some param's type is EXACTLY `name[]` — a
 // bare-typevar ARRAY param (`xs: T[]`). The element sibling of
@@ -18323,6 +18366,10 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
     // qualifier intact, and the decl's own position.
     var decl_methods: FuncDecl[] = [];
     var decl_supers: string[] = [];
+    // Associated types declared by the trait (`type Item;`), referenced in
+    // method signatures as `Self::Item` and bound by each impl with
+    // `type Item = …`. See docs/ASSOCIATED-TYPES.md.
+    var assoc_types: string[] = [];
     var tline: i32 = p.peek_line();
     var tcol: i32 = p.peek_col();
     p = p.advance(); // `trait`
@@ -18353,7 +18400,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
             var sup_name: string = "";
             var sup_written: string = "";
             if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); sup_written = sup_name; p = p.advance(); }
-            if (p.peek_punct() == ".") {
+            if (p.at_path_sep()) {
                 p = p.advance();
                 if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); sup_written = sup_written + "." + sup_name; p = p.advance(); }
             }
@@ -18368,6 +18415,16 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
         p = p.advance();
         while (!p.at_end()) {
             if (p.peek_punct() == "}") { break; }
+            if (p.peek_keyword() == "type") {
+                p = p.advance();
+                var at_name: string = p.peek_ident();
+                if (at_name.len() > 0) {
+                    p = p.advance();
+                    assoc_types = assoc_types.append(at_name);
+                }
+                if (p.peek_punct() == ";") { p = p.advance(); }
+                continue;
+            }
             if (p.peek_keyword() == "function") {
                 var (fr_func, fr_p) = parse_func_decl(p);
                 p = fr_p;
@@ -18385,7 +18442,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
                     // Abstract (body-less) signature: a REQUIRED method every
                     // impl must provide (#4347 E021). Bodied defaults above are
                     // NOT required (synthesised onto omitting impls). The full
-                    // decl rides req_sigs (parallel to required) for the
+                    // decl is kept in req_sigs (parallel to required) for the
                     // signature-mismatch check.
                     required = required.append(fr_func.name);
                     required_sigs = required_sigs.append(fr_func);
@@ -18398,8 +18455,8 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     return (defaults,
-            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided },
-            TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false },
+            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types },
+            TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types },
             p);
 }
 
@@ -18449,7 +18506,7 @@ function is_float_type_name(t: string): boolean {
 // the destination is still free to choose — a bare `1`, or a unary `-`/`+` or a
 // binary `+ - * /` built ONLY from such literals.
 //
-// The "only" is load-bearing. Native settles a binary just once, before its
+// The "only" is essential. Native settles a binary just once, before its
 // float width is known, so a subtree that ALREADY carries a float is left
 // alone: `var f: f64 = 1 + 2.5;` is E009 there, not a silent widening of the
 // i32 operand. A literal with an explicit integer suffix (`1i64`) is settled
@@ -19376,7 +19433,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 funcs = funcs.append(im_cl.fn);
                 mi = mi + 1;
             }
-            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling });
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
@@ -19432,10 +19489,13 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // per-driver prep pipelines diverge, so doing it here is the universal spot).
     // Idempotent: re-running on already-resolved tags recomputes the same depth.
     //
-    // settle_module rides the same reasoning: an integer literal in a float
+    // settle_module follows the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits }))), traits, impl_decls, flines, inline_hints);
+    // resolve_assoc_projections runs FIRST of the module passes: settle_module
+    // and the variant-field resolver both read declared type spellings, and a
+    // `Self::Item` left unresolved would reach them as an unknown nominal.
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits })))), traits, impl_decls, flines, inline_hints);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -19471,7 +19531,7 @@ pub function merge_module(into: Module, from: Module): Module {
     var ntreqs: TraitReq[] = into.trait_reqs;
     var nti: i32 = 0;
     while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
-    return Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls };
+    return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
 // merge_module_prefixed adds `from`'s decls to `into` with
@@ -19524,7 +19584,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var ntreqs: TraitReq[] = into.trait_reqs;
     var nti: i32 = 0;
     while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
-    return Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls };
+    return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
 // =================== VALIDATION ====================
@@ -20448,7 +20508,7 @@ function check_fstrings(): i32 {
 function check_qualified_names(): i32 {
     // Qualified type names in struct fields: `lexer.Token` (and the
     // array form `lexer.Token[]`). Before the parse_type_name fix
-    // the stray `.` parked the field loop and the parser spun until
+    // the stray `.` stalled the field loop and the parser spun until
     // OOM — fatal for parsing parser.fern's own source. Assert the
     // field type-name strings round-trip the qualifier (and the
     // unqualified array form still works).
@@ -20471,7 +20531,7 @@ function check_qualified_names(): i32 {
     if (modQ2.funcs[0].ret_type != "lexer.Token") { return 1133; }
 
     // Qualified variant patterns in a match: `lexer.TokNumber(n)`.
-    // Before the parse_pattern fix the stray `.` parked the arm loop
+    // Before the parse_pattern fix the stray `.` stalled the arm loop
     // and the parser spun until OOM — fatal for parsing parser.fern's
     // own `match (t) { lexer.TokX(x) => … }` statements.
     var srcM: string = "match (t) { lexer.TokNumber(n) => { x = 1; }, _ => { x = 0; } }";
@@ -20501,7 +20561,7 @@ function check_qualified_names(): i32 {
 function check_struct_patterns(): i32 {
     // Struct-pattern parameters, both spellings (#7306). The pattern head
     // desugars to a holder param of the annotated type plus a leading
-    // struct-destructure StmtVar, so it rides the existing lowering.
+    // struct-destructure StmtVar, so it reuses the existing lowering.
     //
     // Its marker carries `@pp;` ahead of the `@sd:` tag. That is the ONE
     // thing separating this prelude from the `let Point { x, y } = p;` a
@@ -20511,7 +20571,7 @@ function check_struct_patterns(): i32 {
     // signature (#7523). Pinning the full marker here is what keeps the two
     // distinguishable.
     //
-    // The NAMED-function assertion is the load-bearing one: before this
+    // The NAMED-function assertion is the essential one: before this
     // landed the parser took `{ x, y }` for the function BODY, so the failure
     // surfaced as `E070 missing return type` pointing at a signature that has
     // one. Pinning ret_type here is what makes that misparse impossible to
@@ -20636,4 +20696,89 @@ function check_struct_patterns(): i32 {
     }
 
     return 0;
+}
+
+// assoc_binding_for returns the type an impl bound for `base::name`, or "" when
+// no impl on `base` binds that associated type.
+function assoc_binding_for(impls: ImplInfo[], base: string, name: string): string {
+    for im in impls {
+        if (im.impl_type == base) {
+            var i: i32 = 0;
+            while (i < im.assoc_names.len()) {
+                if (im.assoc_names[i] == name && i < im.assoc_values.len()) {
+                    return im.assoc_values[i];
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return "";
+}
+
+// resolve_proj_in_type rewrites every `Base::Name` projection in the type
+// spelling `t` to the type the impl of `Base` bound for `Name`. Types are
+// spellings here, so a projection nested in a generic argument
+// (`Option[IntBox::Item]`) is reached by the same scan rather than needing a
+// tree walk. A projection whose base binds nothing is left as written — the
+// E021 conformance pass is what reports that, and rewriting it to something
+// invented would bury the diagnostic. See docs/ASSOCIATED-TYPES.md.
+pub function resolve_proj_in_type(t: string, impls: ImplInfo[]): string {
+    if (!util.contains(t, "::")) { return t; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (i + 1 < t.len() && t[i] == b':' && t[i + 1] == b':') {
+            // The base is the identifier already emitted; the associated name
+            // is the identifier that follows the separator.
+            var bs: i32 = out.len();
+            while (bs > 0 && ident_byte((out[bs - 1] as i32))) { bs = bs - 1; }
+            var base: string = slice_unchecked(out, bs, out.len()) + "";
+            var ns: i32 = i + 2;
+            var ne: i32 = ns;
+            while (ne < t.len() && ident_byte((t[ne] as i32))) { ne = ne + 1; }
+            var nm: string = slice_unchecked(t, ns, ne) + "";
+            var bound: string = assoc_binding_for(impls, base, nm);
+            if (base.len() > 0 && nm.len() > 0 && bound.len() > 0) {
+                out = slice_unchecked(out, 0, bs) + bound;
+                i = ne;
+                continue;
+            }
+        }
+        out = out + (slice_unchecked(t, i, i + 1) + "");
+        i = i + 1;
+    }
+    return out;
+}
+
+// resolve_assoc_projections rewrites every associated-type projection in the
+// module's signatures and struct fields to the bound type, so nothing
+// downstream — checker, lowering, backends — ever sees one. The bindings are
+// syntactic (`type Item = i32;` on the impl), so unlike native this needs no
+// inference and runs in the parser.
+pub function resolve_assoc_projections(mod: Module): Module {
+    var any: boolean = false;
+    for im in mod.impls {
+        if (im.assoc_names.len() > 0) { any = true; }
+    }
+    if (!any) { return mod; }
+    var fs: FuncDecl[] = [];
+    for f in mod.funcs {
+        var ps: ast.ParamDecl[] = [];
+        for pd in f.params {
+            ps = ps.append(ast.ParamDecl { ...pd, type_name: resolve_proj_in_type(pd.type_name, mod.impls) });
+        }
+        fs = fs.append(FuncDecl { ...f,
+            params: ps,
+            ret_type: resolve_proj_in_type(f.ret_type, mod.impls),
+            receiver_type: resolve_proj_in_type(f.receiver_type, mod.impls) });
+    }
+    var sds: StructDecl[] = [];
+    for sd in mod.structs {
+        var flds: StructFieldDecl[] = [];
+        for fd in sd.fields {
+            flds = flds.append(StructFieldDecl { ...fd, type_name: resolve_proj_in_type(fd.type_name, mod.impls) });
+        }
+        sds = sds.append(StructDecl { ...sd, fields: flds });
+    }
+    return Module { ...mod, funcs: fs, structs: sds };
 }

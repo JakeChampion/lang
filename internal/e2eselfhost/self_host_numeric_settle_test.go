@@ -87,7 +87,7 @@ var numericSettleCases = []struct {
 }
 
 // numericSettleRejects are the shapes settling must NOT swallow: the literalness
-// is load-bearing, so an i32 VALUE in a float slot stays an error, with the same
+// is essential, so an i32 VALUE in a float slot stays an error, with the same
 // code native gives it.
 var numericSettleRejects = []struct {
 	name string

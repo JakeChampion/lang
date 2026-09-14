@@ -2,7 +2,7 @@
 //
 // A range pattern is a scalar-match arm whose test is a bound check
 // (`scr >= lo && scr <op> hi`) instead of an equality — `..` is exclusive
-// of the high bound, `..=` inclusive. It rides the existing literal-match
+// of the high bound, `..=` inclusive. It uses the existing literal-match
 // lowering (emitLiteralMatch / emitLiteralMatchExpr): the low bound is
 // carried in MatchArm.Literal, the high in RangeHi. These tests pin the
 // native x86-64 binary against the interpreter oracle across exclusive /

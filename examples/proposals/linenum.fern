@@ -173,7 +173,7 @@ function boundary_counts(): i32[] {
 
 // ------------------------------------------------------------------ tests ---
 
-// The headline. At every carry boundary, the field must be as wide as the LAST
+// The main test. At every carry boundary, the field must be as wide as the LAST
 // number — no wider, no narrower.
 function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcome {
     var counts: i32[] = boundary_counts();

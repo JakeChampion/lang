@@ -18,7 +18,7 @@ import (
 // already in the binary and needs no build-system cooperation to stay
 // true.
 //
-// The Go version and platform ride along because they are the next two
+// The Go version and platform are included because they are the next two
 // questions anyone triaging a miscompile asks.
 func versionString() string {
 	var b strings.Builder

@@ -217,7 +217,7 @@ func checkCaseFormat(dir string) ([]string, error) {
 	return problems, nil
 }
 
-// checkMeta enforces the rule that carries this file's weight: a case may
+// checkMeta enforces the rule that matters most in this file: a case may
 // assert less than the maximum, but not silently. Either direction is a
 // problem — an unjustified weakening hides an implementation gap behind
 // what looks like a passing case, and a stale waiver on a case that no

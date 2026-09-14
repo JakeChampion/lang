@@ -96,7 +96,7 @@ function leb_i64(buf: i32[], value: i64): i32[] {
 // WAT text that wasm.fern's emit_module produces. Slice 2 of the
 // self-hosted *binary* wasm backend: the binary emitter assembles that
 // already-tested WAT rather than re-deriving lowering from the AST, so it
-// rides on the proven text emitter and only does the mechanical
+// depends on the proven text emitter and only does the mechanical
 // text -> bytes mapping. This module turns the WAT string into a flat
 // token stream; a later slice parses the tokens into module structure and
 // encodes it with leb128.fern.
@@ -517,7 +517,7 @@ function parse_f64_bits(s: string): i64 {
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
     }
     // Trailing zeros in the significand carry no information; trimming
-    // keeps the sticky/remainder tests honest.
+    // keeps the sticky/remainder tests correct.
     while (digits.len() > 0 && digits[digits.len() - 1] == 0) {
         digits = pf64_sub(digits, 0, digits.len() - 1);
     }
@@ -1190,7 +1190,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     var ml: i32 = mem_load_opcode(op);
     if (ml != 0) {
-        // An optional `offset=N` memarg atom rides between the op and the address
+        // An optional `offset=N` memarg atom appears between the op and the address
         // operand — wasm.fern's folded struct-drop / field helpers use it to read
         // a non-zero field slot (`(i32.load offset=8 (local.get $box))`). Parsing
         // it fixes both the emitted offset (was hardcoded 0) AND the operand index:

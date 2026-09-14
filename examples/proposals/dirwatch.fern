@@ -11,7 +11,7 @@
 //
 // A watcher is a poller, and polling is a `diff` between two snapshots. That
 // makes the interesting half pure: `diff(before, after)` sorts every file into
-// exactly one of created / modified / deleted, and the load-bearing test is
+// exactly one of created / modified / deleted, and the essential test is
 // that APPLYING the result to `before` reconstructs `after` exactly. A diff
 // that drops a file, double-counts one, or calls a rename a modification fails
 // that and passes every hand-picked example.
@@ -42,7 +42,7 @@ import "std/sort";
 
 // `size` is i64 because `stat` reports it that way — a file is allowed to
 // be bigger than 2 GB, and narrowing here to save a cast would be the tool
-// lying about what it measured.
+// misreporting what it measured.
 struct Entry { name: string, size: i64, sum: i32 }
 
 // std/sort has no case-sensitive string sort — `sort_strings_asc_ci` folds

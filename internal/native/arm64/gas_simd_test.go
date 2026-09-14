@@ -751,7 +751,7 @@ func TestSIMDPinnedEncodings(t *testing.T) {
 	}
 }
 
-// TestSIMDRejects keeps the SIMD operand validation loud: every line here is
+// TestSIMDRejects keeps the SIMD operand validation strict: every line here is
 // one aarch64-linux-gnu-as itself refuses (probed, not assumed) — an
 // arrangement the encoding lacks, a lane index or shift out of range, a
 // mismatched pairing. Accepting any of them would assemble a different,

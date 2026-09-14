@@ -25,7 +25,7 @@ import (
 // either way; what the flag buys is the diagnostic pointing at the construct.
 //
 // These tests are the tripwire that would have caught it at the bail. Two
-// halves, and both are load-bearing:
+// halves, and both are essential:
 //
 //   - strictIRCorpus asserts NO refusal across constructs the IR path is
 //     supposed to cover. A newly-unlowerable construct fails here, naming the
@@ -669,7 +669,7 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrictIRRefusesBail is the teeth: a program that genuinely bails
+// TestSelfHostStrictIRRefusesBail is the gate: a program that genuinely bails
 // must be REFUSED, and the flag must name the bail site. Without this, a green
 // corpus is consistent with the flag doing nothing at all.
 //

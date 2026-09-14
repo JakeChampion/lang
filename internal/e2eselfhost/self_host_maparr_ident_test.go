@@ -22,7 +22,7 @@ import (
 // with is_arr_slot explicitly, which is how `ms[i].get(k)` already worked and
 // why it is a control here rather than a fix.
 //
-// Not covered, and still an honest bail rather than a miscompile: `for x in ms`
+// Not covered, and still a correct bail rather than a miscompile: `for x in ms`
 // and a map-array in a tuple element or struct field. Those need a map ELEMENT
 // kind the array side does not carry — a separate slice.
 var mapArrIdentCases = []struct {

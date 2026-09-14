@@ -41,7 +41,7 @@ func writeTempFern(t *testing.T, dir, name, src string) string {
 // since native rejects it too, but it is the one shape that would pass a test
 // that only asserted "no crash" on the shapes that happened to be reported.
 //
-// Teeth verified by rebuilding the compiler at each stage. With neither guard,
+// Verified by rebuilding the compiler at each stage. With neither guard,
 // ten of the eleven cases exit 134 — every one except `unused_tparam_still_
 // rejected`, which compiled to exit 0. With the `mg_ty` guard alone the six
 // struct cases pass and all four enum cases still exit 134, which is what

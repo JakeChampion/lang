@@ -136,7 +136,7 @@ func TestAutoRebaseCommentsOnceEachHead(t *testing.T) {
 // Every branch the workflow cannot push is a branch whose author has to rebase
 // it by hand, and the only way they learn that is the comment. Without the
 // token — the state this repository is in — that is EVERY open PR, so a
-// reporting loop that only ever speaks up about conflicts leaves a clean branch
+// reporting loop that only ever comments on conflicts leaves a clean branch
 // silently behind forever.
 func TestAutoRebaseAsksForARebaseWhenItCannotPush(t *testing.T) {
 	src := autoRebaseSource(t)
@@ -178,10 +178,10 @@ func TestAutoRebaseAsksForARebaseWhenItCannotPush(t *testing.T) {
 
 // The lane shares a runner pool with ~85 jobs per open PR, so it routinely sits
 // queued for longer than the gap between merges here. `cancel-in-progress: true`
-// therefore kills it on the next push every time — its first eleven runs were
+// therefore cancels it on the next push every time — its first eleven runs were
 // all cancelled without one of them ever being allocated a runner, so not a
 // single step executed. Nothing else reports that: the lane is green-by-absence,
-// and the PRs it should have spoken about simply stay silent.
+// and the PRs it should have reported on get no comment at all.
 func TestAutoRebaseSurvivesTheNextMerge(t *testing.T) {
 	src := autoRebaseSource(t)
 

@@ -111,7 +111,7 @@ func (g *generator) emitSeccompRuntime() {
 	// install a filter of its own choosing.
 	//
 	// rt_sigreturn is likewise absent, which is a classic seccomp
-	// footgun — it is required whenever a signal handler returns. Fern
+	// mistake — it is required whenever a signal handler returns. Fern
 	// installs no signal handlers, and an unhandled fatal signal kills
 	// the process without ever returning, so there is nothing to permit.
 	// Adding a handler would mean adding rt_sigreturn here.
@@ -160,7 +160,7 @@ func (g *generator) emitSeccompRuntime() {
 	// CONFIG_SECCOMP_FILTER, or a seccomp-blocking sandbox we are
 	// already inside, returns an error and the program runs unhardened
 	// rather than refusing to start. Hardening that turns a working
-	// deployment into a boot loop would not survive contact with users,
+	// deployment into a boot loop would not be acceptable to users,
 	// and the compile-time capability system is still in force either
 	// way.
 	g.emit("ret")
@@ -439,7 +439,7 @@ func EmitWithSyscalls(prog *ast.Program, info *checker.Info, opts Options) (stri
 
 // EmitWithOptions runs treeshake, lowers to IR with ptrW=8,
 // then walks each surviving function emitting GAS-flavoured
-// AT&T assembly... no wait, Intel syntax. We deliberately use
+// assembly in Intel syntax, not AT&T. We deliberately use
 // Intel syntax (`.intel_syntax noprefix`) for readability —
 // the rest of the codebase's runtime asm is comparable to the
 // arm64 style (mnemonic dst, src), and Intel x86 syntax
@@ -1414,7 +1414,7 @@ type generator struct {
 	// provides (behaviour-identical — the inline path mirrors the helper
 	// instruction-for-instruction), shrinking the `.s` and its assembler
 	// footprint. Every normal function (all user code, and every self-host
-	// function but the one monster) stays on the inline fast path. Unlike
+	// function but the largest) stays on the inline fast path. Unlike
 	// arm64 — where the same field also dodges the ±128 MB branch-reach
 	// overflow — x86-64's rel32 jumps never overflow, so here the sole
 	// motive is `.s` size / assembler memory.
@@ -2470,7 +2470,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		if localsSize%16 != 0 {
 			localsSize += 8
 		}
-		// The bias rides in the `sub rsp, N` the frame already needs, so it
+		// The bias is folded into the `sub rsp, N` the frame already needs, so it
 		// costs nothing here. A frameless function emits no `sub rsp` at
 		// all, where the bias would be a whole extra instruction to save a
 		// pad it may never reach — so it keeps the canonical parity.
@@ -2703,7 +2703,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// Stash the raw 32-bit bit pattern as an i32 on the
 		// operand stack — same shape as arm64, where floats
 		// live as raw bits on the stack and only move into
-		// xmm registers at op time. Two-line dance: zero-
+		// xmm registers at op time. Two-line sequence: zero-
 		// extend the bit pattern into rax, push.
 		bits := math.Float32bits(op.F32)
 		g.emit(fmt.Sprintf("mov eax, %d", int32(bits)))
@@ -2805,7 +2805,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// binPop's pop-rhs-first order already puts the count
 		// in rcx, so we can shift directly. The destination
 		// register width must match the integer width: a 32-bit
-		// value rides zero-extended in the low half of rax, so a
+		// value is held zero-extended in the low half of rax, so a
 		// 64-bit `shl rax` would mask the count to 0..63 and let
 		// bits spill above bit 31 — `shl eax` masks to 0..31 and
 		// keeps the result in the canonical i32 lane (matching the
@@ -2817,7 +2817,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// sar (arithmetic right shift) preserves the sign
 		// bit for signed values; shr (logical) zero-fills
 		// for unsigned. Width matters for `sar`: a negative i32
-		// rides zero-extended in rax (high half all zero), so
+		// is held zero-extended in rax (high half all zero), so
 		// `sar rax` would read bit 63 (= 0) as the sign and
 		// produce a logical-looking result. `sar eax` reads the
 		// real i32 sign bit (bit 31). Both forms also mask the
@@ -2832,7 +2832,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.push()
 	case ir.OpRotr:
 		// Same count-in-cl shape as the shifts, and the same width
-		// rule: `ror eax` rotates within the i32 lane an i32 rides
+		// rule: `ror eax` rotates within the i32 lane an i32 is held
 		// zero-extended in, where `ror rax` would drag the cleared
 		// high half through the low bits.
 		g.binPop()
@@ -3628,7 +3628,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	case ir.OpCallDirect:
 		target := op.Str
 		// Cheap f64 math intrinsics lower inline — no libm. The f64
-		// argument rides the operand stack as raw bits (same as
+		// argument is carried on the operand stack as raw bits (same as
 		// OpFNeg); the result goes back in rax before push.
 		if g.emitF64UnaryIntrinsic(target) {
 			g.push()
@@ -4096,7 +4096,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 		g.emit("movq rax, xmm1")
 	case "__sin_f64", "__cos_f64", "__exp_f64", "__log_f64":
 		// Transcendentals call the SSE2 polynomial helpers — no libm,
-		// and no x87. Argument and result both ride xmm0, matching
+		// and no x87. Argument and result both use xmm0, matching
 		// arm64's d0 convention for the same five helpers.
 		g.usesF64Trans = true
 		g.emit("movq xmm0, rax")
@@ -4107,7 +4107,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 }
 
 // emitF64Pow lowers __pow_f64(x, y) = exp(y·ln x) through the SSE2
-// helper bundle. Both args ride the operand stack; binPop leaves x in
+// helper bundle. Both args are carried on the operand stack; binPop leaves x in
 // rax and y in rcx. Result is left in rax (caller pushes).
 func (g *generator) emitF64Pow() {
 	g.binPop() // rax = x, rcx = y
@@ -4836,7 +4836,7 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 }
 
 // fbinPop pops two float-shaped values off the operand stack
-// (they ride as raw bit patterns) and moves them into xmm
+// (they are held as raw bit patterns) and moves them into xmm
 // registers. Width selects 32-bit (movd, single-precision)
 // or 64-bit (movq, double-precision). xmm1 = lhs, xmm0 =
 // rhs — same order as the integer binPop so x86's
@@ -6213,7 +6213,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
 		//
-		// The bounds check rides each arm of this dispatch: the heap
+		// The bounds check is emitted in each arm of this dispatch: the heap
 		// length is the 4-byte prefix, the inline length is in the tag
 		// byte, and the tag test that tells them apart is already here.
 		g.usesStrIdx = true
@@ -6529,7 +6529,7 @@ func (g *generator) emitDataSections() {
 			}
 		}
 	}
-	// SSO inline strings ride in a 64-bit register and don't
+	// SSO inline strings are held in a 64-bit register and don't
 	// have a usable memory address until materialised. The
 	// __str_idx index helper spills inline values to this
 	// global scratch slot before computing `&scratch[1 + idx]`
@@ -7030,7 +7030,7 @@ func (g *generator) emitRctRuntime() {
 	g.label("__fern_rct_ev")
 	// rbp is saved for one reason only: the push count must stay EVEN
 	// or every `call` below lands on a misaligned stack. r15 made it
-	// odd; rbp is the honest partner because the hook reads through it.
+	// odd; rbp is the right choice because the hook reads through it.
 	saved := []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbx", "r12", "r13", "r14", "r15", "rbp"}
 	for _, r := range saved {
 		g.emit("push " + r)
@@ -7232,7 +7232,7 @@ func (g *generator) emitAllocRuntime() {
 	// big lazy arena from Linux's overcommit accounting — without it the
 	// heuristic refuses the single 8 GiB anonymous map outright on hosts
 	// with RAM+swap below the arena size, failing every binary AT STARTUP
-	// (the arm64 backend does the same; its comment has the full story).
+	// (the arm64 backend does the same; its comment has the full detail).
 	g.emit("mov r10d, 0x4022")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
@@ -8045,7 +8045,7 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	if ast.RcTrace {
-		// See the `i` event in emitRcIncRuntime for why no count rides
+		// See the `i` event in emitRcIncRuntime for why no count is passed
 		// along. rc_dec returns nothing, so unlike inc there is no rax
 		// to re-derive.
 		g.emit("xor edx, edx")
@@ -9518,7 +9518,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// __fern_kcos(xmm0=r, |r| <= pi/4) → cos r.
 	//   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
 	//   cos = w + (((1-w) - hz) + z*(z*p))
-	// The (1-w)-hz dance recovers the bits 1-hz threw away; computing
+	// The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
 	// 1 - hz + z*z*p directly loses them and costs ~2 ulp.
 	g.line("")
 	g.label("__fern_kcos")
@@ -9791,7 +9791,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_log_f64")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
 	logNoScale := g.freshLabel("logNoScale")
-	// Domain guards. The bit-twiddling below happily extracts an exponent
+	// Domain guards. The bit-twiddling below extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
 	// values call for. log(-0) == log(0) == -Inf, which the equality
@@ -10651,7 +10651,7 @@ func (g *generator) emitRmemchrRuntime() {
 // dispatch. Unlike lzcnt/tzcnt it FAULTS below that baseline rather than
 // silently decoding as something else, so a wrong assumption here is loud.
 //
-// No cursor, so no clamp. The two degenerate answers are both honest counts
+// No cursor, so no clamp. The two degenerate answers are both real counts
 // rather than sentinels: an out-of-range byte counts 0 because no byte can
 // equal it, and an empty string counts 0 because it has no bytes.
 func (g *generator) emitCountByteRuntime() {
@@ -10781,7 +10781,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("jb .Lcrc32_tail")
 	g.emit("movdqa xmm5, xmmword ptr [rip + .Lcrc32_bswap]")
 	g.emit("movdqa xmm2, xmmword ptr [rip + .Lcrc32_k1]")
-	// A = bswap(first block) ^ (crc << 96); the CRC rides the top 32 bits.
+	// A = bswap(first block) ^ (crc << 96); the CRC occupies the top 32 bits.
 	g.emit("movdqu xmm0, xmmword ptr [rsi]")
 	g.emit("pshufb xmm0, xmm5")
 	g.emit("mov r11d, eax")
@@ -10793,7 +10793,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("add rsi, 16")
 	g.emit("sub edx, 16")
 	// Priming the other three accumulators costs 48 bytes, so the wide loop
-	// only pays for itself with a fourth block's worth beyond them.
+	// only wins with a fourth block's worth beyond them.
 	g.emit("cmp edx, 112")
 	g.emit("jb .Lcrc32_fold1")
 	for i, reg := range []string{"xmm6", "xmm7", "xmm8"} {
@@ -12564,7 +12564,7 @@ func (g *generator) emitWasmTimerPollableRuntime() {
 }
 
 // emitWasmPollRuntime emits `__fern_wasm_poll(pollables)` — on native there are
-// no real pollables (a timer pollable is -1 and native readiness rides poll(2)
+// no real pollables (a timer pollable is -1 and native readiness uses poll(2)
 // directly), so this returns -1 (nothing ready), ignoring its array arg. On wasm
 // this symbol is the real wasi:io/poll.poll(list<pollable>) multiplexer instead.
 func (g *generator) emitWasmPollRuntime() {
@@ -12994,7 +12994,7 @@ func (g *generator) emitGetgroupsRuntime() {
 // and for a request past one page it may write fewer and
 // return early when a signal arrives — or -EINTR having
 // written none. A single call would leave the tail of the
-// buffer as the allocator left it, which is zeros: silence
+// buffer as the allocator left it, which is zeros: no entropy
 // where a caller asked for randomness (#9221). A hard error
 // (EFAULT, EINVAL — neither reachable from this call shape)
 // ends the loop rather than spinning, because the signature
@@ -13204,7 +13204,7 @@ const linuxPathMax = 4096
 // — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
 // linuxStatfsFields. System V: rdi = path string value.
 //
-// Built on the same skeleton as __fern_stat: a NUL-terminated heap copy
+// Built on the same shape as __fern_stat: a NUL-terminated heap copy
 // of the path for the syscall, the buffer left live across
 // __fern_alloc_box so the record is copied out after the box exists, and
 // the errno classified against the ORIGINAL path value so the IoError
@@ -15168,7 +15168,7 @@ func (g *generator) emitSignalDispositionReadRuntime() {
 	g.label("__fern_signal_disposition")
 	if g.entry != platforms.EntryProcess {
 		// Nothing can deliver a signal, so every one of them is at the
-		// default it was born with.
+		// default it started with.
 		g.emit("xor eax, eax")
 		g.emit("ret")
 		g.line(".size __fern_signal_disposition, .-__fern_signal_disposition")
@@ -15246,7 +15246,7 @@ func (g *generator) emitCreateSymlinkRuntime() {
 // reports no error, so the answer is only trustworthy when it is SHORTER
 // than the buffer. PATH_MAX is the kernel's own bound on a stored link
 // target, so a full buffer means the target is longer than any path can
-// be and the honest answer is ENAMETOOLONG rather than a truncated one.
+// be and the correct answer is ENAMETOOLONG rather than a truncated one.
 func (g *generator) emitReadLinkRuntime() {
 	g.line("")
 	g.line(".globl __fern_read_link")
@@ -15788,7 +15788,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emitStrLen("r12d", "rdi")
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 56]")
 	// The prefix names a directory, not a path: a '/' in it would
-	// steer the result out of the temp root, since the bytes are
+	// place the result outside the temp root, since the bytes are
 	// concatenated straight into "/tmp/<prefix>-<ns>".
 	g.emit("xor ecx, ecx")
 	g.label(".Ltd_sep")
@@ -16110,7 +16110,7 @@ func (g *generator) emitReadDirRuntime() {
 
 // linuxStatFields maps each FileStat field onto the Linux x86-64
 // `struct stat` field it is read from: the box offset, the statbuf
-// offset, and how many bytes to load. It is the whole of what makes
+// offset, and how many bytes to load. It is all that makes
 // this target-specific — everything else about the helper is shared.
 //
 // Two loads are narrower than the field they fill. `st_nlink` is a

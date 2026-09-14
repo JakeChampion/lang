@@ -170,7 +170,7 @@ function main(): i32 {
 }`,
 	},
 	{
-		// The return-escape shape where the returned guard is LOAD-BEARING
+		// The return-escape shape where the returned guard is ESSENTIAL
 		// at runtime: the iterand is an owned CALL RESULT, so the sweep at
 		// the in-loop return deep-frees the container inside the callee —
 		// there is no caller-side may-alias conservatism to absorb an
@@ -245,7 +245,7 @@ function main(): i32 {
 		// A projection of the element RETURNED mid-loop (#8178): `return
 		// sd.name` keeps the element borrowed — the string leaves with the
 		// Return's own transfer inc — and this is the runtime shape where
-		// that inc is load-bearing: the iterand is an owned CALL RESULT, so
+		// that inc is essential: the iterand is an owned CALL RESULT, so
 		// the sweep at the in-loop return deep-frees the container inside
 		// the callee, elements and all, while the caller reads the field it
 		// was handed. @noinline keeps the call boundary real. Content compare
@@ -330,7 +330,7 @@ function main(): i32 {
 	{
 		// A loop element STORED into an accumulator array: movedLocals and
 		// bindingConfinedToArm (append is a retain sink per
-		// calleeRetainsAnyArg) refuse the borrow. Same story as the return
+		// calleeRetainsAnyArg) refuse the borrow. Same as the return
 		// case above: pinned as cross-backend value correctness with
 		// in-function container death and churn; the escape site takes its
 		// own transfer inc, so even a wrongly-taken borrow shows up as a
@@ -408,12 +408,12 @@ function main(): i32 {
 		// An f-string reassigned in a loop. The classifiers that decide
 		// whether a destination local may release its superseded value read
 		// the raw expression, and an f-string reached each one's
-		// conservative default, so the store dropped the old buffer on the
-		// floor: 32 bytes a round on x86-64 and wasm, and arm64 clean, which
+		// conservative default, so the store left the old buffer unfreed:
+		// 32 bytes a round on x86-64 and wasm, and arm64 clean, which
 		// is why only a three-backend gate catches it (#8697).
 		//
 		// `f"{i}"` alone never leaked — it desugars to a bare to_string()
-		// with no concat — so the literal tail is load-bearing.
+		// with no concat — so the literal tail is essential.
 		name: "fstring_reassign_releases_superseded",
 		src: `
 import "core/int";
@@ -1702,7 +1702,7 @@ function main(): i32 {
 	//
 	// What one body could NOT do is attribute a leak. Its single leak-gate
 	// number covered four independent bugs at once, so a fix to one of them
-	// could not bank a zero and a regression in another could hide inside
+	// could not record a zero and a regression in another could hide inside
 	// somebody else's fix. Measuring them apart is what showed the shapes
 	// differ: the two bound forms and the miss reclaim completely under the
 	// #8276 seam retain + projection credit, while `m = m.without(k).0` is a
@@ -1887,7 +1887,7 @@ function main(): i32 {
 		// [base+0], data = base+8) like a Some(..) literal — without it
 		// the scope-exit drop of an UNUSED `var o = m.get(k)` reads heap
 		// metadata at [data-8] as the rc and underflows. Consumed /
-		// discarded gets dodged it, so it stayed hidden. Exercises every
+		// discarded gets avoided it, so it stayed hidden. Exercises every
 		// rebox arm left unused-and-dropped: Some + None, i32 / string
 		// key, and a string VALUE (whose get-time __fern_str_inc must be
 		// balanced by the unused Option's drop str_dec). One consumed
@@ -4232,7 +4232,7 @@ function main(): i32 {
 		// The same `.with` self-reassign reached through a LOCAL ALIAS of the
 		// borrowed param rather than the param itself, threaded recursively —
 		// the shape the self-host checker's e060_collect_dyn_locals is built
-		// from, and where #6057 was first caught in the wild (52 over-releases
+		// from, and where #6057 was first caught in practice (52 over-releases
 		// compiling parser.fern, 92 compiling checker.fern, while emitting
 		// byte-identical output).
 		//
@@ -4640,7 +4640,7 @@ function main(): i32 {
 		// checker registers each destructure name as a synthetic *ast.Var
 		// that lives only in info.Locals, so renaming the Destructure node's
 		// []string left the slot registered under the old name: the compiler
-		// died outright with `ir: destructure name "a$1" has no slot
+		// failed outright with `ir: destructure name "a$1" has no slot
 		// (compiler bug)`. A hard compiler crash, on main, for a program the
 		// interpreter runs fine — reached here because the sibling-scope
 		// rename above makes the pass fire on far more programs.
@@ -4660,7 +4660,7 @@ function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
 		// pattern inside a LAMBDA body, whose names shadow an enclosing
 		// local. The checker registers a lambda body's locals against the
 		// lambda's synthetic FuncDecl, not the enclosing function, so the
-		// rename found no synthetic Var to follow and the compiler died with
+		// rename found no synthetic Var to follow and the compiler failed with
 		// the same `has no slot` refusal as the case above. Reached once the
 		// pass started walking lambda bodies at all (#7151); before that a
 		// shadowed name inside a lambda was never renamed, which was a wrong
@@ -4708,7 +4708,7 @@ function main(): i32 {
 		// The reads after each call are the point: a premature release would
 		// hand the buffer to the freelist, the next construction would recycle
 		// it, and the sum would come out wrong even where the underflow
-		// counter stayed quiet.
+		// counter reported nothing.
 		name: "closure_call_arg_handed_back_is_not_reclaimed",
 		src: `
 import "core/int";
@@ -5984,7 +5984,7 @@ function main(): i32 {
 		// and its heap string), linear and unbounded — 12 allocs / 6
 		// frees at three rounds before, 12 / 12 after.
 		//
-		// @noinline on both is load-bearing. `inline.go` inlines a
+		// @noinline on both is essential. `inline.go` inlines a
 		// single-reference callee at a loop call site, and an inlined
 		// callee has no argument temp to reclaim, so the shape measures
 		// clean without it whether or not the bug is present.
@@ -6063,7 +6063,7 @@ function main(): i32 {
 		// pinned on the ANSWER and the underflow counter rather than on
 		// a byte count. That distinction is the point: an over-releasing
 		// build reads BETTER on live_bytes, so only the value check and
-		// __rc_underflow dissent.
+		// __rc_underflow catch it.
 		//
 		// `keepf(o) -> o` is admitted today and is correct: the
 		// return-transfer inc puts the temp at rc 2, and the caller's
@@ -6411,15 +6411,15 @@ function main(): i32 {
 	},
 	{
 		// The refusal that keeps the credit sound: one copying use
-		// does not launder a retaining one. keep both scans its
+		// does not admit a retaining one. keep both scans its
 		// parameter AND stores it in the array it returns, so
 		// everyOccurrenceSafe refuses the whole param and the caller
 		// keeps its reference alive for the container. Pinned on the
 		// answer + the underflow counter because an over-releasing
 		// build reads BETTER on live_bytes.
-		// Originally the launder pin from #7867 slice 2: the append store
+		// Originally the refusal pin from #7867 slice 2: the append store
 		// REFUSED the param, and this case pinned the resulting leak to
-		// prove the copying-builtin credit did not launder it. The #7914
+		// prove the copying-builtin credit did not admit it. The #7914
 		// push-element credit made that same append a COUNTED occurrence,
 		// so both occurrences are now legitimately safe and the case's job
 		// flipped: it proves the two credits COMPOSE and the returned
@@ -6457,7 +6457,7 @@ function main(): i32 {
 		// The push credit's REFUSAL half: a param that is pushed AND
 		// returned bare has an occurrence nothing counts, so it stays
 		// uncredited and the caller's temp keeps its safe leak — pinned
-		// in the gate so the refusal is watched (the role the launder
+		// in the gate so the refusal is watched (the role the #7867
 		// pin above used to carry).
 		name: "string_pushed_then_returned_bare_stays_refused",
 		src: `
@@ -6544,7 +6544,7 @@ function main(): i32 {
 		// same-buffer arm keeps the shallow dec that releases what the
 		// call added. Dropping that arm rather than guarding it leaks
 		// MORE than the original bug — the buffer never reaches zero —
-		// which is why both shapes ride in one case.
+		// which is why both shapes are covered in one case.
 		name: "array_overwrite_walks_the_superseded_buffer",
 		src: `
 @noinline
@@ -7384,7 +7384,7 @@ function main(): i32 {
 		// closure crossed a call as an argument — value-returning inside a
 		// return expression and void statement spelling alike. The same
 		// closure called directly elides to a bare env and was always
-		// clean; it rides along as the control.
+		// clean; it is included as the control.
 		name: "closure_scalar_capture_passed_to_callee_released",
 		src: `
 @noinline
@@ -8104,7 +8104,7 @@ function main(): i32 {
 		// non-overridden field is inc'd into the new box and the base's deep
 		// drop nets it back, rather than freeing the caller's array.
 		//
-		// @noinline on both is load-bearing — an inlined producer leaves no
+		// @noinline on both is essential — an inlined producer leaves no
 		// base temp and the shape reads clean either way.
 		name: "struct_update_base_fresh_call_result_released",
 		src: `
@@ -8635,7 +8635,7 @@ function main(): i32 {
 	},
 	{
 		// #8785: a reassigned string PARAMETER is consumed-threaded, and the
-		// entry retain that pays for it is also what keeps the append honest.
+		// entry retain that pays for it is also what keeps the append correct.
 		// The incoming buffer is the CALLER's, so `a = a + s` inside the
 		// callee must copy — rc 2 sends __fern_str_append down its copy path
 		// — and the caller's own name must still read the string it passed.
@@ -8719,7 +8719,7 @@ function main(): i32 {
 		// only question is who owns the value the slot was overwritten with.
 		// The callee does, and must release it — that is the promotion's leak
 		// half. Returning the param on one path and not the other keeps the
-		// exit sweep's move-on-return exclusion honest at the same time.
+		// exit sweep's move-on-return exclusion correct at the same time.
 		name: "str_param_reassigned_to_a_fresh_value",
 		src: `
 function mk(n: i32): string {

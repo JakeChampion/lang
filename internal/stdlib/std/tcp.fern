@@ -251,8 +251,8 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             // Transient accept failure (EINTR-style) — keep
             // looping. Permanent failures (listener closed by
             // the kernel, FD exhaustion) will repeat the same
-            // -errno on every iteration; that's operator-
-            // action territory and the lang-side response is
+            // -errno on every iteration; that needs operator
+            // action, and the lang-side response is
             // the same as success here.
             continue;
         }
@@ -295,7 +295,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
 
 // tcp_serve_supervised(port, handler) — crash-only supervised
 // serving (docs/CRASH-ONLY-SERVE.md, plan item D2'). Same
-// signature as `tcp_serve`, different blast radius: the accept
+// signature as `tcp_serve`, different failure scope: the accept
 // loop runs in a forked WORKER process while the parent does
 // nothing but supervise — `proc_waitpid` on the worker, log the
 // death to stderr (the raw exit code: 134 = trap, 137 = arena

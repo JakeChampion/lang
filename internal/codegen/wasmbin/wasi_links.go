@@ -13,7 +13,7 @@
 // `path_readlink`, and preview 2 has the descriptor methods that match
 // them one for one.
 //
-// Two honest gaps, both properties of WASI rather than of this code and
+// Two acknowledged gaps, both properties of WASI rather than of this code and
 // both recorded in docs/FREESTANDING-CORE.md:
 //
 //   - `path_create_directory` carries NO mode. The `mode` argument is

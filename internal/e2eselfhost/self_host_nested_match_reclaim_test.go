@@ -142,7 +142,7 @@ function main(): i32 {
 }
 `
 
-// THE LOAD-BEARING NEGATIVE. The arm binding escapes to an outer local, so the
+// THE ESSENTIAL NEGATIVE. The arm binding escapes to an outer local, so the
 // payload must not be released. It needs the churn loop: with the box wrongly
 // freed the shape still exits correctly unless same-shaped strings recycle it in
 // between, which is why this class survived earlier passes (#6467).

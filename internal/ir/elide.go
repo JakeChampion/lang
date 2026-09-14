@@ -138,7 +138,7 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32, returnsClosure map[stri
 			// OpTeeLocal would leave the closure-pair value on
 			// the operand stack post-store, which can't match
 			// either of the recognised reader shapes (canonical
-			// dance needs an OpLoadLocal to start, alias needs
+			// sequence needs an OpLoadLocal to start, alias needs
 			// an OpStoreLocal to land on). Tee = disqualified.
 			if op.Kind == OpTeeLocal {
 				failed[op.I32] = true

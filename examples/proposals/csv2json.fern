@@ -12,11 +12,11 @@
 // (quote a field iff it contains a comma, a quote or a newline; double an
 // embedded quote), parsing is where they are undone, and a round trip fails
 // the moment the two disagree about any of it. On top of that the corpus is
-// generated: every combination of a small set of nasty cell values, at every
+// generated: every combination of a small set of awkward cell values, at every
 // position of a 2x2 table, which is ~2 400 tables nobody had to think up and
 // which contains the cases an author would not have.
 //
-// The generator is the load-bearing part, so it is checked too: a test asserts
+// The generator is the essential part, so it is checked too: a test asserts
 // the sweep actually covered the shapes it claims (a cell containing a comma,
 // one containing a quote, one containing a newline, and an empty one), because
 // a sweep that silently stopped generating would pass every comparison it made.
@@ -320,7 +320,7 @@ function show_table(t: Table): string {
     return out;
 }
 
-// Every nasty cell at every position of a 2x2 table: 11^1 choices at one
+// Every awkward cell at every position of a 2x2 table: 11^1 choices at one
 // position against a fixed background, four positions, plus the all-same
 // tables. Enough combinations that the interesting interactions (a quote
 // beside a comma, a newline beside an empty) actually occur.
@@ -376,7 +376,7 @@ function test_every_table_round_trips(): test.TestOutcome {
     return test.pass();
 }
 
-// The generator is load-bearing, so assert it produced the shapes it claims:
+// The generator is essential, so assert it produced the shapes it claims:
 // a cell with a comma, one with a quote, one with a newline, and an empty one.
 function test_the_sweep_covers_the_nasty_shapes(): test.TestOutcome {
     var ts: Table[] = generated_tables();

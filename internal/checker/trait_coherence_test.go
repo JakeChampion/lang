@@ -22,7 +22,7 @@ func wantE021Contains(t *testing.T, name, src, substr string) {
 // ("expected (E)=>E, got (E)=>E"). The parser models the bare enum name
 // in the trait signature as a StructType while the impl method carries an
 // EnumType. normalizeEnumKinds reconciles the kinds. Pins both the borrowed and
-// the consuming (`own self`) forms — the latter is the headline FBIP map.
+// the consuming (`own self`) forms — the latter is the main FBIP map.
 func TestTraitEnumReturnConforms(t *testing.T) {
 	wantOK(t, "borrowed enum-return method", `enum E { A(i32), B }
 trait T { function f(self: Self): E; }

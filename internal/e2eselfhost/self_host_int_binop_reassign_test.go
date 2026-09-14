@@ -15,7 +15,7 @@ import (
 // string alias-reassign retain: a __fern_rc_inc on an integer, which faults
 // for every value but the immortal sentinel -1. coreutils/lib/ld's `add`
 // computes exactly that shape (a value's exponent plus its trailing zeros,
-// then `if (eb < e) { e = eb; }`), which took the self-host numfmt down on
+// then `if (eb < e) { e = eb; }`), which crashed the self-host numfmt on
 // every fractional input.
 //
 // Each program exits 0 when the arithmetic is right; a surviving retain is a

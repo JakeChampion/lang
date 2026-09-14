@@ -31,7 +31,7 @@ import (
 // TestCmdLangComponentTempDirRemoveFile runs a create → write → read
 // → unlink → verify-gone lifecycle inside a composed component.
 //
-// The two negative steps are the load-bearing ones. Reading a file
+// The two negative steps are the essential ones. Reading a file
 // after remove_file must FAIL — otherwise unlink-file-at was never
 // reached and the assertion would pass against a no-op — and removing
 // what is already gone must also fail, which is remove_file's
@@ -260,7 +260,7 @@ func TestCmdLangComponentReadAppend(t *testing.T) {
 // listing surface: `read_dir` over the `directory-entry-stream` cursor,
 // and `remove_dir_all` recursing through it.
 //
-// The entry COUNT is the load-bearing assertion. preview-1's fd_readdir
+// The entry COUNT is the essential assertion. preview-1's fd_readdir
 // yields "." and ".." and the preview-1 body filters them out;
 // wasi-filesystem specifies that read-directory omits them, so the
 // preview-2 body has no filter at all. If that reading of the spec were
@@ -397,7 +397,7 @@ function main(): i32 {
 // The write into the leaf is what makes this more than a syscall
 // smoke test — a walk that created only the last component, or that
 // mis-sliced a prefix, leaves a path write_file cannot reach. The
-// instance-type assertion pins the other half of the preview-2 story:
+// instance-type assertion pins the other half of the preview-2 contract:
 // create-directory-at must be declared for a program that only ever
 // creates directories, without dragging unlink-file-at along.
 func TestCmdLangComponentCreateDirAll(t *testing.T) {

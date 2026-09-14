@@ -17,7 +17,7 @@ import (
 // concurrently) can put two cold driver builds in their memory-peak phase
 // at once — two ~8 GB peaks stacked crosses the host's RAM and trips the
 // OOM killer (the exit-137 / "signal: killed" the project notes used to
-// paper over with an 8 GB swap file).
+// hide with an 8 GB swap file).
 //
 // buildMemLimiter is a weighted counting semaphore over an estimated-RSS
 // budget: each cold driver build acquires its estimated peak before it
@@ -132,7 +132,7 @@ func heavyBuildWeightMB() int {
 	return 4300
 }
 
-// The Go x86-64 emit of a self-host driver allocates hard: its LIVE heap
+// The Go x86-64 emit of a self-host driver allocates heavily: its LIVE heap
 // peaks ~2.6 GB (see emitMemLimitMB), but at the default GOGC the runtime
 // lets the heap double between collections, so the process peaked ~9 GB
 // RSS — over half the emit's footprint was garbage awaiting collection.

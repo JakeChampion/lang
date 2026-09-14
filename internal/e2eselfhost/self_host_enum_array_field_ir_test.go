@@ -98,7 +98,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 // TestSelfHostEnumArrayFieldIRArm64 runs the same cases through the arm64 IR
 // backend (asm_ir_run -target arm64-linux → asm_arm64.emit_module's use_ir branch →
 // asm_arm64_ir.emit_body, sharing irlower's enum-array-field lowering). This is
-// the load-bearing arm64 check: an enum-array struct field's deep-drop rides
+// the essential arm64 check: an enum-array struct field's deep-drop goes through
 // arm64's heap-element reclamation, so an over-release here surfaces as a wrong
 // exit code / crash under qemu. Routing through the production emit (no -ir flag,
 // so asm_arm64.emit_module's own use_ir dispatch runs) is deliberate — only it

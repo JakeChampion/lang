@@ -10,7 +10,7 @@ import (
 // strViewFrameCases pin #6713: a string slice `s[a:b]` is a zero-copy VIEW, and on the
 // register backends the self-host materialised its 24-byte box — [rc=-1, data, len] —
 // on the HEAP. The box is born immortal (rc=-1) because its data pointer aims into the
-// SOURCE string's buffer, so freeing it would attack the middle of someone else's
+// SOURCE string's buffer, so freeing it would release the middle of someone else's
 // allocation; immortal means every rc_dec skips it, so the box is unreclaimable by
 // construction. One per EVALUATION, unbounded in a loop, where native allocates nothing
 // at all for the same program.

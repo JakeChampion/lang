@@ -53,7 +53,7 @@ function main(): i32 { return ((gen_f0(5u32) >> 16u32) as i32) & 63i32; }`, 5},
 	// bare u32 Some payload (`Some(c) => c`) in a value-position match. The
 	// inlined match-expression's payload gate named i32 and nothing else, so
 	// the u32 spelling bailed where the i32 one lowered — even though a u32
-	// payload rides the same 32-bit slot and the STATEMENT form of the same
+	// payload occupies the same 32-bit slot and the STATEMENT form of the same
 	// match already lowered.
 	//
 	// The first row is the issue's repro verbatim. It needs the OTHER arm to be

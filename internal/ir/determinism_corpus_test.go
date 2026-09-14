@@ -4,11 +4,11 @@ package ir_test
 //
 // TestLowerDeterministic (determinism_test.go) covers a hand-curated matrix of
 // programs chosen to thread the map-walking paths. That is a good smoke test
-// and a bad net: it only catches nondeterminism in shapes someone already
+// and poor coverage: it only catches nondeterminism in shapes someone already
 // thought to write down. The map-order bug in computePreciseDrops slipped
 // through it for exactly that reason — the matrix had no program with two
 // locals whose last use falls on the SAME statement, which is what made the
-// drop order a coin flip. Five FIXTURES had that shape and had been compiling
+// drop order random. Five FIXTURES had that shape and had been compiling
 // to two different binaries at random for as long as the bug existed.
 //
 // So this runs the same comparison over the whole conformance corpus, which is

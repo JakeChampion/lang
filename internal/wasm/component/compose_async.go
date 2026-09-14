@@ -3,7 +3,7 @@ package component
 import "fmt"
 
 // compose_async.go assembles a runnable WASI Preview-3 component for a consumer
-// core that AWAITS a single async import — the colorless async-import payoff
+// core that AWAITS a single async import — the colorless async-import demonstration
 // (docs/WASI-PREVIEW3-ASYNC-PLAN.md). It is the composer half of the vertical
 // whose wasmbin half emits the async-lower import shape (`dep$import` with the
 // `(scalar params…, retptr) -> i32 status` signature + a colorless wrapper):

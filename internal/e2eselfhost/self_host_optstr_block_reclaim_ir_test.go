@@ -52,7 +52,7 @@ var optStrBlockReclaimCases = []struct {
     return 0;
 }`, 0},
 	// Array-payload sibling: loop-local Some([..]) consumed by a borrowing
-	// match — the non-string rc payload rides emit_opt_payload_drop.
+	// match — the non-string rc payload uses emit_opt_payload_drop.
 	{"optarr-loop-local-churn", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
@@ -234,7 +234,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// Nested-block candidate with a returning arm: the block-level pending
-	// rides the same return-path sweep (a return exits the FUNCTION).
+	// uses the same return-path sweep (a return exits the FUNCTION).
 	{"optstr-nested-return-arm-churn", `function probe(k: i32): i32 {
     if (k >= 0) {
         var o: Option[string] = Some("v" + k.to_string());

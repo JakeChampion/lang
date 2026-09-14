@@ -25,12 +25,12 @@ import (
 // The new "TUPRCS:" credit adds the missing sweep. It is deliberately stricter
 // than "TUPRC:" rather than a reuse of it, because the sweep has no init literal
 // at exit and must free by TYPE — see the hazard test below for why that
-// distinction is load-bearing.
+// distinction is essential.
 
 // TestSelfHostRcTupleSweepReclaimX86_64 — the final value of a sweepable rc-tuple
 // local is deep-freed: rc children first, then the box.
 //
-// allocs == frees is the load-bearing assertion. frees short of allocs is the leak
+// allocs == frees is the essential assertion. frees short of allocs is the leak
 // this closes; frees ABOVE allocs would mean the sweep and the rebind path both
 // claimed a box, which is a double free rather than a leak.
 func TestSelfHostRcTupleSweepReclaimX86_64(t *testing.T) {

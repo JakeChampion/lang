@@ -1,5 +1,5 @@
 // examples/self_host/ssa_x86.fern — an SSA → x86-64 (Linux, AT&T syntax)
-// code generator. This is the start of the endgame for the self-hosted
+// code generator. This is the start of the final stage for the self-hosted
 // compiler: today the backends emit straight from the AST (asm.fern,
 // asm_arm64.fern); this lowers the optimised SSA from ssa.fern to machine
 // code instead, so the backends can eventually be rebuilt on the SSA +

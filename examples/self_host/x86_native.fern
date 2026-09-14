@@ -811,7 +811,7 @@ function x86_popcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
 // The scalar int<->float converts are one encoding with two operand
 // directions. `pfx` picks the precision — F2 double, F3 single — and `op`
 // picks the operation: 2C truncating float->int, 2D rounding float->int, 2A
-// int->float. In every one of them `w` is load-bearing rather than a choice
+// int->float. In every one of them `w` is meaningful rather than a choice
 // of encoding: the 32-bit form reads or writes only the low half.
 //   F2|F3 [REX.W] 0F <op> /r
 //
@@ -2157,7 +2157,7 @@ function parse_f64_bits(s: string): i64 {
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
     }
     // Trailing zeros in the significand carry no information; trimming
-    // keeps the sticky/remainder tests honest.
+    // keeps the sticky/remainder tests correct.
     while (digits.len() > 0 && digits[digits.len() - 1] == 0) {
         digits = pf64_sub(digits, 0, digits.len() - 1);
     }
@@ -4255,7 +4255,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
     // Parsed ONCE, not per round. The source does not change between
     // relaxation rounds, so splitting and re-parsing it each round bought
     // nothing: what differs between rounds is the byte offsets, and those are
-    // what a round computes. Not the fix for #8146 — the arena wall that
+    // what a round computes. Not the fix for #8146 — the arena limit that
     // issue tracks is still open and its cause still unidentified.
     var pl: GasLine[] = x86_gas_prepare(src);
     var longs: boolean[] = [];

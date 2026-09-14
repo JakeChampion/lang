@@ -127,7 +127,7 @@ func TestMagicU32DenseDivisors(t *testing.T) {
 }
 
 // TestMagicShiftFitsI32 checks the shift bound where the large shifts live:
-// the two ends of each range, plus a stride across the whole of it. An i32
+// the two ends of each range, plus a stride across all of it. An i32
 // shift is defined modulo 32 on wasm and both natives, so a shift of exactly
 // 32 would be a no-op rather than a zeroing shift.
 func TestMagicShiftFitsI32(t *testing.T) {

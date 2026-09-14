@@ -351,7 +351,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__fern_crc32_cksum")
 				case "__fern_print":
-					// fd_write under the hood; transitively
+					// fd_write underneath; transitively
 					// pulls in the byte-copy + alloc helpers.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
@@ -375,7 +375,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// preview-2 body heap-allocates a 1-byte buffer and
 					// a result area, and releases both (the preview-1
 					// body uses fixed scratch and allocates nothing), so
-					// the pair rides on Preview2WASI rather than on an
+					// the pair is gated on Preview2WASI rather than on an
 					// unconditional edge.
 					if opts.Preview2WASI {
 						needs.add("__fern_alloc")
@@ -383,11 +383,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					}
 					needs.add("__fern_putchar")
 				case "__fern_exit":
-					// wasi_proc_exit under the hood; nothing
+					// wasi_proc_exit underneath; nothing
 					// else needed.
 					needs.add("__fern_exit")
 				case "__fern_random_i32":
-					// wasi_random_get under the hood; writes
+					// wasi_random_get underneath; writes
 					// 4 random bytes to the fixed scratch slot
 					// and returns them as an i32.
 					needs.add("__fern_random_i32")
@@ -4076,7 +4076,7 @@ func buildStrEqBody(idxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 	// Loop never falls through (every iteration ends in return
-	// or br 0), but wasm validation still wants a terminating
+	// or br 0), but wasm validation still requires a terminating
 	// instruction with the function's result type. `unreachable`
 	// satisfies the verifier without emitting a runtime const.
 	body = inst.InstUnreachable(body)
@@ -5434,7 +5434,7 @@ func buildCrc32CksumBody(idxs map[string]uint32) []byte {
 //
 // SCALAR (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 1). internal/wasm/simd carries
 // loads, stores, splats, compares, bitwise and bitmask and NO ARITHMETIC at
-// all, so the extadd_pairwise/i32x4.add sequence this wants has no encoder yet
+// all, so the extadd_pairwise/i32x4.add sequence this needs has no encoder yet
 // — and §3.3a's rule, learnt on this very target, is to land the encodings
 // against wasm-tools first rather than assume a sub-opcode.
 //
@@ -5515,7 +5515,7 @@ func buildSumBytesBody(idxs map[string]uint32) []byte {
 // iteration rather than hoisted, to avoid a v128 local and the v128 valtype in
 // the locals vector.
 //
-// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// No cursor, so no clamp. Both degenerate answers are genuine counts rather
 // than sentinels: an out-of-range byte counts 0, an empty string counts 0.
 //
 // Locals after the three params: $n (3), $i (4), $c (5).
@@ -9533,7 +9533,7 @@ func instTrigReduceAndPolys(body []byte) []byte {
 		body = inst.InstI64Const(body, 63)
 		body = numeric.InstI64And(body)
 		body = inst.InstLocalSet(body, off)
-		// addr = (e>>6)*8; the segment base rides in the load offsets.
+		// addr = (e>>6)*8; the segment base is carried in the load offsets.
 		body = inst.InstLocalGet(body, e)
 		body = inst.InstI64Const(body, 6)
 		body = numeric.InstI64ShrU(body)

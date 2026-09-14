@@ -136,7 +136,7 @@ func EmitModule(f *ssa.Func, exportName string, importList ...Import) ([]byte, e
 		return nil, err
 	}
 
-	// Module skeleton.
+	// Module outline.
 	out := encode.PutModuleHeader(nil)
 
 	// Type section: one type per import + one for the main function.

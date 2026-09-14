@@ -18,7 +18,7 @@ import (
 // struct return, then read field-wise. Each constituent already lowers and is
 // individually pinned (struct-update, nested match, while, enum-from-struct-field,
 // string byte index, struct-by-value param + struct return); this locks their
-// composition on the IR path so a future change can't silently kick the combined
+// composition on the IR path so a future change can't silently move the combined
 // shape off it.
 //
 // Routing-pinned via asm_pathprobe_run (assert path == "ir") and oracle-checked

@@ -18,7 +18,7 @@ import (
 // `internal/e2eselfhost` is the gate that runs programs the compiler does not
 // contain. These are those programs.
 //
-// Three properties are load-bearing and each has a case:
+// Three properties are essential and each has a case:
 //   - the callback is threaded through MUTUAL recursion (expr half ↔ stmt
 //     half), so the fn value survives being passed on rather than only being
 //     called where it was bound;

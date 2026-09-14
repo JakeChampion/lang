@@ -11,7 +11,7 @@ import (
 
 // f64ArrayAppendIRCases close the f64[] `.append(v)` gap on the IR path: an
 // `a = a.append(x)` on an `f64[]` local lowers, like the i64[]/u64[] appends
-// via arr_push_i64. The f64 value rides the IR value stack as
+// via arr_push_i64. The f64 value is carried on the IR value stack as
 // raw 8 bytes, so the register backends reuse __fern_arr_push exactly like the
 // i64 path; wasm32 (typed operand stack) uses an f64-typed $__fern_arr_push_f64
 // companion to $__fern_arr_push_i64. The element-read side (a[i] via f64.load,

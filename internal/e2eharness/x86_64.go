@@ -27,7 +27,7 @@ import (
 // has the toolchain and is the only place a test runs — the mirror of
 // FERN_REQUIRE_ARM64_TOOLING. It belongs on the x86_64 leg alone: the aarch64
 // leg carries no x86 cross-compiler by design, so requiring it there would
-// trade an honest skip for an infrastructure red.
+// trade a legitimate skip for an infrastructure red.
 func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 	t.Helper()
 	gcc, exec_, ok := LookupX86_64Tooling()

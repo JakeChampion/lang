@@ -79,7 +79,7 @@ var tupleFnZeroArgCases = []struct {
 	// Already-working payload shapes.
 	{"option-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction main(): i32 { var o: Option[(i32) => i32] = Some(a1); match (o) { Some(f) => { return f(1); }, None => { return 0; } } return 9; }", 4},
 	{"option-lambda", "function main(): i32 { var o: Option[() => i32] = Some(() => 3); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
-	// A fn-typed Option that is NONE — the pre-pass must not choke on a payloadless
+	// A fn-typed Option that is NONE — the pre-pass must not fail on a payloadless
 	// initialiser.
 	{"option-none", "function a1(): i32 { return 3; }\nfunction main(): i32 { var o: Option[() => i32] = None; match (o) { Some(f) => { return f(); }, None => { return 5; } } return 9; }", 5},
 	// Const-read regressions for the variant pre-pass, mirroring the tuple ones.

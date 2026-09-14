@@ -10,7 +10,7 @@ import (
 )
 
 // sortIRCases exercise the merge-sort SHAPE through the self-host IR path on
-// x86-64 + wasm. The per-width monomorphic sort zoo (`sort_i32_asc` etc.)
+// x86-64 + wasm. The per-width monomorphic sort family (`sort_i32_asc` etc.)
 // retired to core/cmp's generic `sort` / `sort_desc` (#5397), but the
 // single-program driver resolves no imports, so the relevant sort surface is
 // inlined verbatim as monomorphic i32 / string merge sorts matching the

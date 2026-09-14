@@ -232,7 +232,7 @@ function run(): i32 {
         return 1;
     }
 
-    // Tree-shaking is load-bearing here rather than an optimisation: the
+    // Tree-shaking is required here rather than an optimisation: the
     // overlay hands the loader every stdlib module the program's imports reach,
     // and without the shake the emitted module carries all of them.
     merged = treeshake.treeshake(merged);

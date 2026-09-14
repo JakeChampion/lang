@@ -41,7 +41,7 @@ var p3StreamRoundtripCore = []byte{
 	0x02, 0x72, 0x64, 0x02, 0x02, 0x77, 0x72,
 }
 
-// TestWasmP3StreamRoundtrip is the WASI Preview-3 `stream<T>` payoff, assembled
+// TestWasmP3StreamRoundtrip is the WASI Preview-3 `stream<T>` gate, assembled
 // through the Go composer (component.BuildStreamRoundtripComponent): a consumer
 // creates a `stream<u8>`, posts a read for 3 bytes, writes 3 bytes through the
 // writable end (read-before-write so the stackful transfer resolves), sums the

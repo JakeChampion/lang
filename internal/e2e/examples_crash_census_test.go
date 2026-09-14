@@ -25,7 +25,7 @@ import (
 // conformance corpus stayed clean, because the crash was in `examples/`
 // and that census covers `conformance/cases`.
 //
-// This runs the same check over the corpus where it bites. Against that
+// This runs the same check over the corpus where it shows. Against that
 // same broken compiler it reports **crash=1**, and 0 on a good one — so
 // unlike the conformance floor it catches the instance and not merely
 // the shape.

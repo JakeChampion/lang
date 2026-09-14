@@ -36,12 +36,12 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 	}
 }
 
-// One copying use does not launder a retaining one: everyOccurrenceSafe
+// One copying use does not admit a retaining one: everyOccurrenceSafe
 // is all-or-nothing, so a parameter that is ALSO stored keeps the
 // refusal — crediting it would let the caller free a live buffer.
 func TestCopyingUseComposesWithThePushCredit(t *testing.T) {
 	// Originally this pinned the refusal: the append store was treated as
-	// uncounted retention, and the copying-builtin credit must not launder
+	// uncounted retention, and the copying-builtin credit must not admit
 	// it. The #7914 push-element credit made the append a COUNTED
 	// occurrence (emitArrayPush's unconditional element retain), so both
 	// occurrences are now legitimately safe and the two credits compose —

@@ -72,7 +72,7 @@ function main(): i32 { match (f(0 - 1)) { Ok(v) => { return v; }, Err(e) => { re
 	{"builtin-bool", `function main(): i32 { var b: boolean = true; match (b) { true => { return 8; }, _ => { return 2; } } }`},
 
 	// Qualified construction of a shadowing payload-less variant. This is the
-	// oracle-checkable half of the construction story — native accepts it
+	// oracle-checkable half of the construction case — native accepts it
 	// because both sides name the enum.
 	{"qualified-user-none-idx-2", `enum E { Aa(i32), Bb(i32), None }
 function main(): i32 { var e: E = E.None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`},

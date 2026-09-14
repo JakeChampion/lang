@@ -26,7 +26,7 @@ import (
 // (#6946), which is the better diagnostic for a builtin a user can write, and
 // leaves this refusal as the backstop it should be.
 //
-// Two halves, and they have to travel together: wasm refuses with exit 3 and
+// Two halves, and they have to be asserted together: wasm refuses with exit 3 and
 // names the op, and the SAME program still compiles on x86-64, which is what
 // distinguishes "this backend cannot lower it" from "the program is invalid".
 func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {

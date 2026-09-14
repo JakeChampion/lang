@@ -52,7 +52,7 @@ func TestWaitpidDecodesTheStatusWordLikeAShell(t *testing.T) {
 	}
 }
 
-// execve does not prepend argv[0], and it wants a NULL-terminated argv. Getting
+// execve does not prepend argv[0], and it requires a NULL-terminated argv. Getting
 // either wrong is a subprocess that runs with its arguments shifted by one, or
 // a kernel read past the end of the array.
 func TestProcExecBuildsArgvWithPathFirstAndNullLast(t *testing.T) {

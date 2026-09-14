@@ -36,7 +36,7 @@ func writeAssets(t *testing.T, files map[string]string) {
 }
 
 // A compile-time asset reaches the running binary byte-for-byte. The blob
-// is the load-bearing half: it carries interior NULs and bytes >= 0x80, so
+// is the essential half: it carries interior NULs and bytes >= 0x80, so
 // it only survives because the emitted literal has an explicit length at
 // data-4 (the .asciz terminator is not the length) and because escapeForGAS
 // round-trips high bytes rather than re-encoding them as UTF-8.

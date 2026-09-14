@@ -101,7 +101,7 @@ function main(): i32 {
 	}
 	// WHICH path produced it. Whole-program `.S<idx>` string labels mean the
 	// merged IR emit; per-unit `.S<ns>_<idx>` pools would mean the per-module
-	// concat. Pinning this keeps the test honest about what it covers, and turns a
+	// concat. Pinning this keeps the test accurate about what it covers, and turns a
 	// future change that DOES route the concat into a visible failure here rather
 	// than a silent change of meaning — which matters, because the concat has an
 	// open cross-unit shape defect (see #3457).

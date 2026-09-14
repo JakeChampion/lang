@@ -96,7 +96,7 @@ function main(): i32 { return 0; }`
 // reaches `pass`'s own parameter and `outer`, whose `s` survives the call,
 // brackets it. Under the literal reading nothing propagated, and whether the
 // summary carried a stray named field beside the unnamed one — which did
-// propagate — was a map-order coin flip.
+// propagate — varied with map order.
 func TestGrowUnnamedFieldPropagatesThroughDyingField(t *testing.T) {
 	src := `struct Inner { insts: i32[] }
 struct St { cur: Inner, ops: i32[], ctrl: i32 }
@@ -231,7 +231,7 @@ function main(): i32 { return branch_returns(mk(), 1) + branch_falls_through(mk(
 	obs := computeParamFieldObs(prog, nil)
 	want := map[string]string{
 		// Both reads of `s` die: the first is last on its own (returning)
-		// path, the second is textually last. `s.ops` rides along on the
+		// path, the second is textually last. `s.ops` is carried on the
 		// second, where the first read is excluded as unreachable-with-it.
 		// `k` is the scalar argument the existing shapes already claim.
 		"branch_returns": "k,s,s,s.ops",

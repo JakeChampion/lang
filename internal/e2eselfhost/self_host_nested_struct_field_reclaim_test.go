@@ -50,7 +50,7 @@ function main(): i32 {
 
 // TestSelfHostNestedStructFieldReclaimX86_64 — a rebound struct local releases
 // the nested-struct field box each rebind orphans. allocs == frees is
-// load-bearing: frees short of allocs is the leak this closes; frees ABOVE
+// essential: frees short of allocs is the leak this closes; frees ABOVE
 // allocs is #6148's use-after-free reappearing as a double free.
 func TestSelfHostNestedStructFieldReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

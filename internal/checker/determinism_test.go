@@ -8,7 +8,7 @@ package checker
 // ordering is the single most regression-prone surface for error UX:
 // users (and the test suite, and the LSP) read the *first* error
 // first, golden-output tests pin the sequence, and a reorder is an
-// invisible-until-it-bites change. Yet nothing pinned that a given
+// invisible change until it breaks. Yet nothing pinned that a given
 // invalid program reports the same diagnostics in the same order on
 // every run.
 //

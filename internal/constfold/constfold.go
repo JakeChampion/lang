@@ -18,7 +18,7 @@
 //
 // The same traversal resolves `__fern_asset("name")` against the
 // compile-time asset set (see internal/embed), replacing the call with a
-// string literal holding the file's bytes. Assets ride the const machinery
+// string literal holding the file's bytes. Assets use the const machinery
 // rather than a pass of their own for two reasons: an asset IS a
 // compile-time constant, and a `const PAGE: string = __fern_asset(...)`
 // has to resolve during const evaluation, not after it.

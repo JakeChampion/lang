@@ -39,7 +39,7 @@ const highByteWant = "8:0 65 127 128 200 239 254 255 \n"
 // the two disagreed silently, and only programs with non-ASCII literals could
 // see it.
 //
-// The victim in this repo is the self-hosted wasm Component-Model framing:
+// What it broke in this repo is the self-hosted wasm Component-Model framing:
 // watbin.fern carries the component type/canon sections as binary blobs written
 // as \xNN escapes, so a natively-assembled self-host CLI emitted components
 // whose type section was corrupt (`wasm-tools validate` → "unexpected

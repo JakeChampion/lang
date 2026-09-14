@@ -125,7 +125,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// now grows linear memory instead of trapping (and the encoder emits
 		// memory.size / memory.grow).
 		{"memory-grow", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 300000) { xs = xs.append(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
-		// Integration capstone: string[] + a string-keyed count map + a
+		// Full integration case: string[] + a string-keyed count map + a
 		// loop. Its ~34 KB WAT also exercises the assembler's own grown heap
 		// (it OOM'd before memory.grow).
 		{"integration-wordcount", "function main(): i32 { var words: string[] = [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"]; var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.insert(w, counts.get_or(w, 0) + 1); i = i + 1; } return counts.get_or(\"a\", 0) * 10 + counts.get_or(\"b\", 0); }", 32},
@@ -194,7 +194,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 				// Surface everything a CI-only failure needs: the
 				// assembler's stderr (wasmtime prints trap/validation
 				// detail there) plus size + hash of both inputs, so a
-				// local repro can confirm it is chewing the same bytes.
+				// local repro can confirm it is processing the same bytes.
 				var stderr []byte
 				if ee, ok := err.(*exec.ExitError); ok {
 					stderr = ee.Stderr

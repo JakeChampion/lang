@@ -27,7 +27,7 @@ import (
 //
 // Crucially the admission gate is the EXISTING whole-program read scan
 // (strfld_reclaim_ok_types_of, via struct_routes_field_reclaim), not a new looser
-// check. That scan carries hard-won history: the per-module compiler self-run
+// check. That scan has history: the per-module compiler self-run
 // segfaulted on exactly this class, because the self-host has no read-side
 // alias-inc for strings, so a field read that escapes is an uncounted alias the
 // free would dangle. Reusing it is what makes this sound; hand-rolling a
@@ -50,7 +50,7 @@ function main(): i32 {
 }`
 
 // TestSelfHostStructArrStrFieldReclaimX86_64 — the element string fields are
-// freed. allocs == frees is load-bearing: frees short of allocs is the leak this
+// freed. allocs == frees is essential: frees short of allocs is the leak this
 // closes; frees ABOVE allocs would mean the element walk's __struct_drop_<T> and
 // something else both claimed one string (a double free), which for a string is a
 // freelist corruption rather than a clean crash.

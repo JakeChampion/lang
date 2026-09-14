@@ -10,7 +10,7 @@ import (
 const resourceDropPrefix = "__resource_drop_"
 
 // insert_resource_drops.go implements automatic drop for owned WIT resource
-// handles — the headline of P5 slice 3 (docs/WIT-BRING-YOUR-OWN.md). When an
+// handles — the main feature of P5 slice 3 (docs/WIT-BRING-YOUR-OWN.md). When an
 // `own R` local goes out of scope without being moved (returned, or passed to
 // an `own` parameter), the compiler releases it by calling the resource's
 // `[resource-drop]` import, so user code never writes a manual drop.

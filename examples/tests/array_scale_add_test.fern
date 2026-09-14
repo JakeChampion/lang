@@ -3,7 +3,7 @@ import "std/array" as array;
 // examples/tests/array_scale_add_test.fern — pure-Fern coverage of std/array's
 // scale_f64 (scalar multiply) and add_f64 (element-wise sum, to the shorter
 // length on a mismatch) — the element-wise companions to the vector reductions.
-// Both return an f64[] (scalar payload), so this rides all four native backends
+// Both return an f64[] (scalar payload), so this runs on all four native backends
 // and both self-host gates. The Go-side TestArrayScaleAdd pins the native
 // backends; this is the migration-shaped companion.
 

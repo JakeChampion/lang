@@ -12,7 +12,7 @@ import (
 // sleep_ms already had IR ops, but sleep_ms lowered its argument through the i32
 // path (lower_expr), which BAILed on an i64 argument (`sleep_ms(5 as i64)`) —
 // taking the whole timing module off the IR path. sleep_ms now width-
-// dispatches its count: an i64 argument rides lower_i64, a plain i32 keeps the
+// dispatches its count: an i64 argument takes lower_i64, a plain i32 keeps the
 // 32-bit path; either way the count is read into a 64-bit register (rdi / x0) by
 // the same __fern_sleep_ms runtime the AST path called. The program reads a
 // monotonic clock, sleeps an i64 millisecond count, reads it again, and checks

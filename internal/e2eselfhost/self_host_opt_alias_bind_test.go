@@ -29,7 +29,7 @@ import (
 // keeps the one deep release.
 //
 // EVERY ROW IS GATED ON `__rc_underflow()`, NOT BYTES, and that is not
-// belt-and-braces here. Both intermediate states of this change balanced the
+// a redundant check here. Both intermediate states of this change balanced the
 // census perfectly while corrupting memory:
 //
 //	build                                   exit   census
@@ -110,7 +110,7 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 68, balance: true,
 		},
 		{
-			// Only the SOURCE is matched: the alias rides the consuming-match
+			// Only the SOURCE is matched: the alias depends on the consuming-match
 			// family's own gate, not the unmatched one. Clean before and after.
 			name: "arr_source_matched",
 			src: `function round(i: i32): i32 {

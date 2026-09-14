@@ -10,7 +10,7 @@ import (
 
 // ifLetIRCases pin `if let PAT = EXPR { then } else { else }` on the IR path.
 // The parser desugars `if let` to `match (EXPR) { PAT => { then }, _ => { else } }`
-// (parser.fern, s_match_origin origin "if_let"), so it rides the already-proven
+// (parser.fern, s_match_origin origin "if_let"), so it uses the already-proven
 // match IR machinery. The existing TestSelfHostIfLet* assert only exit codes,
 // which the legacy AST emitter also satisfies — so a silent regression that
 // kicked `if let` off the IR path would pass undetected. These cases close that
@@ -33,13 +33,13 @@ var ifLetIRCases = []struct {
 	// expression parses with struct literals suppressed (native's
 	// noStructLit), so a bare-ident source whose then-block opens with a
 	// labeled loop (`lp: while …` — the IDENT `:` struct-lit lookahead) is
-	// no longer taken as `s { … }`. Pre-fix the whole statement shredded and
+	// no longer taken as `s { … }`. Pre-fix the whole statement mis-parsed and
 	// the program mis-ran.
 	{"labeled-then-block", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var s: Shape = Circle(42); if let Circle(r) = s { lp: while (true) { return r + pad; } } return 0 + pad; }", 42},
 	// Or-patterns in the head: `if let A(x) | B(x) = e`. Each alternative
 	// becomes its own arm sharing the then-block, the same per-alternative
 	// expansion match arms use, so the binding is live whichever matched.
-	// Before this the `|` was left on the cursor and the statement shredded
+	// Before this the `|` was left on the cursor and the statement mis-parsed
 	// into a P001 pair ("missing { in block", then a bogus assign).
 	{"or-first-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = A(41); if let A(v) | B(v) = e { return v + pad; } return 1 + pad; }", 41},
 	{"or-second-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = B(42); if let A(v) | B(v) = e { return v + pad; } return 1 + pad; }", 42},

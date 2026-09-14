@@ -17,7 +17,7 @@ import (
 // idiom — but not for the byte / half-word forms, and arm64_gas_mem drops the
 // `!` because it sits outside the brackets. So sp was never decremented and the
 // paired release RAISED it by 16: every eprint returned on a frame 16 bytes
-// adrift. eprint's own bytes were correct, so the corruption surfaced only at
+// off. eprint's own bytes were correct, so the corruption surfaced only at
 // the next call, which is why `audit_io_builtins` printed "Hi!" and "to-stderr"
 // and then died somewhere else entirely.
 //

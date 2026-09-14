@@ -21,7 +21,7 @@ import (
 //     `if` was enough. Its `fn[]` annotation never fired, so the array lowering
 //     const-CALLED each element and `fns[0]()` called an integer as a code
 //     pointer: the self-host binary SIGSEGVs (139) where native answers 42.
-//     The `fn[]` annotation must be ABSENT for this to bite — writing
+//     The `fn[]` annotation must be ABSENT for this to fail — writing
 //     `var fns: (() => i32)[]` compiles correctly even unfixed, so an annotated
 //     probe proves nothing.
 //

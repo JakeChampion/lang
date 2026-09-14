@@ -73,7 +73,7 @@ function main(): i32 {
 }`, 0},
 	// Swapped paths: the local declared and returned inside the if-arm (its
 	// slot is block-scoped and entry-zeroed on the literal path — the sweep's
-	// null guards are load-bearing here).
+	// null guards are required here).
 	{"tupown-early-local-late-lit", `function mk(i: i32): (i32, i32[]) {
     if (i % 7 != 0) { var t: (i32, i32[]) = (i, [i, i + 1]); return t; }
     return (0, [0]);
@@ -197,7 +197,7 @@ function main(): i32 {
 	// was a sanitizer use-after-free with a silent census (the pre-return
 	// sweep dec'd the array being returned). Gated, the shape is fully
 	// clean: pick's sweep decs only the box, and the extracted array's one
-	// reference rides to the outer caller's slot, whose release is the
+	// reference passes to the outer caller's slot, whose release is the
 	// is_arr slot-flag sweep no credit can deny. 99 = the gate regressed;
 	// 97 = the returned array was freed under the caller.
 	{"tupown-elem-extract-return", `function mk(i: i32): (i32, i32[]) {

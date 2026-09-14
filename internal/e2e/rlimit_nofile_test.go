@@ -3,7 +3,7 @@
 // The probe cannot assert a fixed number — the limit is whatever the runner
 // was started with — so it asserts the limit the test process ITSELF reads
 // through Go, which is the same process ancestry and therefore the same
-// ceiling. That is the check with teeth: the ways the helper can be wrong all
+// ceiling. That is the discriminating check: the ways the helper can be wrong all
 // produce a plausible-looking number. Reading `rlim_max` instead of `rlim_cur`
 // gives a larger one, reading the second word of a struct laid out backwards
 // gives another, and letting Linux's all-ones RLIM_INFINITY through unclamped

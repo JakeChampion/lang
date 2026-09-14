@@ -386,7 +386,7 @@ func TestAsmRunStackArgsDirectCall(t *testing.T) {
 	}
 }
 
-// The indirect (closure) path: the env pointer rides as the final argument, so
+// The indirect (closure) path: the env pointer is passed as the final argument, so
 // a six-argument call through a closure already needs a stack slot for it.
 func TestAsmRunStackArgsIndirectCall(t *testing.T) {
 	for _, n := range []int{6, 7, 10} {

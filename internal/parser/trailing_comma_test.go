@@ -90,7 +90,7 @@ func TestCStyleForStillParses(t *testing.T) {
 	}
 }
 
-// The empty forms must not be collateral damage: `moreElems` is only reached
+// The empty forms must not be broken by this: `moreElems` is only reached
 // after an element has been parsed, so `[]` / `f()` / `()` still take the
 // zero-element path.
 func TestEmptyListsStillParse(t *testing.T) {

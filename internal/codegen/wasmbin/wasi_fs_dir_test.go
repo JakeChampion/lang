@@ -151,7 +151,7 @@ func TestFsLstatDoesNotFollowSymlinks(t *testing.T) {
 // as a directory, list exactly the files put in it, then recursively
 // remove it.
 //
-// The read_dir count is the load-bearing assertion: WASI's fd_readdir
+// The read_dir count is the essential assertion: WASI's fd_readdir
 // yields "." and ".." where Go's os.ReadDir (which the interpreter
 // wraps) does not, so a missing filter shows up here as 4 entries
 // rather than 2 and the two backends would disagree on every listing.
@@ -308,7 +308,7 @@ func TestFsCreateDirAll(t *testing.T) {
 	}
 }
 
-// TestFsStatFieldsPreview1 pins the whole of what preview 1 can and cannot
+// TestFsStatFieldsPreview1 pins everything preview 1 can and cannot
 // answer about a file.
 //
 // `filestat` carries dev, ino, nlink, size and the three timestamps; it has no

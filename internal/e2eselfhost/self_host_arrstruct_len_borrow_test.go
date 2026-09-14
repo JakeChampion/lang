@@ -195,7 +195,7 @@ function main(): i32 {
 }
 
 // TestSelfHostArrStructLenBorrowHazardsX86_64 — `.len()` is a borrow, but it
-// must not launder anything else in the same function. Each of these pairs a
+// must not credit anything else in the same function. Each of these pairs a
 // `.len()` with a genuine escape and asserts the credit is still refused;
 // behaviour is the assertion, since a wrongly-granted credit frees a value
 // something else still holds. Every `want` is from `fern -interp`.

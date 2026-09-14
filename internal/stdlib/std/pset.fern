@@ -12,7 +12,7 @@
 //   s.len();            // 3
 //   before.len();       // 2
 //
-// See `std/pmap` for the two-path (shared / unique) update story and
+// See `std/pmap` for the two-path (shared / unique) update rules and
 // the hashing rules; both carry over unchanged. Iteration order is hash
 // order — for a sorted set use `std/ordset`; for the small, insertion-
 // ordered array-backed set use `std/set`.

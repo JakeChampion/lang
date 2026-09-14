@@ -29,7 +29,7 @@ import (
 // five `refused_*` rows below hold in place.
 //
 // THE FAILURE MODE IS AN OVER-RELEASE, not a leak, so those rows are
-// load-bearing rather than decorative: each one escapes something (an element,
+// essential rather than decorative: each one escapes something (an element,
 // the array, a bound element) or mutates `tt`, then reads every value back
 // after 200 rounds of churn have recycled the freelist. They answer identically
 // on native x86-64, `bin/fern -interp` and the self-host, and stay pinned at

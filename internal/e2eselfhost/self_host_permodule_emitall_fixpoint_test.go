@@ -12,17 +12,17 @@ import (
 	"time"
 )
 
-// TestSelfHostPerModuleEmitAllFixpointX86_64 is the payoff proof for the
+// TestSelfHostPerModuleEmitAllFixpointX86_64 is the proof for the
 // `-assume-eligible` memory fix (#5668): a gen0 → link → gen1 → gen1-emit-all
 // byte-identity fixpoint on the whole compiler, running gen1's emit-all in
 // batches of 8 units per process — the exact configuration that OOM'd (exit 137)
 // BEFORE the fix.
 //
-// The pre-fix story (recorded then deferred in docs/SELFHOST-AST-RETIREMENT.md):
+// The pre-fix behaviour (recorded then deferred in docs/SELFHOST-AST-RETIREMENT.md):
 // emit-all runs a whole batch in ONE process, and each unit did TWO full
 // whole-module lowering passes (the eligibility pre-check + the emit). On the
 // self-host bump arena (no GC) those stack, so a unit peaked ~7.6 GB and a batch
-// of 8 marched the 8 GiB arena to exit-137 on the second batch. `-assume-eligible`
+// of 8 took the 8 GiB arena to exit-137 on the second batch. `-assume-eligible`
 // drops the redundant pre-check, ~halving each unit's arena advance, so the same
 // batch of 8 now fits. This test is that A/B made permanent: same batch size,
 // with `-assume-eligible`, must run green AND byte-identically (gen0 == gen1).
@@ -31,7 +31,7 @@ import (
 // "~12 min" this comment used to claim predates the param_is_borrowable no-alloc
 // fix, which cut the per-unit emit peak ~3x and the wall with it.
 //
-// batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM config, and it
+// batch=8 is essential — it IS the pre-`-assume-eligible` OOM config, and it
 // is the batch `emit_per_module_spawned` uses for the driver's own default build
 // — so it is the only batch size worth a standing gate. It runs UNGATED, in its
 // own CI job (emitall-fixpoint-x86_64).

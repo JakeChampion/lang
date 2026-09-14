@@ -117,7 +117,7 @@ var p3Stream2SlotFixup = []byte{
 	0x65, 0x01, 0x09, 0x02, 0x00, 0x02, 0x66, 0x30, 0x01, 0x02, 0x66, 0x31,
 }
 
-// TestWasmP3StreamCollect is the colorless `stream[T]` COLLECT payoff, assembled
+// TestWasmP3StreamCollect is the colorless `stream[T]` COLLECT demonstration, assembled
 // through the Go composer (component.BuildStreamCollectComponent): a nested
 // producer exports `prod: async func() -> stream<u8>` and write-awaits + drops
 // the writable end (EOF); the consumer lowers that import and collect-loops

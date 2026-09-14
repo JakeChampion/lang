@@ -116,7 +116,7 @@ func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 // actually reach. The wasi profiles grant it on neither side.
 //
 // Listing it here rather than relaxing the comparison is the point: any OTHER
-// difference, in either direction, still fails — and this entry dies the day
+// difference, in either direction, still fails — and this entry is removed the day
 // native's backends lower it.
 var profileExceptions = map[string]map[string]bool{
 	"hosted-native": {"subprocess": true},

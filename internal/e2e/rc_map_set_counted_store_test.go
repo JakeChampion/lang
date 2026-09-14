@@ -10,7 +10,7 @@
 //   - BALANCED: FERN_LEAKCHECK reads allocs == frees, live 0, on the
 //     natives — pre-change every key / value local built from a fresh
 //     concat or literal was stranded, one block per insert; wasm has no
-//     leak counter, so it rides the __heap_bump_bytes() high-water probe,
+//     leak counter, so it uses the __heap_bump_bytes() high-water probe,
 //     flat under reclaim and linear under a leak.
 //   - CORRECT: reading the entry back after the source local is
 //     reclaimable yields the right value (the store's retain kept it alive).

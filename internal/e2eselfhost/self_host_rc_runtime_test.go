@@ -784,7 +784,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 		// case landed, and the self-host parser then silently miscompiled the
 		// program into an infinite loop (the `i = i + 1` increment lowered to
 		// StmtUnknown), hanging the CI shard at the 18m go-test timeout. The
-		// silent-miscompile-on-parse-error footgun is tracked in #4471.
+		// silent-miscompile-on-parse-error bug is tracked in #4471.
 		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function wrapH(src: E[]): i32 { var h = H { es: src }; return h.es[0].v; } function main(): i32 { var shared: E[] = [E { v: 3 }, E { v: 4 }]; var s = 0; var i = 0; while (i < 2000) { s = s + wrapH(shared); i = i + 1; } return s - s + __rc_underflow(); }", 0},
 		// Struct-array field from a fresh CALL value (sole owner, no inc): the
 		// field-drop frees it; a non-fresh callee would over-free here.
@@ -821,7 +821,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	// (free the elements only when this drop frees the buffer, i.e. the sole
 	// owner), then rc_dec's each element before the buffer dec.
 	//
-	// The binding is REASSIGNED, and that is load-bearing rather than
+	// The binding is REASSIGNED, and that is essential rather than
 	// incidental. With a single `var h = ...`, the reclaim this asserts on is
 	// the rebind over h's slot while that slot still holds its prologue zero —
 	// `is_unique(null)` is 0 on every path, so ir.fern's prune_zero_slot_guards

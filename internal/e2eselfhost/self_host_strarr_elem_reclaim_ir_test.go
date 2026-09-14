@@ -220,7 +220,7 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { re
 		"strarr-local-stored-by-callee-counted", 0, "yes")
 
 	// The same store where the holder ESCAPES the frame that owns the array —
-	// the shape the case above was written to fear, and the one that can
+	// the shape the case above was written against, and the one that can
 	// actually fail. `build` returns the Box, so the retain is still live when
 	// `xs` sweeps: the walk runs, finds rc 2, and decs without touching an
 	// element. 500 rounds each read every element back AFTER 20 churn frames
@@ -263,7 +263,7 @@ function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(
 
 	// SELF-`.with` REBIND, BOUNDED HIGH-WATER (#6407): `a = a.with(i, v)` on an
 	// owned string[] lowers to an in-place arr_set, which used to drop the
-	// overwritten element pointer on the floor — and, because the rebind was a
+	// overwritten element pointer without releasing it — and, because the rebind was a
 	// hazard, cost the array its credit as well, so ALL eight element boxes
 	// leaked per round (380 B/round measured). lower_strarr_with_store now
 	// releases the superseded box and retains the stored value, which makes the

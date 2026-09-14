@@ -100,7 +100,7 @@ func TestCertifyDoesNotReportABorrowedParameter(t *testing.T) {
 	}
 }
 
-// A consumed parameter IS this function's, and dropping it on the floor
+// A consumed parameter IS this function's, and leaving it unreclaimed
 // is a leak.
 func TestCertifyReportsAConsumedParameterNeverReleased(t *testing.T) {
 	f := &Func{Name: "f"}

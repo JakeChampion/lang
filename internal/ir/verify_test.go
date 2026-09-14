@@ -25,7 +25,7 @@ func fn(name string, nSlots int, ops ...Op) *Func {
 // structural runs only the structural half. These fixtures break one
 // structural invariant each and are otherwise hand-built rather than
 // lowered, so they carry no coherent operand stack for the stack half
-// (verifystack_test.go) to have an opinion about.
+// (verifystack_test.go) to check.
 func structural(funcs ...*Func) []Problem {
 	known := map[string]*Func{}
 	for _, f := range funcs {

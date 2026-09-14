@@ -6,7 +6,7 @@
 // for the `a = a.append(v)` self-reassign form (whose overwrite-reclaim
 // pairs with it). For a reused operand it corrupted later reads of the
 // same binding, so interp (correct value semantics) disagreed with every
-// compiled backend (x86-64 exited 77 vs interp's 20201 on the headline
+// compiled backend (x86-64 exited 77 vs interp's 20201 on the main
 // repro). Each case prints its result so the oracle (interp) and all
 // three backends are compared by stdout.
 //
@@ -26,7 +26,7 @@ func TestAppendAliasDifferential(t *testing.T) {
 	cases := []struct {
 		name, src string
 	}{
-		// The headline repro from #4827: `path` (a param) is appended in
+		// The main repro from #4827: `path` (a param) is appended in
 		// argument position, then appended again — the second read must see
 		// the ORIGINAL path, not the first append's in-place-extended buffer.
 		// interp = 20201; compiled was 77 before the fix.

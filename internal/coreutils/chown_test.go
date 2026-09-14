@@ -281,7 +281,7 @@ func chownCases(t *testing.T) []invocation {
 	tree("reference outranks a bad spec", "--reference=nope", "zzznope", "f")
 
 	// ---- --from ----------------------------------------------------------
-	// `--f` is `--from`, which takes an argument — so it swallows the spec
+	// `--f` is `--from`, which takes an argument — so it consumes the spec
 	// and the FILE becomes the spec. chown-only: chgrp did not have the
 	// option until after 9.1 (see chgrp_test.go).
 	tree("f prefix is from", "--f", "root", "f")

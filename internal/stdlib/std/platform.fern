@@ -10,7 +10,7 @@
 // The free functions stay: a CLI tool with no handler in sight calls
 // `eprint` / `now_unix_ms` directly and always will. What the bag adds
 // is a handler that cannot reach an effect it was not given, which is
-// the seam the rest of the platform story hangs off — mock platforms in
+// the seam the rest of the platform design hangs off — mock platforms in
 // tests (Rec §6), per-target capability sets (Rec §2), effect rows
 // (Rec §10). `fern -lint`'s `ambient-capability` rule reports a handler
 // body that reaches around the bag.

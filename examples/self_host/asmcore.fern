@@ -1622,7 +1622,7 @@ pub function rt_src_reader_close(t: string): string {
 // a hard-coded 0: a Reader IS its fd, so a file reader's read_line has to read
 // that file (#7758). The bare builtin passes 0.
 //
-// ONE BYTE PER SYSCALL, which is load-bearing and not an oversight (#6052): a
+// ONE BYTE PER SYSCALL, which is required and not an oversight (#6052): a
 // single read(0, buf, 256) silently discarded every byte past the first newline,
 // because only the line was boxed and the rest of the buffer was dropped — a
 // read-until-EOF loop saw the first line and then a spurious EOF. Reading one byte
@@ -2115,7 +2115,7 @@ pub function rt_src_temp_dir(t: string): string {
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (mode is
 // ignored without O_CREAT, so __syscall3 suffices), take a size HINT from fstat's
-// st_size (lseek lies on directories: EINVAL on tmpfs, the htree sentinel on
+// st_size (lseek is wrong on directories: EINVAL on tmpfs, the htree sentinel on
 // indexed ext4), read to EOF into a buffer that BECOMES the returned string
 // (RC-managed), close,
 // then the D9 gate (#5714): content that is not well-formed UTF-8 returns
@@ -2546,7 +2546,7 @@ function statfs_counts_src(t: string): string {
 // geometry of the filesystem the path resolves on, plus the two length limits a
 // path on it is held to.
 //
-// Same skeleton as rt_src_stat — a NUL-terminated heap copy of the path, the
+// Same shape as rt_src_stat — a NUL-terminated heap copy of the path, the
 // errno classified by the shared __fern_io_error against a FRESH copy of that
 // path — and it diverges only where the kernels do.
 //
@@ -4592,7 +4592,7 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
         var ct: str = slice_unchecked(u.op, 3, u.op.len());
         if (ct == "f64" || ct == "f32" || ct == "float") { return ty_f64(); }
         // A cast HAS the named type. u32/i64/u64 used to erase to
-        // i32 here (all ints ride 64-bit slots, so arithmetic is
+        // i32 here (all ints occupy 64-bit slots, so arithmetic is
         // width-agnostic) — but the TAG drives method dispatch,
         // signed-vs-unsigned compares, and divq/idivq selection, so
         // erasing sent `(3 as u64).checked_sub(10 as u64)` to
@@ -4615,7 +4615,7 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
     // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
     // the `?` result fell through to i32 below, so `var o: Option[i32] =
     // f()?` (f: Result[Option[i32], i32]) was rejected E003 "initializer
-    // has type i32". Only bit the Option/struct payload case — a string /
+    // has type i32". Only broke the Option/struct payload case — a string /
     // array / scalar payload slipped through the lenient assignable check.
     if (u.op == "try_") {
         var ot: Ty = infer_expr_type(u.operand, s);
@@ -4712,7 +4712,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             // Everything else is the COARSE ty_array, which ty_from_ref
             // builds for every array whose element is not one of those
             // scalars — `Option[T][]`, `f64[]`, `S[]`, `T[][]`. That Ty
-            // does not record its element, so the honest answer is
+            // does not record its element, so the correct answer is
             // unknown: saying i32 was a guess that happened to hold for
             // the word-sized cases and produced a false E002 on the rest
             // (`return names[0]` from a function returning Option[string]
@@ -4965,7 +4965,7 @@ function slit_empty_buckets(): i32[] {
 }
 
 pub function add_string_lit(s: EmitState, v: string): StringLitOut {
-    // Dedup: load-bearing for shape-pointer dispatch in
+    // Dedup: required for shape-pointer dispatch in
     // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
     var b: i32 = util.hash_bucket(v, s.slit_head.len());
     var i: i32 = s.slit_head[b];
@@ -5017,7 +5017,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "str_reverse" || name == "str_replace"
         // The Option-returning array helpers box their result via
         // __fern_arr_box. Their call sites mark heap too, so this edge is
-        // byte-neutral through that door; it is what makes the closure right
+        // byte-neutral through that route; it is what makes the closure right
         // when the need is seeded from all_runtime_need_roots instead.
         || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
         || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
@@ -5038,7 +5038,7 @@ pub function runtime_need_deps(name: string): string[] {
         // not, so the two declarations of one edge disagreed and only the wrapper
         // carried it. Byte-neutral today, because every str_trim need is seeded
         // through that wrapper; the point is that the closure no longer depends on
-        // which door the need came in by.
+        // which route the need came in by.
         var dtrim: string[] = ["heap", "str_concat"];
         return dtrim;
     }
@@ -5720,7 +5720,7 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
 // rejects the chain with E038 per argument + E003 at the binding). The
 // self-host inference instead KEY-KINDS a bare ctor result by its NAME
 // (map_new = string-keyed, map_new_i32 = i32-keyed), so a chain whose key
-// arguments DISAGREE with the ctor's key kind sailed through check and the
+// arguments DISAGREE with the ctor's key kind was accepted by check and the
 // emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
 // map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
 // arg-taking map method (insert / get / get_or / has / without) whose chain
@@ -5867,7 +5867,7 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 //
 //   * check_call_arity — native E004, for driver paths that run no full
 //     checker gate (the wasm drivers), where an arg-count mismatch used to
-//     sail through the emitter and miscompile while the Go compiler rejects at
+//     pass through the emitter and miscompile while the Go compiler rejects at
 //     check time. Callers pass a fill_default_args_module'd module so omitted
 //     defaulted arguments don't read as mismatches.
 //   * check_undefined_calls — native E001. A callee naming nothing used to
@@ -6244,7 +6244,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
 //
 // The self-host parser's top-level loop dispatches on the declaration keywords
 // and lets everything else fall through to parse_stmt, which lands in
-// `top_stmts`. That bucket has two very different tenants:
+// `top_stmts`. That bucket has two very different cases:
 //
 //   - With NO `main`, it is the interpreter's SCRIPT mode: eval_module runs
 //     the statements in order and answers with the top-level `return`, which
@@ -6645,7 +6645,7 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
 // `idx` is the field index; a backend derives its own slot offset from it,
 // since the register backends and wasm lay a box out differently.
 //
-// All three backends walk this list. The `string[]` admissions are load-bearing
+// All three backends walk this list. The `string[]` admissions are required
 // on wasm too: a functional-update base copy hands the new box every array
 // field pointer with no retain, so an ungated dec there frees a buffer the base
 // still owns (#8119, the compiler's own FnSigs).

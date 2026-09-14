@@ -17,7 +17,7 @@ import (
 // path used to re-lower every function once PER collect / gate pass (~30×), and
 // each re-lowering paid an O(statements²) ops-array clone into the no-free bump
 // arena. Peak RSS grew ≈ 0.16·n² MB (measured: n=40 → 406 MB, n=80 → 1.18 GB,
-// n=120 → 2.3 GB), so a large single-function module blew the 3.875 GiB arena and
+// n=120 → 2.3 GB), so a large single-function module exhausted the 3.875 GiB arena and
 // the self-host wasm compile was killed (exit 137) — which is what pinned the
 // x86_encode/x86_gas migration to the AST path on wasm.
 //

@@ -43,7 +43,7 @@ import (
 // and on the register backends a slice there is a FRAME box that never touches
 // the heap, so it already measures 0. On wasm it still strands 48000. Closing
 // that means touching the path every `<expr>.len()` takes, where the register
-// lowering currently allocates nothing; that is its own slice, not a rider here.
+// lowering currently allocates nothing; that is its own slice, not part of this.
 const sliceBuiltinPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";

@@ -60,7 +60,7 @@ func TestSuggestOnUnsupported(t *testing.T) {
 // panic here surfaces as a compiler crash with no source location.
 //
 // It found asmLoadStore reading ops[0] before its arity check, so `ldr` with
-// no operands took down the process.
+// no operands crashed the process.
 func TestNoPanicOnMalformedOperands(t *testing.T) {
 	forms := []string{"", " x0", " x0, x1", " x0, x1, x2, x3", " v0.4s", " [x0]"}
 	for _, m := range knownMnemonics {

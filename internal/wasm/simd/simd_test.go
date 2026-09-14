@@ -243,7 +243,7 @@ func TestVectorOpcodesAgainstWasmTools(t *testing.T) {
 // Without this, a bug that made every `enc` return an empty slice would leave
 // the differential passing on every case (an empty slice is contained in
 // everything), which is precisely the shape of silent green this project has
-// been bitten by.
+// hit before.
 func TestVectorOpcodesRejectedByWasmTools(t *testing.T) {
 	wasmTools, err := exec.LookPath("wasm-tools")
 	if err != nil {

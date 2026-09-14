@@ -1492,7 +1492,7 @@ const (
 	// parseBitOr → parseBitXor → parseBitAnd → parseEquality →
 	// parseRelational (parser.go:2520-2533), so `==` binds tighter
 	// than `&`. The printer order has to match the parser or
-	// round-trip drops semantically-load-bearing parens (e.g.
+	// round-trip drops semantically-required parens (e.g.
 	// `(n & (n - 1)) == 0` formats to `n & n - 1 == 0`, then
 	// re-parses as `n & ((n - 1) == 0)` — the "is power of 2"
 	// idiom silently turns into ANDing a number with a boolean).
@@ -2131,7 +2131,7 @@ func (f *formatter) formatParamPattern(p ast.Param) {
 // formatDestructurePattern renders a destructuring pattern — `(a, (b, c))`
 // for a tuple, `Point { x: a, y }` for a struct — prefixed by `w @ ` when an
 // `@` binding names the whole value. `at` overrides the node's own AtName for
-// the parameter site, whose binding rides on the holder parameter instead.
+// the parameter site, whose binding is carried on the holder parameter instead.
 //
 // Every binding site renders through here. A site-local copy is how a struct
 // pattern came to reprint as the positional tuple form, silently rebinding by
@@ -2308,6 +2308,11 @@ func formatType(t ast.Type) string {
 		return out + ") => " + formatType(x.Result)
 	case ast.SelfType:
 		return "Self"
+	case ast.ProjType:
+		// An associated-type projection (`Self::Item`). Without this arm the
+		// switch fell through to "" and `-fmt` wrote `function get(self: Self): ;`
+		// — output that does not parse. See docs/ASSOCIATED-TYPES.md.
+		return formatType(x.Base) + "::" + x.Name
 	case ast.DynTraitType:
 		return x.String()
 	case ast.HandleType:

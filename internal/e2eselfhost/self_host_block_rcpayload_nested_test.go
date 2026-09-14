@@ -16,7 +16,7 @@ import (
 // leaked there: 35200 over 100 rounds, `frees=0`, where every other spelling of
 // the same shape was 0.
 //
-// THE FLAG IS LOAD-BEARING HERE, which is the difference from #6526's scalar
+// THE FLAG IS ESSENTIAL HERE, which is the difference from #6526's scalar
 // version. Flipping the fn-scope call site to `nested_ok = true` segfaults both
 // TestSelfHostNestedMatchBorrowNoUnderflow's program and the opt-struct-payload
 // hazard, where the same mutation on the SCALAR collector was harmless. A scalar

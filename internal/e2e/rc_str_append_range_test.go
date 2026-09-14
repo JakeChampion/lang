@@ -7,7 +7,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// #8770 — end-to-end payoff and safety of `__fern_str_append_range`, the
+// #8770 — end-to-end benefit and safety of `__fern_str_append_range`, the
 // fusion of `acc = acc + slice_unchecked(s, lo, hi)`. The LOWERING decision is
 // pinned target-independently in internal/ir/rc_str_append_range_test.go;
 // these pin what the emitted runtime does.
@@ -205,7 +205,7 @@ const strAppendRangeAllocSrc = `function main(): i32 {
 }`
 
 // TestX86_64StrAppendRangeAllocsCollapse pins the allocation half of the
-// payoff on this exact program:
+// benefit on this exact program:
 //
 //	before -> allocs=633 frees=633 live_bytes=0
 //	after  -> allocs=266 frees=266 live_bytes=0

@@ -31,11 +31,11 @@ package e2e
 // on the string data, so a missing release inflates a count on a block the
 // chain keeps reachable anyway, where the two-word claim ALLOCATES a cell per
 // entry per copy. The bounded leg below is therefore non-vacuous on wasm and
-// arm64 and vacuous on x86-64, which is stated rather than papered over.
+// arm64 and vacuous on x86-64, which is stated rather than hidden.
 //
 // A release may only cover the columns the copy CLAIMS, or it frees what the
 // new handle reads — so the value cases below are what keeps the widened walk
-// honest, and they are why widening was safe to do.
+// correct, and they are why widening was safe to do.
 //
 // What the two un-walked columns had been costing, 100 rounds, live_bytes,
 // x86-64 / arm64 / wasm, before #8431 and after:
@@ -242,7 +242,7 @@ func TestMapCowChainReclaimCensus(t *testing.T) {
 // the sibling file's "must not grow" — linear reclamation lands at 2.0x and the
 // leak at 3.8x, which 2.5x separates with room on both sides.
 //
-// __rc_underflow_count() rides along as the other direction: releasing a column
+// __rc_underflow_count() is included as the other direction: releasing a column
 // the copy does NOT own would show up here rather than as growth.
 const mapCowChainBoundedProg = `
 import "core/map";

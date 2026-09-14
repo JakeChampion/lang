@@ -9,7 +9,7 @@ import (
 
 // ClassifyCore's rejection path: an import the composer cannot place
 // must come back in `unsupported` so the driver can say so, rather than
-// being dropped on the floor and producing a component that fails to
+// being discarded and producing a component that fails to
 // instantiate later.
 //
 // End-to-end coverage (compiling a Fern program whose builtins had no

@@ -29,7 +29,7 @@ import (
 //
 // All three arms of the contract are asserted, and the ELAPSED TIME is checked
 // alongside the value: a helper that returned the right number without actually
-// waiting (the failure mode that bit #4316 during development) would pass a
+// waiting (the failure mode seen in #4316 during development) would pass a
 // value-only test.
 func TestSelfHostWasmIRPollFds(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")

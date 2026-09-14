@@ -11,7 +11,7 @@
 // chunked transfer encoding, no persistent connections (every
 // response advertises `Connection: close`), max 8 KiB headers,
 // max 1 MiB body. Sufficient for CLI tools and edge handlers;
-// the bigger story (keep-alive, TE chunked, TLS) waits on a
+// the rest (keep-alive, TE chunked, TLS) waits on a
 // richer lang shape.
 
 import "core/int";
@@ -667,7 +667,7 @@ pub function cookie_delete(name: string): SetCookie {
 }
 
 // `__cookie_clean(s, drop_eq)` — header-injection defence for
-// serialize: strip control bytes (CR/LF would let a value smuggle
+// serialize: strip control bytes (CR/LF would let a value inject
 // extra headers onto the wire) and the cookie structure bytes `;`
 // (and `=` for names). Everything else passes through unchanged;
 // callers needing arbitrary bytes in a value should encode first

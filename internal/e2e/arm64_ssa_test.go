@@ -132,7 +132,7 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			// lifted to a use its def does not dominate and SIGSEGV'd here
 			// while every other backend ran the program (#5903).
 			//
-			// `return v` is load-bearing in all three of these. A version
+			// `return v` is essential in all three of these. A version
 			// returning something DERIVED from the container
 			// (`return Some(arr[0])`) compiles and runs fine even with the fix
 			// reverted — the later reads consume the abandoned value harmlessly
@@ -373,7 +373,7 @@ function main(): i32 {
 			// rc.dec'd that. `f` is never called: building the closure is
 			// enough. Other capture orders did not crash only because their
 			// offset happened to land on the env pointer or on fn_idx (below
-			// the heap, so the rc guard swallowed it) — decrementing the wrong
+			// the heap, so the rc guard ignored it) — decrementing the wrong
 			// object rather than faulting.
 			name: "closure_scalar_then_pointer_capture",
 			src: `function main(): i32 {
@@ -704,7 +704,7 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// wasm_poll is -1 on native (no real pollables; readiness rides poll(2)),
+			// wasm_poll is -1 on native (no real pollables; readiness uses poll(2)),
 			// ignoring its array arg. On wasm it's the real wasi:io/poll.poll.
 			name: "wasm_poll_stub",
 			src:  `function main(): i32 { var ps: i32[] = [3, 7]; var i = wasm_poll(ps); return if (i == -1) { 5 } else { 0 }; }`,

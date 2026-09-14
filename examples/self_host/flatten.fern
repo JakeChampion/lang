@@ -275,7 +275,7 @@ function mangle_bare(name: string, ctx: RewriteCtx): string {
 
 // rewrite_type_name rewrites a type spelling under ctx:
 //   * qualified `mod.Name` (mod imported) → `mod__Name` (array /
-//     generic suffix rides along: `lexer.Token[]` → `lexer__Token[]`)
+//     generic suffix is preserved: `lexer.Token[]` → `lexer__Token[]`)
 //   * bare `Base` (Base is an own decl) → `prefix__Base`, preserving
 //     any `[]` / `[..]` suffix (`Token[]` → `prefix__Token[]`)
 //   * everything else (i32, Map[string,i32], other.Thing) untouched
@@ -316,7 +316,7 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     // match arm then called its i32 result (#7959).
     //
     // Parameters and result are full spellings, so each needs the same rewrite
-    // the tuple elements get; the array suffix rides after the arrow, exactly as
+    // the tuple elements get; the array suffix goes after the arrow, exactly as
     // render_type_ref spells it.
     if (tref.is_fn) {
         var fout: string = "(";
@@ -798,13 +798,24 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
     var i: i32 = 0;
     while (i < impls.len()) {
         var im: parser.ImplInfo = impls[i];
+        // An associated-type BINDING is a type name like any other, so it
+        // mangles with the rest — an `impl Iterator for R { type Item = Node; }`
+        // in a module must bind the module's mangled `Node`.
+        var mangled_vals: string[] = [];
+        var vi: i32 = 0;
+        while (vi < im.assoc_values.len()) {
+            mangled_vals = mangled_vals.append(rewrite_type_name(im.assoc_values[vi], ctx));
+            vi = vi + 1;
+        }
         out = out.append(parser.ImplInfo {
             trait_name: im.trait_name,
             impl_type: rewrite_type_name(im.impl_type, ctx),
             type_params: im.type_params,
             bounds: im.bounds,
             method_names: im.method_names,
-            trait_spelling: im.trait_spelling
+            trait_spelling: im.trait_spelling,
+            assoc_names: im.assoc_names,
+            assoc_values: mangled_vals
         });
         i = i + 1;
     }

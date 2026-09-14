@@ -10,7 +10,7 @@ import (
 // passed as a BORROWED arg to a normal direct call (`foo(a + b)`) is now
 // stashed and DEC'd after the call. Before this slice nothing reclaimed it
 // — the callee borrows the arg (no callee-side dec under the Phase-2d borrow
-// model) and the caller dropped the operand on the floor, so a
+// model) and the caller left the operand unreclaimed, so a
 // `sum3([i, i+1, i+2])` or `slen(a + b)` in a loop leaked its box every
 // iteration (unbounded). See docs/RC-PERCEUS-PLAN.md "Statement-temporary
 // reclamation" — this is the dominant real-code source ("the real win").

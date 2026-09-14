@@ -9,7 +9,7 @@ import (
 )
 
 // The map iteration-order gate (#8839). `Map[K, V]` iterates in INSERTION
-// order — `core/map` states that contract and `std/json` rides it to preserve
+// order — `core/map` states that contract and `std/json` depends on it to preserve
 // an object's key order — and until this gate existed nothing checked that the
 // self-host's backends agreed with native about it. Two of them did not, in
 // different ways, and both were silent: the program runs, prints, and exits 0.
@@ -20,13 +20,13 @@ import (
 //     after a `.without`.
 //   - The wasm backend kept keys at their probe slot and snapshotted by
 //     sweeping the slot table, so its `keys()` came out in HASH order. That one
-//     diverges on three plain inserts with no delete in sight.
+//     diverges on three plain inserts with no delete at all.
 //
 // The oracle is the interpreter, as everywhere else here: native is the
 // reference implementation, and the compilers must agree with it rather than
 // with each other.
 //
-// Twelve inserts are the load-bearing number: the map starts at capacity 8 and
+// Twelve inserts are the number that matters: the map starts at capacity 8 and
 // grows at 3/4, so the sequence has to survive a rehash — which is exactly
 // where an order column can be rebuilt in the wrong sequence and where a slot
 // sweep looks correct by accident on a small map.

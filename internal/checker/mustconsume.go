@@ -21,7 +21,7 @@ package checker
 //   - at-least-once, not exactly-once (no move tracking);
 //   - storing into an UNMARKED container (array/tuple/map literal, or
 //     an unmarked struct/enum) is a violation at the store site — the
-//     obligation would be laundered out of the checked world;
+//     obligation would be passed out of the checked world;
 //   - lambda captures of marked values are violations (obligation
 //     flow into closures needs design; forbid first);
 //   - loop bodies are opaque to the path analysis: a consuming use
@@ -122,7 +122,7 @@ func (c *checker) mcCheckBinding(fn *ast.FuncDecl, name, typeName string, bindPo
 	// Overwrite scan (same block, straight-line): re-assigning the
 	// binding before any consuming use silently drops the old value.
 	// The re-scan detects only (mcStmtConsumesQuiet) — the reporting
-	// pass above already emitted any laundering/capture errors.
+	// pass above already emitted any store/capture errors.
 	for _, s := range rest {
 		if c.mcStmtConsumesQuiet(s, name) {
 			return
@@ -227,12 +227,12 @@ func (c *checker) mcArm(s ast.Stmt, name, typeName string) (bool, bool) {
 }
 
 // mcStmtConsumes reports whether the statement itself definitely
-// contains a consuming use of the binding (laundering/capture
+// contains a consuming use of the binding (store/capture
 // violations are reported as they are found, and count as consuming
 // so each misuse is reported exactly once).
 // mcStmtConsumesQuiet is the detection-only variant used by the
 // overwrite re-scan (the reporting pass has already emitted any
-// laundering/capture errors for these statements).
+// store/capture errors for these statements).
 func (c *checker) mcStmtConsumesQuiet(s ast.Stmt, name string) bool {
 	return c.mcStmtConsumesImpl(s, name, "", false)
 }

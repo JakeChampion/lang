@@ -105,7 +105,7 @@ func TestSolveReturnsPropagatesThroughACall(t *testing.T) {
 	}
 }
 
-// The payoff, and the reason the anchor is recorded rather than a bare
+// The benefit, and the reason the anchor is recorded rather than a bare
 // flag: a caller that passes its parameter to a borrow-returning
 // function and then releases the RESULT has released the parameter.
 // Without the anchor the two are unrelated values and the parameter

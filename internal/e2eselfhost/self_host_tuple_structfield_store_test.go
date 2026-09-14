@@ -6,7 +6,7 @@ import (
 )
 
 // The counted tuple struct-field store: `S { t: k, … }` where `t` is a direct
-// deep-droppable tuple field. Three halves, all gated on
+// deep-droppable tuple field. Three parts, all gated on
 // struct_has_deep_tuple_field so none can widen without the others (#7253):
 //
 //	retain  — lower_expr_struct_lit's tuple arm incs a non-literal field value;

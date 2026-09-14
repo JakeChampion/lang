@@ -19,7 +19,7 @@ import (
 // paths that don't enter that arm. The sweep then rc_dec's uninitialized
 // stack garbage; when the leftover value looks like a heap pointer it
 // decrements a random live block's rc — a layout-dependent heap corruption.
-// Observed in the wild as the self-host driver miscompiling
+// Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
 // .Lir_main_* branch label): irlower's alias_names_in_stmt binds its
 // StmtAssign arm payload as `a`, shadowing the `var a: string[]`
@@ -108,7 +108,7 @@ function main(): i32 {
 // the binding fanned into two words while the IR balanced the operand
 // stack for one: the store popped a garbage second word and each load
 // pushed one, desynchronising every stack-machine backend. Observed in
-// the wild as the self-host interp's `parser.ExprTuple(t)` arm trapping
+// practice as the self-host interp's `parser.ExprTuple(t)` arm trapping
 // its own bounds check on arm64 (TestSelfHostInterpArm64, exit 134)
 // once a sibling arm gained `var t: string` (#4497).
 func TestMatchBindingCrossShapeVarCollisionGetsFreshSlot(t *testing.T) {

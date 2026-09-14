@@ -23,7 +23,7 @@ var deferValueBlockCases = []struct {
 	name string
 	src  string
 }{
-	// The headline shape: a defer in a `var` initialiser's value block runs at
+	// The main shape: a defer in a `var` initialiser's value block runs at
 	// the enclosing function's exit, so the return expression still reads the
 	// pre-cleanup value.
 	{"var_value_block", `function g(a: Cell[i32]): i32 {

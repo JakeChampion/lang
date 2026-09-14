@@ -4,7 +4,7 @@
 // The stdlib modules a program imports (resolved through
 // modload) pull in helpers, but most programs use only a small
 // subset. Without tree-shaking, codegen would emit every loaded
-// helper, blowing up binary size for trivial programs.
+// helper, inflating binary size for trivial programs.
 // Tree-shake makes the stdlib effectively pay-for-what-you-use.
 //
 // Algorithm: collect entry points (main + handle + anything

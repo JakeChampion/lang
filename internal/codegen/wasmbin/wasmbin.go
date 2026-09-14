@@ -4,7 +4,7 @@
 // WAT-text emitter (internal/codegen/wasm) it replaced has been
 // removed, along with the `wasm-tools parse` shell-out that depended
 // on it. wasmbin shares the lowering and IR optimisation pipeline
-// with every other backend, so a feature added to ir.Lower lights up
+// with every other backend, so a feature added to ir.Lower works
 // here automatically once the corresponding op handler is wired. The
 // package is exercised via `fern -target wasm32-wasi -emit core-module -o prog.wasm
 // prog.fern` end-to-end.
@@ -200,7 +200,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// lang-string round-trip, and emitStrNormalize for the
 		// outgoing body SSO normalize. Per-request memory is
 		// reclaimed by reference counting (RC), not a bump reset.
-		// Its callees ride in on the unconditionalHelperCalls edge,
+		// Its callees come in through the unconditionalHelperCalls edge,
 		// not on a hand-kept list here.
 		helpers.add("__http_entry")
 	}
@@ -1341,7 +1341,7 @@ func valtypeFor(t ast.Type) (byte, error) {
 		// own/borrow R — a resource handle is an opaque i32 (P5).
 		return encode.ValtypeI32, nil
 	case ast.CharType:
-		// A Unicode scalar rides an i32 slot, the same way a handle does.
+		// A Unicode scalar occupies an i32 slot, the same way a handle does.
 		// ir.eraseSurfaceTypes turns `char` into i32 for the declaration
 		// and Info slots it can reach, but a lowering-created scratch slot
 		// can still be typed from an expression position the walk misses,
@@ -1844,7 +1844,7 @@ type emitCtx struct {
 
 // slotType returns the ast.Type of an IR slot. Layout follows the
 // IR convention: params first, then declared locals, then the
-// scratch slots the lowering pass conjured.
+// scratch slots the lowering pass created.
 func slotType(fn *ir.Func, irIdx int32) ast.Type {
 	i := int(irIdx)
 	if i < len(fn.Params) {

@@ -4,7 +4,7 @@ import "std/array" as array;
 // std/array's distance_f64 (Euclidean distance = norm(a - b)) and normalize_f64
 // (unit vector, each element / the norm; zero and empty vectors returned
 // unchanged). distance returns a plain f64, normalize an f64[] — both scalar
-// payload, so this rides all four native backends and both self-host gates. The
+// payload, so this runs on all four native backends and both self-host gates. The
 // Go-side TestArrayDistanceNormalize pins the native backends; this is the
 // migration-shaped companion.
 

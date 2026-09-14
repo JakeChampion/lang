@@ -12,7 +12,7 @@ import (
 // (docs/DST-PLATFORM-BRIEF.md slice 1): a virtual-clock, seeded-PRNG
 // implementation of the async.Driver seam, driven through the
 // gather_on / race_on / with_deadline_on combinator siblings. These
-// gates pin the headline win: deadline-based async is testable under
+// gates pin the main benefit: deadline-based async is testable under
 // `-interp` — where fd-backed Pending futures never resolve on the
 // real driver — with EXACT virtual-time assertions instead of sleeps.
 

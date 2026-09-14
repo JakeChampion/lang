@@ -641,7 +641,7 @@ const (
 	// ResNarrow is void, boolean, or an i32: the i32 sign-extend the
 	// 64-bit backends re-establish after each op is correct on it.
 	ResNarrow = 32
-	// ResWide is an i64, or a float — which rides in a general register
+	// ResWide is an i64, or a float — which is held in a general register
 	// as its f64 bit pattern, so masking one to 32 bits keeps the low
 	// mantissa half and discards the sign and exponent.
 	ResWide = 64
@@ -820,7 +820,7 @@ func (o *Op) CaptureSlots() []int32 {
 
 // Func is a single lowered function: parameter / local list, ops, and
 // the return type. ScratchTypes carries the type of each synthetic
-// slot the lowering pass / inliner conjured (for ArrayLit / StructLit
+// slot the lowering pass / inliner created (for ArrayLit / StructLit
 // / closure helpers and for inlined callees' params,
 // locals, scratches). Slots live at indices [len(Params)+len(Locals),
 // …) and are addressed by OpLoadLocal / OpStoreLocal just like user
@@ -1805,7 +1805,7 @@ type Program struct {
 	// which is deterministic because the function order is.
 	//
 	// The table is fixed at lowering time and the post-Lower passes never
-	// touch it, which is what makes the report honest about dead code: a
+	// touch it, which is what makes the report correct about dead code: a
 	// function the dead-function cull removes leaves its sites in the
 	// table with no site left to increment them, and they report 0 —
 	// never called is exactly what that means.
@@ -2164,7 +2164,7 @@ func rejectDynTrait(prog *ast.Program) error {
 //     vtable infrastructure the compare needs isn't emitted there;
 //   - a non-struct/enum (primitive/string) downcast target — slice-1
 //     scope is struct/enum only (the checker already blocks primitives
-//     with E060; this is a defensive belt-and-braces guard).
+//     with E060; this is a redundant defensive guard).
 func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) error {
 	const unsupportedBackend = "'as?' downcast (dyn Trait → concrete) is not yet supported on this backend; run it on the interpreter (fern -interp)"
 	const primTarget = "'as?' downcast target must be a concrete struct or enum (slice 1); primitive targets are not yet supported on compiled backends"
@@ -2745,7 +2745,7 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 // concrete drop (`__drop_struct_<C>` / `__drop_enum_<C>`) frees `data` and
 // everything it transitively owns (e.g. a String field) and self-guards on
 // rc==1; the vtable word is static data — never inc/dec'd. Reload-before-
-// free is load-bearing on the natives: freeing the cell first would read a
+// free is required on the natives: freeing the cell first would read a
 // reclaimed (possibly reused) cell for data/vtable — a use-after-free.
 //
 // Dispatch reuses OpCallDyn (slot = methodCount, sig (ptr)->ptr — every
@@ -4733,7 +4733,7 @@ func pruneShadowedVariants(names map[string]bool, info *checker.Info) map[string
 //     type-parameter bindings, if any), and
 //   - variant 1 is nullary.
 //
-// The canonical-order requirement is load-bearing: the IR's
+// The canonical-order requirement is essential: the IR's
 // pair-form construction reuses `OpMakeSomeI32` (tag=0) for
 // the payload-carrying variant and `OpMakeNoneI32` (tag=1)
 // for the nullary one, and the consumer-side tag dispatch
@@ -6167,7 +6167,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			// exhaustive still has no fall-through arm here) was handed
 			// an `f32.const 0` against an f64 result and the whole
 			// module was rejected at instantiation — "expected f64,
-			// found f32". That took out every program returning
+			// found f32". That broke every program returning
 			// Option[f64] through a match, including std/test (#6192).
 			if ft, ok := fn.ReturnType.(ast.FloatType); ok && ft.Width == 64 {
 				b.emit(Op{Kind: OpConstF64, F64: 0})
@@ -6213,7 +6213,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// it is safe before (or after) the scratch sizing below.
 	b.insertConsumedParamEntryIncs(entryIncAt, entryIncPos)
 	// Record the type of every synthetic slot the lowering pass
-	// conjured beyond the user-visible params + locals — ArrayLit
+	// created beyond the user-visible params + locals — ArrayLit
 	// / StructLit / closure helpers each added entries to
 	// the locals map. Most are i32 (heap pointers or integer tags);
 	// match-arm bindings of float-typed payloads register a
@@ -8472,7 +8472,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // earlier arm's same-named binding — the slot is REUSED instead of freshly
 // allocated.
 //
-// Why reuse is load-bearing: the return / function-exit dec sweep
+// Why reuse is essential: the return / function-exit dec sweep
 // resolves names through b.locals at the moment each return is LOWERED.
 // A fresh binding slot permanently shadows the var's pre-allocated slot,
 // so every later-lowered return sweeps the ARM's slot — which is never
@@ -8480,7 +8480,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // uninitialized stack garbage; when the leftover value happens to look
 // like a heap pointer (past the null / low-address / sentinel guards) it
 // decrements a random block's rc word — a layout-dependent heap
-// corruption. Observed in the wild as the self-host driver miscompiling
+// corruption. Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
 // .Lir_main_* label): irlower's alias_names_in_stmt binds its StmtAssign
 // arm payload as `a`, shadowing the `var a: string[]` accumulators bound
@@ -9267,7 +9267,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Stage (a) statement-temp reclamation: when the discarded value
 		// is a FRESH owned rc temporary (a literal / concat / string slice
 		// that aliases nothing and escapes nowhere — freshOwnedRcTempType),
-		// DEC it instead of dropping an owned allocation on the floor.
+		// DEC it instead of leaving an owned allocation unreclaimed.
 		// Without this a bare `a + b;` / `[x, y];` leaks its box every time.
 		// Gated inside freshOwnedRcTempType on RcFreeEnabled, so free-off
 		// stays byte-identical to the plain-drop baseline below.
@@ -9278,7 +9278,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			// Discarded owned call result: a bare `mk(i);` whose user-function
 			// result is a fresh struct / array / string / enum leaks it (the
-			// floor-drop below). Dec it via the is_unique-gated drop instead —
+			// plain drop below). Dec it via the is_unique-gated drop instead —
 			// safe because an aliased return is rc>=2 (return-transfer inc) so
 			// the gate only decs it, never frees a still-owned value. Builtins
 			// / mutators / variant ctors that hand back an uncounted alias are
@@ -9506,8 +9506,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			varIdx := arm.VariantIndex
 			// An arm the checker stamped CoversRemainder matches every
-			// value still able to reach it, so testing its tag asks a
-			// question with one answer. Emitting the body straight is what
+			// value still able to reach it, so testing its tag has one
+			// possible outcome. Emitting the body straight is what
 			// the unguarded wildcard above already does, and what the tuple
 			// emitter does for an all-binder arm.
 			//
@@ -9871,7 +9871,7 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 		}
 	case *ast.CharLit:
-		// Both forms ride a 32-bit slot: `char` is erased to i32 by
+		// Both forms occupy a 32-bit slot: `char` is erased to i32 by
 		// eraseSurfaceTypes and `u8` is stored in the low byte of one.
 		b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 	case *ast.DowncastExpr:
@@ -9904,7 +9904,7 @@ func (b *builder) expr(e ast.Expr) error {
 			case sw == dw && dw == 64:
 				// i64 ↔ u64: bit-identical reinterpret.
 			case sw <= 32 && dw <= 32:
-				// Source and destination both ride in i32 storage.
+				// Source and destination both occupy i32 storage.
 				// Produce the destination's *canonical* form so any
 				// later read is correct: a sub-i32 signed dest is
 				// sign-extended from its width, an unsigned dest is
@@ -10752,8 +10752,8 @@ func (b *builder) expr(e ast.Expr) error {
 		// `__str_idx` already does (i*1 + bounds-check) so we
 		// reuse it for sub-i32 owned arrays.
 		// Reclaim a FRESH owned array container consumed by an index —
-		// `mk(i)[1]` (mk returns a fresh i32[]) loaded element 1 and dropped
-		// the buffer on the floor, leaking it every iteration (160000 ->
+		// `mk(i)[1]` (mk returns a fresh i32[]) loaded element 1 and left
+		// the buffer unreclaimed, leaking it every iteration (160000 ->
 		// 1600000 in a loop). Stash the container, index off the reload, then
 		// dec it after the load via the is_unique-gated emitOwnedSlotDrop.
 		//
@@ -11103,7 +11103,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// high - low. Without it an oversized `high` materialised a
 		// view past the source, and the access-time `__slice_idx`
 		// check — which compares against the slice's own len —
-		// happily read out of bounds. (The parser reserves the
+		// read out of bounds. (The parser reserves the
 		// bare `a[:]` form, so at least one bound is present.)
 		if err := b.expr(n.Source); err != nil {
 			return err
@@ -11261,7 +11261,7 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpStore})
 		// Refcount slot at base + headerBytes - 8 (so callers
 		// can reach it via `data - 8`). Initialise to 1 — this
-		// array is uniquely owned by whoever's catching the
+		// array is uniquely owned by whoever receives the
 		// result.
 		b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 		if headerBytes != 8 {
@@ -11726,7 +11726,7 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		// Reclaim a FRESH owned struct/tuple container consumed by a field
 		// access — `mk(i).x` (mk returns a fresh struct) loaded the field and
-		// dropped the box on the floor, leaking it. Stash the container, load
+		// left the box unreclaimed, leaking it. Stash the container, load
 		// the field off the reload, then deep-drop it via the is_unique-gated
 		// emitOwnedSlotDrop (which also reclaims the container's OTHER rc
 		// fields — we only took one).
@@ -12293,7 +12293,7 @@ func (b *builder) targetTupleType(e ast.Expr) (ast.TupleType, bool) {
 		// The checker has already type-checked inner exprs, but
 		// we don't have access to their resolved types from the
 		// IR layer without re-checking. Skip the optimisation
-		// for raw `(...).N` access by punting back to fieldOwner
+		// for raw `(...).N` access by deferring back to fieldOwner
 		// (which won't find it either, surfacing a compile-time
 		// error) — in practice nobody writes `(1,2).0` because
 		// they could just write `1`. If this becomes a real
@@ -12597,7 +12597,7 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 // The call case is what keeps `"n = " + n.to_string()` from leaking the
 // to_string buffer once per join: OpStrConcat borrows its operands and
 // copies out of them, so nothing else in the pipeline ever drops them.
-// It only bites above the 7-byte small-string threshold — shorter
+// It only shows above the 7-byte small-string threshold — shorter
 // results are inline-tagged and never allocated, which is why the leak
 // hid behind small numbers.
 func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
@@ -12647,7 +12647,7 @@ func (b *builder) stashOwnedStringOperand(e ast.Expr) (int32, error) {
 	return sl, nil
 }
 
-// spillStringOperand lowers `e` and parks the result in a string-typed
+// spillStringOperand lowers `e` and stores the result in a string-typed
 // scratch slot, leaving nothing on the operand stack. It is the sibling of
 // stashOwnedStringOperand for lowerings that read their source MORE THAN
 // ONCE (the guarded string slice reads it for the length, both boundary
@@ -12751,7 +12751,7 @@ func (b *builder) binary(n *ast.Binary) error {
 	}
 	// Integer arithmetic identities + strength reduction. Only
 	// applied when neither side is a string-concat / float —
-	// floats sidestep because they need NaN / signed-zero
+	// floats are skipped because they need NaN / signed-zero
 	// handling we don't want to bake in here, and string +
 	// has its own handling below.
 	//
@@ -13740,7 +13740,7 @@ func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 // The runtime cannot derive that size. keyKind says a key is a string, not
 // whether the SLOT holds a cell — that is an ABI fact, and __ptr_width()
 // cannot settle it either: wasm32 boxes (ptrW 4), arm64 under the two-word
-// override boxes (ptrW 8), x86-64 does not (ptrW 8). So the size rides in
+// override boxes (ptrW 8), x86-64 does not (ptrW 8). So the size is packed
 // with the tag, and __map_free_key_cell reads it back to free a deleted
 // entry's key with the size boxIntoCell allocated (#8493).
 //
@@ -14914,7 +14914,7 @@ func (b *builder) callBody(n *ast.Call) error {
 					return err
 				}
 			}
-			// ArgTypes is load-bearing, not decoration. Under the
+			// ArgTypes is essential, not decoration. Under the
 			// two-word string ABI (arm64, wasm) a `string` argument
 			// occupies TWO operand-stack slots, so a backend that pops
 			// I32=3 slots reads the length as the data pointer and the
@@ -14930,7 +14930,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
-	// runtime-helper-call shape and the same load-bearing ArgTypes: a
+	// runtime-helper-call shape and the same essential ArgTypes: a
 	// `string` is TWO operand slots on arm64 and wasm and one on x86-64, so
 	// without the declaration a backend popping I32=3 reads the length as
 	// the data pointer.
@@ -14947,7 +14947,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __count_byte(s, byte) — the same runtime-helper-call shape, and
-	// ArgTypes is load-bearing for the same reason as its three siblings: a
+	// ArgTypes is essential for the same reason as its three siblings: a
 	// `string` is two operand slots on arm64 and wasm and one on x86-64.
 	if id.Name == "__count_byte" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
@@ -14963,7 +14963,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	// __sum_bytes(s) — the same runtime-helper-call shape, with one argument
 	// and therefore the family's smallest ArgTypes, which is still
-	// load-bearing: a `string` is TWO operand slots on arm64 and wasm and one
+	// essential: a `string` is TWO operand slots on arm64 and wasm and one
 	// on x86-64, so a backend popping I32=1 reads the length as the result.
 	if id.Name == "__sum_bytes" && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
@@ -14993,7 +14993,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
-	// above, and ArgTypes is load-bearing here for the same reason: `string`
+	// above, and ArgTypes is essential here for the same reason: `string`
 	// is two operand slots on arm64 and wasm, one on x86-64.
 	if id.Name == "__ascii_run" && len(n.Args) == 2 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
@@ -15008,7 +15008,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// __mismatch(a, ao, b, bo, n) — the same runtime-helper-call shape as its
-	// four siblings, with TWO strings. ArgTypes is doubly load-bearing here:
+	// four siblings, with TWO strings. ArgTypes is doubly essential here:
 	// under the two-word ABI this call is seven operand slots, not five, and
 	// the two strings are not adjacent, so a backend popping I32=5 reads the
 	// second string's length as `n`.
@@ -15029,7 +15029,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// backend rewinds its own cursor and snapshots its own freelist heads.
 	//
 	// These carry the SOURCE builtin name, not the __fern_ runtime name, and
-	// each backend rewrites it at the call site. That is load-bearing for
+	// each backend rewrites it at the call site. That is essential for
 	// release_to: it returns void, and the backends suppress the post-call
 	// operand-stack push via callReturnsVoid, which resolves voidness through
 	// the checker's FuncSigs — keyed by the source name. Emitting the runtime
@@ -15115,7 +15115,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// layout may diverge from strings later.
 	switch id.Name {
 	case "slice_unchecked":
-		// `slice_unchecked(s, a, b)` is `s[a:b]` under its honest name
+		// `slice_unchecked(s, a, b)` is `s[a:b]` under its accurate name
 		// (#5634, D9): lower it onto the identical __str_slice path as
 		// the SliceExpr arm so the two forms cannot drift — including
 		// the owned-temp source stash, without which the
@@ -15160,7 +15160,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		// FRESH owned rc temporary (`(a + b).len()` — a string concat /
 		// slice), the value-consuming op below (OpStrLen / the array
 		// length load) consumes its (data,len) / pointer and returns an
-		// i32, dropping the buffer on the floor — nothing dec's it. That's
+		// i32, leaving the buffer unreclaimed — nothing dec's it. That's
 		// the measured `(a + b).len()` loop leak (1600 → 160000 → 1600000
 		// on wasm, no plateau). The receiver is created solely for this
 		// call and is DEAD after it (the i32 length cannot alias it), so
@@ -15620,8 +15620,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// Stage (b) statement-temp reclamation: a FRESH owned rc temporary
 	// passed as a borrowed arg to a normal direct call (`foo(a + b)`) is
 	// never dec'd by anyone — the callee borrows it (no callee-side dec
-	// under the Phase-2d borrow model) and the caller drops the operand on
-	// the floor. So stash each such arg's value in a scratch slot and dec
+	// under the Phase-2d borrow model) and the caller leaves the operand
+	// unreclaimed. So stash each such arg's value in a scratch slot and dec
 	// it right after the call.
 	//
 	// CRITICAL safety gate — CONCRETE-SCALAR RESULT ONLY
@@ -16379,7 +16379,7 @@ func (b *builder) emitCopiedFieldInc(t ast.Type) {
 
 // reusePlaceableField reports whether a field of this type is one the reuse
 // paths can PLACE into a repurposed box: a scalar of any width — i32-class,
-// wide i64/u64, f32/f64 (#4356 divergence 1), bool — which rides a
+// wide i64/u64, f32/f64 (#4356 divergence 1), bool — which uses a
 // width-correct temp slot (the scratchType stamp sizes the slot and
 // payloadStoreOpFor picks the store), or a single-word rc-tracked pointer
 // (array / struct / Map / enum / closure / tuple), whose displaced value the
@@ -16425,7 +16425,7 @@ func structReuseEligible(sd *ast.StructDecl) bool {
 // through reusePlaceableField, and it is not what makes an accumulator
 // quadratic.
 //
-// Every other REPLACED field rides a temp, and so must be placeable.
+// Every other REPLACED field uses a temp, and so must be placeable.
 func (b *builder) structUpdateReusePlaceable(sl *ast.StructLit, sd *ast.StructDecl, base *ast.Ident) bool {
 	for _, f := range structUpdateFieldInits(sl, sd, base) {
 		if b.fieldCarriedFrom(f.Value, base.Name, f.Name) {
@@ -16446,7 +16446,7 @@ func (b *builder) structUpdateReusePlaceable(sl *ast.StructLit, sd *ast.StructDe
 // element is a scalar of any width (i32-class, i64/u64, f32/f64 — #4356
 // divergence 1) OR a single-word rc-tracked pointer (array / struct / Map /
 // enum / closure / tuple). Strings (two-word) stay excluded, exactly as for
-// structs; the old-element release rides emitFieldDropOnStack.
+// structs; the old-element release goes through emitFieldDropOnStack.
 func tupleReuseEligible(elems []ast.Type) bool {
 	if len(elems) == 0 {
 		return false
@@ -16754,7 +16754,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 //     `items: ident(p.items)`) holds a counted reference, so the freeing
 //     drop only reclaims the genuine last one (the field's own is_unique
 //     gate dec's a shared buffer instead of freeing it). An in-place
-//     `p.items.append(v)` is the same story from the other side: the grow
+//     `p.items.append(v)` is the same case from the other side: the grow
 //     leaves the buffer at rc 2, so this drop hands back exactly the count
 //     the box was holding. The drop is gated
 //     on the i32 is_unique result (not the raw token pointer) so the branch
@@ -17360,7 +17360,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// b.genEnumDrops so the post-pass worklist emits the body.
 		//
 		// We only reach here for a freeEligible (owned, untainted) local, so
-		// the deep recursion is safe — the premature-free that bit escaped
+		// the deep recursion is safe — the premature-free that broke escaped
 		// values can't arise (those are ineligible and skipped above). Types
 		// dropFnNameFor declines — non-uniform / non-heap-boxed generic enums
 		// — fall back to the flat box dec (leak-but-never-UAF, exactly as
@@ -17784,7 +17784,7 @@ func (b *builder) consumingReuseCtor(arm *ast.MatchArm, et ast.EnumType) *ast.Ca
 // (Nil) or a shared box (an `own` argument whose payloads are borrowed — see
 // dupSlots) is only dec'd, never freed. Uniform-droppable enums only (a
 // statically sizable box); others keep their box (a safe leak). This is the
-// heart of Fern's consuming match — the Perceus FBIP traversal.
+// core of Fern's consuming match — the Perceus FBIP traversal.
 //
 // dupSlots holds this arm's rc-tracked payload bindings, retained on whichever
 // branch leaves the box holding its own references to them (#6720).
@@ -18422,7 +18422,7 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 // argument: after this call returns, can anything still reachable name that
 // argument's buffer?
 //
-// It takes BOTH halves of the escape story, because neither is the question on
+// It takes BOTH halves of the escape question, because neither is the question on
 // its own:
 //
 //   - inferParamEscapes says the argument is not stored into a caller-visible
@@ -18751,8 +18751,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				//
 				//   - bit 0 (still the caller's borrow): the forced #2832 inc
 				//     put the buffer at rc >= 2, so cow_inplace copies and DECS
-				//     THE SOURCE ITSELF, cancelling that inc. The frame's books
-				//     are square; dec'ing again releases the CALLER's reference.
+				//     THE SOURCE ITSELF, cancelling that inc. The frame's counts
+				//     balance; dec'ing again releases the CALLER's reference.
 				//     `bump(xs) { xs = xs.with(0, 99) }` called as `a = bump(a)`
 				//     drove the caller's buffer to rc -1 while still emitting
 				//     correct output (#6057).
@@ -20924,7 +20924,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // emitArrayPush lowers `arr.push(v)` inline. Phase 2: hand off
 // the rc check + mutate-or-copy decision to a runtime helper so
 // the per-call-site emit stays straight-line (avoids the SSA
-// Lift dominance trap that bit the OpIf-in-IR attempt). The IR
+// Lift dominance trap that broke the OpIf-in-IR attempt). The IR
 // only does what's stride-aware: the width-correct tail store
 // for the new element.
 //
@@ -21661,8 +21661,8 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 // emits the DEEP `__fern_drop_arr_str` / `__drop_arr_*` for it, which walks
 // the element on the cell's last reference. That walk is only correct if the
 // slot holds a reference the cell took, which is exactly what the retain here
-// establishes and what the raw store did not: every outer rebind dropped the
-// superseded pointer on the floor (32 bytes an iteration, unbounded, #8441)
+// establishes and what the raw store did not: every outer rebind leaked the
+// superseded pointer (32 bytes an iteration, unbounded, #8441)
 // and left an aliased value in the slot under a count nobody had taken.
 //
 // One RHS shape breaks that: a cow-in-place map mutator (`m = m.insert(k, v)`)
@@ -21686,7 +21686,7 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 //
 // The new value is evaluated and stashed BEFORE the old one is released, for
 // emitCellSet's reason: `s = s + "x"` reads the slot inside the value
-// expression, so releasing first would free the buffer the read is standing
+// expression, so releasing first would free the buffer the read depends
 // on. In the guarded shape the OLD element is stashed before that expression
 // too, and twice: the whole payload, which the release consumes, and its first
 // word, which the guard compares against the word the store left in the slot.

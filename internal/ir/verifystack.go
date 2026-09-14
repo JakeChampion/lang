@@ -11,7 +11,7 @@
 // polymorphic-stack treatment of unreachable code after a `br` or a
 // `return`. That is not a coincidence: the IR is a wasm-shaped stack
 // machine, so a stack-discipline break here is a module the wasm backend
-// cannot emit and a register allocator will silently paper over on the
+// cannot emit and a register allocator will silently hide on the
 // natives — which is how the closure-dispatch cluster (#5001 / #5007 /
 // #5009 / #5026) reached run time.
 //
@@ -346,13 +346,13 @@ func (s *stackChecker) localSlots(op Op) ([]valKind, bool) {
 	return []valKind{kInt}, true
 }
 
-// isTwoWord reports whether a value of type t rides two operand-stack
+// isTwoWord reports whether a value of type t occupies two operand-stack
 // slots on this target.
 func (s *stackChecker) isTwoWord(t ast.Type) bool {
 	return TypeIsTwoWordABI(t, s.ptrW, s.twoWordStr)
 }
 
-// TypeIsTwoWord reports whether a value of type t rides two operand-stack
+// TypeIsTwoWord reports whether a value of type t occupies two operand-stack
 // slots on the target with pointer width ptrW: a string under the two-word
 // ABI (its data and length), and a `dyn Trait` on wasm, where the fat
 // pointer stays inline rather than being boxed (OpBoxDyn is the native

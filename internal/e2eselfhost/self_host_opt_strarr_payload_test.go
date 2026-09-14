@@ -79,7 +79,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 		}
 	}
 
-	// The headline row: Option[string[]], block-scoped in a loop. An exact balance
+	// The main row: Option[string[]], block-scoped in a loop. An exact balance
 	// is what separates "freed the buffer and both boxes" from "freed the elements
 	// too" — a bump-growth bound cannot tell those apart, and the element boxes are
 	// most of the bytes.

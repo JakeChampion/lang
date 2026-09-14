@@ -165,13 +165,13 @@ var dynTraitIRCases = []struct {
 	// i64: 5_000_000_000 + 1 == 5_000_000_001 (truncates to garbage at i32).
 	{"dyn-i64-chained",
 		`trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { var p: P = P { n: 5000000000 }; var d: dyn Big = p; var r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
-	// u64 rides the i64 path — same fix.
+	// u64 uses the i64 path — same fix.
 	{"dyn-u64-chained",
 		`trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { var p: P = P { n: 5000000000 }; var d: dyn U = p; var r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, 1},
 	// f64: 2.5 + 0.5 == 3.0 (integer add on the float bits gives a wrong value).
 	{"dyn-f64-chained",
 		`trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { var s: S = S { v: 2.5 }; var d: dyn Fl = s; var r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
-	// f32 rides the f64 twin for value ops — same fix.
+	// f32 uses the f64 twin for value ops — same fix.
 	{"dyn-f32-chained",
 		`trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { var p: P = P { n: 2.5 }; var d: dyn F = p; var r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, 1},
 	// Regression guard for a non-scalar return that DOES track + route IR: an

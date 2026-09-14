@@ -16,7 +16,7 @@ import (
 // module (gated on use), and a program hand-builds an rc-headered object
 // via __alloc + __store_i32 to exercise them directly. This is the
 // additive Phase-0c foundation for wasm RC — array layout migration +
-// inc/dec call sites ride on it in later slices.
+// inc/dec call sites build on it in later slices.
 //
 // Reuses the shared rcRuntimeCases (defined in self_host_rc_runtime_test.go):
 // the `return <expr>;` result becomes the wasm proc_exit code, same as the
@@ -357,7 +357,7 @@ func TestSelfHostRcCountingWasm(t *testing.T) {
 // intrinsics — fresh => unique (rc==1); after an inc => not unique
 // (rc==2); inc+dec restores uniqueness; and the over-release detector
 // stays clean. RC is otherwise inert here (no inc/free wired into array
-// sites yet — that rides on this layout in the next slices).
+// sites yet — that builds on this layout in the next slices).
 func TestSelfHostRcArrayLayoutWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm array-layout RC e2e")

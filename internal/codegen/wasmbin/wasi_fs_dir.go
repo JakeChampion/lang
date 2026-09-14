@@ -47,7 +47,7 @@ import (
 // of the 64-byte filestat record. `stat` only distinguishes these
 // two; everything else (sockets, character devices, symlinks that
 // SYMLINK_FOLLOW did not resolve) reports neither is_file nor
-// is_dir, which is the honest answer for a Fern FileStat.
+// is_dir, which is the correct answer for a Fern FileStat.
 const (
 	wasiFiletypeDirectory int32 = 3
 	wasiFiletypeRegular   int32 = 4

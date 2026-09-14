@@ -11,7 +11,7 @@
 // the WAT side uses preview-2 streams directly (open-at +
 // read-via-stream), which is more efficient at the host
 // boundary but requires another ~15 WASI imports per side.
-// The preview-1 route here is the smaller wedge as wasmbin
+// The preview-1 route here is the smaller step as wasmbin
 // catches up to WAT parity — see the WAT-retirement PR thread
 // for the staging plan.
 

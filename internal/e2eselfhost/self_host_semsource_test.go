@@ -50,9 +50,9 @@ function nested(rows: i32[][]): (i32, i32[]) {
 function view(s: string): string { return s; }
 function refused_call(n: i32): i32 { return abs(n); }
 function float_literal(): f64 { return 1.5; }
-// The unsigned widths: the u64 rides the i64's slot and the u32 the i32's, and
+// The unsigned widths: the u64 occupies the i64's slot and the u32 the i32's, and
 // each takes the operator forms that read no sign bit. A u32 literal past 2^31
-// has no signed immediate to ride, so it carries its source text the way a
+// has no signed immediate to use, so it carries its source text the way a
 // 64-bit one does; a cast names the mask its destination applies. Negation is
 // refused at both, as it is at the byte: its result leaves the range the type
 // names.
@@ -150,6 +150,21 @@ function mapped(xs: i32[], f: (i32) => i32): i32[] { var out: i32[] = []; for x 
 // golden's refusal for this one names the call rather than the record.
 function lifted_field(b: Bag, xs: i32[]): Bag { return Bag { ...b, items: mapped(xs, (v: i32): i32 => v + 1) }; }
 function string_length(s: string): i32 { return s.len(); }
+// An address takes the operators whose lowering never reads the operand width
+// — the backends run these on the whole register — and the golden pins which
+// ones those are. The two it refuses are in the RC fixture's sibling: a shift
+// masks its count to the narrow width and a divide picks its register pair
+// from it, so both would truncate a real address.
+function offset(buf: usize): usize { return buf + 8; }
+function delta(a: usize, b: usize): usize { return a - b; }
+function masked(p: usize): usize { return p & 15; }
+function scaled(p: usize): usize { return p * 2; }
+function above(a: usize, b: usize): boolean { return a > b; }
+function same(a: usize, b: usize): boolean { return a == b; }
+// Refused, and the golden says so: no binary at the pointer width exists for
+// the backends to resolve, so these two stay out until one does.
+function halved(p: usize): usize { return p / 2; }
+function shifted(p: usize): usize { return p >> 3; }
 // A codepoint converts where an i32 does and compares only for equality. The
 // golden pins which conversion each direction is: into and out of the 32-bit
 // widths a mask of the destination, out of the byte none at all since it
@@ -363,7 +378,7 @@ function refused_mixed_width(b: u8, n: i32): i32 { return b + n; }
 // The f64 is a value: literals carry their text, the float operators are the
 // stack IR's own and never wrap, a comparison is a boolean, and a conversion
 // to or from a signed integer is a real instruction. The remainder has no
-// float form. The narrower float rides the same slot rounded to single
+// float form. The narrower float occupies the same slot rounded to single
 // precision, so its operator is the f64's with the rounding after it.
 function float_ops(x: f64, n: i32): i32 {
     var y: f64 = x * 2.5 + (n as f64);
@@ -573,7 +588,7 @@ function cell_text(s: string): i32 {
     return first.len() + c.get().len();
 }
 function refused_cell_value(n: i32): i32 { var c: Cell[i32] = cell_new(n); var k: i32 = c.set(n); return k; }
-// The 32-bit float rides the f64's slot at single precision: a conversion
+// The 32-bit float occupies the f64's slot at single precision: a conversion
 // into it, a literal of it and an operator's result at it are each rounded
 // where they are made, and the bit pair reads and writes that rounded value.
 function narrow_bits(x: f64): i32 { var y: f32 = x as f32; return f32_bits(y); }
@@ -1348,7 +1363,7 @@ enum Chain { End, Link(i32, Chain) }
 // signed opcode answers differently rather than identically: the ordering,
 // the division, the remainder and the right shift all read the slot without a
 // sign bit, and a u32 arithmetic result that leaves the range wraps back to
-// it. A u32 literal past 2^31 has no signed immediate to ride and reaches the
+// it. A u32 literal past 2^31 has no signed immediate to use and reaches the
 // backends as its source text.
 @noinline function u32_cmp(n: u32): i32 {
     if (n > 1u32) { return 1; }
@@ -1775,7 +1790,7 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
 @noinline function slot_held(own s: Slot): i32 { var cc: Cell[i32] = s.c; return held_n(Celled(cc, s.n)); }
 // The cell's own vocabulary: a write is seen by every holder of the box, a
 // read of a reference element is a unit of its own that outlives the write
-// that replaces it, and a wide element rides the slot's own width.
+// that replaces it, and a wide element uses the slot's own width.
 @noinline function cell_count(n: i32): i32 {
     var c: Cell[i32] = cell_new(n);
     var i: i32 = 0;

@@ -20,7 +20,7 @@
 //
 // Both are correct schedulers; picking the wrong one is how a "every 60
 // seconds" job ends up running 1 400 times a day instead of 1 440. The
-// load-bearing test is that the k-th fixed-rate run is due at exactly
+// essential test is that the k-th fixed-rate run is due at exactly
 // `start + k * interval` no matter what the durations are, and that the
 // fixed-delay one is not — the two asserted against each other so neither can
 // quietly become the other.
@@ -253,7 +253,7 @@ function test_an_overrunning_task_falls_behind_without_overlapping(): test.TestO
 }
 
 // Drift is never negative: no scheduler starts a task before it is due. The
-// property that makes the number meaningful, and the first casualty of a
+// property that makes the number meaningful, and the first thing broken by a
 // signed subtraction written the wrong way round.
 function test_drift_is_never_negative(): test.TestOutcome {
     var ts: Task[] = tasks();

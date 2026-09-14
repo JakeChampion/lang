@@ -4,7 +4,7 @@ import "std/string";
 // the std/string classification predicates and case/format transforms that
 // strings_test (find / split / to_lower / to_upper / rfind) leaves out. These
 // are concrete `string -> boolean` / `string -> string` / `string -> i32`
-// methods (no generics), the bread-and-butter validation + formatting surface:
+// methods (no generics), the everyday validation + formatting surface:
 //   is_int / is_float / is_numeric / is_alpha_only / is_blank
 //   is_email_like / is_url_like                       (shape predicates)
 //   capitalize / title_case / snake_case / kebab_case (case transforms)

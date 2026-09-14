@@ -105,7 +105,7 @@ function main(): i32 { if (last(BoolSeq { n: 2 }, false)) { return 7; } return 0
 // `if (…)` condition was never env-boxed, while the callee's fn-param (marked a
 // closure local) still unpacked a box from the bare fn pointer and crashed. The
 // earlier diagnosis ("the boolean accumulator gets the closure ABI wrong") was a
-// red herring: an A≠T fold bound to a `var` already worked, and an A=T fold inside
+// misdiagnosis: an A≠T fold bound to a `var` already worked, and an A=T fold inside
 // an `if` already crashed — the discriminator was the call CONTEXT, not the types.
 // Now if/while/for conditions are walked, so this lowers + runs on the self-host
 // IR path (x86-64 + wasm) too — see TestSelfHostGenericFoldCrossTypeIR* below.
@@ -118,7 +118,7 @@ function main(): i32 { if (fold(RangeIter { cur: 0, end: 4 }, true, (a: boolean,
 
 // TestNativeGenericFoldCrossType pins the A≠T closure-accumulator fold on the
 // native backends (interp / x86-64 / wasm). See foldCrossTypeProg for the
-// #2686-tail story (fn-arg in an `if` condition now lifts on the self-host path).
+// #2686 tail case (fn-arg in an `if` condition now lifts on the self-host path).
 func TestNativeGenericFoldCrossType(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "main.fern")

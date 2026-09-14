@@ -13,7 +13,7 @@ import (
 // onto the shared break stack, so a user `break` exited the match
 // instead of the enclosing loop — turning `while (true) { match … {
 // … => break } }` into an infinite loop. (`continue` was unaffected;
-// it rides a separate stack the match doesn't touch.)
+// it uses a separate stack the match doesn't touch.)
 //
 // Bug 2 — `(w: Writer).write(s)` on x86-64 corrupted the buffer
 // pointer for SSO (small-string-optimized, <=7 byte) strings: the

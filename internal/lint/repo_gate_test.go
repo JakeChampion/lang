@@ -32,7 +32,7 @@ const repoLimit = lint.DefaultMaxComplexity
 // red-light main for whoever pushed the next rc commit — a gate nobody can
 // keep, which is the same failure as a limit nobody can meet.
 //
-// Five per cent absorbs that churn and still bites: one new 400-fork
+// Five per cent absorbs that churn and still fails: one new 400-fork
 // function is +2% of the excess on its own, and a ceiling past 500 fails.
 // The shape — a checked-in baseline with a tolerance, growth fatal, both
 // directions reported — is the one `scripts/ci-check-perf` and
@@ -41,12 +41,12 @@ const tolerance = 0.05
 
 // tree is one body of first-party Fern source held to the limit.
 //
-// The numbers are the measured state, not a permission slip. Growth past
+// The numbers are the measured state, not an allowance. Growth past
 // `tolerance` FAILS. A shrink past it does not fail — it logs, asking for the
-// improvement to be banked. That asymmetry is deliberate: making an unrelated
+// improvement to be recorded. That asymmetry is deliberate: making an unrelated
 // PR red because it happened to simplify something is how a gate gets
 // disabled. A stale-low baseline only makes the gate stricter, so it is safe
-// in the direction it rots.
+// in the direction it goes stale.
 //
 // To exempt a single function instead, annotate the function — a
 // `// fern-lint: allow cyclomatic-complexity` comment above it, with a line
@@ -65,7 +65,7 @@ type tree struct {
 	// (score - repoLimit) across every UNSUPPRESSED function above it.
 	//
 	// Deliberately not a COUNT of functions over the limit, which is the
-	// obvious metric and the wrong one: splitting a 472-fork monster into
+	// obvious metric and the wrong one: splitting a 472-fork function into
 	// ten readable 40-fork helpers takes that count from 1 to 10, so the
 	// gate would report the single most valuable refactor available as a
 	// regression and block it. Summed distance calls the same split what
@@ -86,7 +86,7 @@ func over(measured, want int) bool {
 }
 
 // under reports whether measured has fallen below want by more than
-// tolerance — worth banking, never worth failing.
+// tolerance — worth recording, never worth failing.
 func under(measured, want int) bool {
 	return float64(measured) < float64(want)*(1-tolerance)
 }

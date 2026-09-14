@@ -83,7 +83,7 @@
 //     backends pick the q-suffixed / x-register ops and a comparison still
 //     yields i32), and the width casts `int_extend` (i32 -> i64 via
 //     sext_i64 / zext_i64) and `int_wrap` (i64 -> i32 truncate). i64 locals
-//     ride the value slots (already 8-byte) with width flowing through
+//     occupy the value slots (already 8-byte) with width flowing through
 //     copy / phi. Values that don't fit i32 no longer bail.
 // Everything else (value-producing ifs, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
@@ -525,7 +525,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
         } else if (k == "eprint_str") {
             // stderr line-print (bytes + a trailing newline) → the SSA `print`
             // inst with fd 2 (build_func's print adds the newline; __fern_ssa_print
-            // writes to the imm fd). Pushes a dummy result the statement drop eats.
+            // writes to the imm fd). Pushes a dummy result the statement drop discards.
             if (stack.len() < 1) { ok = false; }
             else {
                 var ev: i32 = stack[stack.len() - 1];
@@ -1210,7 +1210,7 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
             // header on the leak-only SSA heap, so nothing is ever
             // uniquely owned here: the guard is a const 0 and the
             // emitter's FRESH arm — allocate, copy the carried fields
-            // across, drop the old box on the floor — is the arm that
+            // across, discard the old box — is the arm that
             // runs. That arm IS the pre-reuse lowering, so the lifted
             // code matches what the lift consumed before the reuse
             // layer learned this shape.

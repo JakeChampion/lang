@@ -164,7 +164,7 @@ const IndirectNode = "(function value)"
 // argument in one line of output: "you are charged for this because a
 // function value could be anything."
 //
-// Diagnostics live or die on this: "your function reaches `net`" is
+// Diagnostics depend on this: "your function reaches `net`" is
 // only actionable next to the path that reaches it.
 func Witness(g *Graph, sol *Solution, fn string, want Set) []Chain {
 	v := sol.Vocab

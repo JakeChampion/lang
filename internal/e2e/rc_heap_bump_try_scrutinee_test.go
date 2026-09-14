@@ -24,7 +24,7 @@ import (
 //     allocates a fresh rc=1 box per evaluation; tryPairReboxSize +
 //     emitTryBoxFreeSized free it with the repack's exact size.
 //
-// Safety rides the is_unique gate: an aliased box (a callee returning its
+// Safety depends on the is_unique gate: an aliased box (a callee returning its
 // param carries the return-transfer inc, rc>=2) is only dec'd, never freed —
 // pinned by the passthrough cases below (underflow count must stay 0 and the
 // source values must remain readable).

@@ -40,7 +40,7 @@ func TestScaledOffsetCeilingIsRefused(t *testing.T) {
 }
 
 // TestScaledOffsetCeilingIsReachable is the other half: the refusal must
-// not have eaten the last legal offset of each size.
+// not have removed the last legal offset of each size.
 func TestScaledOffsetCeilingIsReachable(t *testing.T) {
 	for _, c := range []struct {
 		src  string
