@@ -977,8 +977,25 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
     var prefix: string = "";
     if let typeinfo.TypeArray(_) = s.values[recv.id] { prefix = "__arrm_"; }
     if (ssasem.is_map(s.values[recv.id])) { prefix = "__mapm_"; }
-    if (prefix == "") { return refused(s, "unsupported call target"); }
+    if (prefix == "") { return primitive_method(c, fa, recv, s); }
     var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
+    if (at < 0) { return primitive_method(c, fa, recv, s); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    return invoke_method(recv, c.args, contract, s);
+}
+
+// A method declared on a PRIMITIVE receiver — `(n: i32) gcd(m: i32)` — is
+// keyed by its receiver's spelling, the way a record's is keyed by its
+// declaration: `i32.gcd`. A text receiver reaches its methods through the
+// `string` owner above; every other scalar had no owner name at all, so the
+// key was never built and the whole of std/i32's surface read as a builtin
+// this boundary does not own.
+function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    var owner: string = typeinfo.spelling(s.values[recv.id]);
+    if (owner.len() == 0) { return refused(s, "unsupported call target"); }
+    var at: i32 = ssasem.find_contract(s.contracts, owner + "." + fa.field);
     if (at < 0) { return refused(s, "unsupported call target"); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
