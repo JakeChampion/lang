@@ -1,0 +1,171 @@
+// coreutils/lib/filetype.fern — st_mode's TYPE half: the S_IFMT kinds,
+// the predicates over them, and the three renderings the utilities here
+// print.
+//
+// Five files held a private `s_ifmt` beside a private `is_dir_mode` and
+// `is_link_mode`, and two of them held the same eight-way word table;
+// `ls -l`, `stat %A` and `stat %F` are the renderings. One copy each.
+//
+// The numbers are the kernel's and are the same on every target Fern
+// builds for — Linux, Darwin and WASI all inherit the historical octal
+// layout — so they are constants rather than a per-OS table.
+// S_IFMT: the four bits of `mode` that name the kind.
+pub function s_ifmt(): u32 {
+  return 0xf000 as u32;
+}
+
+pub function s_ifreg(): u32 {
+  return 0x8000 as u32;
+}
+
+pub function s_ifdir(): u32 {
+  return 0x4000 as u32;
+}
+
+pub function s_iflnk(): u32 {
+  return 0xa000 as u32;
+}
+
+pub function s_ifchr(): u32 {
+  return 0x2000 as u32;
+}
+
+pub function s_ifblk(): u32 {
+  return 0x6000 as u32;
+}
+
+pub function s_ififo(): u32 {
+  return 0x1000 as u32;
+}
+
+pub function s_ifsock(): u32 {
+  return 0xc000 as u32;
+}
+
+// The kind alone, for a caller comparing two modes or switching on one.
+pub function kind(mode: u32): u32 {
+  return mode & s_ifmt();
+}
+
+pub function is_reg(mode: u32): boolean {
+  return kind(mode) == s_ifreg();
+}
+
+pub function is_dir(mode: u32): boolean {
+  return kind(mode) == s_ifdir();
+}
+
+pub function is_link(mode: u32): boolean {
+  return kind(mode) == s_iflnk();
+}
+
+pub function is_chr(mode: u32): boolean {
+  return kind(mode) == s_ifchr();
+}
+
+pub function is_blk(mode: u32): boolean {
+  return kind(mode) == s_ifblk();
+}
+
+pub function is_fifo(mode: u32): boolean {
+  return kind(mode) == s_ififo();
+}
+
+pub function is_sock(mode: u32): boolean {
+  return kind(mode) == s_ifsock();
+}
+
+// `type_name(mode, size)` — what a diagnostic calls the file: `stat %F`
+// prints it and `rm -i` asks about it. An empty regular file is its own
+// word, which is why the size is an argument; `weird file` is the kind
+// the kernel grew after this was written.
+pub function type_name(mode: u32, size: i64): string {
+  var t: u32 = kind(mode);
+  if (t == s_ifreg()) {
+    if (size == 0 as i64) {
+      return "regular empty file";
+    }
+    return "regular file";
+  }
+  if (t == s_ifdir()) {
+    return "directory";
+  }
+  if (t == s_iflnk()) {
+    return "symbolic link";
+  }
+  if (t == s_ifchr()) {
+    return "character special file";
+  }
+  if (t == s_ifblk()) {
+    return "block special file";
+  }
+  if (t == s_ififo()) {
+    return "fifo";
+  }
+  if (t == s_ifsock()) {
+    return "socket";
+  }
+  return "weird file";
+}
+
+// The letter that leads `ls -l`'s mode column and `stat %A`. `?` for a
+// kind with no letter, which is what the C library prints too.
+pub function type_letter(mode: u32): string {
+  var t: u32 = kind(mode);
+  if (t == s_ifdir()) {
+    return "d";
+  }
+  if (t == s_iflnk()) {
+    return "l";
+  }
+  if (t == s_ifchr()) {
+    return "c";
+  }
+  if (t == s_ifblk()) {
+    return "b";
+  }
+  if (t == s_ififo()) {
+    return "p";
+  }
+  if (t == s_ifsock()) {
+    return "s";
+  }
+  if (t == s_ifreg()) {
+    return "-";
+  }
+  return "?";
+}
+
+// One rwx triple. `extra` is the setuid / setgid / sticky bit for this
+// triple and `hi` / `lo` the letters it takes when the execute bit is
+// set and when it is not.
+function triple(mode: u32, shift: i32, extra: u32, hi: string, lo: string): string {
+  var bits: u32 = mode >> shift as u32 & 7 as u32;
+  var out: string = "-";
+  if ((bits & 4 as u32) != 0 as u32) {
+    out = "r";
+  }
+  var w: string = "-";
+  if ((bits & 2 as u32) != 0 as u32) {
+    w = "w";
+  }
+  var x: string = "-";
+  if ((bits & 1 as u32) != 0 as u32) {
+    x = "x";
+  }
+  if ((mode & extra) != 0 as u32) {
+    if ((bits & 1 as u32) != 0 as u32) {
+      x = hi;
+    } else {
+      x = lo;
+    }
+  }
+  return out + w + x;
+}
+
+// `mode_string(mode)` — the ten-character `drwxr-xr-x`: the kind letter
+// and three rwx triples, each of which can carry the special bit that
+// shares its execute position.
+pub function mode_string(mode: u32): string {
+  return type_letter(mode) + triple(mode, 6, 0x800 as u32, "s", "S") + triple(mode, 3, 0x400 as u32, "s", "S") + triple(mode, 0, 0x200 as u32, "t", "T");
+}

@@ -58,6 +58,7 @@
 // the two agree there; the gap is real all the same.
 import "std/array";
 import "./lib/gnu";
+import "./lib/filetype";
 import "./lib/fts";
 import "./lib/mode";
 
@@ -215,18 +216,6 @@ function parse(argv: string[]): Parsed {
   return Parsed { s: s, mode: mode, has_mode: has_mode, reference: reference, has_reference: has_reference, files: g.operands() };
 }
 
-function s_ifmt(): u32 {
-  return 61440 as u32;
-}
-
-function is_dir_mode(m: u32): boolean {
-  return (m & s_ifmt()) == 16384 as u32;
-}
-
-function is_link_mode(m: u32): boolean {
-  return (m & s_ifmt()) == 40960 as u32;
-}
-
 // ---- diagnostics -----------------------------------------------------------
 // A diagnostic `-f` silences. The exit status still moves: `-f` suppresses
 // the message, not the failure.
@@ -299,7 +288,7 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
 function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat): St {
   var st: St = st0;
   var old: i32 = info.mode as i32 & mode.all_bits();
-  var is_dir: boolean = is_dir_mode(info.mode);
+  var is_dir: boolean = filetype.is_dir(info.mode);
   var r: (i32, i32, boolean) = target_mode(t, old, is_dir);
   var wanted: i32 = r.0;
   match (chmod(path, wanted)) {
@@ -338,7 +327,7 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
   if (!top) {
     match (lstat(path)) {
       Ok(info) => {
-        if (is_link_mode(info.mode)) {
+        if (filetype.is_link(info.mode)) {
           return say(st, s, "neither symbolic link " + gnu.quotea(path) + " nor referent has been changed\n");
         }
         return visit(st, s, t, path, info, false);
@@ -367,7 +356,7 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
 function names_symlink(path: string): boolean {
   match (lstat(path)) {
     Ok(info) => {
-      return is_link_mode(info.mode);
+      return filetype.is_link(info.mode);
     },
     Err(_) => {
       return false;
@@ -379,11 +368,11 @@ function names_symlink(path: string): boolean {
 // are read, which is the order GNU's pre-order walk imposes.
 function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, top: boolean): St {
   var st: St = st0;
-  if (top && s.recursive && s.preserve_root && is_dir_mode(info.mode) && is_root_dir(info)) {
+  if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
     return refuse_root(st, path);
   }
   st = change_one(st, s, t, path, info);
-  if (!s.recursive || !is_dir_mode(info.mode)) {
+  if (!s.recursive || !filetype.is_dir(info.mode)) {
     return st;
   }
   match (read_dir(path)) {

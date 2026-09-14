@@ -45,6 +45,7 @@
 // the walk below concatenates paths and meets ENAMETOOLONG partway
 // down such a tree where GNU does not (#9074). Nothing shallower is
 // affected.
+import "./lib/filetype";
 import "./lib/fts";
 import "./lib/gnu";
 
@@ -230,50 +231,6 @@ function parent_name(p: string): string {
   return slice_unchecked(p, 0, end) + "";
 }
 
-// ---- file kinds ------------------------------------------------------------
-function s_ifmt(): u32 {
-  return 61440 as u32;
-}
-
-function is_dir_mode(mode: u32): boolean {
-  return (mode & s_ifmt()) == 16384 as u32;
-}
-
-function is_link_mode(mode: u32): boolean {
-  return (mode & s_ifmt()) == 40960 as u32;
-}
-
-// What the prompt calls the file. The eight S_IFMT kinds plus the
-// fallback for a mode the kernel grew after this was written.
-function file_type(mode: u32, size: i64): string {
-  var fmt: u32 = mode & s_ifmt();
-  if (fmt == 32768 as u32) {
-    if (size == 0 as i64) {
-      return "regular empty file";
-    }
-    return "regular file";
-  }
-  if (fmt == 16384 as u32) {
-    return "directory";
-  }
-  if (fmt == 40960 as u32) {
-    return "symbolic link";
-  }
-  if (fmt == 4096 as u32) {
-    return "fifo";
-  }
-  if (fmt == 49152 as u32) {
-    return "socket";
-  }
-  if (fmt == 24576 as u32) {
-    return "block special file";
-  }
-  if (fmt == 8192 as u32) {
-    return "character special file";
-  }
-  return "weird file";
-}
-
 // ---- errors and prompts ----------------------------------------------------
 // The two errnos `-f` passes over. rm treats both as "it was not
 // there": `rm -f x/` on a regular file `x` is silent, and so is
@@ -321,7 +278,7 @@ function ask(msg: string): boolean {
 // counts, so a name that went away between the stat and here is left
 // to the removal to report.
 function write_protected(path: string, mode: u32): boolean {
-  if (is_link_mode(mode)) {
+  if (filetype.is_link(mode)) {
     return false;
   }
   match (access(path, 2)) {
@@ -407,10 +364,10 @@ function rm_entry(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64)
       }
     },
     Ok(info) => {
-      if (is_dir_mode(info.mode)) {
+      if (filetype.is_dir(info.mode)) {
         return rm_dir(st, s, path, top, cl_dev, info);
       }
-      if (!confirm(s, path, info.mode, "remove", file_type(info.mode, info.size))) {
+      if (!confirm(s, path, info.mode, "remove", filetype.type_name(info.mode, info.size))) {
         return (st, res_keep());
       }
       match (remove_file(path)) {

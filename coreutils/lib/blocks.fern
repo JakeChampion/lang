@@ -472,8 +472,14 @@ function quote_size(spec: string): string {
 }
 
 // The three diagnostics a bad SIZE earns, with the option spelled the
-// way it was typed.
+// way it was typed. `status` is the PARSE status, not the exit code:
+// `die_size` exits 1 and `die_size_with` takes the utility's own
+// number, which `ls` needs because every usage error there is 2.
 pub function die_size(status: i32, option: string, spec: string): void {
+  die_size_with(status, option, spec, 1);
+}
+
+pub function die_size_with(status: i32, option: string, spec: string, exit_status: i32): void {
   if (status == size_bad_suffix()) {
     gnu.error("invalid suffix in " + option + " argument " + quote_size(spec));
   } else if (status == size_overflow()) {
@@ -481,7 +487,7 @@ pub function die_size(status: i32, option: string, spec: string): void {
   } else {
     gnu.error("invalid " + option + " argument " + quote_size(spec));
   }
-  exit(1);
+  exit(exit_status);
 }
 
 pub function option_name(m: gnu.OptMatch, long: string, short: string): string {

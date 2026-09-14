@@ -604,7 +604,7 @@ pub function stream_finish(o: Stream): void {
 // backslashed, the seven named control characters as C escapes, and
 // every other control or non-ASCII byte as three octal digits.
 pub function quote(s: string): string {
-  return c_quote(s, 39, false);
+  return c_quote(s, 39, false, "");
 }
 
 // `quotea(name)` — gnulib's quoteaf: `quotef` with the bare form
@@ -612,7 +612,7 @@ pub function quote(s: string): string {
 // (`head: cannot open 'plain' for reading`) rather than only when
 // the name needs them (`wc: plain: No such file or directory`).
 pub function quotea(s: string): string {
-  return shell_quote(s, false, true, false);
+  return shell_quote(s, false, true, "");
 }
 
 // `quotef(name)` — the file name as a shell would need it typed: bare
@@ -623,7 +623,7 @@ pub function quotea(s: string): string {
 // special here and nowhere else: the diagnostic this quotes for puts
 // one after the name (gnulib's quotearg_n_style_colon).
 pub function quotef(s: string): string {
-  return shell_quote(s, true, true, true);
+  return shell_quote(s, true, true, ":");
 }
 
 // gnulib's quoting styles, in its order, so a position in this list is
@@ -669,31 +669,56 @@ pub function quoting_style_from_env(): i32 {
 // `escape` is `c` with no quotes at all; `locale` and `clocale` are
 // `quote` and `c` in the C locale.
 pub function quote_style(s: string, style: i32): string {
+  return quote_style_with(s, style, "");
+}
+
+// `quote_style_with(s, style, extra)` — `quote_style` over a table with
+// more bytes marked as needing a backslash, or as forcing the quotes:
+// gnulib's set_char_quoting. `ls` is what needs it, twice. A SPACE
+// joins the set under `-b`, so a name prints `sp\ ace` there while
+// `stat`'s own escape style leaves it alone; and a COLON joins it for
+// a directory header, so `ls -bR` writes `./a\:b:`.
+//
+// The literal style ignores the set, as gnulib does: it writes every
+// byte through and has nowhere to put a backslash.
+pub function quote_style_with(s: string, style: i32, extra: string): string {
   if (style == 0) {
     return s;
   }
   if (style < 5) {
-    return shell_quote(s, style == 1 || style == 3, style >= 3, false);
+    return shell_quote(s, style == 1 || style == 3, style >= 3, extra);
   }
   if (style == 5 || style == 9) {
-    return c_quote(s, 34, false);
+    return c_quote(s, 34, false, extra);
   }
   if (style == 6) {
-    return c_quote(s, 34, true);
+    return c_quote(s, 34, true, extra);
   }
   if (style == 7) {
-    return c_quote(s, 0, false);
+    return c_quote(s, 0, false, extra);
   }
-  return quote(s);
+  return c_quote(s, 39, false, extra);
 }
 
-// `c_quote(s, q, elide)` — `s` between two `q` bytes (none when `q` is
-// 0) with backslash, `q` and every control or non-ASCII byte escaped
-// the C way. `elide` returns `s` untouched unless a `q` or a control
-// or non-ASCII byte is in it: a backslash alone does not earn the
-// quotes, and prints bare.
-function c_quote(s: string, q: i32, elide: boolean): string {
-  if (elide && !c_needs_quotes(s, q)) {
+function in_set(extra: string, b: i32): boolean {
+  var i: i32 = 0;
+  while (i < extra.len()) {
+    if (extra[i] as i32 == b) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// `c_quote(s, q, elide, extra)` — `s` between two `q` bytes (none when
+// `q` is 0) with backslash, `q`, every byte of `extra` and every
+// control or non-ASCII byte escaped the C way. `elide` returns `s`
+// untouched unless a `q`, a byte of `extra` or a control or non-ASCII
+// byte is in it: a backslash alone does not earn the quotes, and
+// prints bare.
+function c_quote(s: string, q: i32, elide: boolean, extra: string): string {
+  if (elide && !c_needs_quotes(s, q, extra)) {
     return s;
   }
   var bs: u8[] = [];
@@ -703,7 +728,7 @@ function c_quote(s: string, q: i32, elide: boolean): string {
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
-    if (b == 92 || q != 0 && b == q) {
+    if (b == 92 || q != 0 && b == q || in_set(extra, b)) {
       bs = bs.append(92 as u8);
       bs = bs.append(b as u8);
     } else if (b >= 32 && b < 127) {
@@ -719,11 +744,11 @@ function c_quote(s: string, q: i32, elide: boolean): string {
   return string_from_bytes_unchecked(bs);
 }
 
-function c_needs_quotes(s: string, q: i32): boolean {
+function c_needs_quotes(s: string, q: i32, extra: string): boolean {
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
-    if (b == q || is_control_or_high(b)) {
+    if (b == q || is_control_or_high(b) || in_set(extra, b)) {
       return true;
     }
     i = i + 1;
@@ -784,10 +809,10 @@ function shell_special(b: i32, leading: boolean): boolean {
 }
 
 // Whether `s` needs quoting in a `shell` style: empty, a lone brace,
-// a special byte (a colon too when `colon`), or a control byte —
-// every one when the style escapes them, only a newline, return or
-// tab when it does not.
-function shell_needs_quotes(s: string, escapes: boolean, colon: boolean): boolean {
+// a special byte (one from `extra` too), or a control byte — every one
+// when the style escapes them, only a newline, return or tab when it
+// does not.
+function shell_needs_quotes(s: string, escapes: boolean, extra: string): boolean {
   if (s.len() == 0) {
     return true;
   }
@@ -801,7 +826,7 @@ function shell_needs_quotes(s: string, escapes: boolean, colon: boolean): boolea
       if (escapes || b == 10 || b == 13 || b == 9) {
         return true;
       }
-    } else if (shell_special(b, i == 0) || colon && b == 58) {
+    } else if (shell_special(b, i == 0) || in_set(extra, b)) {
       return true;
     }
     i = i + 1;
@@ -822,14 +847,14 @@ function double_quote_unsafe(b: i32, leading: boolean): boolean {
   return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
 }
 
-// `shell_quote(s, elide, escapes, colon)` — the four `shell` styles:
-// bare when `elide` and nothing needs quoting (a colon counts when
-// `colon`), double-quoted when the apostrophe is the only trouble,
+// `shell_quote(s, elide, escapes, extra)` — the four `shell` styles:
+// bare when `elide` and nothing needs quoting (a byte of `extra`
+// counts), double-quoted when the apostrophe is the only trouble,
 // else single-quoted with `'\''` for a quote and, when `escapes`,
 // every control or non-ASCII byte spliced in as an ANSI-C `$'...'`
 // run.
-function shell_quote(s: string, elide: boolean, escapes: boolean, colon: boolean): string {
-  if (elide && !shell_needs_quotes(s, escapes, colon)) {
+function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string): string {
+  if (elide && !shell_needs_quotes(s, escapes, extra)) {
     return s;
   }
   var double_ok: boolean = true;
