@@ -1,8 +1,10 @@
 // Diagnostic: how much of a real module the checked-source producer admits.
 // Loads the module tree the way the production compiler does, then for every
 // function runs semsource.build -> ssaunits.plan -> ssarc.lower and counts the
-// stage each one reaches. Refusal reasons are tallied by LEAF: a refusal that
-// is only "call target was refused" is charged to the reason at the end of the
+// stage each one reaches. A generic declaration is a template with one body
+// per instantiation its callers bind, so it reaches the stage every one of its
+// instances reaches. Refusal reasons are tallied by LEAF: a refusal that is
+// only "call target was refused" is charged to the reason at the end of the
 // chain, because that is the construct worth building next.
 //
 //   $ semsource_census_run <entry.fern>
@@ -62,6 +64,78 @@ function leaf(why: string): string {
     return out;
 }
 
+// The stage one body reaches, and the reason it stopped there.
+struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
+
+function stage_of(p: semsource.Produced, tab: irlower.StructTab): Stage {
+    var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+    if (!plan.ok) { return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" }; }
+    var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab);
+    if (!lr.ok) { return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why }; }
+    return Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
+}
+
+// A template's stage is the first its instances stop at.
+function template_stage(key: string, instances: semsource.Produced[], stages: Stage[]): Stage {
+    var out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
+    var i: i32 = 0;
+    while (i < instances.len()) {
+        if (instances[i].key == key) {
+            if (!stages[i].planned) { return stages[i]; }
+            if (!stages[i].lowered) { out = stages[i]; }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Every declaration's stage, and the leaf it stopped at.
+function report(merged: parser.Module, tab: irlower.StructTab): void {
+    var built: semsource.Built = semsource.build_module(merged);
+    var total: i32 = built.decls.len();
+    var n_produced: i32 = 0;
+    var n_planned: i32 = 0;
+    var n_lowered: i32 = 0;
+    var n_instances: i32 = 0;
+    var refusals: Hist = Hist { keys: [], counts: [] };
+    var leaves: Hist = Hist { keys: [], counts: [] };
+    var plan_why: Hist = Hist { keys: [], counts: [] };
+    var rc_why: Hist = Hist { keys: [], counts: [] };
+    var stages: Stage[] = [];
+    for inst in built.instances {
+        var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+        if (inst.ok) { n_instances = n_instances + 1; st = stage_of(inst, tab); }
+        stages = stages.append(st);
+    }
+    var i: i32 = 0;
+    while (i < built.decls.len()) {
+        var p: semsource.Produced = built.decls[i];
+        if (!p.ok) {
+            refusals = hist_bump(refusals, p.why);
+            leaves = hist_bump(leaves, leaf(p.why));
+        } else {
+            n_produced = n_produced + 1;
+            var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+            if (p.template) { st = template_stage(p.key, built.instances, stages); } else { st = stage_of(p, tab); }
+            if (!st.planned) {
+                plan_why = hist_bump(plan_why, st.plan_why);
+            } else {
+                n_planned = n_planned + 1;
+                if (!st.lowered) { rc_why = hist_bump(rc_why, st.rc_why); } else { n_lowered = n_lowered + 1; }
+            }
+        }
+        i = i + 1;
+    }
+    print("functions      " + util.i32_to_string(total));
+    print("produced       " + util.i32_to_string(n_produced));
+    print("planned        " + util.i32_to_string(n_planned));
+    print("lowered        " + util.i32_to_string(n_lowered));
+    print("instances      " + util.i32_to_string(built.instances.len()) + " requested, " + util.i32_to_string(n_instances) + " produced");
+    hist_print("-- leaf refusals --", leaves);
+    hist_print("-- plan refusals --", plan_why);
+    hist_print("-- rc refusals --", rc_why);
+}
+
 function main(): i32 {
     var av: string[] = args();
     if (av.len() < 2) { eprint("usage: semsource_census_run <entry.fern>\n"); return 2; }
@@ -76,41 +150,7 @@ function main(): i32 {
             merged = irlower.lift_lambdas(merged);
             var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
 
-            var produced: semsource.Produced[] = semsource.build_module(merged);
-            var total: i32 = produced.len();
-            var n_produced: i32 = 0;
-            var n_planned: i32 = 0;
-            var n_lowered: i32 = 0;
-            var refusals: Hist = Hist { keys: [], counts: [] };
-            var leaves: Hist = Hist { keys: [], counts: [] };
-            var plan_why: Hist = Hist { keys: [], counts: [] };
-            var rc_why: Hist = Hist { keys: [], counts: [] };
-            var i: i32 = 0;
-            while (i < produced.len()) {
-                var p: semsource.Produced = produced[i];
-                if (!p.ok) {
-                    refusals = hist_bump(refusals, p.why);
-                    leaves = hist_bump(leaves, leaf(p.why));
-                } else {
-                    n_produced = n_produced + 1;
-                    var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
-                    if (!plan.ok) {
-                        plan_why = hist_bump(plan_why, plan.why);
-                    } else {
-                        n_planned = n_planned + 1;
-                        var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab);
-                        if (!lr.ok) { rc_why = hist_bump(rc_why, lr.why); } else { n_lowered = n_lowered + 1; }
-                    }
-                }
-                i = i + 1;
-            }
-            print("functions      " + util.i32_to_string(total));
-            print("produced       " + util.i32_to_string(n_produced));
-            print("planned        " + util.i32_to_string(n_planned));
-            print("lowered        " + util.i32_to_string(n_lowered));
-            hist_print("-- leaf refusals --", leaves);
-            hist_print("-- plan refusals --", plan_why);
-            hist_print("-- rc refusals --", rc_why);
+            report(merged, tab);
             return 0;
         },
         Err(_) => { eprint("cannot read entry\n"); return 2; }

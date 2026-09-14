@@ -48,7 +48,7 @@ function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return !ssasem.is_view(t) && !semtypes.erased(t) && supported(t, f);
+    return !ssasem.is_view(t) && supported(t, f);
 }
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
@@ -91,11 +91,7 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void ride one word, a string is its own box, and a function
 // value is the env box its captures ride in.
-// An erased type variable is one i32-shaped word, and every unit of one is
-// moved rather than retained or released (ssaunits.erased_move_error), so it
-// needs no representation beyond that word: no slot class, no release helper.
 function supported_leaf(t: typeinfo.Type): boolean {
-    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
@@ -450,37 +446,7 @@ function named(t: typeinfo.Type): string {
 //
 // Distinct from the AST path's __struct_drop_<T>, which guards each nested
 // field itself and hands back the box. The two are not interchangeable.
-pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + type_key(t); }
-
-// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
-// nominal name: `Option[string]` releases a string where `Option[i32]`
-// releases nothing, so the two cannot share a drop helper. `$` separates the
-// arguments, as it does in a lifted lambda's symbol.
-function type_key(t: typeinfo.Type): string {
-    if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
-    if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
-    if let typeinfo.TypeArray(a) = t { return "arr$" + type_key(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t { return key_args("tup", tup.elements); }
-    return leaf_key(t);
-}
-
-function key_args(name: string, args: typeinfo.Type[]): string {
-    var out: string = name;
-    for a in args { out = out + "$" + type_key(a); }
-    return out;
-}
-
-function leaf_key(t: typeinfo.Type): string {
-    if (ssasem.is_view(t)) { return "str"; }
-    if (ssasem.is_string(t)) { return "string"; }
-    if (ssasem.is_i64(t)) { return "i64"; }
-    if (ssasem.is_u64(t)) { return "u64"; }
-    if (ssasem.is_u8(t)) { return "u8"; }
-    if (ssasem.is_u32(t)) { return "u32"; }
-    if (ssasem.is_f64(t)) { return "f64"; }
-    if (ssasem.is_integer(t)) { return "i32"; }
-    return "bool";
-}
+pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + ssasem.type_key(t); }
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
@@ -632,7 +598,7 @@ function result_kind(t: typeinfo.Type): i32 {
 function frame(f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = empty("");
     r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
-        result_kind: result_kind(f.result) };
+        name: f.graph.name, result_kind: result_kind(f.result) };
     var vi: i32 = 0;
     while (vi < f.values.len()) {
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }

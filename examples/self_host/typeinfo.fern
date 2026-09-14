@@ -62,10 +62,10 @@ pub function fn_own_at(f: TypeFunc, i: i32): boolean {
 }
 
 // A slot where CONSUMING says something: a reference, whose unit changes
-// hands, or an erased word, which may be one at some instantiation. A scalar
-// carries no unit, so `own` on one is not part of the type — dropping it here
-// is what lets a generic `(own T) => T` instantiated at a scalar match the
-// callable a scalar body actually hands out.
+// hands, or a template's variable, which may be one at some instantiation. A
+// scalar carries no unit, so `own` on one is not part of the type — dropping
+// it here is what lets a generic `(own T) => T` instantiated at a scalar match
+// the callable a scalar body actually hands out.
 pub function ownable(t: Type): boolean {
   if let TypeI32(_) = t { return false; }
   if let TypeBool(_) = t { return false; }
@@ -136,13 +136,11 @@ pub struct TypeVoid { tag: i32 }
 
 pub struct TypeUnknown { reason: string }
 
-// A type VARIABLE of an erased generic, carrying the name it is written with.
-// Fern erases generics on the per-module emit path, so the variable is one
-// machine word — pointer-shaped or i32 — and nothing at run time tells the two
-// apart. It is therefore a value, a parameter, a result and a function-signature
-// slot, and never an element, a field or an operand: each of those needs a
-// store width or a drop the variable does not name. Distinct from TypeUnknown,
-// which means the checker could not work a type out at all.
+// A type VARIABLE of a generic declaration, carrying the name it is written
+// with. It stands in a template's contract, where a call site binds it; the
+// semantic boundary produces a generic body once per instantiation, so no
+// produced value ever carries one (docs/SEMANTIC-GENERICS.md). Distinct from
+// TypeUnknown, which means the checker could not work a type out at all.
 pub struct TypeErased { name: string }
 
 pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown | TypeErased;
