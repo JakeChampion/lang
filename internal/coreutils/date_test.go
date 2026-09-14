@@ -70,7 +70,9 @@ func dateCases(t *testing.T) []invocation {
 	zoned := func(zone, str string) {
 		add(invocation{name: zone + " -d " + str, args: []string{"-d", str, "+%F %T %Z %z %s"}, env: []string{"TZ=" + zone}})
 	}
-	// dbg compares the --debug commentary too.
+	// dbg compares the --debug commentary too, so its strings name a
+	// day: one that starts from the clock prints the current second,
+	// and two runs a moment apart straddle one.
 	dbg := func(zone, str string) {
 		add(invocation{name: "debug " + zone + " -d " + str, args: []string{"--debug", "-d", str, "+%F %T %Z"}, env: []string{"TZ=" + zone}})
 	}
@@ -199,7 +201,7 @@ func dateCases(t *testing.T) []invocation {
 			"JUN+17+1992", "12345", "1700-02-29", "2024-13-01", "foo", "12 foo", "jan 1 2024 foo", "1 jan 12:00", "a.m.",
 			"d.s.t", "2024-06-15 12:00 foo bar", "@1718434196.5", "@1 tomorrow", "06/15/2024", "2024/06/15", "24-06-15",
 			"5-06-15", "0024-06-15", "-1-1-1", "2024-06-15 12:00 UTC +0100", "2024-06-15 12:00 +0100 +0200", "monday monday",
-			"12:00 13:00", "2024-06-15 2024-06-16", "EST EDT", "EST DST DST", "1000000000000000000 years",
+			"12:00 13:00", "2024-06-15 2024-06-16", "EST EDT", "EST DST DST", "2024-06-15 1000000000000000000 years",
 			"2024-06-15 12:00:00 9223372036854775807 seconds", "2024-06-15 2147483647 years", "2147485548-01-01",
 			"2024-06-15 12:00:00 999999999999 minutes", "2024-06-15 12:00 +99999999999999 hours", "", "TZ=\"Asia/Tokyo\" 12:00",
 			"TZ=\"Asia/Tokyo\" 2024-06-15 12:00 +0100", "TZ=\"unterminated", "12:00 +0100", "13 pm", "0 am", "99999-01-01",
