@@ -633,6 +633,43 @@ ratios above 1 mean Fern is faster):
 | `sort` | sort -c a sorted 500k-line file | 21.07 ± 2.48 | 7.73 ± 1.03 | 14.75 ± 1.43 | 0.37× | 0.70× |
 | `sort` | sort -m two sorted files | 102.46 ± 8.16 | 30.01 ± 1.84 | 95.87 ± 9.29 | 0.29× | 0.94× |
 
+**sync, touch and date, 2026-09-14**, the same host, each utility's
+workloads file run alone (mean ± σ, ≥20 runs; ratios above 1 mean Fern
+is faster). Every `sync` and `touch` row and every single-invocation
+`date` row wins; the one loss is `date -f` over a file, where the
+grammar runs once a line. Its per-line cost is 54k retired instructions
+against GNU's roughly 30k, and it is the backend's indexed-byte floor
+across the lexer plus the parse state's struct copies, after the two
+larger costs were taken out: a tuple carrying a struct is boxed on every
+return (a `(boolean, Pc, i32)` from each grammar item cost 330
+instructions where returning the struct costs 55), and the word tables
+were a strcmp per entry.
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `sync` | sync | 0.37 ± 0.32 | 1.12 ± 0.21 | 2.01 ± 0.27 | 2.99× | 5.37× |
+| `sync` | sync one file | 0.45 ± 0.22 | 1.30 ± 0.23 | 2.13 ± 0.27 | 2.85× | 4.69× |
+| `sync` | sync -d one file | 0.42 ± 0.21 | 1.21 ± 0.29 | 2.09 ± 0.30 | 2.91× | 5.04× |
+| `sync` | sync -f one file | 0.71 ± 1.13 | 1.45 ± 0.26 | 2.40 ± 0.32 | 2.06× | 3.40× |
+| `sync` | sync 200 files in one run | 8.60 ± 1.19 | 9.44 ± 0.94 | 2.63 ± 0.32 | 1.10× | 0.31× |
+| `sync` | sync -f 200 files in one run | 18.05 ± 1.43 | 20.97 ± 4.31 | 20.88 ± 1.91 | 1.16× | 1.16× |
+| `sync` | sync 200 missing names | 0.90 ± 0.64 | 1.59 ± 0.26 | 2.12 ± 0.25 | 1.76× | 2.35× |
+| `touch` | touch one file | 0.46 ± 0.20 | 1.23 ± 0.24 | 2.18 ± 0.27 | 2.70× | 4.77× |
+| `touch` | touch 200 files in one run | 1.19 ± 0.23 | 1.69 ± 0.30 | 2.67 ± 0.35 | 1.42× | 2.24× |
+| `touch` | touch -d relative 200 files | 1.20 ± 0.22 | 1.69 ± 0.27 | 2.95 ± 0.37 | 1.41× | 2.45× |
+| `touch` | touch -t 200 files | 1.09 ± 0.19 | 1.59 ± 0.88 | 2.59 ± 0.40 | 1.46× | 2.38× |
+| `touch` | touch -r -d 200 files | 1.11 ± 0.23 | 1.58 ± 0.24 | 3.57 ± 0.41 | 1.42× | 3.23× |
+| `touch` | touch -a -m -h 200 files | 0.81 ± 0.17 | 1.49 ± 0.23 | 2.66 ± 0.38 | 1.84× | 3.28× |
+| `touch` | touch -c 200 missing names | 0.64 ± 0.18 | 1.27 ± 0.22 | 2.33 ± 0.33 | 1.98× | 3.65× |
+| `touch` | touch create and remove 10 files | 1.81 ± 0.27 | 2.46 ± 0.29 | 3.40 ± 0.41 | 1.36× | 1.88× |
+| `date` | date | 0.29 ± 0.07 | 1.32 ± 0.14 | 2.18 ± 0.19 | 4.56× | 7.55× |
+| `date` | date -d fixed | 0.30 ± 0.08 | 1.32 ± 0.13 | 2.21 ± 0.15 | 4.43× | 7.41× |
+| `date` | date -d relative | 0.41 ± 0.44 | 1.40 ± 0.24 | 3.02 ± 0.19 | 3.40× | 7.31× |
+| `date` | date every conversion | 0.31 ± 0.10 | 1.34 ± 0.20 | 2.23 ± 0.17 | 4.29× | 7.13× |
+| `date` | date -f 10000 lines | 83.31 ± 2.09 | 40.54 ± 2.19 | 13.61 ± 1.04 | 0.49× | 0.16× |
+| `date` | date -u -R | 0.35 ± 0.09 | 1.34 ± 0.15 | 2.20 ± 0.20 | 3.88× | 6.35× |
+| `date` | date --debug | 0.35 ± 0.09 | 1.34 ± 0.12 | 2.89 ± 0.21 | 3.87× | 8.33× |
+
 Before this branch those rows read `join` 0.10x, `dircolors` 0.29x, `fmt`
 0.12x, `comm` 0.26x, `uniq` 0.55–0.86x, `seq 1 2 1000000` 0.88x (the
 builder take leak, #9179), `cat -n` 0.22x, `od -t x8` 0.18x.
