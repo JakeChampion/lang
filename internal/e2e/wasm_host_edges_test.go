@@ -54,6 +54,11 @@ function main(): i32 {
     match (create_dir_all("d/e")) { Ok(_) => { print("create_dir_all ok"); }, Err(e) => { say("create_dir_all", e); } }
     match (temp_dir("t")) { Ok(_) => { print("temp_dir ok"); }, Err(e) => { say("temp_dir", e); } }
     match (remove_dir_all("d")) { Ok(_) => { print("remove_dir_all ok"); }, Err(e) => { say("remove_dir_all", e); } }
+    match (create_link("f", "g")) { Ok(_) => { print("create_link ok"); }, Err(e) => { say("create_link", e); } }
+    match (set_file_times("f", 0 as i64, 0 as i64, 0 as i64, 0 as i64, 0)) { Ok(_) => { print("set_file_times ok"); }, Err(e) => { say("set_file_times", e); } }
+    match (open_appender("f")) { Ok(_) => { print("open_appender ok"); }, Err(e) => { say("open_appender", e); } }
+    match (open_reader_with("f", 0)) { Ok(_) => { print("open_reader_with ok"); }, Err(e) => { say("open_reader_with", e); } }
+    match (open_writer_with("f", 1)) { Ok(_) => { print("open_writer_with ok"); }, Err(e) => { say("open_writer_with", e); } }
     return 0;
 }`
 	stdout, stderr, ec := runWasmStdinEnv(t, src, "", nil)
@@ -61,7 +66,8 @@ function main(): i32 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
 	for _, op := range []string{"open_reader", "open_writer", "read_file", "write_file", "stat", "remove_file", "create_dir", "read_dir",
-		"remove_dir", "rename", "read_link", "create_symlink", "truncate", "create_dir_all", "temp_dir"} {
+		"remove_dir", "rename", "read_link", "create_symlink", "truncate", "create_dir_all", "temp_dir",
+		"create_link", "set_file_times", "open_appender", "open_reader_with", "open_writer_with"} {
 		if !strings.Contains(stdout, op+" NotFound\n") {
 			t.Errorf("%s without a preopen: want NotFound, stdout:\n%s", op, stdout)
 		}
