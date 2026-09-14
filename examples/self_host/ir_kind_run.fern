@@ -79,7 +79,8 @@ function main(): i32 {
         "signal_disposition", "proc_exec_as", "signal_send", "sum_bytes",
         "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs",
         "buf_new", "buf_push", "buf_push_range", "buf_push_byte",
-        "buf_len", "buf_take", "buf_free", "arr_push_owned_i64", "arr_push_owned_f64"
+        "buf_len", "buf_take", "buf_free", "arr_push_owned_i64", "arr_push_owned_f64",
+        "open_reader_with", "open_writer_with"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -192,7 +193,8 @@ function main(): i32 {
         ir.op_fd_fsync(), ir.op_fd_fdatasync(), ir.op_fd_syncfs(),
         ir.op_buf_new(), ir.op_buf_push(), ir.op_buf_push_range(),
         ir.op_buf_push_byte(), ir.op_buf_len(), ir.op_buf_take(),
-        ir.op_buf_free(), ir.op_arr_push_owned_i64(), ir.op_arr_push_owned_f64()
+        ir.op_buf_free(), ir.op_arr_push_owned_i64(), ir.op_arr_push_owned_f64(),
+        ir.op_open_reader_with(), ir.op_open_writer_with()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -218,7 +220,8 @@ function main(): i32 {
         "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs",
         "buf_new", "buf_push", "buf_push_range",
         "buf_push_byte", "buf_len", "buf_take",
-        "buf_free", "arr_push_owned_i64", "arr_push_owned_f64"
+        "buf_free", "arr_push_owned_i64", "arr_push_owned_f64",
+        "open_reader_with", "open_writer_with"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;
