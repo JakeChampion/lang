@@ -739,6 +739,45 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
+	// #9190: a match on an `Option[i32[]]` LOCAL bound the payload by the
+	// walk's element tag, so `xs.append(v)` keyed `i32.append` and bailed.
+	// The payload is spelled as the array it is; the arm binds it borrowed
+	// from the box, and the rebind un-shares away from it.
+	{"option-local-payload-append", `function main(): i32 {
+    var o: Option[i32[]] = Some([1, 2, 3]);
+    var n: i32 = 0;
+    match (o) {
+        Some(xs) => { n = xs.len(); xs = xs.append(4); n = n + xs.len(); },
+        None => { return 3; }
+    }
+    if (n != 7) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"option-local-payload-with", `function main(): i32 {
+    var o = Some([1, 2, 3]);
+    var n: i32 = 0;
+    match (o) {
+        Some(xs) => { xs = xs.with(0, 9); n = xs[0] + xs.len(); },
+        None => { return 3; }
+    }
+    if (n != 12) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	// The nested payload spells one level deeper; nested arrays are a
+	// leak-only class, so the exit code is the pin.
+	{"option-local-nested-payload-append", `function main(): i32 {
+    var o: Option[i32[][]] = Some([[1, 2], [3]]);
+    var n: i32 = 0;
+    match (o) {
+        Some(g) => { g = g.append([4, 5]); n = g.len() + g[2][1]; },
+        None => { return 3; }
+    }
+    if (n != 8) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 	{"string-elems-excluded", `function main(): i32 {
     var a: string[] = ["x" + "1", "y" + "2"];
     var b: string[] = a;
