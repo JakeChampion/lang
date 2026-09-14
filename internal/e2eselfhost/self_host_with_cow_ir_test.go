@@ -560,6 +560,56 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
+	// The indexed array is a nested-array STRUCT FIELD. The uncounted leaf let
+	// the binding's sweep free a row the struct still holds; the struct is
+	// handed back and a caller that allocates over the freed row reads 7 for
+	// 1. Nested arrays are a leak-only class, so the exit code is the pin.
+	{"if-expression-field-index-leaf-handback", `struct Box { grid: i32[][], n: i32 }
+@noinline
+function mk(): Box {
+    var box: Box = Box { grid: [[1, 2], [3]], n: 2 };
+    var d: i32[] = [4];
+    var b: i32[] = if (box.n == 2) { box.grid[0] } else { d };
+    if (b[0] != 1) { return Box { grid: [], n: 0 }; }
+    return box;
+}
+@noinline
+function churn(): i32 {
+    var j1: i32[] = [7, 7];
+    var j2: i32[] = [8, 8];
+    var j3: i32[] = [9, 9];
+    return j1[0] + j2[0] + j3[0];
+}
+function main(): i32 {
+    var box: Box = mk();
+    if (churn() != 24) { return 3; }
+    if (box.grid[0][0] != 1 || box.grid[0][1] != 2) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// A doubly-indexed element, the same read one level deeper.
+	{"if-expression-nested-index-leaf-handback", `@noinline
+function mk(): i32[][][] {
+    var m: i32[][][] = [[[1, 2], [3]], [[4]]];
+    var d: i32[] = [5];
+    var b: i32[] = if (m.len() == 2) { m[0][1] } else { d };
+    if (b[0] != 3) { return []; }
+    return m;
+}
+@noinline
+function churn(): i32 {
+    var j1: i32[] = [7];
+    var j2: i32[] = [8];
+    var j3: i32[] = [9];
+    return j1[0] + j2[0] + j3[0];
+}
+function main(): i32 {
+    var m: i32[][][] = mk();
+    if (churn() != 24) { return 3; }
+    if (m[0][1][0] != 3) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 	{"if-expression-tuple-leaf-exit-sweep", `@noinline
 function exercise(): i32 {
     var t: (i32[], i32) = ([1, 2], 7);

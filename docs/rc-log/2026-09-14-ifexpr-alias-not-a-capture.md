@@ -44,7 +44,14 @@ Two things were wrong at once:
   catch, twice: each exited 99 the same way with only the ident covered,
   and an `i32[]` / `boolean[]` / `u8[]` field still did when the field arm
   asked only the width classifiers, which spell string, i64 and f64 fields
-  and nothing else.
+  and nothing else. A third catch was the index arm: `box.grid[0]` over a
+  nested-array FIELD, and `m[0][1]`, answered no under `expr_yields_array`,
+  whose index reading accepts an ident receiver alone. Nested arrays are a
+  leak-only class, so that one did not exit 99: the binding's sweep freed a
+  row the struct still held, and a caller handed the struct read 7 for 1
+  once three small allocations had recycled the row (exit 2). The index arm
+  now also asks `index_read_is_arr`, the compiler's own indexed-array-read
+  decision, which spells both shapes.
 
 ## Measured
 
@@ -62,12 +69,15 @@ read of zero were both compatible with the double release.
 
 ## Gates
 
-Six rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
+Ten rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `if-expression-alias`, `if-expression-fresh-arm`,
-`if-expression-alias-exit-sweep`, and the field (`u64[]`, `i32[]`,
-`boolean[]`) / index / tuple `-leaf-exit-sweep` rows. Against the parent commit's lowering the first
-three fail (103 / 3, 102 / 2, exit 99) and the other thirty pass; the leaf
-rows exit 99 with the ident-only guard. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
+`if-expression-alias-exit-sweep`, the field (`u64[]`, `i32[]`,
+`boolean[]`) / index / tuple `-leaf-exit-sweep` rows, and the two
+`-handback` rows (a nested-array field indexed, a doubly-indexed element)
+that pin the recycled-row read. Against the parent commit's lowering the
+first three fail (103 / 3, 102 / 2, exit 99) and the other thirty pass; the
+leaf rows exit 99 with the ident-only guard, and the handback rows exit 2
+with the ident-receiver index arm. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
 — the lift change touches every function with an if-expression — and
 `TestSelfHostCoreutilsParity/(od|printf)`. The probe set of the predecessor
 entry is otherwise unchanged; #9191 (alias + append) and #9190 (Option

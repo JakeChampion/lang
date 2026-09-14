@@ -19729,10 +19729,17 @@ function ifexpr_leaf_is_array_read(e: ast.Expr, s: LowerState): boolean {
                 || enum_arr_field_read_type(e, s) != "" || nested_arr_field_read_type(e, s) != ""
                 || expr_yields_array(e, s);
         },
-        ast.ExprIndex(_) => { return expr_yields_array(e, s); },
+        ast.ExprIndex(_) => { return ifexpr_index_leaf_is_array(e, s); },
         _ => { return false; }
     }
     return false;
+}
+
+// ifexpr_index_leaf_is_array: `xs[i]` handing back an array — a nested-array
+// local, or the compiler's own indexed-array-read decision (index_read_is_arr),
+// which covers a nested-array struct field and a doubly-indexed element.
+function ifexpr_index_leaf_is_array(e: ast.Expr, s: LowerState): boolean {
+    return expr_yields_array(e, s) || index_read_is_arr(e, s);
 }
 
 function expr_yields_array(e: ast.Expr, s: LowerState): boolean {
