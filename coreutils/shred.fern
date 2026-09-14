@@ -399,8 +399,30 @@ function write_pass(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Op
     },
     None => {}
   }
+  return sync_pass(w, path);
+}
+
+// A pass is not done until the bytes are on the device, and a device
+// that cannot be told to flush is not a failure: `fdatasync` on
+// /dev/null answers EINVAL, and GNU then asks for a full `fsync` and
+// carries on when that is refused the same way. It re-asks every pass
+// rather than remembering, so a handle that starts answering does get
+// synced.
+//
+// An IoError carries the strerror text rather than the number, which is
+// what `gnu.is_broken_pipe` reads too.
+function sync_pass(w: Writer, path: string): Option[PassFail] {
   match (w.fdatasync()) {
+    None => {
+      return None;
+    },
+    Some(_) => {}
+  }
+  match (w.fsync()) {
     Some(e) => {
+      if (gnu.io_error_text(e) == "Invalid argument") {
+        return None;
+      }
       return Some(PassFail { msg: path + ": " + gnu.io_error_text(e), fatal: false });
     },
     None => {}
@@ -616,26 +638,42 @@ function dash_handle(): (Writer, boolean) {
       }
     }
   }
-  match (w.stat()) {
-    Err(e) => {
-      gnu.error("-: " + gnu.io_error_text(e));
-      return (w, false);
-    },
-    Ok(st) => {
-      if (is_pipe_or_socket(st.mode)) {
-        gnu.error("-: invalid file type");
-        return (w, false);
-      }
-    }
-  }
   return (w, true);
 }
 
-// A FIFO and a socket are the two types with no length to overwrite;
-// S_IFMT is the top four bits of the mode, 0o010000 and 0o140000.
-function is_pipe_or_socket(mode: u32): boolean {
+// The types with nothing to overwrite in place, which GNU refuses before
+// it writes anything: a FIFO and a socket carry no length to rewind
+// over, and a terminal is a stream rather than storage. Everything else
+// is fair game — a block device is what shred was written for, and
+// /dev/null is a character device it overwrites happily. S_IFMT is the
+// top four bits of the mode, 0o010000 FIFO and 0o140000 socket.
+//
+// `tty` cannot be asked of a NAMED operand yet: `isatty` takes a
+// descriptor number and an open handle does not surrender one, so
+// `shred /dev/pts/0` is written where GNU refuses it. #9229.
+function unshreddable(mode: u32, tty: boolean): boolean {
+  if (tty) {
+    return true;
+  }
   var kind: u32 = mode & 61440 as u32;
   return kind == 4096 as u32 || kind == 49152 as u32;
+}
+
+// A failing fstat is not decided here: `-s` supplies a length the
+// operand itself could not, so shred_length owns that case.
+function shred_type_ok(w: Writer, path: string, is_dash: boolean): boolean {
+  match (w.stat()) {
+    Err(_) => {
+      return true;
+    },
+    Ok(st) => {
+      if (unshreddable(st.mode, is_dash && isatty(1))) {
+        gnu.error(path + ": invalid file type");
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // The passes over one open handle, and then what standing in for removal
@@ -644,6 +682,12 @@ function is_pipe_or_socket(mode: u32): boolean {
 // is as far as `-u` reaches there. A stdio handle is not closed either —
 // the process still needs fd 1.
 function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: boolean): (boolean, boolean) {
+  if (!shred_type_ok(w, path, is_dash)) {
+    if (!is_dash) {
+      w.close();
+    }
+    return (false, false);
+  }
   var sized: (Lengths, boolean) = shred_length(w, s);
   if (!sized.1) {
     gnu.error(path + ": failed to stat");
@@ -702,6 +746,12 @@ function open_for_shred(path: string, s: Settings): Result[Writer, IoError] {
       if (!s.force) {
         return first;
       }
+      match (e) {
+        PermissionDenied(_) => {},
+        _ => {
+          return first;
+        }
+      }
       match (chmod(path, 128)) {
         Err(ce) => {
           return Err(ce);
@@ -717,7 +767,16 @@ function open_for_shred(path: string, s: Settings): Result[Writer, IoError] {
 //
 // `total` is `-s` when it was given, else the file's own length rounded
 // UP to its block size, which is what grows an 11-byte file to 4096.
-// `-x` and a non-regular file both take the length as it stands.
+// `-x` writes the length as it stands.
+//
+// A DEVICE has no length in its stat — `st_size` is 0 for a block
+// device — so where GNU asks is `lseek(0, SEEK_END)`, and that is what
+// makes `shred /dev/sdb` write the whole device rather than nothing.
+// When even that answers 0 the length is unknown, and GNU writes until
+// a write FAILS: on a real device that is ENOSPC at the end of it, and
+// on /dev/null it never comes, so the run does not stop. Asking for
+// every byte an offset can address is the same behaviour and needs no
+// second kind of loop.
 //
 // `first` is the length of a SILENT sweep that comes before it. A file
 // that is about to GROW and is smaller than one block is overwritten at
@@ -740,7 +799,9 @@ function shred_length(w: Writer, s: Settings): (Lengths, boolean) {
       var total: i64 = st.size;
       if (s.size_given) {
         total = s.size;
-      } else if (!s.exact && st.is_file) {
+      } else if (!st.is_file) {
+        total = device_length(w);
+      } else if (!s.exact) {
         total = round_up(st.size, st.blksize);
       }
       var first: i64 = 0 as i64;
@@ -750,6 +811,21 @@ function shred_length(w: Writer, s: Settings): (Lengths, boolean) {
       return (Lengths { first: first, total: total }, true);
     }
   }
+}
+
+// The end of a handle that stat could not measure. The seek leaves the
+// offset there; every pass rewinds before it writes, so nothing has to
+// put it back.
+function device_length(w: Writer): i64 {
+  match (w.seek(0 as i64, 2)) {
+    Ok(end) => {
+      if (end > 0 as i64) {
+        return end;
+      }
+    },
+    Err(_) => {}
+  }
+  return 9223372036854775807 as i64;
 }
 
 function round_up(size: i64, block: i64): i64 {
