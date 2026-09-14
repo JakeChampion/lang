@@ -39,6 +39,9 @@ var arrowLambdaIRCases = []struct {
 	{"capture-twice", `function main(): i32 { var n = 6; var f = (x: i32): i32 => x * n + n; return f(4); }`},
 	// Regression: the () => {} closure form still lowers.
 	{"fn-form-regress", `function main(): i32 { var n = 10; var f = (x: i32): i32 => { return x + n; }; return f(5); }`},
+	// `own` on the FIRST parameter: the lookahead must read past the modifier
+	// to the `name: T` shape, as it does on a declaration.
+	{"own-first-param", `function main(): i32 { var f = (own a: string[]): string[] => a; var xs: string[] = f(["x", "y"]); return xs.len(); }`},
 }
 
 // TestSelfHostArrowLambdaIRX86_64 routes each case through the self-hosted x86-64
