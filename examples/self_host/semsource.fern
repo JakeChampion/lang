@@ -967,6 +967,25 @@ function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind
     return define(s, kind, ids, 0, "", result);
 }
 
+// `xs.first()` where `first` is declared `(xs: T[]) first()`: the registration
+// pass folded it into the free generic `__arrm_first[T]`, and this is the call
+// to that template with the receiver at argument 0. `__mapm_` is the map
+// sibling. The instance is asked for on this call's request, the way any other
+// generic call asks, so the method body is produced once per element type.
+function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+    if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
+    var prefix: string = "";
+    if let typeinfo.TypeArray(_) = s.values[recv.id] { prefix = "__arrm_"; }
+    if (ssasem.is_map(s.values[recv.id])) { prefix = "__mapm_"; }
+    if (prefix == "") { return refused(s, "unsupported call target"); }
+    var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
+    if (at < 0) { return refused(s, "unsupported call target"); }
+    var contract: ssasem.Contract = s.contracts[at];
+    if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
+    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    return invoke_method(recv, c.args, contract, s);
+}
+
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
 function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
@@ -994,7 +1013,18 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view
     // reaches them as a lent box; the two builtins every text has come first.
-    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s, statement); }
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) {
+        var b: Value = builtin_call(c, fa, recv, s, statement);
+        if (b.s.ok) { return b; }
+        // A receiver the builtin vocabulary does not own may still be a method
+        // DECLARED on a generic receiver. The builtin is tried first so a
+        // shape this boundary lowers itself keeps its op, and the declared
+        // method fills the rest; the refused attempt's state is dropped, so
+        // the retry produces the arguments once.
+        var folded: Value = folded_method(c, fa, recv, s);
+        if (folded.s.ok) { return folded; }
+        return b;
+    }
     if (owner == "") { owner = "string"; }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
@@ -1327,17 +1357,38 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
 // produced on this call's request, and the call names it rather than the
 // template.
 function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
-    var ids: i32[] = [];
-    var bound: ssasem.Binding = ssasem.unbound();
+    return invoke_rest([], ssasem.unbound(), args, 0, contract, s);
+}
+
+// A method on a GENERIC RECEIVER is the free generic the registration pass
+// folded it into — `(xs: T[]) first()` is `__arrm_first[T](xs)` — so the call
+// is that free call with the receiver at argument 0. The receiver is already
+// produced here, and producing it a second time would give the call two values
+// for one expression, so it is bound and lent from the value in hand and the
+// written arguments follow it.
+function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
+    var v: Value = lend(recv, contract.params[0], contract.modes[0]);
+    s = v.s;
+    if (!s.ok) { return v; }
+    var bound: ssasem.Binding = ssasem.bind_type(ssasem.unbound(), contract.params[0], s.values[v.id]);
+    if (!bound.ok) { return refused(s, bound.why); }
+    if (!semtypes.equal(ssasem.substitute(contract.params[0], bound), s.values[v.id])) { return refused(s, "call receiver type"); }
+    return invoke_rest([v.id], bound, args, 1, contract, s);
+}
+
+// The arguments from `base` onward, each produced at its parameter's type
+// under the bindings the earlier ones made.
+function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: i32, contract: ssasem.Contract, s: State): Value {
     var i: i32 = 0;
     while (i < args.len()) {
-        var want: typeinfo.Type = ssasem.substitute(contract.params[i], bound);
-        var v: Value = lend(expr(args[i], s, want), want, contract.modes[i]);
+        var at: i32 = base + i;
+        var want: typeinfo.Type = ssasem.substitute(contract.params[at], bound);
+        var v: Value = lend(expr(args[i], s, want), want, contract.modes[at]);
         s = v.s;
         if (!s.ok) { return v; }
-        bound = ssasem.bind_type(bound, contract.params[i], s.values[v.id]);
+        bound = ssasem.bind_type(bound, contract.params[at], s.values[v.id]);
         if (!bound.ok) { return refused(s, bound.why); }
-        if (!semtypes.equal(ssasem.substitute(contract.params[i], bound), s.values[v.id])) { return refused(s, "call argument type"); }
+        if (!semtypes.equal(ssasem.substitute(contract.params[at], bound), s.values[v.id])) { return refused(s, "call argument type"); }
         ids = ids.append(v.id);
         i = i + 1;
     }

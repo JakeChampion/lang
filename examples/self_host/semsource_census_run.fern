@@ -167,6 +167,13 @@ function main(): i32 {
             // census counts against the default target.
             var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
             merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+            // A method on a generic receiver — `(xs: T[]) first()` — carries
+            // its type variable in the RECEIVER and spells no `[T]` list, so
+            // the boundary would read it as concrete and refuse it on its
+            // unresolved result. These three passes fold such a method into
+            // the ordinary free generic the boundary already instantiates,
+            // exactly as the production pipeline does before it lowers.
+            merged = parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(merged)));
             merged = irlower.lift_lambdas(merged);
             var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
 
