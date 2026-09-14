@@ -1550,11 +1550,11 @@ so those bytes would be an invention and the corpus would be measuring it. The
 corpus therefore holds 414 cases over the format engine and none over the four
 layouts; they arrive with the primitives, and #8366 stays open until they do.
 
-`QUOTING_STYLE` is the second, smaller gap: GNU takes `%N`'s quoting style from
-it and `stat.fern` always uses the default shell-escape-always. It reaches `%N`
-and nothing else — the default block prints the name literally whatever the
-variable says. #9105 has the measurement and puts the remaining gnulib styles
-in `lib/gnu.fern`, where `ls` will want them too.
+`QUOTING_STYLE` reaches `%N` and nothing else, and only when the format as
+written holds the two bytes `%N`: `%-N`, an octal-escaped `%` and the default
+block never read it, `%%N` does. The ten gnulib styles live in `lib/gnu.fern`
+as `quote_style`, with `quoting_style_from_env` doing the ARGMATCH lookup and
+the `ignoring invalid value` warning, so `ls` can pick them up as is.
 
 **`mv` does not copy across filesystems.** GNU falls back to a recursive
 copy-then-unlink when `rename(2)` answers EXDEV. Measured, it preserves mode

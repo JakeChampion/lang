@@ -125,6 +125,21 @@ pub function argmatch(v: string, names: string[], option: string): i32 {
 // Returns the VALUE rather than the index; `argmatch` above is this
 // over a table where every name stands for itself.
 pub function argmatch_valued(v: string, names: string[], values: i32[], option: string): i32 {
+  var found: i32 = argmatch_find(v, names, values);
+  if (found >= 0) {
+    return found;
+  }
+  var what: string = "invalid";
+  if (found == 0 - 2) {
+    what = "ambiguous";
+  }
+  return argmatch_die(v, names, values, option, what);
+}
+
+// `argmatch_find(v, names, values)` — the lookup under `argmatch_valued`
+// without its diagnostic: the value `v` names, -1 when it names none
+// and -2 when it is a prefix of names with different values.
+pub function argmatch_find(v: string, names: string[], values: i32[]): i32 {
   var found: i32 = 0 - 1;
   var ambiguous: boolean = false;
   var i: i32 = 0;
@@ -141,14 +156,13 @@ pub function argmatch_valued(v: string, names: string[], values: i32[], option: 
     }
     i = i + 1;
   }
-  if (found >= 0 && !ambiguous) {
+  if (ambiguous) {
+    return 0 - 2;
+  }
+  if (found >= 0) {
     return values[found];
   }
-  var what: string = "invalid";
-  if (ambiguous) {
-    what = "ambiguous";
-  }
-  return argmatch_die(v, names, values, option, what);
+  return 0 - 1;
 }
 
 // `argmatch_exact(v, names, option)` — the same over an option that
@@ -583,17 +597,111 @@ pub function stream_finish(o: Stream): void {
 // visible in the C locale: `quote` wraps an operand in single quotes
 // with C escapes (`extra operand 'c\nd'`), `quotef` renders a file name
 // the way a shell would need it typed (`'no such': No such file or
-// directory`, bare when nothing in it is special).
+// directory`, bare when nothing in it is special). The full gnulib
+// table is `quote_style` below, for the utilities that let
+// QUOTING_STYLE pick one.
 // `quote(s)` — `s` in single quotes; backslash and the quote itself
 // backslashed, the seven named control characters as C escapes, and
 // every other control or non-ASCII byte as three octal digits.
 pub function quote(s: string): string {
+  return c_quote(s, 39, false);
+}
+
+// `quotea(name)` — gnulib's quoteaf: `quotef` with the bare form
+// quoted too, for the diagnostics that always show quotes
+// (`head: cannot open 'plain' for reading`) rather than only when
+// the name needs them (`wc: plain: No such file or directory`).
+pub function quotea(s: string): string {
+  return shell_quote(s, false, true);
+}
+
+// `quotef(name)` — the file name as a shell would need it typed: bare
+// when nothing in it is special, else single-quoted with a quote
+// inside written `'\''` and every control or non-ASCII byte spliced
+// in as an ANSI-C `$'...'` run. A name whose only trouble is the
+// apostrophe goes in double quotes. Empty is `''`.
+pub function quotef(s: string): string {
+  return shell_quote(s, true, true);
+}
+
+// gnulib's quoting styles, in its order, so a position in this list is
+// the `style` that `quote_style` takes and the value QUOTING_STYLE
+// names (abbreviations allowed, as ARGMATCH takes them).
+pub function quoting_style_names(): string[] {
+  return ["literal", "shell", "shell-always", "shell-escape", "shell-escape-always", "c", "c-maybe", "escape", "locale", "clocale"];
+}
+
+// The style a utility quotes with when QUOTING_STYLE says nothing:
+// shell-escape-always, which is `quotea`.
+pub function quoting_style_default(): i32 {
+  return 4;
+}
+
+// `quoting_style_from_env()` — gnulib's getenv_quoting_style: the
+// style QUOTING_STYLE names, or the default with a warning when it
+// names none (`ignoring invalid value of environment variable
+// QUOTING_STYLE: 'bogus'`). Unset is the default and silent.
+pub function quoting_style_from_env(): i32 {
+  match (env("QUOTING_STYLE")) {
+    Some(v) => {
+      var names: string[] = quoting_style_names();
+      var found: i32 = argmatch_find(v, names, one_value_each(names.len()));
+      if (found >= 0) {
+        return found;
+      }
+      error("ignoring invalid value of environment variable QUOTING_STYLE: " + quote(v));
+      return quoting_style_default();
+    },
+    None => {
+      return quoting_style_default();
+    }
+  }
+}
+
+// `quote_style(s, style)` — `s` quoted in one of gnulib's ten styles,
+// numbered as `quoting_style_names` lists them. The two `shell`
+// pairs differ in whether a name that needs no quoting gets them
+// anyway (`-always`) and whether a control or non-ASCII byte forces
+// quoting and comes out as an ANSI-C escape (`-escape`); `c-maybe` is
+// `c` with the quotes dropped when nothing inside needed a backslash;
+// `escape` is `c` with no quotes at all; `locale` and `clocale` are
+// `quote` and `c` in the C locale.
+pub function quote_style(s: string, style: i32): string {
+  if (style == 0) {
+    return s;
+  }
+  if (style < 5) {
+    return shell_quote(s, style == 1 || style == 3, style >= 3);
+  }
+  if (style == 5 || style == 9) {
+    return c_quote(s, 34, false);
+  }
+  if (style == 6) {
+    return c_quote(s, 34, true);
+  }
+  if (style == 7) {
+    return c_quote(s, 0, false);
+  }
+  return quote(s);
+}
+
+// `c_quote(s, q, elide)` — `s` between two `q` bytes (none when `q` is
+// 0) with backslash, `q` and every control or non-ASCII byte escaped
+// the C way. `elide` returns `s` untouched unless a `q` or a control
+// or non-ASCII byte is in it: a backslash alone does not earn the
+// quotes, and prints bare.
+function c_quote(s: string, q: i32, elide: boolean): string {
+  if (elide && !c_needs_quotes(s, q)) {
+    return s;
+  }
   var bs: u8[] = [];
-  bs = bs.append(39 as u8);
+  if (q != 0) {
+    bs = bs.append(q as u8);
+  }
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
-    if (b == 92 || b == 39) {
+    if (b == 92 || q != 0 && b == q) {
       bs = bs.append(92 as u8);
       bs = bs.append(b as u8);
     } else if (b >= 32 && b < 127) {
@@ -603,8 +711,22 @@ pub function quote(s: string): string {
     }
     i = i + 1;
   }
-  bs = bs.append(39 as u8);
+  if (q != 0) {
+    bs = bs.append(q as u8);
+  }
   return string_from_bytes_unchecked(bs);
+}
+
+function c_needs_quotes(s: string, q: i32): boolean {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b == q || is_control_or_high(b)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // One control or non-ASCII byte as a C escape: `\a \b \f \n \r \t \v`
@@ -649,16 +771,39 @@ function is_control_or_high(b: i32): boolean {
   return b < 32 || b >= 127;
 }
 
-// Whether byte `b` makes a file name need quoting at all. `~` and `#`
-// count only at the start of the name.
+// Whether printable byte `b` makes a file name need quoting at all.
+// `~` and `#` count only at the start of the name; `{` and `}` only
+// as the whole of it, which the caller checks.
 function shell_special(b: i32, leading: boolean): boolean {
-  if (is_control_or_high(b)) {
-    return true;
-  }
   if (b == 126 || b == 35) {
     return leading;
   }
-  return b == 32 || b == 39 || b == 34 || b == 92 || b == 36 || b == 42 || b == 59 || b == 61 || b == 58 || b == 33 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 96 || b == 94;
+  return b == 32 || b == 39 || b == 34 || b == 92 || b == 36 || b == 42 || b == 59 || b == 61 || b == 33 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 96 || b == 94;
+}
+
+// Whether `s` needs quoting in a `shell` style: empty, a lone brace,
+// a special byte, or a control byte — every one when the style
+// escapes them, only a newline, return or tab when it does not.
+function shell_needs_quotes(s: string, escapes: boolean): boolean {
+  if (s.len() == 0) {
+    return true;
+  }
+  if (s.len() == 1 && (s[0] == 123 as u8 || s[0] == 125 as u8)) {
+    return true;
+  }
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (is_control_or_high(b)) {
+      if (escapes || b == 10 || b == 13 || b == 9) {
+        return true;
+      }
+    } else if (shell_special(b, i == 0)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // Whether byte `b` rules out the double-quoted form. Not the same set
@@ -674,36 +819,20 @@ function double_quote_unsafe(b: i32, leading: boolean): boolean {
   return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
 }
 
-// `quotea(name)` — gnulib's quoteaf: `quotef` with the bare form
-// quoted too, for the diagnostics that always show quotes
-// (`head: cannot open 'plain' for reading`) rather than only when
-// the name needs them (`wc: plain: No such file or directory`).
-pub function quotea(s: string): string {
-  var q: string = quotef(s);
-  if (q == s) {
-    return "'" + s + "'";
+// `shell_quote(s, elide, escapes)` — the four `shell` styles: bare when
+// `elide` and nothing needs quoting, double-quoted when the apostrophe
+// is the only trouble, else single-quoted with `'\''` for a quote and,
+// when `escapes`, every control or non-ASCII byte spliced in as an
+// ANSI-C `$'...'` run.
+function shell_quote(s: string, elide: boolean, escapes: boolean): string {
+  if (elide && !shell_needs_quotes(s, escapes)) {
+    return s;
   }
-  return q;
-}
-
-// `quotef(name)` — the file name as a shell would need it typed: bare
-// when nothing in it is special, else single-quoted with a quote
-// inside written `'\''` and every control or non-ASCII byte spliced
-// in as an ANSI-C `$'...'` run. A name whose only trouble is the
-// apostrophe goes in double quotes. Empty is `''`.
-pub function quotef(s: string): string {
-  if (s.len() == 0) {
-    return "''";
-  }
-  var needs: boolean = false;
   var double_ok: boolean = true;
   var has_quote: boolean = false;
   var i: i32 = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
-    if (shell_special(b, i == 0)) {
-      needs = true;
-    }
     if (double_quote_unsafe(b, i == 0)) {
       double_ok = false;
     }
@@ -711,9 +840,6 @@ pub function quotef(s: string): string {
       has_quote = true;
     }
     i = i + 1;
-  }
-  if (!needs) {
-    return s;
   }
   if (has_quote && double_ok) {
     return "\"" + s + "\"";
@@ -725,7 +851,7 @@ pub function quotef(s: string): string {
   i = 0;
   while (i < s.len()) {
     var b: i32 = s[i] as i32;
-    if (is_control_or_high(b)) {
+    if (escapes && is_control_or_high(b)) {
       if (open) {
         bs = bs.append(39 as u8);
         open = false;
