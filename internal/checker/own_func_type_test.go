@@ -99,3 +99,13 @@ function apply(f: (own i32[]) => i32, own a: i32[]): i32 { var n = f(a); return 
 function main(): i32 { return apply(eat, [1, 2]); }`,
 		`use of owned parameter "a" after it was consumed`)
 }
+
+// `own T` at a slot the call binds to a scalar is vacuous — nothing changes
+// hands — so a lending scalar function stands in for it, as it does for the
+// self-host, where own_flags drops the flag at a scalar.
+func TestOwnFuncTypeScalarSlotAdmitsLendingCallee(t *testing.T) {
+	wantOK(t, "own-slot-scalar-lending", `
+function id(n: i32, a: i32): i32 { return a + n; }
+function thread[T](own acc: T, n: i32, visit: (i32, own T) => T): T { return visit(n, acc); }
+function main(): i32 { return thread(7, 2, id); }`)
+}

@@ -167,16 +167,25 @@ function fold_two[T](a: T, visit: (i32, T) => T): T {
 }
 function add_at(n: i32, a: i32): i32 { return a + n; }
 function folded(): i32 { return fold_two(10, add_at); }
-// READING the accumulator after passing it is a retain at a reference
-// instantiation and nothing at a scalar one; each instance plans its own.
+// READING the accumulator after passing it: through a LENDING visitor the
+// instance borrows it twice and retains nothing, at a scalar or a reference;
+// through a CONSUMING one an OWNED accumulator handed over and read again is
+// a retain in the string[] instance and nothing in the i32 one, each instance
+// planning its own.
 function reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
     return join(visit(1, a), a);
 }
 function join_at(a: i32, b: i32): i32 { return a - b; }
 function reread_int(): i32 { return reread(5, add_at, join_at); }
-// A parameter abandoned UNCONSUMED is dropped by the instance, which knows its
-// type; a template never had one to drop.
-function abandon[T](a: T, b: T): T { return b; }
+function reread_own[T](own a: T, visit: (i32, own T) => T, join: (own T, own T) => T): T {
+    return join(visit(1, a), a);
+}
+function join_words(own a: string[], own b: string[]): string[] { return a.append(b[0]); }
+function reread_words(): i32 { return reread_own(["q"], own_word, join_words).len(); }
+function reread_ints(): i32 { return reread_own(5, add_at, join_at); }
+// An OWNED parameter abandoned UNCONSUMED is dropped by the instance, which
+// knows its type; a template never had one to drop.
+function abandon[T](own a: T, own b: T): T { return b; }
 function abandon_words(): i32 {
     var x: string[] = ["x"];
     var y: string[] = ["y", "z"];
@@ -454,6 +463,12 @@ function use_of(n: i32, f: string, a: Tally): Tally { return Tally { n: a.n + f.
 function scan(x: i32, f: string): Tally {
     function ve(n: i32, own a: Tally): Tally { return use_of(n, f, a); }
     return fold_own(Tally { n: x }, ve);
+}
+// The same with an owning ARRAY parameter, whose own sits on the spelling's
+// base name under the array suffix.
+function scan_words(x: i32, f: string): i32 {
+    function ve(n: i32, own a: string[]): string[] { return a.append(f); }
+    return fold_own(["a"], ve).len();
 }
 function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function refused_fn_result(): (i32) => i32 { return twice_it; }

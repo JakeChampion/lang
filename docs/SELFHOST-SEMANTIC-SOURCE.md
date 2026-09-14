@@ -546,10 +546,10 @@ fold and read back after churn so an over-release answers a sentinel rather
 than a length. The driver AST-lowers each template's own erased body for
 main's calls and emits the instances beside it, so the two symbol conventions
 link in one program. The print golden pins the instance names, a template's
-"template instantiated" verdict, a fold that reads its accumulator after
-passing it (a retain in the `string[]` instance, nothing in the i32 one), and
-one that abandons a parameter unconsumed, dropped by the instance that knows
-its type.
+"template instantiated" verdict, a fold that reads an OWNED accumulator after
+handing it to a consuming visitor (a retain in the `string[]` instance,
+nothing in the i32 one), and one that abandons an owned parameter unconsumed,
+dropped by the instance that knows its type.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at

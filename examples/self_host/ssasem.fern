@@ -792,13 +792,15 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
 // nominal name: `Option[string]` releases a string where `Option[i32]`
 // releases nothing, so the two cannot share a drop helper, and a template's
 // instances are told apart by it. `$` separates the arguments, as it does in
-// a lifted lambda's symbol.
+// a lifted lambda's symbol. A structural type's key starts with one, which no
+// declared name can, so an array of strings and a struct named `arr`
+// instantiated at a string never share a key.
 pub function type_key(t: typeinfo.Type): string {
     if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
     if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
-    if let typeinfo.TypeArray(a) = t { return "arr$" + type_key(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t { return key_args("tup", tup.elements); }
-    if let typeinfo.TypeFunc(fn) = t { return key_args("fn", fn.param_types.append(fn.ret_type)); }
+    if let typeinfo.TypeArray(a) = t { return "$arr$" + type_key(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { return key_args("$tup", tup.elements); }
+    if let typeinfo.TypeFunc(fn) = t { return key_args("$fn", fn.param_types.append(fn.ret_type)); }
     return leaf_key(t);
 }
 
