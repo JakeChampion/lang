@@ -9,7 +9,7 @@ mkdir -p "$d"
 i=0
 : > "$d/lines"
 while [ "$i" -lt 10000 ]; do
-  printf '2024-06-15 12:34:56.123456789 +0100 next monday 3pm 2 days ago\n' >> "$d/lines"
+  printf '2024-06-15 12:34:56.123456789 +0100 next monday 2 days ago\n' >> "$d/lines"
   i=$((i + 1))
 done
 printf 'date\ty\t{}\n'
