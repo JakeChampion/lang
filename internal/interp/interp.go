@@ -655,6 +655,8 @@ func New() *Interp {
 	i.Builtins["open_writer"] = &Builtin{Fn: builtinOpenWriter}
 	i.Builtins["open_appender"] = &Builtin{Fn: builtinOpenAppender}
 	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
+	i.Builtins["open_reader_with"] = &Builtin{Fn: builtinOpenReaderWith}
+	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
 	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
@@ -3650,6 +3652,35 @@ func builtinOpenAppender(i *Interp, args []Value) (Value, error) {
 // here is one the fixpoint cannot see.
 func builtinOpenExclusive(i *Interp, args []Value) (Value, error) {
 	return openHelper(i, args, "Writer", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
+// builtinOpenReaderWith / builtinOpenWriterWith open under Fern's own
+// flags word: bit 1 creates (0666 through the umask), bit 2 is
+// O_NONBLOCK. The writer is O_WRONLY with neither O_TRUNC nor O_APPEND.
+func builtinOpenReaderWith(i *Interp, args []Value) (Value, error) {
+	return openWithHelper(i, args, "Reader", os.O_RDONLY)
+}
+
+func builtinOpenWriterWith(i *Interp, args []Value) (Value, error) {
+	return openWithHelper(i, args, "Writer", os.O_WRONLY)
+}
+
+func openWithHelper(i *Interp, args []Value, structName string, access int) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("open_*_with: expected 2 args, got %d", len(args))
+	}
+	flags, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("open_*_with: expected number flags, got %T", args[1])
+	}
+	flag := access
+	if int(flags)&1 != 0 {
+		flag |= os.O_CREATE
+	}
+	if int(flags)&2 != 0 {
+		flag |= syscall.O_NONBLOCK
+	}
+	return openHelper(i, args[:1], structName, flag, 0o666)
 }
 
 func openHelper(i *Interp, args []Value, structName string, flag int, perm os.FileMode) (Value, error) {

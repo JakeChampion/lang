@@ -2789,13 +2789,15 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	// in one shot; `open_reader` / `open_writer` / `open_appender` /
 	// `open_exclusive` return Reader / Writer values backed by a
 	// preview-1 fd.
-	"read_file":       "__fern_read_file",
-	"read_file_bytes": "__fern_read_file_bytes",
-	"write_file":      "__fern_write_file",
-	"open_reader":     "__fern_open_reader",
-	"open_writer":     "__fern_open_writer",
-	"open_appender":   "__fern_open_appender",
-	"open_exclusive":  "__fern_open_exclusive",
+	"read_file":        "__fern_read_file",
+	"read_file_bytes":  "__fern_read_file_bytes",
+	"write_file":       "__fern_write_file",
+	"open_reader":      "__fern_open_reader",
+	"open_writer":      "__fern_open_writer",
+	"open_appender":    "__fern_open_appender",
+	"open_exclusive":   "__fern_open_exclusive",
+	"open_reader_with": "__fern_open_reader_with",
+	"open_writer_with": "__fern_open_writer_with",
 
 	// Directory + metadata (#6208). `std/test` needs stat / read_dir /
 	// temp_dir / remove_dir_all to build at all — TestRunner.finish

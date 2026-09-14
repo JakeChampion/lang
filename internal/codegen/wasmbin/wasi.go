@@ -2188,6 +2188,26 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_open")
 		}
 	}
+	if helpers.set["__fern_open_reader_with"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_read_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
+	}
+	if helpers.set["__fern_open_writer_with"] {
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
+	}
 	if helpers.set["__fern_open_exclusive"] {
 		if opts.Preview2WASI {
 			// open_exclusive opens via get-directories → open-at(create,
@@ -2295,7 +2315,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			// A Reader owns a descriptor only when open_reader made it;
 			// stdin's carries noDescriptor, and a module without an
 			// opener has no chain for the drop to sit in.
-			if helpers.set["__fern_open_reader"] {
+			if helpers.set["__fern_open_reader"] || helpers.set["__fern_open_reader_with"] {
 				in.add("wasi_descriptor_drop_p2")
 			}
 			// The Reader holds an own<input-stream> handle; close drops it
@@ -2310,7 +2330,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			// Same as the Reader: only open_writer / open_appender /
 			// open_exclusive make a Writer that owns a descriptor.
 			if helpers.set["__fern_open_writer"] || helpers.set["__fern_open_appender"] ||
-				helpers.set["__fern_open_exclusive"] {
+				helpers.set["__fern_open_exclusive"] || helpers.set["__fern_open_writer_with"] {
 				in.add("wasi_descriptor_drop_p2")
 			}
 			// The Writer holds an own<output-stream> handle; close drops it.
@@ -2806,6 +2826,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,
 	"__fern_open_appender":       buildOpenAppenderBodyP2,
+	"__fern_open_reader_with":    buildOpenReaderWithBodyP2,
+	"__fern_open_writer_with":    buildOpenWriterWithBodyP2,
 	"__fern_open_exclusive":      buildOpenExclusiveBodyP2,
 	"__fern_writer_write":        buildWriterWriteBodyP2,
 	"__fern_reader_close_fd":     buildReaderCloseFdBodyP2,

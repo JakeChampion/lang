@@ -1336,6 +1336,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"sync":                          emitSyncHelper,
 	"open_appender":                 emitOpenAppenderHelper,
 	"open_exclusive":                emitOpenExclusiveHelper,
+	"open_reader_with":              emitOpenReaderWithHelper,
+	"open_writer_with":              emitOpenWriterWithHelper,
 	"stdin":                         emitStdHandleHelper("stdin", 0),
 	"stdout":                        emitStdHandleHelper("stdout", 1),
 	"stderr":                        emitStdHandleHelper("stderr", 2),
@@ -3000,6 +3002,122 @@ func emitOpenExclusiveHelper(w func(string, ...any)) {
 	emitOpenHandleHelper(w, "open_exclusive", "ox", 193, 384)
 }
 
+// emitOpenWithHelper writes open_reader_with / open_writer_with(path, flags)
+// -> Result[Reader|Writer, IoError]: emitOpenHandleHelper with the flags word
+// arriving in x1 rather than baked in — bit 0 is O_CREAT (64), bit 1
+// O_NONBLOCK (2048), on top of `access` (O_RDONLY 0 / O_WRONLY 1), mode 0666.
+// The word sits in x21 across the path copy. x0=path, x1=flags.
+func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
+	w("")
+	w("%s:", fnLabel(name))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tmov x19, x0") // path
+	w("\tmov x21, x1") // flags
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w7, #0")
+	w(".Lssa_%s_cp:", lbl)
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_%s_cpd", lbl)
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_%s_cp", lbl)
+	w(".Lssa_%s_cpd:", lbl)
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x20, x4") // pathz
+	// openat(AT_FDCWD, pathz, access | creat | nonblock, 0666).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov x2, #%d", access)
+	w("\ttbz x21, #0, .Lssa_%s_nc", lbl)
+	w("\torr x2, x2, #64") // O_CREAT
+	w(".Lssa_%s_nc:", lbl)
+	w("\ttbz x21, #1, .Lssa_%s_nb", lbl)
+	w("\torr x2, x2, #2048") // O_NONBLOCK
+	w(".Lssa_%s_nb:", lbl)
+	w("\tmov x3, #438")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	// A descriptor below 3 is moved up, as in emitOpenHandleHelper (#8823).
+	w("\tcmp x0, #3")
+	w("\tb.hs .Lssa_%s_hi", lbl)
+	w("\tmov x20, x0")
+	w("\tmov x1, #0") // F_DUPFD
+	w("\tmov x2, #3")
+	w("\tmov x8, #25") // fcntl
+	w("\tsvc #0")
+	w("\tstr x0, [sp, #-16]!")
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tldr x0, [sp], #16")
+	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	w(".Lssa_%s_hi:", lbl)
+	w("\tmov w9, w0")
+	emitWriterHandleAlloc(w, "x19", "w9")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
+	w("\tstr x19, [x0, #8]")
+	w("\tb .Lssa_%s_ret", lbl)
+	w(".Lssa_%s_err:", lbl)
+	w("\tneg x0, x0")  // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #15")
+	w("\tand x4, x4, #-16")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	emitHeapGuardCall(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_%s_ret:", lbl)
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+func emitOpenReaderWithHelper(w func(string, ...any)) {
+	emitOpenWithHelper(w, "open_reader_with", "orw", 0)
+}
+
+func emitOpenWriterWithHelper(w func(string, ...any)) {
+	emitOpenWithHelper(w, "open_writer_with", "oww", 1)
+}
+
 // emitWriterWriteHelper writes __method_Writer_write(writer, data) ->
 // Option[IoError]: loop write(2) the whole single-word string to the handle's fd
 // (loaded from [writer+8]); return None on success, or map -errno through
@@ -3500,6 +3618,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_seek":          {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"open_exclusive":                {"__fern_io_error"},
+	"open_reader_with":              {"__fern_io_error"},
+	"open_writer_with":              {"__fern_io_error"},
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
 	"__sin_f64":                     {"__rem_pio2_large"},
 	"__cos_f64":                     {"__rem_pio2_large"},
@@ -3587,6 +3707,8 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_seek":          true,
 	"open_appender":                 true,
 	"open_exclusive":                true,
+	"open_reader_with":              true,
+	"open_writer_with":              true,
 	"stdin":                         true,
 	"stdout":                        true,
 	"stderr":                        true,

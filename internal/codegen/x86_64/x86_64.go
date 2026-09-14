@@ -1998,6 +1998,7 @@ func (g *generator) recordUse(target string) {
 		"__method_Writer_write",
 		"__method_Writer_close",
 		"open_reader", "open_writer", "open_appender", "open_exclusive",
+		"open_reader_with", "open_writer_with",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
 	case "__method_Reader_stat", "__method_Writer_stat":
@@ -3801,6 +3802,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_open_appender"
 		case "open_exclusive":
 			target = "__fern_open_exclusive"
+		case "open_reader_with":
+			target = "__fern_open_reader_with"
+		case "open_writer_with":
+			target = "__fern_open_writer_with"
 		case "stdin":
 			target = "__fern_stdin"
 		case "stdout":
@@ -16411,16 +16416,21 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.line(".size " + e.sym + ", .-" + e.sym)
 	}
 
-	// open_reader / open_writer / open_appender / open_exclusive.
+	// open_reader / open_writer / open_appender / open_exclusive, and the
+	// two `_with` forms whose flags word arrives in esi: bit 0 is O_CREAT
+	// (64), bit 1 O_NONBLOCK (2048), on top of the access mode in `flags`.
 	for _, e := range []struct {
-		sym   string
-		flags int
-		mode  int
+		sym       string
+		flags     int
+		mode      int
+		withFlags bool
 	}{
-		{"__fern_open_reader", 0, 0},
-		{"__fern_open_writer", oflagCreatTrunc, 0666},
-		{"__fern_open_appender", oflagCreatAppend, 0666},
-		{"__fern_open_exclusive", oflagCreatExcl, 0600},
+		{"__fern_open_reader", 0, 0, false},
+		{"__fern_open_writer", oflagCreatTrunc, 0666, false},
+		{"__fern_open_appender", oflagCreatAppend, 0666, false},
+		{"__fern_open_exclusive", oflagCreatExcl, 0600, false},
+		{"__fern_open_reader_with", 0, 0666, true},
+		{"__fern_open_writer_with", 1, 0666, true},
 	} {
 		g.line("")
 		g.line(".globl " + e.sym)
@@ -16432,11 +16442,15 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("push r12") // handle / errno scratch
 		g.emit("push r13") // path byte length
 		g.emit("push r14") // path byte pointer
-		// 5 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and buys:
+		// 5 pushes ⇒ rsp ≡ 8 mod 16; sub 40 realigns and buys:
 		//   [rbp-40] emitStrDataPtr inline-spill scratch
 		//   [rbp-48] the original path string value (io_error arg)
-		g.emit("sub rsp, 24")
+		//   [rbp-56] the flags word of a `_with` form
+		g.emit("sub rsp, 40")
 		g.emit("mov [rbp - 48], rdi")
+		if e.withFlags {
+			g.emit("mov [rbp - 56], esi")
+		}
 		// openat wants a NUL-terminated C string, and an SSO path is
 		// seven bytes in the register rather than a pointer at all, so
 		// the bytes are copied out before the syscall sees them.
@@ -16459,6 +16473,17 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov edi, -100")
 		g.emit("mov rsi, rbx")
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
+		if e.withFlags {
+			g.emit("mov eax, [rbp - 56]")
+			g.emit("test eax, 1")
+			g.emit("jz .Lorw_nc_" + e.sym)
+			g.emit("or edx, 64") // O_CREAT
+			g.label(".Lorw_nc_" + e.sym)
+			g.emit("test eax, 2")
+			g.emit("jz .Lorw_nb_" + e.sym)
+			g.emit("or edx, 2048") // O_NONBLOCK
+			g.label(".Lorw_nb_" + e.sym)
+		}
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
 		g.emitSyscall(257)
 		// The syscall has read pathz; return it before either result box.
@@ -16507,7 +16532,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov dword ptr [rax], 1") // Err
 		g.emit("mov [rax + 8], r12")
 		g.label(".Lorw_ret_" + e.sym)
-		g.emit("add rsp, 24")
+		g.emit("add rsp, 40")
 		g.emit("pop r14")
 		g.emit("pop r13")
 		g.emit("pop r12")
