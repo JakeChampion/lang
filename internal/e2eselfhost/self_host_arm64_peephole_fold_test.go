@@ -203,3 +203,46 @@ function main(): i32 { return ((small() + wide() + neg()) % 1000i64) as i32; }`,
 		},
 	})
 }
+
+// TestSelfHostNonX0RoundTripFoldsArm64 pins P7: an operand-stack round trip
+// whose pop goes to a register other than x0 reroutes the pushed value there
+// ahead of the run, and both stack lines go. The three-operand builtins are
+// where the shape comes from — `slice_unchecked` takes its string in x5, its
+// bounds in x4 / x3, and the emitter pushes each operand while the next is
+// materialised in x0.
+//
+// The second case pins the refusal that keeps the rule local: P7 steps only
+// over lines that write the one register they name, so the stores and the
+// `bl __fern_arr_box` a struct literal builds through leave its round trips
+// exactly where they were.
+func TestSelfHostNonX0RoundTripFoldsArm64(t *testing.T) {
+	runArm64PeepholeFoldCases(t, []peepholeFoldCase{
+		{
+			name: "slice-operands",
+			src: `function mid(s: string, a: i32, b: i32): string { return slice_unchecked(s, a, b) + ""; }
+function main(): i32 {
+    var s: string = "abcdefgh";
+    var a: i32 = 2;
+    if (mid(s, a, a + 3) == "cde") { return 7; }
+    return 1;
+}`,
+			want: 7,
+			has: map[string][]string{
+				"mid": {"ldr x0, [x29, #-8]\n    mov x5, x0\n    ldr x0, [x29, #-16]\n    mov x4, x0\n    ldr x0, [x29, #-24]\n    mov x3, x0"},
+			},
+			lacks: map[string][]string{
+				"mid": {"ldr x4, [sp], #16", "ldr x5, [sp], #16"},
+			},
+		},
+		{
+			name: "store-and-call-block",
+			src: `struct Rec { a: i32, b: i32, c: i32 }
+function make(x: i32, y: i32): Rec { return Rec { a: x, b: y, c: x + y }; }
+function main(): i32 { var r: Rec = make(3, 4); return r.a + r.b + r.c; }`,
+			want: 14,
+			has: map[string][]string{
+				"make": {"str x0, [sp, #-16]!", "ldr x1, [sp], #16\n    str x1, [x0, #24]"},
+			},
+		},
+	})
+}

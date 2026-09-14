@@ -14629,7 +14629,8 @@ func (g *generator) peepholeTail() {
 	// The `mov` has to precede <op> — <op> is there to overwrite x0, which is
 	// why the push exists — so <op> may not mention xD in either width, or it
 	// would read the moved value instead of what it held before. This is the
-	// arm64 twin of x86-64's P5.
+	// arm64 twin of x86-64's P5, and the self-host emitter mirrors it as P7
+	// (examples/self_host/asm_arm64_ir.fern).
 	if dst, k, ok := matchPopReg(w[n-1]); ok && dst != "x0" {
 		// The run between the push and the pop keeps both its order and its
 		// indices; only the push becomes the `mov` and the pop goes, so the
