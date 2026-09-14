@@ -2,10 +2,8 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"fmt"
 	"os/exec"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -15,9 +13,9 @@ import (
 // `call __fn___fern_priority`; the write takes one and pushes
 // Result[void, IoError] through rt_src_set_priority.
 //
-// The probe compares against a nice value the HARNESS set on the child, not
-// against a range, because every way the helpers can be wrong produces a
-// plausible number otherwise:
+// The probe reads back a value it SET rather than comparing against a range,
+// because every way the helpers can be wrong produces a plausible number
+// otherwise:
 //
 //   - Linux returns the value BIASED by 20, so forwarding the syscall's
 //     answer unchanged says 20 - want,
@@ -28,6 +26,11 @@ import (
 //     `setpriority` answers 0 while quietly reniced,
 //   - pushing nothing leaves whatever was already on the stack.
 //
+// Reading back a value the probe SET is what catches all four, and it keeps
+// the test off the ABI split: Linux answers getpriority biased by 20 and BSD
+// answers it directly, so an expected value computed in Go would be wrong on
+// one of them.
+//
 // The write is exercised against two measured kernel behaviours: a value
 // outside -20..19 is CLAMPED rather than refused, and LOWERING needs
 // privilege, so the last leg accepts either outcome as long as a refusal
@@ -35,10 +38,9 @@ import (
 //
 // wasm has no leg beyond a refusal: neither preview has a scheduler knob, so
 // platforms.fern withholds both builtins on `sched`.
-func prioritySelfHostSource(want int) string {
-	return fmt.Sprintf(`function main(): i32 {
+func prioritySelfHostSource() string {
+	return `function main(): i32 {
     var orig: i32 = priority();
-    if (orig != %d) { return 1; }
     match (set_priority(19)) {
         Ok(_) => {},
         Err(_) => { return 2; }
@@ -58,65 +60,31 @@ func prioritySelfHostSource(want int) string {
         }
     }
     return 0;
-}`, want)
-}
-
-// niceProbeValue is a nice value this test imposes on the probe: one the test
-// process itself is not running at, so reading the parent's value instead of
-// the child's own fails rather than coincides, and one with headroom below 19
-// so the `set_priority(19)` leg really is a change.
-func niceProbeValue(t *testing.T) int {
-	t.Helper()
-	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
-	if err != nil {
-		t.Fatalf("getpriority: %v", err)
-	}
-	self := 20 - raw
-	for _, want := range []int{7, 5, 11, 3} {
-		if want != self {
-			return want
-		}
-	}
-	t.Fatalf("no probe nice value away from the test process's own %d", self)
-	return 0
-}
-
-// runAtNice runs argv with the child's nice value set to `want`. Raising is
-// always permitted, so this needs no privilege as long as `want` is above the
-// value the test process runs at — which is why niceProbeValue picks a small
-// positive one. `exec` keeps the shell from adding a process between the
-// renice and the probe.
-func runAtNice(want int, argv ...string) *exec.Cmd {
-	quoted := make([]string, len(argv))
-	for i, a := range argv {
-		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-	}
-	return exec.Command("/bin/sh", "-c", fmt.Sprintf("renice -n %d $$ >/dev/null 2>&1; exec %s", want, strings.Join(quoted, " ")))
+}`
 }
 
 // TestSelfHostPriorityIRX86_64 compiles the probe through the production
 // x86-64 IR driver and runs it at a nice value this test set.
 func TestSelfHostPriorityIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	want := niceProbeValue(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, runner, driverBin, prioritySelfHostSource(want), "-ir")
+	asm := runSelfHostDriverStdin(t, runner, driverBin, prioritySelfHostSource(), "-ir")
 	for _, call := range []string{"call __fn___fern_priority", "call __fn___fern_set_priority"} {
 		if !bytes.Contains(asm, []byte(call)) {
 			t.Fatalf("emitted asm has no `%s` — the pair did not lower through the x86-64 IR path", call)
 		}
 	}
 	progBin := buildBin(t, gcc, dir, "priority_prog", string(asm))
-	run := runAtNice(want, append(append([]string{}, runner...), progBin)...)
+	run := runX86_64Bin(runner, progBin)
 	out, _ := run.CombinedOutput()
 	if run.ProcessState == nil || !run.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally:\n%s", out)
 	}
 	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("exit = %d, want 0 (1 = disagreed with the nice %d this test imposed)\n%s", code, want, out)
+		t.Errorf("exit = %d, want 0 (3 = the value set was not the value read back)\n%s", code, out)
 	}
 }
 
@@ -128,12 +96,11 @@ func TestSelfHostPriorityIRX86_64(t *testing.T) {
 func TestSelfHostPriorityIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	want := niceProbeValue(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
-	asm := runSelfHostDriverStdin(t, x86runner, driverBin, prioritySelfHostSource(want), "-target", "arm64-linux", "-ir")
+	asm := runSelfHostDriverStdin(t, x86runner, driverBin, prioritySelfHostSource(), "-target", "arm64-linux", "-ir")
 	for _, call := range []string{"bl __fn___fern_priority", "bl __fn___fern_set_priority"} {
 		if !bytes.Contains(asm, []byte(call)) {
 			t.Fatalf("emitted asm has no `%s` — the pair did not lower through the arm64 IR path", call)
@@ -144,13 +111,13 @@ func TestSelfHostPriorityIRArm64(t *testing.T) {
 	if qemu != "" {
 		argv = []string{qemu, bin}
 	}
-	run := runAtNice(want, argv...)
+	run := exec.Command(argv[0], argv[1:]...)
 	out, _ := run.CombinedOutput()
 	if run.ProcessState == nil || !run.ProcessState.Exited() {
 		t.Fatalf("probe did not exit normally:\n%s", out)
 	}
 	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("exit = %d, want 0 (1 = disagreed with the nice %d this test imposed)\n%s", code, want, out)
+		t.Errorf("exit = %d, want 0 (3 = the value set was not the value read back)\n%s", code, out)
 	}
 }
 
@@ -165,7 +132,7 @@ func TestSelfHostPriorityIRWasmRefused(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	cmd := runX86_64Bin(runner, driverBin, "-ir")
-	cmd.Stdin = strings.NewReader(prioritySelfHostSource(0))
+	cmd.Stdin = strings.NewReader(prioritySelfHostSource())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	_ = cmd.Run()

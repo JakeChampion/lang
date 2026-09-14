@@ -2,12 +2,13 @@
 // that provides them.
 //
 // The read cannot assert a fixed number — the nice value is whatever the
-// runner was started with — so it asserts the one the test process ITSELF
-// reads through Go. A child inherits its parent's niceness, so the two are
-// the same fact, and that is the check with teeth: Linux returns the value
-// BIASED by 20, so a helper that forwards the syscall's answer unchanged says
-// 20 where the truth is 0, and one that negates the correction says -20. Both
-// are plausible-looking numbers.
+// runner was started with — so the probe SETS one and reads it back. That is
+// the check with teeth AND it keeps the test off the ABI split: Linux's
+// getpriority answers the value biased by 20 while BSD answers it directly,
+// so an expected value computed in Go would be right on one and wrong on the
+// other. Reading back a 19 the probe itself asked for catches a bias left in
+// place (1), a correction applied twice (1 again), and the swapped syscall
+// numbers, which make a read quietly renice and answer 0.
 //
 // The write is then exercised against two measured kernel behaviours. A value
 // outside -20..19 is CLAMPED rather than refused, so `set_priority(1000)`
@@ -22,9 +23,7 @@
 package e2e
 
 import (
-	"fmt"
 	"os"
-	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -32,26 +31,11 @@ import (
 	"github.com/jakechampion/lang/internal/platforms"
 )
 
-// selfNice is the test process's own nice value, with Linux's bias undone —
-// Go's syscall.Getpriority is the raw syscall and does NOT undo it, unlike
-// every libc wrapper.
-func selfNice(t *testing.T) int {
-	t.Helper()
-	n, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
-	if err != nil {
-		t.Fatalf("getpriority: %v", err)
-	}
-	return 20 - n
-}
-
-// prioritySource returns 0 when both builtins agree with what the harness
-// measured, and a code naming the disagreement otherwise.
-func prioritySource(want int) string {
-	return fmt.Sprintf(`function main(): i32 {
+// prioritySource returns 0 when the pair agrees with itself, and a code
+// naming the disagreement otherwise.
+func prioritySource() string {
+	return `function main(): i32 {
     var orig: i32 = priority();
-    // The bias left in place reads as 20 - want; the correction applied
-    // twice reads as want - 20. Neither is want.
-    if (orig != %d) { return 1; }
 
     // Raising is always permitted, whoever is running.
     match (set_priority(19)) {
@@ -79,29 +63,29 @@ func prioritySource(want int) string {
     }
     return 0;
 }
-`, want)
+`
 }
 
 func TestX86_64Priority(t *testing.T) {
-	if code, out := compileRunX86_64WithSetup(t, prioritySource(selfNice(t)), nil); code != 0 {
-		t.Fatalf("exit = %d, want 0 (1 = disagreed with the harness's own getpriority)\n%s", code, out)
+	if code, out := compileRunX86_64WithSetup(t, prioritySource(), nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 (3 = the value set was not the value read back)\n%s", code, out)
 	}
 }
 
 func TestArm64Priority(t *testing.T) {
-	out, code := compileAndRunArm64(t, prioritySource(selfNice(t)))
+	out, code := compileAndRunArm64(t, prioritySource())
 	if code != 0 {
-		t.Fatalf("exit = %d, want 0 (1 = disagreed with the harness's own getpriority)\n%s", code, out)
+		t.Fatalf("exit = %d, want 0 (3 = the value set was not the value read back)\n%s", code, out)
 	}
 }
 
 func TestArm64SSAPriority(t *testing.T) {
 	fern := buildFernForArm64SSA(t)
 	qemu := arm64QemuOrEmpty(t)
-	bin := compileArm64SSA(t, fern, prioritySource(selfNice(t)), os.Environ())
+	bin := compileArm64SSA(t, fern, prioritySource(), os.Environ())
 	code, stderr := runArm64SSABin(t, qemu, bin, t.TempDir(), os.Environ())
 	if code != 0 {
-		t.Fatalf("exit = %d, want 0 (1 = disagreed with the harness's own getpriority)\n%s", code, stderr)
+		t.Fatalf("exit = %d, want 0 (3 = the value set was not the value read back)\n%s", code, stderr)
 	}
 }
 
@@ -109,8 +93,8 @@ func TestArm64SSAPriority(t *testing.T) {
 // `fern`'s own niceness. That is the same one-process scope a compiled
 // program has, and it is why this probe puts the value back before it ends.
 func TestInterpPriority(t *testing.T) {
-	if code := runInterpExit(t, prioritySource(selfNice(t))); code != 0 {
-		t.Fatalf("exit = %d, want 0 (1 = disagreed with the harness's own getpriority)", code)
+	if code := runInterpExit(t, prioritySource()); code != 0 {
+		t.Fatalf("exit = %d, want 0 (3 = the value set was not the value read back)", code)
 	}
 }
 

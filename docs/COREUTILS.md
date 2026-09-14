@@ -1560,6 +1560,16 @@ returns it directly and reports failure through errno alone — so the read
 undoes the bias on Linux and not on Darwin, and a copied table silently runs
 the other half of the pair.
 
+That split reaches the INTERPRETER too, and Go hides it: `syscall.Getpriority`
+is the raw syscall on Linux and libSystem's wrapper on Darwin, so the same
+call returns the biased value on one and the nice value on the other. Hence
+`priority_linux.go` and `priority_darwin.go` beside `priority_other.go`,
+the way `mknod` and `fsstat` already split. The TESTS stay off the split
+entirely by reading back a value the probe itself set, which is sharper
+anyway: it catches a bias left in place, a correction applied twice and the
+swapped numbers, where an expected value computed in Go could only ever be
+right on one OS.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast
