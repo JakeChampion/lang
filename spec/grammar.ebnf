@@ -411,7 +411,7 @@ LambdaParams
 # reached — see `looksLikeArrowLambda` / `firstParamLooksTyped`. So
 # `(x) => x + 1` and `(x, y) => x` are both P001, and an empty parameter
 # list needs no annotation because `()` is already unambiguous.
-LambdaParam = PatternParam | IDENT ':' Type ;
+LambdaParam = PatternParam | [ 'own' ] IDENT ':' Type ;
 
 ParenOrTuple
             = '(' Expr { ',' Expr } [ ',' ] ')' ;
