@@ -192,11 +192,23 @@ pub function func_result(t: typeinfo.Type): typeinfo.Type {
 }
 
 // A closure body's first parameter is the environment it reads its captures
-// out of: the box itself, an array of i32-shaped words.
+// out of: the box itself — a bare array of i32-shaped words when the body
+// captures nothing, and otherwise the environment record naming the captures
+// (`semtypes.is_env`).
 pub function closure_env(c: Contract): boolean {
     if (c.params.len() == 0) { return false; }
     if let typeinfo.TypeArray(a) = c.params[0] { return semtypes.equal(a.elem, env_word()); }
-    return false;
+    return semtypes.is_env(c.params[0]);
+}
+
+pub function env_type(body: string, captures: typeinfo.Type[]): typeinfo.Type {
+    return typeinfo.TypeStruct { name: semtypes.env_prefix() + body, args: captures };
+}
+
+// The captures a body's environment holds, in slot order after the address.
+pub function closure_captures(c: Contract): typeinfo.Type[] {
+    if (c.params.len() == 0) { return []; }
+    return semtypes.env_captures(c.params[0]);
 }
 
 function env_word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false }; }
@@ -486,7 +498,13 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var c: Contract = f.calls[at];
     if (!closure_env(c)) { return "closure environment parameter"; }
     if (!semtypes.equal(closure_type(c), result)) { return "closure signature"; }
-    for arg in ins.args { if (semtypes.needs_anchor(f.values[arg])) { return "closure capture is a reference"; } }
+    var caps: typeinfo.Type[] = closure_captures(c);
+    if (ins.args.len() != caps.len()) { return "closure capture count"; }
+    var i: i32 = 0;
+    while (i < caps.len()) {
+        if (!semtypes.equal(f.values[ins.args[i]], caps[i])) { return "closure capture type"; }
+        i = i + 1;
+    }
     return "";
 }
 
@@ -754,16 +772,20 @@ pub function instance_name(key: string, b: Binding, vars: string[]): string {
 // parameter whose variable bound a scalar carrying no unit, so its declared
 // mode drops to a value's.
 pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Contract {
+    var name: string = instance_name(c.name, b, vars);
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var i: i32 = 0;
     while (i < c.params.len()) {
         var t: typeinfo.Type = substitute(c.params[i], b);
+        // An instance's environment names the instance, whose address the
+        // box's slot 0 holds.
+        if (i == 0 && semtypes.is_env(t)) { t = env_type(name, semtypes.env_captures(t)); }
         params = params.append(t);
         if (semtypes.needs_anchor(t)) { modes = modes.append(c.modes[i]); } else { modes = modes.append(value_mode()); }
         i = i + 1;
     }
-    return Contract { name: instance_name(c.name, b, vars), params: params, modes: modes, result: substitute(c.result, b) };
+    return Contract { name: name, params: params, modes: modes, result: substitute(c.result, b) };
 }
 
 // A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one

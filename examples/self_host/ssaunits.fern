@@ -114,8 +114,7 @@ function schema_fields_error(f: ssasem.Func): string {
 // arguments carry are read off the function TYPE the box hands out. A counted
 // parameter is a CONSUMING slot and the type spells one with `own`: what
 // ssasem.closure_type builds from these same modes is what every call through
-// the box is checked against, so the two sides cannot disagree. An ERASED slot
-// is consuming too and says so through the variable itself.
+// the box is checked against, so the two sides cannot disagree.
 //
 // The environment parameter is the box, which is lent like any other receiver
 // and never appears in the type the box hands out, so a counted one there would
@@ -156,8 +155,11 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
 // binary operator's result are fresh; only a reference-typed one is a unit of
 // this function's own (a string concatenation), so a scalar operator's result
 // is never owned. A projection or a copy borrows its source.
+// A closure box is a construction too: it owns one unit per reference capture,
+// released when the box is.
 function construction(kind: i32): boolean {
-    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new();
+    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new()
+        || kind == ssasem.closure_new();
 }
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call()
