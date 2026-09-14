@@ -17,6 +17,8 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./modloader";
+import "./constfold";
+import "./platforms";
 import "./irlower";
 import "./semsource";
 import "./ssaunits";
@@ -160,6 +162,11 @@ function main(): i32 {
             var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
+            // The driver folds the target's name to its two literals before
+            // anything lowers, so the boundary never sees the call; the
+            // census counts against the default target.
+            var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
+            merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
             merged = irlower.lift_lambdas(merged);
             var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
 

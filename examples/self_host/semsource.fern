@@ -66,10 +66,12 @@ function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: t
 function t_u32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false }; }
 function t_u64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false }; }
 function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
+function t_usize(): typeinfo.Type { return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_str(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
 function t_f64(): typeinfo.Type { return typeinfo.TypeFloat { width: 64, polymorphic: false }; }
+function t_f32(): typeinfo.Type { return typeinfo.TypeFloat { width: 32, polymorphic: false }; }
 function t_void(): typeinfo.Type { return typeinfo.TypeVoid { tag: 0 }; }
 function is_i32(t: typeinfo.Type): boolean { return semtypes.equal(t, t_i32()); }
 function is_bool(t: typeinfo.Type): boolean { return semtypes.equal(t, t_bool()); }
@@ -325,13 +327,13 @@ function literal_type(suffix: string): typeinfo.Type {
 // instead, which is also how the AST lowering hands the same literal to the
 // backends, rather than through a parse and re-format.
 // A float literal is an f64 unless something names the narrower width: the
-// checker types it polymorphic and settles it where it lands, and this
-// vocabulary has one float width, so the only question is whether the source
-// asked for the other. It carries its text the way a wide integer does.
+// checker types it polymorphic and settles it where it lands, so the literal
+// is an f32 where its suffix or its destination says so. It carries its text
+// the way a wide integer does; the f32 is rounded where the constant is made.
 function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     var narrow: boolean = n.suffix == "f32";
     if let typeinfo.TypeFloat(fl) = expected { if (fl.width == 32) { narrow = true; } }
-    if (narrow) { return refused(s, "unsupported literal width"); }
+    if (narrow) { return define(s, 1, [], 0, n.text, t_f32()); }
     return define(s, 1, [], 0, n.text, t_f64());
 }
 
@@ -341,7 +343,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
-    if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    // An address has no literal: the pointer width is the backend's, so no
+    // immediate here names a value at it.
+    if (!semtypes.concrete(ty, false) || ssasem.is_usize(ty)) { return refused(s, "unsupported literal width"); }
     if (ssasem.text_constant(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
@@ -432,23 +436,27 @@ function builtin_variants(t: typeinfo.Type): semrecords.Variant[] {
     return [];
 }
 
+// A `void` payload is no payload: the variant carries nothing, as None does.
 function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
+    if (is_void(ty)) { return semrecords.Variant { name: name, fields: [] }; }
     return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
 }
 
 // The payload types one variant declares, and whether the union has such a
-// variant at all.
-struct Payloads { found: boolean, types: typeinfo.Type[] }
+// variant at all. `unit` marks a variant declared with a `void` payload: it
+// carries no field, but a pattern still writes the one binding its
+// declaration has, and that binding names nothing.
+struct Payloads { found: boolean, types: typeinfo.Type[], unit: boolean }
 
 function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
     for v in builtin_variants(whole) {
         if (v.name == name) {
             var types: typeinfo.Type[] = [];
             for field in v.fields { types = types.append(field.ty); }
-            return Payloads { found: true, types: types };
+            return Payloads { found: true, types: types, unit: v.fields.len() == 0 && name != "None" };
         }
     }
-    return Payloads { found: false, types: [] };
+    return Payloads { found: false, types: [], unit: false };
 }
 
 // A pattern reaches a member of either kind of declared union; a literal only
@@ -456,13 +464,13 @@ function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
 function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
     if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
     var sig: checker.StructSig = checker.variant_shape_sig(s.scope, name, union_name(whole));
-    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
 }
 
 function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
     if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
     var sig: checker.StructSig = checker.variant_sig(s.scope, name, union_name(whole));
-    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
 }
 
 // The union a variant literal builds. The checker types a declared enum's
@@ -742,7 +750,7 @@ function width_bearing(e: ast.Expr): boolean {
 }
 
 // A type an operator can run at: one integer type, or the f64.
-function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) || ssasem.is_f64(t); }
+function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) || ssasem.is_float(t); }
 
 // The width an operator runs at, decided before either operand is produced so
 // that a literal on EITHER side takes it. A tree of unsuffixed literals
@@ -887,10 +895,26 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
+// A cell's methods: `get` hands out a unit of the element, and `set` takes the
+// new element's unit and returns nothing, so it stands only as a statement.
+function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
+    var elem: typeinfo.Type = semtypes.cell_elem(s.values[recv.id]);
+    if (fa.field == "get" && c.args.len() == 0) { return define(s, ssasem.cell_get(), [recv.id], 0, "", elem); }
+    if (fa.field != "set" || c.args.len() != 1) { return refused(s, "unsupported call target"); }
+    if (!statement) { return refused(s, "unsupported void call"); }
+    var v: Value = expr(c.args[0], s, elem);
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
+    if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "cell element type"); }
+    return define(s, ssasem.cell_set(), [recv.id, v.id], 0, "", t_void());
+}
+
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
-function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
+    if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
     if (fa.field == "len" && c.args.len() == 0) { return builtin_length(recv, s); }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
@@ -902,7 +926,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
 // the way the declaration keyed its contract, and the way every backend labels
 // the body: <Type>.<method>. The receiver is argument 0, because the callee
 // declared it as parameter 0.
-function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value {
+function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, statement: boolean): Value {
     var recv: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = recv.s;
     if (!s.ok) { return recv; }
@@ -912,7 +936,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     // contract for, so it is matched by shape instead. A string's methods are
     // declared in the standard library on a `string` receiver, and a view
     // reaches them as a lent box; the two builtins every text has come first.
-    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s); }
+    if (owner == "" && (fa.field == "len" || fa.field == "append" || !ssasem.is_text(s.values[recv.id]))) { return builtin_call(c, fa, recv, s, statement); }
     if (owner == "") { owner = "string"; }
     var key: string = owner + "." + fa.field;
     var at: i32 = ssasem.find_contract(s.contracts, key);
@@ -935,6 +959,20 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State): Value 
     }
     if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
     return define(s, ssasem.call(), ids, 0, key, contract.result);
+}
+
+// `cell_new(v)` builds the shared one-element box over v's unit. The checker
+// types the call as a bare `Cell`, so the element is the argument's type,
+// produced at the width the destination names; a view cannot be held, as an
+// array cannot hold one.
+function cell_construction(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    var v: Value = expr(c.args[0], s, semtypes.cell_elem(expected));
+    s = v.s;
+    if (!s.ok) { return v; }
+    var elem: typeinfo.Type = s.values[v.id];
+    if (!semtypes.concrete(elem, false)) { return refused(s, "unresolved cell element type"); }
+    if (ssasem.is_view(elem)) { return refused(s, "view element escapes its source"); }
+    return define(s, ssasem.cell_new(), [v.id], 0, "", typeinfo.TypeStruct { name: "Cell", args: [elem] });
 }
 
 // `slice_unchecked(s, start, end)` reads a window of a string's bytes. The box
@@ -1165,13 +1203,20 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (parser.is_value_block(c)) { return value_block(e, c, s); }
-    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s); }
+    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s, statement); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
+    return free_call(e, name, c, s, statement, expected);
+}
+
+// A call of a free name: a builtin with a shape of its own, the lambda
+// lift's closure constructor, a declaration with a contract, or a variant.
+function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (is_slice_call(name, c)) { return string_slice(c, s); }
+    if (name == "cell_new" && c.args.len() == 1) { return cell_construction(c, s, expected); }
     // The lambda lift's closure constructor names no declaration of its own:
     // it is the marker left where a capturing inline lambda — or a bare
     // function name at a function-typed argument — was written, carrying the
@@ -1457,7 +1502,7 @@ function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, lay
     // A struct-union member's box IS the value, so its arm binds one name
     // whatever the member's field count; an enum variant binds one name per
     // payload position.
-    if (layout == semrecords.layout_member()) {
+    if (layout == semrecords.layout_member() || shape.unit) {
         if (pv.extra_bindings.len() > 0) { return "pattern arity"; }
         return "";
     }
@@ -1475,10 +1520,11 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
 }
 
 // Each named payload position is a projection of the scrutinee, bound for
-// the arm's body; `_` and an absent payload list bind nothing.
+// the arm's body; `_`, an absent payload list and a `void` payload's binding
+// bind nothing.
 function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State, layout: i32): State {
     if (layout == semrecords.layout_member()) { return narrowed(pv, scrut, s); }
-    if (pv.binding == "") { return s; }
+    if (pv.binding == "" || fields.len() == 0) { return s; }
     var names: string[] = [pv.binding];
     for n in pv.extra_bindings { names = names.append(n); }
     var k: i32 = 0;
@@ -2147,7 +2193,7 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     for v in variants {
         for field in v.fields {
             if (!semtypes.concrete(field.ty, false)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
-            if (ssasem.is_wide(field.ty) || ssasem.is_f64(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
+            if (ssasem.is_wide(field.ty) || ssasem.is_float(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
         }
     }
     return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
@@ -2265,7 +2311,27 @@ function builtin_contracts(): ssasem.Contract[] {
     var out: ssasem.Contract[] = union_result_contracts();
     for c in value_contracts() { out = out.append(c); }
     for c in string_contracts() { out = out.append(c); }
+    for c in builder_contracts() { out = out.append(c); }
     return out;
+}
+
+// The string builder: a handle is the ADDRESS of its control block, a
+// `usize`, which is a value with no unit and no drop — a builder that is
+// never freed leaks, as a descriptor that is never closed does. The pushes
+// read the string they copy; `buf_take` hands the bytes over as a fresh
+// string of the caller's own.
+function builder_contracts(): ssasem.Contract[] {
+    var handle: i32[] = [ssaunits.value_mode()];
+    var push: i32[] = [ssaunits.value_mode(), ssaunits.borrow_mode()];
+    return [
+        ssasem.Contract { name: "buf_new", params: [t_i32()], modes: handle, result: t_usize() },
+        ssasem.Contract { name: "buf_push", params: [t_usize(), t_string()], modes: push, result: t_void() },
+        ssasem.Contract { name: "buf_push_range", params: [t_usize(), t_string(), t_i32(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "buf_push_byte", params: [t_usize(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
+        ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
+        ssasem.Contract { name: "buf_free", params: [t_usize()], modes: handle, result: t_void() }
+    ];
 }
 
 // The builtins whose result is one of the front end's generic unions. Each
@@ -2273,11 +2339,13 @@ function builtin_contracts(): ssasem.Contract[] {
 // owns: each reads the string it is lent and copies whatever it keeps, so the
 // box owns every part of itself — `env`'s value, `read_line`'s line,
 // `read_file`'s contents, `read_file_bytes`'s buffer, `read_dir`'s names,
-// `stat`'s record, and the IoError an error arm carries. Nothing here is
-// generic: each builtin has exactly one instantiation, so none is a template.
+// `stat`'s record, and the IoError an error arm carries. The writers and the
+// two directory walks read their path and contents the same way and hand back
+// only the outcome, `Result[void, IoError]`. Nothing here is generic: each
+// builtin has exactly one instantiation, so none is a template.
 function union_result_contracts(): ssasem.Contract[] {
     var path: i32[] = [ssaunits.borrow_mode()];
-    return [
+    var out: ssasem.Contract[] = [
         ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
         ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
         ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
@@ -2286,18 +2354,34 @@ function union_result_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
         ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) }
     ];
+    for c in outcome_contracts() { out = out.append(c); }
+    return out;
+}
+
+function outcome_contracts(): ssasem.Contract[] {
+    var path: i32[] = [ssaunits.borrow_mode()];
+    var written: i32[] = [ssaunits.borrow_mode(), ssaunits.borrow_mode()];
+    var done: typeinfo.Type = t_io_result(t_void());
+    return [
+        ssasem.Contract { name: "write_file", params: [t_string(), t_string()], modes: written, result: done },
+        ssasem.Contract { name: "write_file_exec", params: [t_string(), t_string()], modes: written, result: done },
+        ssasem.Contract { name: "create_dir_all", params: [t_string()], modes: path, result: done },
+        ssasem.Contract { name: "remove_dir_all", params: [t_string()], modes: path, result: done },
+        ssasem.Contract { name: "remove_file", params: [t_string()], modes: path, result: done }
+    ];
 }
 
 // The builtins whose result owns nothing: the process arguments are a fresh
-// array of this function's own, the byte write and the bit reinterpret are
-// values, and the over-release counter and the two shared-append totals are
-// reads of a runtime word.
+// array of this function's own, the byte write and the two bit reinterprets
+// of the single-precision float are values, and the over-release counter and
+// the two shared-append totals are reads of a runtime word.
 function value_contracts(): ssasem.Contract[] {
     var value: i32[] = [ssaunits.value_mode()];
     return [
         ssasem.Contract { name: "args", params: [], modes: [], result: typeinfo.TypeArray { elem: t_string() } },
         ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
-        ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f64() },
+        ssasem.Contract { name: "f32_bits", params: [t_f32()], modes: value, result: t_i32() },
+        ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f32() },
         ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: t_i64() }

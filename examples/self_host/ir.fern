@@ -100,6 +100,13 @@ pub function op_const_i64(v: i64): Op {
 // the register backends (wasm uses i64.extend_i32_s/u and i32.wrap_i64).
 pub function op_int_extend(unsigned: boolean): Op { return Op { decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" }; }
 pub function op_int_wrap(unsigned: boolean): Op { return Op { decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" }; }
+// The same two conversions FROM and TO the pointer width, which a `usize`
+// carries: 32 bits on wasm, where they are the i32 forms above, and the whole
+// 64-bit slot on the register backends, where an address already fills the
+// slot and the emitter moves nothing. `width` carries width_ptr() so the
+// emitter can tell them from the i32 forms, which mask.
+pub function op_int_extend_ptr(): Op { return Op { decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" }; }
+pub function op_int_wrap_ptr(): Op { return Op { decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" }; }
 // op_const_i64_text carries the literal's SOURCE TEXT (in `str`) rather than a
 // parsed i64, so the backends can splice it straight into a 64-bit immediate
 // (`movabsq $TEXT` / `ldr x0, =TEXT` / `i64.const TEXT`) without an i64

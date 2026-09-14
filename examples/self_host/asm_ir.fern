@@ -4852,6 +4852,9 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // i64 add/sub/mul/cmp/bitwise then reuse the existing 64-bit-register
             // bin ops unchanged — only the load differs from i32.
             s = emit_const_text_push(s, o.str, "movabsq");
+        } else if ((o.kind_tag == 7 || o.kind_tag == 8) && o.width == ir.width_ptr()) {  // int_extend_ptr, int_wrap_ptr
+            // The pointer width is the whole slot here: an address already
+            // fills it, so nothing moves.
         } else if (o.kind_tag == 7 || o.kind_tag == 8) {  // int_extend, int_wrap
             // i32<->i64 in 64-bit slots: signed -> sign-extend low 32 (movslq),
             // unsigned -> zero-extend low 32 (movl). Same sequence either way.
