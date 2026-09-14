@@ -66,6 +66,7 @@ function t_u8(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: t
 function t_u32(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false }; }
 function t_u64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false }; }
 function t_i64(): typeinfo.Type { return typeinfo.TypeI32 { width: 64, unsigned: false, is_char: false }; }
+function t_usize(): typeinfo.Type { return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false }; }
 function t_bool(): typeinfo.Type { return typeinfo.TypeBool { tag: 0 }; }
 function t_string(): typeinfo.Type { return typeinfo.TypeString { tag: 0 }; }
 function t_str(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
@@ -342,7 +343,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
-    if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    // An address has no literal: the pointer width is the backend's, so no
+    // immediate here names a value at it.
+    if (!semtypes.concrete(ty, false) || ssasem.is_usize(ty)) { return refused(s, "unsupported literal width"); }
     if (ssasem.text_constant(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
@@ -2308,7 +2311,27 @@ function builtin_contracts(): ssasem.Contract[] {
     var out: ssasem.Contract[] = union_result_contracts();
     for c in value_contracts() { out = out.append(c); }
     for c in string_contracts() { out = out.append(c); }
+    for c in builder_contracts() { out = out.append(c); }
     return out;
+}
+
+// The string builder: a handle is the ADDRESS of its control block, a
+// `usize`, which is a value with no unit and no drop — a builder that is
+// never freed leaks, as a descriptor that is never closed does. The pushes
+// read the string they copy; `buf_take` hands the bytes over as a fresh
+// string of the caller's own.
+function builder_contracts(): ssasem.Contract[] {
+    var handle: i32[] = [ssaunits.value_mode()];
+    var push: i32[] = [ssaunits.value_mode(), ssaunits.borrow_mode()];
+    return [
+        ssasem.Contract { name: "buf_new", params: [t_i32()], modes: handle, result: t_usize() },
+        ssasem.Contract { name: "buf_push", params: [t_usize(), t_string()], modes: push, result: t_void() },
+        ssasem.Contract { name: "buf_push_range", params: [t_usize(), t_string(), t_i32(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "buf_push_byte", params: [t_usize(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
+        ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
+        ssasem.Contract { name: "buf_free", params: [t_usize()], modes: handle, result: t_void() }
+    ];
 }
 
 // The builtins whose result is one of the front end's generic unions. Each
