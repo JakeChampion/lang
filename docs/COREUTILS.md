@@ -250,6 +250,22 @@ compiles each utility once per process, without `-O` so the assert() checks
 stay live. When the corpus grows past what the unit lane should carry, it
 moves to a lane of its own; that is a workflow change, not a change here.
 
+### The wasm leg
+
+`TestWasmSmoke` compiles a handful of utilities for `wasm32-wasi`, runs them
+under wasmtime and holds them to the native build of the same source. It is
+not a parity gate — a dozen invocations, not a corpus — but before it nothing
+ran the tree on the wasm target, and the first run found three faults in the
+runtime rather than in any utility (#9070): `exit(n)` for `n > 1` trapped the
+host because `wasi:cli/exit` carries one bit, a stdio handle answered `stat`
+with Unsupported where a preview-1 host answers the all-zero record, and a
+path with no preopened directory trapped on a handle the host never issued
+instead of answering NotFound. Two things the leg does not compare by value:
+the exit status, which the host folds to 0 or 1, and anything under a
+directory the guest was not given. Note for anyone running a utility by hand:
+`wasmtime run util.wasm -- --version` hands the `--` to the guest as
+`argv[1]`, which every utility rightly takes as the end of its options.
+
 ## Layout
 
 ```

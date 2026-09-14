@@ -15,6 +15,7 @@
 package wasmbin
 
 import (
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
@@ -126,8 +127,11 @@ func buildFdStatBody(idxs map[string]uint32) []byte {
 
 // buildFdStatBodyP2 is the preview-2 __fern_fd_stat: descriptor.stat on
 // the descriptor the handle was opened on, projected by
-// projectDescriptorStatP2. A stdio handle owns no descriptor and answers
-// Unsupported.
+// projectDescriptorStatP2. A stdio handle owns no descriptor; it
+// answers the all-zero record a preview-1 host's fd_filestat_get gives
+// the same stream — not a file, not a directory, no size — so a
+// program asking whether its stdout is a regular file gets the same
+// answer on both.
 //
 // Locals after the param:
 //
@@ -146,9 +150,16 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Eq(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = inst.InstI32Const(body, errnoNoTsup)
-		body = inst.InstLocalSet(body, 6)
-		body = emitHandleResultErr(body, buildIoErr, allocRc1, 6, 7, 9)
+		body = allocFileStat(body, alloc, 8)
+		body = zeroFileStatFields(body, 8,
+			[]int32{ir.FileStat.IsFile, ir.FileStat.IsDir, ir.FileStat.Mode,
+				ir.FileStat.Nlink, ir.FileStat.UID, ir.FileStat.GID},
+			[]int32{ir.FileStat.Size, ir.FileStat.Dev, ir.FileStat.Rdev,
+				ir.FileStat.Ino, ir.FileStat.Blksize, ir.FileStat.Blocks,
+				ir.FileStat.Atime, ir.FileStat.AtimeNsec, ir.FileStat.Mtime,
+				ir.FileStat.MtimeNsec, ir.FileStat.Ctime, ir.FileStat.CtimeNsec})
+		body = emitResultOkPtr(body, allocRc1, 8, 9)
+		body = inst.InstReturn(body)
 	}
 	body = inst.InstEnd(body)
 

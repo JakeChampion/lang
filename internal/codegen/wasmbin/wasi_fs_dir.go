@@ -1452,12 +1452,22 @@ func emitPreopenCachedP2(body []byte, getDirs, rbLocal, preopenLocal uint32) []b
 		// get-directories(rb): list header (base @ rb+0, count @ rb+4).
 		body = inst.InstLocalGet(body, rbLocal)
 		body = inst.InstCall(body, getDirs)
-		// mem[preopenHandleAddr] = mem[mem[rb+0] + 0] — the first tuple's
-		// descriptor handle.
+		// mem[preopenHandleAddr] = count == 0 ? noDescriptor
+		//                        : mem[mem[rb+0] + 0] — the first
+		// tuple's descriptor handle. A host that granted no directory
+		// leaves nothing to open a path against, and emitPreopenMissing
+		// is how each caller answers that.
 		body = inst.InstI32Const(body, preopenHandleAddr)
+		body = inst.InstLocalGet(body, rbLocal)
+		body = memory.InstI32Load(body, 2, 4)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, encode.ValtypeI32)
+		body = inst.InstI32Const(body, noDescriptor)
+		body = inst.InstElse(body)
 		body = inst.InstLocalGet(body, rbLocal)
 		body = memory.InstI32Load(body, 2, 0)
 		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstEnd(body)
 		body = memory.InstI32Store(body, 2, 0)
 		body = inst.InstI32Const(body, preopenInitAddr)
 		body = inst.InstI32Const(body, 1)
@@ -1468,6 +1478,24 @@ func emitPreopenCachedP2(body []byte, getDirs, rbLocal, preopenLocal uint32) []b
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, preopenLocal)
 	return body
+}
+
+// emitPreopenMissing appends "if preopen == noDescriptor { err }" —
+// the answer to a path when the host granted no directory at all.
+// Nothing can be found in a directory the program was not given, so
+// `err` sets ENOENT and returns the helper's own Err shape.
+func emitPreopenMissing(body []byte, preopenLocal uint32, err func([]byte) []byte) []byte {
+	body = inst.InstLocalGet(body, preopenLocal)
+	body = inst.InstI32Const(body, noDescriptor)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = err(body)
+	return inst.InstEnd(body)
+}
+
+func setErrnoNoEnt(body []byte, errnoLocal uint32) []byte {
+	body = inst.InstI32Const(body, errnoNoEnt)
+	return inst.InstLocalSet(body, errnoLocal)
 }
 
 // buildRemoveFileBodyP2 is the preview-2 buildRemoveFileBody:
@@ -1488,6 +1516,10 @@ func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 9)
 	body = emitPreopenP2(body, alloc, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 6)
+		return emitResultErr(b, buildIoErr, allocRc1, 6, 7, 8)
+	})
 
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 3)
@@ -1533,6 +1565,10 @@ func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 9)
 	body = emitPreopenP2(body, alloc, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 6)
+		return emitResultErr(b, buildIoErr, allocRc1, 6, 7, 8)
+	})
 
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalSet(body, 10)
@@ -1641,6 +1677,10 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
 	body = emitRejectSeparator(body, buildIoErr, allocRc1, 2, 3, 4, 9, 10, 11)
 	body = emitPreopenP2(body, alloc, getDirs, 14, 15)
+	body = emitPreopenMissing(body, 15, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 9)
+		return emitResultErr(b, buildIoErr, allocRc1, 9, 10, 11)
+	})
 
 	// buf = alloc(pfx_len + 1 + 8); len = pfx_len + 9.
 	body = inst.InstLocalGet(body, 3)
@@ -1849,6 +1889,10 @@ func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	// runs, so one buffer would in fact do. Keeping them separate costs
 	// 16 bytes and removes the ordering constraint entirely.
 	body = emitPreopenP2(body, alloc, getDirs, 10, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 6)
+		return emitResultErr(b, buildIoErr, allocRc1, 6, 10, 9)
+	})
 
 	// stat-at(preopen, path-flags, path_buf, len, rb).
 	body = inst.InstLocalGet(body, 5)
@@ -1968,6 +2012,10 @@ func buildOpenDirBodyP2(idxs map[string]uint32) []byte {
 
 	var body []byte
 	body = emitPreopenP2(body, alloc, getDirs, 2, 3)
+	body = emitPreopenMissing(body, 3, func(b []byte) []byte {
+		b = inst.InstI32Const(b, -errnoNoEnt)
+		return inst.InstReturn(b)
+	})
 
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstI32Const(body, 1) // path-flags: symlink-follow
