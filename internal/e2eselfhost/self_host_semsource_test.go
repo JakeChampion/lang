@@ -535,6 +535,7 @@ function built(n: i32): string {
 }
 function refused_handle_sum(h: usize, k: usize): usize { return h + k; }
 function refused_handle_narrow(h: usize): i32 { return h as i32; }
+function refused_handle_lit(): usize { var p: usize = 16; return p; }
 // The outcome of a write is a Result whose Ok carries void: a payload that is
 // no payload, so the arm's binding names nothing and the box is a tag with a
 // zero word behind it.

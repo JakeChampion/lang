@@ -343,7 +343,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
-    if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    // An address has no literal: the pointer width is the backend's, so no
+    // immediate here names a value at it.
+    if (!semtypes.concrete(ty, false) || ssasem.is_usize(ty)) { return refused(s, "unsupported literal width"); }
     if (ssasem.text_constant(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
