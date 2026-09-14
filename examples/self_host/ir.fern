@@ -1182,6 +1182,11 @@ pub function op_sync(): Op { return op0("sync"); }
 // `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
 // lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
 pub function op_reader_seek(): Op { return op0("reader_seek"); }
+// `fd_flags` pops [fd] and pushes Result[i64, IoError]: the handle's open
+// flags as Fern's own three bits (1 readable, 2 writable, 4 appending).
+// One op for both `r.flags()` and `w.flags()`, like reader_seek: a handle
+// is its fd on every target this lowers for.
+pub function op_fd_flags(): Op { return op0("fd_flags"); }
 // `writer_truncate` pops [fd, length] and pushes Option[IoError]: ftruncate(2)
 // on the handle. Backs `w.truncate(length)`. Distinct from `truncate` (273),
 // which resolves a PATH and checks write permission again — the descriptor's
@@ -1973,6 +1978,7 @@ function kind_id_len8(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a') { return kind_id_len8_a(name); }
     if (c == b'f' && name == "fd_fsync") { return 299; }
+    if (c == b'f' && name == "fd_flags") { return 307; }
     if (c == b'b') { return kind_id_len8_b(name); }
     if (c == b'c' && name == "chown_at") { return 275; }
     if (c == b'f' && name == "f32_bits") { return 14; }
@@ -2568,6 +2574,7 @@ function kind_name_4(id: i32): string {
     if (id == 240) { return "hostname"; }
     if (id == 241) { return "fd_stat"; }
     if (id == 242) { return "reader_seek"; }
+    if (id == 307) { return "fd_flags"; }
     if (id == 243) { return "signal_ignore"; }
     if (id == 244) { return "signal_default"; }
     if (id == 245) { return "mismatch"; }
@@ -2729,7 +2736,7 @@ function pops1_io(t: i32): boolean {
         || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 243 || t == 244                                          // signal_ignore, signal_default
         || t == 277 || t == 279                                          // chdir, signal_disposition
-        || t == 241 || t == 250                                          // fd_stat, uname_field
+        || t == 241 || t == 250 || t == 307                              // fd_stat, uname_field, fd_flags
         || t == 299 || t == 300 || t == 301                              // fd_fsync, fd_fdatasync, fd_syncfs
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 270 || t == 271                                          // statfs, process_alive
@@ -4445,9 +4452,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 270) { return true; }
     // window_size boxes a fresh WinSize struct + a Result wrapper.
     if (tag == 276) { return true; }
-    // fd_stat boxes the same pair; reader_seek boxes its Result[i64, IoError];
-    // writer_truncate boxes its Option[IoError].
-    if (tag == 241 || tag == 242 || tag == 281) { return true; }
+    // fd_stat boxes the same pair; reader_seek and fd_flags box their
+    // Result[i64, IoError]; writer_truncate boxes its Option[IoError].
+    if (tag == 241 || tag == 242 || tag == 281 || tag == 307) { return true; }
     // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
     // string blocks, so it needs the heap runtime.
     if (tag == 177) { return true; }

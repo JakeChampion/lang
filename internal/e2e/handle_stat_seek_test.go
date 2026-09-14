@@ -162,6 +162,47 @@ func handleStatSeekSource(path, out, app string) string {
             }
         }
     }
+    // flags(): 1 readable, 2 writable, 4 appending (#9219). The three
+    // handles this program already has are the three answers — a reader is
+    // readable, a writer writable, an appender both writable and
+    // appending — and every target agrees on them because each was opened
+    // HERE. An inherited stdio handle is the one shape that differs (the
+    // host answers for it, and wasmtime does not report the append bit its
+    // own stdout was handed), so it is asked only for Ok.
+    match (open_reader(%[1]q)) {
+        Err(_) => { return 90; },
+        Ok(r) => {
+            match (r.flags()) {
+                Err(_) => { r.close(); return 91; },
+                Ok(f) => { if (f != 1 as i64) { r.close(); return 92; } }
+            }
+            r.close();
+        }
+    }
+    match (open_writer(%[2]q)) {
+        Err(_) => { return 93; },
+        Ok(w) => {
+            match (w.flags()) {
+                Err(_) => { w.close(); return 94; },
+                Ok(f) => { if (f != 2 as i64) { w.close(); return 95; } }
+            }
+            w.close();
+        }
+    }
+    match (open_appender(%[3]q)) {
+        Err(_) => { return 96; },
+        Ok(w) => {
+            match (w.flags()) {
+                Err(_) => { w.close(); return 97; },
+                Ok(f) => { if (f != 6 as i64) { w.close(); return 98; } }
+            }
+            w.close();
+        }
+    }
+    match (stdout().flags()) {
+        Err(_) => { return 99; },
+        Ok(_) => {}
+    }
     return 0;
 }
 `, path, out, app)
@@ -389,9 +430,83 @@ func handleStatSeekWasmSource() string {
             }
         }
     }
+    // flags(): 1 readable, 2 writable, 4 appending (#9219). The three
+    // handles this program already has are the three answers — a reader is
+    // readable, a writer writable, an appender both writable and
+    // appending — and every target agrees on them because each was opened
+    // HERE. An inherited stdio handle is the one shape that differs (the
+    // host answers for it, and wasmtime does not report the append bit its
+    // own stdout was handed), so it is asked only for Ok.
+    match (open_reader("hello.txt")) {
+        Err(_) => { return 90; },
+        Ok(r) => {
+            match (r.flags()) {
+                Err(_) => { r.close(); return 91; },
+                Ok(f) => { if (f != 1 as i64) { r.close(); return 92; } }
+            }
+            r.close();
+        }
+    }
+    match (open_writer("out.txt")) {
+        Err(_) => { return 93; },
+        Ok(w) => {
+            match (w.flags()) {
+                Err(_) => { w.close(); return 94; },
+                Ok(f) => { if (f != 2 as i64) { w.close(); return 95; } }
+            }
+            w.close();
+        }
+    }
+    match (open_appender("app.txt")) {
+        Err(_) => { return 96; },
+        Ok(w) => {
+            match (w.flags()) {
+                Err(_) => { w.close(); return 97; },
+                Ok(f) => { if (f != 6 as i64) { w.close(); return 98; } }
+            }
+            w.close();
+        }
+    }
+    match (stdout().flags()) {
+        Err(_) => { return 99; },
+        Ok(_) => {}
+    }
     return 0;
 }
 `
+}
+
+// handleFlagsPreview1Source asks the two STDIO handles for their flags,
+// which is all a preview-1 core module can do here — the runner mounts no
+// directory — and is exactly what exercises the preview-1 body: one
+// `fd_fdstat_get` into the static landing area, the two rights and the
+// APPEND fdflag read back out of the record. The component test above
+// takes the preview-2 path, which asks the host nothing.
+//
+// The bits are tested by MASK rather than by equality: a host is entitled
+// to report more rights than these two on an inherited stream, and
+// wasmtime's own stdout does not carry the append bit the process was
+// handed.
+const handleFlagsPreview1Source = `function main(): i32 {
+    match (stdout().flags()) {
+        Err(_) => { return 1; },
+        Ok(f) => {
+            if ((f & 2 as i64) == 0 as i64) { return 2; }
+            if ((f & 4 as i64) != 0 as i64) { return 3; }
+        }
+    }
+    match (stdin().flags()) {
+        Err(_) => { return 4; },
+        Ok(f) => { if ((f & 1 as i64) == 0 as i64) { return 5; } }
+    }
+    return 0;
+}
+`
+
+func TestWASMPreview1HandleFlags(t *testing.T) {
+	if code := compileAndRunWasmbinMain(t, handleFlagsPreview1Source); code != 0 {
+		t.Errorf("preview-1 flags: main = %d, want 0 (1/4=Err, 2=stdout not writable, 3=stdout claims append, 5=stdin not readable)", code)
+	}
 }
 
 func TestWASMHandleStatSeek(t *testing.T) {

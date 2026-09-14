@@ -1481,15 +1481,6 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
-**`shred -` is refused rather than shredding standard output.** GNU has three
-answers for the operand and which one is right depends on how fd 1 was
-OPENED: a regular file is overwritten, an append-only one is `cannot shred
-append-only file descriptor`, a pipe is `invalid file type`. Nothing here can
-ask that question — an `O_APPEND` handle stats and seeks exactly like a plain
-one — so the operand reports that the flags are unavailable on this system and
-exits 1. #9219 is the primitive (`w.flags()`, fcntl `F_GETFL`); the refusal
-goes away with it, and it is the only operand shape shred does not carry.
-
 **What a `shred` corpus can compare, and what nothing can.** GNU's pass
 SCHEDULE is drawn at random: two runs of `-n 10` over identical files disagree
 on both the order of the patterns and the SET of them, so `-v` output past the
@@ -1503,6 +1494,15 @@ once per pass and silently, and only then at the rounded-up length where the
 pass lines are, so an 11-byte file under `-n 2` is written 11, 11, 4096, 4096.
 That sweep is invisible to a source of one repeated byte, so the corpus seeds
 a second source whose every byte differs.
+
+`-` is comparable too, and it is the one operand whose answer depends on how
+fd 1 was OPENED rather than on anything in the file: a pipe is `invalid file
+type`, an append-only descriptor is `cannot shred append-only file
+descriptor`, a closed one is `fcntl failed: Bad file descriptor`, and a plain
+writable file is overwritten in place — `-u` then truncating what it cannot
+unlink. `w.flags()` (#9219) is what tells those apart. The harness reaches all
+three through `stdoutPath` (an append-only fd 1) and `stdoutFile` (a writable
+one, whose whole content is what the case compares).
 
 **`expr`'s empty alternation branch inside a COUNTED repetition follows no
 branch order at all.** glibc demotes a branch that compiles to nothing — `expr
@@ -2044,8 +2044,12 @@ write-failure cases (`yes >&-`, `> /dev/full`); source unable to learn its
 compile target (#8338), in `yes.fern`'s per-target block; and fstat/lseek on
 a DESCRIPTOR (#8713), which `cat` needs to refuse a closed fd 1 before it
 reads anything and `tail` needs to read a regular file from its end — landed
-as `r.stat()` / `w.stat()` / `r.seek()` on every backend, and `w.seek()`
-beside them for the utilities that write at an offset. `hostid` wanted a
+as `r.stat()` / `w.stat()` / `r.seek()` on every backend, `w.seek()`
+beside them for the utilities that write at an offset, and `r.flags()` /
+`w.flags()` (#9219) for the one question a descriptor answers and a path
+cannot: what the handle was OPENED for — 1 readable, 2 writable, 4
+appending — which is how `shred -` tells an append-only standard output,
+which it must refuse, from a writable one, which it overwrites. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
 on one backend. Group C's first four wanted three more the same way:

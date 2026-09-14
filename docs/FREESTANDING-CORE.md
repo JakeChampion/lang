@@ -400,6 +400,24 @@ calling convention is an ISA property, and nothing about a kernel forbids one �
 `none` grants nothing at all by construction, and no backend emits for a freestanding
 target yet, so there is nothing to observe. Revisit it with #6510, not before.
 
+**A handle method reports only what its target can measure, and `flags()` is
+where that bit.** `r.flags()` / `w.flags()` (#9219) answer three bits about how
+the handle was OPENED — 1 readable, 2 writable, 4 appending — and stop there.
+O_NONBLOCK is the flag a caller reaches for next, and preview 2 has no spelling
+for it at all: `descriptor.get-flags` reports read, write and the three sync
+bits, so a CLEARED non-blocking bit there would be the `geteuid`-answers-0
+failure again — a claim nobody measured. The three that are reported are
+answerable on all three targets, though not from the same place: F_GETFL on the
+natives, the `fdstat` record's rights and APPEND fdflag on preview 1, and on
+preview 2 the handle's own construction plus the Writer box's append flag,
+because a descriptor there has no append bit — an appending Writer is one that
+was opened `append-via-stream`. That is also the method's limit: on an
+INHERITED stdio handle preview 2 can report what the handle is, not what the
+parent opened, the same boundary that makes `stat` answer the all-zero record
+there. No capability gates it, for the reason no handle method does: the
+Reader or Writer had to be obtained first, and `open_*` is where the
+filesystem capability is spent.
+
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the
 classification's. Keeping it out of the capability vocabulary is deliberate — otherwise

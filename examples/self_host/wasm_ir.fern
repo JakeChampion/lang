@@ -293,6 +293,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "fd_fdatasync")) { out = out.append("fd_fdatasync"); }
     if (module_emits_op_cached(cache, "fd_syncfs")) { out = out.append("fd_syncfs"); }
     if (module_emits_op_cached(cache, "reader_seek")) { out = out.append("reader_seek"); }
+    if (module_emits_op_cached(cache, "fd_flags")) { out = out.append("fd_flags"); }
     if (module_emits_op_cached(cache, "writer_truncate")) { out = out.append("writer_truncate"); }
     if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
     if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
@@ -4127,6 +4128,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // Neither preview has a per-filesystem flush, so this one drops the
         // fd and answers Unsupported rather than importing anything.
         parts = parts.append("    call $__fern_fd_syncfs\n");
+    } else if (o.kind_tag == 307) {  // fd_flags
+        // r.flags() / w.flags() -> Result[i64, IoError]: the fd is already
+        // on the stack, as fd_stat's is.
+        parts = parts.append("    call $__fern_fd_flags\n");
     } else if (o.kind_tag == 242) {  // reader_seek
         // r.seek(offset, whence) -> Result[i64, IoError]: fd, i64 offset and
         // whence are on the stack in param order.
@@ -5415,6 +5420,11 @@ pub function fd_stat_import(): string {
 pub function fd_seek_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"fd_seek\" (func $fd_seek (param i32 i64 i32 i32) (result i32)))\n";
 }
+// fd_fdstat_get_import is $__fern_fd_flags's, and `isatty` would want the
+// same one — it has none here, so the import stays this op's alone.
+pub function fd_fdstat_get_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"fd_fdstat_get\" (func $fd_fdstat_get (param i32 i32) (result i32)))\n";
+}
 // stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
 // read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
@@ -5669,6 +5679,45 @@ pub function reader_seek_func(): string {
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 16)))\n";
     o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
     o = o + "    (i64.store (i32.add (local.get $res) (i32.const 8)) (i64.load (local.get $rb)))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
+// fd_flags_func emits $__fern_fd_flags(fd) -> Result[i64, IoError] box: one
+// fd_fdstat_get, and Fern's three bits read out of the record it fills —
+// 1 readable and 2 writable from the two RIGHTS, 4 appending from fs_flags.
+// That is preview 1's whole answer to what fcntl(F_GETFL) answers on a
+// native, and the mapping is exact rather than a reduction: the record has
+// no access MODE to collapse.
+//
+// The landing area is 8-ALIGNED (the allocator's blocks are): wasmtime's
+// preview-1 shim refuses the call outright on a misaligned one, because the
+// record's two rights fields are u64.
+pub function fd_flags_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_fd_flags (param $fd i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $buf i32) (local $res i32) (local $path i32) (local $bits i32)\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (i32.const 24)))\n";
+    o = o + "    (local.set $err (call $fd_fdstat_get (local.get $fd) (local.get $buf)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    // rights_base @8 is a u64, but both bits wanted live in its LOW half —
+    // FD_READ is bit 1 and FD_WRITE bit 6 — so an i32 load reads them.
+    // fs_flags @2: APPEND is bit 0.
+    o = o + "    (if (i32.and (i32.load (i32.add (local.get $buf) (i32.const 8))) (i32.const 2))\n";
+    o = o + "      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))\n";
+    o = o + "    (if (i32.and (i32.load (i32.add (local.get $buf) (i32.const 8))) (i32.const 64))\n";
+    o = o + "      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))\n";
+    o = o + "    (if (i32.and (i32.load16_u (i32.add (local.get $buf) (i32.const 2))) (i32.const 1))\n";
+    o = o + "      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i64.store (i32.add (local.get $res) (i32.const 8)) (i64.extend_i32_u (local.get $bits)))\n";
     o = o + "    (local.get $res))\n";
     return o;
 }
@@ -9684,6 +9733,7 @@ function preview1_imports(needs: string[]): string {
     if (need(needs, "fd_fsync")) { parts = parts.append(fd_sync_import()); }
     if (need(needs, "fd_fdatasync")) { parts = parts.append(fd_datasync_import()); }
     if (need(needs, "reader_seek")) { parts = parts.append(fd_seek_import()); }
+    if (need(needs, "fd_flags")) { parts = parts.append(fd_fdstat_get_import()); }
     // remove_file / remove_dir_all use the preview1 path_unlink_file import
     // (remove_dir_all unlinks the regular files it finds) — emit it once across
     // both (must precede the function section).
@@ -10180,6 +10230,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "fd_stat")) { parts = parts.append(fd_stat_func()); }
     parts = parts.append(fd_sync_funcs(needs));
     if (need(needs, "reader_seek")) { parts = parts.append(reader_seek_func()); }
+    if (need(needs, "fd_flags")) { parts = parts.append(fd_flags_func()); }
     if (need(needs, "writer_truncate")) { parts = parts.append(writer_truncate_func()); }
     // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
     if (need(needs, "@uses_str_to_i32")) { parts = parts.append(str_to_i32_helper()); }

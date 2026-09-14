@@ -5661,6 +5661,11 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // with stat's.
             s = s.write("    call __fn___fern_fd_stat\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("reader"); s = s.need("fd_stat");
+        } else if (o.kind_tag == 307) {  // fd_flags
+            // [fd] IS param[0], like fd_stat; the Fern-compiled
+            // __fn___fern_fd_flags pushes a fresh Result[i64, IoError].
+            s = s.write("    call __fn___fern_fd_flags\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_flags");
         } else if (o.kind_tag == 242) {  // reader_seek
             // [fd][offset][whence] (whence on top) -> Result[i64, IoError]. The
             // operands are in param order but on the wrong end: pop all three
@@ -8901,6 +8906,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }
+        if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86_64"); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
