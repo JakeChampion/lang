@@ -8751,6 +8751,11 @@ function peep_p4(own p: Peep): Peep {
 // freeing it is the only reason the push is there, and a run that never
 // touches it is some other pattern. Native states that condition as "writes
 // x0", which is the same thing there because its own pushes always are of x0.
+//
+// Those two conditions together are why the `mov` is unconditional, where P1
+// drops it for a pair naming one register: a run line writing the PUSH
+// register would also MENTION the POP one were they the same, and the walk
+// refuses such a line, so a fold with push == pop cannot reach here.
 function peep_p7(own p: Peep): Peep {
     var n: i32 = p.n;
     if (n < 3) { return p; }
@@ -8771,9 +8776,7 @@ function peep_p7(own p: Peep): Peep {
     p = Peep { ...p, n: n - 1 };
     var tail: PLine[] = peep_tail_from(p, k);
     p = Peep { ...p, n: k - 1, fired: true };
-    if (!pp_same_bytes(pop.s, pop.a, pop.b, push.s, push.a, push.b)) {
-        p = peep_add_text(p, "    mov " + pl_operand(pop) + ", " + pl_operand(push) + "\n");
-    }
+    p = peep_add_text(p, "    mov " + pl_operand(pop) + ", " + pl_operand(push) + "\n");
     return peep_readd(p, tail);
 }
 
