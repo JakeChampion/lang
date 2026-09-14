@@ -8191,7 +8191,9 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
 // enter the window as PK_MID: a whitelist of mnemonics that write just the
 // register they name and read just their operands, naming no sp. A call, a
 // branch, a store or anything with a memory effect fails the whitelist and
-// still closes the window.
+// still closes the window. So does a whitelisted line with no push behind it
+// to fold back to, which is most of them — recognising those costs more per
+// line than the rule saves.
 //
 // P6 has no arm64 form: a helper call pops its arguments straight into the
 // argument registers, so there is no copy out of the accumulator to fold.
@@ -8417,14 +8419,20 @@ function pl_stack(p: PLine, o1: i32, cm: i32): PLine {
 // frame slot's address, and every other register named must be x0, x29 or
 // x16 — the chain's own temporaries and the frame pointer — so that renaming
 // x0 to x1 changes nothing else.
-function pl_mat(p: PLine, o1: i32, cm: i32): PLine {
+function pl_mat(p: PLine, o1: i32, cm: i32, mids: boolean): PLine {
     var f: i32 = 0;
     if (pp_reg0_at(p.s, o1, cm) && cm - o1 == 2) { f = PF_DEST0; }
-    else if (!pp_is(p.s, o1, cm, "x16") || !pl_mnem_is(p, "sub")) { return pl_mid(p, o1, cm); }
+    else if (!pp_is(p.s, o1, cm, "x16") || !pl_mnem_is(p, "sub")) {
+        if (!mids) { return p; }
+        return pl_mid(p, o1, cm);
+    }
     if (cm >= p.hi) { return p; }
     var rest: i32 = cm + 2;
     if (pp_mentions_reg0(p.s, rest, p.hi)) { f = f | PF_READS0; }
-    if (!pl_mat_operands_ok(p, rest)) { return pl_mid(p, o1, cm); }
+    if (!pl_mat_operands_ok(p, rest)) {
+        if (!mids) { return p; }
+        return pl_mid(p, o1, cm);
+    }
     f = f | PF_MIDOK;
     var v: i64 = 0i64;
     if (pl_mnem_is(p, "mov") && p.s[rest] == 35 && pp_imm_ok(p.s, rest + 1, p.hi)) {
@@ -8496,8 +8504,10 @@ function pl_is_alu_mnem(p: PLine): boolean {
 }
 
 // pl_classify decodes one indented line of s. Anything it does not recognise
-// is PK_NONE, which closes the window.
-function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
+// is PK_NONE, which closes the window. `mids` admits the PK_MID lines P7 steps
+// over, and is false unless the window already holds a push to fold back to —
+// see peep_mid_open for why that gate is worth having.
+function pl_classify(s: string, ln: i32, bs: i32, hi: i32, mids: boolean): PLine {
     var me: i32 = pp_find(s, bs, hi, 32);
     var p: PLine = PLine { s: s, ln: ln, bs: bs, me: me, hi: hi, kind: PK_NONE, a: 0, b: 0, val: 0i64, flags: 0 };
     if (me + 1 >= hi) { return p; }
@@ -8511,7 +8521,8 @@ function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
         if (!pl_mnem_is(p, "cmp")) { af = PF_DEST0 | PF_MIDOK; }
         return PLine { ...p, kind: PK_ALU, flags: af };
     }
-    if (pl_is_mat_mnem(p)) { return pl_mat(p, o1, cm); }
+    if (pl_is_mat_mnem(p)) { return pl_mat(p, o1, cm, mids); }
+    if (!mids) { return p; }
     return pl_mid(p, o1, cm);
 }
 
@@ -8597,7 +8608,19 @@ function peep_add(own p: Peep, l: PLine): Peep {
 }
 
 function peep_add_text(own p: Peep, text: string): Peep {
-    return peep_add(p, pl_classify(text, 0 - 1, 4, text.len() - 1));
+    var l: PLine = pl_classify(text, 0 - 1, 4, text.len() - 1, peep_mid_open(p));
+    return peep_add(p, l);
+}
+
+// peep_mid_open reports whether the window's tail already walks back over
+// lines P7 may step over to a push. It is the rule's own walk, asked one line
+// early: with no such push behind it a PK_MID line can never be folded across,
+// so it closes the window as any other line does. Classifying every line
+// instead costs more per line than the rule saves.
+function peep_mid_open(p: Peep): boolean {
+    var k: i32 = p.n;
+    while (k > 0 && (p.w[k - 1].flags & PF_MIDOK) != 0) { k = k - 1; }
+    return k > 0 && p.w[k - 1].kind == PK_PUSH;
 }
 
 function peep_readd(own p: Peep, tail: PLine[]): Peep {
@@ -8788,7 +8811,7 @@ function peep_p5(own p: Peep, e: i32): Peep {
 // everything flushes and the line joins the run.
 function peep_line(own p: Peep, ln: i32, bs: i32, hi: i32): Peep {
     var l: PLine = pl_none(p.asm, ln, bs, hi);
-    if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi); }
+    if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi, peep_mid_open(p)); }
     if (l.kind != PK_NONE) {
         p = peep_add(p, l);
         return peep_settle(p);
