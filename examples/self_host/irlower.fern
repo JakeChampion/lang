@@ -80223,7 +80223,16 @@ function callee_hands_back_any(key: string, cnt_handback: string[]): boolean {
     return false;
 }
 // static_call_key: counted_call_key from declarations alone — a free callee by
-// its bare name, a method by the declared struct type of a bare receiver.
+// its bare name, a method by the struct type of a bare receiver.
+//
+// The receiver's type is read from its ANNOTATION first, and from its struct
+// LITERAL when it has none (`var b = Big { … }`). Both halves are needed
+// because this key decides the SINKSHARE marking, and the CNTRECVRET exemption
+// that marking makes sound resolves the same receiver through the literal
+// (fresh_struct_lit_type_deep). Reading only the annotation here let the two
+// disagree: an unannotated receiver kept its deep drop with no rc gate on the
+// walk, which leaked today and would dangle the moment the counted claim came
+// back through any other channel.
 function static_call_key(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
     if let ast.ExprCall(c) = e {
         if let ast.ExprIdent(cid) = c.callee { return cid.name; }
@@ -80231,11 +80240,22 @@ function static_call_key(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[],
             var rn: string = ident_name_or_empty(fa.obj);
             var rt: string = declared_struct_type_of(body, rn, structs);
             if (rt.len() == 0) { rt = param_struct_type_of(params, rn, structs); }
+            if (rt.len() == 0) { rt = literal_struct_type_of(body, rn, structs); }
             if (rt.len() == 0) { return ""; }
             return rt + "." + fa.field;
         }
     }
     return "";
+}
+
+// literal_struct_type_of: the struct type of an UNANNOTATED local, read from
+// the literal it is bound to. "" unless every binding of the name is a no-base
+// literal of one struct type — fresh_struct_lit_type_deep's own contract.
+function literal_struct_type_of(body: ast.Stmt[], name: string, structs: StructTab): string {
+    if (name.len() == 0) { return ""; }
+    var t: string = fresh_struct_lit_type_deep(body, name);
+    if (t.len() == 0 || !decl_is_struct(structs, t)) { return ""; }
+    return t;
 }
 function param_struct_type_of(params: ast.ParamDecl[], name: string, structs: StructTab): string {
     for pd in params {
