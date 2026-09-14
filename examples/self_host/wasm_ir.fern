@@ -2243,6 +2243,19 @@ function err_payload_p2(): string {
     return "(call $__fern_build_io_error_p2 (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (local.get $np))";
 }
 
+// no_preopen_p2 follows a get-directories call whose list header sits at
+// $ra: a host that granted no directory (count @ ra+4 is 0) leaves no
+// descriptor to open a path against, and the answer is Err(NotFound) —
+// errno 44 — rather than a trap on a handle the host never issued.
+function no_preopen_p2(): string {
+    var o: string = "    (if (i32.eqz (i32.load (i32.add (local.get $ra) (i32.const 4)))) (then\n";
+    o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 44) (local.get $np)))\n";
+    o = o + "      (return (local.get $tmp))))\n";
+    return o;
+}
+
 pub function readfile_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
@@ -2250,6 +2263,7 @@ pub function readfile_func_p2(): string {
     o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 32)) (i32.const 7)) (i32.const -8)))\n";
     // first preopen descriptor = load(load(retarea))
     o = o + "    (call $get_directories (local.get $ra))\n";
+    o = o + no_preopen_p2();
     o = o + "    (local.set $fd (i32.load (i32.load (local.get $ra))))\n";
     // open-at(desc, path-flags=1, path+4, len, oflags=0, descriptor-flags=1, ra)
     o = o + "    (call $open_at (local.get $fd) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i32.const 1) (local.get $ra))\n";
@@ -2311,6 +2325,7 @@ pub function readfile_bytes_func_p2(): string {
     o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $i i32) (local $tmp i32) (local $arr i32)\n";
     o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 32)) (i32.const 7)) (i32.const -8)))\n";
     o = o + "    (call $get_directories (local.get $ra))\n";
+    o = o + no_preopen_p2();
     o = o + "    (local.set $fd (i32.load (i32.load (local.get $ra))))\n";
     o = o + "    (call $open_at (local.get $fd) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i32.const 1) (local.get $ra))\n";
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
@@ -2376,6 +2391,7 @@ pub function writefile_func_p2(): string {
     o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 32)) (i32.const 7)) (i32.const -8)))\n";
     // first preopen descriptor = load(load(retarea))
     o = o + "    (call $get_directories (local.get $ra))\n";
+    o = o + no_preopen_p2();
     o = o + "    (local.set $fd (i32.load (i32.load (local.get $ra))))\n";
     // open-at(desc, path-flags=1, path+4, len, open-flags=9 create|truncate,
     // descriptor-flags=2 write, ra)
@@ -2478,9 +2494,10 @@ pub function needs_wall_clock(needs: string[]): boolean {
 //     handle, anything else stdout. That is what lets eprint and print share
 //     one shim rather than needing a separate $__fern_eprint body.
 //   $proc_exit — over wasi:cli/exit, whose status is a result discriminant
-//     (0 = ok, 1 = err; > 1 is an invalid discriminant and traps, mirroring the
-//     native compiler). The import diverges, so the trailing `unreachable`
-//     keeps the void function well-formed with no fallthrough.
+//     (0 = ok, 1 = err), so every non-zero code folds to 1 rather than
+//     trapping as an invalid discriminant, as native's buildExitBodyP2 does.
+//     The import diverges, so the trailing `unreachable` keeps the void
+//     function well-formed with no fallthrough.
 //
 // Each handle is fetched once and cached (-1 = unfetched). The result area
 // blocking-write-and-flush writes into must be aligned to its result type's
@@ -2514,7 +2531,7 @@ pub function component_io_shims(needs: string[]): string {
     o = o + "    (i32.const 0))\n";
     if (need(needs, "exit")) {
         o = o + "  (func $proc_exit (param $c i32)\n";
-        o = o + "    (call $exit (local.get $c))\n";
+        o = o + "    (call $exit (i32.ne (local.get $c) (i32.const 0)))\n";
         o = o + "    (unreachable))\n";
     }
     // The preview2 clock / random bodies. These are not shims over a preview1
