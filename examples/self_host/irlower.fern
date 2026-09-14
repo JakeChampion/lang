@@ -19518,6 +19518,11 @@ function lower_value_tail(body: ast.Stmt[], tslot: i32, s: LowerState): LowerSta
             if (infer_expr_width(r.value, cs) == 64) { return s.fail(); }
             cs = lower_expr(r.value, cs);
             if (!cs.ok) { return cs; }
+            // An array LOCAL handed back whole is a second holder of its buffer,
+            // exactly as `var b = a` is: the value takes the alias retain, so the
+            // binding the expression lands in owns the reference its exit sweep
+            // releases, and the source's next update finds the buffer shared.
+            if (cs.is_arr_slot(cs.slot_of(bare_ident_name(r.value)))) { cs = cs.retain_tos("ifexpr-alias-leaf"); }
             return cs.emit(ir.op_store_local(tslot));
         },
         ast.StmtIf(nested) => {
@@ -76132,7 +76137,14 @@ function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl
 function box_nested_lambdas(e: ast.Expr, acc: ast.ExprLambda[]): ast.ExprLambda[] {
     var out: ast.ExprLambda[] = acc;
     match (e) {
-        ast.ExprLambda(l) => { return out.append(l); },
+        // A value block (an if- / match-expression, a block expression, a
+        // comprehension) is inlined into this function and reads its slots
+        // directly, so it is no capture of anything: only the lambdas INSIDE it
+        // are collected.
+        ast.ExprLambda(l) => {
+            if (parser.is_value_block_origin(l.origin)) { return box_nested_lambdas_stmts(l.body, out); }
+            return out.append(l);
+        },
         ast.ExprStructLit(sl) => {
             for fv in sl.field_values { out = box_nested_lambdas(fv, out); }
             if (sl.has_base) { out = box_nested_lambdas(sl.base, out); }
@@ -76157,6 +76169,29 @@ function box_nested_lambdas(e: ast.Expr, acc: ast.ExprLambda[]): ast.ExprLambda[
         ast.ExprIndex(ix) => { return box_nested_lambdas(ix.index, box_nested_lambdas(ix.array, out)); },
         ast.ExprFieldAccess(fa) => { return box_nested_lambdas(fa.obj, out); },
         _ => { return out; }
+    }
+    return out;
+}
+
+// box_nested_lambdas_stmts collects the operand-position lambdas of every
+// statement in an inlined value block, nested blocks included.
+function box_nested_lambdas_stmts(stmts: ast.Stmt[], acc: ast.ExprLambda[]): ast.ExprLambda[] {
+    var out: ast.ExprLambda[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { out = box_nested_lambdas(v.init, out); },
+            ast.StmtAssign(a) => { out = box_nested_lambdas(a.value, out); },
+            ast.StmtReturn(r) => { out = box_nested_lambdas(r.value, out); },
+            ast.StmtExpr(e) => { out = box_nested_lambdas(e.value, out); },
+            ast.StmtIf(f) => { out = box_nested_lambdas_stmts(f.else_body, box_nested_lambdas_stmts(f.then_body, box_nested_lambdas(f.cond, out))); },
+            ast.StmtWhile(w) => { out = box_nested_lambdas_stmts(w.body, box_nested_lambdas(w.cond, out)); },
+            ast.StmtFor(fo) => { out = box_nested_lambdas_stmts(fo.body, box_nested_lambdas(fo.iter, out)); },
+            ast.StmtMatch(m) => {
+                out = box_nested_lambdas(m.scrutinee, out);
+                for arm in m.arms { out = box_nested_lambdas_stmts(arm.body, out); }
+            },
+            _ => {}
+        }
     }
     return out;
 }

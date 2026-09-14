@@ -449,6 +449,51 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
+	// An if-expression handing back a local: the value block is inlined, so
+	// its mention of `a` is no capture and `a` stays a plain slot, and the
+	// ident leaf takes the alias retain so `b` owns the reference its exit
+	// sweep releases. Before: `a` was boxed into a capture cell for the whole
+	// function and every update cloned into the cell with no release, 103 / 3.
+	{"if-expression-alias", `function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var c: i32[] = [4];
+    var b: i32[] = if (a[0] == 1) { a } else { c };
+    var i: i32 = 0;
+    while (i < 100) { a = a.with(0, 9 + i); i = i + 1; }
+    if (b[0] != 1) { return 1; }
+    if (a[0] != 108) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"if-expression-fresh-arm", `@noinline
+function mk(): i32[] { return [7, 8]; }
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = if (a[0] == 1) { a } else { mk() };
+    var i: i32 = 0;
+    while (i < 100) { a = a.with(0, 9 + i); i = i + 1; }
+    if (b[0] != 1) { return 1; }
+    if (a[0] != 108) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
+	// The underflow is read after the owning frame's exit sweep, which is where
+	// an unretained if-expression result was released a second time.
+	{"if-expression-alias-exit-sweep", `@noinline
+function exercise(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var c: i32[] = [4];
+    var b: i32[] = if (a[0] == 1) { a } else { c };
+    if (b[0] != 1) { return 1; }
+    if (a[0] != 1) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    var r: i32 = exercise();
+    if (r != 0) { return r; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
 	// A string[] keeps the static clone: its elements are counted references
 	// the scalar path does not admit.
 	{"string-elems-excluded", `function main(): i32 {
