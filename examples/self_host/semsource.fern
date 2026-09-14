@@ -977,6 +977,12 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
     var prefix: string = "";
     if let typeinfo.TypeArray(_) = s.values[recv.id] { prefix = "__arrm_"; }
     if (ssasem.is_map(s.values[recv.id])) { prefix = "__mapm_"; }
+    // register_struct_method_generics folds a THIRD shape, a method with its
+    // own type variables on a generic-struct receiver, to `__smm_<Base>_<m>`.
+    // It has no arm here because it cannot be reached: a parameterised struct
+    // is not admitted as a value at all ("unsupported record type"), so the
+    // receiver is refused before a method on it is looked up. Wiring the name
+    // without the type would be an arm nothing can execute.
     if (prefix == "") { return primitive_method(c, fa, recv, s); }
     var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
     if (at < 0) { return primitive_method(c, fa, recv, s); }

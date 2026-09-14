@@ -150,6 +150,23 @@ function mapped(xs: i32[], f: (i32) => i32): i32[] { var out: i32[] = []; for x 
 // golden's refusal for this one names the call rather than the record.
 function lifted_field(b: Bag, xs: i32[]): Bag { return Bag { ...b, items: mapped(xs, (v: i32): i32 => v + 1) }; }
 function string_length(s: string): i32 { return s.len(); }
+// A method whose receiver carries the type variable reaches the free generic
+// the registration passes fold it into, and the call instantiates that
+// template at the receiver's element. A method on a PRIMITIVE receiver needs
+// no fold at all — it is keyed by the receiver's spelling, i32.doubled, the
+// way a record's is keyed by its declaration.
+//
+// The third fold, a method with its own type variables on a generic-struct
+// receiver, is refused before it can be reached: a parameterised struct is not
+// admitted as a VALUE here, so via_smm stops at its parameter rather than at
+// the call.
+struct Holder[T] { item: T }
+function (xs: T[]) second_or(d: T): T { if (xs.len() < 2) { return d; } return xs[1]; }
+function (h: Holder[T]) tagged[U](u: U): i32 { return h.item.len(); }
+function (n: i32) doubled(): i32 { return n * 2; }
+function via_arrm(a: i32[]): i32 { return a.second_or(0); }
+function via_smm(h: Holder[string]): i32 { return h.tagged(true); }
+function via_prim(k: i32): i32 { return k.doubled(); }
 function refused_string_method(s: string): string { return s.trim(); }
 // The builtins whose result is an instantiated builtin union, and a literal of
 // one: the golden pins the contract's INSTANTIATION as the value type, the
@@ -654,7 +671,7 @@ function main(): i32 {
     // The production pipeline injects the front end's own enum variants
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
-    var mod = irlower.lift_lambdas(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) });
+    var mod = irlower.lift_lambdas(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     // Every declaration in order, then every instance the templates were
     // produced at.
     var built = semsource.build_module(mod);
@@ -2468,7 +2485,7 @@ function main(): i32 {
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     var parsed = parser.parse_module(lexer.tokenize(src));
-    var mod = irlower.lift_lambdas(checker.annotate_module(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }));
+    var mod = irlower.lift_lambdas(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var built = semsource.build_module(mod);
