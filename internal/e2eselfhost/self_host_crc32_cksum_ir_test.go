@@ -26,7 +26,8 @@ import (
 //     case; what is not is a body that pops in the right order and then
 //     zero-extends the result, because the top bit is live here and a CRC
 //     with it set reads back as a large positive number from a 64-bit slot.
-//     The high-byte cases are what separate that.
+//     Only a pin whose ANSWER has bit 31 set separates that, which most
+//     inputs do not — see the two high-byte cases and their lengths.
 //
 //   - It CARRIES state in. sum_bytes starts from zero every call; this one
 //     resumes, and that identity — one call over the whole string equals
@@ -38,7 +39,7 @@ import (
 
 // crc32CksumIRProg is SELF-CHECKING: it carries its own bit-at-a-time
 // reference in Fern and compares `__crc32_cksum` against it over every length
-// to 40, then pins seven values computed by the Go oracle in
+// to 40, then pins eight values computed by the Go oracle in
 // internal/e2e/crc32_cksum_test.go so that a reference and a kernel wrong in
 // the same way still fail.
 //
@@ -83,12 +84,17 @@ function main(): i32 {
     if (__crc32_cksum(0, "a") != 0 - 1469785312) { return 7; }
     if (__crc32_cksum(0, "hello world") != 1937437358) { return 8; }
     if (__crc32_cksum(0, "abcdefghijklmnopqrstuvwxyz") != 1002611811) { return 9; }
-    // The top bit live in the RESULT: 40 high bytes, which a zero-extending
-    // push turns into a large positive number instead.
+    // The top bit live in the RESULT, which a zero-extending push turns into
+    // a large positive number instead. Both answers below have bit 31 set —
+    // MOST do not, so the length is the whole of what makes these two cases
+    // carry the claim: 40 high bytes answers 0x438e3ca6 and cannot tell the
+    // two pushes apart at all. One block and eight.
     var hi: string = "";
     var h: i32 = 0;
-    while (h < 40) { hi = hi + "\xff"; h = h + 1; }
-    if (__crc32_cksum(0, hi) != 1133395110) { return 10; }
+    while (h < 16) { hi = hi + "\xff"; h = h + 1; }
+    if (__crc32_cksum(0, hi) != 0 - 223276853) { return 10; }
+    while (h < 128) { hi = hi + "\xff"; h = h + 1; }
+    if (__crc32_cksum(0, hi) != 0 - 1955225115) { return 14; }
     // The top bit live in the INCOMING crc.
     if (__crc32_cksum(0 - 1, "x") != 0 - 2001448981) { return 11; }
     // The streaming identity the carried state exists for: the same bytes cut
