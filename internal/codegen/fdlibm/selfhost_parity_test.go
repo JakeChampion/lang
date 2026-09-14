@@ -224,14 +224,67 @@ var powIntMaxSpellings = map[string]func(int) string{
 func TestSelfHostPowIntMaxMatches(t *testing.T) {
 	for path, spell := range powIntMaxSpellings {
 		src := readSelfHost(t, path)
-		if want := spell(PowIntMax); !strings.Contains(src, want) {
+		want := spell(PowIntMax)
+		if !strings.Contains(src, want) {
 			t.Errorf("%s does not emit %q — PowIntMax is %d; either this emitter's bound has drifted or its spelling has, and both are the drift this gate exists for",
 				path, want, PowIntMax)
+			continue
 		}
 		// A leftover 64 in the same instruction shape is the specific
 		// regression: the old bound, still readable as deliberate.
-		if stale := spell(64); PowIntMax != 64 && strings.Contains(src, stale) {
-			t.Errorf("%s still emits %q, the pre-#6405 bound", path, stale)
+		if stale := spell(64); PowIntMax != 64 && strings.Contains(emitterRoutine(src, want), stale) {
+			t.Errorf("%s still emits %q in the routine that writes __fern_pow_f64, the pre-#6405 bound", path, stale)
 		}
+	}
+}
+
+var fernFuncStart = regexp.MustCompile(`(?m)^(?:pub )?function `)
+
+// emitterRoutine returns the emitter routine containing `anchor` — the Fern
+// function it sits in, which for the pow bound is the one that writes
+// __fern_pow_f64's body.
+//
+// The stale-bound search is scoped to that routine because the instruction
+// SHAPE is not unique to this kernel: arm64's `cmp x11, #64` is also the
+// CRC32 fold-by-4 byte count, which is a bound of its own and correct at 64.
+// A whole-file search reads that as the pre-#6405 pow bound.
+func emitterRoutine(src, anchor string) string {
+	i := strings.Index(src, anchor)
+	if i < 0 {
+		return ""
+	}
+	start := 0
+	for _, loc := range fernFuncStart.FindAllStringIndex(src[:i], -1) {
+		start = loc[0]
+	}
+	if loc := fernFuncStart.FindStringIndex(src[i:]); loc != nil {
+		return src[start : i+loc[0]]
+	}
+	return src[start:]
+}
+
+// The scoping above must narrow without blinding: the arm64 emitter really
+// does contain `cmp x11, #64`, and the gate has to keep failing if that
+// instruction ever appears in the pow routine rather than the CRC one.
+func TestPowIntMaxScopingStillSeesAStaleBound(t *testing.T) {
+	const path = selfHostAsmArm64
+	src := readSelfHost(t, path)
+	want := powIntMaxSpellings[path](PowIntMax)
+	stale := powIntMaxSpellings[path](64)
+	if !strings.Contains(src, stale) {
+		t.Skipf("%s no longer contains %q anywhere; this test has nothing to distinguish", path, stale)
+	}
+	routine := emitterRoutine(src, want)
+	if routine == "" {
+		t.Fatalf("%s: no routine found around %q", path, want)
+	}
+	if strings.Contains(routine, stale) {
+		t.Fatalf("%s: the pow routine contains %q, so the scoping is not what keeps the gate green", path, stale)
+	}
+	if !strings.Contains(emitterRoutine(src, stale), stale) {
+		t.Fatalf("%s: the routine holding %q does not contain it — emitterRoutine is not bounding what it claims", path, stale)
+	}
+	if strings.Contains(emitterRoutine(src, stale), want) {
+		t.Fatalf("%s: %q and %q resolve to the same routine, so scoping to it distinguishes nothing", path, stale, want)
 	}
 }
