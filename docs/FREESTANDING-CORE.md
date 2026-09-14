@@ -237,6 +237,13 @@ rather than discovering:
     one, and the destination descriptor handed to `rename-at` is that same
     preopen. A kernel's `EXDEV` has no counterpart here; the failure is
     `ENOTCAPABLE` for the operand that left.
+  - **`open_reader_with` / `open_writer_with` carry their flags word across
+    too**: the create bit is preview 1's own CREATE oflag and preview 2's
+    `create` open-flag, and the non-blocking bit is preview 1's NONBLOCK
+    fdflag. Preview 2 has no spelling for it and the bit is not read there:
+    its streams do not block the way a preview-1 descriptor can, and the
+    FIFO the bit exists for cannot be created on either preview (`mknod`
+    is refused, above).
   - **The omit, now and nofollow flags are honoured**, each in the preview's
     own spelling: preview 1 clears an `fstflags` bit or sets its `*_NOW`
     sibling and passes `lookupflags` 0, preview 2 passes the `new-timestamp`

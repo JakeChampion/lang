@@ -11,12 +11,10 @@
 //
 // GNU opens `O_RDONLY | O_NONBLOCK`, falling back to `O_WRONLY |
 // O_NONBLOCK` and reporting the read-only errno when both fail; the
-// non-blocking bit is what lets it open a FIFO that has no writer. No
-// Fern open is non-blocking, so a FIFO is answered from its stat
-// instead: fsync and fdatasync of a FIFO are `Invalid argument` on Linux
-// without the open, and -f flushes the file system through the FIFO's
-// directory, which is the same file system. Everything else opens as GNU
-// does.
+// non-blocking bit is what lets it open a FIFO that has no writer, and
+// the flush then answers whatever the kernel says of a FIFO's
+// descriptor. This does the same through `open_reader_with` and
+// `open_writer_with`.
 import "std/string";
 import "./lib/gnu";
 
@@ -56,16 +54,10 @@ function help_text(): string {
   return out;
 }
 
-function s_ifmt(): u32 {
-  return 61440 as u32;
-}
-
-function s_ififo(): u32 {
-  return 4096 as u32;
-}
-
-// `flush(r, mode)` — the flush the mode names, on an open handle.
-function flush(r: Reader, mode: i32): Option[IoError] {
+// `flush_reader` / `flush_writer(h, mode)` — the flush the mode names,
+// on an open handle. Reader and Writer carry the same three methods but
+// are two types, hence two functions.
+function flush_reader(r: Reader, mode: i32): Option[IoError] {
   if (mode == mode_data()) {
     return r.fdatasync();
   }
@@ -75,49 +67,57 @@ function flush(r: Reader, mode: i32): Option[IoError] {
   return r.fsync();
 }
 
-// `sync_open(name, mode, path)` — open `path`, flush it, close it; the
-// diagnostics name `name`, the operand as given.
-function sync_open(name: string, mode: i32, path: string): boolean {
+function flush_writer(w: Writer, mode: i32): Option[IoError] {
+  if (mode == mode_data()) {
+    return w.fdatasync();
+  }
+  if (mode == mode_file_system()) {
+    return w.syncfs();
+  }
+  return w.fsync();
+}
+
+// `report(name, flushed, closed)` — the two per-operand diagnostics
+// after an open, each costing the status.
+function report(name: string, flushed: Option[IoError], closed: Option[IoError]): boolean {
   var ok: boolean = true;
-  match (open_reader(path)) {
-    Ok(r) => {
-      match (flush(r, mode)) {
-        Some(e) => {
-          gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
-          ok = false;
-        },
-        None => {}
-      }
-      match (r.close()) {
-        Some(e) => {
-          gnu.error("failed to close " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
-          ok = false;
-        },
-        None => {}
-      }
-    },
-    Err(e) => {
-      gnu.error("error opening " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+  match (flushed) {
+    Some(e) => {
+      gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
       ok = false;
-    }
+    },
+    None => {}
+  }
+  match (closed) {
+    Some(e) => {
+      gnu.error("failed to close " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+      ok = false;
+    },
+    None => {}
   }
   return ok;
 }
 
+// `sync_arg(name, mode)` — open the operand read-only and non-blocking,
+// then write-only and non-blocking, flush it, close it. Both opens
+// failing reports the first errno.
 function sync_arg(name: string, mode: i32): boolean {
-  match (stat(name)) {
-    Ok(st) => {
-      if ((st.mode & s_ifmt()) == s_ififo()) {
-        if (mode == mode_file_system()) {
-          return sync_open(name, mode, gnu.dir_name(name));
-        }
-        gnu.error("error syncing " + gnu.quotea(name) + ": Invalid argument");
-        return false;
-      }
+  match (open_reader_with(name, 2)) {
+    Ok(r) => {
+      return report(name, flush_reader(r, mode), r.close());
     },
-    Err(_) => {}
+    Err(e) => {
+      match (open_writer_with(name, 2)) {
+        Ok(w) => {
+          return report(name, flush_writer(w, mode), w.close());
+        },
+        Err(_) => {
+          gnu.error("error opening " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+          return false;
+        }
+      }
+    }
   }
-  return sync_open(name, mode, name);
 }
 
 function main(): i32 {
