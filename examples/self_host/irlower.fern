@@ -13482,6 +13482,23 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
     // stack, count-agnostic on every backend.
     var sm: LowerState = lower_expr(fa.obj, s);
     if (!sm.ok) { return sm; }
+    // A COUNTED-return producer in RECEIVER position — `b.me().val()`, the
+    // callee in cnt_struct_ret_fns. The result carries one count this frame
+    // owes a release for, and a receiver is the fourth position that owes it:
+    // a binding, a discarded statement, a read-through field and an argument
+    // temp each have their own, and this one had none, so the count stranded
+    // and the receiver's box never reached rc 1. counted_recv_release_ok holds
+    // the gate. The release is the BARE box dec, the floor
+    // emit_counted_result_release keeps: a handback's box is the caller's own,
+    // and a fresh return's field values are not proven owned here.
+    var cntrecv: i32 = 0 - 1;
+    if (counted_ret_call_arg(fa.obj, s) && counted_recv_release_ok(disp_ty + "." + fa.field, s)) {
+        var crn: string = "$crcv" + util.i32_to_string(sm.locals.len());
+        sm = sm.add_local(crn);
+        cntrecv = sm.slot_of(crn);
+        sm = sm.emit(ir.op_store_local(cntrecv));
+        sm = sm.emit(ir.op_load_local(cntrecv));
+    }
     // #4873 / #8224 containment: a method that may grow its receiver's array
     // FIELD buffers in place must not do so through a receiver this frame still
     // reads. grow_exempt (the statement's dying `x = x.m(…)` / `return x.m(…)`
@@ -13529,7 +13546,9 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
     sm = emit_grow_field_bracket_dec(sm, smb.slots);
     sm = free_stashed_str_args(sm, sm_lat);
     sm = free_stashed_str_args_guarded(sm, sm_latg);
-    return free_stashed_struct_args(sm, sm_lsl);
+    sm = free_stashed_struct_args(sm, sm_lsl);
+    if (cntrecv >= 0) { sm = emit_counted_result_release(sm, cntrecv); }
+    return sm;
 }
 
 // lower_call_fn_field lowers a call through a CLOSURE-VALUED struct field —
@@ -15482,6 +15501,20 @@ function owned_fresh_call_callee(e: ast.Expr, kind: string, s: LowerState): stri
 // caller.
 function emit_counted_result_release(st: LowerState, boxslot: i32): LowerState {
     return st.release(boxslot, "__fern_rc_dec", "counted-result");
+}
+
+// counted_recv_release_ok: the callee at `key` lets a COUNTED result standing
+// in its RECEIVER position be released after the call. Either the body lets the
+// receiver escape nowhere — the plain key — so the result can never be this
+// box and the dec frees nothing the caller goes on to read; or the only escape
+// is the bare `return self` ("RECVIDENT:") and the callee is itself a counted
+// member, so a handback arrives carrying its own added count and the one this
+// frame owes is still exactly one dec. A bare UNCOUNTED handback earns neither
+// key and keeps its leak, which is the safe floor.
+function counted_recv_release_ok(key: string, s: LowerState): boolean {
+    if (util.index_of_str(s.frame.sigs.recv_borrow_fns, key) >= 0) { return true; }
+    return util.index_of_str(s.frame.sigs.recv_borrow_fns, "RECVIDENT:" + key) >= 0
+        && util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, key) >= 0;
 }
 
 // is_counted_ret_method_call: `e` is a method call whose callee is in
