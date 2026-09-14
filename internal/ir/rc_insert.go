@@ -721,7 +721,7 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 				if !ok || id.Name != name {
 					continue
 				}
-				if b.borrowingCallArg(x, i) {
+				if b.readOnlyCallArg(x, i) {
 					excused[id] = true
 				}
 			}
@@ -784,33 +784,28 @@ func (b *builder) nestedMatchConfines(m *ast.Match, scrutType ast.Type) bool {
 	return true
 }
 
-// borrowingCallArg reports whether argument `i` of direct call `call` is a
-// pure BORROW — the callee neither keeps a reference to it past the call nor
-// hands it back — so an occurrence there cannot let a pointer outlive the
-// caller's next statement. `x.len()` is the shape that motivates it: the
-// checker rewrites it to `__method_Array_len(x)`, so the receiver sits in an
-// argument list and matched none of bindingConfinedToArm's read shapes.
+// readOnlyCallArg reports whether argument `i` of direct call `call` is one
+// the callee neither KEEPS nor HANDS BACK. `x.len()` is the shape that
+// motivates it: the checker rewrites it to `__method_Array_len(x)`, so the
+// receiver sits in an argument list and matched none of
+// bindingConfinedToArm's read shapes.
 //
-// The gate is the stage-(b) arg-temp reclaim's, asked per argument: that path
-// decs a fresh temp immediately after the same call, which is sound exactly
-// when the callee cannot have retained or returned it.
-//
-//   - a CONCRETE SCALAR result (resultCannotAliasArg), so the result can
-//     neither be nor contain the argument. An unresolved generic result is
-//     rejected there too, which is what an identity return hides behind;
 //   - not a retain sink (calleeRetainsAnyArg — `push` / `set` MOVE the
 //     argument into a container), and not `map_new`, whose builtin injects
 //     arguments of its own;
 //   - the callee does not take OWNERSHIP of the parameter (an explicit `own`
 //     or an owned-by-default position frees it at the callee's exit);
-//   - the parameter provably does not escape the callee: the borrow oracle
-//     says so, or it is the receiver of a pure-read builtin
-//     (pureReadReceiverBuiltin), whose contract is the same fact for a helper
-//     that has no Fern body to analyse.
+//   - the parameter provably does not escape the callee. The borrow oracle
+//     says so — and its verdict covers BOTH halves, since paramEscapesInFn
+//     counts a returned parameter as escaping, so a parameter it clears is
+//     one the callee neither stored nor returned. A pure-read builtin
+//     receiver (pureReadReceiverBuiltin) and a hand-audited copying
+//     argument (copyingBuiltinArg) state the same fact for a helper that
+//     has no Fern body to analyse.
 //
 // A callee reached through a local (a closure value) is refused: nothing names
 // which body it holds, so no oracle can be consulted.
-func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
+func (b *builder) readOnlyCallArg(call *ast.Call, i int) bool {
 	id, ok := call.Callee.(*ast.Ident)
 	if !ok {
 		return false
@@ -819,20 +814,6 @@ func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
 		return false
 	}
 	if _, isFunc := b.info.FuncSigs[id.Name]; !isFunc {
-		return false
-	}
-	// A hand-audited copying builtin states both of this gate's claims
-	// outright — the callee moves no count on the argument AND the call's
-	// result cannot alias it (copyingBuiltinArg's contract) — so it needs
-	// neither the resultCannotAliasArg proxy for the second nor an escape
-	// oracle for the first. `w.write(s)` and `w.write_some(s)` are the
-	// shapes that want it: both hand the bytes to write(2) and keep
-	// nothing, yet both answer with a boxed Option / Result, which
-	// resultCannotAliasArg refuses (#9244).
-	if copyingBuiltinArg(id.Name, i) {
-		return true
-	}
-	if !resultCannotAliasArg(b.exprType(call)) {
 		return false
 	}
 	if calleeRetainsAnyArg(id.Name) || id.Name == "map_new" {
@@ -845,11 +826,37 @@ func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
 		b.calleeParamOwnedByDefault(id.Name, sig.Params[i], i) {
 		return false
 	}
+	if copyingBuiltinArg(id.Name, i) {
+		return true
+	}
 	if pureReadReceiverBuiltin(id.Name) && i == 0 {
 		return true
 	}
 	esc, known := b.paramEscapes[id.Name]
 	return known && i < len(esc) && !esc[i]
+}
+
+// borrowingCallArg is readOnlyCallArg plus the one gate the stage-(b)
+// arg-temp reclaim needs on top: that path decs a FRESH temp immediately
+// after the call, so the result must not BE the temp. A CONCRETE SCALAR
+// result settles it (resultCannotAliasArg), and an unresolved generic
+// result is rejected there too, which is what an identity return hides
+// behind. A hand-audited copying argument states the same fact outright —
+// `w.write(s)` and `w.write_some(s)` hand the bytes to write(2) and keep
+// nothing, yet both answer with a boxed Option / Result that
+// resultCannotAliasArg refuses (#9244).
+//
+// A CONFINEMENT question does not need that gate: it asks whether the
+// pointer can outlive the arm, which the escape oracle answers by itself —
+// so bindingConfinedToArm asks readOnlyCallArg instead (#9245).
+func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
+	if !b.readOnlyCallArg(call, i) {
+		return false
+	}
+	if id, ok := call.Callee.(*ast.Ident); ok && copyingBuiltinArg(id.Name, i) {
+		return true
+	}
+	return resultCannotAliasArg(b.exprType(call))
 }
 
 // reclaimableTryScrutinee reports whether a `?`'s source Option/Result box is
