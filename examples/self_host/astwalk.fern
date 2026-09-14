@@ -10,9 +10,9 @@ import "./util";
 // The accumulator is CONSUMING: the fold hands its unit to the visitor at each
 // step and takes back the one the call returns, so exactly one unit is live at
 // every point and the fold releases nothing. The function type spells it —
-// `(ast.Expr, own T) => T` — which is what lets one body be correct whether T
-// binds a scalar or a reference; `docs/ERASED-GENERICS-RC.md` has the rule and
-// why no other answer is available at an erased word.
+// `(ast.Expr, own T) => T` — so a visitor and the fold agree on who releases
+// the step's old accumulator whether T binds a scalar or a reference;
+// `docs/SEMANTIC-GENERICS.md` has how each lowering compiles the body.
 //
 // fold_expr threads `acc` through every expression reachable from `e`, calling
 // `visit` on each node in pre-order before descending into its children. It is
