@@ -833,6 +833,28 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
+	// The same program written WITHOUT the annotations. The credit is resolved
+	// from the callee's declared return type (struct_ret_fns) the way the
+	// `dyn T` arm already does it, so the unannotated spelling reclaims like
+	// its annotated twin rather than leaking the box and its buffer (#9224).
+	{"struct-handback-bind-unannotated", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var b = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c = b.id_or_make(0);
+    if (c.mag.len() != 3) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
 	{"struct-handback-free-fn", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }

@@ -38526,13 +38526,30 @@ function body_declares_name(stmts: ast.Stmt[], name: string): boolean {
 // own: the local carries a type ANNOTATION and is declared exactly once, so
 // that annotation IS the receiver's type rather than a shadowed sibling's. A
 // param receiver resolves to neither and keeps today's leak.
-function local_recv_method_key(callee: ast.Expr, body: ast.Stmt[], structs: StructTab): string {
+// name_is_param: `name` is one of this function's parameters. local_decl_count
+// counts STATEMENT bindings only, so a parameter registers nowhere in the body
+// scans — a nested `var b = Big { … }` shadowing a `b: Small` parameter passes
+// the one-declaration guard, and the receiver resolvers below would answer with
+// the shadow's type while the call site outside that scope still means the
+// parameter. Refusing the name is the safe direction: no credit rather than one
+// keyed to the wrong struct, whose sweep would drop a box of another layout.
+function name_is_param(params: ast.ParamDecl[], name: string): boolean {
+    for pd in params { if (pd.name == name) { return true; } }
+    return false;
+}
+
+function local_recv_method_key(callee: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
     match (callee) {
         ast.ExprFieldAccess(mfa) => {
             match (mfa.obj) {
                 ast.ExprIdent(rid) => {
+                    if (name_is_param(params, rid.name)) { return ""; }
                     if (local_decl_count(body, rid.name) != 1) { return ""; }
                     var rt: string = util.base_type_name(body_local_decl_type(body, rid.name));
+                    // An UNANNOTATED receiver (`var b = Big { … }`) has no
+                    // declared type to read; its literal names one, under
+                    // fresh_struct_lit_type_deep's own single-type contract.
+                    if (rt.len() == 0) { rt = literal_struct_type_of(body, rid.name, structs); }
                     if (rt.len() == 0) { return ""; }
                     if (decl_field_type(structs, rt, mfa.field) != "") { return ""; }
                     return rt + "." + mfa.field;
@@ -38552,12 +38569,12 @@ function local_recv_method_key(callee: ast.Expr, body: ast.Stmt[], structs: Stru
 // container's own single reference to that box, so it owns it: this is the third
 // site of the pointer-half triple (#6491), and without it the read's retain / move
 // would strand the extracted string exactly as the container used to strand.
-function owned_container_read_str_binding(init: ast.Expr, body: ast.Stmt[], fresh_ret: string[], structs: StructTab): boolean {
+function owned_container_read_str_binding(init: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], fresh_ret: string[], structs: StructTab): boolean {
     var callee: string = "";
     var kind: string = "";
     match (init) {
         ast.ExprIndex(ix) => { kind = "STRARR:"; match (ix.array) { ast.ExprCall(c) => { match (c.callee) { ast.ExprIdent(cid) => { callee = cid.name; }, _ => {} } }, _ => {} } },
-        ast.ExprFieldAccess(fa) => { kind = "STRFLDF:"; match (fa.obj) { ast.ExprCall(c) => { match (c.callee) { ast.ExprIdent(cid) => { callee = cid.name; }, _ => { callee = local_recv_method_key(c.callee, body, structs); } } }, _ => {} } },
+        ast.ExprFieldAccess(fa) => { kind = "STRFLDF:"; match (fa.obj) { ast.ExprCall(c) => { match (c.callee) { ast.ExprIdent(cid) => { callee = cid.name; }, _ => { callee = local_recv_method_key(c.callee, body, params, structs); } } }, _ => {} } },
         _ => {}
     }
     if (callee.len() == 0) { return false; }
@@ -38569,20 +38586,20 @@ function owned_container_read_str_binding(init: ast.Expr, body: ast.Stmt[], fres
 // read>` destinations. The `string` ANNOTATION is required — an unannotated
 // binding leaves the slot's type to inference the analysis cannot see, and a
 // mis-credit here frees a box the read never handed over.
-function collect_owned_container_read_str_names(stmts: ast.Stmt[], body: ast.Stmt[], fresh_ret: string[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
+function collect_owned_container_read_str_names(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], fresh_ret: string[], reassigned: string[], structs: StructTab, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
                 if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0
-                        && owned_container_read_str_binding(v.init, body, fresh_ret, structs)) {
+                        && owned_container_read_str_binding(v.init, body, params, fresh_ret, structs)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_owned_container_read_str_names(f.then_body, body, fresh_ret, reassigned, structs, a); a = collect_owned_container_read_str_names(f.else_body, body, fresh_ret, reassigned, structs, a); },
-            ast.StmtWhile(w) => { a = collect_owned_container_read_str_names(w.body, body, fresh_ret, reassigned, structs, a); },
-            ast.StmtFor(fo) => { a = collect_owned_container_read_str_names(fo.body, body, fresh_ret, reassigned, structs, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_owned_container_read_str_names(m.arms[ai].body, body, fresh_ret, reassigned, structs, a); ai = ai + 1; } },
+            ast.StmtIf(f) => { a = collect_owned_container_read_str_names(f.then_body, body, params, fresh_ret, reassigned, structs, a); a = collect_owned_container_read_str_names(f.else_body, body, params, fresh_ret, reassigned, structs, a); },
+            ast.StmtWhile(w) => { a = collect_owned_container_read_str_names(w.body, body, params, fresh_ret, reassigned, structs, a); },
+            ast.StmtFor(fo) => { a = collect_owned_container_read_str_names(fo.body, body, params, fresh_ret, reassigned, structs, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_owned_container_read_str_names(m.arms[ai].body, body, params, fresh_ret, reassigned, structs, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -38658,7 +38675,25 @@ function collect_fresh_str_ret_call_names(stmts: ast.Stmt[], str_fresh_ret: stri
 // refuses a rebind that leaves a BORROW in the slot, recv_borrow_escapes_via_result
 // the handed-back receiver), and body_unsafe_for still rejects any r that is
 // returned / stored / passed to a non-borrowable param.
-function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
+// credit_unannotated_fresh_ret: the struct credit for `var c = mk(i)` /
+// `var c = b.m(i)` written without an annotation. The concrete type is the
+// callee's declared return type (struct_ret_fns), reached only once fresh_ret
+// proves every return of that callee is a fresh literal — so the result is
+// this frame's own rc 1 box, the standing an annotated binding has. The
+// leak-safe and deep-drop gates are the annotated arm's, unchanged.
+function credit_unannotated_fresh_ret(v: ast.StmtVar, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
+    var key: string = "";
+    if let ast.ExprCall(vc) = v.init {
+        if let ast.ExprIdent(cid) = vc.callee { key = cid.name; }
+        else { key = local_recv_method_key(vc.callee, body, params, structs); }
+    }
+    if (key.len() == 0 || util.index_of_str(fresh_ret, key) < 0) { return acc; }
+    var rty: string = sig_reg_value_of(struct_ret_fns, key);
+    if (rty.len() == 0 || !decl_is_struct(structs, rty) || !decl_is_leaksafe(structs, rty)) { return acc; }
+    return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
+}
+
+function collect_fresh_ret_call_names(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -38677,11 +38712,22 @@ function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: StructTab, fre
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
+                // The same binding written WITHOUT an annotation. The gates
+                // above need a concrete type and the declaration has none, so
+                // it comes from the callee's declared return type — the
+                // resolution the `dyn T` arm already makes for exactly this
+                // reason (collect_dyn_struct_in_stmt), where the annotation
+                // names only the trait. Reading the annotation alone left the
+                // unannotated spelling uncredited and so never swept, leaking
+                // its box and every rc field with it (#9224).
+                if (v.type_name.len() == 0) {
+                    a = credit_unannotated_fresh_ret(v, body, params, structs, fresh_ret, struct_ret_fns, a);
+                }
             },
-            ast.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, structs, fresh_ret, a); a = collect_fresh_ret_call_names(f.else_body, structs, fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, structs, fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, structs, fresh_ret, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, structs, fresh_ret, a); ai = ai + 1; } },
+            ast.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, body, params, structs, fresh_ret, struct_ret_fns, a); a = collect_fresh_ret_call_names(f.else_body, body, params, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, body, params, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, body, params, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, body, params, structs, fresh_ret, struct_ret_fns, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -39945,12 +39991,12 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
 // blanked (shadow — the payloads may differ). `body` is the WHOLE function
 // body, carried unchanged through the recursion so a method callee's receiver
 // type resolves against every declaration in scope.
-function collect_dyn_struct_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
+function collect_dyn_struct_names(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
-    for stmt in stmts { a = collect_dyn_struct_in_stmt(stmt, body, structs, fresh_ret, struct_ret_fns, a); }
+    for stmt in stmts { a = collect_dyn_struct_in_stmt(stmt, body, params, structs, fresh_ret, struct_ret_fns, a); }
     return a;
 }
-function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
+function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
             if (v.type_name.len() > 4 && slice_unchecked(v.type_name, 0, 4) == "dyn ") {
@@ -39998,7 +40044,7 @@ function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], structs: Str
                                 // the `dyn T` annotation cannot supply; a
                                 // once-declared annotated local resolves it, a
                                 // param receiver keeps today's leak.
-                                _ => { ckey = local_recv_method_key(dc.callee, body, structs); },
+                                _ => { ckey = local_recv_method_key(dc.callee, body, params, structs); },
                             }
                             if (ckey.len() > 0 && util.index_of_str(fresh_ret, ckey) >= 0) {
                                 var rty: string = sig_reg_value_of(struct_ret_fns, ckey);
@@ -40020,14 +40066,14 @@ function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], structs: Str
             return acc;
         },
         ast.StmtIf(iff) => {
-            var a: string[] = collect_dyn_struct_names(iff.then_body, body, structs, fresh_ret, struct_ret_fns, acc);
-            return collect_dyn_struct_names(iff.else_body, body, structs, fresh_ret, struct_ret_fns, a);
+            var a: string[] = collect_dyn_struct_names(iff.then_body, body, params, structs, fresh_ret, struct_ret_fns, acc);
+            return collect_dyn_struct_names(iff.else_body, body, params, structs, fresh_ret, struct_ret_fns, a);
         },
-        ast.StmtWhile(w) => { return collect_dyn_struct_names(w.body, body, structs, fresh_ret, struct_ret_fns, acc); },
-        ast.StmtFor(f) => { return collect_dyn_struct_names(f.body, body, structs, fresh_ret, struct_ret_fns, acc); },
+        ast.StmtWhile(w) => { return collect_dyn_struct_names(w.body, body, params, structs, fresh_ret, struct_ret_fns, acc); },
+        ast.StmtFor(f) => { return collect_dyn_struct_names(f.body, body, params, structs, fresh_ret, struct_ret_fns, acc); },
         ast.StmtMatch(m) => {
             var a: string[] = acc;
-            for arm in m.arms { a = collect_dyn_struct_names(arm.body, body, structs, fresh_ret, struct_ret_fns, a); }
+            for arm in m.arms { a = collect_dyn_struct_names(arm.body, body, params, structs, fresh_ret, struct_ret_fns, a); }
             return a;
         },
         _ => { return acc; },
@@ -41767,7 +41813,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // A cnt_struct_ret_fns callee's binding rides along: its box is counted
     // whichever return produced it, and sinkshare_counted_handbacks below
     // gates its field walk for the case where that box is the argument's.
-    fresh = collect_fresh_ret_call_names(body, structs, append_all(fresh_ret, cntret), fresh);
+    fresh = collect_fresh_ret_call_names(body, body, params, structs, append_all(fresh_ret, cntret), struct_ret_fns, fresh);
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
@@ -42011,7 +42057,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // mk()[i]` / `= mk().f`. The read releases the container and hands over its
     // single reference to the extracted box, so s owns it exactly as a
     // fresh-producer binding does — same two gates, same "STR:" class.
-    var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, structs, []);
+    var ocrs: string[] = collect_owned_container_read_str_names(body, body, params, fresh_ret, reassigned, structs, []);
     out = reclaimable_owned_container_read_str(body, borrowable, ocrs, recv_borrow, out);
     // `?`-bound string payloads (#4355): `var s: string = mk(pre)?` where mk is
     // an opt-fresh producer whose success payloads are all fresh (flag "f") —
@@ -42224,7 +42270,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // verdict alone, as "DYNCAND:<name>". The coercion site completes it: only
     // there is the op_dyn_box primitive known, and a non-string primitive cell
     // is fresh by construction, so the escape gates are the whole admission.
-    var dyns: string[] = collect_dyn_struct_names(body, body, structs, fresh_ret, struct_ret_fns, []);
+    var dyns: string[] = collect_dyn_struct_names(body, body, params, structs, fresh_ret, struct_ret_fns, []);
     out = reclaimable_dyn_struct(body, borrowable, dyns, reassigned, recv_borrow, out);
     // dyn-Trait ARRAY locals (#4351 slice 3): `var xs: dyn T[] = [<literals>]`
     // — every element is an rc-headered box (prim/string op_dyn_box cell or
@@ -80292,7 +80338,7 @@ function static_call_key(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[],
             var rn: string = ident_name_or_empty(fa.obj);
             var rt: string = declared_struct_type_of(body, rn, structs);
             if (rt.len() == 0) { rt = param_struct_type_of(params, rn, structs); }
-            if (rt.len() == 0) { rt = literal_struct_type_of(body, rn, structs); }
+            if (rt.len() == 0 && !name_is_param(params, rn)) { rt = literal_struct_type_of(body, rn, structs); }
             if (rt.len() == 0) { return ""; }
             return rt + "." + fa.field;
         }
