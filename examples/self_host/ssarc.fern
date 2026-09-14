@@ -1189,17 +1189,77 @@ function builder_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
     if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
     if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
+    if (ins.str == "buf_push_u64") { return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) }; }
     if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }
     if (ins.str == "buf_take") { return Lowered { found: true, r: emit(r, ir.op_buf_take()) }; }
     if (ins.str == "buf_free") { return Lowered { found: true, r: emit(r, ir.op_buf_free()) }; }
     return Lowered { found: false, r: r };
 }
 
-// A name neither half owns is a runtime helper with a symbol of its own, which
-// a direct call reaches.
+// The runtime intrinsics: each is the stack IR op the AST lowering emits for
+// the same call, so a contract here is only half the work — without the op the
+// name reaches the backends as a direct call to a symbol no runtime defines.
+function intrinsic_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    var kind: string = irlower.f64_math_builtin_kind(ins.str);
+    if (kind != "") { return Lowered { found: true, r: emit(r, ir.op_funary(kind)) }; }
+    if (ins.str == "__pow_f64") { return Lowered { found: true, r: emit(r, ir.op_fbin("fpow")) }; }
+    var bits: Lowered = bit_count_site(r, ins);
+    if (bits.found) { return bits; }
+    var mem: Lowered = raw_memory_site(r, ins);
+    if (mem.found) { return mem; }
+    return byte_scan_site(r, ins);
+}
+
+// One op per operand width, the width riding the op rather than the name.
+function bit_count_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "__clz32") { return Lowered { found: true, r: emit(r, ir.op_clz(32)) }; }
+    if (ins.str == "__ctz32") { return Lowered { found: true, r: emit(r, ir.op_ctz(32)) }; }
+    if (ins.str == "__popcount32") { return Lowered { found: true, r: emit(r, ir.op_popcount(32)) }; }
+    if (ins.str == "__clz64") { return Lowered { found: true, r: emit(r, ir.op_clz(64)) }; }
+    if (ins.str == "__ctz64") { return Lowered { found: true, r: emit(r, ir.op_ctz(64)) }; }
+    if (ins.str == "__popcount64") { return Lowered { found: true, r: emit(r, ir.op_popcount(64)) }; }
+    return Lowered { found: false, r: r };
+}
+
+// The raw-memory escape hatches. The byte load has no op of its own: it is the
+// two-operand raw load at a constant zero offset, which is also what keeps the
+// address at full pointer width.
+function raw_memory_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "__alloc") { return Lowered { found: true, r: emit(r, ir.op_alloc()) }; }
+    if (ins.str == "__alloc_u8") { return Lowered { found: true, r: emit(r, ir.op_alloc_u8()) }; }
+    if (ins.str == "__free") { return Lowered { found: true, r: emit(r, ir.op_free()) }; }
+    if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
+    if (ins.str == "__heap_bump_bytes") { return Lowered { found: true, r: emit(r, ir.op_heap_bump_bytes()) }; }
+    if (ins.str == "__heap_mark") { return Lowered { found: true, r: emit(r, ir.op_heap_mark()) }; }
+    if (ins.str == "__heap_release_to") { return Lowered { found: true, r: emit(r, ir.op_heap_release_to()) }; }
+    if (ins.str == "__memcpy") { return Lowered { found: true, r: emit(r, ir.op_memcpy()) }; }
+    if (ins.str == "__memset") { return Lowered { found: true, r: emit(r, ir.op_memset()) }; }
+    if (ins.str == "__load_u8") { return Lowered { found: true, r: emit(emit(r, ir.op_const_i32(0)), ir.op_raw_load8()) }; }
+    if (ins.str == "__load_i32") { return Lowered { found: true, r: emit(r, ir.op_load_i32()) }; }
+    if (ins.str == "__load_i64") { return Lowered { found: true, r: emit(r, ir.op_load_i64()) }; }
+    if (ins.str == "__load_ptr") { return Lowered { found: true, r: emit(r, ir.op_load_ptr()) }; }
+    if (ins.str == "__store_i32") { return Lowered { found: true, r: emit(r, ir.op_store_i32()) }; }
+    if (ins.str == "__store_i64") { return Lowered { found: true, r: emit(r, ir.op_store_i64()) }; }
+    if (ins.str == "__store_ptr") { return Lowered { found: true, r: emit(r, ir.op_store_ptr()) }; }
+    return Lowered { found: false, r: r };
+}
+
+// The byte scans over a lent string.
+function byte_scan_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "__sum_bytes") { return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) }; }
+    if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
+    if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
+    if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }
+    if (ins.str == "__mismatch") { return Lowered { found: true, r: emit(r, ir.op_mismatch()) }; }
+    return Lowered { found: false, r: r };
+}
+
+// A name no half owns is a runtime helper with a symbol of its own, which a
+// direct call reaches.
 function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     var done: Lowered = union_builtin_site(r, ins);
     if (!done.found) { done = value_builtin_site(r, ins); }
+    if (!done.found) { done = intrinsic_site(r, ins); }
     if (done.found) { return done.r; }
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }

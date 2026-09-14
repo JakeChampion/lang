@@ -2399,7 +2399,109 @@ function builtin_contracts(): ssasem.Contract[] {
     for c in value_contracts() { out = out.append(c); }
     for c in string_contracts() { out = out.append(c); }
     for c in builder_contracts() { out = out.append(c); }
+    for c in intrinsic_contracts() { out = out.append(c); }
     return out;
+}
+
+// The runtime intrinsics, typed as native's FuncSigs types them. Every one is
+// a stack IR op rather than a call — ssarc.intrinsic_site emits it, and an
+// intrinsic with no op there would reach the backends as a direct call to a
+// symbol no runtime defines. Every argument is a scalar the op reads, except
+// the byte scans, which are LENT the string whose bytes they walk and keep
+// nothing of it. `__alloc_u8` is the one result the caller owns: a fresh
+// zeroed buffer, counted like any other array.
+//
+// `__alloc_reuse` and the `__c_callN` trampolines are absent because the
+// self-host IR does not lower them at all — that is a lowering gap behind the
+// name, not a contract gap here.
+function intrinsic_contracts(): ssasem.Contract[] {
+    var out: ssasem.Contract[] = float_primitive_contracts();
+    for c in bit_count_contracts() { out = out.append(c); }
+    for c in memory_contracts() { out = out.append(c); }
+    for c in byte_scan_contracts() { out = out.append(c); }
+    return out;
+}
+
+// The ten f64 primitives `std/float` dispatches to, and the one two-operand
+// member.
+function float_primitive_contracts(): ssasem.Contract[] {
+    var names: string[] = ["__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64",
+        "__abs_f64", "__log_f64", "__exp_f64", "__sin_f64", "__cos_f64"];
+    var value: i32[] = [ssaunits.value_mode()];
+    var out: ssasem.Contract[] = [];
+    for n in names {
+        out = out.append(ssasem.Contract { name: n, params: [t_f64()], modes: value, result: t_f64() });
+    }
+    return out.append(ssasem.Contract { name: "__pow_f64", params: [t_f64(), t_f64()],
+        modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_f64() });
+}
+
+// One name per operand width, each answering an i32 count.
+function bit_count_contracts(): ssasem.Contract[] {
+    var narrow: string[] = ["__clz32", "__ctz32", "__popcount32"];
+    var wide: string[] = ["__clz64", "__ctz64", "__popcount64"];
+    var value: i32[] = [ssaunits.value_mode()];
+    var out: ssasem.Contract[] = [];
+    for n in narrow {
+        out = out.append(ssasem.Contract { name: n, params: [t_u32()], modes: value, result: t_i32() });
+    }
+    for n in wide {
+        out = out.append(ssasem.Contract { name: n, params: [t_u64()], modes: value, result: t_i32() });
+    }
+    return out;
+}
+
+// The raw-memory escape hatches. An address is a `usize`, a value with no unit
+// — a block `__alloc` hands back is never freed by this boundary, as a
+// builder handle is not, and `__free` gives one back explicitly. `__alloc_u8`'s
+// buffer is the exception: it is an ordinary counted array, so the caller owns
+// it and drops it.
+function memory_contracts(): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    var out: ssasem.Contract[] = [
+        ssasem.Contract { name: "__alloc", params: [t_i32()], modes: [v], result: t_usize() },
+        ssasem.Contract { name: "__alloc_u8", params: [t_i32()], modes: [v], result: typeinfo.TypeArray { elem: t_u8() } },
+        ssasem.Contract { name: "__free", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__ptr_width", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__heap_bump_bytes", params: [], modes: [], result: t_i64() },
+        ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: t_i64() },
+        ssasem.Contract { name: "__heap_release_to", params: [t_i64()], modes: [v], result: t_void() },
+        ssasem.Contract { name: "__memcpy", params: [t_usize(), t_usize(), t_i32()], modes: [v, v, v], result: t_void() },
+        ssasem.Contract { name: "__memset", params: [t_usize(), t_i32(), t_i32()], modes: [v, v, v], result: t_void() }
+    ];
+    for c in load_store_contracts() { out = out.append(c); }
+    return out;
+}
+
+// One peek and one poke per width. A load answers the width its name carries;
+// a store takes the address and the value and gives nothing back.
+function load_store_contracts(): ssasem.Contract[] {
+    var v: i32 = ssaunits.value_mode();
+    return [
+        ssasem.Contract { name: "__load_u8", params: [t_usize()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
+        ssasem.Contract { name: "__load_ptr", params: [t_usize()], modes: [v], result: t_usize() },
+        ssasem.Contract { name: "__store_i32", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__store_i64", params: [t_usize(), t_i64()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__store_ptr", params: [t_usize(), t_usize()], modes: [v, v], result: t_void() }
+    ];
+}
+
+// The byte scans: each is LENT the string it walks and answers an index or a
+// count, so nothing of the source escapes into the result.
+function byte_scan_contracts(): ssasem.Contract[] {
+    var lent: i32 = ssaunits.borrow_mode();
+    var value: i32 = ssaunits.value_mode();
+    return [
+        ssasem.Contract { name: "__sum_bytes", params: [t_string()], modes: [lent], result: t_i32() },
+        ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
+        ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
+        ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
+        ssasem.Contract { name: "__rmemchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },
+        ssasem.Contract { name: "__mismatch", params: [t_string(), t_i32(), t_string(), t_i32(), t_i32()],
+            modes: [lent, value, lent, value, value], result: t_i32() }
+    ];
 }
 
 // The string builder: a handle is the ADDRESS of its control block, a
@@ -2415,6 +2517,7 @@ function builder_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "buf_push", params: [t_usize(), t_string()], modes: push, result: t_void() },
         ssasem.Contract { name: "buf_push_range", params: [t_usize(), t_string(), t_i32(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
         ssasem.Contract { name: "buf_push_byte", params: [t_usize(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+        ssasem.Contract { name: "buf_push_u64", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
         ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
         ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
         ssasem.Contract { name: "buf_free", params: [t_usize()], modes: handle, result: t_void() }

@@ -430,6 +430,28 @@ Unsupported constructs refuse the whole function with a reason.
   `call_indirect` this boundary emits describes each slot as one, and a
   funcref type is structural on wasm.
 
+- The runtime INTRINSICS, typed as native's `FuncSigs` types them: the ten f64
+  primitives `std/float` dispatches to and `__pow_f64`, the six bit counts, the
+  raw-memory escape hatches (`__alloc`, `__alloc_u8`, `__free`, the loads and
+  stores, `__memcpy` / `__memset`, `__ptr_width`, the heap marks), and the byte
+  scans over a LENT string (`__sum_bytes`, `__ascii_run`, `__count_byte`,
+  `__memchr`, `__rmemchr`, `__mismatch`).
+
+  Each is a stack IR OP rather than a call, and a contract alone does not say
+  so: without `ssarc.intrinsic_site` emitting the op, the name reaches the
+  backends as a direct call to a symbol no runtime defines, which is a link
+  error rather than a diagnostic. Contract and op go together.
+
+  `__alloc_u8` is the one whose result the caller owns — a fresh zeroed buffer,
+  counted like any other array. Every other answer is a scalar, and every
+  argument is a scalar the op reads except the scans' string, which is lent.
+
+  `__alloc_reuse` and the `__c_callN` trampolines are absent: the self-hosted
+  IR does not lower them on any backend, so a contract would only move the
+  failure from the bail site to the linker. That is a lowering gap behind the
+  name, which is the half `TestSelfHostKnowsEveryNativeBuiltin` describes as
+  self-reporting.
+
 - `Map[string, V]` at a NARROW SCALAR `V` — the runtime hash map, at the one
   shape whose release this boundary can state. `__fern_map_free_ks` releases
   every key in the string column and frees the scalar value column and the box;
