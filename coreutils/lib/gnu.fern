@@ -612,16 +612,18 @@ pub function quote(s: string): string {
 // (`head: cannot open 'plain' for reading`) rather than only when
 // the name needs them (`wc: plain: No such file or directory`).
 pub function quotea(s: string): string {
-  return shell_quote(s, false, true);
+  return shell_quote(s, false, true, false);
 }
 
 // `quotef(name)` — the file name as a shell would need it typed: bare
 // when nothing in it is special, else single-quoted with a quote
 // inside written `'\''` and every control or non-ASCII byte spliced
 // in as an ANSI-C `$'...'` run. A name whose only trouble is the
-// apostrophe goes in double quotes. Empty is `''`.
+// apostrophe goes in double quotes. Empty is `''`. A colon counts as
+// special here and nowhere else: the diagnostic this quotes for puts
+// one after the name (gnulib's quotearg_n_style_colon).
 pub function quotef(s: string): string {
-  return shell_quote(s, true, true);
+  return shell_quote(s, true, true, true);
 }
 
 // gnulib's quoting styles, in its order, so a position in this list is
@@ -671,7 +673,7 @@ pub function quote_style(s: string, style: i32): string {
     return s;
   }
   if (style < 5) {
-    return shell_quote(s, style == 1 || style == 3, style >= 3);
+    return shell_quote(s, style == 1 || style == 3, style >= 3, false);
   }
   if (style == 5 || style == 9) {
     return c_quote(s, 34, false);
@@ -782,9 +784,10 @@ function shell_special(b: i32, leading: boolean): boolean {
 }
 
 // Whether `s` needs quoting in a `shell` style: empty, a lone brace,
-// a special byte, or a control byte — every one when the style
-// escapes them, only a newline, return or tab when it does not.
-function shell_needs_quotes(s: string, escapes: boolean): boolean {
+// a special byte (a colon too when `colon`), or a control byte —
+// every one when the style escapes them, only a newline, return or
+// tab when it does not.
+function shell_needs_quotes(s: string, escapes: boolean, colon: boolean): boolean {
   if (s.len() == 0) {
     return true;
   }
@@ -798,7 +801,7 @@ function shell_needs_quotes(s: string, escapes: boolean): boolean {
       if (escapes || b == 10 || b == 13 || b == 9) {
         return true;
       }
-    } else if (shell_special(b, i == 0)) {
+    } else if (shell_special(b, i == 0) || colon && b == 58) {
       return true;
     }
     i = i + 1;
@@ -819,13 +822,14 @@ function double_quote_unsafe(b: i32, leading: boolean): boolean {
   return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
 }
 
-// `shell_quote(s, elide, escapes)` — the four `shell` styles: bare when
-// `elide` and nothing needs quoting, double-quoted when the apostrophe
-// is the only trouble, else single-quoted with `'\''` for a quote and,
-// when `escapes`, every control or non-ASCII byte spliced in as an
-// ANSI-C `$'...'` run.
-function shell_quote(s: string, elide: boolean, escapes: boolean): string {
-  if (elide && !shell_needs_quotes(s, escapes)) {
+// `shell_quote(s, elide, escapes, colon)` — the four `shell` styles:
+// bare when `elide` and nothing needs quoting (a colon counts when
+// `colon`), double-quoted when the apostrophe is the only trouble,
+// else single-quoted with `'\''` for a quote and, when `escapes`,
+// every control or non-ASCII byte spliced in as an ANSI-C `$'...'`
+// run.
+function shell_quote(s: string, elide: boolean, escapes: boolean, colon: boolean): string {
+  if (elide && !shell_needs_quotes(s, escapes, colon)) {
     return s;
   }
   var double_ok: boolean = true;
