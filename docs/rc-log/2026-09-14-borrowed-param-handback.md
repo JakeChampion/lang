@@ -111,3 +111,19 @@ neither the credit nor #9244's cancellation (whose leg declines: the alias
 goes to a user callee, and `paramEscapesInFn` counts `return s` as an
 escape). One reference per call, and nothing in the tree is written that
 way.
+
+## Native-only, and a debt entry (#4451)
+
+`paramNoUncountedAlias` and the `creditBareReturn` relaxation live entirely
+in `internal/ir`. Nothing in `examples/self_host` mirrors them: the
+self-host's `counted_handback_*` machinery in `irlower.fern` gates the
+SINKSHARE / deep-drop side, which is a different axis. So a program
+compiled by the SELF-HOST still keeps the `out = f(out)` handback leak
+until the goal-2 rc port reaches this.
+
+The divergence is leak-direction and never a dangle, which is why nothing
+red points at it — and `self_host_rcplan_diff_test.go` cannot see it
+either, since it compares plans over its own anchored fixtures rather than
+over a program with this shape. `docs/NATIVE-CONVERGENCE.md` says a new
+native-only feature is a debt entry rather than a free win; this is that
+entry.
