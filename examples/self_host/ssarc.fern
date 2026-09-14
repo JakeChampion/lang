@@ -1247,6 +1247,7 @@ function raw_memory_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 // The byte scans over a lent string.
 function byte_scan_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__sum_bytes") { return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) }; }
+    if (ins.str == "__crc32_cksum") { return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) }; }
     if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
     if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
     if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }

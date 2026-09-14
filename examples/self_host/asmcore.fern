@@ -4340,6 +4340,15 @@ function builtin_i32_names(): string[] {
         // a single operand — it has no byte to compare and no cursor,
         // so an empty string is its one degenerate case and sums to 0.
         "__sum_bytes",
+        // __crc32_cksum(crc, s): the incoming CRC-32 with s's bytes
+        // folded in — poly 0x04C11DB7, MSB first, unreflected, no
+        // final complement (#9128). i32 like its five siblings, and
+        // the only one whose STRING is the second operand: the
+        // carried CRC comes first, which is what lets a caller hash
+        // a stream in chunks. An empty string returns the incoming
+        // crc unchanged, and that identity is what makes chunking
+        // associative.
+        "__crc32_cksum",
         // __mismatch(a, ao, b, bo, n): the offset of the first byte where
         // a[ao..ao+n) and b[bo..bo+n) differ, or the CLAMPED n when the
         // two ranges are equal (#8791, fifth kernel). i32 like its four

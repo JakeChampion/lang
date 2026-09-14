@@ -2599,13 +2599,15 @@ function load_store_contracts(): ssasem.Contract[] {
     ];
 }
 
-// The byte scans: each is LENT the string it walks and answers an index or a
-// count, so nothing of the source escapes into the result.
+// The byte scans: each is LENT the string it walks and answers an index, a
+// count or a checksum, so nothing of the source escapes into the result.
+// __crc32_cksum is the one whose string is at position 1 rather than 0.
 function byte_scan_contracts(): ssasem.Contract[] {
     var lent: i32 = ssaunits.borrow_mode();
     var value: i32 = ssaunits.value_mode();
     return [
         ssasem.Contract { name: "__sum_bytes", params: [t_string()], modes: [lent], result: t_i32() },
+        ssasem.Contract { name: "__crc32_cksum", params: [t_i32(), t_string()], modes: [value, lent], result: t_i32() },
         ssasem.Contract { name: "__ascii_run", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
         ssasem.Contract { name: "__count_byte", params: [t_string(), t_i32()], modes: [lent, value], result: t_i32() },
         ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [lent, value, value], result: t_i32() },

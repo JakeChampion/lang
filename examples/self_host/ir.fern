@@ -536,6 +536,21 @@ pub function op_count_byte(): Op { return op0("count_byte"); }
 // nothing to clamp and no range guard: an empty string sums to 0.
 pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
 
+// crc32_cksum (#9128): pops [crc, str] → the i32 CRC-32 that cksum(1) prints,
+// with the string's bytes folded into the incoming `crc`. Poly 0x04C11DB7,
+// most significant bit first, unreflected, and NO final complement — the
+// length fold and the complement belong to std/hash's finish, not to a chunk.
+// Allocates nothing and reads only the source bytes.
+//
+// The only member of this family whose string is NOT operand 0: the carried
+// CRC comes first, so a body copied from count_byte reads the length off the
+// wrong operand. That ordering is also what makes it the family's first
+// CARRIED reduction — sum_bytes starts from zero every call, this one resumes,
+// which is the whole reason it can hash a stream in chunks. An empty string
+// returns the incoming crc unchanged, and that identity is what makes the
+// chunking associative.
+pub function op_crc32_cksum(): Op { return op0("crc32_cksum"); }
+
 // ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
 // → the i32 index of the first byte at or after `from` whose high bit is set,
 // or the string's length if the rest is ASCII. Allocates nothing and reads only
@@ -2182,6 +2197,7 @@ function kind_id_len10_t(name: string): i32 {
 function kind_id_len11(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'c' && name == "call_direct") { return 149; }
+    if (c == b'c' && name == "crc32_cksum") { return 309; }
     if (c == b'c' && name == "create_link") { return 262; }
     if (c == b'm' && name == "mapiter_key") { return 135; }
     if (c == b'n' && name == "now_unix_ms") { return 184; }
@@ -2570,6 +2586,7 @@ function kind_name_4(id: i32): string {
     if (id == 234) { return "rmemchr"; }
     if (id == 235) { return "count_byte"; }
     if (id == 253) { return "sum_bytes"; }
+    if (id == 309) { return "crc32_cksum"; }
     if (id == 228) { return "syscall5"; }
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
@@ -2770,6 +2787,7 @@ function pops2_mem(t: i32): boolean {
         || t == 105 || t == 108                                          // str_split, str_repeat
         || t == 114 || t == 115 || t == 116 || t == 227                  // str_starts_with/ends_with/index_of, ascii_run
         || t == 235                                                      // count_byte
+        || t == 309                                                      // crc32_cksum
         || t == 127 || t == 128 || t == 130                              // map_get, map_has, map_delete
         || t == 140 || t == 144;                                         // struct_set, tuple_set
 }
@@ -4526,7 +4544,8 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
-        || tag == 234 || tag == 235 || tag == 245 || tag == 253;
+        || tag == 234 || tag == 235 || tag == 245 || tag == 253
+        || tag == 309;
 }
 
 // --- Structured-scope navigation over an op stream ---

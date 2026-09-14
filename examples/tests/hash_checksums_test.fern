@@ -52,6 +52,32 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
     return test.assert_eq(c.finish(), hash.cksum_of(string_from_bytes_unchecked(msg)));
 }
 
+// update(string) and update_bytes are two different implementations of the
+// same fold — the string side calls the __crc32_cksum kernel (#9128), the
+// bytes side walks the slicing-by-8 table — so running the same 10,003 bytes
+// through both is a differential, not a restatement. The cuts are irregular
+// and none divides 16 or 64, so they straddle every block boundary of the
+// native folds; the seven-byte test above cannot reach them, because seven
+// bytes never fill a block at all.
+function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
+    var msg: string = string_from_bytes_unchecked(__pseudo());
+    var cuts: i32[] = [1, 15, 16, 17, 31, 47, 63, 64, 65, 113, 191, 1009];
+    var c: hash.Cksum = hash.cksum_new();
+    var at: i32 = 0;
+    var k: i32 = 0;
+    while (at < 10003) {
+        var take: i32 = cuts[k % cuts.len()];
+        if (at + take > 10003) { take = 10003 - at; }
+        c = c.update(slice_unchecked(msg, at, at + take));
+        at = at + take;
+        k = k + 1;
+    }
+    if (c.len() != (10003 as u64)) { return test.fail("len"); }
+    var viabytes: hash.Cksum = hash.cksum_new().update_bytes(__pseudo());
+    if (c.finish() != viabytes.finish()) { return test.fail("chunked string vs table"); }
+    return test.assert_eq(c.finish(), hash.cksum_of(msg));
+}
+
 function test_bsd_sum(): test.TestOutcome {
     if (hash.bsd_sum_of("") != 0) { return test.fail("empty"); }
     if (hash.bsd_sum_of("abc") != 16556) { return test.fail("abc"); }
@@ -124,6 +150,7 @@ function main(): i32 {
     r = r.it("cksum vectors", test_cksum_vectors);
     r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
     r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);
+    r = r.it("cksum string chunks match the table", test_cksum_string_chunks_match_the_table);
     r = r.it("bsd sum", test_bsd_sum);
     r = r.it("sysv sum", test_sysv_sum);
     r = r.it("sysv sum string updates", test_sysv_sum_string_updates);

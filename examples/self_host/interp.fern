@@ -2788,6 +2788,43 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             _ => { return v_err("__rmemchr: first arg must be a string"); }
         }
     }
+    // `__crc32_cksum(crc, s)` — the CRC-32 cksum(1) prints, with s's bytes
+    // folded into the incoming crc: poly 0x04C11DB7, most significant bit
+    // first, unreflected, no final complement. The length fold and the
+    // complement are std/hash's finish, not a chunk's.
+    //
+    // Its own arm rather than a ride on __memchr's: the string is args[1]
+    // here, so it cannot share that destructure whatever else it shares.
+    //
+    // Bit-at-a-time, which is the DEFINITION rather than a restatement of a
+    // backend: the two native emitters fold with a carry-less multiply and
+    // the differential is only worth running if this side is the spec. An
+    // empty string returns the incoming crc unchanged.
+    if (name == "__crc32_cksum") {
+        if (args.len() != 2) { return v_err("__crc32_cksum: expected 2 args (crc, s)"); }
+        if (!is_i32_arg(args[0])) { return v_err("__crc32_cksum: crc must be an integer"); }
+        match (args[1]) {
+            VString(s) => {
+                var crc: i32 = vint_bits(args[0]);
+                var ci: i32 = 0;
+                while (ci < s.v.len()) {
+                    crc = crc ^ ((s.v[ci] as i32) << 24);
+                    var bk: i32 = 0;
+                    while (bk < 8) {
+                        // `crc < 0` IS the top bit, and says so without
+                        // depending on whether `>>` propagates the sign or
+                        // on an i32 literal with bit 31 set.
+                        if (crc < 0) { crc = (crc << 1) ^ 0x04c11db7; }
+                        else { crc = crc << 1; }
+                        bk = bk + 1;
+                    }
+                    ci = ci + 1;
+                }
+                return v_int(crc);
+            },
+            _ => { return v_err("__crc32_cksum: second arg must be a string"); }
+        }
+    }
     // `__mismatch(a, ao, b, bo, n)` — the offset of the first byte where
     // a[ao..ao+n) and b[bo..bo+n) differ, or n when the two ranges are equal
     // (#8791). The reference meaning for the kernel the compiled backends
