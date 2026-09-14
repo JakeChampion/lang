@@ -169,15 +169,17 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED — `return p` where p is a PARAMETER. The caller owns that
-			// box; this is the `return self` shape the registry exists to refuse.
-			// Still leaks 8000, unchanged.
+			// REFUSED by this registry — `return p` where p is a PARAMETER is the
+			// `return self` shape it exists to refuse. The row balances all the
+			// same since #9203: the handback is counted, so `v` earns the struct
+			// credit from cnt_struct_ret_fns and `src` keeps its own, each walking
+			// its fields only on finding rc 1. It leaked 8000 before that.
 			name: "refused_param_returned",
 			src: `struct P { xs: i32[] }
 function mk(p: P): P { return p; }
 function round(i: i32): i32 { var src: P = P { xs: [i, i + 1] }; var v: P = mk(src); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 200, frees: 0,
+			want: 34, allocs: 200, frees: 200,
 		},
 		{
 			// REFUSED — a second binding aliases the local before it is

@@ -809,6 +809,85 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+	// A borrowed STRUCT param or receiver handed back bare is COUNTED (#9203):
+	// the callee retains it exactly as it does an array, the binding owns the
+	// count it holds, and the caller gives the extra count back where the result
+	// turns out to be the argument's own box — at a dying source's last-use
+	// release, at a self-rebind, at a read-through. Each row read allocs / 0 on
+	// the parent commit (the credits were refused for the uncounted handback).
+	{"struct-handback-bind", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.id_or_make(0);
+    if (c.mag.len() != 3) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
+	{"struct-handback-free-fn", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var held: Big = keepit(b);
+    if (held.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
+	{"struct-handback-last-use", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = keepit(b);
+    if (c.mag.len() != 3) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
+	{"struct-handback-rebind-loop", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var x: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var j: i32 = 0;
+    while (j < 3) { x = x.id_or_make(j % 2); j = j + 1; }
+    if (x.mag.len() != 3) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
 	{"string-elems-excluded", `function main(): i32 {
     var a: string[] = ["x" + "1", "y" + "2"];
     var b: string[] = a;
