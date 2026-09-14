@@ -1016,15 +1016,15 @@ function tokenize_impl(src: string, keep: boolean): LexResult {
                 l = l.advance();
                 i = i + 1;
             }
-            // `::` is the path separator — pure surface syntax, equivalent to
-            // `.` (`Type::f` / `mod::g` / `Type::CONST`). The self-host AST
-            // carries no record of the separator, so normalise it to a `.`
-            // token here and every `.`-handling parser site (postfix access,
-            // qualified names, qualified patterns) treats it identically.
-            // Mirrors the native parser's `::` → FieldAccess. See #2700.
-            var ptext: string = mp;
-            if (mp == "::") { ptext = "."; }
-            out = out.append(TokPunct { text: ptext, line: start_line, col: start_col });
+            // `::` is kept as its own token. In EXPRESSION position it is a
+            // path separator equivalent to `.` (`Type::f` / `mod::g` /
+            // `Type::CONST`), and every `.`-handling parser site accepts both
+            // via `at_path_sep`. In TYPE position the two are NOT
+            // interchangeable: `mod.Type` is a module-qualified name and
+            // `Base::Name` an associated-type projection (`Self::Item`), so
+            // normalising `::` away here left the type parser unable to tell
+            // them apart. See docs/ASSOCIATED-TYPES.md, #2700.
+            out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
             after_dot = false;
             continue;
         }

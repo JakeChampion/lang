@@ -2388,8 +2388,16 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     out = out + " ";
     if (id.trait_ref.len() > 0) { out = out + id.trait_ref + " for "; }
     out = out + id.type_ref;
-    if (id.methods.len() == 0) { return (out + " {}\n", f); }
+    // Same for an impl whose only members are associated-type bindings.
+    if (id.methods.len() == 0 && id.assoc_names.len() == 0) { return (out + " {}\n", f); }
     out = out + " {\n";
+    var abi: i32 = 0;
+    while (abi < id.assoc_names.len()) {
+        var abv: string = "";
+        if (abi < id.assoc_values.len()) { abv = id.assoc_values[abi]; }
+        out = out + indent_str(1) + "type " + id.assoc_names[abi] + " = " + abv + ";\n";
+        abi = abi + 1;
+    }
     var g: Fmt = f;
     var mi: i32 = 0;
     while (mi < id.methods.len()) {
@@ -2459,8 +2467,15 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
             spi = spi + 1;
         }
     }
-    if (td.methods.len() == 0) { return (out + " {}\n", f); }
+    // An associated-type-only trait is NOT empty: printing `{}` here would
+    // delete every `type Item;` the source wrote. See docs/ASSOCIATED-TYPES.md.
+    if (td.methods.len() == 0 && td.assoc_types.len() == 0) { return (out + " {}\n", f); }
     out = out + " {\n";
+    var ati: i32 = 0;
+    while (ati < td.assoc_types.len()) {
+        out = out + indent_str(1) + "type " + td.assoc_types[ati] + ";\n";
+        ati = ati + 1;
+    }
     var g: Fmt = f;
     var mi: i32 = 0;
     while (mi < td.methods.len()) {
