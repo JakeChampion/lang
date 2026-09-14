@@ -8174,6 +8174,27 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
 // sound only when the push was of x0. A push of some other register folds
 // too, and then owes the `mov x0, SRC` P1 would have made of the pair.
 //
+// P7 — the same round trip with the pop going somewhere OTHER than x0 and no
+// copy out. The push protects a register across a run that frees it, and the
+// pop then wants it in xD, so the value can go straight there ahead of the run:
+//
+//     str x0, [sp, #-16]! / <run, frees x0> / ldr xD, [sp], #16
+//       ->  mov xD, x0 / <run>
+//
+// The `mov` has to precede the run — the run is there to overwrite x0 — so no
+// line of it may name xD in either width, or it would read the moved value
+// instead of what it held before. This is native arm64's P4 (#9146); it is
+// complementary to P5 rather than a special case of it, since P5's pop is into
+// x0 and needs the trailing copy, and each leaves the other's sites alone.
+//
+// P7 is the only rule that steps over lines no other rule can use, so those
+// enter the window as PK_MID: a whitelist of mnemonics that write just the
+// register they name and read just their operands, naming no sp. A call, a
+// branch, a store or anything with a memory effect fails the whitelist and
+// still closes the window. So does a whitelisted line with no push behind it
+// to fold back to, which is most of them — recognising those costs more per
+// line than the rule saves.
+//
 // P6 has no arm64 form: a helper call pops its arguments straight into the
 // argument registers, so there is no copy out of the accumulator to fold.
 //
@@ -8192,12 +8213,14 @@ const PK_DROP: i32 = 3;    // add sp, sp, #16
 const PK_MAT: i32 = 4;     // a chain line: writes x0 (or only x16), reads at most x0 / x29 / x16
 const PK_COPY: i32 = 5;    // mov x1, x0
 const PK_ALU: i32 = 6;     // add|sub x0, x0, x1 | cmp x0, x1
+const PK_MID: i32 = 7;     // no rule's own line, but one P7 may step over
 
 const PF_MARKER: i32 = 1;  // the register is x8 / x16, darwinize's marker
 const PF_X0: i32 = 2;      // the register is exactly x0
 const PF_READS0: i32 = 4;  // PK_MAT: the line reads x0 (or w0)
 const PF_DEST0: i32 = 8;   // PK_MAT: the line writes x0 (or w0)
 const PF_CONST: i32 = 16;  // PK_MAT: `mov x0, #K` or `ldr x0, =K`, with `val` holding K
+const PF_MIDOK: i32 = 32;  // P7 may step the pair over this line
 
 struct PLine {
     s: string,   // the text the line lives in: `asm` itself, or a rewritten line
@@ -8279,6 +8302,55 @@ function pp_is_alnum(c: i32): boolean {
     return pp_is_digit(c) || (c >= 97 && c <= 122) || c == 95;
 }
 
+// pp_mentions_sp reports whether s[lo:hi] names sp as a whole token, so a
+// symbol with "sp" inside it is not read as the stack pointer.
+function pp_mentions_sp(s: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    while (i + 1 < hi) {
+        if (s[i] == 115 && s[i + 1] == 112 && (i == lo || !pp_is_alnum(s[i - 1] as i32))
+            && (i + 2 >= hi || !pp_is_alnum(s[i + 2] as i32))) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// pp_mentions_regnum reports whether s[lo:hi] names the register whose NUMBER
+// is the digits r[rlo:rhi], in EITHER width — "x3" or "w3" — as a whole token.
+// P7 checks both: a write of w3 is a write of x3's low half.
+function pp_mentions_regnum(s: string, lo: i32, hi: i32, r: string, rlo: i32, rhi: i32): boolean {
+    var i: i32 = lo;
+    while (i < hi) {
+        var c: i32 = s[i] as i32;
+        if ((c == 120 || c == 119) && (i == lo || !pp_is_alnum(s[i - 1] as i32))) {
+            var e: i32 = i + 1;
+            while (e < hi && pp_is_digit(s[e] as i32)) { e = e + 1; }
+            if (e > i + 1 && (e >= hi || !pp_is_alnum(s[e] as i32))
+                && pp_same_bytes(s, i + 1, e, r, rlo, rhi)) { return true; }
+            i = e;
+        } else {
+            i = i + 1;
+        }
+    }
+    return false;
+}
+
+function pp_same_bytes(a: string, alo: i32, ahi: i32, b: string, blo: i32, bhi: i32): boolean {
+    if (ahi - alo != bhi - blo) { return false; }
+    var i: i32 = 0;
+    while (alo + i < ahi) {
+        if (a[alo + i] != b[blo + i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// pp_is_xreg reports whether s[lo:hi] is a plain 64-bit register name — "x"
+// and one or two digits — so sp, xzr and the w-width names are excluded.
+function pp_is_xreg(s: string, lo: i32, hi: i32): boolean {
+    if (hi - lo < 2 || hi - lo > 3 || s[lo] != 120) { return false; }
+    return pp_digits_ok(s, lo + 1, hi, 2, false);
+}
+
 // pp_imm_ok reports whether the literal s[lo:hi] is one util.lit_to_i64 reads
 // exactly: an optional `-` and up to eighteen decimal digits, or `0x` and up
 // to sixteen hex digits.
@@ -8347,14 +8419,21 @@ function pl_stack(p: PLine, o1: i32, cm: i32): PLine {
 // frame slot's address, and every other register named must be x0, x29 or
 // x16 — the chain's own temporaries and the frame pointer — so that renaming
 // x0 to x1 changes nothing else.
-function pl_mat(p: PLine, o1: i32, cm: i32): PLine {
+function pl_mat(p: PLine, o1: i32, cm: i32, mids: boolean): PLine {
     var f: i32 = 0;
     if (pp_reg0_at(p.s, o1, cm) && cm - o1 == 2) { f = PF_DEST0; }
-    else if (!pp_is(p.s, o1, cm, "x16") || !pl_mnem_is(p, "sub")) { return p; }
+    else if (!pp_is(p.s, o1, cm, "x16") || !pl_mnem_is(p, "sub")) {
+        if (!mids) { return p; }
+        return pl_mid(p, o1, cm);
+    }
     if (cm >= p.hi) { return p; }
     var rest: i32 = cm + 2;
     if (pp_mentions_reg0(p.s, rest, p.hi)) { f = f | PF_READS0; }
-    if (!pl_mat_operands_ok(p, rest)) { return p; }
+    if (!pl_mat_operands_ok(p, rest)) {
+        if (!mids) { return p; }
+        return pl_mid(p, o1, cm);
+    }
+    f = f | PF_MIDOK;
     var v: i64 = 0i64;
     if (pl_mnem_is(p, "mov") && p.s[rest] == 35 && pp_imm_ok(p.s, rest + 1, p.hi)) {
         f = f | PF_CONST;
@@ -8394,13 +8473,39 @@ function pl_is_mat_mnem(p: PLine): boolean {
         || pl_mnem_is(p, "sub") || pl_mnem_is(p, "ldrsw") || pl_mnem_is(p, "ldrb") || pl_mnem_is(p, "sxtw");
 }
 
+// pl_is_mid_mnem: the mnemonics P7 will step a push/pop pair over — native
+// arm64's roundTripMidOps, entry for entry. It is a whitelist rather than a
+// filter on the dangerous ones: each writes only the register it names and
+// reads only its operands, so a call, a branch, a store, or anything with a
+// memory or flag effect cannot qualify by omission. `cmp` is out for that
+// reason, which is why PK_ALU carries PF_MIDOK only in its add / sub forms.
+function pl_is_mid_mnem(p: PLine): boolean {
+    if (pl_is_mat_mnem(p)) { return true; }
+    return pl_mnem_is(p, "movz") || pl_mnem_is(p, "movk") || pl_mnem_is(p, "mvn")
+        || pl_mnem_is(p, "neg") || pl_mnem_is(p, "and") || pl_mnem_is(p, "orr")
+        || pl_mnem_is(p, "eor") || pl_mnem_is(p, "lsl") || pl_mnem_is(p, "lsr")
+        || pl_mnem_is(p, "asr") || pl_mnem_is(p, "ror") || pl_mnem_is(p, "mul")
+        || pl_mnem_is(p, "ldur") || pl_mnem_is(p, "ldrh") || pl_mnem_is(p, "ldrsb")
+        || pl_mnem_is(p, "ldrsh") || pl_mnem_is(p, "uxtw");
+}
+
+// pl_mid classifies a line no other rule can use but P7 may step over. Which
+// registers it names is a question only the rule can answer, so nothing beyond
+// the mnemonic and the absence of sp is decided here.
+function pl_mid(p: PLine, o1: i32, cm: i32): PLine {
+    if (cm >= p.hi || !pl_is_mid_mnem(p) || pp_mentions_sp(p.s, o1, p.hi)) { return p; }
+    return PLine { ...p, kind: PK_MID, a: o1, b: cm, flags: PF_MIDOK };
+}
+
 function pl_is_alu_mnem(p: PLine): boolean {
     return pl_mnem_is(p, "add") || pl_mnem_is(p, "sub") || pl_mnem_is(p, "cmp");
 }
 
 // pl_classify decodes one indented line of s. Anything it does not recognise
-// is PK_NONE, which closes the window.
-function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
+// is PK_NONE, which closes the window. `mids` admits the PK_MID lines P7 steps
+// over, and is false unless the window already holds a push to fold back to —
+// see peep_mid_open for why that gate is worth having.
+function pl_classify(s: string, ln: i32, bs: i32, hi: i32, mids: boolean): PLine {
     var me: i32 = pp_find(s, bs, hi, 32);
     var p: PLine = PLine { s: s, ln: ln, bs: bs, me: me, hi: hi, kind: PK_NONE, a: 0, b: 0, val: 0i64, flags: 0 };
     if (me + 1 >= hi) { return p; }
@@ -8408,12 +8513,15 @@ function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
     var cm: i32 = pp_find(s, o1, hi, 44);
     var q: PLine = pl_stack(p, o1, cm);
     if (q.kind != PK_NONE) { return q; }
-    if (pp_is(s, o1, hi, "x1, x0") && pl_mnem_is(p, "mov")) { return PLine { ...p, kind: PK_COPY }; }
+    if (pp_is(s, o1, hi, "x1, x0") && pl_mnem_is(p, "mov")) { return PLine { ...p, kind: PK_COPY, flags: PF_MIDOK }; }
     if (pl_is_alu_mnem(p) && (pp_is(s, o1, hi, "x0, x0, x1") || (pl_mnem_is(p, "cmp") && pp_is(s, o1, hi, "x0, x1")))) {
-        return PLine { ...p, kind: PK_ALU };
+        var af: i32 = PF_MIDOK;
+        if (pl_mnem_is(p, "cmp")) { af = 0; }
+        return PLine { ...p, kind: PK_ALU, flags: af };
     }
-    if (pl_is_mat_mnem(p)) { return pl_mat(p, o1, cm); }
-    return p;
+    if (pl_is_mat_mnem(p)) { return pl_mat(p, o1, cm, mids); }
+    if (!mids) { return p; }
+    return pl_mid(p, o1, cm);
 }
 
 function pl_text(l: PLine, lo: i32, hi: i32): string {
@@ -8498,7 +8606,19 @@ function peep_add(own p: Peep, l: PLine): Peep {
 }
 
 function peep_add_text(own p: Peep, text: string): Peep {
-    return peep_add(p, pl_classify(text, 0 - 1, 4, text.len() - 1));
+    var l: PLine = pl_classify(text, 0 - 1, 4, text.len() - 1, peep_mid_open(p));
+    return peep_add(p, l);
+}
+
+// peep_mid_open reports whether the window's tail already walks back over
+// lines P7 may step over to a push. It is the rule's own walk, asked one line
+// early: with no such push behind it a PK_MID line can never be folded across,
+// so it closes the window as any other line does. Classifying every line
+// instead costs more per line than the rule saves.
+function peep_mid_open(p: Peep): boolean {
+    var k: i32 = p.n;
+    while (k > 0 && (p.w[k - 1].flags & PF_MIDOK) != 0) { k = k - 1; }
+    return k > 0 && p.w[k - 1].kind == PK_PUSH;
 }
 
 function peep_readd(own p: Peep, tail: PLine[]): Peep {
@@ -8539,6 +8659,8 @@ function peep_rules(own p: Peep): Peep {
     p = peep_p3(p);
     if (p.fired) { return p; }
     p = peep_p4(p);
+    if (p.fired) { return p; }
+    p = peep_p7(p);
     if (p.fired) { return p; }
     var e: i32 = p.n - 2;
     return peep_p5(p, e);
@@ -8617,6 +8739,61 @@ function peep_p4(own p: Peep): Peep {
     return peep_add_text(p, line);
 }
 
+// peep_p7 folds the round trip whose pop at w[n-1] goes to a register other
+// than x0: the push it walks back to becomes `mov POP, PUSH` ahead of the run,
+// and the run keeps both its order and its place. Native arm64's P4 (#9146).
+//
+// The walk stops at the first line that is not one P7 may step over, so a
+// second push, a pop or the `add sp, sp, #16` of a drop all end it — this
+// pop's slot is then not the one that push wrote, and the LIFO holds.
+//
+// At least one line of the run has to write the register the push saved:
+// freeing it is the only reason the push is there, and a run that never
+// touches it is some other pattern. Native states that condition as "writes
+// x0", which is the same thing there because its own pushes always are of x0.
+//
+// Those two conditions together are why the `mov` is unconditional, where P1
+// drops it for a pair naming one register: a run line writing the PUSH
+// register would also MENTION the POP one were they the same, and the walk
+// refuses such a line, so a fold with push == pop cannot reach here.
+function peep_p7(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 3) { return p; }
+    var pop: PLine = p.w[n - 1];
+    if (pop.kind != PK_POP || (pop.flags & (PF_X0 | PF_MARKER)) != 0) { return p; }
+    if (!pp_is_xreg(pop.s, pop.a, pop.b)) { return p; }
+    var k: i32 = n - 1;
+    while (k > 0 && p.w[k - 1].kind != PK_PUSH) {
+        var m: PLine = p.w[k - 1];
+        if ((m.flags & PF_MIDOK) == 0) { return p; }
+        if (pp_mentions_regnum(m.s, m.me + 1, m.hi, pop.s, pop.a + 1, pop.b)) { return p; }
+        k = k - 1;
+    }
+    // k == n - 1 is the adjacent pair P1 already took.
+    if (k < 1 || k > n - 2) { return p; }
+    var push: PLine = p.w[k - 1];
+    if (!peep_run_frees(p, k, n - 1, push)) { return p; }
+    p = Peep { ...p, n: n - 1 };
+    var tail: PLine[] = peep_tail_from(p, k);
+    p = Peep { ...p, n: k - 1, fired: true };
+    p = peep_add_text(p, "    mov " + pl_operand(pop) + ", " + pl_operand(push) + "\n");
+    return peep_readd(p, tail);
+}
+
+// peep_run_frees reports whether some line of w[lo..hi) writes the register
+// `push` saved, in either width. The destination is the first operand, which
+// every mnemonic PF_MIDOK admits has.
+function peep_run_frees(p: Peep, lo: i32, hi: i32, push: PLine): boolean {
+    var i: i32 = lo;
+    while (i < hi) {
+        var m: PLine = p.w[i];
+        var o1: i32 = m.me + 1;
+        if (pp_mentions_regnum(m.s, o1, pp_find(m.s, o1, m.hi, 44), push.s, push.a + 1, push.b)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // peep_p5 folds the chain ending in the copy at w[e-1] and the pop at w[e]
 // — called with e = n-2 from the tail, once P4 has had its chance at the
 // line after the pop, and with e = n-1 when a line that cannot join closes
@@ -8650,7 +8827,7 @@ function peep_p5(own p: Peep, e: i32): Peep {
 // everything flushes and the line joins the run.
 function peep_line(own p: Peep, ln: i32, bs: i32, hi: i32): Peep {
     var l: PLine = pl_none(p.asm, ln, bs, hi);
-    if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi); }
+    if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi, peep_mid_open(p)); }
     if (l.kind != PK_NONE) {
         p = peep_add(p, l);
         return peep_settle(p);
