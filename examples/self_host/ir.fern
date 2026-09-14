@@ -799,6 +799,12 @@ pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
 // `Writer.close()` reuses op_reader_close. The byte count is not reported:
 // native's signature has no channel for it (#7926).
 pub function op_writer_write(): Op { return op0("writer_write"); }
+// `write_some` [fd, str box] -> a fresh `Result[i64, IoError]` box: ONE
+// write(2) and the count it returned, where `writer_write` above loops until
+// the whole string is out and so can only report whether it all landed.
+// Backs `w.write_some(s)`; the count is what GNU shred's failing-write offset
+// and dd's record tally are made of (#9231).
+pub function op_write_some(): Op { return op0("write_some"); }
 // `open_file` [path box] -> a fresh `Result[Reader|Writer, IoError]` box:
 // NUL-terminate the path, openat(AT_FDCWD, path, flags, 0644), then Ok(fd) or
 // Err(io_error(errno, path)). `flags` is baked into the immediate so one op
@@ -2136,6 +2142,7 @@ function kind_id_len10(name: string): i32 {
     if (c == b't') { return kind_id_len10_t(name); }
     if (c == b'v' && name == "variant_is") { return 145; }
     if (c == b'w' && name == "write_file") { return 170; }
+    if (c == b'w' && name == "write_some") { return 308; }
     if (c == b'w' && name == "wasm_block") { return 191; }
     return 0;
 }
@@ -2575,6 +2582,7 @@ function kind_name_4(id: i32): string {
     if (id == 241) { return "fd_stat"; }
     if (id == 242) { return "reader_seek"; }
     if (id == 307) { return "fd_flags"; }
+    if (id == 308) { return "write_some"; }
     if (id == 243) { return "signal_ignore"; }
     if (id == 244) { return "signal_default"; }
     if (id == 245) { return "mismatch"; }
@@ -2776,7 +2784,7 @@ function pops2_io(t: i32): boolean {
         || t == 285                                                      // signal_send (pid, sig)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
-        || t == 202 || t == 213                                          // writer_write, proc_exec
+        || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some
         || t == 278;                                                     // signal_mask (how, mask)
 }
 
@@ -4422,7 +4430,8 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 203 || tag == 304 || tag == 305) { return true; }
     // writer_write boxes its Option[IoError] result (and, on a failing write,
     // the IoError inside it), so it needs the heap runtime too (#7926).
-    if (tag == 202) { return true; }
+    // write_some boxes a Result[i64, IoError] the same way.
+    if (tag == 202 || tag == 308) { return true; }
     // read_file_bytes boxes the contents into a fresh u8[] + a Result wrapper.
     if (tag == 233) { return true; }
     // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path

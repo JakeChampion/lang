@@ -1394,6 +1394,10 @@ func pureReadReceiverBuiltin(name string) bool {
 //   - `w.write(s)` (__fern_writer_write) writes the bytes to the
 //     Writer's fd and returns a fresh Option[IoError] box holding an
 //     immortal IoError, neither of which can name the string;
+//   - `w.write_some(s)` (__fern_writer_write_some) is the same write with
+//     the loop taken out, and its Result holds a COUNT — a scalar, so
+//     there is even less for the string to be named by than in `write`'s
+//     error box;
 //   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
 //     (inline-packed, the empty sentinel, or an rc1 heap copy — never
 //     the input buffer);
@@ -1421,6 +1425,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"write":                       {0},
 	"eprint":                      {0},
 	"__method_Writer_write":       {1},
+	"__method_Writer_write_some":  {1},
 	"string_from_bytes_unchecked": {0},
 	"__memchr":                    {0},
 	"__rmemchr":                   {0},

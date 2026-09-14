@@ -256,6 +256,7 @@ var providedSigs = map[string]providedSig{
 	"__method_Writer_close":         {-1, rWord},
 	"__method_Writer_truncate":      {-1, rWord},
 	"__method_Writer_write":         {-1, rWord},
+	"__method_Writer_write_some":    {-1, rWord},
 	"__method_slice_len":            {-1, rWord},
 	"__method_string_as_bytes":      {2, rWord},
 	"__method_string_len":           {-1, rWord},

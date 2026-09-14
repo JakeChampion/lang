@@ -671,6 +671,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
+	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
@@ -3970,6 +3971,46 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 		return optionSome(classifyIoError("", err)), nil
 	}
 	return optionNone(), nil
+}
+
+// builtinWriterWriteSome answers `w.write_some(s)`: one write and the
+// count it returned, rather than the loop `write` above hides.
+//
+// An io.Writer the interpreter is driving — a stdio stream a test
+// replaced with a buffer — reports what it took, which for a buffer is
+// always everything. The descriptor path is a real single write(2), so a
+// short write is a short write here too.
+func builtinWriterWriteSome(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Writer.write_some: expected 2 args")
+	}
+	s, ok := args[1].(String)
+	if !ok {
+		return nil, fmt.Errorf("Writer.write_some: content must be a string")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		w, werr := writerStream(i, args[0])
+		if werr != nil {
+			return nil, werr
+		}
+		n, e := w.Write([]byte(s))
+		if e != nil {
+			return resultErr(classifyIoError("", e)), nil
+		}
+		return resultOk(Number(n)), nil
+	}
+	n, e := syscall.Write(int(f.Fd()), []byte(s))
+	if e != nil {
+		return resultErr(classifyIoError("", e)), nil
+	}
+	return resultOk(Number(n)), nil
 }
 
 // builtinWriterTruncate answers `w.truncate(len)`: ftruncate(2) on the

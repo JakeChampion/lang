@@ -1332,6 +1332,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_flags":         emitFdFlagsHelper("__method_Writer_flags", "wfl"),
 	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
 	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
+	"__method_Writer_write_some":    emitWriterWriteSomeHelper,
 	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
 	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
 	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
@@ -3202,6 +3203,45 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitWriterWriteSomeHelper writes __method_Writer_write_some(writer, s) ->
+// Result[i64, IoError]: ONE write(2) and the count it returned. The loop in
+// emitWriterWriteHelper above is what makes that count unobservable there —
+// a failure has forgotten what landed before it — and the count is output
+// for shred's failing-write offset and dd's record tally (#9231). Zero is a
+// real answer rather than an error.
+func emitWriterWriteSomeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Writer_write_some"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tldr w19, [x0, #8]")    // fd @ ptr+8
+	w("\tmov x20, x1")          // data ptr
+	w("\tldur w22, [x20, #-4]") // byte length
+	w("\tmov w0, w19")
+	w("\tmov x1, x20")
+	w("\tmov x2, x22")
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wrws_err")
+	w("\tmov x21, x0")
+	emitOptionBox(w, 0, "x21") // Ok(count)
+	w("\tb .Lssa_wrws_ret")
+	w(".Lssa_wrws_err:")
+	w("\tneg x19, x0") // errno (reuse x19; fd no longer needed)
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0")
+	emitOptionBox(w, 1, "x19") // Err(e)
+	w(".Lssa_wrws_ret:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
 // emitWriterTruncateHelper writes __method_Writer_truncate(writer, len) ->
 // Option[IoError]: ftruncate(2) the handle's fd (from [writer+8]) to len;
 // return None on success, or map -errno through __fern_io_error (with an empty
@@ -3661,6 +3701,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_flags":         {"__fern_io_error"},
 	"__method_Reader_isatty":        {"isatty"},
 	"__method_Writer_isatty":        {"isatty"},
+	"__method_Writer_write_some":    {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"open_exclusive":                {"__fern_io_error"},
 	"open_reader_with":              {"__fern_io_error"},
@@ -3755,6 +3796,7 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_flags":         true,
 	"__method_Reader_isatty":        true,
 	"__method_Writer_isatty":        true,
+	"__method_Writer_write_some":    true,
 	"open_appender":                 true,
 	"open_exclusive":                true,
 	"open_reader_with":              true,

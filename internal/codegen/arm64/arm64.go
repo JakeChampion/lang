@@ -13439,6 +13439,64 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_writer_write")
 
+	// __fern_writer_write_some(writer_ptr, s) → Result[i64, IoError]:
+	// ONE write(2) and the count it returned. The loop above is what
+	// makes the count unobservable there — a failure has already
+	// forgotten what landed before it — and the count is output for
+	// `shred`'s failing-write offset and `dd`'s record tally (#9231).
+	//
+	// Zero is a real answer rather than an error, so the Ok arm takes
+	// whatever the kernel said.
+	g.line("")
+	g.line(".global __fern_writer_write_some")
+	g.typeDirective("__fern_writer_write_some")
+	g.label("__fern_writer_write_some")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("ldr w19, [x0]") // fd
+	if twoWord {
+		g.emitStrLen2W("w22", "x2")
+		g.emitStrDataPtr2W("x20", "x1", "x2", 48)
+	} else {
+		g.emit("mov x20, x1")
+		g.emitStrLen("w22", "x20")
+	}
+	g.emit("mov w0, w19")
+	g.emit("mov x1, x20")
+	g.emit("mov x2, x22")
+	g.syscall("write")
+	g.emit("tbnz x0, #63, .Lwws_err")
+	g.emit("mov x21, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]") // Ok
+	g.emit("str x21, [x0, #8]")
+	g.emit("b .Lwws_ret")
+	g.label(".Lwws_err")
+	g.emit("neg x22, x0")
+	g.emit("mov x0, x22")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w21, #1")
+	g.emit("str w21, [x0]") // Err
+	g.emit("str x19, [x0, #8]")
+	g.label(".Lwws_ret")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_writer_write_some")
+
 	// __fern_close_fd_box(handle_ptr) → Option[IoError].
 	// Shared by Reader.close + Writer.close.
 	g.line("")
@@ -18911,6 +18969,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_handle_isatty"
 			g.usesHandleIsatty = true
 			g.usesIsatty = true
+		case "__method_Writer_write_some":
+			target = "__fern_writer_write_some"
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "__method_Reader_seek", "__method_Writer_seek":
 			// lseek(2) on the handle's fd → Result[i64, IoError]; a Reader
 			// and a Writer hold the fd at the same place.

@@ -614,6 +614,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_handle_isatty":
 					// (h) → i32 — 0 / 1, and nothing to box.
 					needs.add("__fern_handle_isatty")
+				case "__fern_writer_write_some":
+					// (w, s_data, s_len) → i32 — one write and
+					// the count; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_writer_write_some")
 				case "__fern_writer_truncate":
 					// (w, length) → i32 — ftruncate of the
 					// handle; Option[IoError].
@@ -1256,7 +1265,7 @@ var helperResultBoxCallers = []string{
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
 	"__fern_reader_close_fd", "__fern_writer_close",
-	"__fern_writer_write", "__fern_reader_read_line_fd",
+	"__fern_writer_write", "__fern_writer_write_some", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek", "__fern_writer_seek",
 	"__fern_reader_flags", "__fern_writer_flags",
 	"__fern_writer_truncate",
@@ -2755,6 +2764,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriterWriteBody,
+	},
+	"__fern_writer_write_some": {
+		// (w, s_data, s_len) → i32 — heap-form
+		// Result[i64, IoError]: ONE fd_write and the count the
+		// host reported, where the helper above loops until the
+		// whole string has landed. See wasi_write_some.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriterWriteSomeBody,
 	},
 	"__fern_reader_read_line_fd": {
 		// (r: i32) → i32 — heap-form Option[string]. Reads

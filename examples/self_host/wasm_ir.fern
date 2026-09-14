@@ -337,6 +337,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "open_file")) { out = out.append("open_file"); }
     if (module_emits_op_cached(cache, "open_reader_with") || module_emits_op_cached(cache, "open_writer_with")) { out = out.append("open_with"); }
     if (module_emits_op_cached(cache, "writer_write")) { out = out.append("writer_write"); }
+    if (module_emits_op_cached(cache, "write_some")) { out = out.append("write_some"); }
     if (module_allocates(cache)) { out = out.append("@allocates"); }
     if (module_calls_optarrarr_free(cache)) { out = out.append("@calls_optarrarr_free"); }
     if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
@@ -3727,6 +3728,11 @@ function emit_host_op_wat(o: ir.Op): string {
         if (o.kind_tag == 305) { open_write = 1; }
         return "    i32.const " + util.i32_to_string(open_write) + "\n    call $__fern_open_with\n";
     }
+    if (o.kind_tag == 308) {  // write_some (#9231)
+        // stack: fd, str box -> $__fern_writer_write_some (ONE fd_write) ->
+        // a fresh Result[i64, IoError] box carrying the count.
+        return "    call $__fern_writer_write_some\n";
+    }
     if (o.kind_tag == 202) {  // writer_write (#4372)
         // stack: fd, str box -> $__fern_writer_write (fd_write of the box's
         // bytes, in a short-write loop) -> a fresh Option[IoError] box: None on
@@ -4936,7 +4942,7 @@ function needs_fd_sync(needs: string[]): boolean {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -8138,6 +8144,37 @@ pub function writer_write_func(): string {
     o = o + "    (local.get $opt))\n";
     return o;
 }
+// writer_write_some_func emits $__fern_writer_write_some(fd, str_box) -> a
+// fresh Result[i64, IoError] box: ONE fd_write of the string's bytes and the
+// count the host reported back, where writer_write_func above loops until
+// every byte is out and so can only say whether they all landed (#9231).
+//
+// The iovec is built at scratch 0/4 as that loop's is, and nwritten lands at
+// scratch 8. Zero is a real answer rather than an error — a stream with no
+// room right now has written none of them — and the Ok payload is the i64 the
+// Result box carries, as reader_seek's offset is.
+pub function writer_write_some_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_writer_write_some (param $fd i32) (param $box i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $n i32) (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $box)))\n";
+    o = o + "    (i32.store (i32.const 0) (i32.add (local.get $box) (i32.const 4)))\n";
+    o = o + "    (i32.store (i32.const 4) (local.get $n))\n";
+    o = o + "    (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i64.store (i32.add (local.get $res) (i32.const 8)) (i64.extend_i32_u (i32.load (i32.const 8))))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
 // writer_truncate_func emits $__fern_writer_truncate(fd, length) ->
 // Option[IoError]: one fd_filestat_set_size on the handle's own fd, which is
 // the import the path-based $__fern_truncate opens a descriptor to reach. None
@@ -9682,7 +9719,7 @@ function preview1_imports(needs: string[]): string {
     if (need(needs, "@uses_random")) { parts = parts.append(random_get_import()); }
     // print_int / print_str / eprint_str / putchar write via WASI fd_write
     // — import it only when the module writes to stdout or stderr.
-    if (leak_check_on() || need(needs, "print_int") || need(needs, "print_i64") || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write")) {
+    if (leak_check_on() || need(needs, "print_int") || need(needs, "print_i64") || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write") || need(needs, "write_some")) {
         parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
     }
     // read_file / write_file open paths under preopen fd 3: path_open +
@@ -10022,7 +10059,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -10212,6 +10249,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need_open_file(needs)) { parts = parts.append(open_file_func()); }
     if (need(needs, "open_with")) { parts = parts.append(open_with_func()); }
     if (need(needs, "writer_write")) { parts = parts.append(writer_write_func()); }
+    if (need(needs, "write_some")) { parts = parts.append(writer_write_some_func()); }
     // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates);
     // $__fern_read_int parses an int into scratch (no heap). Emitted when the
     // module reads stdin.

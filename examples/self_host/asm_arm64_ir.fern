@@ -1435,6 +1435,13 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             s = s.need("heap"); s = s.need("writer_write");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_writer_write\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 308) {  // write_some (#9231)
+            // [fd, str box], marshalled exactly as writer_write's are, into
+            // __fn___fern_writer_write_some(fd, s) -> a fresh
+            // Result[i64, IoError]. Body in the fs bundle below.
+            s = s.need("heap"); s = s.need("write_some");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_writer_write_some\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
             // [path box] -> __fern_open_res(x0=path, x1=flags(imm), x2=mode) -> a
             // fresh Result[Reader|Writer, IoError] box. Body emitted in the fs
@@ -7150,6 +7157,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
         if (s.has_need("open_with")) { fs_src = fs_src + " " + asmcore.rt_src_open_with(tgt); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write(tgt); }
+        if (s.has_need("write_some")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write_some(tgt); }
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, tgt);
@@ -8047,8 +8055,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "mknod", "chown_at", "window_size", "set_file_times", "read_link",
         "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
-        "remove_dir_all", "open_file", "open_with", "writer_write", "reader",
-        "signal_send"
+        "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
+        "reader", "signal_send"
     ]);
 }
 

@@ -432,6 +432,19 @@ target with no terminals, which is why neither form needs a capability and
 neither is refused by E066 — unlike `window_size`, where there is no truthful
 width for a terminal that does not exist.
 
+**`write_some` reports what one write moved**, and every target can answer
+that much. `w.write_some(s)` (#9231) is one `write(2)` and the count it
+returned, where `w.write(s)` is the same call in a loop and can only say
+whether the whole string landed — a failure there has already forgotten how
+much of it did, which is the fact GNU `shred` prints. Preview 1 answers from
+`fd_write`'s own `nwritten`. Preview 2 has no partial answer to relay:
+`blocking-write-and-flush` takes the chunk it is handed or fails, so
+`write_some` there writes at most 4096 bytes — the bound the looping helper
+beside it already chunks at — and reports that length, which keeps a caller
+that loops on the count making the same progress it would on a kernel. Zero
+is a real answer on all three rather than an error, so a caller that treats
+it as progress spins on every target equally.
+
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the
 classification's. Keeping it out of the capability vocabulary is deliberate — otherwise

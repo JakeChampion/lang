@@ -430,29 +430,67 @@ function sync_pass(w: Writer, path: string): Option[PassFail] {
   return None;
 }
 
+// One block, however many writes it takes: `write_some` reports what
+// each one moved, so a SHORT write finishes from where it stopped and
+// a failure knows the exact byte it stopped at — which is what GNU's
+// diagnostic names, and for ENOSPC that byte lands inside a block rather
+// than on its edge (#9231). The pair is (the offset reached, the
+// failure if there was one).
+//
+// A write that moves nothing without failing is a standstill, not an
+// error: the pass stops there, which is what the native `w.write` loop
+// does with the same answer.
+function write_block(w: Writer, path: string, block: string, at: i64): (i64, Option[PassFail]) {
+  var n: i32 = block.len();
+  var off: i32 = 0;
+  while (off < n) {
+    var piece: string = block;
+    if (off > 0) {
+      piece = slice_unchecked(block, off, n) + "";
+    }
+    match (w.write_some(piece)) {
+      Err(e) => {
+        var at_byte: string = ": error writing at offset " + (at + off as i64).to_string() + ": ";
+        return (at + off as i64, Some(PassFail { msg: path + at_byte + gnu.io_error_text(e), fatal: false }));
+      },
+      Ok(k) => {
+        if (k == 0 as i64) {
+          return (at + off as i64, None);
+        }
+        off = off + k as i32;
+      }
+    }
+  }
+  return (at + n as i64, None);
+}
+
 // The blocks of one pass, from wherever the handle stands.
 function write_blocks(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Option[PassFail] {
   var full: string = "";
   if (code != random_pass()) {
     full = pattern_block(code, block_bytes());
   }
-  var left: i64 = len;
-  while (left > 0 as i64) {
+  var at: i64 = 0 as i64;
+  while (at < len) {
     var n: i32 = block_bytes();
-    if (left < block_bytes() as i64) {
-      n = left as i32;
+    if (len - at < block_bytes() as i64) {
+      n = (len - at) as i32;
     }
     var got: (string, boolean) = pass_chunk(code, n, full, rnd);
     if (!got.1) {
       return Some(PassFail { msg: gnu.quote(rnd.name) + ": end of file", fatal: true });
     }
-    match (w.write(got.0)) {
-      Some(e) => {
-        return Some(PassFail { msg: path + ": " + gnu.io_error_text(e), fatal: false });
+    var moved: (i64, Option[PassFail]) = write_block(w, path, got.0, at);
+    match (moved.1) {
+      Some(f) => {
+        return Some(f);
       },
       None => {}
     }
-    left = left - n as i64;
+    if (moved.0 == at) {
+      return None;
+    }
+    at = moved.0;
   }
   return None;
 }

@@ -81,6 +81,22 @@ func emitHandleResultOkI64(body []byte, allocRc1, valLocal, boxLocal uint32) []b
 	return inst.InstLocalGet(body, boxLocal)
 }
 
+// emitHandleResultOkI64U is the same for a count the host reported as an
+// i32: the payload slot is 64 bits wide whatever produced it, so the
+// value widens UNSIGNED — a byte count is never negative.
+func emitHandleResultOkI64U(body []byte, allocRc1, valLocal, boxLocal uint32) []byte {
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocRc1)
+	body = inst.InstLocalTee(body, boxLocal)
+	body = inst.InstI32Const(body, 0) // tag = Ok
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, boxLocal)
+	body = inst.InstLocalGet(body, valLocal)
+	body = convert.InstI64ExtendI32U(body)
+	body = memory.InstI64Store(body, 3, 8)
+	return inst.InstLocalGet(body, boxLocal)
+}
+
 // buildFdStatBody assembles __fern_fd_stat on preview 1.
 //
 // Signature: (r) → i32 — heap-form Result[FileStat, IoError].

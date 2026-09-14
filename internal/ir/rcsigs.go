@@ -276,6 +276,7 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
+	"__method_Writer_write_some": true,
 
 	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
@@ -416,7 +417,9 @@ var rcInert = map[string]bool{
 	// The handle form of isatty reads the descriptor out of a box it
 	// borrows and answers 0/1: no count moves either way.
 	"__fern_handle_isatty": true,
-	"signal_default":       true, "signal_ignore": true,
+	// write_some borrows the string it writes and hands back a count.
+	"__fern_writer_write_some": true,
+	"signal_default":           true, "signal_ignore": true,
 	"signal_mask": true, "signal_disposition": true,
 	"__wasi_errno_of_code": true,
 
