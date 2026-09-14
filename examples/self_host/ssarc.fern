@@ -33,7 +33,7 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
-    return i.width == 32 || (i.width == 8 && i.unsigned) || i.width == 64;
+    return i.width == 32 || (i.width == 8 && i.unsigned) || i.width == 64 || (i.width == typeinfo.width_ptr() && i.unsigned);
 }
 
 // A value that fits the ONE i32-shaped word a tuple stores per element:
@@ -785,6 +785,8 @@ function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.L
     var to: typeinfo.Type = f.values[ins.result];
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
     if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
+    if (ssasem.is_usize(from)) { return emit(r, ir.op_int_extend_ptr()); }
+    if (ssasem.is_usize(to)) { return emit(r, ir.op_int_wrap_ptr()); }
     if (ssasem.is_wide(to)) {
         if (ssasem.is_wide(from)) { return r; }
         return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
@@ -1130,6 +1132,19 @@ function value_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__rc_underflow_count") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) }; }
     if (ins.str == "__arr_push_shared_count") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) }; }
     if (ins.str == "__arr_push_shared_bytes") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_bytes()) }; }
+    return builder_builtin_site(r, ins);
+}
+
+// The string builder's ops: a handle is a value, and the statement ops push
+// the dummy a statement op pushes.
+function builder_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "buf_new") { return Lowered { found: true, r: emit(r, ir.op_buf_new()) }; }
+    if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
+    if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
+    if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
+    if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }
+    if (ins.str == "buf_take") { return Lowered { found: true, r: emit(r, ir.op_buf_take()) }; }
+    if (ins.str == "buf_free") { return Lowered { found: true, r: emit(r, ir.op_buf_free()) }; }
     return Lowered { found: false, r: r };
 }
 

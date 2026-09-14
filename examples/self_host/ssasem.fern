@@ -115,6 +115,16 @@ pub function is_u64(t: typeinfo.Type): boolean {
 // The types that need a 64-bit slot of their own, which only wasm spells out.
 pub function is_wide(t: typeinfo.Type): boolean { return is_i64(t) || is_u64(t); }
 
+// The pointer-width unsigned integer: an address, riding the narrow slot,
+// which is the address's own width on every backend — 32 bits on wasm, the
+// whole 64-bit slot on the register backends. It converts to and from the
+// 64-bit integers and nothing else: an operator at it would run at the i32's
+// width on a register backend, which is not the address's.
+pub function is_usize(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.width == typeinfo.width_ptr() && i.unsigned && !i.is_char; }
+    return false;
+}
+
 // The integer types read without a sign bit. It is what a widening extends by
 // and which form of the sign-reading operators — the orderings, the right
 // shift, division and remainder — the operand takes.
@@ -144,7 +154,7 @@ pub function is_float(t: typeinfo.Type): boolean { return is_f64(t) || is_f32(t)
 // tree this producer reads is not rewritten with that conversion, so a mixed
 // operator is refused here rather than guessed at.
 pub function is_integer(t: typeinfo.Type): boolean {
-    return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t);
+    return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
 // A constant whose value has no i32 immediate to ride carries the literal's
@@ -870,6 +880,7 @@ function leaf_key(t: typeinfo.Type): string {
     if (is_u64(t)) { return "u64"; }
     if (is_u8(t)) { return "u8"; }
     if (is_u32(t)) { return "u32"; }
+    if (is_usize(t)) { return "usize"; }
     if (is_f64(t)) { return "f64"; }
     if (is_f32(t)) { return "f32"; }
     if (is_integer(t)) { return "i32"; }
@@ -919,7 +930,7 @@ function float_op(op: string): boolean {
 // the conversion is a cast the source has to write. Operator overloads have
 // none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
-    if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
+    if (is_integer(left) && !is_usize(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
     if (is_float(left) && semtypes.equal(left, right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
@@ -973,6 +984,8 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // widths the backends have an opcode for are admitted: the byte has none, and
 // reaches the float through the i32 the source writes.
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    if (is_usize(from)) { return is_wide(to); }
+    if (is_usize(to)) { return is_wide(from); }
     if (is_integer(from) && is_integer(to)) { return true; }
     if (is_float(from) && is_float(to)) { return !semtypes.equal(from, to); }
     if (is_float(to)) { return is_integer(from) && !is_u8(from); }
