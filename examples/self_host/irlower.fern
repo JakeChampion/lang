@@ -38507,6 +38507,10 @@ function local_recv_method_key(callee: ast.Expr, body: ast.Stmt[], structs: Stru
                 ast.ExprIdent(rid) => {
                     if (local_decl_count(body, rid.name) != 1) { return ""; }
                     var rt: string = util.base_type_name(body_local_decl_type(body, rid.name));
+                    // An UNANNOTATED receiver (`var b = Big { … }`) has no
+                    // declared type to read; its literal names one, under
+                    // fresh_struct_lit_type_deep's own single-type contract.
+                    if (rt.len() == 0) { rt = literal_struct_type_of(body, rid.name, structs); }
                     if (rt.len() == 0) { return ""; }
                     if (decl_field_type(structs, rt, mfa.field) != "") { return ""; }
                     return rt + "." + mfa.field;
@@ -38632,7 +38636,25 @@ function collect_fresh_str_ret_call_names(stmts: ast.Stmt[], str_fresh_ret: stri
 // refuses a rebind that leaves a BORROW in the slot, recv_borrow_escapes_via_result
 // the handed-back receiver), and body_unsafe_for still rejects any r that is
 // returned / stored / passed to a non-borrowable param.
-function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: StructTab, fresh_ret: string[], acc: string[]): string[] {
+// credit_unannotated_fresh_ret: the struct credit for `var c = mk(i)` /
+// `var c = b.m(i)` written without an annotation. The concrete type is the
+// callee's declared return type (struct_ret_fns), reached only once fresh_ret
+// proves every return of that callee is a fresh literal — so the result is
+// this frame's own rc 1 box, the standing an annotated binding has. The
+// leak-safe and deep-drop gates are the annotated arm's, unchanged.
+function credit_unannotated_fresh_ret(v: ast.StmtVar, body: ast.Stmt[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
+    var key: string = "";
+    if let ast.ExprCall(vc) = v.init {
+        if let ast.ExprIdent(cid) = vc.callee { key = cid.name; }
+        else { key = local_recv_method_key(vc.callee, body, structs); }
+    }
+    if (key.len() == 0 || util.index_of_str(fresh_ret, key) < 0) { return acc; }
+    var rty: string = sig_reg_value_of(struct_ret_fns, key);
+    if (rty.len() == 0 || !decl_is_struct(structs, rty) || !decl_is_leaksafe(structs, rty)) { return acc; }
+    return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
+}
+
+function collect_fresh_ret_call_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -38651,11 +38673,22 @@ function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: StructTab, fre
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
+                // The same binding written WITHOUT an annotation. The gates
+                // above need a concrete type and the declaration has none, so
+                // it comes from the callee's declared return type — the
+                // resolution the `dyn T` arm already makes for exactly this
+                // reason (collect_dyn_struct_in_stmt), where the annotation
+                // names only the trait. Reading the annotation alone left the
+                // unannotated spelling uncredited and so never swept, leaking
+                // its box and every rc field with it (#9224).
+                if (v.type_name.len() == 0) {
+                    a = credit_unannotated_fresh_ret(v, body, structs, fresh_ret, struct_ret_fns, a);
+                }
             },
-            ast.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, structs, fresh_ret, a); a = collect_fresh_ret_call_names(f.else_body, structs, fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, structs, fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, structs, fresh_ret, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, structs, fresh_ret, a); ai = ai + 1; } },
+            ast.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, body, structs, fresh_ret, struct_ret_fns, a); a = collect_fresh_ret_call_names(f.else_body, body, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, body, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, body, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, body, structs, fresh_ret, struct_ret_fns, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -41741,7 +41774,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // A cnt_struct_ret_fns callee's binding rides along: its box is counted
     // whichever return produced it, and sinkshare_counted_handbacks below
     // gates its field walk for the case where that box is the argument's.
-    fresh = collect_fresh_ret_call_names(body, structs, append_all(fresh_ret, cntret), fresh);
+    fresh = collect_fresh_ret_call_names(body, body, structs, append_all(fresh_ret, cntret), struct_ret_fns, fresh);
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
