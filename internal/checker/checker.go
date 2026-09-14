@@ -2922,11 +2922,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
 	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
 	// (`Other("Illegal seek")`), which is how a utility learns it must
-	// stream rather than jump to the end.
+	// stream rather than jump to the end. On a Writer opened for append
+	// the offset moves as lseek's does and the writes keep landing at
+	// the end, O_APPEND's rule on every target.
+	seekResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Reader", "seek",
-		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}},
-		ast.EnumType{Name: "Result", Args: []ast.Type{
-			ast.NumberType{Width: 64, Signed: true}, ioErrType}})
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	registerStructMethod("Writer", "seek",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set

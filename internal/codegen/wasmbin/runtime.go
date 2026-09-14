@@ -597,6 +597,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_reader_seek")
+				case "__fern_writer_seek":
+					// (w, offset, whence) → i32 — lseek of the
+					// handle; Result[i64, IoError].
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add("__fern_writer_seek")
 				case "__fern_writer_truncate":
 					// (w, length) → i32 — ftruncate of the
 					// handle; Option[IoError].
@@ -1184,6 +1191,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_fd_fdatasync":      {"__wasi_errno_of_code"},
 	"__fern_fd_syncfs":         {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
+	"__fern_writer_seek":       {"__wasi_errno_of_code"},
 	"__fern_writer_truncate":   {"__wasi_errno_of_code"},
 	"__fern_remove_file":       {"__wasi_errno_of_code"},
 	"__fern_create_dir_all":    {"__wasi_errno_of_code"},
@@ -1236,7 +1244,7 @@ var helperResultBoxCallers = []string{
 	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
-	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek",
+	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek", "__fern_writer_seek",
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
@@ -2777,6 +2785,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	"__fern_reader_seek": {
 		// (r, offset: i64, whence) → i32 — heap-form
 		// Result[i64, IoError]: lseek of the handle's fd.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderSeekBody,
+	},
+	"__fern_writer_seek": {
+		// (w, offset: i64, whence) → i32 — heap-form
+		// Result[i64, IoError]: lseek of the handle's fd, the same
+		// body as the Reader's on preview 1, where a handle is its
+		// fd; preview 2 has its own (wasi_fs_handle.go).
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderSeekBody,
