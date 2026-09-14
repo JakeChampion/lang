@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -14,11 +15,13 @@ import (
 //
 // What the count is FOR is a diagnostic nobody can reach from a test: GNU
 // shred names the byte a failing write stopped at, and reaching that needs
-// a full filesystem or a device at its end. What a test can pin is the
+// a full filesystem or a device at its end. What this source pins is the
 // count on the paths that succeed — a regular file, an empty string, and
-// stdout — plus the bytes actually arriving, which is what separates a
-// count read out of the kernel's answer from one echoed back from the
-// length asked for.
+// stdout — and the bytes arriving in order, so a second write lands after
+// the first rather than over it. Every write here is a WHOLE write, so
+// none of it separates a count read out of the kernel's answer from one
+// echoed back from the length asked for; writeSomePartialSource below is
+// the case that does.
 func writeSomeSource(path string) string {
 	return fmt.Sprintf(`import "std/i64";
 
@@ -64,6 +67,94 @@ function main(): i32 {
 func writeSomeTarget(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "out.txt")
+}
+
+// writeSomePartialSource asks for the one answer a helper echoing back the
+// length it was handed cannot give: a count SMALLER than the string. A pipe
+// whose reader never drains takes what fits in the kernel's buffer and
+// reports that, and the non-blocking open is what makes the write answer
+// rather than wait for room.
+//
+// Not a wasm case. Preview 2 has no spelling for the non-blocking bit at
+// all (docs/FREESTANDING-CORE.md) and neither preview can make a FIFO, so
+// the partial answer is a native and interpreter fact.
+func writeSomePartialSource(fifo string) string {
+	return fmt.Sprintf(`import "std/i64";
+
+function main(): i32 {
+    // A megabyte, which is far past Linux's 64 KiB default pipe buffer and
+    // past any grown one a caller is likely to have set.
+    var big: string = "x";
+    var i: i32 = 0;
+    while (i < 20) {
+        big = big + big;
+        i = i + 1;
+    }
+    // 2 is the non-blocking bit of the open_*_with flags word; the FIFO
+    // exists already, so nothing asks for CREATE.
+    match (open_writer_with(%[1]q, 2)) {
+        Err(_) => { return 1; },
+        Ok(w) => {
+            match (w.write_some(big)) {
+                Err(_) => { w.close(); return 2; },
+                Ok(n) => {
+                    // Zero would be the standstill a full pipe gives, and
+                    // the whole length would be an echo of what was asked.
+                    if (n <= 0 as i64) { w.close(); return 3; }
+                    if (n >= big.len() as i64) { w.close(); return 4; }
+                }
+            }
+            w.close();
+        }
+    }
+    return 0;
+}
+`, fifo)
+}
+
+// writeSomeFifo makes a FIFO and holds a READER open for the test's
+// lifetime. Without one the writer's non-blocking open is ENXIO; with one
+// that never reads, the buffer fills and the write can only be partial.
+func writeSomeFifo(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "pipe")
+	if err := syscall.Mkfifo(p, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { syscall.Close(fd) })
+	return p
+}
+
+func TestX86_64WriteSomePartial(t *testing.T) {
+	bin, runner := compileX86_64Bin(t, writeSomePartialSource(writeSomeFifo(t)))
+	out, code := runWithPipes(t, runX86_64Bin(runner, bin))
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (1=open, 2=Err, 3=count 0, 4=count is the whole length)\n%s", code, out)
+	}
+}
+
+func TestArm64WriteSomePartial(t *testing.T) {
+	bin, qemu := compileArm64Bin(t, writeSomePartialSource(writeSomeFifo(t)))
+	out, code := runWithPipes(t, runArm64Bin(qemu, bin))
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (1=open, 2=Err, 3=count 0, 4=count is the whole length)\n%s", code, out)
+	}
+}
+
+func TestInterpWriteSomePartial(t *testing.T) {
+	src := writeSomePartialSource(writeSomeFifo(t))
+	p := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runWithPipes(t, exec.Command(buildLangBinForInterp(t), "-interp", p))
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (1=open, 2=Err, 3=count 0, 4=count is the whole length)\n%s", code, out)
+	}
 }
 
 func TestX86_64WriteSome(t *testing.T) {
