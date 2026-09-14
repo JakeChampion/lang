@@ -833,6 +833,90 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
+	// A forwarding LAYER between the caller and the producer. The layer alone
+	// decided whether the receiver's buffer came back: written as a free function
+	// it balanced, written as a method it leaked one buffer a round, because one
+	// pass of recv_borrow_fns_of answered a forwarding method with no row at all
+	// and the caller then dropped the receiver box-only (#9235). Three rows: the
+	// fresh path through the layer, the same with the layer's own identity return
+	// present, and the identity path, where the result IS the receiver's box and
+	// an over-release would read 99 rather than a leak.
+	{"struct-handback-fwd-method", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function (a: Big) fwd(k: i32): Big { return a.id_or_make(k); }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.fwd(1);
+    if (c.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
+	{"struct-handback-fwd-mixed", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function (a: Big) fwd(k: i32): Big { if (k <= 0) { return a; } return a.id_or_make(k); }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.fwd(1);
+    if (c.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
+	{"struct-handback-fwd-identity", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function (a: Big) fwd(k: i32): Big { return a.id_or_make(k); }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.fwd(0);
+    if (c.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
+	// Two layers, so the row the outer one earns has to come from the row the
+	// inner one earned in an earlier pass — the fixpoint, not a single lookahead.
+	{"struct-handback-fwd-two-layers", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function (a: Big) inner(k: i32): Big { return a.id_or_make(k); }
+@noinline
+function (a: Big) outer(k: i32): Big { return a.inner(k); }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.outer(1);
+    if (c.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
 	// The same program written WITHOUT the annotations. The credit is resolved
 	// from the callee's declared return type (struct_ret_fns) the way the
 	// `dyn T` arm already does it, so the unannotated spelling reclaims like
