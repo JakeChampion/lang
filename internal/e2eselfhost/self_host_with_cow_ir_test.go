@@ -888,6 +888,50 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 3},
+	// The fresh path of the same method reads `a.mag` into a local before
+	// forwarding it, so the callee is neither a receiver borrow nor
+	// identity-only and the receiver was "NODEEP:" — box-only, with the count
+	// the callee's field read added never given back. A counted identity
+	// method's moved result no longer costs the receiver its deep drop
+	// (recv_ident_methods_of): both owners are SINKSHARE, and whichever
+	// reaches rc 1 walks the fields. Each row read allocs / allocs - 1 before.
+	{"struct-handback-fresh-path", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.id_or_make(1);
+    if (c.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"struct-handback-alias-then-fresh", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+@noinline
+function keepit(s: Big): Big { return s; }
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var c: Big = b.id_or_make(0);
+    c = c.id_or_make(1);
+    if (c.mag.len() + b.mag.len() != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
 	{"string-elems-excluded", `function main(): i32 {
     var a: string[] = ["x" + "1", "y" + "2"];
     var b: string[] = a;
