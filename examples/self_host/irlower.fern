@@ -1219,6 +1219,14 @@ pub function (s: LowerState) is_aliased_name(name: string): boolean {
     return util.index_of_str(s.frame.aliased_names, name) >= 0;
 }
 
+// note_aliased_name adds a lasting local alias the lowering itself creates —
+// the hidden snapshot a foreach binds from a local its body reassigns — which
+// the source scan (aliased_array_names_of) cannot see.
+pub function (s: LowerState) note_aliased_name(name: string): LowerState {
+    if (name.len() == 0 || s.is_aliased_name(name)) { return s; }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, aliased_names: s.frame.aliased_names.append(name) } };
+}
+
 // is_borrowed_name reports whether `name` names a buffer this function does not
 // own (#6158). Consulted ONLY by the `.with` self-reassign's in-place gate.
 pub function (s: LowerState) is_borrowed_name(name: string): boolean {
@@ -3422,6 +3430,40 @@ function opt_payload_struct_ok(pt: string, s: LowerState): boolean {
 // binding replaces exactly that answer with its declared type (#7217); an
 // unannotated one keeps it, its payload being a type var the checker resolves
 // nowhere and accepts only while it goes unread.
+// some_payload_opt_type spells `Some(arg)` from the walk's tag `pt` for the
+// argument. An ARRAY payload the walk tagged by its element (`Some([1, 2])`
+// reads "i32", `Some([[1], [2]])` and `Some(xs)` the same) is spelled as the
+// array it is, since the match arm binds by this tag: a scalar tag binds the
+// box's array as one element and `xs.append(v)` keys `i32.append` (#9190).
+// A map-array payload declines (see some_opt_type's map note).
+function some_payload_opt_type(arg: ast.Expr, pt: string, s: LowerState): string {
+    if (is_map_type_name(pt) && !is_array_type_name(pt) && expr_is_arr_src(arg, s)) { return ""; }
+    var asp: string = array_payload_spelling(arg, s);
+    if (asp != "" && !is_array_type_name(pt)) { return "Option[" + asp + "]"; }
+    return "Option[" + pt + "]";
+}
+
+// array_payload_spelling is the `T[]` spelling of an expression that is an
+// array, or "" when it is not one: a literal from its first element (an
+// element that is itself an array nests the spelling), any other carrier from
+// the tag the checker stamped on it.
+function array_payload_spelling(e: ast.Expr, s: LowerState): string {
+    match (e) {
+        ast.ExprArray(al) => {
+            if (al.elements.len() == 0) { return ""; }
+            var inner: string = array_payload_spelling(al.elements[0], s);
+            if (inner == "") { inner = elem_type_tag(al.elements[0], s); }
+            return inner + "[]";
+        },
+        _ => {
+            var ty: string = stamped_expr_ty(e);
+            if (is_array_type_name(ty)) { return ty; }
+            return "";
+        }
+    }
+    return "";
+}
+
 pub function some_opt_type(e: ast.Expr, s: LowerState): string {
     match (e) {
         ast.ExprCall(c) => {
@@ -3452,13 +3494,9 @@ pub function some_opt_type(e: ast.Expr, s: LowerState): string {
                         // for the array itself. Recording that claims the payload
                         // IS one map, and the claim beats the binding's own
                         // annotation, so `match` binds an array box as a map.
-                        // Decline for the same reason as the two cases above.
-                        //
-                        // Only the map spelling: a scalar array deliberately keeps
-                        // the bare "i32" tag (elem_type_tag's typed-array arm), and
-                        // Option[i32[][]] depends on it.
-                        if (is_map_type_name(pt) && !is_array_type_name(pt) && expr_is_arr_src(c.args[0], s)) { return ""; }
-                        return "Option[" + pt + "]";
+                        // Declined for the same reason as the two cases above;
+                        // every other array payload is spelled as the array.
+                        return some_payload_opt_type(c.args[0], pt, s);
                     }
                     return "";
                 },
@@ -9121,7 +9159,7 @@ function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma:
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var itn: string = "$forit" + util.i32_to_string(s.locals.len());
     var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
-    var s2: LowerState = lower_stmt(sv, s);
+    var s2: LowerState = lower_stmt(sv, s.note_aliased_name(bare_ident_name(iter)));
     if (!s2.ok) { return s2; }
     var nf: ast.Stmt = ast.StmtFor { var_name: var_name, iter: ast.ExprIdent { name: itn, line: 0, col: 0, ty: "" }, body: body, label: "", line: 0 };
     return lower_stmt(nf, s2);
@@ -23982,6 +24020,32 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 // preserves lower_stmt's own post-match fallback for any fall-through.
 // The 8-byte-element push: the sole-owner form reclaims the superseded buffer
 // on a grow, as arr_push_owned does for a 4-byte-slot array.
+// aliased_push_releases_old: the plain arr_push an ALIASED local takes leaves
+// the superseded buffer to its holders — in place it hands back the same
+// pointer, on a grow or an un-share copy a fresh rc 1 buffer with the old one
+// untouched — so the store releases this frame's reference to the old buffer
+// exactly when the pointer changed (emit_arr_store's cow guard). A sole owner's
+// arr_push_owned reclaims on grow itself, and a parameter's store is its
+// ownership flag's (emit_consumed_param_store).
+//
+// Scalar elements only. The un-share copy duplicates the element words with no
+// retain, so a pointer-element buffer (string[], T[][], a struct array) shares
+// its elements with the copy uncounted; releasing this frame's reference lets
+// the other holder's deep free reach rc 1 and walk elements the copy still
+// reads (#9209). That buffer is left to its holders, as before.
+function aliased_push_releases_old(sole_owner: boolean, s: LowerState, slot: i32): boolean {
+    return !sole_owner && arr_slot_shallow_release_ok(s, slot) && slot_holds_scalar_elems(s, slot);
+}
+
+// append_target_sole_owner: `name = name.append(v)` may reclaim the superseded
+// buffer on a grow (arr_push_owned) only when no other reference survives it —
+// not a local something else aliases, not a parameter (the caller's buffer,
+// #3457), and not a binding borrowed from a box it still shares with, a match
+// projection say, whose grow must leave the box's buffer to the box.
+function append_target_sole_owner(s: LowerState, name: string, slot: i32): boolean {
+    return !s.is_aliased_name(name) && slot >= s.frame.n_params && !s.is_borrowed_arr_slot(slot);
+}
+
 function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
     if (is_f64) {
         if (sole_owner) { return ir.op_arr_push_owned_f64(); }
@@ -24116,13 +24180,13 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // A sole-owner target takes the reclaim-on-grow push at
                             // every element width; an aliased target or a parameter
                             // keeps the plain one (the i32 branch below says why).
-                            var sole_owner: boolean = !s.is_aliased_name(a.target) && slot >= s.frame.n_params;
+                            var sole_owner: boolean = append_target_sole_owner(s, a.target, slot);
                             if (s.is_f64arr_slot(slot)) {
                                 var apf: LowerState = s.emit(ir.op_load_local(slot));
                                 apf = lower_expr(wc.args[0], apf);
                                 if (!apf.ok) { return apf; }
                                 apf = apf.emit(wide_push_op(sole_owner, true));
-                                return emit_arr_store(apf, slot, false, false);
+                                return emit_arr_store(apf, slot, false, aliased_push_releases_old(sole_owner, apf, slot));
                             }
                             // i64[] / u64[] (8-byte element): lower the value as
                             // an i64 and grow via the 8-byte arr_push_i64. u64
@@ -24133,7 +24197,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 ap8 = lower_i64(wc.args[0], ap8);
                                 if (!ap8.ok) { return ap8; }
                                 ap8 = ap8.emit(wide_push_op(sole_owner, false));
-                                return emit_arr_store(ap8, slot, false, false);
+                                return emit_arr_store(ap8, slot, false, aliased_push_releases_old(sole_owner, ap8, slot));
                             }
                             var aps: LowerState = s.emit(ir.op_load_local(slot));
                             // A bare named-fn VALUE appended to a plain-fn-
@@ -24290,12 +24354,13 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
                                     + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why + "\n");
                             }
-                            if (tgt_aliased || tgt_param) {
+                            var push_shared: boolean = !append_target_sole_owner(s, a.target, slot);
+                            if (push_shared) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());
                             }
-                            aps = emit_arr_store(aps, slot, false, false);
+                            aps = emit_arr_store(aps, slot, false, aliased_push_releases_old(!push_shared, aps, slot));
                             // If the appended value is a closure BOX — a
                             // `__mkclo$…` env-box marker (capturing `$clo` or
                             // wrapped no-capture `$wrap`), a closure-returning
@@ -31813,7 +31878,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
                         if (!body_has_top_level_match(body, v.name)
-                                && !opt_body_binding_escapes(body, v.name, rcc.variant, type_is_scalar_union(rcc.ptype))) {
+                                && !opt_payload_binding_escapes(body, v.name, rcc.variant, rcc.ptype, structs)) {
                             is_rcopt = true;
                             rcopt_pfree = opt_payload_freefn(rcc.ptype);
                             rcopt_sty = opt_payload_deep_sty(rcc.ptype, structs);
@@ -46484,6 +46549,10 @@ function opt_body_binds_rc_payload(stmts: ast.Stmt[], name: string): boolean {
 // NOTHING — `"Ok"` never matches a `Some(s)` arm — while reading as if it ran.
 // Checking every arm instead over-refuses: a scalar `Err(e)` binding used in
 // arithmetic is not a payload this drop can release.
+//
+// A scalar-element ARRAY payload is not asked at all (opt_payload_binding_escapes):
+// every escape of such a binding is counted or flag-tracked, so the consuming
+// drop stays sound whatever the arm does with it.
 function opt_arm_binding_escapes(st: ast.Stmt, variant: string, scrut_borrow: boolean): boolean {
     match (st) {
         ast.StmtMatch(m) => {
@@ -46499,11 +46568,8 @@ function opt_arm_binding_escapes(st: ast.Stmt, variant: string, scrut_borrow: bo
                         }
                         var is_target: boolean = vname == variant;
                         if (variant == "Ok|Some") { is_target = vname == "Ok" || vname == "Some"; }
-                        if (is_target && pv.binding != "" && pv.binding != "_") {
-                            if (scrut_borrow) {
-                                if (binding_escapes_arm_scrut(arm, pv.binding)) { return true; }
-                            } else if (binding_escapes_arm(arm, pv.binding, no_names())) { return true; }
-                        }
+                        if (is_target && pv.binding != "" && pv.binding != "_"
+                            && opt_binding_escape(arm, pv.binding, scrut_borrow)) { return true; }
                     },
                     _ => {}
                 }
@@ -46512,6 +46578,30 @@ function opt_arm_binding_escapes(st: ast.Stmt, variant: string, scrut_borrow: bo
         },
         _ => { return false; }
     }
+}
+function opt_binding_escape(arm: ast.MatchArm, binding: string, scrut_borrow: boolean): boolean {
+    if (scrut_borrow) { return binding_escapes_arm_scrut(arm, binding); }
+    return binding_escapes_arm(arm, binding, no_names());
+}
+
+// opt_payload_binding_escapes: the consuming-match candidate gate on the arm
+// BINDING of an rc payload, `ptype`. A scalar-element ARRAY payload is admitted
+// outright: its binding carries the ownership flag emit_borrowed_scalar_array_bind
+// sets and claim_pending_scalar_payload pairs with the drop's transfer, so a
+// store to an outer local or an alias takes a retain at the destination, a
+// call argument borrows or retains at the callee, and a `return` moves the
+// claimed reference out with no second count (the #8070 pairing) — the box's
+// own release lands on whichever claim is left. Refusing those shapes stranded
+// the box and, once the binding was typed as the array it is, the payload with
+// it. Every other payload kind keeps the escape walk (the enum path's
+// moved_skip_applies draws the same line).
+function opt_payload_binding_escapes(body: ast.Stmt[], name: string, variant: string, ptype: string, structs: StructTab): boolean {
+    if (store_out_takes_counted_claim(structs, ptype)) { return false; }
+    return opt_body_binding_escapes(body, name, variant, type_is_scalar_union(ptype));
+}
+function opt_payload_arm_binding_escapes(st: ast.Stmt, variant: string, ptype: string, scrut_borrow: boolean, structs: StructTab): boolean {
+    if (store_out_takes_counted_claim(structs, ptype)) { return false; }
+    return opt_arm_binding_escapes(st, variant, scrut_borrow);
 }
 
 // nested_opt_payload_arm_escapes: the second half of the rc-INNER proof. The
@@ -47349,8 +47439,8 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[],
                         // proof: its nested match binds a POINTER, which a scalar
                         // inner's copy could never be.
                         var innerfree: string = nested_opt_inner_freefn(cand.ptype);
-                        var binds_esc: boolean = opt_arm_binding_escapes(msv[0], cand.variant,
-                            type_is_scalar_union(cand.ptype) || innerfree.len() > 0);
+                        var binds_esc: boolean = opt_payload_arm_binding_escapes(msv[0], cand.variant, cand.ptype,
+                            type_is_scalar_union(cand.ptype) || innerfree.len() > 0, structs);
                         if (!binds_esc && innerfree.len() > 0) {
                             binds_esc = nested_opt_payload_arm_escapes(msv[0], cand.variant);
                         }

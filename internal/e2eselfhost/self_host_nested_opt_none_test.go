@@ -160,13 +160,14 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			// The escape is what makes the row discriminate, and it is why the
 			// simpler `match (o) { Some(a) => a[0] + a[1] }` is not the probe
 			// here: that shape balances under the broad rule too and would gate
-			// nothing. With `a` escaping to an outer local, frees are 400 on the
-			// parent and here, and 200 under the broad rule — which is the same
-			// defect that took TestSelfHostNestedMatchBorrowHazards from 200
-			// frees to 100. Pinned exactly, so an OVER-release is caught too.
-			//
-			// The 8000 live bytes are a pre-existing 40 B/round leak on this
-			// shape, byte-identical on the parent; native frees all 600.
+			// nothing. With `a` escaping to an outer local the row once read 400
+			// (200 under the broad rule, the defect that took
+			// TestSelfHostNestedMatchBorrowHazards from 200 frees to 100): the
+			// consuming match refused `o` for the escape, `held` took the payload
+			// uncounted and its sweep freed it, and the box leaked 40 B a round.
+			// A scalar-array payload's escapes are counted now, so the candidate
+			// is admitted and every box goes: 600, native's number. Pinned
+			// exactly, so an OVER-release is caught too.
 			name: "array_payload_escapes",
 			src: `function round(i: i32): i32 {
     var held: i32[] = [];
@@ -177,7 +178,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
     }
     return acc + held[1];
 }` + nestedOptNoneMain,
-			want: 77, wantFrees: 400,
+			want: 77, wantFrees: 600,
 		},
 		{
 			// A STRING payload. Newly lowering, and it leaks 80 B/round — but
