@@ -5793,25 +5793,29 @@ pub function truncate_func(): string {
 // `timestamp` is. That count is UNSIGNED, so a second before 1970 has no
 // representation and is answered EOVERFLOW (WASI errno 61) rather than wrapped
 // into a date six centuries out and presented as a success. Only a half the
-// call actually writes is checked: an omitted one is not read at all.
+// call actually writes from its value is checked: an omitted one is not read
+// at all, and one written from the host's clock is not either.
 //
 // Preview 1 spells "leave this one alone" as a cleared `fstflags` bit rather
-// than a sentinel in the timespec, and "do not follow a final symlink" as a
-// CLEARED lookupflags bit rather than a set one, so both of Fern's omit bits
-// and its nofollow bit invert on the way across.
+// than a sentinel in the timespec, "the host's clock" as that half's `*_NOW`
+// bit, and "do not follow a final symlink" as a CLEARED lookupflags bit rather
+// than a set one, so both of Fern's omit bits and its nofollow bit invert on
+// the way across; an omit bit wins over a now bit on the same half.
 pub function set_file_times_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_set_file_times (param $path i32) (param $asec i64) (param $ansec i64) (param $msec i64) (param $mnsec i64) (param $flags i32) (result i32)\n";
     o = o + "    (local $err i32) (local $res i32) (local $fst i32) (local $lf i32)\n";
     o = o + "    (local.set $err (i32.const 0))\n";
-    o = o + "    (if (i32.eqz (i32.and (local.get $flags) (i32.const 2))) (then\n";
+    o = o + "    (if (i32.eqz (i32.and (local.get $flags) (i32.const 10))) (then\n";
     o = o + "      (if (i64.lt_s (local.get $asec) (i64.const 0)) (then (local.set $err (i32.const 61))))))\n";
-    o = o + "    (if (i32.eqz (i32.and (local.get $flags) (i32.const 4))) (then\n";
+    o = o + "    (if (i32.eqz (i32.and (local.get $flags) (i32.const 20))) (then\n";
     o = o + "      (if (i64.lt_s (local.get $msec) (i64.const 0)) (then (local.set $err (i32.const 61))))))\n";
     o = o + "    (if (i32.eqz (local.get $err)) (then\n";
     o = o + "      (local.set $fst (i32.const 0))\n";
-    o = o + "      (if (i32.eqz (i32.and (local.get $flags) (i32.const 2))) (then (local.set $fst (i32.or (local.get $fst) (i32.const 1)))))\n";
-    o = o + "      (if (i32.eqz (i32.and (local.get $flags) (i32.const 4))) (then (local.set $fst (i32.or (local.get $fst) (i32.const 4)))))\n";
+    o = o + "      (if (i32.eqz (i32.and (local.get $flags) (i32.const 2))) (then\n";
+    o = o + "        (if (i32.and (local.get $flags) (i32.const 8)) (then (local.set $fst (i32.or (local.get $fst) (i32.const 2)))) (else (local.set $fst (i32.or (local.get $fst) (i32.const 1)))))))\n";
+    o = o + "      (if (i32.eqz (i32.and (local.get $flags) (i32.const 4))) (then\n";
+    o = o + "        (if (i32.and (local.get $flags) (i32.const 16)) (then (local.set $fst (i32.or (local.get $fst) (i32.const 8)))) (else (local.set $fst (i32.or (local.get $fst) (i32.const 4)))))))\n";
     o = o + "      (local.set $lf (i32.const 1))\n";
     o = o + "      (if (i32.and (local.get $flags) (i32.const 1)) (then (local.set $lf (i32.const 0))))\n";
     o = o + "      (local.set $err (call $path_filestat_set_times (i32.const 3) (local.get $lf) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))";

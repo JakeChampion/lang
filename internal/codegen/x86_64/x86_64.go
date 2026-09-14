@@ -15158,10 +15158,12 @@ func (g *generator) emitChownAtRuntime() {
 //
 // The two `struct timespec`s are built on the stack in the order the
 // kernel reads them, access time first. `flags` is Fern's word rather
-// than the kernel's: bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2
-// become UTIME_OMIT written into the nanosecond half of the timespec
-// being skipped — an omit is not a flag to utimensat, it is a sentinel
-// value, and the seconds half is then ignored.
+// than the kernel's: bit 0 becomes AT_SYMLINK_NOFOLLOW, bits 3 and 4
+// become UTIME_NOW and bits 1 and 2 UTIME_OMIT, each written into the
+// nanosecond half of the timespec it names — neither is a flag to
+// utimensat, both are sentinel values, and the seconds half is then
+// ignored. Omit is written after now so that it wins when both name one
+// half.
 func (g *generator) emitSetFileTimesRuntime() {
 	g.line("")
 	g.line(".globl __fern_set_file_times")
@@ -15186,6 +15188,18 @@ func (g *generator) emitSetFileTimesRuntime() {
 	g.emit("mov [rbp - 88], rdx")
 	g.emit("mov [rbp - 80], rcx")
 	g.emit("mov [rbp - 72], r8")
+	// UTIME_NOW (1<<30 - 1) into the nanosecond half of whichever
+	// timespec the caller asked to set to the clock.
+	g.emit("test r14d, 8")
+	g.emit("jz .Lsft_na")
+	g.emit("mov qword ptr [rbp - 96], 0")
+	g.emit("mov qword ptr [rbp - 88], 1073741823")
+	g.label(".Lsft_na")
+	g.emit("test r14d, 16")
+	g.emit("jz .Lsft_nm")
+	g.emit("mov qword ptr [rbp - 80], 0")
+	g.emit("mov qword ptr [rbp - 72], 1073741823")
+	g.label(".Lsft_nm")
 	// UTIME_OMIT (1<<30 - 2) into the nanosecond half of whichever
 	// timespec the caller asked to leave alone.
 	g.emit("test r14d, 2")

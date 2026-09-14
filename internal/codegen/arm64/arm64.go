@@ -11156,8 +11156,10 @@ func (g *generator) emitMknodRuntime() {
 // (x0..x6) → Result[void, IoError].
 //
 // On Linux that is utimensat(AT_FDCWD, path, times, flags): two
-// `struct timespec`s on the stack, access time first, with UTIME_OMIT in
-// the nanosecond half of either one the caller asked to leave alone.
+// `struct timespec`s on the stack, access time first, with UTIME_NOW or
+// UTIME_OMIT in the nanosecond half of either one the caller asked to
+// set to the clock or to leave alone; omit is written last so that it
+// wins when both name one half.
 //
 // XNU has no utimensat syscall — libc builds it out of setattrlistat(2),
 // and so does this. The attribute list names only the timestamps that
@@ -11166,6 +11168,8 @@ func (g *generator) emitMknodRuntime() {
 // ATTR_CMN_ACCTIME (0x1000) — the reverse of the timespec order Linux
 // wants. Omitting both leaves an empty list, which setattrlistat accepts
 // and which does nothing, exactly as UTIME_OMIT on both halves does.
+// The attribute list has no "now" either, so a now bit reads
+// gettimeofday first and names that value, as libc does.
 //
 // The two operands are read into the frame before the path copy: they
 // arrive in argument registers that NUL-terminating the path clobbers.
@@ -11189,6 +11193,28 @@ func (g *generator) emitSetFileTimesRuntime() {
 	g.emit("mov x20, x1") // path_len
 	g.emit("mov x23, x6") // flags
 	if g.darwin {
+		g.emit("tst x23, #24")
+		g.emit("b.eq .Lsft_clocked")
+		g.emit("stp x2, x3, [x29, #96]") // the operands, across the syscall
+		g.emit("stp x4, x5, [x29, #112]")
+		g.emit("add x0, x29, #128") // timeval buffer, before the attributes land there
+		g.emit("mov x1, #0")        // tz = NULL
+		g.emit("mov x16, #%d", darGettimeofday)
+		g.emit("svc #0x80")
+		g.emit("ldp x2, x3, [x29, #96]")
+		g.emit("ldp x4, x5, [x29, #112]")
+		g.emit("ldr x9, [x29, #128]")  // tv_sec (i64)
+		g.emit("ldr w10, [x29, #136]") // tv_usec (i32)
+		g.emit("mov x11, #1000")
+		g.emit("mul x10, x10, x11") // usec → nsec
+		g.emit("tbz x23, #3, .Lsft_now_m")
+		g.emit("mov x2, x9")
+		g.emit("mov x3, x10")
+		g.label(".Lsft_now_m")
+		g.emit("tbz x23, #4, .Lsft_clocked")
+		g.emit("mov x4, x9")
+		g.emit("mov x5, x10")
+		g.label(".Lsft_clocked")
 		g.emit("mov w9, #0")         // commonattr
 		g.emit("add x10, x29, #128") // buffer cursor
 		g.emit("tbnz x23, #2, .Lsft_no_m")
@@ -11216,9 +11242,17 @@ func (g *generator) emitSetFileTimesRuntime() {
 	} else {
 		g.emit("stp x2, x3, [x29, #96]")  // atime
 		g.emit("stp x4, x5, [x29, #112]") // mtime
-		// UTIME_OMIT (1<<30 - 2) in the nanosecond half is how
-		// utimensat is told to leave one of the pair alone; the
-		// seconds half is then not read.
+		// UTIME_NOW (1<<30 - 1) and UTIME_OMIT (1<<30 - 2) in the
+		// nanosecond half are how utimensat is told to set one of the
+		// pair to the clock or leave it alone; the seconds half is then
+		// not read.
+		g.emit("mov x9, #1073741823")
+		g.emit("tbz x23, #3, .Lsft_na")
+		g.emit("stp xzr, x9, [x29, #96]")
+		g.label(".Lsft_na")
+		g.emit("tbz x23, #4, .Lsft_nm")
+		g.emit("stp xzr, x9, [x29, #112]")
+		g.label(".Lsft_nm")
 		g.emit("mov x9, #1073741822")
 		g.emit("tbz x23, #1, .Lsft_a")
 		g.emit("stp xzr, x9, [x29, #96]")

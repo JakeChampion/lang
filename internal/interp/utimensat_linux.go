@@ -7,11 +7,13 @@ import (
 	"unsafe"
 )
 
-// utimeOmit is UTIME_OMIT, the tv_nsec value that tells utimensat(2) to
-// leave that timestamp alone. utimeNow (UTIME_NOW) is its sibling and is
-// deliberately unused: `set_file_times` takes a clock reading from the
-// caller, so "now" is a value rather than a mode.
-const utimeOmit = 1<<30 - 2
+// utimeOmit and utimeNow are UTIME_OMIT and UTIME_NOW, the tv_nsec
+// values that tell utimensat(2) to leave that timestamp alone or to
+// write its own clock reading into it.
+const (
+	utimeOmit = 1<<30 - 2
+	utimeNow  = 1<<30 - 1
+)
 
 // atSymlinkNofollow is AT_SYMLINK_NOFOLLOW. Architecture-independent on
 // Linux, and not exported by `syscall`.
