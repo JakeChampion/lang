@@ -35,7 +35,15 @@ buffer is not sole-owned, and leaves it — 2 / 1 again.
   goes from 2 to 1 and the alias keeps it; on a grow of a buffer only this
   frame holds it is freed. Gated on `arr_slot_shallow_release_ok`, the exit
   sweep's own condition for a bare box dec, so a parameter (its store is the
-  ownership flag's) and the pointer-element classes are untouched.
+  ownership flag's) and the deep-credit classes are untouched — and on
+  `slot_holds_scalar_elems`, because the un-share copy duplicates the
+  element words with no retain: a `string[]` local bound from a struct
+  field, appended and stored into a second struct
+  (`TestSelfHostStrArrFieldBindShare/refused_appended`) had its release
+  take the field's buffer to rc 1, the holder's deep drop freed the
+  strings, and the copy read them back — a hang on CI, where the un-gated
+  first cut had passed every targeted suite. Filed as #9209; until the
+  copy retains its elements, every pointer-element class stays leak-only.
 - `lower_foreach_snapshot` credits the iterable as aliased
   (`note_aliased_name`) before binding the snapshot: the hidden `var` is the
   alias the source scan describes, bound by the lowering instead.
@@ -61,7 +69,14 @@ oracles (native balances every row):
 
 The rest of the alias-kind probe set is unchanged row for row. `string[]`
 (2 / 1) and `i32[][]` (5 / 2) under the same shape are the pointer-element
-classes the gate leaves alone, and stay leak-only.
+classes the gate leaves alone, and stay leak-only (#9209).
+
+`TestSelfHostFinalCreditSiteKey/structarra_collide` was the other CI
+catch of the un-gated cut: a struct array aliased after its append read
+350 frees for its 250 pin. The freed buffer there was the empty literal
+the first append grew away from, which nobody else held — but a struct
+array's un-share copy shares its element boxes exactly as a `string[]`
+does, so the same gate keeps that row at its pin.
 
 The compiler-sized residue is not this shape either: `od -t fL` over 300
 bytes and `printf '%e %g %f\n' 4e-4951 ×3` read the same census before and
