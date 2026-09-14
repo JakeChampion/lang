@@ -31878,7 +31878,7 @@ function precise_drop_names(body: ast.Stmt[], reassigned: string[], structs: Str
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
                         if (!body_has_top_level_match(body, v.name)
-                                && !opt_body_binding_escapes(body, v.name, rcc.variant, type_is_scalar_union(rcc.ptype))) {
+                                && !opt_payload_binding_escapes(body, v.name, rcc.variant, rcc.ptype, structs)) {
                             is_rcopt = true;
                             rcopt_pfree = opt_payload_freefn(rcc.ptype);
                             rcopt_sty = opt_payload_deep_sty(rcc.ptype, structs);
@@ -46549,6 +46549,10 @@ function opt_body_binds_rc_payload(stmts: ast.Stmt[], name: string): boolean {
 // NOTHING — `"Ok"` never matches a `Some(s)` arm — while reading as if it ran.
 // Checking every arm instead over-refuses: a scalar `Err(e)` binding used in
 // arithmetic is not a payload this drop can release.
+//
+// A scalar-element ARRAY payload is not asked at all (opt_payload_binding_escapes):
+// every escape of such a binding is counted or flag-tracked, so the consuming
+// drop stays sound whatever the arm does with it.
 function opt_arm_binding_escapes(st: ast.Stmt, variant: string, scrut_borrow: boolean): boolean {
     match (st) {
         ast.StmtMatch(m) => {
@@ -46564,11 +46568,8 @@ function opt_arm_binding_escapes(st: ast.Stmt, variant: string, scrut_borrow: bo
                         }
                         var is_target: boolean = vname == variant;
                         if (variant == "Ok|Some") { is_target = vname == "Ok" || vname == "Some"; }
-                        if (is_target && pv.binding != "" && pv.binding != "_") {
-                            if (scrut_borrow) {
-                                if (binding_escapes_arm_scrut(arm, pv.binding)) { return true; }
-                            } else if (binding_escapes_arm(arm, pv.binding, no_names())) { return true; }
-                        }
+                        if (is_target && pv.binding != "" && pv.binding != "_"
+                            && opt_binding_escape(arm, pv.binding, scrut_borrow)) { return true; }
                     },
                     _ => {}
                 }
@@ -46577,6 +46578,30 @@ function opt_arm_binding_escapes(st: ast.Stmt, variant: string, scrut_borrow: bo
         },
         _ => { return false; }
     }
+}
+function opt_binding_escape(arm: ast.MatchArm, binding: string, scrut_borrow: boolean): boolean {
+    if (scrut_borrow) { return binding_escapes_arm_scrut(arm, binding); }
+    return binding_escapes_arm(arm, binding, no_names());
+}
+
+// opt_payload_binding_escapes: the consuming-match candidate gate on the arm
+// BINDING of an rc payload, `ptype`. A scalar-element ARRAY payload is admitted
+// outright: its binding carries the ownership flag emit_borrowed_scalar_array_bind
+// sets and claim_pending_scalar_payload pairs with the drop's transfer, so a
+// store to an outer local or an alias takes a retain at the destination, a
+// call argument borrows or retains at the callee, and a `return` moves the
+// claimed reference out with no second count (the #8070 pairing) — the box's
+// own release lands on whichever claim is left. Refusing those shapes stranded
+// the box and, once the binding was typed as the array it is, the payload with
+// it. Every other payload kind keeps the escape walk (the enum path's
+// moved_skip_applies draws the same line).
+function opt_payload_binding_escapes(body: ast.Stmt[], name: string, variant: string, ptype: string, structs: StructTab): boolean {
+    if (store_out_takes_counted_claim(structs, ptype)) { return false; }
+    return opt_body_binding_escapes(body, name, variant, type_is_scalar_union(ptype));
+}
+function opt_payload_arm_binding_escapes(st: ast.Stmt, variant: string, ptype: string, scrut_borrow: boolean, structs: StructTab): boolean {
+    if (store_out_takes_counted_claim(structs, ptype)) { return false; }
+    return opt_arm_binding_escapes(st, variant, scrut_borrow);
 }
 
 // nested_opt_payload_arm_escapes: the second half of the rc-INNER proof. The
@@ -47414,8 +47439,8 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[],
                         // proof: its nested match binds a POINTER, which a scalar
                         // inner's copy could never be.
                         var innerfree: string = nested_opt_inner_freefn(cand.ptype);
-                        var binds_esc: boolean = opt_arm_binding_escapes(msv[0], cand.variant,
-                            type_is_scalar_union(cand.ptype) || innerfree.len() > 0);
+                        var binds_esc: boolean = opt_payload_arm_binding_escapes(msv[0], cand.variant, cand.ptype,
+                            type_is_scalar_union(cand.ptype) || innerfree.len() > 0, structs);
                         if (!binds_esc && innerfree.len() > 0) {
                             binds_esc = nested_opt_payload_arm_escapes(msv[0], cand.variant);
                         }

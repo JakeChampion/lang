@@ -778,6 +778,37 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+	// The Some-arm binding of a scalar-array payload ESCAPES: returned from
+	// the arm, and handed to a call. Each refused the consuming match once,
+	// which left the box to leak and, with the payload bound as the array
+	// it is, its buffer too (2 / 0 on the return shape). A scalar-array
+	// payload's escapes are counted or flag-tracked, so the candidate is
+	// admitted: the claimed reference moves out with the return, the box
+	// goes at the match, and the caller's sweep frees the buffer.
+	{"option-payload-return", `@noinline
+function pick(i: i32): i32[] {
+    var o: Option[i32[]] = Some([i, i + 1]);
+    match (o) { Some(a) => { return a; }, None => {} }
+    return [];
+}
+function main(): i32 {
+    var v: i32[] = pick(3);
+    if (v[1] != 4) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	{"option-payload-call-arg", `@noinline
+function total(xs: i32[]): i32 { return xs[0] + xs[1]; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var o: Option[i32[]] = Some([3, 4]);
+    if (acc >= 0) {
+        match (o) { Some(a) => { acc = total(a); }, None => {} }
+    }
+    if (acc != 7) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 	{"string-elems-excluded", `function main(): i32 {
     var a: string[] = ["x" + "1", "y" + "2"];
     var b: string[] = a;

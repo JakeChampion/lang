@@ -294,8 +294,10 @@ function main(): i32 {
 			wantFrees: 0,
 		},
 		{
-			// The arm BINDING escapes — refused a gate earlier, and the scrutinee
-			// reading must not reach past that.
+			// The arm BINDING escapes to an outer local. Once refused by the
+			// binding gate, which left the payload to `held`'s sweep and the box
+			// to leak (200); a scalar-array payload's store-out is a counted
+			// claim, so the consuming match is admitted and all 300 go.
 			name: "arm_binding_escapes_to_an_outer_local",
 			src: `function round(i: i32): i32 {
     var held: i32[] = [];
@@ -313,10 +315,12 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 200,
+			wantFrees: 300,
 		},
 		{
-			// The arm binding escapes into a container that outlives the match.
+			// The arm binding escapes into a container that outlives the match:
+			// the element push retains it, so the box's release is admitted the
+			// same way (300; the container's own row is the leak that remains).
 			name: "arm_binding_escapes_into_a_container",
 			src: `function round(i: i32): i32 {
     var keep: i32[][] = [];
@@ -334,7 +338,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 200,
+			wantFrees: 300,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
