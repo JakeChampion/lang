@@ -673,6 +673,72 @@ function main(): i32 {
 }`, 3},
 	// A string[] keeps the static clone: its elements are counted references
 	// the scalar path does not admit.
+	// #9191: `var b = a; a = a.append(x)`. The plain push un-shares into a fresh
+	// buffer and leaves the original to `b`; the store releases this frame's
+	// reference to it, so `b`'s sweep is the one free of the original.
+	{"alias-append", `function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = a;
+    a = a.append(40);
+    if (b.len() != 3) { return 1; }
+    if (a.len() != 4 || a[3] != 40) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
+	// The same target grown a hundred times: after the un-share every grow
+	// supersedes a buffer only this frame holds, and each is released as the
+	// copy replaces it (7 on x86-64: the un-share and the doublings).
+	{"alias-append-loop", `function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = a;
+    var i: i32 = 0;
+    while (i < 100) { a = a.append(i); i = i + 1; }
+    if (b.len() != 3) { return 1; }
+    if (a.len() != 103 || a[102] != 99) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 8},
+	// Both holders grow: each un-shares once and releases what it superseded.
+	{"alias-append-both", `function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = a;
+    a = a.append(40);
+    a = a.append(50);
+    b = b.append(60);
+    if (b.len() != 4 || b[3] != 60) { return 1; }
+    if (a.len() != 5 || a[4] != 50) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	// The 8-byte widths take the same store.
+	{"alias-append-wide", `function main(): i32 {
+    var a: i64[] = [1, 2, 3];
+    var b: i64[] = a;
+    a = a.append(40);
+    var c: f64[] = [1.0, 2.0, 3.0];
+    var d: f64[] = c;
+    c = c.append(4.5);
+    if (b.len() != 3 || d.len() != 3) { return 1; }
+    if (a.len() != 4 || a[3] != 40) { return 2; }
+    if (c.len() != 4 || c[3] != 4.5) { return 3; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
+	// The foreach snapshot is the same alias, bound by the lowering rather
+	// than the source; the loop reads the entry buffer and the body's grow
+	// un-shares away from it.
+	{"alias-append-foreach", `function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var n: i32 = 0;
+    for x in a {
+        n = n + x;
+        a = a.append(x * 10);
+    }
+    if (n != 6) { return 1; }
+    if (a.len() != 6 || a[5] != 30) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 2},
 	{"string-elems-excluded", `function main(): i32 {
     var a: string[] = ["x" + "1", "y" + "2"];
     var b: string[] = a;
