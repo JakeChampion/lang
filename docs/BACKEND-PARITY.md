@@ -48,7 +48,7 @@ inside a codegen switch:
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
 | arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, and the carry-less multiply `pmull` / `pmull2` in its `.1q` form. This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
-| x86-64 | Haswell-class, 2013 — SSE4.2 + BMI1 (AMD: Piledriver/Jaguar and later) | `popcnt` (SSE4.2) and `lzcnt` / `tzcnt` (BMI1), alongside the SSE4.1 `roundsd` and SSE2 floating point the backend already required. |
+| x86-64 | **x86-64-v3** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
 **LZCNT / TZCNT have a failure mode POPCNT does not, and it is the reason to
@@ -59,8 +59,19 @@ the prefix and executes BSR / BSF, which answer a different question and are
 undefined at a zero input. So a sub-baseline CPU miscomputes **silently** there
 instead of crashing.
 
-Anything above these baselines (AVX2, BMI2, …) needs runtime dispatch first;
-none of it is used today.
+**The x86-64 level is what the backends already emit, not a raise.** The byte
+kernels run 32-byte AVX2 main loops — `vmovdqu` / `vpcmpeqb` / `vpbroadcastb` /
+`vpmovmskb` on `ymm`, 29 sites across `internal/codegen/x86_64` and
+`internal/codegen/x86_64ssa`, with no cpuid check anywhere — so AVX2 has been a
+hard requirement of every emitted binary for as long as those kernels have
+existed. x86-64-v3 is the standard name for the class that has it, and no real
+part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
+and Piledriver are AVX1 parts and never ran this output.
+
+Anything above this level (AVX-512, …) needs runtime dispatch first, and none
+of it is used. AVX-512 is deliberately not taken: Intel removed it from
+consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one
+keeps.
 
 **The two assemblers encode more than the baselines cover, on purpose.** An
 assembler that cannot spell an instruction cannot be told to gate it, so both
