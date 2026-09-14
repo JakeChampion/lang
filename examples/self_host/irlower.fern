@@ -1219,6 +1219,14 @@ pub function (s: LowerState) is_aliased_name(name: string): boolean {
     return util.index_of_str(s.frame.aliased_names, name) >= 0;
 }
 
+// note_aliased_name adds a lasting local alias the lowering itself creates —
+// the hidden snapshot a foreach binds from a local its body reassigns — which
+// the source scan (aliased_array_names_of) cannot see.
+pub function (s: LowerState) note_aliased_name(name: string): LowerState {
+    if (name.len() == 0 || s.is_aliased_name(name)) { return s; }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, aliased_names: s.frame.aliased_names.append(name) } };
+}
+
 // is_borrowed_name reports whether `name` names a buffer this function does not
 // own (#6158). Consulted ONLY by the `.with` self-reassign's in-place gate.
 pub function (s: LowerState) is_borrowed_name(name: string): boolean {
@@ -9121,7 +9129,7 @@ function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma:
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var itn: string = "$forit" + util.i32_to_string(s.locals.len());
     var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
-    var s2: LowerState = lower_stmt(sv, s);
+    var s2: LowerState = lower_stmt(sv, s.note_aliased_name(bare_ident_name(iter)));
     if (!s2.ok) { return s2; }
     var nf: ast.Stmt = ast.StmtFor { var_name: var_name, iter: ast.ExprIdent { name: itn, line: 0, col: 0, ty: "" }, body: body, label: "", line: 0 };
     return lower_stmt(nf, s2);
@@ -23982,6 +23990,17 @@ function refine_map_struct_val(a: ast.StmtAssign, slot: i32, s: LowerState): Low
 // preserves lower_stmt's own post-match fallback for any fall-through.
 // The 8-byte-element push: the sole-owner form reclaims the superseded buffer
 // on a grow, as arr_push_owned does for a 4-byte-slot array.
+// aliased_push_releases_old: the plain arr_push an ALIASED local takes leaves
+// the superseded buffer to its holders — in place it hands back the same
+// pointer, on a grow or an un-share copy a fresh rc 1 buffer with the old one
+// untouched — so the store releases this frame's reference to the old buffer
+// exactly when the pointer changed (emit_arr_store's cow guard). A sole owner's
+// arr_push_owned reclaims on grow itself, and a parameter's store is its
+// ownership flag's (emit_consumed_param_store).
+function aliased_push_releases_old(sole_owner: boolean, s: LowerState, slot: i32): boolean {
+    return !sole_owner && arr_slot_shallow_release_ok(s, slot);
+}
+
 function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
     if (is_f64) {
         if (sole_owner) { return ir.op_arr_push_owned_f64(); }
@@ -24122,7 +24141,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 apf = lower_expr(wc.args[0], apf);
                                 if (!apf.ok) { return apf; }
                                 apf = apf.emit(wide_push_op(sole_owner, true));
-                                return emit_arr_store(apf, slot, false, false);
+                                return emit_arr_store(apf, slot, false, aliased_push_releases_old(sole_owner, apf, slot));
                             }
                             // i64[] / u64[] (8-byte element): lower the value as
                             // an i64 and grow via the 8-byte arr_push_i64. u64
@@ -24133,7 +24152,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 ap8 = lower_i64(wc.args[0], ap8);
                                 if (!ap8.ok) { return ap8; }
                                 ap8 = ap8.emit(wide_push_op(sole_owner, false));
-                                return emit_arr_store(ap8, slot, false, false);
+                                return emit_arr_store(ap8, slot, false, aliased_push_releases_old(sole_owner, ap8, slot));
                             }
                             var aps: LowerState = s.emit(ir.op_load_local(slot));
                             // A bare named-fn VALUE appended to a plain-fn-
@@ -24290,12 +24309,13 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
                                     + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why + "\n");
                             }
-                            if (tgt_aliased || tgt_param) {
+                            var push_shared: boolean = tgt_aliased || tgt_param;
+                            if (push_shared) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());
                             }
-                            aps = emit_arr_store(aps, slot, false, false);
+                            aps = emit_arr_store(aps, slot, false, aliased_push_releases_old(!push_shared, aps, slot));
                             // If the appended value is a closure BOX — a
                             // `__mkclo$…` env-box marker (capturing `$clo` or
                             // wrapped no-capture `$wrap`), a closure-returning
