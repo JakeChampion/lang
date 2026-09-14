@@ -16832,6 +16832,14 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
         so = so.emit(ir.op_load_local(fsslot));
         so = so.emit(ir.op_struct_get(idx, struct_field_width(s.frame.structs, sty, idx)));
         so = so.emit(ir.op_store_local(fsvslot));
+        // The FIELD walk first, gated on the temp being the sole owner. The two
+        // paths of a counted member need different answers and the gate is what
+        // tells them apart at run time: on the identity path the receiver still
+        // holds the box, so the walk does not fire and the receiver's own
+        // release does it later; on the fresh path the box is a strict-fresh
+        // literal this frame solely owns, so its rc fields are its to drop and
+        // the bare dec alone stranded every count they hold.
+        so = emit_struct_field_drops_gated(so, fsslot, true);
         so = emit_counted_result_release(so, fsslot);
         return so.emit(ir.op_load_local(fsvslot));
     }
