@@ -697,9 +697,10 @@ pub function op_chown_at(): Op { return op0("chown_at"); }
 // IoError]. Each timestamp is a whole second since the epoch plus a
 // nanosecond remainder, the shape `stat` hands back. `flags` is Fern's own
 // word, not the kernel's: 1 do not follow a final symlink, 2 leave the access
-// time alone, 4 leave the modification time alone. The two omit bits are
-// UTIME_OMIT sentinels in the timespec on Linux, absent attributes on Darwin
-// and cleared fstflags bits on wasm.
+// time alone, 4 leave the modification time alone, 8 and 16 set the access and
+// modification time to the clock. The omit and now bits are UTIME_OMIT and
+// UTIME_NOW sentinels in the timespec on Linux, absent or clock-read attributes
+// on Darwin and fstflags bits on wasm.
 pub function op_set_file_times(): Op { return op0("set_file_times"); }
 // `hostname` takes no operands and pushes ONE fresh string box holding the
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty

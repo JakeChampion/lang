@@ -2699,12 +2699,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	//	1  do not follow a final symlink (AT_SYMLINK_NOFOLLOW)
 	//	2  leave the access time as it is (UTIME_OMIT in atime_nsec)
 	//	4  leave the modification time as it is (UTIME_OMIT in mtime_nsec)
+	//	8  set the access time to the kernel's clock (UTIME_NOW in atime_nsec)
+	//	16 set the modification time to the kernel's clock (UTIME_NOW in mtime_nsec)
 	//
 	// The two omit bits are how `touch -a` and `touch -m` write one
 	// timestamp without disturbing the other: reading the other first
 	// and writing it back is a race, and it round-trips a value the
 	// caller never asked to set. A timestamp whose omit bit is set is
 	// not read, so passing 0 for both of its halves is fine.
+	//
+	// The two now bits are not a convenience over reading the clock:
+	// the kernel lets any writer of a file set its times to now, but
+	// only its owner set them to a value, so a plain `touch` that
+	// carried a clock reading would be refused on a file the caller
+	// can write and does not own. A now bit outranks nothing — an omit
+	// bit on the same half still wins, and that half is not read.
 	//
 	// Setting both omit bits does nothing and is not an error — that is
 	// `utimensat`'s own answer.
