@@ -640,11 +640,23 @@ pub struct FnSigs {
     param_counted: string[],
     trmc_consume_fns: string[],
     // handback_params: "fn|idx" for parameters the callee RETURNS BARE
-    // (`function keepit(s: S): S { return s; }`) — the argument's box flows
-    // back to the caller with no counted reference on the self-host, so the
-    // struct plan gate refuses a credited name passed at such a position
-    // (native retains at the return instead — paramCountedRetain's channel).
+    // (`function keepit(s: S): S { return s; }`) and whose result is NOT
+    // counted — the callee is outside cnt_struct_ret_fns, so some path hands
+    // a box back with no reference of its own — so the struct plan gate
+    // refuses a credited name passed at such a position.
     handback_params: string[],
+    // cnt_struct_ret_fns: keys (bare name / "<Base>.<method>") of the functions
+    // whose every return hands the caller a COUNTED struct reference — a
+    // strict-fresh construction, a borrowed struct parameter or receiver handed
+    // back bare (the return path retains it, ret_struct_param_counted), or a
+    // forwarding call to another member (counted_struct_ret_fns_of).
+    cnt_struct_ret_fns: string[],
+    // cnt_handback_params: "<key>|idx" / "<key>|r" for the parameters and
+    // receivers a cnt_struct_ret_fns member hands back bare. The result then
+    // holds a count the callee added on top of the argument's own, and the
+    // caller gives it back where the result turns out to BE that box
+    // (emit_handback_identity_dec). Disjoint from handback_params.
+    cnt_handback_params: string[],
     // handback_carry_params: "fn|idx" for parameters the callee hands back
     // INSIDE its result — as an element of a returned tuple literal or a field
     // of a returned struct literal, directly or through a bare alias (`var s =
@@ -843,6 +855,9 @@ pub struct LowerFrame {
     // return-transfer retain. See the return path's use for why that retain is
     // what made accumulator threading quadratic.
     own_params: string[],
+    // cur_key: this function's registry key (struct_ret_key) — the bare name
+    // of a free function, "<Base>.<method>" for a method.
+    cur_key: string,
     n_params: i32,
     // fail_why: a one-line description of the INNERMOST AST node that refused to
     // lower, stamped by lower_expr / lower_stmt on the way back out of a failed
@@ -13807,20 +13822,19 @@ function lower_call_len(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState)
             lr = lr.release(lslot, "__fern_str_free", "len-fresh-str");
             return lr;
         }
-        // `b.relabel(t).tag.len()` — a string field read off a MIXED-path
-        // method result ("FRESHSELF:"). The STRING is borrowed on both
-        // paths; what dies here is the temp BOX, and only when the fresh
-        // path produced it. Read the length while the box is still alive,
-        // then release under the pointer compare. The string-fresh cases
-        // above never match this shape: their release frees the string, and
-        // here the string belongs to whoever the literal took it from.
+        // `b.relabel(t).tag.len()` — a string field read off a COUNTED-return
+        // method result (cnt_struct_ret_fns). The STRING is borrowed on both
+        // paths; what dies here is the temp BOX, counted whichever path
+        // produced it. Read the length while the box is still alive, then
+        // release. The string-fresh cases above never match this shape: their
+        // release frees the string, and here the string belongs to whoever the
+        // literal took it from.
         match (fa.obj) {
             ast.ExprFieldAccess(fsfa) => {
-                // Shape first: freshself_call_recv_slot rejects on the callee's
-                // form before any type walk, and this arm sits on the path every
-                // `<expr>.len()` takes.
-                var fsbrecv: i32 = freshself_call_recv_slot(fsfa.obj, s);
-                if (fsbrecv >= 0) {
+                // Shape first: is_counted_ret_method_call rejects on the
+                // callee's form before any type walk, and this arm sits on the
+                // path every `<expr>.len()` takes.
+                if (is_counted_ret_method_call(fsfa.obj, s)) {
                     var fsbty: string = expr_struct_type(fsfa.obj, s);
                     var fsbfld: i32 = 0 - 1;
                     if (fsbty != "" && decl_field_type(s.frame.structs, fsbty, fsfa.field) == "string") {
@@ -13841,7 +13855,7 @@ function lower_call_len(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState)
                         fsb = fsb.emit(ir.op_struct_get(fsbfld, struct_field_width(s.frame.structs, fsbty, fsbfld)));
                         fsb = fsb.emit(ir.op_str_len());
                         fsb = fsb.emit(ir.op_store_local(nslot2));
-                        fsb = emit_freshself_release(fsb, bslot, fsbrecv);
+                        fsb = emit_counted_result_release(fsb, bslot);
                         return fsb.emit(ir.op_load_local(nslot2));
                     }
                 }
@@ -15458,53 +15472,30 @@ function owned_fresh_call_callee(e: ast.Expr, kind: string, s: LowerState): stri
     return "";
 }
 
-// emit_freshself_release: release the temp box parked in `boxslot` unless it is
-// the same pointer as the receiver parked in `recvslot`. A "FRESHSELF:" producer
-// hands back a fresh box on one path and its receiver on the other, so only the
-// runtime knows which arrived — the compare is the whole admission. The dec is
-// SHALLOW: a fresh literal's field values are not proven owned here, so what the
-// box does own leaks with it rather than being freed out from under a caller.
-function emit_freshself_release(st: LowerState, boxslot: i32, recvslot: i32): LowerState {
-    var r: LowerState = st.emit(ir.op_load_local(boxslot));
-    r = r.emit(ir.op_load_local(recvslot));
-    r = r.emit(ir.op_bin("ne", 0, false));
-    r = r.emit(ir.op_if(0));
-    r = r.emit(ir.op_load_local(boxslot));
-    r = r.emit(ir.op_call_direct("__fern_rc_dec", 1));
-    r = r.emit(ir.op_drop());
-    return r.emit(ir.op_end());
+// emit_counted_result_release: release the temp box parked in `boxslot`, the
+// result of a cnt_struct_ret_fns method read through and dead. The callee hands
+// back a fresh box on one path and its receiver, COUNTED, on the other
+// (ret_struct_param_counted), so the dec is this frame's to make either way: it
+// frees the fresh box and gives the receiver's extra count back. The dec is
+// SHALLOW: a fresh literal's field values are not proven owned here, so what
+// the box does own leaks with it rather than being freed out from under a
+// caller.
+function emit_counted_result_release(st: LowerState, boxslot: i32): LowerState {
+    return st.release(boxslot, "__fern_rc_dec", "counted-result");
 }
 
-// freshself_call_recv_slot: the RECEIVER's slot when `e` is a method call whose
-// callee is in the "FRESHSELF:" registry — every return either a strict-fresh
-// struct literal or the receiver itself — else -1. The result is then one of
-// two boxes and only the runtime knows which, so the caller releases it under a
-// pointer compare against this slot. The receiver must be a bare LOCAL for that
-// compare to reload it without re-evaluating anything, which is the same
-// restriction owned_fresh_call_callee's method arm carries.
-function freshself_call_recv_slot(e: ast.Expr, s: LowerState): i32 {
-    match (e) {
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprFieldAccess(cfa) => {
-                    var rslot: i32 = 0 - 1;
-                    match (cfa.obj) {
-                        ast.ExprIdent(rid) => { rslot = s.slot_of(rid.name); },
-                        _ => { return 0 - 1; }
-                    }
-                    if (rslot < 0) { return 0 - 1; }
-                    var rty: string = expr_struct_type(cfa.obj, s);
-                    if (rty == "") { return 0 - 1; }
-                    if (decl_field_type(s.frame.structs, rty, cfa.field) != "") { return 0 - 1; }
-                    if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "FRESHSELF:" + rty + "." + cfa.field) < 0) { return 0 - 1; }
-                    return rslot;
-                },
-                _ => { return 0 - 1; }
-            }
-        },
-        _ => { return 0 - 1; }
+// is_counted_ret_method_call: `e` is a method call whose callee is in
+// cnt_struct_ret_fns — every return a strict-fresh construction, the receiver
+// handed back counted, or a forwarding call to such a member.
+function is_counted_ret_method_call(e: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(cfa) = c.callee {
+            var rty: string = expr_struct_type(cfa.obj, s);
+            if (rty == "" || decl_field_type(s.frame.structs, rty, cfa.field) != "") { return false; }
+            return util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, rty + "." + cfa.field) >= 0;
+        }
     }
-    return 0 - 1;
+    return false;
 }
 
 // lower_expr lowers one expression, stamping the bail description on the way
@@ -16662,19 +16653,23 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
             faown = owned_fresh_call_callee(fa.obj, "", s);
         }
     }
-    // A MIXED-path method producer (`b.relabel(t).tag`, "FRESHSELF:"):
-    // every return is either a strict-fresh literal or the receiver
-    // itself, so which box arrived is a runtime fact and the pointer
-    // decides it — the struct twin of the SFRRECV chain release. The
-    // release is the BARE box dec: the fresh path's field values are
-    // not proven owned (`Box { tag: t, … }` takes a parameter's box),
-    // so the field read stays a borrow and everything the box does own
-    // leaks with it, which is the established safe floor.
-    var fsrecv: i32 = 0 - 1;
+    // A COUNTED-return method producer (`b.relabel(t).tag`,
+    // cnt_struct_ret_fns): every return is a strict-fresh construction,
+    // the receiver handed back counted, or a forwarding call to such a
+    // member, so the result is this frame's to dec either way
+    // (emit_counted_result_release). The release is the BARE box dec:
+    // the fresh path's field values are not proven owned (`Box { tag:
+    // t, … }` takes a parameter's box), so the field read stays a
+    // borrow and everything the box does own leaks with it, which is
+    // the established safe floor — and what makes an ARRAY field read
+    // (`b.id_or_make(0).mag.len()`) safe here too: the buffer the read
+    // hands on outlives the box's shallow dec.
+    var fsself: boolean = false;
     if (faown == "" && !struct_field_is_i64(s.frame.structs, sty, idx)
             && (owned_scalar_field_type(decl_field_type(s.frame.structs, sty, fa.field))
-                || decl_field_type(s.frame.structs, sty, fa.field) == "string")) {
-        fsrecv = freshself_call_recv_slot(fa.obj, s);
+                || decl_field_type(s.frame.structs, sty, fa.field) == "string"
+                || is_array_type_name(decl_field_type(s.frame.structs, sty, fa.field)))) {
+        fsself = is_counted_ret_method_call(fa.obj, s);
     }
     // A SCALAR field read off an ELEMENT of a fresh struct-array producer —
     // `mk()[i].k`, mk in the "STRUCTARRF:" / "ARRSTRUCTF:" registries
@@ -16729,7 +16724,7 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
     // unconditionally safe. An rc-field read (`(A { … }).xs`) stays
     // refused — admitting it needs a retain this read cannot prove.
     var falit: boolean = false;
-    if (faown == "" && fsrecv < 0
+    if (faown == "" && !fsself
             && owned_scalar_field_type(decl_field_type(s.frame.structs, sty, fa.field))) {
         match (fa.obj) {
             ast.ExprStructLit(fsl) => {
@@ -16742,7 +16737,7 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
     }
     var so: LowerState = lower_expr(fa.obj, s);
     if (!so.ok) { return so; }
-    if (fsrecv >= 0) {
+    if (fsself) {
         var fsn: string = "$fsfld" + util.i32_to_string(so.locals.len());
         so = so.add_local(fsn);
         var fsslot: i32 = so.slot_of(fsn);
@@ -16756,7 +16751,7 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
         so = so.emit(ir.op_load_local(fsslot));
         so = so.emit(ir.op_struct_get(idx, struct_field_width(s.frame.structs, sty, idx)));
         so = so.emit(ir.op_store_local(fsvslot));
-        so = emit_freshself_release(so, fsslot, fsrecv);
+        so = emit_counted_result_release(so, fsslot);
         return so.emit(ir.op_load_local(fsvslot));
     }
     if (faown != "" || falit) {
@@ -20345,49 +20340,8 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             }
             if (rpid.len() > 0) {
                 var rps: i32 = s.slot_of(rpid);
-                // An `own` param is EXCLUDED: the caller moved its reference in,
-                // so returning it moves that same reference back out and there is
-                // no second owner to count. Retaining it anyway ratcheted the
-                // buffer's rc to 2 permanently, which disabled __fern_arr_push's
-                // in-place fast path (it requires rc == 1) — so every push copied
-                // the whole array AND the pre-grow buffer never reached rc 0.
-                // A threaded accumulator (`buf = le32(buf, w)`, the shape every
-                // emitter is written in) cost O(n^2) time and unbounded memory:
-                // measured 7 GB and arena exhaustion for 40k appends, against
-                // 1 MB for the same appends written inline. The caller's
-                // overwrite release is already pointer-guarded (`if old != new
-                // then arr_dec(old)`), so dropping the retain leaves the buffer
-                // freed exactly once on the grow path and untouched in place.
-                // STRUCTS take no such inc: a returned borrowed struct param
-                // stays an UNCOUNTED alias, which is what every struct consumer
-                // reads it as — a materialised call result is dec'd through an
-                // __fern_rc_is_unique gate that a second count turns off, so
-                // retaining here strands the box instead (#8240,
-                // alloc_flat_method_identity_return). The caller-side pairing is
-                // release_last_use_source, which honours the same convention.
-                if (rps >= 0 && rps < s.frame.n_params && s.is_arr_slot(rps)) {
-                    var rpl: LowerState = lower_expr(r.value, s);
-                    if (!rpl.ok) { return rpl; }
-                    var rpfl: i32 = s.ownflag_slot_of(rps);
-                    if (!s.is_own_param(rpid)) {
-                        if (rpfl >= 0) {
-                            // A consumed-threaded param (ownflag_name) is the
-                            // caller's only while its flag is 0; a buffer this
-                            // frame owns is handed over as it stands.
-                            rpl = rpl.emit(ir.op_load_local(rpfl));
-                            rpl = rpl.emit(ir.op_const_i32(0));
-                            rpl = rpl.emit(ir.op_bin("eq", 0, false));
-                            rpl = rpl.emit(ir.op_if(0));
-                            rpl = rpl.retain(rps, "ret-borrowed-param");
-                            rpl = rpl.emit(ir.op_end());
-                        } else {
-                            rpl = rpl.retain_tos("ret-borrowed-param");
-                        }
-                    }
-                    rpl = emit_consumed_param_exit(rpl, r.value, true);
-                    rpl = emit_dec_sweep_except(rpl, rps);
-                    return rpl.emit(ir.op_return());
-                }
+                var rpa: RetArm = lower_return_param(r.value, rpid, rps, s);
+                if (rpa.handled) { return rpa.state; }
                 // A match-arm binding of an ARRAY payload borrows the enum
                 // box's buffer (mark_borrowed_arr): the box keeps its
                 // reference and the binding is never swept, so the escaping
@@ -20760,6 +20714,16 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                                 } else {
                                     se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");
                                 }
+                            } else if (util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dcid.name) >= 0) {
+                                // A discarded call to a COUNTED-return free function
+                                // outside the strict-fresh registry (a bare param handed
+                                // back, or a forwarding frame): the result holds a count
+                                // this frame owns — the callee's transfer retain on the
+                                // handback path, a fresh box on the other — and the
+                                // shallow rc-aware dec gives it back either way. What a
+                                // fresh box owns leaks with it, as the read-through release
+                                // below accepts.
+                                se = se.release_tos("__fern_rc_dec", "discard-cntret-box");
                             } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
                                     || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
                                 // A discarded call to an ARRAY-returning free function
@@ -20892,9 +20856,13 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                                 ast.ExprIdent(_) => { drty = expr_struct_type(dcfa.obj, s); },
                                 _ => {}
                             }
+                            // A COUNTED-return METHOD (`b.id_or_make(0);`, cnt_struct_ret_fns)
+                            // takes the same shallow dec: its result is this frame's
+                            // count whichever path produced it.
                             if (drty != "" && decl_field_type(s.frame.structs, drty, dcfa.field) == ""
                                 && (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
-                                    || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0)) {
+                                    || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0
+                                    || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, drty + "." + dcfa.field) >= 0)) {
                                 se = se.release_tos("__fern_rc_dec", "discard-field-arr-ret");
                             }
                         },
@@ -21824,7 +21792,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // (non-loop) local is unaffected: old is null, so only the store happens, and
     // the exit sweep still frees the final value.
     if (slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot) && sb.struct_routes_field_reclaim(vt.struct_ty)) {
-        return emit_field_reclaim_store(sb, slot, vt.struct_ty, 0 - 1);
+        return emit_field_reclaim_store(sb, slot, vt.struct_ty, 0 - 1, false);
     }
     // Reclaimable arr-of-arr LOOP-LOCAL (#4355 slice 9): the re-declaration
     // must free the prior iteration's whole two-level structure before the
@@ -24344,17 +24312,18 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // frame owns it (emit_consumed_param_store).
                             var tgt_aliased: boolean = s.is_aliased_name(a.target);
                             var tgt_param: boolean = slot < s.frame.n_params;
+                            var push_shared: boolean = !append_target_sole_owner(s, a.target, slot);
                             if (append_report_on()) {
                                 var why: string = "sole owner: the grow reclaims the superseded buffer";
-                                if (tgt_aliased) { why = "aliased target: a surviving reference forbids the reclaim"; }
+                                if (tgt_aliased) { why = "aliased target: the plain push leaves the buffer to its holders; the store releases this frame's reference"; }
                                 else if (tgt_param) { why = "parameter target: the buffer is the caller's (#3457)"; }
+                                else if (push_shared) { why = "borrowed binding: the buffer is the box's"; }
                                 var verdict: string = "owned";
-                                if (tgt_aliased || tgt_param) { verdict = "LEAKS"; }
+                                if (push_shared) { verdict = "shared"; }
                                 eprint("append-report: " + s.frame.cur_fn + ":"
                                     + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
                                     + "  " + verdict + "  " + lexical.source_name(a.target) + "  " + why + "\n");
                             }
-                            var push_shared: boolean = !append_target_sole_owner(s, a.target, slot);
                             if (push_shared) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
@@ -24688,6 +24657,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // A struct box the call CONSUMED (`a = f(a)` into an `own` position) was
     // released by the callee's own exit sweep; the reclaims below would read a
     // freed block. Bare store.
+    se = handback_identity_dec_store(se, a, slot, target_is_arr, s);
     if (!target_is_arr && decl_is_struct(s.frame.structs, s.struct_type_of_slot(slot)) && call_owns_arg(a.value, a.target, s)) {
         return se.emit(ir.op_store_local(slot));
     }
@@ -24695,7 +24665,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
         var snsl: i32 = s.slot_of(snapshot_slot_name(slot));
         var snty: string = s.struct_type_of_slot(slot);
         if (!s.is_arr_slot(slot) && s.struct_routes_field_reclaim(snty)) {
-            return emit_field_reclaim_store(se, slot, snty, snsl);
+            return emit_field_reclaim_store(se, slot, snty, snsl, false);
         }
         return emit_snapshot_store(se, slot, snsl);
     }
@@ -24718,11 +24688,11 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     if (!target_is_arr && slot >= s.frame.n_params && asty.len() > 0) { snls = s.slot_of(snapshot_slot_name(slot)); }
     var nofld: boolean = reclaim_has(s.frame.reclaimable_names, "NOFLD:", s.reclaim_site_key(slot));
     if (snls >= 0 && !slot_is_reclaimable_struct(s, slot)) {
-        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls); }
+        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls, false); }
         return emit_snapshot_store(se, slot, snls);
     }
     if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !nofld && s.struct_routes_field_reclaim(asty)) {
-        return emit_field_reclaim_store(se, slot, asty, snls);
+        return emit_field_reclaim_store(se, slot, asty, snls, true);
     }
     // A struct local the frame RETURNS ("RETRE:", slot_reassign_reclaims_struct)
     // still supersedes a box at every rebind, and that box is dead the moment
@@ -24732,7 +24702,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // cow guard itself, and a type routing no field reclaim takes the box-only
     // sibling.
     if (!target_is_arr && slot_reassign_reclaims_struct(s, slot)) {
-        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls); }
+        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls, true); }
         return emit_unique_reclaim_store(se, slot);
     }
     // A reclaimable rc-TUPLE local REBIND (`p = (i, "hi")` / `p = (i, [i, i+1])`,
@@ -28202,6 +28172,81 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
     return st;
 }
 
+struct RetArm { handled: boolean, state: LowerState }
+
+// lower_return_param: `return <param>` for the two kinds whose bare return
+// hands the caller a COUNTED reference to a box the caller already holds. The
+// caller binds the result as an owned move (its slot is exit-swept), but the
+// param's box belongs to the caller's caller, so without a retain the callee
+// hands out an UNCOUNTED alias and the two sweeps over-release it — native's
+// return-transfer inc (needsRcIncOnAlias, paramCountedRetain). Params are
+// never exit-swept, so no move-out bookkeeping is needed; a bare LOCAL return
+// stays on the move-on-return path (its slot is kept from the sweep instead).
+function lower_return_param(rv: ast.Expr, name: string, slot: i32, s: LowerState): RetArm {
+    var none: RetArm = RetArm { handled: false, state: s };
+    if (slot < 0 || slot >= s.frame.n_params) { return none; }
+    if (s.is_arr_slot(slot)) { return RetArm { handled: true, state: lower_return_arr_param(rv, name, slot, s) }; }
+    if (ret_struct_param_counted(s, name, slot)) { return RetArm { handled: true, state: lower_return_struct_param(rv, slot, s) }; }
+    return none;
+}
+
+// An `own` param is EXCLUDED: the caller moved its reference in, so returning
+// it moves that same reference back out and there is no second owner to
+// count. Retaining it anyway ratcheted the buffer's rc to 2 permanently, which
+// disabled __fern_arr_push's in-place fast path (it requires rc == 1) — so
+// every push copied the whole array AND the pre-grow buffer never reached rc
+// 0. A threaded accumulator (`buf = le32(buf, w)`, the shape every emitter is
+// written in) cost O(n^2) time and unbounded memory: measured 7 GB and arena
+// exhaustion for 40k appends, against 1 MB for the same appends written
+// inline. The caller's overwrite release is already pointer-guarded (`if old
+// != new then arr_dec(old)`), so dropping the retain leaves the buffer freed
+// exactly once on the grow path and untouched in place.
+function lower_return_arr_param(rv: ast.Expr, name: string, slot: i32, s: LowerState): LowerState {
+    var rpl: LowerState = lower_expr(rv, s);
+    if (!rpl.ok) { return rpl; }
+    var rpfl: i32 = s.ownflag_slot_of(slot);
+    if (!s.is_own_param(name)) {
+        if (rpfl >= 0) {
+            // A consumed-threaded param (ownflag_name) is the caller's only
+            // while its flag is 0; a buffer this frame owns is handed over as
+            // it stands.
+            rpl = rpl.emit(ir.op_load_local(rpfl));
+            rpl = rpl.emit(ir.op_const_i32(0));
+            rpl = rpl.emit(ir.op_bin("eq", 0, false));
+            rpl = rpl.emit(ir.op_if(0));
+            rpl = rpl.retain(slot, "ret-borrowed-param");
+            rpl = rpl.emit(ir.op_end());
+        } else {
+            rpl = rpl.retain_tos("ret-borrowed-param");
+        }
+    }
+    rpl = emit_consumed_param_exit(rpl, rv, true);
+    rpl = emit_dec_sweep_except(rpl, slot);
+    return rpl.emit(ir.op_return());
+}
+
+// ret_struct_param_counted: `name` is a borrowed STRUCT param or receiver
+// whose bare return takes the transfer retain — in a function of the
+// cnt_struct_ret_fns class, and only there: the retain and the caller's
+// release of a result that turns out to be the argument's own box are one
+// pairing keyed on that registry, and a retain the caller never gives back
+// strands the box (measured as one generation a round on the tuple-handback
+// loops). The class already refuses a REASSIGNED param, which may hold a box
+// this frame built; an `own` param is the caller's reference moving through,
+// as for arrays, and stays on the move-on-return path.
+function ret_struct_param_counted(s: LowerState, name: string, slot: i32): boolean {
+    if (s.is_own_param(name) || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, s.frame.cur_key) < 0) { return false; }
+    return decl_is_struct(s.frame.structs, s.struct_type_of_slot(slot));
+}
+function lower_return_struct_param(rv: ast.Expr, slot: i32, s: LowerState): LowerState {
+    var st: LowerState = lower_expr(rv, s);
+    if (!st.ok) { return st; }
+    st = st.retain_tos("ret-borrowed-struct-param");
+    st = emit_consumed_param_exit(st, rv, true);
+    st = emit_dec_sweep_except(st, slot);
+    return st.emit(ir.op_return());
+}
+
 // ret_type_cannot_hold_buffer: a value of the declared return type `t` is
 // never an array buffer nor anything that can reach one, so a parameter named
 // in the returned expression (`return p[0] + p[1]`) is read there, not handed
@@ -28914,8 +28959,12 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
 // whole reclaim runs only for the sole owner; a shared old box takes the
 // box-only path: this slot gives up its counted reference (__fern_rc_dec) so
 // the surviving owner reaches rc 1 and does the deep work — unless the old box
-// IS the snapshot, held uncounted, which gets neither.
-function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_slot: i32): LowerState {
+// IS the snapshot, held uncounted, which gets neither. `box_counted` says the
+// slot holds a count on whatever box it names, snapshot included — a CREDITED
+// slot, whose exit sweep decs unconditionally — so the shared path gives the
+// count back even when the box is the snapshot's: a counted handback of the
+// source's box (cnt_struct_ret_fns) is exactly that shape.
+function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_slot: i32, box_counted: boolean): LowerState {
     var scratch: string = "$frs" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
@@ -28940,7 +28989,7 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_load_local(tmp));
     st = st.emit(ir.op_bin("ne", 0, false));
-    if (snap_slot >= 0) {
+    if (snap_slot >= 0 && !box_counted) {
         st = st.emit(ir.op_load_local(slot));
         st = st.emit(ir.op_load_local(snap_slot));
         st = st.emit(ir.op_bin("ne", 0, false));
@@ -28967,9 +29016,11 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
 // freeing under it is a use-after-free rather than a leak — and is null-safe, so
 // the zeroed slot the first rebind supersedes is a no-op. The cow guard
 // (`old != new`) keeps the box a self-store hands straight back, the same
-// identity emit_arr_store's release is guarded against. A SHARED old box is left
-// alone rather than dec'd: this class hands out no counted reference of its own,
-// so there is no count here to give back.
+// identity emit_arr_store's release is guarded against; a COUNTED handback of
+// it (cnt_struct_ret_fns) gave its extra count back ahead of this store
+// (handback_identity_dec_store). A SHARED old box is left alone rather than
+// dec'd: this class hands out no counted reference of its own, so there is no
+// count here to give back.
 function emit_unique_reclaim_store(se: LowerState, slot: i32): LowerState {
     var scratch: string = "$urs" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
@@ -40947,7 +40998,7 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[], spread_
 // the key carries the callee half.
 //
 // Struct receivers only: the marker it feeds is the struct deep drop.
-pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, borrowable: string[], sfok: string[]): string[] {
+pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, borrowable: string[], sfok: string[], cntret: string[]): string[] {
     var out: string[] = [];
     for fn in funcs {
         if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0) {
@@ -40961,7 +41012,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, bo
             // (a view of the receiver) alike, since both are escapes for it.
             if (rty == "string") {
                 if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
-                    out = out.append("RECVRET:" + rty + "." + fn.name);
+                    out = out.append(recvret_row(cntret, rty + "." + fn.name));
                 }
                 if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
                     out = out.append(rty + "." + fn.name);
@@ -40973,8 +41024,10 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, bo
                 // the receiver's own box. Independent of the other two
                 // predicates — a method that also moves a field can still hand
                 // its receiver back, and the caller's credit gate has to know.
+                // A cnt_struct_ret_fns member hands it back COUNTED and keys
+                // "CNTRECVRET:" instead, which that gate does not read.
                 if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
-                    out = out.append("RECVRET:" + rty + "." + fn.name);
+                    out = out.append(recvret_row(cntret, rty + "." + fn.name));
                 }
                 if (!moves_fields_stmts(fn.body, fn.receiver_name, no_names(), spread_copy_counted(structs, sfok, rty))
                     && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
@@ -40994,6 +41047,11 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: StructTab, bo
         }
     }
     return out;
+}
+
+function recvret_row(cntret: string[], key: string): string {
+    if (util.index_of_str(cntret, key) >= 0) { return "CNTRECVRET:" + key; }
+    return "RECVRET:" + key;
 }
 
 // body_returns_bare_ident: some `return name;` in `stmts` hands `name` itself
@@ -41430,10 +41488,12 @@ function struct_returned_bare(stmts: ast.Stmt[], name: string): boolean {
 }
 
 // struct_arg_to_handback: `name` is a bare argument at a position the callee
-// returns bare (handback_params_of) — `held = keepit(s)` hands s's box back
-// uncounted, so granting s frees it under the result (measured as underflow
-// 244 on the callee-keeps probe). A callee that stores the arg into a
-// returned CONSTRUCTION is not refused: the construction's retain counts it.
+// returns bare and UNCOUNTED (handback_params_of) — `held = keepit(s)` hands
+// s's box back with no count of its own, so granting s frees it under the
+// result (measured as underflow 244 on the callee-keeps probe). A callee that
+// stores the arg into a returned CONSTRUCTION is not refused: the
+// construction's retain counts it. Nor is a cnt_struct_ret_fns callee: its
+// handback is counted, and sinkshare_counted_handbacks gates the field walk.
 function struct_arg_to_handback_expr(e: ast.Expr, name: string, handback: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
@@ -41593,12 +41653,15 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     return out;
 }
 
-function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
+function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[], cnt_handback: string[], cntret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, [], sfok);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
     // body_unsafe_for gate below still proves non-escape before any is freed.
-    fresh = collect_fresh_ret_call_names(body, structs, fresh_ret, fresh);
+    // A cnt_struct_ret_fns callee's binding rides along: its box is counted
+    // whichever return produced it, and sinkshare_counted_handbacks below
+    // gates its field walk for the case where that box is the argument's.
+    fresh = collect_fresh_ret_call_names(body, structs, append_all(fresh_ret, cntret), fresh);
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
@@ -41612,6 +41675,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // once the first pass finishes — and that ordering is the co-extensivity
     // guarantee.
     out = reclaimable_alias_sink_share(body, borrowable, fresh, recv_borrow, out);
+    out = sinkshare_counted_handbacks(out, body, params, structs, cnt_handback);
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
     // sweeps' DEEP field drop (emit_struct_field_drops → __struct_drop_<T>) is
     // sound only while the dead box still OWNS its rc fields. A method-RECEIVER
@@ -42755,33 +42819,6 @@ function struct_ret_local_init_strictfresh(stmts: ast.Stmt[], name: string, stru
     }
     return false;
 }
-// body_returns_fresh_or_self_struct: every return in `stmts` hands back either a
-// strict-fresh struct literal or the RECEIVER itself (`return b`). The mixed
-// shape every builder-ish method opens with — `if (t.len() == 0) { return b; }`
-// — which no all-fresh registry can admit, and which the caller can still
-// release under a pointer compare because those are the only two boxes it can
-// be. A body with no return at all answers false via the caller's
-// body_has_return check.
-function body_returns_fresh_or_self_struct(stmts: ast.Stmt[], structs: StructTab, fnbody: ast.Stmt[], recv: string, arr_fresh: string[], fwd: string[], fnparams: ast.ParamDecl[], sfok: string[]): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtReturn(r) => {
-                var self_ret: boolean = false;
-                match (r.value) {
-                    ast.ExprIdent(rid) => { if (rid.name == recv) { self_ret = true; } },
-                    _ => {}
-                }
-                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
-            },
-            ast.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } },
-            ast.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } },
-            ast.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } a = a + 1; } },
-            _ => {}
-        }
-    }
-    return true;
-}
 function body_has_nonstrictfresh_return(stmts: ast.Stmt[], structs: StructTab, fnbody: ast.Stmt[], arr_fresh: string[], fwd: string[], fnparams: ast.ParamDecl[], sfok: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
@@ -43904,28 +43941,100 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
             if (fn.receiver_type.len() > 0) { skey = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append("STRFLDF:" + skey);
         }
-        // "FRESHSELF:<Base>.<method>" — the MIXED-path producer: SOME return hands
-        // back the receiver and every other is a strict-fresh struct literal. The
-        // bare-receiver return is required, not merely allowed: an all-fresh body
-        // is what the plain entry above already admits, with no runtime compare to
-        // pay for, and a second entry for it would only lengthen a registry every
-        // call site scans (#6911 §4d.4). Neither
-        // the bare entry nor "STRFLDF:" can hold it (both demand every path be
-        // fresh), and refusing it strands the fresh path's box at every call —
-        // the shape `if (t.len() == 0) { return b; }` gives every builder-ish
-        // method. The caller releases under a pointer compare against the
-        // receiver, so the identity path costs nothing and the fresh path is
-        // freed; the release is the BARE box dec, since a fresh literal's field
-        // values are not proven owned here (`Box { tag: t, … }` takes a
-        // parameter's box) and only the box itself is provably this frame's.
-        if (fn.receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
-                && body_has_return(fn.body)
-                && body_returns_bare_ident(fn.body, fn.receiver_name)
-                && body_returns_fresh_or_self_struct(fn.body, structs, fn.body, fn.receiver_name, arr_fresh, fwd, fn.params, sfok)) {
-            out = out.append("FRESHSELF:" + util.base_type_name(fn.receiver_type) + "." + fn.name);
+    }
+    // "CNTRET:<key>" — the counted-return class, the MIXED-path producer
+    // (`if (t.len() == 0) { return b; }`, which every builder-ish method opens
+    // with) included: neither the bare entry nor "STRFLDF:" can hold it (both
+    // demand every path be fresh), and refusing it strands the fresh path's
+    // box at every call. Its handback path is counted by the return path, so a
+    // read-through or discarded result takes the bare box dec either way.
+    for ck in counted_struct_ret_fns_of(funcs, structs, arr_fresh, fwd, sfok) { out = out.append("CNTRET:" + ck); }
+    return out;
+}
+
+// counted_struct_ret_fns_of: the "CNTRET:" class (FnSigs.cnt_struct_ret_fns).
+// A least fixpoint over every function with a leak-safe struct return: a
+// return is counted when it is strict-fresh, a bare non-own parameter or
+// receiver of the return type that the body never reassigns or redeclares
+// (the return path retains it), or a call to a member already proven — a
+// free function by its bare name, a method through a declared receiver type.
+function counted_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, arr_fresh: string[], fwd: string[], sfok: string[]): string[] {
+    var pending: i32[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (decl_is_struct(structs, funcs[k].ret_type) && decl_is_leaksafe(structs, funcs[k].ret_type) && body_has_return(funcs[k].body)) {
+            pending = pending.append(k);
+        }
+        k = k + 1;
+    }
+    var acc: string[] = [];
+    var round: i32 = 0;
+    while (round < 8) {
+        var still: i32[] = [];
+        var added: boolean = false;
+        var p: i32 = 0;
+        while (p < pending.len()) {
+            var fi: i32 = pending[p];
+            if (!body_has_uncounted_return(funcs[fi].body, funcs[fi], structs, arr_fresh, fwd, sfok, acc)) {
+                acc = acc.append(struct_ret_key(funcs[fi]));
+                added = true;
+            } else {
+                still = still.append(fi);
+            }
+            p = p + 1;
+        }
+        pending = still;
+        if (!added || pending.len() == 0) { return acc; }
+        round = round + 1;
+    }
+    return acc;
+}
+function body_has_uncounted_return(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: StructTab, arr_fresh: string[], fwd: string[], sfok: string[], acc: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtReturn(r) => { if (!counted_ret_value(r.value, fn, structs, arr_fresh, fwd, sfok, acc)) { return true; } },
+            ast.StmtIf(f) => { if (body_has_uncounted_return(f.then_body, fn, structs, arr_fresh, fwd, sfok, acc) || body_has_uncounted_return(f.else_body, fn, structs, arr_fresh, fwd, sfok, acc)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_uncounted_return(w.body, fn, structs, arr_fresh, fwd, sfok, acc)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_uncounted_return(fo.body, fn, structs, arr_fresh, fwd, sfok, acc)) { return true; } },
+            ast.StmtMatch(m) => { for arm in m.arms { if (body_has_uncounted_return(arm.body, fn, structs, arr_fresh, fwd, sfok, acc)) { return true; } } },
+            _ => {}
         }
     }
-    return out;
+    return false;
+}
+function counted_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: StructTab, arr_fresh: string[], fwd: string[], sfok: string[], acc: string[]): boolean {
+    if (return_value_is_strictfresh_struct(e, structs, fn.body, arr_fresh, fwd, fn.params, sfok)) { return true; }
+    if let ast.ExprIdent(rid) = e { return counted_handback_param(fn, rid.name); }
+    var key: string = counted_forward_key(e, fn, structs);
+    return key.len() > 0 && util.index_of_str(acc, key) >= 0;
+}
+// counted_handback_param: `name` is a non-own parameter or the receiver of
+// `fn`, of its return type, never reassigned or redeclared in the body — the
+// shape ret_struct_param_counted retains at `return name`.
+function counted_handback_param(fn: parser.FuncDecl, name: string): boolean {
+    if (name.len() == 0 || local_decl_count(fn.body, name) != 0) { return false; }
+    if (util.index_of_str(body_assign_targets(fn.body), name) >= 0) { return false; }
+    if (fn.receiver_name.len() > 0 && name == fn.receiver_name) { return util.base_type_name(fn.receiver_type) == util.base_type_name(fn.ret_type); }
+    for pd in fn.params {
+        if (pd.name == name) { return !pd.own && pd.type_name == fn.ret_type; }
+    }
+    return false;
+}
+// counted_forward_key: the registry key of a forwarding return's callee, "" for
+// a callee this frame shadows or a receiver of unknown type.
+function counted_forward_key(e: ast.Expr, fn: parser.FuncDecl, structs: StructTab): string {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee {
+            if (decl_type_in_fn(fn, cid.name).len() > 0 || body_declares_name(fn.body, cid.name)) { return ""; }
+            return cid.name;
+        }
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rt: string = util.base_type_name(decl_type_in_fn(fn, ident_name_or_empty(fa.obj)));
+            if (rt.len() == 0 || !decl_is_struct(structs, rt)) { return ""; }
+            return rt + "." + fa.field;
+        }
+    }
+    return "";
 }
 
 // is_fresh_ret_binding: `init` is a call/method whose callee is fresh-returning.
@@ -59405,7 +59514,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
     if (plan_on) { plan_fe = free_eligible_sites_of(fn, asg_targets, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
-    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
+    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -59624,7 +59733,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, rc_ml_compute(fn, structs).names);
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -67327,7 +67436,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
         opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e,
-        consumed_arr_positions: e, param_counted: e, enum_regions: [] };
+        consumed_arr_positions: e, param_counted: e, cnt_struct_ret_fns: e, cnt_handback_params: e, enum_regions: [] };
 }
 
 // fn_sigs_empty is the all-empty registry, for the analysis-only lowerings that
@@ -67342,6 +67451,7 @@ pub function fn_sigs_empty(): FnSigs {
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
         tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e, handback_carry_params: e,
+        cnt_struct_ret_fns: e, cnt_handback_params: e,
         str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e };
 }
 
@@ -67778,6 +67888,8 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
     // fn_param_sigs, grow_recv_fns and grow_field_positions — so the fixpoint
     // runs once here rather than per consumer.
     var growflags: string[] = grow_param_flags_of(funcs);
+    var rf: string[] = return_fresh_struct_ret_fns_of(funcs, structs, sfok);
+    var cntret: string[] = prefixed_names_of(rf, "CNTRET:");
     return FnSigs {
         enum_regions: enum_regions,
         arr_ret_fns: sig_reg_of(arr_ret_fns),
@@ -67807,8 +67919,8 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         fn_names: sig_reg_of(fn_names_of(funcs)),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
-        return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs, sfok),
-        recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams, sfok),
+        return_fresh_struct_ret_fns: rf,
+        recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams, sfok, cntret),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))),
         strfld_ok_types: sfok,
@@ -67818,7 +67930,9 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         consumed_arr_positions: consumed_arr_positions_of(funcs),
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
-        handback_params: handback_params_of(funcs),
+        handback_params: handback_params_of(funcs, cntret),
+        cnt_struct_ret_fns: cntret,
+        cnt_handback_params: cnt_handback_params_of(funcs, cntret),
         handback_carry_params: handback_carry_params_of(funcs),
         str_handback_ret: str_handback_ret_of(funcs),
         grow_recv_fns: grow_recv_fns_of(growflags),
@@ -67827,25 +67941,59 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
 }
 
 // handback_params_of: "fn|idx" for every parameter some return hands back
-// BARE — see the FnSigs field comment. Only direct `return <param>` counts;
-// a param stored into a returned construction takes the construction's
-// counted retain and is not a hand-back.
-pub function handback_params_of(funcs: parser.FuncDecl[]): string[] {
+// BARE and UNCOUNTED — see the FnSigs field comment. Only direct `return
+// <param>` counts; a param stored into a returned construction takes the
+// construction's counted retain and is not a hand-back. A cnt_struct_ret_fns
+// member's handbacks are counted and live in cnt_handback_params instead.
+pub function handback_params_of(funcs: parser.FuncDecl[], cntret: string[]): string[] {
     var out: string[] = [];
     for fn in funcs {
-        var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
-        var pi: i32 = 0;
-        while (pi < fn.params.len()) {
-            var hit: boolean = false;
-            for r in rets {
-                match (r) {
-                    ast.ExprIdent(rid) => { if (rid.name == fn.params[pi].name) { hit = true; } },
-                    _ => {}
-                }
+        if (util.index_of_str(cntret, struct_ret_key(fn)) >= 0) { continue; }
+        out = append_all(out, bare_handback_rows(fn, fn.name, false));
+    }
+    return out;
+}
+// cnt_handback_params_of: the COUNTED rows — "<key>|idx" for a bare-returned
+// non-own parameter and "<key>|r" for a bare-returned receiver of a
+// cnt_struct_ret_fns member, keyed as the registry keys it. An `own` parameter
+// handed back is the caller's own reference moving through, so it takes no
+// row: there is no second count to give back.
+pub function cnt_handback_params_of(funcs: parser.FuncDecl[], cntret: string[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        var key: string = struct_ret_key(fn);
+        if (util.index_of_str(cntret, key) < 0) { continue; }
+        out = append_all(out, bare_handback_rows(fn, key, true));
+        if (fn.receiver_name.len() > 0 && body_returns_bare_ident(fn.body, fn.receiver_name)) { out = out.append(key + "|r"); }
+    }
+    return out;
+}
+function bare_handback_rows(fn: parser.FuncDecl, key: string, skip_own: boolean): string[] {
+    var out: string[] = [];
+    var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var hit: boolean = false;
+        for r in rets {
+            match (r) {
+                ast.ExprIdent(rid) => { if (rid.name == fn.params[pi].name) { hit = true; } },
+                _ => {}
             }
-            if (hit) { out = out.append(fn.name + "|" + util.i32_to_string(pi)); }
-            pi = pi + 1;
         }
+        if (hit && !(skip_own && fn.params[pi].own)) { out = out.append(key + "|" + util.i32_to_string(pi)); }
+        pi = pi + 1;
+    }
+    return out;
+}
+function struct_ret_key(fn: parser.FuncDecl): string {
+    if (fn.receiver_type.len() > 0) { return util.base_type_name(fn.receiver_type) + "." + fn.name; }
+    return fn.name;
+}
+// prefixed_names_of: the rows of `rows` carrying `pfx`, with it stripped.
+function prefixed_names_of(rows: string[], pfx: string): string[] {
+    var out: string[] = [];
+    for r in rows {
+        if (r.len() > pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) { out = out.append(slice_unchecked(r, pfx.len(), r.len()) + ""); }
     }
     return out;
 }
@@ -67930,6 +68078,82 @@ function bare_alias_step(stmts: ast.Stmt[], names: string[]): string[] {
         }
     }
     return a;
+}
+
+// counted_call_key: the cnt_struct_ret_fns key of `e`'s callee — a free
+// function by its bare name (not shadowed by a local), a method by the static
+// struct type of its receiver — or "".
+function counted_call_key(e: ast.Expr, s: LowerState): string {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee {
+            if (s.slot_of(cid.name) >= 0) { return ""; }
+            return cid.name;
+        }
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rty: string = expr_struct_type(fa.obj, s);
+            if (rty == "" || decl_field_type(s.frame.structs, rty, fa.field) != "") { return ""; }
+            return rty + "." + fa.field;
+        }
+    }
+    return "";
+}
+
+// call_hands_back_counted: `e` is a call whose callee may hand `name`'s own box
+// back COUNTED (cnt_handback_params): `name` is its receiver, or a bare
+// argument, at a position the callee returns bare. The result then holds one
+// count more than the argument's slot owed, and emit_handback_identity_dec
+// gives it back where the two turn out to be one box.
+function call_hands_back_counted(e: ast.Expr, name: string, s: LowerState): boolean {
+    var key: string = counted_call_key(e, s);
+    if (key.len() == 0 || name.len() == 0) { return false; }
+    var ops: string[] = call_operand_idents(e);
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var pos: string = "r";
+        if (i > 0) { pos = util.i32_to_string(i - 1); }
+        if (ops[i] == name && util.index_of_str(s.frame.sigs.cnt_handback_params, key + "|" + pos) >= 0) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// emit_handback_identity_dec gives back the count a COUNTED handback added on
+// the box `slot` already held: `x = x.m()` / `var q = g(x)` where the callee
+// returned its argument bare (call_hands_back_counted). The callee retained
+// it, so when the result in `new_slot` IS the old box the slot's own claim is
+// unchanged and the extra count goes here; a different box is the ordinary
+// release's business. `snap_slot` >= 0 names a box the slot holds UNCOUNTED
+// (a dying source's snapshot), which owes nothing back.
+function emit_handback_identity_dec(s: LowerState, slot: i32, new_slot: i32, snap_slot: i32): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(new_slot));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    if (snap_slot >= 0) {
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_load_local(snap_slot));
+        st = st.emit(ir.op_bin("ne", 0, false));
+        st = st.emit(ir.op_bin("and", 0, false));
+    }
+    st = st.emit(ir.op_if(0));
+    st = st.release(slot, "__fern_rc_dec", "handback-identity");
+    return st.emit(ir.op_end());
+}
+// emit_handback_identity_dec_tos: the same with the new value on the operand
+// stack, left there.
+function emit_handback_identity_dec_tos(se: LowerState, slot: i32, snap_slot: i32): LowerState {
+    var scratch: string = "$hbn" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = emit_handback_identity_dec(st, slot, tmp, 0 - 1);
+    return st.emit(ir.op_load_local(tmp));
+}
+// handback_identity_dec_store: the struct REBIND entry — `a.target = <call>`
+// with the new value on the operand stack.
+function handback_identity_dec_store(se: LowerState, a: ast.StmtAssign, slot: i32, target_is_arr: boolean, s: LowerState): LowerState {
+    if (target_is_arr || !decl_is_struct(s.frame.structs, s.struct_type_of_slot(slot))) { return se; }
+    if (!call_hands_back_counted(a.value, a.target, s)) { return se; }
+    return emit_handback_identity_dec_tos(se, slot, 0 - 1);
 }
 
 // callee_carries_arg: `e` is a direct call that hands `name`'s box back inside
@@ -71112,7 +71336,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -78563,13 +78787,17 @@ function last_use_release_slot(v: ast.StmtVar, s: LowerState): i32 {
 // derived from name, so name's box is dead. Release it the way a rebind would,
 // with q2 standing in for the new value: a field q2 carries on is kept, the
 // replaced ones and the box go, a shared box gives up this slot's count. When g
-// handed name's own box back there is nothing to release: a returned borrowed
-// param is an UNCOUNTED alias, so this slot's count is the only one and it
-// transfers to q2, whose own sweep frees the box (#8240 — decing it here took
-// rc 1 to 0 under a live q2, and the next allocation handed the same block
-// out again). At an `own` position the callee took the box — reused in place or
-// freed — and nothing here may read it. The slot is zeroed either way, so the
-// exit sweep of a credited local finds nothing.
+// handed name's own box back the release sees old == new and keeps it; a
+// COUNTED handback (cnt_struct_ret_fns, the return path's retain) left the box
+// one count up, and that count is this slot's to give back
+// (emit_handback_identity_dec) — unless the slot held the box UNCOUNTED, as
+// the snapshot of an alias, in which case the count is q2's own. An uncounted
+// handback (a callee outside the class) leaves this slot's count as the only
+// one, and it transfers to q2, whose own sweep frees the box (#8240 — decing
+// it here took rc 1 to 0 under a live q2). At an `own` position the callee
+// took the box — reused in place or freed — and nothing here may read it. The
+// slot is zeroed either way, so the exit sweep of a credited local finds
+// nothing.
 function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
     if (!sv.ok) { return sv; }
     var slot: i32 = last_use_release_slot(v, sv);
@@ -78583,9 +78811,10 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
         var q2: i32 = st.slot_of(v.name);
         var sty: string = st.struct_type_of_slot(slot);
         var snls: i32 = st.slot_of(snapshot_slot_name(slot));
+        st = handback_identity_dec_dying(st, v.init, lu_name, slot, q2, snls);
         st = st.emit(ir.op_load_local(q2));                       // new
         if (!reclaim_has(st.frame.reclaimable_names, "NOFLD:", st.reclaim_site_key(slot)) && st.struct_routes_field_reclaim(sty)) {
-            st = emit_field_reclaim_store(st, slot, sty, snls);
+            st = emit_field_reclaim_store(st, slot, sty, snls, false);
         } else {
             st = st.emit(ir.op_load_local(slot));                 // old (arg1)
             if (snls >= 0) { st = st.emit(ir.op_load_local(snls)); } else { st = st.emit(ir.op_const_i32(0)); }
@@ -78595,6 +78824,15 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
     }
     st = st.emit(ir.op_const_i32(0));
     return st.emit(ir.op_store_local(slot));
+}
+
+// handback_identity_dec_dying: emit_handback_identity_dec for a source that
+// dies at the call that may hand its box back (release_last_use_source,
+// tail_release_one): the box in `slot` gives back its count when it is the
+// result and not the slot's uncounted snapshot.
+function handback_identity_dec_dying(st: LowerState, init: ast.Expr, name: string, slot: i32, new_slot: i32, snap_slot: i32): LowerState {
+    if (!call_hands_back_counted(init, name, st)) { return st; }
+    return emit_handback_identity_dec(st, slot, new_slot, snap_slot);
 }
 
 // arg_moved_into_callee: `name` sits at a declared `own` position of e's callee
@@ -78656,7 +78894,7 @@ function tail_release_snapshot_locals(v: ast.Expr, s: LowerState): LowerState {
         // operand's, so the release's stand-in guard would not see the
         // handback and would free what the caller is about to receive
         // (#8891). The box goes back with the result instead.
-        if (!callee_carries_arg(v, an, st)) { st = tail_release_one(an, st); }
+        if (!callee_carries_arg(v, an, st)) { st = tail_release_one(v, an, st); }
     }
     return st;
 }
@@ -78688,7 +78926,7 @@ function call_recv_ident(e: ast.Expr): string {
     if (ops.len() == 0) { return ""; }
     return ops[0];
 }
-function tail_release_one(name: string, s: LowerState): LowerState {
+function tail_release_one(v: ast.Expr, name: string, s: LowerState): LowerState {
     if (name.len() == 0) { return s; }
     var slot: i32 = s.slot_of(name);
     if (slot < s.frame.n_params || s.is_arr_slot(slot) || slot_is_reclaimable_struct(s, slot)) { return s; }
@@ -78697,8 +78935,16 @@ function tail_release_one(name: string, s: LowerState): LowerState {
     var snls: i32 = s.slot_of(snapshot_slot_name(slot));
     if (snls < 0) { return s; }
     var st: LowerState = s;
+    if (call_hands_back_counted(v, name, st)) {
+        var scratch: string = "$hbt" + util.i32_to_string(st.locals.len());
+        st = st.add_local(scratch);
+        var tmp: i32 = st.slot_of(scratch);
+        st = st.emit(ir.op_store_local(tmp));
+        st = emit_handback_identity_dec(st, slot, tmp, snls);
+        st = st.emit(ir.op_load_local(tmp));
+    }
     if (!reclaim_has(s.frame.reclaimable_names, "NOFLD:", s.reclaim_site_key(slot)) && s.struct_routes_field_reclaim(sty)) {
-        st = emit_field_reclaim_store(st, slot, sty, snls);
+        st = emit_field_reclaim_store(st, slot, sty, snls, false);
     } else {
         st = emit_snapshot_store(st, slot, snls);
     }
@@ -79845,6 +80091,100 @@ while (i < fresh.len()) {
 }
 
     return out;
+}
+
+// sinkshare_counted_handbacks marks "SINKSHARE:" on every credited struct site
+// whose name takes part in a COUNTED handback (cnt_handback_params): a source
+// handed to a callee that returns it bare, and a local bound or assigned from
+// such a call. Both may then hold a claim on one box, so each walks its fields
+// only on finding rc 1 and the box dec hands the last one its turn. Runs right
+// after the two struct passes, while `out` holds struct rows alone.
+function sinkshare_counted_handbacks(out: string[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, cnt_handback: string[]): string[] {
+    if (cnt_handback.len() == 0) { return out; }
+    var names: string[] = counted_handback_names(body, params, structs, cnt_handback);
+    var res: string[] = out;
+    var n: i32 = out.len();
+    var i: i32 = 0;
+    while (i < n) {
+        if (row_is_bare_site(out[i]) && util.index_of_str(names, reclaim_site_name(out[i])) >= 0) {
+            res = push_str_unique(res, "SINKSHARE:" + out[i]);
+        }
+        i = i + 1;
+    }
+    return res;
+}
+// row_is_bare_site: a credit row with no tag — the site key "name@line:col".
+function row_is_bare_site(row: string): boolean {
+    var i: i32 = 0;
+    while (i < row.len() && row[i] != b'@') {
+        if (row[i] == b':') { return false; }
+        i = i + 1;
+    }
+    return i < row.len();
+}
+// counted_handback_names: every name that is a receiver or bare argument at a
+// counted handback position anywhere in `body`, and every name bound or
+// assigned from such a call.
+function counted_handback_names(body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, cnt_handback: string[]): string[] {
+    function at_stmt(st: ast.Stmt, own a: string[]): string[] { return counted_handback_target(st, body, params, structs, cnt_handback, a); }
+    function at_expr(e: ast.Expr, own a: string[]): string[] { return counted_handback_sources(e, body, params, structs, cnt_handback, a); }
+    var acc: string[] = [];
+    for stmt in body { acc = astwalk.fold_stmt_nodes(stmt, acc, at_stmt, at_expr, astwalk.descend_all); }
+    return acc;
+}
+function counted_handback_target(st: ast.Stmt, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, cnt_handback: string[], acc: string[]): string[] {
+    if let ast.StmtVar(v) = st {
+        if (callee_hands_back_any(static_call_key(v.init, body, params, structs), cnt_handback)) { return push_str_unique(acc, v.name); }
+    }
+    if let ast.StmtAssign(a) = st {
+        if (callee_hands_back_any(static_call_key(a.value, body, params, structs), cnt_handback)) { return push_str_unique(acc, a.target); }
+    }
+    return acc;
+}
+// counted_handback_sources: the bare operands of the one call `e` that its
+// callee hands back counted.
+function counted_handback_sources(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, cnt_handback: string[], acc: string[]): string[] {
+    var key: string = static_call_key(e, body, params, structs);
+    if (key.len() == 0) { return acc; }
+    var ops: string[] = call_operand_idents(e);
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var pos: string = "r";
+        if (i > 0) { pos = util.i32_to_string(i - 1); }
+        if (ops[i].len() > 0 && ops[i] != "!" && util.index_of_str(cnt_handback, key + "|" + pos) >= 0) { a = push_str_unique(a, ops[i]); }
+        i = i + 1;
+    }
+    return a;
+}
+function callee_hands_back_any(key: string, cnt_handback: string[]): boolean {
+    if (key.len() == 0) { return false; }
+    var pfx: string = key + "|";
+    for row in cnt_handback {
+        if (row.len() > pfx.len() && slice_unchecked(row, 0, pfx.len()) == pfx) { return true; }
+    }
+    return false;
+}
+// static_call_key: counted_call_key from declarations alone — a free callee by
+// its bare name, a method by the declared struct type of a bare receiver.
+function static_call_key(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee { return cid.name; }
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rn: string = ident_name_or_empty(fa.obj);
+            var rt: string = declared_struct_type_of(body, rn, structs);
+            if (rt.len() == 0) { rt = param_struct_type_of(params, rn, structs); }
+            if (rt.len() == 0) { return ""; }
+            return rt + "." + fa.field;
+        }
+    }
+    return "";
+}
+function param_struct_type_of(params: ast.ParamDecl[], name: string, structs: StructTab): string {
+    for pd in params {
+        if (pd.name == name && decl_is_struct(structs, pd.type_name)) { return pd.type_name; }
+    }
+    return "";
 }
 
 function reclaimable_alias_sink_share(body: ast.Stmt[], borrowable: string[], fresh: string[], recv_borrow: string[], out: string[]): string[] {
