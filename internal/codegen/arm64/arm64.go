@@ -18904,12 +18904,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__method_Reader_flags", "__method_Writer_flags":
 			target = "__fern_fd_flags"
 			g.usesFdFlags = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "__method_Reader_isatty", "__method_Writer_isatty":
+			// No box and no IoError: the answer is one word.
 			target = "__fern_handle_isatty"
 			g.usesHandleIsatty = true
 			g.usesIsatty = true
-			g.usesAlloc = true
-			g.usesIoError = true
 		case "__method_Reader_seek", "__method_Writer_seek":
 			// lseek(2) on the handle's fd → Result[i64, IoError]; a Reader
 			// and a Writer hold the fd at the same place.
