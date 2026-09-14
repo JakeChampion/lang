@@ -2053,10 +2053,17 @@ pub function fn_param_from_lambda(name: string, lam: ast.ExprLambda): ast.ParamD
 // fn_param_from_func recovers a fn value's signature from the FuncDecl it
 // targets, skipping `skip` leading params — 1 for a hoisted closure body, whose
 // first param is the env box.
+// A consuming parameter spells its `own`, so the signature keeps the slots the
+// body consumes.
 pub function fn_param_from_func(name: string, f: parser.FuncDecl, skip: i32): ast.ParamDecl {
     var tys: string[] = [];
     var i: i32 = skip;
-    while (i < f.params.len()) { tys = tys.append(f.params[i].type_name); i = i + 1; }
+    while (i < f.params.len()) {
+        var ty: string = f.params[i].type_name;
+        if (f.params[i].own) { ty = "own " + ty; }
+        tys = tys.append(ty);
+        i = i + 1;
+    }
     return fn_param_decl(name, tys, f.ret_type);
 }
 

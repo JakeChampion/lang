@@ -155,12 +155,11 @@ function refused_string_method(s: string): string { return s.trim(); }
 // one: the golden pins the contract's INSTANTIATION as the value type, the
 // exhausted match's last arm with no test of its own, and the refusal of a
 // payload too wide for the box's one word.
-// ---- erased type variables (docs/ERASED-GENERICS-RC.md, option 1) --------
-// An erased type variable is ONE MACHINE WORD, and nothing at run time tells a
-// pointer instantiation from a scalar one, so a generic body emits neither
-// retain nor release on one: every erased position is a MOVE. The accumulator
-// is threaded by REPLACEMENT, the astwalk fold shape, so exactly one unit is
-// live at every point and the body releases nothing.
+// ---- generic declarations (docs/SEMANTIC-GENERICS.md) ---------------------
+// A generic declaration is a TEMPLATE: a call site binds its variables and the
+// body is produced once per instantiation, named by the types bound, so the
+// accumulator is a plain i32 in one instance and a plain string[] in another.
+// The accumulator is threaded by REPLACEMENT, the astwalk fold shape.
 function fold_two[T](a: T, visit: (i32, T) => T): T {
     var acc: T = visit(1, a);
     acc = visit(2, acc);
@@ -168,25 +167,37 @@ function fold_two[T](a: T, visit: (i32, T) => T): T {
 }
 function add_at(n: i32, a: i32): i32 { return a + n; }
 function folded(): i32 { return fold_two(10, add_at); }
-// READING the accumulator after passing it needs a retain this body cannot
-// emit: the runtime increment on an erased word touches a refcount at one
-// instantiation and an integer at another. The unit planner refuses it.
-function refused_reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
+// READING the accumulator after passing it: through a LENDING visitor the
+// instance borrows it twice and retains nothing, at a scalar or a reference;
+// through a CONSUMING one an OWNED accumulator handed over and read again is
+// a retain in the string[] instance and nothing in the i32 one, each instance
+// planning its own.
+function reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
     return join(visit(1, a), a);
 }
-// An erased word abandoned UNCONSUMED needs a release this body cannot emit
-// either, so the planner refuses that direction too.
-function refused_abandon[T](a: T, b: T): T { return b; }
-// A REFERENCE instantiation hands a unit to a function value, and a function
-// value LENDS every argument at a slot its TYPE does not spell consuming — so
-// the accumulator each step abandons would leak one unit per step. Refused
-// rather than admitted under a rule that is wrong at that instantiation.
+function join_at(a: i32, b: i32): i32 { return a - b; }
+function reread_int(): i32 { return reread(5, add_at, join_at); }
+function reread_own[T](own a: T, visit: (i32, own T) => T, join: (own T, own T) => T): T {
+    return join(visit(1, a), a);
+}
+function join_words(own a: string[], own b: string[]): string[] { return a.append(b[0]); }
+function reread_words(): i32 { return reread_own(["q"], own_word, join_words).len(); }
+function reread_ints(): i32 { return reread_own(5, add_at, join_at); }
+// An OWNED parameter abandoned UNCONSUMED is dropped by the instance, which
+// knows its type; a template never had one to drop.
+function abandon[T](own a: T, own b: T): T { return b; }
+function abandon_words(): i32 {
+    var x: string[] = ["x"];
+    var y: string[] = ["y", "z"];
+    return abandon(x, y).len();
+}
+// The variable bound to a REFERENCE through a LENDING visitor: the instance
+// borrows its accumulator as the declaration says, and each step's result is
+// a unit of its own, released when the next step supersedes it.
 function add_word(n: i32, a: string[]): string[] { return a.append("x"); }
-function refused_ref_acc(): i32 { var w: string[] = []; return fold_two(w, add_word).len(); }
-// The same instantiation through a fold whose function type DOES spell the
-// accumulator slot consuming. The caller hands its unit over and takes back
-// the one the call returns, so the pair is what the admission turns on: this
-// one produces, the one above is refused, and the only difference is the own.
+function ref_acc(): i32 { var w: string[] = []; return fold_two(w, add_word).len(); }
+// And through a CONSUMING one, own in the function type: the caller hands
+// its unit over at each step and takes back the one the call returns.
 function fold_own[T](own a: T, visit: (i32, own T) => T): T {
     var acc: T = visit(1, a);
     acc = visit(2, acc);
@@ -405,14 +416,19 @@ function line_each(ns: i32[]): i32 {
 // A function VALUE is the environment box the lambda lift builds: the hoisted
 // body's address in slot 0, then the captures. A call through one is
 // environment-first, so the box is lent to the body as the environment it
-// reads its captures out of, and the result is a unit of the caller's own.
-// Refused: a capture that is a reference, a signature with a slot wider than
-// the word the untagged indirect call describes, a function value as a
-// result, and one as an element.
+// reads its captures out of, and the result is a unit of the caller's own. A
+// capture that is a reference is one unit the box owns, walked by the
+// environment record the body in slot 0 names when the box dies. Refused: a
+// signature with a slot wider than the word the untagged indirect call
+// describes, a function value as a result, and one as an element.
 function twice_it(x: i32): i32 { return x * 2; }
 function apply_int(f: (i32) => i32, x: i32): i32 { return f(x); }
 function use_apply(n: i32): i32 { return apply_int(twice_it, n); }
 function shift_by(k: i32, n: i32): i32 { return apply_int((x: i32): i32 => { return x + k; }, n); }
+// A function value is lent, never handed over: a parameter that would take
+// its box and release it here has no contract, since only the frame that
+// built the box knows the captures its release must walk.
+function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 function bound_fn(n: i32): i32 { var g: (i32) => i32 = twice_it; return g(n) + g(1); }
 function head_of_arr(xs: i32[]): i32 { return xs[0]; }
 function apply_arr(f: (i32[]) => i32, xs: i32[]): i32 { return f(xs) + f([9, 8]); }
@@ -431,7 +447,33 @@ function shift_loop(k: i32, n: i32): i32 {
 function eat_text(own w: string): i32 { return w.len(); }
 function apply_text(f: (string) => i32, s: string): i32 { return f(s); }
 function refused_own_value(s: string): i32 { return apply_text(eat_text, s); }
-function refused_text_capture(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
+function text_capture(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
+function words_capture(n: i32): i32 {
+    var ws: string[] = ["ab"];
+    var f: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
+    return f(n) + f(1);
+}
+function pick_capture(k: i32, n: i32): i32 {
+    var ws: string[] = ["ab"];
+    var w: string = "xyz";
+    var g: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
+    if (k > 0) { g = (x: i32): i32 => { return x + w.len(); }; }
+    return g(n);
+}
+// A nested function with an owning parameter is a lambda bound to a name,
+// and the name's type spells the own the way the box's does.
+struct Tally { n: i32 }
+function use_of(n: i32, f: string, a: Tally): Tally { return Tally { n: a.n + f.len() + n }; }
+function scan(x: i32, f: string): Tally {
+    function ve(n: i32, own a: Tally): Tally { return use_of(n, f, a); }
+    return fold_own(Tally { n: x }, ve);
+}
+// The same with an owning ARRAY parameter, whose own sits on the spelling's
+// base name under the array suffix.
+function scan_words(x: i32, f: string): i32 {
+    function ve(n: i32, own a: string[]): string[] { return a.append(f); }
+    return fold_own(["a"], ve).len();
+}
 function refused_wide_sig(f: (i64) => i64, n: i64): i64 { return f(n); }
 function refused_fn_result(): (i32) => i32 { return twice_it; }
 function refused_fn_element(n: i32): i32 { var fs: ((i32) => i32)[] = [twice_it]; return fs.len(); }
@@ -467,11 +509,23 @@ function refused_cell_new(n: i32): i32 { var c: Cell[i32] = cell_new(n); return 
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
 import "./parser"; import "./lexer"; import "./util"; import "./irlower";
-// An erased type variable has no declaration spelling, so it is shown by the
-// name it is written with, bracketed to keep it apart from a concrete one.
-function shown(t: typeinfo.Type): string {
-    if let typeinfo.TypeErased(e) = t { return "[" + e.name + "]"; }
-    return typeinfo.spelling(t);
+function show(p: semsource.Produced): void {
+    if (!p.ok) { print("refused " + p.why); return; }
+    if (p.template) { print("template instantiated"); return; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < p.func.values.len()) {
+        if (i > 0) { out = out + " "; }
+        out = out + "v" + util.i32_to_string(i) + ":" + typeinfo.spelling(p.func.values[i]);
+        i = i + 1;
+    }
+    var modes: string = "";
+    for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
+    print("modes" + modes + " result " + typeinfo.spelling(p.func.result));
+    print(out);
+    var plan = ssaunits.plan(p.func, p.modes);
+    if (!plan.ok) { print("plan " + plan.why); }
+    print(ssa.print_func(p.func.graph));
 }
 function main(): i32 {
     var src: string = "";
@@ -481,23 +535,11 @@ function main(): i32 {
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
     var mod = irlower.lift_lambdas(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) });
-    for p in semsource.build_module(mod) {
-        if (!p.ok) { print("refused " + p.why); continue; }
-        var out: string = "";
-        var i: i32 = 0;
-        while (i < p.func.values.len()) {
-            if (i > 0) { out = out + " "; }
-            out = out + "v" + util.i32_to_string(i) + ":" + shown(p.func.values[i]);
-            i = i + 1;
-        }
-        var modes: string = "";
-        for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
-        print("modes" + modes + " result " + shown(p.func.result));
-        print(out);
-        var plan = ssaunits.plan(p.func, p.modes);
-        if (!plan.ok) { print("plan " + plan.why); }
-        print(ssa.print_func(p.func.graph));
-    }
+    // Every declaration in order, then every instance the templates were
+    // produced at.
+    var built = semsource.build_module(mod);
+    for p in built.decls { show(p); }
+    for p in built.instances { show(p); }
     return 0;
 }
 `
@@ -1736,13 +1778,11 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
     if (seen < 0) { return 1; }
     return 0;
 }
-// ---- erased type variables (docs/ERASED-GENERICS-RC.md, option 1) --------
-// An erased type variable is ONE MACHINE WORD and nothing at run time tells a
-// pointer instantiation from a scalar one, so these bodies emit neither retain
-// nor release on the accumulator: every erased position is a MOVE, which
-// ssaunits proves rather than assumes. Consuming and producing are both no-ops
-// at the scalar instantiations run here, which is what makes ONE body correct
-// at every instantiation.
+// ---- generic declarations (docs/SEMANTIC-GENERICS.md) ---------------------
+// A generic declaration is a TEMPLATE, produced once per instantiation its
+// callers bind and named by the types bound, so the accumulator here is a
+// plain i32 or boolean in one instance and a string[] further down; the AST
+// lowering keeps the one erased body for its own callers, main among them.
 @noinline function add_at(n: i32, a: i32): i32 { return a + n; }
 @noinline function or_over(n: i32, a: boolean): boolean { return a || n > 1; }
 @noinline function fold_acc[T](a: T, visit: (i32, T) => T): T {
@@ -1750,8 +1790,8 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
     acc = visit(2, acc);
     return acc;
 }
-// The erased word handed on to a SECOND generic: a variable binds a variable,
-// which is one word at every instantiation.
+// A generic calling a SECOND generic: the instance requests the instance it
+// needs, to a fixpoint over the requests.
 @noinline function fold_twice[T](a: T, visit: (i32, T) => T): T {
     return fold_acc(fold_acc(a, visit), visit);
 }
@@ -1766,7 +1806,7 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
 @noinline function folded_twice(): i32 { return fold_twice(0, add_at); }
 @noinline function folded_loop(n: i32): i32 { return fold_loop(0, n, add_at); }
 @noinline function folded_flag(): i32 { if (fold_acc(false, or_over)) { return 1; } return 0; }
-// A heap value HELD ACROSS an erased fold and read back after churn has had
+// A heap value HELD ACROSS a scalar fold and read back after churn has had
 // every chance to reuse a box freed too early. An over-release reads a short
 // array and answers the sentinel rather than the length, so a wrong ANSWER —
 // not a balanced allocation count — is what a mistake here shows as.
@@ -1820,6 +1860,50 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
     if (held.len() != 3) { return 0 - 1; }
     if (held[2].len() != 5) { return 0 - 2; }
     return out.len() + churn.len();
+}
+// Reference captures. The box owns one unit of each capture that is one: the
+// constructing function retains what it still reads after and moves what it
+// does not, and the box's release walks them by the environment record the
+// body in slot 0 names — after the calls that lent a box held in a local,
+// once per loop step, and on the arm a join did not take. The captured array
+// is read back after churn so an over-release answers the sentinel.
+@noinline function cap_text(w: string, n: i32): i32 { return apply_int((x: i32): i32 => { return x + w.len(); }, n); }
+@noinline function cap_words(n: i32): i32 {
+    var ws: string[] = ["ab", "cde"];
+    var f: (i32) => i32 = (x: i32): i32 => { return x + ws.len() + ws[1].len(); };
+    return f(n) + f(1);
+}
+@noinline function cap_pick(k: i32, n: i32): i32 {
+    var ws: string[] = ["ab"];
+    var w: string = "xyz";
+    var g: (i32) => i32 = (x: i32): i32 => { return x + ws.len(); };
+    if (k > 0) { g = (x: i32): i32 => { return x + w.len(); }; }
+    return g(n);
+}
+@noinline function cap_loop(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var ws: string[] = ["a"];
+        ws = ws.append("bc");
+        t = t + apply_int((x: i32): i32 => { return x * ws[1].len(); }, i);
+        i = i + 1;
+    }
+    return t;
+}
+@noinline function cap_held(n: i32): i32 {
+    var ws: string[] = ["alpha", "beta"];
+    var r: i32 = apply_int((x: i32): i32 => { return x + ws.len(); }, n);
+    var churn: string[] = [];
+    var i: i32 = 0;
+    while (i < 12) { churn = churn.append("junk"); i = i + 1; }
+    if (ws[1].len() != 4) { return 0 - 1; }
+    return r + churn.len();
+}
+@noinline function cap_rec(n: i32): i32 {
+    var q: Q = Q { name: "abcd", p: P { n: n, xs: [1, 2, 3] } };
+    var f: (i32) => i32 = (x: i32): i32 => { return x + q.name.len() + q.p.xs.len(); };
+    return f(1);
 }
 function main(): i32 {
     var a: i32[] = pick(0);
@@ -1996,6 +2080,8 @@ function main(): i32 {
     print_int(pick_nested(4)); print(""); print_int(pick_nested(1)); print(""); print_int(pick_nested(0)); print("");
     print_int(words_kept(3)); print(""); print_int(words_grown(3)); print("");
     print_int(words_lambda(2)); print(""); print_int(words_held(4)); print("");
+    print_int(cap_text("abc", 4)); print(""); print_int(cap_words(2)); print(""); print_int(cap_pick(1, 5)); print("");
+    print_int(cap_pick(0, 5)); print(""); print_int(cap_loop(3)); print(""); print_int(cap_held(3)); print(""); print_int(cap_rec(2)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -2084,7 +2170,7 @@ function main(): i32 {
 // (4 + 8 = 12), and a string is under-or-equal and over-or-equal itself
 // (2 + 8 = 10). Two views of one string order by the bytes they point at, and
 // a concatenation this function owns orders before it is released.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -2097,13 +2183,22 @@ function main(): i32 {
     var mod = irlower.lift_lambdas(checker.annotate_module(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
-    var produced = semsource.build_module(mod);
+    var built = semsource.build_module(mod);
     var bodies: irlower.LowerResult[] = [];
     var helpers: irlower.LowerResult[] = [];
+    var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
     var at: i32 = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() }); at = at + 1; continue; }
-        var p = produced[at];
+        var p = built.decls[at];
+        // main is AST-lowered, and so is a template's own erased body, which
+        // main's calls name; the template's instances are bodies of their own.
+        if (fd.name == "main" || p.template) {
+            if (!p.ok && fd.name != "main") { eprint(fd.name + ": " + p.why); return 4; }
+            if (p.template) { eprint("produced " + fd.name + "\n"); }
+            bodies = bodies.append(skipped);
+            at = at + 1;
+            continue;
+        }
         if (!p.ok) { eprint(fd.name + ": " + p.why); return 4; }
         var plan = ssaunits.plan(p.func, p.modes);
         if (!plan.ok) { eprint(fd.name + ": " + plan.why); return 5; }
@@ -2115,16 +2210,29 @@ function main(): i32 {
         bodies = bodies.append(lowered);
         at = at + 1;
     }
+    var instances: irlower.LowerResult[] = [];
+    for p in built.instances {
+        if (!p.ok) { eprint(p.key + ": " + p.why); return 4; }
+        var plan = ssaunits.plan(p.func, p.modes);
+        if (!plan.ok) { eprint(p.func.graph.name + ": " + plan.why); return 5; }
+        var lowered = ssarc.lower(p.func, p.modes, plan, tab);
+        if (!lowered.ok) { eprint(p.func.graph.name + ": " + lowered.why); return 6; }
+        eprint("instance " + p.func.graph.name + "\n");
+        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
+        instances = instances.append(lowered);
+    }
     var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi");
     if (!g.ok) { eprint("ast lowering failed"); return 3; }
     var cache: irlower.LowerResult[] = [];
     at = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { cache = cache.append(g.cache[at]); } else { cache = cache.append(bodies[at]); }
+        if (bodies[at].ok) { cache = cache.append(bodies[at]); } else { cache = cache.append(g.cache[at]); }
         at = at + 1;
     }
-    // The per-type drop helpers are bodies with no declaration, so they go on
-    // the cache tail past mod.funcs, deduped by symbol.
+    // The instances and the per-type drop helpers are bodies with no
+    // declaration, so they go on the cache tail past mod.funcs, deduped by
+    // symbol.
+    cache = ssarc.merge_helpers(cache, instances);
     cache = ssarc.merge_helpers(cache, helpers);
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base));
@@ -2170,7 +2278,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
