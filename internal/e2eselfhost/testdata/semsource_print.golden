@@ -1501,6 +1501,7 @@ func shift_by {
     ret v3
 }
 
+refused owning function parameter
 modes 1 result i32
 v0:i32 v1:((i32) => i32) v2:i32 v3:i32 v4:i32 v5:i32
 func bound_fn {
