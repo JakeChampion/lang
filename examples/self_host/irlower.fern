@@ -12897,6 +12897,7 @@ function lower_call_path4(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): L
 function is_byte_kernel_call(name: string, argc: i32): boolean {
     if (name == "__memchr" || name == "__rmemchr") { return argc == 3; }
     if (name == "__count_byte" || name == "__ascii_run") { return argc == 2; }
+    if (name == "__crc32_cksum") { return argc == 2; }
     if (name == "__sum_bytes") { return argc == 1; }
     if (name == "__mismatch") { return argc == 5; }
     return false;
@@ -12917,6 +12918,9 @@ function is_byte_kernel_call(name: string, argc: i32): boolean {
 //   __mismatch(a, ao, b, bo, n) → the first differing offset of two ranges, or
 //                                 the clamped n. The only one with TWO string
 //                                 operands, at slots 0 and 2.
+//   __crc32_cksum(crc, s)      → the incoming crc with s's bytes folded in.
+//                                 The only one whose string is NOT operand 0,
+//                                 and the only one that CARRIES state in.
 function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var k: LowerState = s;
     var i: i32 = 0;
@@ -12930,6 +12934,7 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
     if (cid.name == "__count_byte") { return k.emit(ir.op_count_byte()); }
     if (cid.name == "__sum_bytes") { return k.emit(ir.op_sum_bytes()); }
     if (cid.name == "__ascii_run") { return k.emit(ir.op_ascii_run()); }
+    if (cid.name == "__crc32_cksum") { return k.emit(ir.op_crc32_cksum()); }
     return k.emit(ir.op_mismatch());
 }
 
@@ -66346,7 +66351,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch"];
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum"];
     var has_write: boolean = false;
     var has_write_some: boolean = false;
     for fn in funcs {
@@ -66362,12 +66367,13 @@ function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
 // copying-builtin key. Most keys copy a single string at position 0;
 // __mismatch reads TWO ranges and retains neither, so positions 0 and 2 both
 // carry the credit (native's copyingBuiltinArgs["__mismatch"] is {0, 2}), and
-// the two buf_push forms take the builder handle at position 0, so the string
-// they copy is at position 1. A position past the string's end reads as not
-// borrowable, which is what the i32 parameters want.
+// the two buf_push forms take the builder handle at position 0, and
+// __crc32_cksum the carried CRC, so the string they copy is at position 1.
+// A position past the string's end reads as not borrowable, which is what the
+// i32 parameters want.
 function copying_builtin_flags(key: string): string {
     if (key == "__mismatch") { return "10100"; }
-    if (key == "buf_push" || key == "buf_push_range") { return "01"; }
+    if (key == "buf_push" || key == "buf_push_range" || key == "__crc32_cksum") { return "01"; }
     return "1";
 }
 

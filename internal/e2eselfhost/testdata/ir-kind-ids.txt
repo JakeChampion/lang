@@ -289,3 +289,4 @@ open_writer_with=305
 buf_push_u64=306
 fd_flags=307
 write_some=308
+crc32_cksum=309
