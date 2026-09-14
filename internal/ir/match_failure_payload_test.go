@@ -8,9 +8,9 @@ import "testing"
 // so the pointer is dead by the time the join frees the box, which is the
 // property `Err(_)` has syntactically and this one has by proof.
 //
-// bindingConfinedToArm once asked for a CONCRETE SCALAR result on top of
-// the escape oracle — the arg-temp reclaim's requirement, since that path
-// decs a fresh temp right after the call, and not a confinement's. A
+// bindingConfinedToArm used to ask for a CONCRETE SCALAR result on top —
+// the arg-temp reclaim's requirement, since that path decs a fresh temp
+// right after the call, and not a confinement's. A
 // helper returning a string failed it, the arm was refused, and the whole
 // match declined its release: 32 bytes per I/O call in every utility that
 // reports an errno (#9245). The confinement now asks readOnlyCallArg,
