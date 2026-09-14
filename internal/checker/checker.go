@@ -2913,7 +2913,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// function because a handle is not a number everywhere: on wasi
 	// preview 2 a Reader is an input-stream plus the descriptor it was
 	// opened on, and only the descriptor can answer. A stdio handle there
-	// has no descriptor and answers Err(Unsupported) (#8713).
+	// has no descriptor and answers the all-zero record a preview-1 host
+	// reports for the same stream (#8713, #9070).
 	fileStatResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.StructType{Name: "FileStat"}, ioErrType}}
 	registerStructMethod("Reader", "stat", nil, fileStatResult)
@@ -2986,8 +2987,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// syncfs flushes the whole filesystem the handle lives on, not the
 	// handle's own file. Neither WASI preview has it — preview 1's
 	// `fd_sync` is per-descriptor and a preopen is a capability handle
-	// rather than a mount — so it answers `Err(Unsupported)` there, the
-	// way `stat` answers it for a preview-2 stdio handle (#8713).
+	// rather than a mount — so it answers `Err(Unsupported)` there.
 	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
 	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
 	// sync(): void — `sync(2)`, which schedules write-back of every

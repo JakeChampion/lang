@@ -282,6 +282,10 @@ func buildRenameBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 13)
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 13)
 	body = emitPreopenP2(body, alloc, getDirs, 4, 9)
+	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 10)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 10, 2, 3, 11, 12)
+	})
 
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstLocalGet(body, 5)
@@ -333,6 +337,10 @@ func buildSetFileTimesBodyP2(idxs map[string]uint32) []byte {
 	body = emitTimesOverflowGuard(body, idxs, 6, 11, 12, 13)
 	body = emitStrNormalize(body, idxs, 0, 1, 8, 9, 14)
 	body = emitPreopenP2(body, alloc, getDirs, 7, 10)
+	body = emitPreopenMissing(body, 10, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 11)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 11, 0, 1, 12, 13)
+	})
 
 	body = inst.InstI32Const(body, wasiTimestampValue)
 	body = inst.InstLocalSet(body, 15)

@@ -2595,6 +2595,16 @@ function main(): i32 {
 			t.Errorf("read: component stdout = %q, want %q", string(out), "hello fs")
 		}
 
+		// No --dir at all: the host granted no directory, so a path is
+		// NotFound rather than a trap on a handle the host never issued
+		// (native's counterpart is TestWASMNoPreopenIsNotFound).
+		noDirBin := build(t, "nodir", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { return 1; }, Err(e) => { match (e) { NotFound(_) => { write(\"not found\"); return 0; }, _ => { return 2; } } } } }\n")
+		noDirCmd := exec.Command(wasmtime, "run", noDirBin)
+		noDirOut, _ := noDirCmd.Output()
+		if ec := noDirCmd.ProcessState.ExitCode(); ec != 0 || string(noDirOut) != "not found" {
+			t.Errorf("no preopen: component exited %d with stdout %q, want 0 and %q", ec, string(noDirOut), "not found")
+		}
+
 		// write: create a file, then verify its contents.
 		writeBin := build(t, "write", "function main(): i32 { match (write_file(\"out.txt\", \"written\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		wDir := t.TempDir()
@@ -2721,6 +2731,20 @@ function main(): i32 {
 			}
 			if code := cmd.ProcessState.ExitCode(); code != 0 {
 				t.Errorf("exit: exit code = %d, want 0", code)
+			}
+		}
+		// wasi:cli/exit carries one bit, so a code above 1 folds to 1
+		// rather than trapping the host as an invalid discriminant
+		// (native's counterpart is TestWASMExitCodeCollapsesToOne).
+		exit3Bin := build(t, "exit3", "function main(): i32 { write(\"before\"); exit(3); return 0; }\n")
+		{
+			cmd := exec.Command(wasmtime, "run", exit3Bin)
+			out, _ := cmd.Output()
+			if string(out) != "before" {
+				t.Errorf("exit(3): stdout = %q, want %q", string(out), "before")
+			}
+			if code := cmd.ProcessState.ExitCode(); code != 1 {
+				t.Errorf("exit(3): exit code = %d, want 1", code)
 			}
 		}
 	})

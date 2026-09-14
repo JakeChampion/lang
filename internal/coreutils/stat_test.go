@@ -142,6 +142,22 @@ func statTree(t *testing.T) string {
 	write(j("weird\xffname"), 1)
 	link("sp ace", j("link to"))
 	link("weird\xffname", j("weird\xfelink"))
+	// The rest of what tells the ten QUOTING_STYLE styles apart: a colon
+	// (never special), a lone brace (special) against one inside a name
+	// (not), an apostrophe beside a byte that is only safe in double
+	// quotes, `=`, and the control bytes the `shell` style leaves bare
+	// against the ones it quotes.
+	write(j("col:on"), 1)
+	write(j("{"), 1)
+	write(j("a{b}"), 1)
+	write(j("quo'te@"), 1)
+	write(j("eq=ual"), 1)
+	write(j("bell\ax"), 1)
+	write(j("del\x7fx"), 1)
+	write(j("new\nline"), 1)
+	write(j("ctl\x01x"), 1)
+	write(j("bs\\dq\""), 1)
+	link("quo'te@", j("link'to"))
 
 	return dir
 }
@@ -209,6 +225,43 @@ func statCases(t *testing.T) []invocation {
 	// A modifier — ANY modifier — turns %N from the quoted form into the
 	// raw one, and applies itself to the name and the link target
 	// separately.
+	// --- QUOTING_STYLE picks %N's style ------------------------------------
+	// Every gnulib style over every name above, then the abbreviations
+	// ARGMATCH accepts and the values it does not, which warn once and
+	// fall back to the default.
+	quotedNames := []string{
+		"f", "sp ace", "quo'te", "dq\"x", "tab\tx", "back\\x", "weird\xffname",
+		"sl", "dangle", "link to", "weird\xfelink", "dirlink", "link'to",
+		"col:on", "{", "a{b}", "quo'te@", "eq=ual", "bell\ax", "del\x7fx",
+		"new\nline", "ctl\x01x", "bs\\dq\"",
+	}
+	for _, style := range []string{
+		"literal", "shell", "shell-always", "shell-escape", "shell-escape-always",
+		"c", "c-maybe", "escape", "locale", "clocale",
+	} {
+		for _, name := range quotedNames {
+			env("style-"+style+"-"+name, []string{"QUOTING_STYLE=" + style}, "-c", "%N", name)
+		}
+	}
+	for _, style := range []string{"lit", "c-m", "she", "shell-e", "", "bo'g", "bogus", "a\nb"} {
+		env("style-"+style+"-plain", []string{"QUOTING_STYLE=" + style}, "-c", "%N", "f")
+		env("style-"+style+"-quote", []string{"QUOTING_STYLE=" + style}, "-c", "%N", "quo'te")
+	}
+	// The variable is read only when the format AS WRITTEN holds `%N`:
+	// a modified %N, an octal-escaped `%`, and the default block never
+	// warn; `%%N` does. The warning comes after the operand check and
+	// before the first operand is looked at.
+	bogus := []string{"QUOTING_STYLE=bogus"}
+	env("bogus-unread-n", bogus, "-c", "%n", "f")
+	env("bogus-unread-raw-N", bogus, "-c", "%-N", "f")
+	env("bogus-unread-octal-percent", bogus, "--printf", "\\045N\\n", "f")
+	env("bogus-read-percent-percent-N", bogus, "-c", "%%N", "f")
+	env("bogus-before-missing-file", bogus, "-c", "%N", "nowhere")
+	env("bogus-fs-mode", bogus, "-f", "-c", "%N", "f")
+	env("bogus-once-for-two", bogus, "--printf", "%N\\n", "f", "sl")
+	env("bogus-trailing-text", bogus, "-c", "%Nz", "f")
+	env("bogus-last-format-wins", bogus, "-c", "%n", "--printf", "%N\\n", "f")
+	env("bogus-after-missing-operand", bogus, "-c", "%N")
 	add("name-quoted-bare", "-c", "[%N]", "dangle")
 	add("name-flag-drops-quotes", "-c", "[%-N]", "dangle")
 	add("name-hash-drops-quotes", "-c", "[%#N]", "dangle")
@@ -371,6 +424,17 @@ func statCases(t *testing.T) []invocation {
 	add("printf-hex-three-digits", "--printf", "[\\x414]\\n", "f")
 	add("printf-hex-no-digits", "--printf", "[\\xz]\\n", "f")
 	add("printf-hex-upper", "--printf", "[\\xFf]\\n", "f")
+	// Escapes are resolved as each operand prints, after the directives
+	// are found: a backslash hides the `%` after it, an escaped `%` is
+	// text rather than a directive, and an unknown escape warns once per
+	// operand, after whatever was printed before it.
+	add("printf-warns-per-operand", "--printf", "[\\q]\\n", "f", "sl")
+	add("printf-warns-after-missing", "--printf", "[\\q]", "nowhere", "f")
+	add("printf-escaped-percent", "--printf", "\\%s|\\n", "f")
+	add("printf-backslash-then-directive", "--printf", "\\\\%n\\n", "f")
+	add("printf-octal-percent", "--printf", "\\045n\\n", "f")
+	add("printf-hex-warns-then-directive", "--printf", "[\\xz]%n\\n", "f")
+	add("format-keeps-backslash", "-c", "%n\\q", "f")
 	add("printf-unknown-escape", "--printf", "a\\qb\\n", "f")
 	add("printf-trailing-backslash", "--printf", "ab\\", "f")
 	add("printf-no-trailing-newline", "--printf", "%s", "f")
