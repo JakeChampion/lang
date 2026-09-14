@@ -32,10 +32,14 @@ Two things were wrong at once:
   the exit sweep releases it. So the function released the one buffer twice
   at exit. The probe never saw it because `__rc_underflow_count()` is read
   before the sweep runs; from a caller's frame the parent compiler exits 99
-  on `if-expression-alias-exit-sweep`. The ident leaf now takes the alias
-  retain (`retain_tos`), the same second holder `var b = a` records, so `b`
-  owns the reference its sweep releases and the source's next update finds
-  the buffer shared and copies once.
+  on `if-expression-alias-exit-sweep`. The leaf now takes the alias retain
+  (`retain_tos`) for the read shapes the `var` ladder retains — a bare array
+  local, a struct field, a tuple element, a nested-array element
+  (`ifexpr_leaf_is_array_read`) — so `b` owns the reference its sweep
+  releases and the source's next update finds the buffer shared and copies
+  once. A fresh producer in a branch (a literal, a slice, a call) is a move
+  and stays unretained. The container-read leaves were the reviewer's
+  catch: each exited 99 the same way with only the ident covered.
 
 ## Measured
 
@@ -53,11 +57,12 @@ read of zero were both compatible with the double release.
 
 ## Gates
 
-Three rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
+Six rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `if-expression-alias`, `if-expression-fresh-arm`,
-`if-expression-alias-exit-sweep`. Against the parent commit's lowering
-exactly those three fail (103 / 3, 102 / 2, exit 99) and the other thirty
-pass. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
+`if-expression-alias-exit-sweep`, and the field / index / tuple
+`-leaf-exit-sweep` rows. Against the parent commit's lowering the first
+three fail (103 / 3, 102 / 2, exit 99) and the other thirty pass; the leaf
+rows exit 99 with the ident-only guard. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
 — the lift change touches every function with an if-expression — and
 `TestSelfHostCoreutilsParity/(od|printf)`. The probe set of the predecessor
 entry is otherwise unchanged; #9191 (alias + append) and #9190 (Option

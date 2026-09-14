@@ -19699,11 +19699,14 @@ function lower_value_tail(body: ast.Stmt[], tslot: i32, s: LowerState): LowerSta
             if (infer_expr_width(r.value, cs) == 64) { return s.fail(); }
             cs = lower_expr(r.value, cs);
             if (!cs.ok) { return cs; }
-            // An array LOCAL handed back whole is a second holder of its buffer,
-            // exactly as `var b = a` is: the value takes the alias retain, so the
-            // binding the expression lands in owns the reference its exit sweep
-            // releases, and the source's next update finds the buffer shared.
-            if (cs.is_arr_slot(cs.slot_of(bare_ident_name(r.value)))) { cs = cs.retain_tos("ifexpr-alias-leaf"); }
+            // An array handed back whole from a local, a struct field, a tuple
+            // element or a nested-array element is a second holder of a buffer
+            // its source still points at, exactly as `var b = <that>` is: the
+            // value takes the alias retain, so the binding the expression lands
+            // in owns the reference its exit sweep releases, and the source's
+            // next update finds the buffer shared. A fresh producer (a literal,
+            // a slice, a call) is a move and stays as it is.
+            if (ifexpr_leaf_is_array_read(r.value, cs)) { cs = cs.retain_tos("ifexpr-alias-leaf"); }
             return cs.emit(ir.op_store_local(tslot));
         },
         ast.StmtIf(nested) => {
@@ -19712,6 +19715,26 @@ function lower_value_tail(body: ast.Stmt[], tslot: i32, s: LowerState): LowerSta
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// ifexpr_leaf_is_array_read: the branch value reads an array out of storage
+// something else owns — the read shapes the `var` ladder's container-read
+// retain covers (#3457), plus a bare array local.
+function ifexpr_leaf_is_array_read(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return s.is_arr_slot(s.slot_of(id.name)); },
+        ast.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) { return is_array_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s)); }
+            return expr_yields_array(e, s);
+        },
+        ast.ExprIndex(_) => { return expr_yields_array(e, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function expr_yields_array(e: ast.Expr, s: LowerState): boolean {
+    return expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s);
 }
 
 // discardable_scalar_arr_lit reports whether an array literal is a fresh
@@ -76359,6 +76382,7 @@ function box_nested_lambdas_stmts(stmts: ast.Stmt[], acc: ast.ExprLambda[]): ast
                 out = box_nested_lambdas(m.scrutinee, out);
                 for arm in m.arms { out = box_nested_lambdas_stmts(arm.body, out); }
             },
+            ast.StmtDefer(d) => { out = box_nested_lambdas_stmts([d.action], out); },
             _ => {}
         }
     }

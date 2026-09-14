@@ -494,6 +494,55 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
+	// The same second holder read out of a struct field, a nested-array element
+	// and a tuple element: each is the container-read retain the `var` ladder
+	// applies, and each exited 99 from the sweep before the leaf took it.
+	{"if-expression-field-leaf-exit-sweep", `struct Box { mag: u64[], n: i32 }
+@noinline
+function exercise(): i32 {
+    var box: Box = Box { mag: [1u64, 2u64], n: 0 };
+    var d: u64[] = [4u64];
+    var b: u64[] = if (box.n == 0) { box.mag } else { d };
+    if (b[0] != 1u64) { return 1; }
+    if (box.mag[0] != 1u64) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    var r: i32 = exercise();
+    if (r != 0) { return r; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"if-expression-index-leaf-exit-sweep", `@noinline
+function exercise(): i32 {
+    var g: i32[][] = [[1, 2], [3]];
+    var d: i32[] = [4];
+    var b: i32[] = if (g.len() == 2) { g[0] } else { d };
+    if (b[0] != 1) { return 1; }
+    if (g[0][0] != 1) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    var r: i32 = exercise();
+    if (r != 0) { return r; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
+	{"if-expression-tuple-leaf-exit-sweep", `@noinline
+function exercise(): i32 {
+    var t: (i32[], i32) = ([1, 2], 7);
+    var d: i32[] = [4];
+    var b: i32[] = if (t.1 == 7) { t.0 } else { d };
+    if (b[0] != 1) { return 1; }
+    if (t.0[0] != 1) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    var r: i32 = exercise();
+    if (r != 0) { return r; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
 	// A string[] keeps the static clone: its elements are counted references
 	// the scalar path does not admit.
 	{"string-elems-excluded", `function main(): i32 {
