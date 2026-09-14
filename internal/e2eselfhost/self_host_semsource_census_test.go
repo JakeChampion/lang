@@ -85,6 +85,41 @@ function main(): i32 {
 		t.Errorf("census lowered 0 of %d functions; report:\n%s", total, report)
 	}
 
+	// A template nothing instantiates is counted apart from a refusal. It has
+	// no body, so a measurement over it is not evidence about what the
+	// boundary admits, and counting it as a refusal made it 44% of the
+	// corpus histogram.
+	shaken := filepath.Join(dir, "shaken.fern")
+	writeEntry(t, shaken, `function used[T](x: T[]): i32 { return x.len(); }
+function never_asked[T](x: T[], y: T): i32 { return x.len(); }
+function main(): i32 { return used([1, 2]); }
+`)
+	out, err = exec.Command(bin, shaken).CombinedOutput()
+	if err != nil {
+		t.Fatalf("census failed: %v\n%s", err, out)
+	}
+	shakenReport := string(out)
+	t.Logf("census of an entry with one uninstantiated template:\n%s", shakenReport)
+	countIn := func(report, label string) int {
+		m := regexp.MustCompile(`(?m)^` + label + `\s+(\d+)`).FindStringSubmatch(report)
+		if m == nil {
+			t.Fatalf("no %q line in the report:\n%s", label, report)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	if n := countIn(shakenReport, "bodyless"); n != 1 {
+		t.Errorf("bodyless = %d, want 1: never_asked is a template nothing instantiates, so it has "+
+			"no body to lower and must not be counted as a refusal.\n%s", n, shakenReport)
+	}
+	if got, want := countIn(shakenReport, "measured"), countIn(shakenReport, "functions")-1; got != want {
+		t.Errorf("measured = %d, want %d (functions minus the bodyless template)\n%s", got, want, shakenReport)
+	}
+	if strings.Contains(shakenReport, "uninstantiated generic") {
+		t.Errorf("an uninstantiated template still appears in the refusal histogram; it is not a "+
+			"refusal, it is a declaration with nothing to measure.\n%s", shakenReport)
+	}
+
 	// An import that still does not resolve has to be named, not dropped.
 	orphan := filepath.Join(dir, "orphan.fern")
 	writeEntry(t, orphan, `import "std/definitely_not_a_module";
