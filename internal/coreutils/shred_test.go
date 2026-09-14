@@ -129,10 +129,12 @@ func shredTypesSeed(t *testing.T, dir string) {
 // what carries the write path: the block loop, the rewind between
 // passes, and the rounding up to the block size.
 //
-// One answer of GNU's is out of reach, and it is about a TYPE: a
-// terminal operand is refused, and `isatty` cannot be asked of a handle
-// opened by name (#9229). `-` onto a terminal is the same question and
-// is answered, because there the descriptor number is 1.
+// Nothing about the operand itself is out of reach any more: the three
+// types GNU refuses are all reachable here, the terminal through
+// /dev/ptmx. What no case can compare is a write that FAILS — it needs a
+// full filesystem or a device, and the harness mounts nothing — so
+// GNU's `error writing at offset N` line is measured by hand
+// (docs/COREUTILS.md, #9231).
 func shredCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(name string, args ...string) {
@@ -265,6 +267,20 @@ func shredCases(t *testing.T) []invocation {
 	addType("type-fifo-then-file", "--random-source=f", "-n", "0", "-z", "-v", "p", "f")
 	addType("type-socket", "-n", "0", "-z", "-v", "sock")
 	addType("type-socket-force", "-n", "0", "-z", "-v", "-f", "sock")
+	// A TERMINAL is the third refusal, and the one a mode cannot
+	// answer: /dev/null and /dev/ptmx are both character devices and
+	// only one of them is written. /dev/ptmx is the terminal every
+	// machine has — opening it allocates a pty master — so it needs no
+	// seeding, and `w.isatty()` (#9229) is what tells it from /dev/null
+	// below. `-f` is deliberately absent: a chmod of a system device is
+	// not something a corpus should be able to attempt.
+	add("type-terminal", "-n", "1", "-v", "/dev/ptmx")
+	add("type-terminal-size", "-n", "1", "-v", "-s", "64", "/dev/ptmx")
+	add("type-terminal-exact", "-n", "1", "-v", "-x", "/dev/ptmx")
+	add("type-terminal-zero-pass", "-n", "0", "-z", "-v", "/dev/ptmx")
+	add("type-terminal-quiet", "-n", "1", "/dev/ptmx")
+	add("type-terminal-then-file", "--random-source=src", "-n", "1", "-v", "/dev/ptmx", "f")
+
 	// Every device case gives a SIZE. Without one the length comes from
 	// `lseek(0, SEEK_END)`, which a character device answers 0 for, and
 	// both implementations then write until a write FAILS — on

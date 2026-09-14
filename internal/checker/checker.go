@@ -2980,6 +2980,22 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Reader", "flags", nil, flagsResult)
 	registerStructMethod("Writer", "flags", nil, flagsResult)
+	// isatty() is the free `isatty(fd)` asked of a handle instead of a
+	// descriptor number, and it exists because a handle surrenders no
+	// number: a program that opened a name can otherwise only ask the
+	// question of fds 0, 1 and 2.
+	//
+	// Boolean rather than a Result, exactly as the free form is: the
+	// question has no third answer, and "this is not a terminal" is the
+	// truthful reply on a target with no terminals at all, which is why
+	// neither form is gated (docs/FREESTANDING-CORE.md). A closed
+	// handle is not a terminal either.
+	//
+	// GNU `shred` is what wanted it — it refuses a terminal operand
+	// before writing, and the check has to happen on the handle it
+	// opened rather than on a name it could stat (#9229).
+	registerStructMethod("Reader", "isatty", nil, ast.BoolType{})
+	registerStructMethod("Writer", "isatty", nil, ast.BoolType{})
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set

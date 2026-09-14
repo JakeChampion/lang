@@ -1330,6 +1330,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_seek":          emitSeekHelper("__method_Writer_seek", "wsk"),
 	"__method_Reader_flags":         emitFdFlagsHelper("__method_Reader_flags", "rfl"),
 	"__method_Writer_flags":         emitFdFlagsHelper("__method_Writer_flags", "wfl"),
+	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
+	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
 	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
 	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
 	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
@@ -2069,6 +2071,19 @@ func emitIsattyHelper(w func(string, ...any)) {
 	w("\tcset w0, eq")
 	w("\tadd sp, sp, #80")
 	w("\tret")
+}
+
+// emitHandleIsattyHelper writes r.isatty() / w.isatty() -> 0/1: the free
+// isatty asked of the descriptor the handle holds, which a Reader and a
+// Writer keep at the same place (ptr+8 here, past the rc header). Leaf, and
+// a tail call, since the answer is isatty's own.
+func emitHandleIsattyHelper(name string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8
+		w("\tb %s", fnLabel("isatty"))
+	}
 }
 
 // emitWindowSizeHelper writes window_size(fd) -> Result[WinSize, IoError]:
@@ -3644,6 +3659,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_seek":          {"__fern_io_error"},
 	"__method_Reader_flags":         {"__fern_io_error"},
 	"__method_Writer_flags":         {"__fern_io_error"},
+	"__method_Reader_isatty":        {"isatty"},
+	"__method_Writer_isatty":        {"isatty"},
 	"open_appender":                 {"__fern_io_error"},
 	"open_exclusive":                {"__fern_io_error"},
 	"open_reader_with":              {"__fern_io_error"},
@@ -3736,6 +3753,8 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_seek":          true,
 	"__method_Reader_flags":         true,
 	"__method_Writer_flags":         true,
+	"__method_Reader_isatty":        true,
+	"__method_Writer_isatty":        true,
 	"open_appender":                 true,
 	"open_exclusive":                true,
 	"open_reader_with":              true,

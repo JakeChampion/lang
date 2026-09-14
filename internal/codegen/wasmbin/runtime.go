@@ -611,6 +611,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add(callDirectAlias(op.Str))
+				case "__fern_handle_isatty":
+					// (h) → i32 — 0 / 1, and nothing to box.
+					needs.add("__fern_handle_isatty")
 				case "__fern_writer_truncate":
 					// (w, length) → i32 — ftruncate of the
 					// handle; Option[IoError].
@@ -2828,6 +2831,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildFdFlagsBody,
+	},
+	"__fern_handle_isatty": {
+		// (h) → i32 (0 / 1) — is the handle a terminal? Preview 1
+		// asks the same fd_fdstat_get question `isatty` does, since a
+		// handle there IS its fd; preview 2 has no fd table and
+		// answers no, as its free `isatty` does (wasi.go).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildIsattyBody,
 	},
 	"__fern_writer_truncate": {
 		// (w, length: i64) → i32 — heap-form Option[IoError]:

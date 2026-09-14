@@ -1504,20 +1504,19 @@ unlink. `w.flags()` (#9219) is what tells those apart. The harness reaches all
 three through `stdoutPath` (an append-only fd 1) and `stdoutFile` (a writable
 one, whose whole content is what the case compares).
 
-**What an operand IS decides before any of that**, and one answer in that
-family is out of reach. GNU refuses a FIFO, a socket and a TERMINAL with
-`<name>: invalid file type` and exit 1 — none has a length to rewind over —
-while a character or block DEVICE is overwritten like a file, which is what
-shred was written for. Measured, GNU 9.4: a FIFO with a reader held on it
-gives the refusal, a unix socket never reaches the question because its open
-answers ENXIO (`failed to open for writing: No such device or address`), and
-`/dev/null` is written and exits 0 even though `fdatasync` on it answers
-EINVAL — GNU asks for a full `fsync`, is refused the same way, and carries on.
-The corpus gates each of those. The terminal is the gap: `isatty` takes a
-descriptor NUMBER, and a handle opened by name surrenders none, so
-`shred /dev/pts/0` writes where GNU declines — **#9229**, which is the
-`Writer.isatty()` that closes it. `shred -` onto a terminal is the same
-question with a known descriptor and is answered.
+**What an operand IS decides before any of that.** GNU refuses a FIFO, a
+socket and a TERMINAL with `<name>: invalid file type` and exit 1 — none has a
+length to rewind over — while a character or block DEVICE is overwritten like
+a file, which is what shred was written for. Measured, GNU 9.4: a FIFO with a
+reader held on it gives the refusal, a unix socket never reaches the question
+because its open answers ENXIO (`failed to open for writing: No such device or
+address`), a terminal gives the refusal whether it arrives as a name
+(`/dev/ptmx`, `/dev/pts/0`) or as `-` on a terminal fd 1, and `/dev/null` is
+written and exits 0 even though `fdatasync` on it answers EINVAL — GNU asks
+for a full `fsync`, is refused the same way, and carries on. The corpus gates
+all of it; the terminal is `w.isatty()` (#9229), which is the question a MODE
+cannot answer, since /dev/null and /dev/ptmx are both character devices and
+only one of them is written.
 
 `-f` is an open RETRY rather than an eager chmod, and gating it matters to the
 TREE rather than to the output: GNU makes the entry writable only after an
@@ -2092,7 +2091,10 @@ beside them for the utilities that write at an offset, and `r.flags()` /
 `w.flags()` (#9219) for the one question a descriptor answers and a path
 cannot: what the handle was OPENED for — 1 readable, 2 writable, 4
 appending — which is how `shred -` tells an append-only standard output,
-which it must refuse, from a writable one, which it overwrites. `hostid` wanted a
+which it must refuse, from a writable one, which it overwrites. `isatty` was
+the same shape one step further on: it took a descriptor NUMBER, so only the
+three stdio fds could be asked, and `shred` has to refuse a TERMINAL operand
+it opened by name — `r.isatty()` / `w.isatty()` (#9229) ask it of the handle. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
 on one backend. Group C's first four wanted three more the same way:
