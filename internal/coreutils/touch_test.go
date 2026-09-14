@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -361,7 +362,28 @@ func TestTouchTimestamps(t *testing.T) {
 			t.Fatalf("chtimes f: %v", err)
 		}
 	}
-	names := []string{"f", "new", "lf", "d", "dangling", "missing", "ref", "lref", "gap", "fold", "split"}
+	// Only the operands are compared: an entry the case does not name
+	// keeps the instant its tree was seeded at, and the two trees are
+	// seeded moments apart.
+	operands := func(args []string) []string {
+		var names []string
+		skip := false
+		for _, a := range args {
+			if skip {
+				skip = false
+				continue
+			}
+			if a == "-r" || a == "-d" || a == "-t" {
+				skip = true
+				continue
+			}
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			names = append(names, a)
+		}
+		return names
+	}
 	run := func(bin, dir string, c stampCase) string {
 		cmd := exec.Command(bin, c.args...)
 		cmd.Dir = dir
@@ -377,7 +399,7 @@ func TestTouchTimestamps(t *testing.T) {
 		seed(got)
 		wantOut := run(gnu, want, c)
 		gotOut := run(ours, got, c)
-		for _, n := range names {
+		for _, n := range operands(c.args) {
 			ws, wok := stampOf(t, filepath.Join(want, n))
 			gs, gok := stampOf(t, filepath.Join(got, n))
 			// A symlink's own access time moves on the first lookup
