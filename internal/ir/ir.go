@@ -19970,10 +19970,10 @@ func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]b
 		if ty.Name == "Map" {
 			return false
 		}
-		if seen[ty.Name] {
+		if seen[ty.String()] {
 			return true
 		}
-		seen[ty.Name] = true
+		seen[ty.String()] = true
 		sd, ok := info.Structs[ty.Name]
 		if !ok {
 			return false
@@ -19985,24 +19985,17 @@ func typeSelfDropSafeNoStrings(t ast.Type, info *checker.Info, seen map[string]b
 		}
 		return true
 	case ast.EnumType:
-		if ty.Name == "Option" || ty.Name == "Result" {
-			for _, a := range ty.Args {
-				if !typeSelfDropSafeNoStrings(a, info, seen) {
-					return false
-				}
-			}
+		if seen[ty.String()] {
 			return true
 		}
-		if seen[ty.Name] {
-			return true
-		}
-		seen[ty.Name] = true
+		seen[ty.String()] = true
 		ed, ok := info.Enums[ty.Name]
 		if !ok {
 			return false
 		}
 		for _, v := range ed.Variants {
 			for _, pl := range v.Payloads {
+				pl = substituteTypeParamsDeep(pl, ed.TypeParams, ty.Args)
 				if !typeSelfDropSafeNoStrings(pl, info, seen) {
 					return false
 				}
@@ -20034,10 +20027,10 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 		if ty.Name == "Map" {
 			return false
 		}
-		if seen[ty.Name] {
+		if seen[ty.String()] {
 			return true
 		}
-		seen[ty.Name] = true
+		seen[ty.String()] = true
 		sd, ok := info.Structs[ty.Name]
 		if !ok {
 			return false
@@ -20049,27 +20042,20 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 		}
 		return true
 	case ast.EnumType:
-		// Option / Result are the builtin generics: info.Enums has no
-		// declaration for them, so they are judged by their type arguments
-		// — an `Option[string]` field is as droppable as a string one.
-		if ty.Name == "Option" || ty.Name == "Result" {
-			for _, a := range ty.Args {
-				if !typeSelfDropSafe(a, info, seen) {
-					return false
-				}
-			}
+		// A generic enum's payloads are written in its own type parameters
+		// (`Option[T]`'s `Some` carries `T`), so they only answer the
+		// droppability question once bound to this instantiation's arguments.
+		if seen[ty.String()] {
 			return true
 		}
-		if seen[ty.Name] {
-			return true
-		}
-		seen[ty.Name] = true
+		seen[ty.String()] = true
 		ed, ok := info.Enums[ty.Name]
 		if !ok {
 			return false
 		}
 		for _, v := range ed.Variants {
 			for _, pl := range v.Payloads {
+				pl = substituteTypeParamsDeep(pl, ed.TypeParams, ty.Args)
 				if !typeSelfDropSafe(pl, info, seen) {
 					return false
 				}
