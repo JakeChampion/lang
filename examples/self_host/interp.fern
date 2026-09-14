@@ -2527,7 +2527,17 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
     if (name == "buf_push_u64") {
         if (args.len() != 2) { return v_err("buf_push_u64: expected 2 args (b, v)"); }
         if (!is_int_like(args[1])) { return v_err("buf_push_u64: expected number"); }
-        buf_push_u64(h, vint_as_i64(args[1]) as u64);
+        // Eight byte pushes rather than the op itself: these SOURCES have to
+        // compile under the pinned stage0 (docs/BOOTSTRAP.md), which knows no
+        // builtin added after it was published, and the interpreter's speed is
+        // not what the op exists for. Little-endian, which is the order every
+        // target stores a u64 in and what the checker's contract states.
+        var w: i64 = vint_as_i64(args[1]);
+        var k: i32 = 0;
+        while (k < 8) {
+            buf_push_byte(h, ((w >> ((k * 8) as i64)) as i32) & 255);
+            k = k + 1;
+        }
         return v_void();
     }
     if (name != "buf_push_byte") { return v_err(name + ": not a builder append"); }
