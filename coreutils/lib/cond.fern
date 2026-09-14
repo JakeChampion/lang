@@ -31,6 +31,7 @@
 // zeros, an explicit sign, and surrounding blanks are all accepted and
 // `-0` equals `0`. File predicates never report a failure: a path that
 // cannot be stat'ed is simply false.
+import "./filetype";
 import "./gnu";
 
 // `run(bracket)` — the whole program. `bracket` selects the `[` rules;
@@ -440,15 +441,11 @@ function int_operand(t: string, is_length: boolean): Int {
 }
 
 // ---- files -----------------------------------------------------------------
-function s_ifmt(): u32 {
-  return 61440 as u32;
-}
-
 function kind_of(path: string, follow: boolean): u32 {
   if (follow) {
     match (stat(path)) {
       Ok(st) => {
-        return st.mode & s_ifmt();
+        return filetype.kind(st.mode);
       },
       Err(_) => {
         return 0 as u32;
@@ -457,7 +454,7 @@ function kind_of(path: string, follow: boolean): u32 {
   }
   match (lstat(path)) {
     Ok(st) => {
-      return st.mode & s_ifmt();
+      return filetype.kind(st.mode);
     },
     Err(_) => {
       return 0 as u32;

@@ -291,6 +291,15 @@ seek and reaching no mode word, does build and is in the leg — the one
 utility there that WRITES a file, so the leg covers a preopened
 directory's `path_open` and the write loop behind it.
 
+`ls`, `dir` and `vdir` do not build there either, and for two capabilities
+rather than one: `tty`, because the column layout asks the terminal how wide
+it is, and `cwd`, because `--hyperlink` names the canonical path. Both are
+features of the utility rather than incidental — a `window_size` that
+answered 80 would claim a measurement, and a `--hyperlink` that emitted a
+relative URI would be wrong — and E066 refuses them post-tree-shake for the
+same reason it refuses `shred -f`. They join `pwd`, `readlink`, `realpath`
+and `stat`, each of which reaches `getcwd` the same way.
+
 ## Layout
 
 ```
@@ -2157,6 +2166,20 @@ past a pipe buffer on the way out) rather than to what native would take. Found
 when the self-host build of dircolors was SIGKILLed on a case native finishes
 in 0.19 s.
 
+**`read_dir` drops `.` and `..`, so `ls -f` cannot reproduce readdir's
+order (#9279).** The builtin filters the two dot entries out of the getdents
+stream before a program sees them, which is what the four walking utilities
+want and what `ls -a` cannot have: it has to PRINT them. Synthesising them is
+right for a sorted listing, because the sort puts them where they belong; for
+an unsorted one it can only put them at the front, and GNU puts them wherever
+the filesystem did — `.` is the 18th entry of one tree here and `..` the 46th.
+So `ls -f`, `ls -aU` and `ls -a --sort=none` diverge in exactly one way, where
+those two names land, and the corpus has no case for the three. What it has
+instead is `TestLsUnsortedAllShowsTheDotEntries`, which compares the SET of
+names against GNU's and asserts the two entries and the dotfiles are in it —
+everything about `-f` except the position. `read_dir_all` is the fix and is a
+primitive, so it is its own change.
+
 **A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
 takes a path, so a recursive walk concatenates one per entry and the kernel
 refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /
@@ -2187,6 +2210,10 @@ under a running chmod, and the 333 cases agree on stdout, stderr, exit status
 and the mode of every entry; what is missing is a safety property no case
 asserts, which is why it is recorded here rather than left to the depth
 sentence above.
+
+`ls -R` is the fifth, and there the bound is only depth: it rebuilds the
+path per entry the way the other four do, and a tree deeper than PATH_MAX
+stops with `File name too long` where GNU keeps walking.
 
 `chown -R` and `chgrp -R` are the third and fourth, with the same shape: they
 rebuild the path per entry where GNU holds a descriptor, so a rename of an

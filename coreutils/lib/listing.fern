@@ -1,0 +1,3313 @@
+// coreutils/lib/listing.fern — the whole of `ls`, and with it the two
+// programs that ARE ls with different option defaults: `dir` is
+// `ls -C -b` and `vdir` is `ls -l -b`. Three files, one implementation;
+// `run(defaults)` is the entry point and the caller names nothing else.
+//
+// Five of its rules are not in any man page and were measured from the
+// reference binary.
+//
+// **The column layout is not a uniform grid.** Each column is sized to
+// the longest name IN THAT COLUMN plus a two-space separator, the last
+// column getting no separator, and every column has a FLOOR of three
+// characters. The column count is the largest whose total is STRICTLY
+// less than the width — a listing that exactly fills the line is
+// refused, which is the spare cell a terminal needs so that the cursor
+// landing past the last column does not wrap.
+//
+// **The padding is tab-aware and that is byte-visible.** Moving from
+// column `f` to column `t` emits a tab exactly while
+// `t / tabsize > (f + 1) / tabsize`, and spaces otherwise — so a name
+// ending at 7 with the next column at 11 gets four SPACES under the
+// default tab size of 8, while one ending at 3 gets a tab and three
+// spaces. `-T 0` turns tabs off.
+//
+// **A width of zero means unlimited**, and it does not mean "one very
+// wide grid": the whole listing goes on ONE line with entries joined by
+// two spaces, which is the same code path `-m` takes with a comma.
+//
+// **The six-month window is a fixed number of SECONDS, not a calendar
+// offset.** The average Gregorian year is 31556952 seconds and the
+// window is half of it, 15778476 — so the boundary lands on the
+// 182.62-day mark and not on the same day six months back. Any FUTURE
+// timestamp takes the year format with no grace at all.
+//
+// **`-q` substitutes after quoting, and only for three styles.** It
+// replaces every non-printable byte of the ALREADY QUOTED name with
+// `?`, which is why `-q -b` is just `-b` (the escape style leaves no
+// non-printable byte to replace) and why `-q --quoting-style=shell`
+// leaves a control-byte name UNQUOTED: the quoting decision was taken
+// before the `?` went in.
+//
+// The two `-l` time formats are one `--time-style` value with a
+// newline in it, line 1 for a non-recent time and line 2 for a recent
+// one, so the C-locale default is `%b %e  %Y` and `%b %e %H:%M` — the
+// alignment is the format's own (two spaces before the year, `%e`
+// space-padded), not a separate pass. `iso` works the same way with a
+// TRAILING space on its non-recent line.
+//
+// What it leans on rather than reinvents: `lib/gnu.fern` for the option
+// scan, the ten quoting styles and ARGMATCH; `lib/timefmt.fern` for
+// nstrftime and the broken-down local time; `lib/blocks.fern` for
+// `--block-size` and the `-h` / `--si` rendering; `lib/pwdb.fern` for
+// the owner and group columns; `lib/tabs.fern`'s tab-stop arithmetic is
+// NOT used — `indent` above is its own rule and a stop table cannot
+// express it; `lib/filetype.fern` for the mode string and the kinds.
+//
+// `-Z` reports `?` for every file, which is what GNU reports on a
+// kernel with no SELinux: it short-circuits on `is_selinux_enabled()`
+// before asking for a context. On a kernel that HAS SELinux the answer
+// needs `getxattr` (#9098), the same gap `stat %C` has.
+import "std/string";
+import "std/array";
+import "std/i64";
+import "std/u64";
+import "std/io_buffered";
+import "./gnu";
+import "./blocks";
+import "./canon";
+import "./colordb";
+import "./filetype";
+import "./fnmatch";
+import "./pwdb";
+import "./timefmt";
+import "./tz";
+import "./selinux";
+import "./vercmp";
+
+// ---- option identifiers -----------------------------------------------------
+// The long options are declared in GNU's order, because the ambiguity
+// list prints its candidates in it: `ls --=x` names all 44.
+function op_all(): i32 {
+  return 1;
+}
+
+function op_escape(): i32 {
+  return 2;
+}
+
+function op_directory(): i32 {
+  return 3;
+}
+
+function op_dired(): i32 {
+  return 4;
+}
+
+function op_full_time(): i32 {
+  return 5;
+}
+
+function op_group_dirs(): i32 {
+  return 6;
+}
+
+function op_human(): i32 {
+  return 7;
+}
+
+function op_inode(): i32 {
+  return 8;
+}
+
+function op_kibibytes(): i32 {
+  return 9;
+}
+
+function op_numeric(): i32 {
+  return 10;
+}
+
+function op_no_group(): i32 {
+  return 11;
+}
+
+function op_hide_control(): i32 {
+  return 12;
+}
+
+function op_reverse(): i32 {
+  return 13;
+}
+
+function op_size(): i32 {
+  return 14;
+}
+
+function op_width(): i32 {
+  return 15;
+}
+
+function op_almost_all(): i32 {
+  return 16;
+}
+
+function op_ignore_backups(): i32 {
+  return 17;
+}
+
+function op_classify(): i32 {
+  return 18;
+}
+
+function op_file_type(): i32 {
+  return 19;
+}
+
+function op_si(): i32 {
+  return 20;
+}
+
+function op_deref_cmd(): i32 {
+  return 21;
+}
+
+function op_deref_cmd_dir(): i32 {
+  return 22;
+}
+
+function op_hide(): i32 {
+  return 23;
+}
+
+function op_ignore(): i32 {
+  return 24;
+}
+
+function op_indicator(): i32 {
+  return 25;
+}
+
+function op_deref(): i32 {
+  return 26;
+}
+
+function op_literal(): i32 {
+  return 27;
+}
+
+function op_quote_name(): i32 {
+  return 28;
+}
+
+function op_quoting(): i32 {
+  return 29;
+}
+
+function op_recursive(): i32 {
+  return 30;
+}
+
+function op_format(): i32 {
+  return 31;
+}
+
+function op_show_control(): i32 {
+  return 32;
+}
+
+function op_sort(): i32 {
+  return 33;
+}
+
+function op_tabsize(): i32 {
+  return 34;
+}
+
+function op_time(): i32 {
+  return 35;
+}
+
+function op_time_style(): i32 {
+  return 36;
+}
+
+function op_zero(): i32 {
+  return 37;
+}
+
+function op_color(): i32 {
+  return 38;
+}
+
+function op_hyperlink(): i32 {
+  return 39;
+}
+
+function op_block_size(): i32 {
+  return 40;
+}
+
+function op_context(): i32 {
+  return 41;
+}
+
+function op_author(): i32 {
+  return 42;
+}
+
+// The short options with no long form.
+function op_long(): i32 {
+  return 50;
+}
+
+function op_one(): i32 {
+  return 51;
+}
+
+function op_many(): i32 {
+  return 52;
+}
+
+function op_across(): i32 {
+  return 53;
+}
+
+function op_commas(): i32 {
+  return 54;
+}
+
+function op_no_owner(): i32 {
+  return 55;
+}
+
+function op_no_group_long(): i32 {
+  return 56;
+}
+
+function op_ctime(): i32 {
+  return 57;
+}
+
+function op_atime(): i32 {
+  return 58;
+}
+
+function op_sort_time(): i32 {
+  return 59;
+}
+
+function op_sort_size(): i32 {
+  return 60;
+}
+
+function op_sort_none(): i32 {
+  return 61;
+}
+
+function op_sort_version(): i32 {
+  return 62;
+}
+
+function op_sort_ext(): i32 {
+  return 63;
+}
+
+function op_unsorted_all(): i32 {
+  return 64;
+}
+
+function op_slash(): i32 {
+  return 65;
+}
+
+// ---- enumerated settings ----------------------------------------------------
+// The five output formats, numbered as `--format` lists its values.
+function fmt_long(): i32 {
+  return 0;
+}
+
+function fmt_commas(): i32 {
+  return 1;
+}
+
+function fmt_across(): i32 {
+  return 2;
+}
+
+function fmt_vertical(): i32 {
+  return 3;
+}
+
+function fmt_single(): i32 {
+  return 4;
+}
+
+function sort_name(): i32 {
+  return 0;
+}
+
+function sort_none(): i32 {
+  return 1;
+}
+
+function sort_time(): i32 {
+  return 2;
+}
+
+function sort_size(): i32 {
+  return 3;
+}
+
+function sort_ext(): i32 {
+  return 4;
+}
+
+function sort_version(): i32 {
+  return 5;
+}
+
+function sort_width(): i32 {
+  return 6;
+}
+
+function time_mtime(): i32 {
+  return 0;
+}
+
+function time_atime(): i32 {
+  return 1;
+}
+
+function time_ctime(): i32 {
+  return 2;
+}
+
+function time_birth(): i32 {
+  return 3;
+}
+
+// Which dot entries a listing drops. `-a` and `-A` are one setting and
+// the LAST one typed wins, so `ls -a -A` is `-A`.
+function ignore_default(): i32 {
+  return 0;
+}
+
+function ignore_dot_and_dotdot(): i32 {
+  return 1;
+}
+
+function ignore_minimal(): i32 {
+  return 2;
+}
+
+function ind_none(): i32 {
+  return 0;
+}
+
+function ind_slash(): i32 {
+  return 1;
+}
+
+function ind_file_type(): i32 {
+  return 2;
+}
+
+function ind_classify(): i32 {
+  return 3;
+}
+
+// How far a symbolic link is followed. `none` is lstat everywhere;
+// `cmd` follows a command-line operand; `cmd_dir` follows one only when
+// it resolves to a directory; `all` follows every entry.
+function deref_none(): i32 {
+  return 0;
+}
+
+function deref_cmd(): i32 {
+  return 1;
+}
+
+function deref_cmd_dir(): i32 {
+  return 2;
+}
+
+function deref_all(): i32 {
+  return 3;
+}
+
+function when_always(): i32 {
+  return 0;
+}
+
+function when_never(): i32 {
+  return 1;
+}
+
+function when_auto(): i32 {
+  return 2;
+}
+
+// `ls` exits 2 for a usage error and 1 for a file it could not reach.
+function status_usage(): i32 {
+  return 2;
+}
+
+function status_minor(): i32 {
+  return 1;
+}
+
+// The smallest a column may be, whatever its contents.
+function min_column_width(): i32 {
+  return 3;
+}
+
+// Half the average Gregorian year, in seconds: the whole of the
+// recent / non-recent test.
+function six_months(): i64 {
+  return 15778476 as i64;
+}
+
+// ---- configuration ----------------------------------------------------------
+// `Cfg` is the whole of what the option scan decides, and the only
+// thing the rest of the file reads.
+//
+// Two block sizes, not one, because `-k` moves only one of them:
+// `fsize` renders the SIZE column and `bsize` the `total` line and the
+// `-s` block counts, so `ls -lk` still prints a file size in bytes
+// while its total is in kibibytes. `--block-size` and `-h` set both.
+pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: string, recent_fmt: string, zone: tz.Zone, now: i64, colors: Palette }
+
+// `defaults(format, qstyle)` — the starting configuration the three
+// programs differ in and nothing else: `ls` is one-per-line and
+// literal, `dir` is vertical columns and escape, `vdir` is long and
+// escape.
+pub function defaults(format: i32, qstyle: i32): Cfg {
+  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: "%b %e  %Y", recent_fmt: "%b %e %H:%M", zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
+}
+
+// ---- output -----------------------------------------------------------------
+// The byte position matters because `--dired` reports the byte OFFSET
+// of every name it wrote, so the writer carries one. `names` and `subs`
+// collect the `//DIRED//` and `//SUBDIRED//` pairs.
+// `status` is the exit status so far: 1 for a file that could not be
+// reached, 2 for a command-line operand that could not be, and the
+// larger of the two wins.
+struct Out { w: io_buffered.BufWriter, pos: i64, names: i64[], subs: i64[], status: i32 }
+
+function out_new(): Out {
+  return Out { w: gnu.out_new(), pos: 0 as i64, names: [], subs: [], status: 0 };
+}
+
+function put(o: Out, s: string): Out {
+  // An empty write is not free — it rebuilds the writer and drops it
+  // again — and most entries have three of them: no frills, no
+  // indicator, no colour.
+  if (s.len() == 0) {
+    return o;
+  }
+  return Out { ...o, w: gnu.put_with(o.w, s, status_usage()), pos: o.pos + s.len() as i64 };
+}
+
+// A name written with its byte range recorded, for `--dired`.
+function put_name(c: Cfg, o: Out, s: string): Out {
+  var start: i64 = o.pos;
+  var next: Out = put(o, s);
+  if (!c.dired) {
+    return next;
+  }
+  return Out { ...next, names: next.names.append(start).append(next.pos) };
+}
+
+function put_subdir(c: Cfg, o: Out, s: string): Out {
+  var start: i64 = o.pos;
+  var next: Out = put(o, s);
+  if (!c.dired) {
+    return next;
+  }
+  return Out { ...next, subs: next.subs.append(start).append(next.pos) };
+}
+
+// `--dired` indents every long-format line by two spaces, the offsets
+// above counting them.
+function dired_indent(c: Cfg, o: Out): Out {
+  if (c.dired) {
+    return put(o, "  ");
+  }
+  return o;
+}
+
+function fail(o: Out, msg: string, status: i32): Out {
+  var worst: i32 = o.status;
+  if (status > worst) {
+    worst = status;
+  }
+  return Out { ...o, w: gnu.error_out(o.w, msg), status: worst };
+}
+
+// ---- small helpers ----------------------------------------------------------
+// A run of `n` spaces in ONE allocation, sliced out of a literal.
+// Prepending a byte at a time allocated a string per byte of padding,
+// and a long listing pads six fields per line.
+function spaces(n: i32): string {
+  if (n <= 0) {
+    return "";
+  }
+  var pool: string = "                                                                ";
+  if (n <= pool.len()) {
+    return slice_unchecked(pool, 0, n) + "";
+  }
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    bs = bs.append(32 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+function pad_left(s: string, w: i32): string {
+  return spaces(w - s.len()) + s;
+}
+
+function pad_right(s: string, w: i32): string {
+  return s + spaces(w - s.len());
+}
+
+// The padding between two columns: a tab while the target tab stop is
+// strictly beyond the one the next character would reach, spaces after
+// that. `size` of zero is `-T 0` and never emits a tab.
+function indent(from: i32, to: i32, size: i32): string {
+  var bs: u8[] = [];
+  var f: i32 = from;
+  while (f < to) {
+    if (size != 0 && to / size > (f + 1) / size) {
+      bs = bs.append(9 as u8);
+      f = f + (size - f % size);
+    } else {
+      bs = bs.append(32 as u8);
+      f = f + 1;
+    }
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+function digits_u64(n: u64): i32 {
+  return n.to_string().len();
+}
+
+// ---- colour -----------------------------------------------------------------
+// The capability slots, in the order the two-letter names below declare
+// them. `no` is the "normal text" colour, `fi` a plain file, `mi` a
+// missing link target and `or` an orphaned link; `cl` is the
+// clear-to-end-of-line sequence, accepted and never emitted because
+// nothing here writes a partial line it has to erase.
+function cap_names(): string[] {
+  return ["no", "fi", "di", "ln", "pi", "so", "bd", "cd", "mi", "or", "ex", "do", "su", "sg", "st", "ow", "tw", "ca", "mh", "cl", "lc", "rc", "ec", "rs"];
+}
+
+function cap_no(): i32 {
+  return 0;
+}
+
+function cap_fi(): i32 {
+  return 1;
+}
+
+function cap_di(): i32 {
+  return 2;
+}
+
+function cap_ln(): i32 {
+  return 3;
+}
+
+function cap_pi(): i32 {
+  return 4;
+}
+
+function cap_so(): i32 {
+  return 5;
+}
+
+function cap_bd(): i32 {
+  return 6;
+}
+
+function cap_cd(): i32 {
+  return 7;
+}
+
+function cap_mi(): i32 {
+  return 8;
+}
+
+function cap_or(): i32 {
+  return 9;
+}
+
+function cap_ex(): i32 {
+  return 10;
+}
+
+function cap_su(): i32 {
+  return 12;
+}
+
+function cap_sg(): i32 {
+  return 13;
+}
+
+function cap_st(): i32 {
+  return 14;
+}
+
+function cap_ow(): i32 {
+  return 15;
+}
+
+function cap_tw(): i32 {
+  return 16;
+}
+
+function cap_ca(): i32 {
+  return 17;
+}
+
+function cap_mh(): i32 {
+  return 18;
+}
+
+function cap_count(): i32 {
+  return 20;
+}
+
+// `Palette` is LS_COLORS as the renderer needs it: the wrapper strings,
+// one code per capability with a flag for "named at all" (an unset
+// capability and one set to the empty string are different things), and
+// the filename suffixes.
+//
+// `link_target` is the `ln=target` spelling, which is not a colour: it
+// says to colour a symlink as whatever it points AT.
+pub struct Palette { on: boolean, link_target: boolean, lc: string, rc: string, rs: string, ec: string, has_ec: boolean, code: string[], set: boolean[], suffix: string[], suffix_code: string[] }
+
+// Every slot is present even with colour off, so that a caller can ask
+// about a capability without first asking whether colour is on.
+function empty_caps(): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < cap_count()) {
+    out = out.append("");
+    i = i + 1;
+  }
+  return out;
+}
+
+function unset_caps(): boolean[] {
+  var out: boolean[] = [];
+  var i: i32 = 0;
+  while (i < cap_count()) {
+    out = out.append(false);
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function palette_off(): Palette {
+  return Palette { on: false, link_target: false, lc: "", rc: "", rs: "", ec: "", has_ec: false, code: empty_caps(), set: unset_caps(), suffix: [], suffix_code: [] };
+}
+
+// The built-in table, which is what `ls --color` uses with LS_COLORS
+// unset — and it is NOT what `dircolors` writes: `mi`, `or`, `ca` and
+// `mh` are unset here where the database names them, so an orphaned
+// link takes `ln`'s bright cyan rather than a colour of its own.
+function palette_default(): Palette {
+  var code: string[] = empty_caps();
+  var set: boolean[] = unset_caps();
+  var p: Palette = Palette { on: true, link_target: false, lc: "\x1b[", rc: "m", rs: "0", ec: "", has_ec: false, code: code, set: set, suffix: [], suffix_code: [] };
+  p = cap_put(p, cap_di(), "01;34");
+  p = cap_put(p, cap_ln(), "01;36");
+  p = cap_put(p, cap_pi(), "33");
+  p = cap_put(p, cap_so(), "01;35");
+  p = cap_put(p, cap_bd(), "01;33");
+  p = cap_put(p, cap_cd(), "01;33");
+  p = cap_put(p, cap_ex(), "01;32");
+  p = cap_put(p, cap_su(), "37;41");
+  p = cap_put(p, cap_sg(), "30;43");
+  p = cap_put(p, cap_st(), "37;44");
+  p = cap_put(p, cap_ow(), "34;42");
+  p = cap_put(p, cap_tw(), "30;42");
+  return p;
+}
+
+function cap_put(p: Palette, id: i32, value: string): Palette {
+  return Palette { ...p, code: p.code.with(id, value), set: p.set.with(id, true) };
+}
+
+// Two different questions, and GNU answers them differently. A
+// capability that was NAMED AT ALL is emitted, so `LS_COLORS=di=`
+// wraps a directory in an empty sequence rather than leaving it bare;
+// but only one that is named and not a RESET (empty, `0` or `00`)
+// SELECTS its type over the fallbacks, which is what decides whether a
+// sticky directory takes `st` or `di`.
+function cap_set(p: Palette, id: i32): boolean {
+  return p.set[id];
+}
+
+function cap_on(p: Palette, id: i32): boolean {
+  if (!p.set[id]) {
+    return false;
+  }
+  var v: string = p.code[id];
+  return v.len() > 0 && v != "0" && v != "00";
+}
+
+// One LS_COLORS field's worth of text with its escapes resolved: `\e`,
+// the seven named control characters, `\?` for DEL and `\_` for a
+// space, `\NNN` octal and `\xHH` hex, a backslash before anything else
+// standing for that byte, and `^X` for the control character X names.
+function unescape(s: string, start: i32, end: i32): string {
+  var bs: u8[] = [];
+  var i: i32 = start;
+  while (i < end) {
+    var c: i32 = s[i] as i32;
+    if (c == 92 && i + 1 < end) {
+      var n: i32 = s[i + 1] as i32;
+      if (n == 97) {
+        bs = bs.append(7 as u8);
+        i = i + 2;
+      } else if (n == 98) {
+        bs = bs.append(8 as u8);
+        i = i + 2;
+      } else if (n == 101) {
+        bs = bs.append(27 as u8);
+        i = i + 2;
+      } else if (n == 102) {
+        bs = bs.append(12 as u8);
+        i = i + 2;
+      } else if (n == 110) {
+        bs = bs.append(10 as u8);
+        i = i + 2;
+      } else if (n == 114) {
+        bs = bs.append(13 as u8);
+        i = i + 2;
+      } else if (n == 116) {
+        bs = bs.append(9 as u8);
+        i = i + 2;
+      } else if (n == 118) {
+        bs = bs.append(11 as u8);
+        i = i + 2;
+      } else if (n == 63) {
+        bs = bs.append(127 as u8);
+        i = i + 2;
+      } else if (n == 95) {
+        bs = bs.append(32 as u8);
+        i = i + 2;
+      } else if (n >= 48 && n <= 55) {
+        var v: i32 = 0;
+        var k: i32 = i + 1;
+        while (k < end && k < i + 4 && s[k] as i32 >= 48 && s[k] as i32 <= 55) {
+          v = v * 8 + (s[k] as i32 - 48);
+          k = k + 1;
+        }
+        bs = bs.append((v & 255) as u8);
+        i = k;
+      } else if (n == 120 || n == 88) {
+        var hv: i32 = 0;
+        var hk: i32 = i + 2;
+        var any: boolean = false;
+        while (hk < end) {
+          var d: i32 = hex_value(s[hk] as i32);
+          if (d < 0) {
+            break;
+          }
+          hv = hv * 16 + d;
+          any = true;
+          hk = hk + 1;
+        }
+        if (any) {
+          bs = bs.append((hv & 255) as u8);
+          i = hk;
+        } else {
+          bs = bs.append(n as u8);
+          i = i + 2;
+        }
+      } else {
+        bs = bs.append(n as u8);
+        i = i + 2;
+      }
+    } else if (c == 94 && i + 1 < end) {
+      var m: i32 = s[i + 1] as i32;
+      if (m == 63) {
+        bs = bs.append(127 as u8);
+      } else {
+        bs = bs.append((m & 31) as u8);
+      }
+      i = i + 2;
+    } else {
+      bs = bs.append(c as u8);
+      i = i + 1;
+    }
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+function hex_value(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return 0 - 1;
+}
+
+// The index of the next unescaped `b` at or after `i`, or `end`.
+function scan_to(s: string, i0: i32, end: i32, b: i32): i32 {
+  var i: i32 = i0;
+  while (i < end) {
+    var c: i32 = s[i] as i32;
+    if (c == 92 && i + 1 < end) {
+      i = i + 2;
+      continue;
+    }
+    if (c == b) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return end;
+}
+
+// `parse_ls_colors(spec)` — LS_COLORS as a palette. A field is
+// `PREFIX=VALUE`; a prefix starting with `*` is a filename SUFFIX
+// (matched case-insensitively at the end of the name, not as a glob —
+// `*a?c` colours the file literally called `a?c`), anything else is one
+// of the two-letter capabilities. An unrecognized prefix and a field
+// with no `=` are both fatal to the whole variable: two diagnostics,
+// and colour is off for the run, but the listing still happens and the
+// exit status does not move.
+function parse_ls_colors(spec: string): Palette {
+  var p: Palette = palette_default();
+  var names: string[] = cap_names();
+  var n: i32 = spec.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (spec[i] as i32 == 58) {
+      i = i + 1;
+      continue;
+    }
+    var stop: i32 = scan_to(spec, i, n, 58);
+    var eq: i32 = scan_to(spec, i, stop, 61);
+    if (eq >= stop) {
+      gnu.error("unparsable value for LS_COLORS environment variable");
+      return palette_off();
+    }
+    var key: string = unescape(spec, i, eq);
+    var value: string = unescape(spec, eq + 1, stop);
+    if (key.len() > 1 && key[0] as i32 == 42) {
+      p = Palette { ...p, suffix: p.suffix.append(slice_unchecked(key, 1, key.len()) + ""), suffix_code: p.suffix_code.append(value) };
+    } else {
+      var slot: i32 = 0 - 1;
+      var k: i32 = 0;
+      while (k < names.len()) {
+        if (names[k] == key) {
+          slot = k;
+          break;
+        }
+        k = k + 1;
+      }
+      if (slot < 0) {
+        gnu.error("unrecognized prefix: " + gnu.quote(key));
+        gnu.error("unparsable value for LS_COLORS environment variable");
+        return palette_off();
+      }
+      if (slot == 20) {
+        p = Palette { ...p, lc: value };
+      } else if (slot == 21) {
+        p = Palette { ...p, rc: value };
+      } else if (slot == 22) {
+        p = Palette { ...p, ec: value, has_ec: true };
+      } else if (slot == 23) {
+        p = Palette { ...p, rs: value };
+      } else if (slot == cap_ln() && value == "target") {
+        p = Palette { ...p, link_target: true };
+        p = cap_put(p, cap_ln(), "");
+      } else {
+        p = cap_put(p, slot, value);
+      }
+    }
+    i = stop + 1;
+  }
+  return p;
+}
+
+// The reset written after a coloured name, and once before the first
+// one: `ec` outright when it was named, else the wrapper around `rs`.
+function reset_seq(p: Palette): string {
+  if (p.has_ec) {
+    return p.ec;
+  }
+  return p.lc + p.rs + p.rc;
+}
+
+function wrap_seq(p: Palette, code: string): string {
+  return p.lc + code + p.rc;
+}
+
+// ---- one entry --------------------------------------------------------------
+// `name` is what gets printed and `path` what gets stat'ed: inside a
+// directory they differ, and for a command-line operand they are the
+// same string.
+//
+// `link_mode` is the TARGET's mode when the entry is a symlink whose
+// target could be reached. Two options need it and neither dereferences
+// the entry outright: `--group-directories-first` counts a link to a
+// directory as a directory, and `ln=target` colours a link as its
+// referent.
+struct Ent { name: string, path: string, st: FileStat, stated: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string }
+
+function blank_stat(): FileStat {
+  return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
+}
+
+function ent_new(name: string, path: string): Ent {
+  return Ent { name: name, path: path, st: blank_stat(), stated: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "" };
+}
+
+// Whether the listing needs a stat(2) per entry at all. A plain `ls`
+// prints names it already has from readdir, and asking the kernel about
+// each one is the single largest cost this program can avoid — so it is
+// asked only when something on the line depends on the answer.
+//
+// `-L` is NOT on the list, and that is observable rather than a saving:
+// it says which stat to use, not that one is needed, so `ls -L` over a
+// dangling link prints the name in silence while `ls -lL` reports that
+// it cannot access it.
+function needs_stat(c: Cfg): boolean {
+  return c.format == fmt_long() || c.inode || c.show_blocks || c.show_context || c.indicator != ind_none() || c.color || c.dirs_first || c.sort_key == sort_time() || c.sort_key == sort_size() || c.recursive;
+}
+
+// Whether the TARGET of a symlink has to be stat'ed. GNU avoids it
+// wherever it can, and the difference is visible: `ls -l --color` over
+// a link to a directory leaves the target name UNCOLOURED, because
+// nothing asked what the target was. Four things ask — `ln=target` and
+// the `or` / `mi` capabilities, which decide the colour, and an
+// indicator style that distinguishes kinds — plus
+// `--group-directories-first`, which counts a link to a directory as
+// one.
+function needs_link_mode(c: Cfg): boolean {
+  if (c.indicator == ind_file_type() || c.indicator == ind_classify()) {
+    return true;
+  }
+  if (c.dirs_first) {
+    return true;
+  }
+  if (!c.color) {
+    return false;
+  }
+  return c.colors.link_target || cap_on(c.colors, cap_or()) || cap_on(c.colors, cap_mi());
+}
+
+// `stat_entry(c, e, cmdline)` — the entry with its record filled in.
+// The link target is read whenever the entry IS a link and something
+// will print or judge it.
+function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
+  var follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
+  var out: Ent = e;
+  if (follow) {
+    match (stat(e.path)) {
+      Ok(s) => {
+        return (Ent { ...out, st: s, stated: true }, true, "");
+      },
+      Err(err) => {
+        return (out, false, gnu.io_error_text(err));
+      }
+    }
+  }
+  match (lstat(e.path)) {
+    Ok(s) => {
+      out = Ent { ...out, st: s, stated: true };
+    },
+    Err(err) => {
+      return (out, false, gnu.io_error_text(err));
+    }
+  }
+  if (!filetype.is_link(out.st.mode)) {
+    return (out, true, "");
+  }
+  // `-H` on a link to a DIRECTORY, and `--dereference-command-line-
+  // symlink-to-dir`, both replace the record with the target's — but
+  // only when the target is one.
+  if (cmdline && (c.deref == deref_cmd_dir() || c.deref == deref_cmd())) {
+    match (stat(e.path)) {
+      Ok(s) => {
+        if (filetype.is_dir(s.mode)) {
+          return (Ent { ...out, st: s }, true, "");
+        }
+      },
+      Err(_) => {}
+    }
+  }
+  match (read_link(e.path)) {
+    Ok(t) => {
+      out = Ent { ...out, target: t, has_target: true };
+    },
+    Err(_) => {}
+  }
+  if (needs_link_mode(c)) {
+    match (stat(e.path)) {
+      Ok(s) => {
+        out = Ent { ...out, link_mode: s.mode, link_ok: true };
+      },
+      Err(_) => {}
+    }
+  }
+  return (out, true, "");
+}
+
+// The timestamp the listing prints and `-t` orders by.
+function ent_time(c: Cfg, e: Ent): i64 {
+  if (c.time_type == time_atime()) {
+    return e.st.atime;
+  }
+  if (c.time_type == time_ctime()) {
+    return e.st.ctime;
+  }
+  return e.st.mtime;
+}
+
+function ent_nsec(c: Cfg, e: Ent): i64 {
+  if (c.time_type == time_atime()) {
+    return e.st.atime_nsec;
+  }
+  if (c.time_type == time_ctime()) {
+    return e.st.ctime_nsec;
+  }
+  return e.st.mtime_nsec;
+}
+
+// The mode whose KIND is trusted even when the record is not: an entry
+// nothing could be stat'ed about still keeps the letter lstat gave, so
+// `ls -LF` marks a dangling link `@` after reporting it.
+function kind_mode(e: Ent): u32 {
+  if (e.stated) {
+    return e.st.mode;
+  }
+  return e.link_mode;
+}
+
+// The mode that decides an indicator or a colour: the referent's when
+// the entry is a link and the palette said `ln=target`.
+function effective_mode(c: Cfg, e: Ent): u32 {
+  if (c.colors.link_target && e.link_ok) {
+    return e.link_mode;
+  }
+  return e.st.mode;
+}
+
+// ---- sorting ----------------------------------------------------------------
+// The `<` / `>` operators, not a byte loop: they are one memcmp each
+// where the loop was a bounds check and two loads per byte, and this is
+// the innermost thing a listing does — 28% of a plain `ls` over four
+// thousand names went here before.
+function byte_cmp(a: string, b: string): i32 {
+  if (a < b) {
+    return 0 - 1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
+}
+
+// The file suffix `-X` groups by: everything from the last dot that is
+// not the first byte, or nothing at all.
+function extension(name: string): string {
+  var i: i32 = name.len() - 1;
+  while (i > 0) {
+    if (name[i] as i32 == 46) {
+      return slice_unchecked(name, i, name.len()) + "";
+    }
+    i = i - 1;
+  }
+  return "";
+}
+
+function cmp_i64(a: i64, b: i64): i32 {
+  if (a < b) {
+    return 0 - 1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
+}
+
+// The primary key, with the NAME as the tie-break in every case — so
+// `-r` reversing the whole comparison reverses the tie-break too, which
+// is why `ls -Sr` on two files of one size prints them backwards.
+function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
+  if (c.sort_key == sort_name()) {
+    return byte_cmp(a.name, b.name);
+  }
+  if (c.sort_key == sort_time()) {
+    var r: i32 = cmp_i64(ent_time(c, b), ent_time(c, a));
+    if (r == 0) {
+      r = cmp_i64(ent_nsec(c, b), ent_nsec(c, a));
+    }
+    if (r != 0) {
+      return r;
+    }
+    return byte_cmp(a.name, b.name);
+  }
+  if (c.sort_key == sort_size()) {
+    var s: i32 = cmp_i64(b.st.size, a.st.size);
+    if (s != 0) {
+      return s;
+    }
+    return byte_cmp(a.name, b.name);
+  }
+  if (c.sort_key == sort_ext()) {
+    var e: i32 = byte_cmp(extension(a.name), extension(b.name));
+    if (e != 0) {
+      return e;
+    }
+    return byte_cmp(a.name, b.name);
+  }
+  if (c.sort_key == sort_version()) {
+    return vercmp.compare(a.name, b.name);
+  }
+  if (c.sort_key == sort_width()) {
+    // The DISPLAYED width, so a name carrying a control byte sorts by
+    // the cells it takes rather than the bytes it holds: `nl\nx` is 3
+    // wide and leads a listing of four-byte names.
+    var w: i32 = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
+    if (w != 0) {
+      return w;
+    }
+    return byte_cmp(a.name, b.name);
+  }
+  return byte_cmp(a.name, b.name);
+}
+
+// `before(c, es, a, b)` — whether the entry at `a` sorts before the one
+// at `b`. A BOOLEAN rather than a three-way compare, and by INDEX
+// rather than by value, because that is all a merge asks: the name key
+// then answers with one `<` where an ordering would take two, and
+// nothing copies a record to be compared.
+//
+// `--group-directories-first` sits OUTSIDE the reversal: `-r` still
+// puts the directories first and only reverses within each group.
+function before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
+  if (c.dirs_first) {
+    var ad: boolean = is_dir_entry(c, es[a]);
+    var bd: boolean = is_dir_entry(c, es[b]);
+    if (ad != bd) {
+      return ad;
+    }
+  }
+  if (c.reverse) {
+    return key_before(c, es, b, a);
+  }
+  return key_before(c, es, a, b);
+}
+
+function key_before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
+  if (c.sort_key == sort_name()) {
+    return es[a].name < es[b].name;
+  }
+  return cmp_key(c, es[a], es[b]) < 0;
+}
+
+// A symlink TO a directory counts as one here, unlike for `-F`, where
+// it earns `@` rather than `/`.
+function is_dir_entry(c: Cfg, e: Ent): boolean {
+  if (filetype.is_dir(e.st.mode)) {
+    return true;
+  }
+  return e.link_ok && filetype.is_dir(e.link_mode);
+}
+
+// A merge sort over the indices, so the comparator can take `c`
+// without a closure.
+function sort_entries(c: Cfg, es: Ent[]): Ent[] {
+  var n: i32 = es.len();
+  if (n < 2 || c.sort_key == sort_none()) {
+    return es;
+  }
+  var src: i32[] = [];
+  var dst: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    src = src.append(i);
+    dst = dst.append(0);
+    i = i + 1;
+  }
+  var width: i32 = 1;
+  while (width < n) {
+    var start: i32 = 0;
+    var at: i32 = 0;
+    while (start < n) {
+      var mid: i32 = start + width;
+      if (mid > n) {
+        mid = n;
+      }
+      var end: i32 = mid + width;
+      if (end > n) {
+        end = n;
+      }
+      var p: i32 = start;
+      var q: i32 = mid;
+      while (p < mid && q < end) {
+        if (before(c, es, src[q], src[p])) {
+          dst = dst.with(at, src[q]);
+          q = q + 1;
+        } else {
+          dst = dst.with(at, src[p]);
+          p = p + 1;
+        }
+        at = at + 1;
+      }
+      while (p < mid) {
+        dst = dst.with(at, src[p]);
+        p = p + 1;
+        at = at + 1;
+      }
+      while (q < end) {
+        dst = dst.with(at, src[q]);
+        q = q + 1;
+        at = at + 1;
+      }
+      start = end;
+    }
+    var swap: i32[] = src;
+    src = dst;
+    dst = swap;
+    width = width * 2;
+  }
+  var out: Ent[] = [];
+  var k: i32 = 0;
+  while (k < n) {
+    out = out.append(es[src[k]]);
+    k = k + 1;
+  }
+  return out;
+}
+
+// ---- the name as it prints --------------------------------------------------
+// `-q` replaces every non-printable byte of the ALREADY QUOTED name
+// with `?`, and only for the three styles that can leave one there.
+// `-b`'s escape style and `-Q`'s C style have already turned every such
+// byte into printable text, so `-q` with either is a no-op — and a
+// quoting decision taken BEFORE the substitution is not revisited,
+// which is why `-q --quoting-style=shell` leaves a control-byte name
+// bare while the same name with a newline in it comes out quoted.
+function qmark_applies(style: i32): boolean {
+  return style == 0 || style == 1 || style == 2;
+}
+
+function qmark(s: string): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b < 32 || b >= 127) {
+      bs = bs.append(63 as u8);
+    } else {
+      bs = bs.append(b as u8);
+    }
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+// A SPACE joins the escaped set under the escape style, and only
+// there: `ls -b` writes `sp\ ace` where the same style reached through
+// `stat`'s QUOTING_STYLE leaves the space alone. It is ls's own
+// addition to the table, not the style's.
+function quoted_name(c: Cfg, name: string): string {
+  var extra: string = "";
+  if (c.qstyle == 7) {
+    extra = " ";
+  }
+  var out: string = gnu.quote_style_with(name, c.qstyle, extra);
+  if (c.qmark && qmark_applies(c.qstyle)) {
+    return qmark(out);
+  }
+  return out;
+}
+
+// A directory header is quoted in the same style with a COLON in the
+// escaped set instead — the `:` that follows the name would otherwise
+// be impossible to tell from one inside it. The space is NOT in this
+// set, so `ls -bR` writes the entry `sp\ ace` and the header
+// `./sp ace:`.
+function quoted_header(c: Cfg, name: string): string {
+  var out: string = gnu.quote_style_with(name, c.qstyle, ":");
+  if (c.qmark && qmark_applies(c.qstyle)) {
+    return qmark(out);
+  }
+  return out;
+}
+
+// The one-character suffix `-F` / `-p` / `--indicator-style` adds. A
+// symlink earns `@` whatever it points at, broken ones included, which
+// is the opposite of what `--group-directories-first` does with one.
+function indicator(c: Cfg, e: Ent): string {
+  if (c.indicator == ind_none()) {
+    return "";
+  }
+  var m: u32 = kind_mode(e);
+  if (filetype.is_dir(m)) {
+    return "/";
+  }
+  if (c.indicator == ind_slash()) {
+    return "";
+  }
+  if (filetype.is_link(m)) {
+    return "@";
+  }
+  if (filetype.is_fifo(m)) {
+    return "|";
+  }
+  if (filetype.is_sock(m)) {
+    return "=";
+  }
+  if (c.indicator == ind_classify() && filetype.is_reg(m) && (m & 0x49 as u32) != 0 as u32) {
+    return "*";
+  }
+  return "";
+}
+
+// The capability a file's mode selects, or -1 for "no colour". The
+// order inside each kind is the measured one: for a directory
+// sticky-and-other-writable, then other-writable, then sticky; for a
+// regular file setuid, setgid, capabilities, executable, then more than
+// one hard link — and the filename suffixes are consulted only for a
+// regular file that none of those claimed.
+function color_slot(c: Cfg, e: Ent): i32 {
+  var p: Palette = c.colors;
+  if (filetype.is_link(e.st.mode)) {
+    if (!e.link_ok && (p.link_target || cap_on(p, cap_or()))) {
+      return cap_or();
+    }
+    if (!p.link_target) {
+      return cap_ln();
+    }
+  }
+  var m: u32 = effective_mode(c, e);
+  if (filetype.is_dir(m)) {
+    var sticky: boolean = (m & 0x200 as u32) != 0 as u32;
+    var other_w: boolean = (m & 2 as u32) != 0 as u32;
+    if (sticky && other_w && cap_on(p, cap_tw())) {
+      return cap_tw();
+    }
+    if (other_w && cap_on(p, cap_ow())) {
+      return cap_ow();
+    }
+    if (sticky && cap_on(p, cap_st())) {
+      return cap_st();
+    }
+    return cap_di();
+  }
+  if (filetype.is_fifo(m)) {
+    return cap_pi();
+  }
+  if (filetype.is_sock(m)) {
+    return cap_so();
+  }
+  if (filetype.is_blk(m)) {
+    return cap_bd();
+  }
+  if (filetype.is_chr(m)) {
+    return cap_cd();
+  }
+  if (!filetype.is_reg(m)) {
+    return cap_or();
+  }
+  if ((m & 0x800 as u32) != 0 as u32 && cap_on(p, cap_su())) {
+    return cap_su();
+  }
+  if ((m & 0x400 as u32) != 0 as u32 && cap_on(p, cap_sg())) {
+    return cap_sg();
+  }
+  if ((m & 0x49 as u32) != 0 as u32 && cap_on(p, cap_ex())) {
+    return cap_ex();
+  }
+  if (e.st.nlink > 1 as u32 && cap_on(p, cap_mh())) {
+    return cap_mh();
+  }
+  return cap_fi();
+}
+
+// The code a name is wrapped in, "" for none. A suffix rule reaches
+// only the plain-regular-file case, and the LAST matching suffix in
+// LS_COLORS wins.
+function color_code(c: Cfg, e: Ent): (string, boolean) {
+  if (!c.color) {
+    return ("", false);
+  }
+  var p: Palette = c.colors;
+  var slot: i32 = color_slot(c, e);
+  if (slot == cap_fi()) {
+    var i: i32 = p.suffix.len() - 1;
+    while (i >= 0) {
+      if (ends_with_fold(e.name, p.suffix[i])) {
+        return (p.suffix_code[i], true);
+      }
+      i = i - 1;
+    }
+  }
+  if (slot < 0 || !cap_set(p, slot)) {
+    return ("", false);
+  }
+  return (p.code[slot], true);
+}
+
+// The suffix comparison LS_COLORS patterns use: a literal tail, case
+// folded. `*a?c` is the file called `a?c` and not a glob.
+function ends_with_fold(name: string, suffix: string): boolean {
+  if (suffix.len() > name.len()) {
+    return false;
+  }
+  var off: i32 = name.len() - suffix.len();
+  var i: i32 = 0;
+  while (i < suffix.len()) {
+    var x: i32 = name[off + i] as i32;
+    var y: i32 = suffix[i] as i32;
+    if (x >= 65 && x <= 90) {
+      x = x + 32;
+    }
+    if (y >= 65 && y <= 90) {
+      y = y + 32;
+    }
+    if (x != y) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `--hyperlink` wraps the name in OSC 8 with a `file://HOST/ABS-PATH`
+// URI, every byte outside the unreserved set percent-encoded.
+function uri_encode(s: string): string {
+  var bs: u8[] = [];
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    var plain: boolean = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 45 || b == 46 || b == 95 || b == 126 || b == 47;
+    if (plain) {
+      bs = bs.append(b as u8);
+    } else {
+      bs = bs.append(37 as u8);
+      bs = bs.append(hex_digit_byte(b / 16));
+      bs = bs.append(hex_digit_byte(b % 16));
+    }
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+function hex_digit_byte(v: i32): u8 {
+  if (v < 10) {
+    return (48 + v) as u8;
+  }
+  return (87 + v) as u8;
+}
+
+// The URI a hyperlink carries is the CANONICAL path, links resolved:
+// `--hyperlink` over a symbolic link points at what the link points
+// at, and over a BROKEN one at the name the link names, since nothing
+// along the way has to exist.
+function canonical(path: string): string {
+  match (canon.canonicalize(path, canon.missing(), false)) {
+    Ok(p) => {
+      return p;
+    },
+    Err(_) => {
+      if (path.len() > 0 && path[0] as i32 == 47) {
+        return path;
+      }
+      return gnu.join_path(getcwd(), path);
+    }
+  }
+}
+
+// ---- the long format --------------------------------------------------------
+// Every numeric column is sized over the WHOLE listing, which is why
+// the entries are all gathered before the first line is written.
+//
+// Which way each pads is not uniform and was measured: the link count
+// and the size are RIGHT-aligned, the owner and group names LEFT — and
+// `-n`'s numeric ids go right, the opposite of the name form they
+// replace.
+struct Widths { inode: i32, blocks: i32, nlink: i32, owner: i32, group: i32, author: i32, context: i32, size: i32, major: i32, minor: i32, time: i32, pad: boolean }
+
+function widths_new(): Widths {
+  return Widths { inode: 0, blocks: 0, nlink: 0, owner: 0, group: 0, author: 0, context: 0, size: 0, major: 0, minor: 0, time: 0, pad: false };
+}
+
+// glibc's `major` / `minor` over the 64-bit encoding.
+function dev_major(dev: u64): u64 {
+  return dev >> 8 as u64 & 0xfff as u64 | dev >> 32 as u64 & 0xfffff000 as u64;
+}
+
+function dev_minor(dev: u64): u64 {
+  return dev & 0xff as u64 | dev >> 12 as u64 & 0xffffff00 as u64;
+}
+
+function is_device(e: Ent): boolean {
+  return filetype.is_blk(e.st.mode) || filetype.is_chr(e.st.mode);
+}
+
+// `pwdb`'s own header says the lookups that take a path re-read the
+// whole file, and that this is "quadratic for one asking per entry" —
+// which a long listing is, twice over. So the two databases are read
+// ONCE and every id resolved against the text, with the answers
+// remembered: a listing of four thousand files has one owner and one
+// group in practice, so the cache is a short linear scan and the parse
+// happens once per DISTINCT id rather than once per entry.
+//
+// It is built only when a name is going to be printed. `-n` renders the
+// number and reads nothing at all.
+struct IdNames { passwd: string, group: string, uids: i64[], users: string[], gids: i64[], groups: string[] }
+
+function id_names_new(c: Cfg): IdNames {
+  var empty: IdNames = IdNames { passwd: "", group: "", uids: [], users: [], gids: [], groups: [] };
+  if (c.format != fmt_long() || c.numeric_ids) {
+    return empty;
+  }
+  var want_user: boolean = c.show_owner || c.show_author;
+  if (!want_user && !c.show_group) {
+    return empty;
+  }
+  var text: string = "";
+  if (want_user) {
+    text = pwdb.passwd_text();
+  }
+  var groups: string = "";
+  if (c.show_group) {
+    groups = pwdb.group_text();
+  }
+  return IdNames { ...empty, passwd: text, group: groups };
+}
+
+function owner_of(n: IdNames, uid: u32): (string, IdNames) {
+  var key: i64 = uid as i64;
+  var i: i32 = 0;
+  while (i < n.uids.len()) {
+    if (n.uids[i] == key) {
+      return (n.users[i], n);
+    }
+    i = i + 1;
+  }
+  var name: string = uid.to_string();
+  match (pwdb.user_by_uid_in(n.passwd, key)) {
+    Some(u) => {
+      name = u.name;
+    },
+    None => {}
+  }
+  return (name, IdNames { ...n, uids: n.uids.append(key), users: n.users.append(name) });
+}
+
+function group_of(n: IdNames, gid: u32): (string, IdNames) {
+  var key: i64 = gid as i64;
+  var i: i32 = 0;
+  while (i < n.gids.len()) {
+    if (n.gids[i] == key) {
+      return (n.groups[i], n);
+    }
+    i = i + 1;
+  }
+  var name: string = gid.to_string();
+  match (pwdb.group_name_in(n.group, key)) {
+    Some(g) => {
+      name = g;
+    },
+    None => {}
+  }
+  return (name, IdNames { ...n, gids: n.gids.append(key), groups: n.groups.append(name) });
+}
+
+// The two columns an entry prints, resolved once at gather time so that
+// the width pass and the line pass read a string rather than ask again.
+function resolve_ids(c: Cfg, n: IdNames, e: Ent): (Ent, IdNames) {
+  if (c.format != fmt_long() || !e.stated) {
+    return (e, n);
+  }
+  if (c.numeric_ids) {
+    return (Ent { ...e, owner: e.st.uid.to_string(), group: e.st.gid.to_string() }, n);
+  }
+  var names: IdNames = n;
+  var owner: string = "";
+  if (c.show_owner || c.show_author) {
+    var u: (string, IdNames) = owner_of(names, e.st.uid);
+    owner = u.0;
+    names = u.1;
+  }
+  var group: string = "";
+  if (c.show_group) {
+    var g: (string, IdNames) = group_of(names, e.st.gid);
+    group = g.0;
+    names = g.1;
+  }
+  return (Ent { ...e, owner: owner, group: group }, names);
+}
+
+// `-Z` on a kernel with no SELinux is `?` for every file, which is
+// exactly what GNU prints: it asks `is_selinux_enabled()` first and
+// never reaches the attribute. With SELinux the answer is a `getxattr`
+// away (#9098).
+function context_text(): string {
+  return "?";
+}
+
+// A unit letter is printed only when the SPEC named one with no count:
+// `--block-size=K` is `4K` where `--block-size=1K` is `4`.
+function unit_suffix(u: blocks.Unit): string {
+  if (!u.show_suffix) {
+    return "";
+  }
+  return blocks.unit_text(u.block_size, u.base, u.with_b);
+}
+
+function render(u: blocks.Unit, n: u64): string {
+  return blocks.format_size(n, u.block_size, unit_suffix(u), u.human);
+}
+
+function size_text(c: Cfg, e: Ent): string {
+  return render(c.fsize, e.st.size as u64);
+}
+
+function block_text(c: Cfg, e: Ent): string {
+  return render(c.bsize, (e.st.blocks * (512 as i64)) as u64);
+}
+
+// The width a rendered time takes, which is the ONLY thing it is used
+// for: an unknown time is a `?` right-aligned in it. A real timestamp
+// is written as the format rendered it, since the format carries its
+// own alignment.
+function time_width(c: Cfg): i32 {
+  var a: i32 = timefmt.strftime(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
+  var b: i32 = timefmt.strftime(c.recent_fmt, c.zone, c.now, 0 as i64).len();
+  if (b > a) {
+    return b;
+  }
+  return a;
+}
+
+function time_text(c: Cfg, e: Ent): string {
+  if (!e.stated) {
+    return pad_left("?", time_width(c));
+  }
+  var t: i64 = ent_time(c, e);
+  var recent: boolean = c.now - six_months() < t && t <= c.now;
+  if (recent) {
+    return timefmt.strftime(c.recent_fmt, c.zone, t, ent_nsec(c, e));
+  }
+  return timefmt.strftime(c.nonrecent_fmt, c.zone, t, ent_nsec(c, e));
+}
+
+function measure(c: Cfg, es: Ent[]): Widths {
+  var w: Widths = widths_new();
+  w = Widths { ...w, time: time_width(c), pad: some_quoted(c, es) };
+  var i: i32 = 0;
+  while (i < es.len()) {
+    var e: Ent = es[i];
+    if (c.inode) {
+      var ino: string = "?";
+      if (e.stated) {
+        ino = e.st.ino.to_string();
+      }
+      w = Widths { ...w, inode: max_i32(w.inode, ino.len()) };
+    }
+    if (c.show_blocks) {
+      var blk: string = "?";
+      if (e.stated) {
+        blk = block_text(c, e);
+      }
+      w = Widths { ...w, blocks: max_i32(w.blocks, blk.len()) };
+    }
+    if (c.show_context) {
+      w = Widths { ...w, context: max_i32(w.context, context_text().len()) };
+    }
+    if (c.format == fmt_long()) {
+      var nl: string = "?";
+      if (e.stated) {
+        nl = e.st.nlink.to_string();
+      }
+      w = Widths { ...w, nlink: max_i32(w.nlink, nl.len()) };
+      if (c.show_owner) {
+        w = Widths { ...w, owner: max_i32(w.owner, field_or_query(e.stated, e.owner).len()) };
+      }
+      if (c.show_group) {
+        w = Widths { ...w, group: max_i32(w.group, field_or_query(e.stated, e.group).len()) };
+      }
+      if (c.show_author) {
+        w = Widths { ...w, author: max_i32(w.author, field_or_query(e.stated, e.owner).len()) };
+      }
+      if (!e.stated) {
+        w = Widths { ...w, size: max_i32(w.size, 1) };
+      } else if (is_device(e)) {
+        w = Widths { ...w, major: max_i32(w.major, digits_u64(dev_major(e.st.rdev as u64))), minor: max_i32(w.minor, digits_u64(dev_minor(e.st.rdev as u64))) };
+      } else {
+        w = Widths { ...w, size: max_i32(w.size, size_text(c, e).len()) };
+      }
+    }
+    i = i + 1;
+  }
+  if (w.major > 0 || w.minor > 0) {
+    w = Widths { ...w, size: max_i32(w.size, w.major + 2 + w.minor) };
+  }
+  return w;
+}
+
+function field_or_query(stated: boolean, s: string): string {
+  if (stated) {
+    return s;
+  }
+  return "?";
+}
+
+function max_i32(a: i32, b: i32): i32 {
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+// The mode column of an entry nothing could be learned about: the kind
+// letter lstat still gave, and a `?` for every permission bit.
+function unknown_mode_string(e: Ent): string {
+  return filetype.type_letter(kind_mode(e)) + "?????????";
+}
+
+// The size half of one long line: `major, minor` for a device, in the
+// two widths measured over the listing, and the file size otherwise.
+function size_field(c: Cfg, w: Widths, e: Ent): string {
+  if (!e.stated) {
+    return pad_left("?", w.size);
+  }
+  if (is_device(e)) {
+    return pad_left(pad_left(dev_major(e.st.rdev as u64).to_string(), w.major) + ", " + pad_left(dev_minor(e.st.rdev as u64).to_string(), w.minor), w.size);
+  }
+  return pad_left(size_text(c, e), w.size);
+}
+
+// The columns `-i` and `-s` put in FRONT of everything, in that order,
+// in every format and not only the long one.
+function frills(c: Cfg, w: Widths, e: Ent): string {
+  var out: string = "";
+  if (c.inode) {
+    var ino: string = "?";
+    if (e.stated) {
+      ino = e.st.ino.to_string();
+    }
+    out = out + pad_left(ino, w.inode) + " ";
+  }
+  if (c.show_blocks) {
+    var blk: string = "?";
+    if (e.stated) {
+      blk = block_text(c, e);
+    }
+    out = out + pad_left(blk, w.blocks) + " ";
+  }
+  if (c.show_context && c.format != fmt_long()) {
+    out = out + pad_right(context_text(), w.context) + " ";
+  }
+  return out;
+}
+
+// Everything on a long line before the name, built in a
+// capacity-carrying buffer: a dozen `+` allocated and copied a growing
+// string a dozen times per line, and a dozen writes threaded and
+// rebuilt the writer a dozen times, where one buffer appends in place
+// and hands the result over without a copy.
+function long_prefix(c: Cfg, w: Widths, e: Ent): string {
+  var h: usize = buf_new(96);
+  buf_push(h, frills(c, w, e));
+  if (e.stated) {
+    buf_push(h, filetype.mode_string(e.st.mode));
+  } else {
+    buf_push(h, unknown_mode_string(e));
+  }
+  var nl: string = "?";
+  if (e.stated) {
+    nl = e.st.nlink.to_string();
+  }
+  buf_push(h, " ");
+  push_left(h, nl, w.nlink);
+  if (c.show_owner) {
+    buf_push(h, " ");
+    push_field(c, h, field_or_query(e.stated, e.owner), w.owner);
+  }
+  if (c.show_group) {
+    buf_push(h, " ");
+    push_field(c, h, field_or_query(e.stated, e.group), w.group);
+  }
+  if (c.show_author) {
+    buf_push(h, " ");
+    push_field(c, h, field_or_query(e.stated, e.owner), w.author);
+  }
+  if (c.show_context) {
+    buf_push(h, " ");
+    push_right(h, context_text(), w.context);
+  }
+  buf_push(h, " ");
+  buf_push(h, size_field(c, w, e));
+  buf_push(h, " ");
+  buf_push(h, time_text(c, e));
+  buf_push(h, " ");
+  return buf_take(h);
+}
+
+function push_pad(h: usize, n: i32): void {
+  var i: i32 = 0;
+  while (i < n) {
+    buf_push_byte(h, 32);
+    i = i + 1;
+  }
+}
+
+function push_left(h: usize, s: string, w: i32): void {
+  push_pad(h, w - s.len());
+  buf_push(h, s);
+}
+
+function push_right(h: usize, s: string, w: i32): void {
+  buf_push(h, s);
+  push_pad(h, w - s.len());
+}
+
+// An id pads to the RIGHT as a name and to the LEFT as a number, which
+// is the whole of the difference `-n` makes to the two columns.
+function push_field(c: Cfg, h: usize, s: string, w: i32): void {
+  if (c.numeric_ids) {
+    push_left(h, s, w);
+  } else {
+    push_right(h, s, w);
+  }
+}
+
+// ---- writing a name ---------------------------------------------------------
+// The one-time reset before the FIRST coloured name of the run: GNU
+// emits it lazily, so `ls --color=always` over a listing with nothing
+// to colour writes no escape at all.
+struct Paint { started: boolean, used: boolean }
+
+function paint_new(): Paint {
+  return Paint { started: false, used: false };
+}
+
+// `write_name(c, o, p, e, code, text)` — the name with its colour, its
+// hyperlink and its byte range recorded for `--dired`. `code` is the
+// colour to wrap it in, "" for none; `text` is the already-quoted name.
+function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean), text: string, record: boolean): (Out, Paint) {
+  var out: Out = o;
+  var paint: Paint = p;
+  var pal: Palette = c.colors;
+  var has: boolean = colour.1;
+  var coloured: boolean = c.color && (has || cap_on(pal, cap_no()));
+  if (coloured) {
+    if (!paint.started) {
+      out = put(out, reset_seq(pal));
+      paint = Paint { started: true, used: true };
+    }
+    if (cap_on(pal, cap_no()) && has) {
+      out = put(out, pal.lc + pal.rc);
+    }
+    if (has) {
+      out = put(out, wrap_seq(pal, colour.0));
+    }
+  }
+  if (c.hyperlink) {
+    out = put(out, "\x1b]8;;file://" + hostname() + uri_encode(canonical(e.path)) + "\x07");
+  }
+  if (record) {
+    out = put_name(c, out, text);
+  } else {
+    out = put(out, text);
+  }
+  if (c.hyperlink) {
+    out = put(out, "\x1b]8;;\x07");
+  }
+  if (coloured) {
+    out = put(out, reset_seq(pal));
+  }
+  return (out, paint);
+}
+
+// GNU emits the `no` colour at the start of the LINE rather than
+// before the name, so with `no` set a long listing has its mode column
+// and its inode inside the sequence too — and the type colour that
+// follows the prefix is introduced by a bare reset.
+function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
+  if (!c.color || !cap_on(c.colors, cap_no())) {
+    return (o, p);
+  }
+  var out: Out = o;
+  var paint: Paint = p;
+  if (!paint.started) {
+    out = put(out, reset_seq(c.colors));
+    paint = Paint { started: true, used: true };
+  }
+  return (put(out, wrap_seq(c.colors, c.colors.code[cap_no()])), paint);
+}
+
+// Whether the whole listing pads the unquoted names by one space so
+// that the first character of every name lines up with the first
+// character INSIDE the quotes of the quoted ones. gnulib calls it
+// align_variable_outer_quotes, and both halves are needed: a format
+// whose names line up at all (the long one, or a column one with a
+// width), and a quoting style that quotes only SOME names.
+//
+// `-q` satisfies the style half and never the other, because the
+// literal style it leaves in place quotes nothing — so `ls -q -C` pads
+// nothing while `ls --quoting-style=shell -C` pads every bare name.
+function aligns_quotes(c: Cfg): boolean {
+  var laid_out: boolean = c.format == fmt_long() || (c.format == fmt_vertical() || c.format == fmt_across()) && c.width != 0 as i64;
+  if (!laid_out) {
+    return false;
+  }
+  return c.qmark || c.qstyle == 1 || c.qstyle == 3 || c.qstyle == 6;
+}
+
+// Whether a quoted name came out wearing outer quotes. Under the three
+// variable styles nothing unquoted can begin with either quote byte,
+// which is what makes the first byte the whole of the test.
+function wears_quotes(text: string): boolean {
+  return text.len() > 0 && (text[0] as i32 == 39 || text[0] as i32 == 34);
+}
+
+// Whether any entry of this listing wears them, which is what makes the
+// padding apply to the rest.
+function some_quoted(c: Cfg, es: Ent[]): boolean {
+  if (!aligns_quotes(c)) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < es.len()) {
+    if (wears_quotes(quoted_name(c, es[i].name))) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// The name and everything attached to it: the colour, the indicator
+// and, on a long line, the ` -> target` of a symlink — whose target is
+// coloured in its own right, by the TARGET's kind.
+function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean): (Out, Paint) {
+  var text: string = quoted_name(c, e.name);
+  var lead: Out = o;
+  if (pad && !wears_quotes(text)) {
+    lead = put(lead, " ");
+  }
+  var r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true);
+  var out: Out = r.0;
+  var paint: Paint = r.1;
+  // In the long format an entry that IS a symbolic link never carries
+  // an indicator of its own: it carries ` -> target` when the target
+  // was read, and nothing at all when it was not, which is what
+  // `vdir -LF` over a dangling link prints.
+  if (!long || !filetype.is_link(kind_mode(e))) {
+    out = put(out, indicator(c, e));
+  }
+  if (long && e.has_target) {
+    out = put(out, " -> ");
+    var target: Ent = ent_new(e.target, e.target);
+    if (e.link_ok) {
+      target = Ent { ...target, st: FileStat { ...e.st, mode: e.link_mode }, stated: true };
+    }
+    // A target that could not be reached takes `mi` when the palette
+    // names it and otherwise falls through the kind switch with a mode
+    // of zero, which lands on `or` — so `LS_COLORS=or=42` colours both
+    // the link and what it points at.
+    var code: (string, boolean) = color_code(c, target);
+    if (!e.link_ok && cap_set(c.colors, cap_mi())) {
+      code = (c.colors.code[cap_mi()], true);
+    }
+    var t: (Out, Paint) = write_name(c, out, paint, target, code, quoted_name(c, e.target), false);
+    out = t.0;
+    paint = t.1;
+    out = put(out, indicator(c, target));
+  }
+  return (out, paint);
+}
+
+// The displayed length of one entry, which is what the column layout
+// measures: the quoted name plus the inode / block columns in front of
+// it and the indicator behind. Colour and hyperlink escapes are not
+// counted — they take no cells.
+//
+// It counts PRINTABLE bytes, not bytes, and that is visible: a name
+// holding a control byte or a UTF-8 é lays out one cell narrower per
+// such byte than it writes, because in the C locale nothing else has a
+// width. `-q` makes the two agree by turning every one of them into a
+// `?`.
+function display_len(c: Cfg, w: Widths, e: Ent): i32 {
+  var text: string = quoted_name(c, e.name);
+  var pad: i32 = 0;
+  if (w.pad && !wears_quotes(text)) {
+    pad = 1;
+  }
+  return frills(c, w, e).len() + pad + printable_width(text) + indicator(c, e).len();
+}
+
+function printable_width(s: string): i32 {
+  var n: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b >= 32 && b < 127) {
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+// ---- the column layout ------------------------------------------------------
+// The count is the largest whose total is STRICTLY less than the width,
+// every column floored at three characters; `by_columns` is `-C`'s
+// down-then-across against `-x`'s across-then-down, and the two differ
+// only in which column an entry lands in.
+function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32 {
+  var n: i32 = lens.len();
+  var max_cols: i32 = width / min_column_width();
+  if (max_cols > n) {
+    max_cols = n;
+  }
+  if (max_cols < 1) {
+    max_cols = 1;
+  }
+  // `cols[i]` is the candidate of i+1 columns: its per-column widths
+  // laid end to end at `base[i]`, its running total, and whether it
+  // still fits.
+  var base: i32[] = [];
+  var total: i32[] = [];
+  var valid: boolean[] = [];
+  var flat: i32[] = [];
+  var at: i32 = 0;
+  var i: i32 = 0;
+  while (i < max_cols) {
+    base = base.append(at);
+    total = total.append(min_column_width() * (i + 1));
+    valid = valid.append(true);
+    var j: i32 = 0;
+    while (j <= i) {
+      flat = flat.append(min_column_width());
+      j = j + 1;
+    }
+    at = at + i + 1;
+    i = i + 1;
+  }
+  var f: i32 = 0;
+  while (f < n) {
+    var len: i32 = lens[f];
+    var k: i32 = 0;
+    while (k < max_cols) {
+      if (valid[k]) {
+        var cols: i32 = k + 1;
+        var idx: i32 = 0;
+        if (by_columns) {
+          var rows: i32 = (n + k) / cols;
+          if (rows > 0) {
+            idx = f / rows;
+          }
+        } else {
+          idx = f % cols;
+        }
+        var want: i32 = len;
+        if (idx != k) {
+          want = want + 2;
+        }
+        var slot: i32 = base[k] + idx;
+        if (flat[slot] < want) {
+          total = total.with(k, total[k] + want - flat[slot]);
+          flat = flat.with(slot, want);
+          valid = valid.with(k, total[k] < width);
+        }
+      }
+      k = k + 1;
+    }
+    f = f + 1;
+  }
+  var chosen: i32 = 1;
+  var c2: i32 = max_cols;
+  while (c2 > 1) {
+    if (valid[c2 - 1]) {
+      chosen = c2;
+      break;
+    }
+    c2 = c2 - 1;
+  }
+  return chosen;
+}
+
+// The per-column widths of the chosen candidate. Recomputed rather than
+// carried out of `column_count`, which holds a candidate per possible
+// count and would have to hand back a slice of one flat array.
+function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
+  var n: i32 = lens.len();
+  var w: i32[] = [];
+  var i: i32 = 0;
+  while (i < cols) {
+    w = w.append(min_column_width());
+    i = i + 1;
+  }
+  var rows: i32 = (n + cols - 1) / cols;
+  var f: i32 = 0;
+  while (f < n) {
+    var idx: i32 = 0;
+    if (by_columns) {
+      if (rows > 0) {
+        idx = f / rows;
+      }
+    } else {
+      idx = f % cols;
+    }
+    var want: i32 = lens[f];
+    if (idx != cols - 1) {
+      want = want + 2;
+    }
+    if (w[idx] < want) {
+      w = w.with(idx, want);
+    }
+    f = f + 1;
+  }
+  return w;
+}
+
+function column_start(w: i32[], col: i32): i32 {
+  var s: i32 = 0;
+  var i: i32 = 0;
+  while (i < col) {
+    s = s + w[i];
+    i = i + 1;
+  }
+  return s;
+}
+
+// ---- emitting a listing -----------------------------------------------------
+// `--zero` replaces the end of every ENTRY line and of the `total`
+// line, and nothing else: a directory header and the blank line
+// between two directory blocks keep their newline.
+function eol(c: Cfg): string {
+  if (c.zero) {
+    return "\x00";
+  }
+  return "\n";
+}
+
+function emit_single(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
+  var out: Out = o;
+  var paint: Paint = p;
+  var i: i32 = 0;
+  while (i < es.len()) {
+    var open: (Out, Paint) = start_entry(c, out, paint);
+    out = put(open.0, frills(c, w, es[i]));
+    paint = open.1;
+    var r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
+    out = r.0;
+    paint = r.1;
+    out = put(out, eol(c));
+    i = i + 1;
+  }
+  return (out, paint);
+}
+
+function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
+  var out: Out = o;
+  var paint: Paint = p;
+  var i: i32 = 0;
+  while (i < es.len()) {
+    out = dired_indent(c, out);
+    var open: (Out, Paint) = start_entry(c, out, paint);
+    out = put(open.0, long_prefix(c, w, es[i]));
+    paint = open.1;
+    var r: (Out, Paint) = emit_name(c, out, paint, es[i], true, w.pad);
+    out = r.0;
+    paint = r.1;
+    out = put(out, eol(c));
+    i = i + 1;
+  }
+  return (out, paint);
+}
+
+// `-m`, and the width-0 path of `-C` / `-x`: one run of entries with a
+// separator between them, breaking to a new line when the next name
+// would not fit. A width of zero never breaks.
+function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: string): (Out, Paint) {
+  var out: Out = o;
+  var paint: Paint = p;
+  var width: i32 = c.width as i32;
+  var pos: i32 = 0;
+  var i: i32 = 0;
+  while (i < es.len()) {
+    var len: i32 = 0;
+    if (width != 0) {
+      len = display_len(c, w, es[i]);
+    }
+    if (i > 0) {
+      out = put(out, sep);
+      if (width == 0 || pos + len + 2 < width) {
+        pos = pos + 2;
+        out = put(out, " ");
+      } else {
+        pos = 0;
+        out = put(out, "\n");
+      }
+    }
+    var open: (Out, Paint) = start_entry(c, out, paint);
+    out = put(open.0, frills(c, w, es[i]));
+    paint = open.1;
+    var r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
+    out = r.0;
+    paint = r.1;
+    pos = pos + display_len(c, w, es[i]);
+    i = i + 1;
+  }
+  if (es.len() > 0) {
+    out = put(out, eol(c));
+  }
+  return (out, paint);
+}
+
+function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns: boolean): (Out, Paint) {
+  var n: i32 = es.len();
+  // A width of zero is unlimited, and GNU does not lay out one very
+  // wide grid for it: the whole listing goes on one line with the same
+  // separator writer `-m` uses, whose own separator is a space here
+  // rather than a comma — so entries are two spaces apart.
+  if (c.width == 0 as i64) {
+    return emit_separated(c, o, p, es, w, " ");
+  }
+  var lens: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    lens = lens.append(display_len(c, w, es[i]));
+    i = i + 1;
+  }
+  var cols: i32 = column_count(c, lens, by_columns, c.width as i32);
+  var cw: i32[] = column_widths(lens, cols, by_columns);
+  var rows: i32 = (n + cols - 1) / cols;
+  var out: Out = o;
+  var paint: Paint = p;
+  var r: i32 = 0;
+  while (r < rows) {
+    var pos: i32 = 0;
+    var col: i32 = 0;
+    while (col < cols) {
+      var idx: i32 = 0;
+      if (by_columns) {
+        idx = col * rows + r;
+      } else {
+        idx = r * cols + col;
+      }
+      if (idx >= n) {
+        break;
+      }
+      var start: i32 = column_start(cw, col);
+      out = put(out, indent(pos, start, c.tabsize as i32));
+      var open: (Out, Paint) = start_entry(c, out, paint);
+      out = put(open.0, frills(c, w, es[idx]));
+      paint = open.1;
+      var e: (Out, Paint) = emit_name(c, out, paint, es[idx], false, w.pad);
+      out = e.0;
+      paint = e.1;
+      pos = start + lens[idx];
+      col = col + 1;
+    }
+    out = put(out, eol(c));
+    r = r + 1;
+  }
+  return (out, paint);
+}
+
+function emit_entries(c: Cfg, o: Out, p: Paint, es: Ent[]): (Out, Paint) {
+  return emit_measured(c, o, p, es, measure(c, es));
+}
+
+function emit_measured(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
+  if (es.len() == 0) {
+    return (o, p);
+  }
+  if (c.format == fmt_long()) {
+    return emit_long(c, o, p, es, w);
+  }
+  if (c.format == fmt_single()) {
+    return emit_single(c, o, p, es, w);
+  }
+  if (c.format == fmt_commas()) {
+    return emit_separated(c, o, p, es, w, ",");
+  }
+  return emit_columns(c, o, p, es, w, c.format == fmt_vertical());
+}
+
+// The `total` line, in the block unit rather than the file-size one.
+function emit_total(c: Cfg, o: Out, es: Ent[]): Out {
+  var sum: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < es.len()) {
+    if (es[i].stated) {
+      sum = sum + es[i].st.blocks;
+    }
+    i = i + 1;
+  }
+  var text: string = render(c.bsize, (sum * (512 as i64)) as u64);
+  var out: Out = dired_indent(c, o);
+  return put(out, "total " + text + eol(c));
+}
+
+// ---- which entries a directory contributes ----------------------------------
+// `-a` shows everything including `.` and `..`, which readdir does not
+// hand back, so they are synthesized; `-A` shows the dotfiles without
+// them. `-B` drops names ending in `~`, `-I` drops what its pattern
+// matches and `--hide` does the same except that `-a` or `-A` cancels
+// it.
+function hidden(c: Cfg, name: string): boolean {
+  if (c.ignore_mode != ignore_default()) {
+    return false;
+  }
+  return name.len() > 0 && name[0] as i32 == 46;
+}
+
+function matches_any(pats: string[], name: string): boolean {
+  var i: i32 = 0;
+  while (i < pats.len()) {
+    if (fnmatch.fnmatch(pats[i], name)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function ignored(c: Cfg, name: string): boolean {
+  if (c.ignore_backups && name.len() > 0 && name[name.len() - 1] as i32 == 126) {
+    return true;
+  }
+  if (matches_any(c.ignores, name)) {
+    return true;
+  }
+  if (c.ignore_mode == ignore_default() && matches_any(c.hides, name)) {
+    return true;
+  }
+  return false;
+}
+
+// `dir_entries(c, o, path)` — the entries of one directory, stat'ed if
+// anything on the line needs it, with a diagnostic for each one that
+// could not be reached. A failed stat is not a skip: the entry is still
+// listed, with `?` where the record would be.
+// gnulib's `attach`: the path of one entry of `dir`. A dirname of `.`
+// contributes NOTHING, which is why `ls -L` in a directory with a
+// dangling link says `cannot access 'link'` and not `'./link'` — while
+// the SUBDIRECTORY `-R` queues is `./adir`, joined the ordinary way.
+function attach(dir: string, name: string): string {
+  if (dir == ".") {
+    return name;
+  }
+  return gnu.join_path(dir, name);
+}
+
+function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, IdNames) {
+  var out: Out = o;
+  var names: string[] = [];
+  match (read_dir(path)) {
+    Ok(es) => {
+      names = es;
+    },
+    Err(e) => {
+      return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e), status_minor()), seed);
+    }
+  }
+  var list: Ent[] = [];
+  if (c.ignore_mode == ignore_minimal()) {
+    list = list.append(ent_new(".", attach(path, ".")));
+    list = list.append(ent_new("..", attach(path, "..")));
+  }
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var name: string = names[i];
+    if (hidden(c, name) || ignored(c, name)) {
+      i = i + 1;
+      continue;
+    }
+    list = list.append(ent_new(name, attach(path, name)));
+    i = i + 1;
+  }
+  if (!needs_stat(c)) {
+    return (list, out, seed);
+  }
+  var ids: IdNames = seed;
+  var filled: Ent[] = [];
+  var k: i32 = 0;
+  while (k < list.len()) {
+    var r: (Ent, boolean, string) = stat_entry(c, list[k], false);
+    var e: Ent = r.0;
+    if (!r.1) {
+      out = fail(out, "cannot access " + gnu.quotea(e.path) + ": " + r.2, status_minor());
+      // lstat still answers for a link whose TARGET is what could not
+      // be reached, and its kind is the one letter the mode column
+      // keeps.
+      match (lstat(e.path)) {
+        Ok(s) => {
+          e = Ent { ...e, link_mode: s.mode };
+        },
+        Err(_) => {}
+      }
+    }
+    var r2: (Ent, IdNames) = resolve_ids(c, ids, e);
+    filled = filled.append(r2.0);
+    ids = r2.1;
+    k = k + 1;
+  }
+  return (filled, out, ids);
+}
+
+// ---- listing a directory ----------------------------------------------------
+// `-R`'s queue, held as a stack of paths yet to be listed. The display
+// name is the path AS WALKED, so a recursive listing of `tree` names
+// its grandchild `tree/bdir/nested` and not `nested`.
+struct Pending { path: string }
+
+struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: IdNames }
+
+// One directory: its header, its `total` when the format asks for one,
+// and its entries. `-R` pushes each subdirectory it found, in the
+// sorted order, so the walk is depth first through the listing's own
+// order rather than readdir's.
+function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
+  var r: (Ent[], Out, IdNames) = dir_entries(c, st.out, p.path, st.names);
+  var es: Ent[] = r.0;
+  var out: Out = r.1;
+  var state: State = State { ...st, out: out, names: r.2 };
+  if (header) {
+    if (state.wrote) {
+      state = State { ...state, out: put(state.out, "\n") };
+    }
+    var h: Out = dired_indent(c, state.out);
+    h = put_subdir(c, h, quoted_header(c, p.path));
+    state = State { ...state, out: put(h, ":\n") };
+  }
+  state = State { ...state, wrote: true };
+  es = sort_entries(c, es);
+  if (c.format == fmt_long() || c.show_blocks) {
+    state = State { ...state, out: emit_total(c, state.out, es) };
+  }
+  var e: (Out, Paint) = emit_entries(c, state.out, state.paint, es);
+  state = State { ...state, out: e.0, paint: e.1 };
+  if (!c.recursive) {
+    return state;
+  }
+  // The subdirectory's name is joined the ORDINARY way even under a
+  // parent of `.`, so a recursive listing of the current directory
+  // heads its children `./adir:` while the entries inside them are
+  // reached by `attach` above.
+  var subs: Pending[] = [];
+  var i: i32 = 0;
+  while (i < es.len()) {
+    var ent: Ent = es[i];
+    if (filetype.is_dir(ent.st.mode) && ent.name != "." && ent.name != "..") {
+      subs = subs.append(Pending { path: gnu.join_path(p.path, ent.name) });
+    }
+    i = i + 1;
+  }
+  var q: Pending[] = subs;
+  var k: i32 = 0;
+  while (k < state.queue.len()) {
+    q = q.append(state.queue[k]);
+    k = k + 1;
+  }
+  return State { ...state, queue: q };
+}
+
+// ---- the whole run ----------------------------------------------------------
+// The operands split in two: the non-directories are listed first as
+// one group, then each directory in turn. A directory's name is
+// suppressed only when it is the SOLE thing being listed and the walk
+// is not recursive — the first `-R` directory keeps its header.
+function run_operands(c: Cfg, o: Out, operands: string[]): Out {
+  var files: Ent[] = [];
+  var every: Ent[] = [];
+  var dirs: Pending[] = [];
+  var out: Out = o;
+  var ids: IdNames = id_names_new(c);
+  var explicit: boolean = operands.len() > 0;
+  var args: string[] = operands;
+  if (!explicit) {
+    args = ["."];
+  }
+  var i: i32 = 0;
+  while (i < args.len()) {
+    var arg: string = args[i];
+    var e: Ent = ent_new(arg, arg);
+    var r: (Ent, boolean, string) = stat_entry(c, e, true);
+    if (!r.1) {
+      out = fail(out, "cannot access " + gnu.quotea(arg) + ": " + r.2, status_usage());
+      i = i + 1;
+      continue;
+    }
+    var got0: (Ent, IdNames) = resolve_ids(c, ids, r.0);
+    every = every.append(got0.0);
+    ids = got0.1;
+    i = i + 1;
+  }
+  // Sorted BEFORE the split, so `ls d2 d1` walks d1 first however the
+  // two were typed, and the widths below are measured over the
+  // directories too — a directory operand's 4096 sizes the column its
+  // own listing never uses.
+  every = sort_entries(c, every);
+  var operand_widths: Widths = measure(c, every);
+  var k2: i32 = 0;
+  while (k2 < every.len()) {
+    var got: Ent = every[k2];
+    if (filetype.is_dir(got.st.mode) && !c.immediate_dirs) {
+      dirs = dirs.append(Pending { path: got.name });
+    } else {
+      files = files.append(got);
+    }
+    k2 = k2 + 1;
+  }
+  var state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
+  // The command-line group gets no `total`: that line counts one
+  // DIRECTORY's blocks, and a list of operands is not one.
+  if (files.len() > 0) {
+    var fe: (Out, Paint) = emit_measured(c, state.out, state.paint, files, operand_widths);
+    state = State { ...state, out: fe.0, paint: fe.1, wrote: true };
+  }
+  var header: boolean = state.wrote || c.recursive || args.len() > 1 || dirs.len() > 1;
+  while (state.queue.len() > 0) {
+    var next: Pending = state.queue[0];
+    var rest: Pending[] = [];
+    var k: i32 = 1;
+    while (k < state.queue.len()) {
+      rest = rest.append(state.queue[k]);
+      k = k + 1;
+    }
+    state = State { ...state, queue: rest };
+    state = list_dir(c, state, next, header);
+    header = true;
+  }
+  var done: Out = state.out;
+  if (c.color && state.paint.used && (c.colors.lc != "\x1b[" || c.colors.rc != "m")) {
+    done = put(done, c.colors.lc + c.colors.rc);
+  }
+  if (c.dired) {
+    if (done.names.len() > 0) {
+      done = put(done, dired_line("//DIRED//", done.names));
+    }
+    if (done.subs.len() > 0) {
+      done = put(done, dired_line("//SUBDIRED//", done.subs));
+    }
+    done = put(done, "//DIRED-OPTIONS// --quoting-style=" + gnu.quoting_style_names()[c.qstyle] + "\n");
+  }
+  return done;
+}
+
+function dired_line(tag: string, offs: i64[]): string {
+  var out: string = tag;
+  var i: i32 = 0;
+  while (i < offs.len()) {
+    out = out + " " + offs[i].to_string();
+    i = i + 1;
+  }
+  return out + "\n";
+}
+
+// ---- --time-style -----------------------------------------------------------
+// One value carries BOTH long-format time formats, separated by a
+// newline: line 1 for a non-recent time, line 2 for a recent one. Only
+// the leading `+` of the whole value is removed, so the second line of
+// `+A\n+B` is the literal `+B`.
+//
+// `posix-` prefixed styles fall back to the locale default outside the
+// POSIX locale, and everything here runs in C, so all four are the
+// default.
+function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
+  if (spec.len() > 0 && spec[0] as i32 == 43) {
+    var body: string = slice_unchecked(spec, 1, spec.len()) + "";
+    var parts: string[] = body.lines();
+    if (parts.len() > 2) {
+      gnu.error("invalid time style format " + gnu.quote(body));
+      exit(status_usage());
+    }
+    if (parts.len() == 2) {
+      return Cfg { ...c, nonrecent_fmt: parts[0], recent_fmt: parts[1] };
+    }
+    return Cfg { ...c, nonrecent_fmt: body, recent_fmt: body };
+  }
+  var name: string = spec;
+  if (name.starts_with("posix-")) {
+    name = slice_unchecked(name, 6, name.len()) + "";
+    if (name == "full-iso" || name == "long-iso" || name == "iso" || name == "locale") {
+      return c;
+    }
+  }
+  if (name == "full-iso") {
+    return Cfg { ...c, nonrecent_fmt: "%Y-%m-%d %H:%M:%S.%N %z", recent_fmt: "%Y-%m-%d %H:%M:%S.%N %z" };
+  }
+  if (name == "long-iso") {
+    return Cfg { ...c, nonrecent_fmt: "%Y-%m-%d %H:%M", recent_fmt: "%Y-%m-%d %H:%M" };
+  }
+  if (name == "iso") {
+    // The trailing space is the alignment: it makes the non-recent
+    // form exactly as wide as `%m-%d %H:%M`.
+    return Cfg { ...c, nonrecent_fmt: "%Y-%m-%d ", recent_fmt: "%m-%d %H:%M" };
+  }
+  if (name == "locale") {
+    return c;
+  }
+  // An unusable TIME_STYLE is not fatal the way an unusable option
+  // value is; an unrecognized one is, either way.
+  gnu.error("invalid argument " + gnu.quote(spec) + " for 'time style'");
+  eprint("Valid arguments are:");
+  eprint("  - [posix-]full-iso");
+  eprint("  - [posix-]long-iso");
+  eprint("  - [posix-]iso");
+  eprint("  - [posix-]locale");
+  eprint("  - +FORMAT (e.g., +%H:%M) for a 'date'-style format");
+  gnu.try_help(status_usage());
+  return c;
+}
+
+// ---- options ----------------------------------------------------------------
+function options(): gnu.Opt[] {
+  var o: gnu.Opt[] = [];
+  o = o.append(gnu.flag("a", "all", op_all()));
+  o = o.append(gnu.flag("b", "escape", op_escape()));
+  o = o.append(gnu.flag("d", "directory", op_directory()));
+  o = o.append(gnu.flag("D", "dired", op_dired()));
+  o = o.append(gnu.flag("", "full-time", op_full_time()));
+  o = o.append(gnu.flag("", "group-directories-first", op_group_dirs()));
+  o = o.append(gnu.flag("h", "human-readable", op_human()));
+  o = o.append(gnu.flag("i", "inode", op_inode()));
+  o = o.append(gnu.flag("k", "kibibytes", op_kibibytes()));
+  o = o.append(gnu.flag("n", "numeric-uid-gid", op_numeric()));
+  o = o.append(gnu.flag("G", "no-group", op_no_group()));
+  o = o.append(gnu.flag("q", "hide-control-chars", op_hide_control()));
+  o = o.append(gnu.flag("r", "reverse", op_reverse()));
+  o = o.append(gnu.flag("s", "size", op_size()));
+  o = o.append(gnu.valued("w", "width", op_width()));
+  o = o.append(gnu.flag("A", "almost-all", op_almost_all()));
+  o = o.append(gnu.flag("B", "ignore-backups", op_ignore_backups()));
+  // `-F` takes no value; only `--classify[=WHEN]` does, so `-FC` is
+  // two options and not a WHEN of "C".
+  o = o.append(gnu.optional_long("F", "classify", op_classify()));
+  o = o.append(gnu.flag("", "file-type", op_file_type()));
+  o = o.append(gnu.flag("", "si", op_si()));
+  o = o.append(gnu.flag("H", "dereference-command-line", op_deref_cmd()));
+  o = o.append(gnu.flag("", "dereference-command-line-symlink-to-dir", op_deref_cmd_dir()));
+  o = o.append(gnu.valued("", "hide", op_hide()));
+  o = o.append(gnu.valued("I", "ignore", op_ignore()));
+  o = o.append(gnu.valued("", "indicator-style", op_indicator()));
+  o = o.append(gnu.flag("L", "dereference", op_deref()));
+  o = o.append(gnu.flag("N", "literal", op_literal()));
+  o = o.append(gnu.flag("Q", "quote-name", op_quote_name()));
+  o = o.append(gnu.valued("", "quoting-style", op_quoting()));
+  o = o.append(gnu.flag("R", "recursive", op_recursive()));
+  o = o.append(gnu.valued("", "format", op_format()));
+  o = o.append(gnu.flag("", "show-control-chars", op_show_control()));
+  o = o.append(gnu.valued("", "sort", op_sort()));
+  o = o.append(gnu.valued("T", "tabsize", op_tabsize()));
+  o = o.append(gnu.valued("", "time", op_time()));
+  o = o.append(gnu.valued("", "time-style", op_time_style()));
+  o = o.append(gnu.flag("", "zero", op_zero()));
+  o = o.append(gnu.optional_long("", "color", op_color()));
+  o = o.append(gnu.optional_long("", "hyperlink", op_hyperlink()));
+  o = o.append(gnu.valued("", "block-size", op_block_size()));
+  o = o.append(gnu.flag("Z", "context", op_context()));
+  o = o.append(gnu.flag("", "author", op_author()));
+  // The short options with no long spelling, after the table above so
+  // that the ambiguity list stays in GNU's order.
+  o = o.append(gnu.flag("l", "", op_long()));
+  o = o.append(gnu.flag("1", "", op_one()));
+  o = o.append(gnu.flag("C", "", op_many()));
+  o = o.append(gnu.flag("x", "", op_across()));
+  o = o.append(gnu.flag("m", "", op_commas()));
+  o = o.append(gnu.flag("g", "", op_no_owner()));
+  o = o.append(gnu.flag("o", "", op_no_group_long()));
+  o = o.append(gnu.flag("c", "", op_ctime()));
+  o = o.append(gnu.flag("u", "", op_atime()));
+  o = o.append(gnu.flag("t", "", op_sort_time()));
+  o = o.append(gnu.flag("S", "", op_sort_size()));
+  o = o.append(gnu.flag("U", "", op_sort_none()));
+  o = o.append(gnu.flag("v", "", op_sort_version()));
+  o = o.append(gnu.flag("X", "", op_sort_ext()));
+  o = o.append(gnu.flag("f", "", op_unsorted_all()));
+  o = o.append(gnu.flag("p", "", op_slash()));
+  return o;
+}
+
+function when_names(): string[] {
+  return ["always", "yes", "force", "never", "no", "none", "auto", "tty", "if-tty"];
+}
+
+function when_values(): i32[] {
+  return [when_always(), when_always(), when_always(), when_never(), when_never(), when_never(), when_auto(), when_auto(), when_auto()];
+}
+
+// `--color`, `--hyperlink` and `-F` all take the same optional WHEN,
+// and an option with no value means `always`.
+function parse_when(m: gnu.OptMatch, option: string): i32 {
+  if (!m.has_value) {
+    return when_always();
+  }
+  return gnu.argmatch_valued(m.value, when_names(), when_values(), option);
+}
+
+function when_on(w: i32): boolean {
+  if (w == when_always()) {
+    return true;
+  }
+  if (w == when_never()) {
+    return false;
+  }
+  return isatty(1);
+}
+
+function format_names(): string[] {
+  return ["verbose", "long", "commas", "horizontal", "across", "vertical", "single-column"];
+}
+
+function format_values(): i32[] {
+  return [fmt_long(), fmt_long(), fmt_commas(), fmt_across(), fmt_across(), fmt_vertical(), fmt_single()];
+}
+
+function sort_names(): string[] {
+  return ["none", "time", "size", "extension", "version", "width"];
+}
+
+function sort_values(): i32[] {
+  return [sort_none(), sort_time(), sort_size(), sort_ext(), sort_version(), sort_width()];
+}
+
+function time_names(): string[] {
+  return ["atime", "access", "use", "ctime", "status", "mtime", "modification", "birth", "creation"];
+}
+
+function time_values(): i32[] {
+  return [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime(), time_mtime(), time_mtime(), time_birth(), time_birth()];
+}
+
+function indicator_names(): string[] {
+  return ["none", "slash", "file-type", "classify"];
+}
+
+// `-w`, `-T` and COLUMNS are all `strtoul` with base ZERO, which is
+// more than a decimal count: leading blanks and a `+` are accepted,
+// `0x28` is 40 and `040` is 32. A `-` is not — `-w -0` is an invalid
+// line width.
+function parse_ulong0(spec: string): (i64, boolean) {
+  var n: i32 = spec.len();
+  var i: i32 = 0;
+  while (i < n && gnu.is_blank(spec[i] as i32)) {
+    i = i + 1;
+  }
+  if (i < n && spec[i] as i32 == 43) {
+    i = i + 1;
+  }
+  if (i >= n) {
+    return (0 as i64, false);
+  }
+  var base: i64 = 10 as i64;
+  if (spec[i] as i32 == 48) {
+    if (i + 1 < n && (spec[i + 1] as i32 == 120 || spec[i + 1] as i32 == 88)) {
+      base = 16 as i64;
+      i = i + 2;
+      if (i >= n) {
+        return (0 as i64, false);
+      }
+    } else {
+      base = 8 as i64;
+      i = i + 1;
+      if (i >= n) {
+        return (0 as i64, true);
+      }
+    }
+  }
+  var v: i64 = 0 as i64;
+  while (i < n) {
+    var d: i32 = hex_value(spec[i] as i32);
+    if (d < 0 || d as i64 >= base) {
+      return (0 as i64, false);
+    }
+    v = v * base + d as i64;
+    if (v > 2147483647 as i64) {
+      v = 2147483647 as i64;
+    }
+    i = i + 1;
+  }
+  return (v, true);
+}
+
+function parse_count(spec: string, what: string): i64 {
+  var r: (i64, boolean) = parse_ulong0(spec);
+  if (!r.1) {
+    gnu.error("invalid " + what + ": " + gnu.quote(spec));
+    exit(status_usage());
+  }
+  return r.0;
+}
+
+// ---- help -------------------------------------------------------------------
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
+  out = out + "List information about the FILEs (the current directory by default).\n";
+  out = out + "Entries are sorted alphabetically unless an option below says otherwise.\n";
+  out = out + "\n";
+  out = out + "  -a, --all                  do not ignore entries starting with .\n";
+  out = out + "  -A, --almost-all           do not list implied . and ..\n";
+  out = out + "      --author               with -l, print the author of each file\n";
+  out = out + "  -b, --escape               print C-style escapes for nongraphic characters\n";
+  out = out + "      --block-size=SIZE      scale sizes by SIZE before printing them\n";
+  out = out + "  -B, --ignore-backups       do not list entries ending with ~\n";
+  out = out + "  -c                         with -l, show and sort by ctime\n";
+  out = out + "  -C                         list entries by columns\n";
+  out = out + "      --color[=WHEN]         colour the output; WHEN is always, auto or never\n";
+  out = out + "  -d, --directory            list directories themselves, not their contents\n";
+  out = out + "  -D, --dired                generate output designed for Emacs' dired mode\n";
+  out = out + "  -f                         do not sort, enable -aU\n";
+  out = out + "  -F, --classify[=WHEN]      append an indicator (one of */=>@|) to entries\n";
+  out = out + "      --file-type            likewise, except do not append '*'\n";
+  out = out + "      --format=WORD          across, commas, horizontal, long, single-column,\n";
+  out = out + "                               verbose, vertical\n";
+  out = out + "      --full-time            like -l --time-style=full-iso\n";
+  out = out + "  -g                         like -l, but do not list the owner\n";
+  out = out + "      --group-directories-first  list directories before files\n";
+  out = out + "  -G, --no-group             in a long listing, do not print group names\n";
+  out = out + "  -h, --human-readable       with -l and -s, print sizes like 1K 234M 2G\n";
+  out = out + "      --si                   likewise, but use powers of 1000 not 1024\n";
+  out = out + "  -H, --dereference-command-line  follow symbolic links on the command line\n";
+  out = out + "      --dereference-command-line-symlink-to-dir  follow each command line\n";
+  out = out + "                               symbolic link that points to a directory\n";
+  out = out + "      --hide=PATTERN         do not list entries matching PATTERN\n";
+  out = out + "                               (overridden by -a or -A)\n";
+  out = out + "      --hyperlink[=WHEN]     hyperlink file names; WHEN as for --color\n";
+  out = out + "      --indicator-style=WORD  append an indicator to entry names: none,\n";
+  out = out + "                               slash (-p), file-type, classify (-F)\n";
+  out = out + "  -i, --inode                print the index number of each file\n";
+  out = out + "  -I, --ignore=PATTERN       do not list entries matching PATTERN\n";
+  out = out + "  -k, --kibibytes            default to 1024-byte blocks for disk usage\n";
+  out = out + "  -l                         use a long listing format\n";
+  out = out + "  -L, --dereference          show information for the link's referent\n";
+  out = out + "  -m                         fill width with a comma separated list\n";
+  out = out + "  -n, --numeric-uid-gid      like -l, but list numeric user and group ids\n";
+  out = out + "  -N, --literal              print entry names without quoting\n";
+  out = out + "  -o                         like -l, but do not list group information\n";
+  out = out + "  -p                         append / indicator to directories\n";
+  out = out + "  -q, --hide-control-chars   print ? instead of nongraphic characters\n";
+  out = out + "      --show-control-chars   show nongraphic characters as-is\n";
+  out = out + "  -Q, --quote-name           enclose entry names in double quotes\n";
+  out = out + "      --quoting-style=WORD   literal, locale, shell, shell-always,\n";
+  out = out + "                               shell-escape, shell-escape-always, c, escape\n";
+  out = out + "  -r, --reverse              reverse order while sorting\n";
+  out = out + "  -R, --recursive            list subdirectories recursively\n";
+  out = out + "  -s, --size                 print the allocated size of each file, in blocks\n";
+  out = out + "  -S                         sort by file size, largest first\n";
+  out = out + "      --sort=WORD            sort by WORD instead of name: none (-U), size (-S),\n";
+  out = out + "                               time (-t), version (-v), extension (-X), width\n";
+  out = out + "      --time=WORD            select which timestamp is shown and sorted by\n";
+  out = out + "      --time-style=STYLE     time/date format with -l; STYLE is full-iso,\n";
+  out = out + "                               long-iso, iso, locale, or +FORMAT\n";
+  out = out + "  -t                         sort by time, newest first\n";
+  out = out + "  -T, --tabsize=COLS         assume tab stops at each COLS instead of 8\n";
+  out = out + "  -u                         with -lt sort by, and show, access time\n";
+  out = out + "  -U                         do not sort; list entries in directory order\n";
+  out = out + "  -v                         natural sort of (version) numbers within text\n";
+  out = out + "  -w, --width=COLS           set output width to COLS; 0 means no limit\n";
+  out = out + "  -x                         list entries by lines instead of by columns\n";
+  out = out + "  -X                         sort alphabetically by entry extension\n";
+  out = out + "  -Z, --context              print any security context of each file\n";
+  out = out + "      --zero                 end each output line with NUL, not newline\n";
+  out = out + "  -1                         list one file per line\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The SIZE argument is an integer with an optional unit: K, M, G, T, P, E, Z, Y,\n";
+  out = out + "R or Q for powers of 1024, or KB, MB and so on for powers of 1000.\n";
+  out = out + "\n";
+  out = out + "The WHEN argument of --color, --classify and --hyperlink defaults to 'always'.\n";
+  out = out + "With 'auto' the decision is whether standard output is a terminal.\n";
+  out = out + "\n";
+  out = out + "Exit status is 0 if all went well, 1 if a file could not be reached, and 2 if\n";
+  out = out + "there was a serious trouble such as an unusable option.\n";
+  return out;
+}
+
+// ---- the option scan --------------------------------------------------------
+struct Scan { c: Cfg, width_seen: boolean, operands: string[] }
+
+function scan(argv: string[], start: Cfg): Scan {
+  var c: Cfg = start;
+  c = Cfg { ...c, qstyle: gnu.quoting_style_from_env_with(c.qstyle) };
+  var g: gnu.Getopt = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
+  // The format an option ASKED for, apart from the program's default:
+  // `-1` gives way to a long format that was TYPED and overrides one
+  // that came from being `vdir`, and `--zero` falls back to
+  // one-per-line only when nothing was typed.
+  var format_opt: i32 = 0 - 1;
+  // `-c` and `-u` pick the timestamp, and when the format is NOT long
+  // and no sort was asked for they also pick the SORT: `ls -u` is
+  // ordered by access time where `ls -lu` is ordered by name.
+  var sort_opt: i32 = 0 - 1;
+  var explicit_time: boolean = false;
+  var deref_seen: boolean = false;
+  var kibibytes: boolean = false;
+  var width_seen: boolean = false;
+  var color_when: i32 = when_never();
+  var link_when: i32 = when_never();
+  var block_spec_seen: boolean = false;
+  var time_style: string = "";
+  var time_style_seen: boolean = false;
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == op_all()) {
+          c = Cfg { ...c, ignore_mode: ignore_minimal() };
+        } else if (m.id == op_almost_all()) {
+          c = Cfg { ...c, ignore_mode: ignore_dot_and_dotdot() };
+        } else if (m.id == op_author()) {
+          c = Cfg { ...c, show_author: true };
+        } else if (m.id == op_escape()) {
+          c = Cfg { ...c, qstyle: 7 };
+        } else if (m.id == op_literal()) {
+          c = Cfg { ...c, qstyle: 0 };
+        } else if (m.id == op_quote_name()) {
+          c = Cfg { ...c, qstyle: 5 };
+        } else if (m.id == op_quoting()) {
+          c = Cfg { ...c, qstyle: gnu.argmatch(m.value, gnu.quoting_style_names(), "--quoting-style") };
+        } else if (m.id == op_hide_control()) {
+          c = Cfg { ...c, qmark: true };
+        } else if (m.id == op_show_control()) {
+          c = Cfg { ...c, qmark: false };
+        } else if (m.id == op_directory()) {
+          c = Cfg { ...c, immediate_dirs: true };
+        } else if (m.id == op_dired()) {
+          c = Cfg { ...c, dired: true };
+        } else if (m.id == op_full_time()) {
+          format_opt = fmt_long();
+          time_style = "full-iso";
+          time_style_seen = true;
+        } else if (m.id == op_group_dirs()) {
+          c = Cfg { ...c, dirs_first: true };
+        } else if (m.id == op_human()) {
+          c = Cfg { ...c, fsize: blocks.human_unit(1024 as u64), bsize: blocks.human_unit(1024 as u64) };
+          block_spec_seen = true;
+        } else if (m.id == op_si()) {
+          c = Cfg { ...c, fsize: blocks.human_unit(1000 as u64), bsize: blocks.human_unit(1000 as u64) };
+          block_spec_seen = true;
+        } else if (m.id == op_block_size()) {
+          var n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          if (n.status != blocks.size_ok()) {
+            blocks.die_size_with(n.status, "--block-size", m.value, status_usage());
+          }
+          c = Cfg { ...c, fsize: blocks.unit_from(n), bsize: blocks.unit_from(n) };
+          block_spec_seen = true;
+        } else if (m.id == op_kibibytes()) {
+          kibibytes = true;
+        } else if (m.id == op_inode()) {
+          c = Cfg { ...c, inode: true };
+        } else if (m.id == op_size()) {
+          c = Cfg { ...c, show_blocks: true };
+        } else if (m.id == op_numeric()) {
+          c = Cfg { ...c, numeric_ids: true };
+          format_opt = fmt_long();
+        } else if (m.id == op_no_group()) {
+          c = Cfg { ...c, show_group: false };
+        } else if (m.id == op_no_owner()) {
+          c = Cfg { ...c, show_owner: false };
+          format_opt = fmt_long();
+        } else if (m.id == op_no_group_long()) {
+          c = Cfg { ...c, show_group: false };
+          format_opt = fmt_long();
+        } else if (m.id == op_reverse()) {
+          c = Cfg { ...c, reverse: true };
+        } else if (m.id == op_recursive()) {
+          c = Cfg { ...c, recursive: true };
+        } else if (m.id == op_width()) {
+          c = Cfg { ...c, width: parse_count(m.value, "line width") };
+          width_seen = true;
+        } else if (m.id == op_tabsize()) {
+          c = Cfg { ...c, tabsize: parse_count(m.value, "tab size") };
+        } else if (m.id == op_ignore_backups()) {
+          c = Cfg { ...c, ignore_backups: true };
+        } else if (m.id == op_ignore()) {
+          c = Cfg { ...c, ignores: c.ignores.append(m.value) };
+        } else if (m.id == op_hide()) {
+          c = Cfg { ...c, hides: c.hides.append(m.value) };
+        } else if (m.id == op_classify()) {
+          if (when_on(parse_when(m, "--classify"))) {
+            c = Cfg { ...c, indicator: ind_classify() };
+          } else {
+            c = Cfg { ...c, indicator: ind_none() };
+          }
+        } else if (m.id == op_file_type()) {
+          c = Cfg { ...c, indicator: ind_file_type() };
+        } else if (m.id == op_slash()) {
+          c = Cfg { ...c, indicator: ind_slash() };
+        } else if (m.id == op_indicator()) {
+          c = Cfg { ...c, indicator: gnu.argmatch(m.value, indicator_names(), "--indicator-style") };
+        } else if (m.id == op_deref()) {
+          c = Cfg { ...c, deref: deref_all() };
+          deref_seen = true;
+        } else if (m.id == op_deref_cmd()) {
+          c = Cfg { ...c, deref: deref_cmd() };
+          deref_seen = true;
+        } else if (m.id == op_deref_cmd_dir()) {
+          c = Cfg { ...c, deref: deref_cmd_dir() };
+          deref_seen = true;
+        } else if (m.id == op_format()) {
+          format_opt = gnu.argmatch_valued(m.value, format_names(), format_values(), "--format");
+        } else if (m.id == op_long()) {
+          format_opt = fmt_long();
+        } else if (m.id == op_one()) {
+          // `-1` has no effect after a long format was typed, and
+          // `vdir -1` is one per line because vdir's long format is a
+          // default rather than something typed.
+          if (format_opt != fmt_long()) {
+            format_opt = fmt_single();
+          }
+        } else if (m.id == op_many()) {
+          format_opt = fmt_vertical();
+        } else if (m.id == op_across()) {
+          format_opt = fmt_across();
+        } else if (m.id == op_commas()) {
+          format_opt = fmt_commas();
+        } else if (m.id == op_sort()) {
+          sort_opt = gnu.argmatch_valued(m.value, sort_names(), sort_values(), "--sort");
+        } else if (m.id == op_sort_time()) {
+          sort_opt = sort_time();
+        } else if (m.id == op_sort_size()) {
+          sort_opt = sort_size();
+        } else if (m.id == op_sort_none()) {
+          sort_opt = sort_none();
+        } else if (m.id == op_sort_version()) {
+          sort_opt = sort_version();
+        } else if (m.id == op_sort_ext()) {
+          sort_opt = sort_ext();
+        } else if (m.id == op_unsorted_all()) {
+          c = Cfg { ...c, ignore_mode: ignore_minimal() };
+          sort_opt = sort_none();
+          color_when = when_never();
+        } else if (m.id == op_time()) {
+          c = Cfg { ...c, time_type: gnu.argmatch_valued(m.value, time_names(), time_values(), "--time") };
+          explicit_time = true;
+        } else if (m.id == op_ctime()) {
+          c = Cfg { ...c, time_type: time_ctime() };
+          explicit_time = true;
+        } else if (m.id == op_atime()) {
+          c = Cfg { ...c, time_type: time_atime() };
+          explicit_time = true;
+        } else if (m.id == op_time_style()) {
+          time_style = m.value;
+          time_style_seen = true;
+        } else if (m.id == op_zero()) {
+          // `--zero` asks for one per line the way `-1` does: it
+          // gives way to a long format that was TYPED and overrides
+          // everything else, so `ls -l --zero` stays long while
+          // `ls -C --zero` is one per line.
+          // It also drops the quoting: `dir --zero` writes raw bytes
+          // where `dir` escapes them, and a `-b` after it wins.
+          c = Cfg { ...c, zero: true, qmark: false, qstyle: 0 };
+          if (format_opt != fmt_long()) {
+            format_opt = fmt_single();
+          }
+        } else if (m.id == op_color()) {
+          color_when = parse_when(m, "--color");
+        } else if (m.id == op_hyperlink()) {
+          link_when = parse_when(m, "--hyperlink");
+        } else if (m.id == op_context()) {
+          c = Cfg { ...c, show_context: true };
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  if (format_opt >= 0) {
+    c = Cfg { ...c, format: format_opt };
+  }
+  if (sort_opt >= 0) {
+    c = Cfg { ...c, sort_key: sort_opt };
+  } else if (c.format != fmt_long() && explicit_time) {
+    c = Cfg { ...c, sort_key: sort_time() };
+  }
+  // The default is NOT "never follow": a command-line symbolic link to
+  // a directory is followed, which is why `ls link_dir` lists the
+  // directory. The three options that turn that off are the ones for
+  // which the link ITSELF is the subject.
+  if (c.deref == deref_none() && !deref_seen) {
+    if (!c.immediate_dirs && c.indicator != ind_classify() && c.format != fmt_long()) {
+      c = Cfg { ...c, deref: deref_cmd_dir() };
+    }
+  }
+  if (c.dired && c.zero) {
+    // Not a `die_usage`: there is no `Try …` line under this one.
+    gnu.error("--dired and --zero are incompatible");
+    exit(status_usage());
+  }
+  c = Cfg { ...c, color: when_on(color_when), hyperlink: when_on(link_when) };
+  if (c.color) {
+    var spec: string = "";
+    match (env("LS_COLORS")) {
+      Some(v) => {
+        spec = v;
+      },
+      None => {}
+    }
+    if (spec.len() > 0) {
+      c = Cfg { ...c, colors: parse_ls_colors(spec) };
+    } else if (colorterm_set() || colordb.term_known(env_or_empty("TERM"))) {
+      // An empty or unset LS_COLORS falls back to the built-in table,
+      // but only for a terminal something vouches for: COLORTERM
+      // non-empty, or a $TERM the database's own TERM lines match.
+      // Otherwise `--color=always` writes no escape at all, which is
+      // what it does in an environment with neither.
+      c = Cfg { ...c, colors: palette_default() };
+    } else {
+      c = Cfg { ...c, colors: palette_off() };
+    }
+    if (!c.colors.on) {
+      c = Cfg { ...c, color: false };
+    }
+  }
+  // Colour and tab padding do not mix: an escape sequence takes no
+  // cells, so a terminal's idea of the cursor column and ls's agree
+  // only while every byte written is a character. GNU turns the tabs
+  // off rather than track it, and the padding becomes spaces.
+  if (c.color) {
+    c = Cfg { ...c, tabsize: 0 as i64 };
+  }
+  // `--dired` is long-format only: with any other format GNU emits no
+  // `//DIRED//` lines at all.
+  if (c.format != fmt_long()) {
+    c = Cfg { ...c, dired: false };
+  }
+  if (!time_style_seen) {
+    match (env("TIME_STYLE")) {
+      Some(v) => {
+        time_style = v;
+        time_style_seen = true;
+      },
+      None => {}
+    }
+  }
+  if (time_style_seen) {
+    c = apply_time_style(c, time_style, false);
+  }
+  // The environment is consulted only when no option named a unit, and
+  // LS_BLOCK_SIZE / BLOCK_SIZE move the SIZE column with the total —
+  // which `-k` then undoes for the size column by moving only the
+  // block one, last of all.
+  if (!block_spec_seen) {
+    var u: blocks.Unit = blocks.env_unit(["LS_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
+    c = Cfg { ...c, bsize: u };
+    if (env_named_block_size()) {
+      c = Cfg { ...c, fsize: u };
+    }
+  }
+  if (kibibytes) {
+    c = Cfg { ...c, bsize: blocks.plain_unit(1024 as u64) };
+  }
+  return Scan { c: c, width_seen: width_seen, operands: g.operands() };
+}
+
+function env_or_empty(name: string): string {
+  match (env(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+function colorterm_set(): boolean {
+  return env_or_empty("COLORTERM").len() > 0;
+}
+
+// Whether the environment named a block size at all, which decides
+// whether it reaches the file-size column as well as the block one.
+// BLOCKSIZE is not on the list: it moves the total and nothing else.
+function env_named_block_size(): boolean {
+  match (env("LS_BLOCK_SIZE")) {
+    Some(_) => {
+      return true;
+    },
+    None => {}
+  }
+  match (env("BLOCK_SIZE")) {
+    Some(_) => {
+      return true;
+    },
+    None => {}
+  }
+  return false;
+}
+
+// The terminal width, which decides the column layout: `-w` if it was
+// given, else COLUMNS, else the terminal's own answer, else 80. COLUMNS
+// is read even when standard output is a PIPE, which is what makes the
+// column formats reachable without a terminal at all.
+function resolve_width(c: Cfg, seen: boolean): Cfg {
+  if (seen) {
+    return c;
+  }
+  match (window_size(1)) {
+    Ok(ws) => {
+      if (ws.cols > 0 as i64) {
+        return Cfg { ...c, width: ws.cols };
+      }
+    },
+    Err(_) => {}
+  }
+  match (env("COLUMNS")) {
+    Some(v) => {
+      if (v.len() > 0) {
+        var r: (i64, boolean) = parse_ulong0(v);
+        if (r.1) {
+          return Cfg { ...c, width: r.0 };
+        }
+        // Not fatal, and zero IS a width here: it selects the
+        // unlimited single-line layout.
+        gnu.error("ignoring invalid width in environment variable COLUMNS: " + gnu.quote(v));
+      }
+    },
+    None => {}
+  }
+  return c;
+}
+
+// The three programs, which differ in two defaults and nothing else.
+// Off a terminal `ls` is one entry per line with no quoting; `dir` and
+// `vdir` carry `-b`'s escaping in their defaults, so a space in a name
+// comes out `sp\ ace` from them and raw from `ls`.
+pub function ls(): i32 {
+  return run(fmt_single(), 0);
+}
+
+pub function dir(): i32 {
+  return run(fmt_vertical(), 7);
+}
+
+pub function vdir(): i32 {
+  return run(fmt_long(), 7);
+}
+
+function run(format: i32, qstyle: i32): i32 {
+  var argv: string[] = args();
+  var start: Cfg = defaults(format, qstyle);
+  var s: Scan = scan(argv, start);
+  var c: Cfg = resolve_width(s.c, s.width_seen);
+  c = Cfg { ...c, zone: tz.local_zone(), now: now_unix_ms() / (1000 as i64) };
+  var o: Out = run_operands(c, out_new(), s.operands);
+  var status: i32 = o.status;
+  // gnulib's `exit_failure` for `ls` is 2, so a write that cannot
+  // finish exits 2 rather than 1.
+  gnu.close_stdout_with(o.w, false, status_usage());
+  return status;
+}
