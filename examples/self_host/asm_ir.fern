@@ -4550,6 +4550,50 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(sb_done + ":\n    pushq %r10\n");
         return s;
     }
+    if (o.kind_tag == 309) {  // crc32_cksum
+        // operand stack [crc, box] (the box on top) -> the incoming CRC-32
+        // with the string's bytes folded in.
+        //
+        // SCALAR (§3.4 step 1), and nothing below the IR is in the way:
+        // x86_native.fern encodes pclmulqdq and pshufb, and this emitter
+        // already lays out rodata for the float constants. The native x86-64
+        // twin's fold measures 4.3x over a table. What is missing is a
+        // MEASUREMENT — the self-hosted compiler hashes nothing, so no
+        // workload here asks for the second fold — and §3.4 puts the scalar
+        // lowering in every backend before any of them is vectorised.
+        //
+        // The box is popped FIRST because it is the second operand: the crc
+        // was pushed before it. Every other kernel in this family pops its
+        // string last, which is exactly the shape a port copies wrong.
+        //
+        // The polynomial is selected by an arithmetic shift of the sign bit
+        // rather than a branch, so the eight bit steps have nothing
+        // unpredictable between them. `movslq` before the push because the
+        // result is a signed i32 whose top bit is live — a zero-extended
+        // 0x80000000 would read back as +2147483648 from the 64-bit slot.
+        var clo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var cc_scan: string = clo.name;
+        var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
+        var cc_bit: string = clo2.name;
+        var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
+        var cc_done: string = clo3.name;
+        s = clo3.state;
+        s = s.write("    popq %rsi\n");
+        s = s.write("    movq 8(%rsi), %r8\n    movq (%rsi), %rsi\n");
+        s = s.write("    popq %rax\n");
+        s = s.write("    xorq %rdx, %rdx\n");
+        s = s.write(cc_scan + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + cc_done + "\n");
+        s = s.write("    movzbl (%rsi,%rdx), %r9d\n    shll $24, %r9d\n    xorl %r9d, %eax\n");
+        s = s.write("    movl $8, %r11d\n");
+        s = s.write(cc_bit + ":\n");
+        s = s.write("    movl %eax, %r10d\n    sarl $31, %r10d\n    andl $0x04c11db7, %r10d\n");
+        s = s.write("    addl %eax, %eax\n    xorl %r10d, %eax\n");
+        s = s.write("    subl $1, %r11d\n    jne " + cc_bit + "\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + cc_scan + "\n");
+        s = s.write(cc_done + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.

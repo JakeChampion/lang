@@ -178,4 +178,5 @@ so explicitly.
 | `TEST-RUNNER-MIGRATION.md` | [record] | Go-test → pure-Fern runner migration audit. |
 | `TEST-GATES.md` | [policy] | Which suite proves what, which look authoritative and are not, and what nothing gates. |
 | `LOCAL-DEV-LOOP.md` | [reference] | Machine-shaped facts for running things locally: suite timings + sharding, build-memory budgets and knobs, arena-vs-OOM exit codes, which instrument to measure memory with, arm64/qemu policy, pinned wasm toolchain. |
+| `AGENT-PROMPTING.md` | [reference] | How the published Claude prompting guidance applies here: behaviours to correct for, harness settings (effort, append-only history, compaction) no prompt can fix, and the two places this repo overrides that guidance. |
 | `FERN-PROPOSALS.md` | [policy] | The Fern Proposal program: build an app as a user, fix the worst defect you hit, ship it. Draw list in `proposals/random_app.txt`; settled rulings in `proposals/wontfix.md`. |

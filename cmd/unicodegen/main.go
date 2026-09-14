@@ -2499,8 +2499,8 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 // iterating this result, or an operation that does not need to know
 // about clusters at all. Fern keeps ` + "`s.len()`" + ` in BYTES and ` + "`s[i]`" + ` a byte
 // index precisely so that the cheap operations stay visibly cheap.
-pub function graphemes(s: string): str[] {
-    var out: str[] = [];
+pub function graphemes(s: string): string[] {
+    var out: string[] = [];
     var n: i32 = s.len();
     if (n == 0) { return out; }
     var start: i32 = 0;
@@ -2519,7 +2519,7 @@ pub function graphemes(s: string): str[] {
         var cur_pict: boolean = _is_extpict(cp);
         if (prev >= 0) {
             if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
-                out = out.append(slice_unchecked(s, start, i));
+                out = out.append((slice_unchecked(s, start, i) + ""));
                 start = i;
             }
         }
@@ -2528,7 +2528,7 @@ pub function graphemes(s: string): str[] {
         prev = cls;
         i = i + w;
     }
-    return out.append(slice_unchecked(s, start, n));
+    return out.append((slice_unchecked(s, start, n) + ""));
 }
 
 // ` + "`grapheme_count(s)`" + ` — how many clusters, without building the array
@@ -2569,7 +2569,7 @@ pub function grapheme_count(s: string): i32 {
 // ` + "`reverse_bytes`" + ` keeps its name and its place: it is the honest one,
 // carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
-    var gs: str[] = graphemes(s);
+    var gs: string[] = graphemes(s);
     var out: string = "";
     var i: i32 = gs.len() - 1;
     while (i >= 0) {
@@ -2741,8 +2741,8 @@ function _wb_is_word(s: string, a: i32, b: i32): boolean {
 // Japanese: those scripts do not mark word boundaries with spaces, and
 // UAX #29 says so itself. Han and Hiragana therefore segment per code
 // point, and Katakana runs stay together (WB13).
-pub function word_segments(s: string): str[] {
-    var out: str[] = [];
+pub function word_segments(s: string): string[] {
+    var out: string[] = [];
     var n: i32 = s.len();
     if (n == 0) { return out; }
     var start: i32 = 0;
@@ -2763,7 +2763,7 @@ pub function word_segments(s: string): str[] {
             var nxt: i32 = 0 - 1;
             if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
             if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
-                out = out.append(slice_unchecked(s, start, i));
+                out = out.append((slice_unchecked(s, start, i) + ""));
                 start = i;
             }
         }
@@ -2775,7 +2775,7 @@ pub function word_segments(s: string): str[] {
         }
         i = i + w;
     }
-    return out.append(slice_unchecked(s, start, n));
+    return out.append((slice_unchecked(s, start, n) + ""));
 }
 
 // ` + "`" + `words(s)` + "`" + ` — the word-like segments only: what a reader would count
@@ -2785,9 +2785,9 @@ pub function word_segments(s: string): str[] {
 // Note this is NOT ` + "`" + `s.split(" ")` + "`" + ` with extra steps: it keeps ` + "`" + `can't` + "`" + `
 // and ` + "`" + `3.14` + "`" + ` whole, splits ` + "`" + `hello,world` + "`" + ` without a space to help it,
 // and works on text with no ASCII spaces in it at all.
-pub function words(s: string): str[] {
-    var segs: str[] = word_segments(s);
-    var out: str[] = [];
+pub function words(s: string): string[] {
+    var segs: string[] = word_segments(s);
+    var out: string[] = [];
     var i: i32 = 0;
     var off: i32 = 0;
     while (i < segs.len()) {

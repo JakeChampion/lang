@@ -901,7 +901,7 @@ pub function (s: string) is_json_like(): boolean {
 // `s.common_prefix(other)` — longest shared leading
 // substring. Returns "" when the first byte differs or
 // either argument is empty.
-pub function (s: string) common_prefix(other: string): str {
+pub function (s: string) common_prefix(other: string): string {
     var n: i32 = s.len();
     var m: i32 = other.len();
     var cap: i32 = n;
@@ -917,7 +917,7 @@ pub function (s: string) common_prefix(other: string): str {
 // `s.common_suffix(other)` — longest shared trailing
 // substring. Returns "" when no overlap or either side
 // is empty.
-pub function (s: string) common_suffix(other: string): str {
+pub function (s: string) common_suffix(other: string): string {
     var n: i32 = s.len();
     var m: i32 = other.len();
     var cap: i32 = n;
@@ -1564,7 +1564,7 @@ pub function (s: string) to_owned(): string {
     return s + "";
 }
 
-pub function (s: string) trim(): str {
+pub function (s: string) trim(): string {
     var n: i32 = s.len();
     var low: i32 = 0;
     var high: i32 = n;
@@ -1576,37 +1576,37 @@ pub function (s: string) trim(): str {
         if (!__is_ascii_ws((s[high - 1] as i32))) { break; }
         high = high - 1;
     }
-    return slice_unchecked(s, low, high);
+    return (slice_unchecked(s, low, high) + "");
 }
 
 // `s.trim_start()` / `trim_end()` — one-sided whitespace
 // strip. The bare `trim` already covers both ends; these
 // are the asymmetric variants useful for trimming a
 // prompt prefix without eating trailing data, or vice versa.
-pub function (s: string) trim_start(): str {
+pub function (s: string) trim_start(): string {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n && __is_ascii_ws((s[i] as i32))) { i = i + 1; }
-    return slice_unchecked(s, i, n);
+    return (slice_unchecked(s, i, n) + "");
 }
 
-pub function (s: string) trim_end(): str {
+pub function (s: string) trim_end(): string {
     var n: i32 = s.len();
     var end: i32 = n;
     while (end > 0 && __is_ascii_ws((s[end - 1] as i32))) { end = end - 1; }
-    return slice_unchecked(s, 0, end);
+    return (slice_unchecked(s, 0, end) + "");
 }
 
 // `s.rstrip_newline()` — strip a single trailing newline.
 // Removes "\n" or "\r\n" (the CRLF pair) but stops there —
 // runs of multiple newlines are preserved beyond the first
 // strip. Use trim_end for full whitespace strip.
-pub function (s: string) rstrip_newline(): str {
+pub function (s: string) rstrip_newline(): string {
     var n: i32 = s.len();
     if (n == 0) { return s; }
     if (s[n - 1] == 10) {
-        if (n >= 2 && s[n - 2] == 13) { return slice_unchecked(s, 0, n - 2); }
-        return slice_unchecked(s, 0, n - 1);
+        if (n >= 2 && s[n - 2] == 13) { return (slice_unchecked(s, 0, n - 2) + ""); }
+        return (slice_unchecked(s, 0, n - 1) + "");
     }
     return s;
 }
@@ -1615,43 +1615,43 @@ pub function (s: string) rstrip_newline(): str {
 // `chars` from both ends. Empty `chars` is a no-op. Useful
 // for stripping a chosen set of delimiters / wrapping
 // characters in one pass.
-pub function (s: string) trim_chars(chars: string): str {
+pub function (s: string) trim_chars(chars: string): string {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var low: i32 = 0;
     var high: i32 = n;
     while (low < high) {
-        if (chars.index_of(slice_unchecked(s, low, low + 1)) < 0) { break; }
+        if (chars.index_of((slice_unchecked(s, low, low + 1) + "")) < 0) { break; }
         low = low + 1;
     }
     while (high > low) {
-        if (chars.index_of(slice_unchecked(s, high - 1, high)) < 0) { break; }
+        if (chars.index_of((slice_unchecked(s, high - 1, high) + "")) < 0) { break; }
         high = high - 1;
     }
-    return slice_unchecked(s, low, high);
+    return (slice_unchecked(s, low, high) + "");
 }
 
 // `s.trim_start_chars(chars)` / `s.trim_end_chars(chars)` —
 // one-sided variants of trim_chars. Strip any byte in `chars`
 // from the start / end only.
-pub function (s: string) trim_start_chars(chars: string): str {
+pub function (s: string) trim_start_chars(chars: string): string {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var i: i32 = 0;
-    while (i < n && chars.index_of(slice_unchecked(s, i, i + 1)) >= 0) {
+    while (i < n && chars.index_of((slice_unchecked(s, i, i + 1) + "")) >= 0) {
         i = i + 1;
     }
-    return slice_unchecked(s, i, n);
+    return (slice_unchecked(s, i, n) + "");
 }
 
-pub function (s: string) trim_end_chars(chars: string): str {
+pub function (s: string) trim_end_chars(chars: string): string {
     var n: i32 = s.len();
     if (chars.len() == 0) { return s; }
     var end: i32 = n;
-    while (end > 0 && chars.index_of(slice_unchecked(s, end - 1, end)) >= 0) {
+    while (end > 0 && chars.index_of((slice_unchecked(s, end - 1, end) + "")) >= 0) {
         end = end - 1;
     }
-    return slice_unchecked(s, 0, end);
+    return (slice_unchecked(s, 0, end) + "");
 }
 
 // `s.starts_with_ci(prefix)` / `s.ends_with_ci(suffix)` —
@@ -1975,18 +1975,18 @@ function __ceil_boundary(s: string, i: i32): i32 {
 // every n. take(big) returns the whole string; drop(big) returns
 // empty; a negative count is treated as 0. On boundary counts —
 // hence all ASCII — both are exactly the old byte slices.
-pub function (s: string) take(n: i32): str {
+pub function (s: string) take(n: i32): string {
     if (n <= 0) { return ""; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return s; }
-    return slice_unchecked(s, 0, __floor_boundary(s, n));
+    return (slice_unchecked(s, 0, __floor_boundary(s, n)) + "");
 }
 
-pub function (s: string) drop(n: i32): str {
+pub function (s: string) drop(n: i32): string {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
-    return slice_unchecked(s, __floor_boundary(s, n), sLen);
+    return (slice_unchecked(s, __floor_boundary(s, n), sLen) + "");
 }
 
 // `s.slice_snap(a, b)` — total byte slicing that cannot split a
@@ -1996,11 +1996,11 @@ pub function (s: string) drop(n: i32): str {
 // outside [a:b) and is identical to `s[a:b]` whenever both
 // indices already sit on boundaries — hence on all ASCII input.
 // An inverted or snapped-empty range returns "".
-pub function (s: string) slice_snap(a: i32, b: i32): str {
+pub function (s: string) slice_snap(a: i32, b: i32): string {
     var lo: i32 = __ceil_boundary(s, a);
     var hi: i32 = __floor_boundary(s, b);
     if (lo >= hi) { return ""; }
-    return slice_unchecked(s, lo, hi);
+    return (slice_unchecked(s, lo, hi) + "");
 }
 
 // `s.chunks(size)` — split into consecutive chunks of at most
@@ -2167,15 +2167,15 @@ pub function (s: string) strip_suffix(suffix: string): Option[string] {
 // when the prefix / suffix doesn't match, instead of
 // Option. Avoids the match boilerplate when the unchanged
 // value is the right fallback.
-pub function (s: string) remove_prefix(prefix: string): str {
+pub function (s: string) remove_prefix(prefix: string): string {
     if (!s.starts_with(prefix)) { return s; }
-    return slice_unchecked(s, prefix.len(), s.len());
+    return (slice_unchecked(s, prefix.len(), s.len()) + "");
 }
 
-pub function (s: string) remove_suffix(suffix: string): str {
+pub function (s: string) remove_suffix(suffix: string): string {
     if (!s.ends_with(suffix)) { return s; }
     var k: i32 = s.len() - suffix.len();
-    return slice_unchecked(s, 0, k);
+    return (slice_unchecked(s, 0, k) + "");
 }
 
 // `s.is_uuid()` — true if s matches the canonical UUID
@@ -2364,7 +2364,7 @@ pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
 // peel sub off the beginning / end as many times as it
 // appears, contiguously. Symmetric with the regular trim()
 // that strips whitespace.
-pub function (s: string) trim_start_matches(sub: string): str {
+pub function (s: string) trim_start_matches(sub: string): string {
     if (sub.len() == 0) { return s; }
     var n: i32 = s.len();
     var subLen: i32 = sub.len();
@@ -2372,10 +2372,10 @@ pub function (s: string) trim_start_matches(sub: string): str {
     while (i + subLen <= n && __substr_eq(s, i, sub, subLen)) {
         i = i + subLen;
     }
-    return slice_unchecked(s, i, n);
+    return (slice_unchecked(s, i, n) + "");
 }
 
-pub function (s: string) trim_end_matches(sub: string): str {
+pub function (s: string) trim_end_matches(sub: string): string {
     if (sub.len() == 0) { return s; }
     var n: i32 = s.len();
     var subLen: i32 = sub.len();
@@ -2383,7 +2383,7 @@ pub function (s: string) trim_end_matches(sub: string): str {
     while (end - subLen >= 0 && __substr_eq(s, end - subLen, sub, subLen)) {
         end = end - subLen;
     }
-    return slice_unchecked(s, 0, end);
+    return (slice_unchecked(s, 0, end) + "");
 }
 
 // `s.contains_ci(needle)` / `index_of_ci(needle)` — case-
@@ -2892,20 +2892,20 @@ pub function (s: string) remove_all(needle: string): string {
 // `s.before(sep)` — substring before the first occurrence
 // of sep. Returns s unchanged if sep not present, "" if
 // s starts with sep. Doesn't include sep in the result.
-pub function (s: string) before(sep: string): str {
+pub function (s: string) before(sep: string): string {
     var idx: i32 = s.index_of(sep);
     if (idx < 0) { return s; }
-    return slice_unchecked(s, 0, idx);
+    return (slice_unchecked(s, 0, idx) + "");
 }
 
 // `s.after(sep)` — substring after the first occurrence
 // of sep. Returns "" if sep not present, s unchanged if sep
 // is empty. Doesn't include sep in the result.
-pub function (s: string) after(sep: string): str {
+pub function (s: string) after(sep: string): string {
     if (sep.len() == 0) { return s; }
     var idx: i32 = s.index_of(sep);
     if (idx < 0) { return ""; }
-    return slice_unchecked(s, idx + sep.len(), s.len());
+    return (slice_unchecked(s, idx + sep.len(), s.len()) + "");
 }
 
 // `s.between(start, end)` — Some(substring) for the content

@@ -487,6 +487,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__sum_bytes") { return t_i32(); }
   if (argc == 2 && name == "__ascii_run") { return t_i32(); }
   if (argc == 2 && name == "__count_byte") { return t_i32(); }
+  if (argc == 2 && name == "__crc32_cksum") { return t_i32(); }
   if (argc == 3 && name == "__memchr") { return t_i32(); }
   if (argc == 3 && name == "__rmemchr") { return t_i32(); }
   return t_unknown("not a runtime intrinsic");

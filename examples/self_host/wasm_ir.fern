@@ -372,6 +372,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_mismatch(cache)) { out = out.append("@uses_mismatch"); }
     if (module_uses_count_byte(cache)) { out = out.append("@uses_count_byte"); }
     if (module_uses_sum_bytes(cache)) { out = out.append("@uses_sum_bytes"); }
+    if (module_uses_crc32_cksum(cache)) { out = out.append("@uses_crc32_cksum"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
     if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
@@ -722,6 +723,13 @@ pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_sum_bytes(cache: irlower.LowerResult[]): boolean {
     function is_sum_bytes(o: ir.Op): boolean { return o.kind_tag == 253; }  // sum_bytes
     return any_op(cache, is_sum_bytes);
+}
+
+// module_uses_crc32_cksum gates $__fern_crc32_cksum, the CRC-32 fold of
+// #9128. Same shape as module_uses_memchr above.
+pub function module_uses_crc32_cksum(cache: irlower.LowerResult[]): boolean {
+    function is_crc32(o: ir.Op): boolean { return o.kind_tag == 309; }  // crc32_cksum
+    return any_op(cache, is_crc32);
 }
 
 // module_uses_ascii_run gates $__fern_ascii_run, the high-bit scan of
@@ -4588,6 +4596,13 @@ function emit_str_op_wat(o: ir.Op): string {
         // memchr's reason: the body loops over its own locals.
         return "    call $__fern_sum_bytes\n";
     }
+    if (o.kind_tag == 309) {  // crc32_cksum
+        // stack: crc, s -> the incoming CRC-32 with s's bytes folded in.
+        // The operands are already in that order, which is the helper's
+        // parameter order too. A call for memchr's reason: the body loops
+        // over its own locals.
+        return "    call $__fern_crc32_cksum\n";
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // stack: s, from -> the first high-bit index, or the length. A
         // call for memchr's reason: the body loops over its own locals.
@@ -6634,6 +6649,44 @@ pub function count_byte_helper(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c2)))\n";
     o = o + "    (local.get $c))\n";
+    return o;
+}
+
+// crc32_cksum_helper emits $__fern_crc32_cksum(crc, s) -> the incoming CRC-32
+// with s's bytes folded in: poly 0x04C11DB7, most significant bit first,
+// unreflected, and NO final complement (#9128). The length fold and the
+// complement belong to std/hash's finish, not to a chunk.
+//
+// Bit-at-a-time, and deliberately so where its neighbours here are v128: wasm
+// has no carry-less multiply for a fold to lower onto, and a 256-entry table
+// would need a data segment these runtime helpers cannot carry. This body is
+// therefore the DEFINITION, which is what makes the differential worth running
+// — the two native emitters fold, and agreement says the folds match the spec
+// rather than each other.
+//
+// Branchless: `i32.shr_s` by 31 spreads the top bit into a mask, so the eight
+// steps have no `if` between them.
+//
+// Reads only the source block ([len@0][bytes@4]) — no allocation, no calls.
+// An empty string returns $crc unchanged.
+pub function crc32_cksum_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_crc32_cksum (param $crc i32) (param $s i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $i i32) (local $k i32) (local $m i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (local.set $crc (i32.xor (local.get $crc) (i32.shl (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (i32.const 24))))\n";
+    o = o + "      (local.set $k (i32.const 8))\n";
+    o = o + "      (block $bd (loop $bc\n";
+    o = o + "        (br_if $bd (i32.eqz (local.get $k)))\n";
+    o = o + "        (local.set $m (i32.and (i32.shr_s (local.get $crc) (i32.const 31)) (i32.const 0x04c11db7)))\n";
+    o = o + "        (local.set $crc (i32.xor (i32.shl (local.get $crc) (i32.const 1)) (local.get $m)))\n";
+    o = o + "        (local.set $k (i32.sub (local.get $k) (i32.const 1)))\n";
+    o = o + "        (br $bc)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $crc))\n";
     return o;
 }
 // ascii_run_helper emits $__fern_ascii_run(s, from) -> the index of the first
@@ -10292,6 +10345,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "@uses_mismatch")) { parts = parts.append(mismatch_helper()); }
     if (need(needs, "@uses_count_byte")) { parts = parts.append(count_byte_helper()); }
     if (need(needs, "@uses_sum_bytes")) { parts = parts.append(sum_bytes_helper()); }
+    if (need(needs, "@uses_crc32_cksum")) { parts = parts.append(crc32_cksum_helper()); }
     if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
     if (need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(str_split_helper()); }
