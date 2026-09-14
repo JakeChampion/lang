@@ -56,8 +56,10 @@ Unscheduled; it constrains design choices today, it is not work in flight.
   the latest macOS is supported.
 - **WASI / WebAssembly** — exercised via wasmtime.
 - **x86-64 / amd64 Linux ELF** — System V AMD64 ABI. Baseline is
-  **Haswell-class 2013** (SSE4.2 + BMI1), so `popcnt` / `lzcnt` / `tzcnt` are
-  assumable. Binaries are static with no runtime dispatch, so a selected
+  **x86-64-v3**, Haswell-class 2013 (AMD: Excavator 2015, Zen 2017), so
+  `popcnt` / `lzcnt` / `tzcnt`, `pshufb`, `pclmulqdq` and **AVX2** are all
+  assumable — the byte kernels have emitted 32-byte AVX2 loops with no cpuid
+  check all along. Binaries are static with no runtime dispatch, so a selected
   instruction is a hard requirement, not a fast path. Note LZCNT/TZCNT fail
   **silently** below the baseline (same opcodes as bsr/bsf plus an F3 the older
   CPU ignores) where POPCNT faults. No Darwin x86-64.

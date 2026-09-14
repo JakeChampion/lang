@@ -225,7 +225,8 @@ var Named = []NamedFamily{
 			{ATT: "psrldq", Intel: "psrldq", Op: 0x73, Ext: 3, Probe: "psrldq xmm0, 8", ATTProbe: "psrldq $8, %xmm0"},
 			{ATT: "pslldq", Intel: "pslldq", Op: 0x73, Ext: 7, Probe: "pslldq xmm0, 8", ATTProbe: "pslldq $8, %xmm0"},
 		}},
-	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination (SSE4.1, inside the Haswell baseline)", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3 and SSE4.1, both well inside the declared x86-64-v3 baseline", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
+		{ATT: "pshufb", Intel: "pshufb", Op: 0x00, Probe: "pshufb xmm0, xmm1", ATTProbe: "pshufb %xmm1, %xmm0"},
 		{ATT: "ptest", Intel: "ptest", Op: 0x17, Probe: "ptest xmm0, xmm1", ATTProbe: "ptest %xmm1, %xmm0"},
 		{ATT: "pmulld", Intel: "pmulld", Op: 0x40, Probe: "pmulld xmm0, xmm1", ATTProbe: "pmulld %xmm1, %xmm0"},
 		{ATT: "pminsb", Intel: "pminsb", Op: 0x38, Probe: "pminsb xmm0, xmm1", ATTProbe: "pminsb %xmm1, %xmm0"},

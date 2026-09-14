@@ -1254,12 +1254,34 @@ function byte_scan_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: false, r: r };
 }
 
+// The string methods the AST lowering emits an op for, keyed by receiver the
+// way their contracts are. `contains` has no op of its own on any backend: it
+// is `index_of(sub) >= 0`, which is how the AST path spells it too.
+function string_method_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "string.to_ascii_upper") { return Lowered { found: true, r: emit(r, ir.op_str_to_upper()) }; }
+    if (ins.str == "string.to_ascii_lower") { return Lowered { found: true, r: emit(r, ir.op_str_to_lower()) }; }
+    if (ins.str == "string.trim") { return Lowered { found: true, r: emit(r, ir.op_str_trim()) }; }
+    if (ins.str == "string.reverse") { return Lowered { found: true, r: emit(r, ir.op_str_reverse()) }; }
+    if (ins.str == "string.lines") { return Lowered { found: true, r: emit(r, ir.op_str_lines()) }; }
+    if (ins.str == "string.split") { return Lowered { found: true, r: emit(r, ir.op_str_split()) }; }
+    if (ins.str == "string.repeat") { return Lowered { found: true, r: emit(r, ir.op_str_repeat()) }; }
+    if (ins.str == "string.replace") { return Lowered { found: true, r: emit(r, ir.op_str_replace()) }; }
+    if (ins.str == "string.starts_with") { return Lowered { found: true, r: emit(r, ir.op_str_starts_with()) }; }
+    if (ins.str == "string.ends_with") { return Lowered { found: true, r: emit(r, ir.op_str_ends_with()) }; }
+    if (ins.str == "string.index_of") { return Lowered { found: true, r: emit(r, ir.op_str_index_of()) }; }
+    if (ins.str != "string.contains") { return Lowered { found: false, r: r }; }
+    r = emit(r, ir.op_str_index_of());
+    r = emit(r, ir.op_const_i32(0));
+    return Lowered { found: true, r: emit(r, ir.op_bin("ge_s", 0, false)) };
+}
+
 // A name no half owns is a runtime helper with a symbol of its own, which a
 // direct call reaches.
 function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     var done: Lowered = union_builtin_site(r, ins);
     if (!done.found) { done = value_builtin_site(r, ins); }
     if (!done.found) { done = intrinsic_site(r, ins); }
+    if (!done.found) { done = string_method_site(r, ins); }
     if (done.found) { return done.r; }
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }

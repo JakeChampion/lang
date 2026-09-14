@@ -10136,11 +10136,9 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("add r8, rdi") // cursor = data + from
 	g.emit("mov r9d, ecx")
 	g.emit("add r9, rdi") // end = data + len
-	// Broadcast the needle byte across xmm1. movd + punpcklbw + punpcklwd
-	// + pshufd is the SSE2 splat; pshufb would be one instruction but is
-	// SSSE3, outside the declared baseline. The 16-byte tail loop below
-	// reuses xmm1 directly; ymm1 is the same bytes, widened for the AVX2
-	// main loop.
+	// Broadcast the needle byte across xmm1 with the SSE2 splat. The
+	// 16-byte tail loop below reuses xmm1 directly; ymm1 is the same bytes,
+	// widened for the AVX2 main loop.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
 	g.emit("punpcklwd xmm1, xmm1")
@@ -10642,9 +10640,8 @@ func (g *generator) emitCountByteRuntime() {
 	g.emit("cmp esi, 255")
 	g.emit("ja .Lcount_byte_ret")
 	g.emit("xor edx, edx") // cursor, as an INDEX
-	// SSE2 splat, as __memchr's: pshufb would be one instruction but is
-	// SSSE3, outside the declared baseline. ymm1 widens it for the AVX2
-	// main loop below; the 16-byte tail loop reuses xmm1 directly.
+	// SSE2 splat, as __memchr's. ymm1 widens it for the AVX2 main loop
+	// below; the 16-byte tail loop reuses xmm1 directly.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
 	g.emit("punpcklwd xmm1, xmm1")
