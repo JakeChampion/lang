@@ -55,6 +55,10 @@ read of zero were both compatible with the double release.
 
 Three rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `if-expression-alias`, `if-expression-fresh-arm`,
-`if-expression-alias-exit-sweep`. The probe set of the predecessor entry is
-otherwise unchanged; #9191 (alias + append) and #9190 (Option payload typing)
-stand.
+`if-expression-alias-exit-sweep`. Against the parent commit's lowering
+exactly those three fail (103 / 3, 102 / 2, exit 99) and the other thirty
+pass. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)
+— the lift change touches every function with an if-expression — and
+`TestSelfHostCoreutilsParity/(od|printf)`. The probe set of the predecessor
+entry is otherwise unchanged; #9191 (alias + append) and #9190 (Option
+payload typing) stand.
