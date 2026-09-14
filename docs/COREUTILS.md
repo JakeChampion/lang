@@ -695,39 +695,46 @@ were a strcmp per entry.
 | `date` | date --debug | 0.35 ± 0.09 | 1.34 ± 0.12 | 2.89 ± 0.21 | 3.87× | 8.33× |
 
 **shred, 2026-09-14**, the same host, its workloads file run alone (mean ±
-σ, ≥20 runs; ratios above 1 mean Fern is faster). The rows that write a
-lot of bytes are what this utility is, so the two shapes below are worth
-separating: a pattern pass is 3× GNU, and a random pass loses to it.
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
 
 | utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
 |---|---|---|---|---|---|---|
-| `shred` | shred one small file | 3.07 ± 1.14 | 4.35 ± 1.29 | 6.87 ± 2.64 | 1.42× | 2.23× |
-| `shred` | shred 200 small files | 517.69 ± 57.18 | 687.25 ± 25.73 | 1002.24 ± 46.52 | 1.33× | 1.94× |
-| `shred` | shred 200 small files in one run | 462.94 ± 45.89 | 407.34 ± 40.84 | 513.71 ± 31.34 | 0.88× | 1.11× |
-| `shred` | shred 4MiB default passes | 62.64 ± 4.90 | 38.26 ± 5.44 | 23.93 ± 2.70 | 0.61× | 0.38× |
-| `shred` | shred 4MiB -n 1 | 21.67 ± 1.86 | 15.06 ± 2.10 | 12.35 ± 2.37 | 0.69× | 0.57× |
-| `shred` | shred 4MiB -n 1 -z | 25.47 ± 2.54 | 24.64 ± 4.33 | 15.32 ± 2.00 | 0.97× | 0.60× |
-| `shred` | shred 4MiB -n 1 from a file source | 7.99 ± 0.97 | 15.10 ± 3.07 | 6.03 ± 1.20 | 1.89× | 0.75× |
-| `shred` | shred 4MiB -n 4 from a file source | 21.06 ± 3.33 | 37.95 ± 5.31 | 5.20 ± 2.07 | 1.80× | 0.25× |
-| `shred` | shred 4MiB -n 1 -x | 22.21 ± 2.89 | 14.52 ± 2.67 | 10.99 ± 1.81 | 0.65× | 0.49× |
-| `shred` | shred 200 sub-block files | 496.46 ± 43.33 | 487.74 ± 44.26 | 500.62 ± 30.95 | 0.98× | 1.01× |
-| `shred` | shred -u 200 small files | 448.09 ± 26.80 | 665.69 ± 90.23 | 726.63 ± 59.93 | 1.49× | 1.62× |
-| `shred` | shred -n 0 -u 200 small files | 365.33 ± 29.89 | 539.91 ± 52.44 | 552.57 ± 53.32 | 1.48× | 1.51× |
-| `shred` | shred -s 4096 of a 4MiB file | 6.76 ± 2.65 | 6.88 ± 1.01 | 8.60 ± 1.21 | 1.02× | 1.27× |
+| `shred` | shred one small file | 2.57 ± 0.97 | 3.62 ± 0.80 | 5.31 ± 1.04 | 1.41× | 2.07× |
+| `shred` | shred 200 small files | 490.77 ± 37.87 | 712.54 ± 26.95 | 1078.32 ± 38.24 | 1.45× | 2.20× |
+| `shred` | shred 200 small files in one run | 457.97 ± 42.49 | 451.79 ± 46.35 | 575.05 ± 50.54 | 0.99× | 1.26× |
+| `shred` | shred 4MiB default passes | 32.65 ± 4.73 | 42.18 ± 8.12 | 23.24 ± 2.19 | 1.29× | 0.71× |
+| `shred` | shred 4MiB -n 1 | 13.04 ± 1.75 | 16.02 ± 2.77 | 11.52 ± 1.47 | 1.23× | 0.88× |
+| `shred` | shred 4MiB -n 1 -z | 18.86 ± 2.91 | 24.25 ± 2.60 | 16.30 ± 1.45 | 1.29× | 0.86× |
+| `shred` | shred 4MiB -n 1 from a file source | 7.58 ± 1.10 | 16.78 ± 6.60 | 5.97 ± 1.76 | 2.21× | 0.79× |
+| `shred` | shred 4MiB -n 4 from a file source | 23.82 ± 2.53 | 42.83 ± 6.35 | 5.21 ± 0.79 | 1.80× | 0.22× |
+| `shred` | shred 4MiB -n 1 -x | 12.57 ± 1.62 | 15.69 ± 2.32 | 12.03 ± 1.65 | 1.25× | 0.96× |
+| `shred` | shred 200 sub-block files | 511.36 ± 58.51 | 507.14 ± 71.61 | 494.73 ± 25.57 | 0.99× | 0.97× |
+| `shred` | shred -u 200 small files | 492.70 ± 65.62 | 696.74 ± 39.89 | 846.74 ± 88.56 | 1.41× | 1.72× |
+| `shred` | shred -n 0 -u 200 small files | 349.06 ± 17.16 | 578.00 ± 74.66 | 567.56 ± 23.96 | 1.66× | 1.63× |
+| `shred` | shred -s 4096 of a 4MiB file | 7.70 ± 2.20 | 8.38 ± 1.67 | 9.07 ± 1.20 | 1.09× | 1.18× |
 
-A PATTERN pass is at the floor: 5.6 ms for 4 MiB against `dd`'s own 5.8
-with the same `fdatasync`, which is why the `--random-source` rows win by
-1.8× — GNU reads its bytes through a buffer layer we do not have. What
-loses is a RANDOM pass, and the cause is not shred (#9221). The only
-source of random bytes here is `random_bytes`, one `getrandom(2)` per
-block, and the kernel's generator runs at 320 MB/s on this host —
-measured at the syscall, `dd if=/dev/urandom` costs the same 13 ms for
-4 MiB. GNU seeds an ISAAC generator from `/dev/urandom` once and produces
-the rest in USERSPACE at roughly twice that, so a 4 MiB pass costs it
-12 ms against our 21. Closing it needs a bulk pseudorandom fill in the
-runtime: a generator written in Fern cannot get there, because building
-the buffer a byte at a time costs 8 ns a byte on its own — six times the
-syscall.
+Eleven of thirteen rows win and the other two are inside a σ on a workload
+whose reseeding forks 200 GNU `head`s per run; per file `shred.fern` makes 9
+syscalls against GNU's 41. Three measurements got it there, in order of what
+they were worth:
+
+- A PATTERN pass is at the write floor — 5.6 ms for 4 MiB against `dd`'s own
+  5.8 with the same `fdatasync` — once the pattern block is laid down ONCE per
+  pass with `repeat` instead of a byte at a time per block (34 ms to 5.6), and
+  once a random pass stops building a pattern block it throws away.
+- A RANDOM pass was the whole of what was left, and the cause was not shred:
+  `random_bytes` is one `getrandom(2)` per block and the kernel's generator
+  runs at 320 MB/s here — `dd if=/dev/urandom` costs the same 13 ms for
+  4 MiB — where GNU seeds ISAAC from /dev/urandom once and produces the rest
+  in userspace at about twice that. So the default source is now
+  `std/rand`'s seeded generator over `buf_push_u64` (#9221), which fills
+  4 MiB in 5.6 ms, and every random row moved from 0.61–0.69× to 1.23–1.29×.
+  A generator written in Fern could not have closed it before that primitive:
+  assembling the bytes cost 8 ns each through an array append and 5 ns
+  through `buf_push_byte`, both dearer than the syscall they would replace.
+- The block size is 60 KiB: a multiple of three, so every block starts at the
+  same point in a pattern's cycle and one block serves the pass, and of 4096,
+  so the writes stay aligned.
 
 Before this branch those rows read `join` 0.10x, `dircolors` 0.29x, `fmt`
 0.12x, `comm` 0.26x, `uniq` 0.55–0.86x, `seq 1 2 1000000` 0.88x (the
@@ -1453,6 +1460,18 @@ they are provided on wasm rather than classified out. `umask` takes `fsmode`
 beside `access` and `write_file_exec` and is refused there — WASI has no
 file-mode creation mask, and `path_create_directory` has no mode either, which
 is the same fact twice. `docs/FREESTANDING-CORE.md` carries both.
+
+`buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
+bytes into the capacity-carrying builder in one store, little-endian, which is
+how every target holds a u64. It exists because a byte at a time is not fast
+enough to be worth having: a generator whose arithmetic costs 2.5 ms for 4 MiB
+of words spent 23 ms handing the bytes over one `buf_push_byte` call each, and
+35 ms through an array append. With it, `std/rand`'s `rng_fill` produces 4 MiB
+in 5.6 ms where `random_bytes` needs 15.3, which is what `shred`'s random
+passes are built on. Its SSA lowering in the self-hosted compiler is
+deliberately absent: that backend stores a string as one byte per EIGHT-byte
+word, so the single store would be eight and the op would lose its reason to
+exist — a module using it takes the IR path, which is the production default.
 
 What is deliberately NOT here: `create_dir_all` and `remove_dir_all`, which
 already existed. Neither is the primitive `mkdir(1)` or `rmdir(1)` needs —

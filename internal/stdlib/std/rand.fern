@@ -198,6 +198,99 @@ pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
     return Some(xs[pick.1]);
 }
 
+// ---- bulk bytes -------------------------------------------------------------
+//
+// `rng_fill` / `rng_bytes` are the seeded generator applied to BYTES rather
+// than to indices, for a caller whose output IS the randomness: overwriting a
+// file, filling a test fixture, generating a corpus.
+//
+// They are here because the CSPRNG cannot do this at speed. `random_bytes` is
+// one `getrandom(2)` per call and the kernel's generator runs at roughly
+// 320 MB/s on a 2013-baseline x86-64; this runs in userspace at over twice
+// that, which is what `shred` needs to beat GNU (GNU's own overwrite bytes
+// come from a userspace generator seeded once from /dev/urandom, for exactly
+// this reason). The generator's state is 64 bits and its output pins it, so
+// the caveat above applies with force: never fill a token, a nonce or a key
+// this way.
+//
+// The bytes go out eight at a time through `buf_push_u64`, because a byte at
+// a time is what made this slow in the first place (#9221).
+
+// `rng_fill(state, h, n)` — push `n` pseudorandom bytes onto the builder `h`
+// and return the advanced state. `n <= 0` pushes nothing.
+//
+// Two 32-bit draws make each eight-byte word, low half first, so a stream is
+// the same bytes whatever length it is asked for in: filling 16 then 16 gives
+// what filling 32 does. A tail shorter than a word takes its bytes from one
+// more draw pair, least significant first.
+pub function rng_fill(state: i64, h: usize, n: i32): i64 {
+    // The generator is `rng_next`'s, and the step is written out here
+    // rather than called: a call whose result is a TUPLE is returned
+    // through a box, and two of them per eight bytes cost more than the
+    // syscall this exists to beat (17.9 ms against 15.3 for 4 MiB, measured
+    // before inlining; 7.6 after). `rng_next` stays the definition of what
+    // the step IS — this loop must produce the same stream, which
+    // `rng_fill_matches_next` in the suite pins.
+    var mult: u64 = __pcg_mult();
+    var inc: u64 = __pcg_inc();
+    var st: u64 = state as u64;
+    var left: i32 = n;
+    while (left >= 8) {
+        var lo: u64 = st;
+        st = lo * mult + inc;
+        var hi: u64 = st;
+        st = hi * mult + inc;
+        var a: u32 = __rotr32(((((lo >> (18 as u64)) ^ lo) >> (27 as u64)) as u32), (lo >> (59 as u64)) as u32);
+        var b: u32 = __rotr32(((((hi >> (18 as u64)) ^ hi) >> (27 as u64)) as u32), (hi >> (59 as u64)) as u32);
+        buf_push_u64(h, (a as u64) | ((b as u64) << (32 as u64)));
+        left = left - 8;
+    }
+    if (left <= 0) { return st as i64; }
+    var tail = __rng_word(st as i64);
+    var v: u64 = tail.1;
+    var k: i32 = 0;
+    while (k < left) {
+        buf_push_byte(h, (v & (255 as u64)) as i32);
+        v = v >> (8 as u64);
+        k = k + 1;
+    }
+    return tail.0;
+}
+
+// `__rng_word(state)` — the next 64 bits as `(state', value)`: two 32-bit
+// draws, the first in the low half. The word shape `rng_fill` writes out.
+function __rng_word(state: i64): (i64, u64) {
+    var lo = rng_next(state);
+    var hi = rng_next(lo.0);
+    return (hi.0, (lo.1 as u64) | ((hi.1 as u64) << (32 as u64)));
+}
+
+// `rng_bytes(state, n)` — `n` pseudorandom bytes as a string, and the
+// advanced state. The builder form is what a caller filling block after
+// block wants: this one allocates one per call.
+pub function rng_bytes(state: i64, n: i32): (i64, string) {
+    if (n <= 0) { return (state, ""); }
+    var h: usize = buf_new(n);
+    var st: i64 = rng_fill(state, h, n);
+    var out: string = buf_take(h);
+    buf_free(h);
+    return (st, out);
+}
+
+// `rng_seed_from_os()` — a generator state seeded from the platform CSPRNG,
+// for a caller that wants the throughput of the seeded generator without a
+// reproducible run. Eight bytes of `random_bytes` folded into the seed.
+pub function rng_seed_from_os(): i64 {
+    var bs: u8[] = random_bytes(8);
+    var seed: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < bs.len()) {
+        seed = (seed << (8 as u64)) | (bs[i] as u64);
+        i = i + 1;
+    }
+    return rng_seed(seed as i64);
+}
+
 // `sample_seeded(seed, xs, k)` — `sample`'s seeded counterpart: `k`
 // elements of `xs` chosen uniformly WITHOUT replacement, in random order.
 pub function sample_seeded[T](seed: i64, xs: T[], k: i32): T[] {

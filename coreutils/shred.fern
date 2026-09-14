@@ -47,6 +47,7 @@
 import "std/string";
 import "std/i32";
 import "std/i64";
+import "std/rand" as rand;
 import "./lib/gnu";
 
 function opt_force(): i32 {
@@ -273,10 +274,19 @@ function shuffled_vocab(): i32[] {
 // `-v` still calls the pass random. A source that cannot be opened is
 // reported by NAME alone, which is GNU's wording: `shred: /nonexistent:
 // No such file or directory`.
-struct Rand { from_file: boolean, r: Reader, name: string }
+// With no source named, the bytes come from a generator seeded once from
+// the platform CSPRNG, which is where GNU's come from too and for the same
+// reason: `getrandom(2)` runs at about 320 MB/s here, less than half what
+// the write path can take, so a syscall per block makes the kernel the
+// bottleneck of a program whose whole job is writing bytes (#9221). The
+// generator's state sits in a Cell because a source HAS a position: the
+// file-backed arm advances an fd's offset through its handle, and this arm
+// advances a word counter the same way, so neither is threaded through six
+// call frames to say so.
+struct Rand { from_file: boolean, r: Reader, name: string, st: Cell[i64], block: usize }
 
 function rand_none(): Rand {
-  return Rand { from_file: false, r: stdin(), name: "" };
+  return Rand { from_file: false, r: stdin(), name: "", st: cell_new(rand.rng_seed_from_os()), block: buf_new(block_bytes()) };
 }
 
 function rand_open(s: Settings): (Rand, boolean) {
@@ -285,7 +295,7 @@ function rand_open(s: Settings): (Rand, boolean) {
   }
   match (open_reader(s.source)) {
     Ok(r) => {
-      return (Rand { from_file: true, r: r, name: s.source }, true);
+      return (Rand { from_file: true, r: r, name: s.source, st: cell_new(0 as i64), block: 0 as usize }, true);
     },
     Err(e) => {
       gnu.error(s.source + ": " + gnu.io_error_text(e));
@@ -305,7 +315,8 @@ function rand_open(s: Settings): (Rand, boolean) {
 // the bytes written — there is no read-ahead to account for.
 function rand_block(rnd: Rand, n: i32): (string, boolean) {
   if (!rnd.from_file) {
-    return (string_from_bytes_unchecked(random_bytes(n)), true);
+    rnd.st.set(rand.rng_fill(rnd.st.get(), rnd.block, n));
+    return (buf_take(rnd.block), true);
   }
   var out: string = "";
   while (out.len() < n) {
@@ -843,12 +854,22 @@ function main(): i32 {
     // An exhausted random source is the run's end, not this operand's:
     // the operands after it are left as they were.
     if (done.1) {
+      rand_close(rnd);
       return 1;
     }
     i = i + 1;
   }
+  rand_close(rnd);
   if (ok) {
     return 0;
   }
   return 1;
+}
+
+// A builder is not refcounted and has no drop, so the generator's block is
+// released by hand, as an fd is closed.
+function rand_close(rnd: Rand): void {
+  if (!rnd.from_file) {
+    buf_free(rnd.block);
+  }
 }
