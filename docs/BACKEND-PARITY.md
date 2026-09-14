@@ -67,10 +67,15 @@ instead of crashing.
 `internal/codegen/x86_64`'s byte kernels run 32-byte AVX2 main loops —
 `vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, 16 emitted
 instructions with no cpuid check anywhere — so any binary linking one of those
-kernels has required AVX2 for as long as they have existed. The experimental
-`-target *-ssa` backend is SSE2 only (16-byte `movdqu` / `pcmpeqb` /
-`pmovmskb` on `xmm`) and reaches no further than the old level did; it is the
-default backend that fixes the floor. x86-64-v3 is the standard name for the class that has it, and no real
+kernels has required AVX2 for as long as they have existed. `-backend ssa`
+names no register wider than `xmm` — its byte kernels are SSE2 (16-byte
+`movdqu` / `pcmpeqb` / `pmovmskb`) — but its floor is not SSE2:
+`__fern_count_byte` ends each block in `popcnt`, and `OpClz` / `OpCtz` /
+`OpPopcount` lower to `lzcnt` / `tzcnt` / `popcnt`, so it sits at the OLD
+SSE4.2 + BMI1 level and reaches no further than that (#9255). It is the
+default backend that fixes the floor at v3.
+
+x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
 and Piledriver are AVX1 parts and never ran this output.
 
