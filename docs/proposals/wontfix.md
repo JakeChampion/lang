@@ -54,8 +54,8 @@ to dodge a break is explicitly not supported — see `docs/BACKEND-PARITY.md`
 
 **No Darwin x86-64.** Apple Silicon is the macOS path.
 
-**The x86-64 CPU baseline is Haswell-class 2013 (SSE4.2 + BMI1) and the arm64
-baseline is plain ARMv8-A.** Binaries are static with no runtime dispatch, so a
+**The x86-64 CPU baseline is x86-64-v3 (Haswell-class 2013) and the arm64
+baseline is ARMv8.2-A with the cryptographic extensions.** Binaries are static with no runtime dispatch, so a
 selected instruction is a hard requirement. Raising or lowering either baseline
 is a project decision, not something a proposal settles.
 
