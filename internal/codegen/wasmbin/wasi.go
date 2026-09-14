@@ -2285,6 +2285,18 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_seek")
 		}
 	}
+	if helpers.set["__fern_writer_seek"] {
+		if opts.Preview2WASI {
+			// SEEK_END and an append Writer's SEEK_CUR need the size;
+			// the seek itself is a fresh write-via-stream at the target
+			// replacing the old stream.
+			in.add("wasi_descriptor_stat_p2")
+			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_io_output_stream_drop")
+		} else {
+			in.add("wasi_fd_seek")
+		}
+	}
 	if helpers.set["__fern_writer_truncate"] {
 		// The same set-size the path form borrows, on the handle's own
 		// descriptor rather than one this helper opens.
@@ -2842,6 +2854,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_fd_fdatasync":        buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
 	"__fern_fd_syncfs":           buildFdSyncfsBody,
 	"__fern_reader_seek":         buildReaderSeekBodyP2,
+	"__fern_writer_seek":         buildWriterSeekBodyP2,
 	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,

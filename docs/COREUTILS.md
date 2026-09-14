@@ -1959,7 +1959,8 @@ write-failure cases (`yes >&-`, `> /dev/full`); source unable to learn its
 compile target (#8338), in `yes.fern`'s per-target block; and fstat/lseek on
 a DESCRIPTOR (#8713), which `cat` needs to refuse a closed fd 1 before it
 reads anything and `tail` needs to read a regular file from its end — landed
-as `r.stat()` / `w.stat()` / `r.seek()` on every backend. `hostid` wanted a
+as `r.stat()` / `w.stat()` / `r.seek()` on every backend, and `w.seek()`
+beside them for the utilities that write at an offset. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
 on one backend. Group C's first four wanted three more the same way:
@@ -2057,7 +2058,9 @@ groups are the order of work. Each sub-issue names its group.
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  `shred` `stty`, `uptime` (done — no new primitive: the boot time and the
+  `shred` (their primitive is here: `w.seek(offset, whence)`, lseek on a
+  Writer, which is what writing at an offset without rewriting the file
+  needs) `stty`, `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
   clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
   `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
@@ -2102,7 +2105,8 @@ groups are the order of work. Each sub-issue names its group.
   and calls `ftruncate(2)`, so it resizes a file whose MODE would refuse
   a fresh open, and `umask 222; truncate -s 5 new` succeeds there and
   fails here with `Permission denied`. `truncate(1)` therefore waits on
-  the descriptor form, which is the same surface `dd` and `shred` want.
+  the descriptor form; the handle methods `dd` and `shred` want —
+  `w.truncate(len)` and `w.seek(offset, whence)` — are both here.
 
   Neither WASI preview has a path-based set-size —
   `path_filestat_set_size` is not a preview-1 import, measured against

@@ -270,7 +270,7 @@ var rcInertBuiltins = map[string]bool{
 	"__method_MapIter_key": true, "__method_MapIter_value": true,
 
 	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
-	"__method_Reader_read_line": true, "__method_Reader_seek": true,
+	"__method_Reader_read_line": true, "__method_Reader_seek": true, "__method_Writer_seek": true,
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
@@ -453,7 +453,7 @@ var rcInert = map[string]bool{
 	"__fern_read_dir_raw": true, "__fern_read_file": true,
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,
-	"__fern_fd_stat": true, "__fern_reader_seek": true,
+	"__fern_fd_stat": true, "__fern_reader_seek": true, "__fern_writer_seek": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
 	"__fern_reader_read_chunk": true, "__fern_reader_read_line": true,
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,

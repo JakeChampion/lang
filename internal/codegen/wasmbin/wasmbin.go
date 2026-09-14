@@ -2771,6 +2771,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Reader_close":      "__fern_reader_close_fd",
 	"__method_Reader_stat":       "__fern_fd_stat",
 	"__method_Reader_seek":       "__fern_reader_seek",
+	"__method_Writer_seek":       "__fern_writer_seek",
 	"__method_Writer_write":      "__fern_writer_write",
 	"__method_Writer_close":      "__fern_writer_close",
 	"__method_Writer_stat":       "__fern_fd_stat",

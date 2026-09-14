@@ -11,14 +11,16 @@ import (
 )
 
 // selfHostHandleMethodSource drives `Reader.stat()` / `Writer.stat()`,
-// `Reader.seek(offset, whence)` and `Writer.truncate(length)` through the
-// self-host's lowering: the `fd_stat`, `reader_seek` and `writer_truncate`
-// ops, and the Fern runtime leaves behind them. Every failure returns its own
+// `Reader.seek(offset, whence)` / `Writer.seek(offset, whence)` and
+// `Writer.truncate(length)` through the self-host's lowering: the
+// `fd_stat`, `reader_seek` and `writer_truncate` ops, and the Fern runtime
+// leaves behind them. Both seeks are one op there, because a Reader and a
+// Writer are both their fd. Every failure returns its own
 // exit code; the reads after each seek are the assertion that the position
 // moved, and the stat after the resize is the assertion that the length did.
 // `minus2` is bound first because the self-host's lower_expr has no `as i64`
 // arm for a mixed-width subtraction.
-func selfHostHandleMethodSource(path string, out string) string {
+func selfHostHandleMethodSource(path string, out string, app string) string {
 	return fmt.Sprintf(`function main(): i32 {
     var minus2: i64 = (0 as i64) - (2 as i64);
     match (open_reader(%[1]q)) {
@@ -88,9 +90,45 @@ func selfHostHandleMethodSource(path string, out string) string {
         Err(_) => { return 27; },
         Ok(s) => { if (s.len() != 6) { return 28; } }
     }
+    match (open_writer(%[3]q)) {
+        Err(_) => { return 40; },
+        Ok(w) => {
+            match (w.write("0123456789")) { Some(_) => { return 41; }, None => {} }
+            match (w.seek(0 as i64, 1)) {
+                Err(_) => { return 42; },
+                Ok(pos) => { if (pos != 10 as i64) { return 43; } }
+            }
+            match (w.seek(4 as i64, 0)) {
+                Err(_) => { return 44; },
+                Ok(pos) => { if (pos != 4 as i64) { return 45; } }
+            }
+            match (w.write("ab")) { Some(_) => { return 46; }, None => {} }
+            match (w.seek(0 as i64, 1)) {
+                Err(_) => { return 47; },
+                Ok(pos) => { if (pos != 6 as i64) { return 48; } }
+            }
+            match (w.seek(0 as i64, 2)) {
+                Err(_) => { return 49; },
+                Ok(pos) => { if (pos != 10 as i64) { return 50; } }
+            }
+            match (w.seek((0 as i64) - (1 as i64), 0)) {
+                Ok(_) => { return 51; },
+                Err(_) => {}
+            }
+            w.close();
+        }
+    }
+    match (read_file(%[3]q)) {
+        Err(_) => { return 52; },
+        Ok(s) => { if (s != "0123ab6789") { return 53; } }
+    }
+    match (stdout().seek(0 as i64, 5)) {
+        Ok(_) => { return 80; },
+        Err(_) => {}
+    }
     return 0;
 }
-`, path, out)
+`, path, out, app)
 }
 
 func selfHostHandleProbeFile(t *testing.T, dir string) string {
@@ -129,7 +167,8 @@ func TestSelfHostHandleMethodsIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"))
+	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"),
+		filepath.Join(dir, "seeked.txt"))
 	asm := runCapture(t, gcc, runner, driverBin, []byte(src), "-ir")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
@@ -158,7 +197,8 @@ func TestSelfHostHandleMethodsArm64IR(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
-	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"))
+	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"),
+		filepath.Join(dir, "seeked.txt"))
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux", "-ir")
 	if len(asm) == 0 {
 		t.Fatal("driver emitted no asm")
@@ -230,6 +270,38 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
             }
             r.close();
         }
+    }
+    match (open_writer("out.txt")) {
+        Err(_) => { return 40; },
+        Ok(w) => {
+            match (w.write("0123456789")) { Some(_) => { return 41; }, None => {} }
+            match (w.seek(0 as i64, 1)) {
+                Err(_) => { return 42; },
+                Ok(pos) => { if (pos != 10 as i64) { return 43; } }
+            }
+            match (w.seek(4 as i64, 0)) {
+                Err(_) => { return 44; },
+                Ok(pos) => { if (pos != 4 as i64) { return 45; } }
+            }
+            match (w.write("ab")) { Some(_) => { return 46; }, None => {} }
+            match (w.seek(0 as i64, 1)) {
+                Err(_) => { return 47; },
+                Ok(pos) => { if (pos != 6 as i64) { return 48; } }
+            }
+            match (w.seek(0 as i64, 2)) {
+                Err(_) => { return 49; },
+                Ok(pos) => { if (pos != 10 as i64) { return 50; } }
+            }
+            w.close();
+        }
+    }
+    match (read_file("out.txt")) {
+        Err(_) => { return 52; },
+        Ok(s) => { if (s != "0123ab6789") { return 53; } }
+    }
+    match (stdout().seek(0 as i64, 5)) {
+        Ok(_) => { return 80; },
+        Err(_) => {}
     }
     return 0;
 }

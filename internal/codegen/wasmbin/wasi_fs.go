@@ -1783,7 +1783,7 @@ func buildOpenWriterWithBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 8)
 	// Writer struct as buildOpenWriteViaStreamBodyP2 builds it.
-	body = inst.InstI32Const(body, 16)
+	body = inst.InstI32Const(body, writerBoxBytes)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 9)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -1798,6 +1798,7 @@ func buildOpenWriterWithBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 9)
 	body = inst.InstLocalGet(body, 7)
 	body = memory.InstI32Store(body, 2, 4)
+	body = emitWriterFieldsP2(body, 9, false)
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, allocRc1)
 	body = inst.InstLocalTee(body, 10)
@@ -2016,9 +2017,10 @@ func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []by
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Writer struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
-	// descriptor @ +12) — close drops both.
-	body = inst.InstI32Const(body, 16)
+	// Writer struct: the rc sentinel, then {stream handle, descriptor}
+	// — close drops both — and the three fields the seek keeps
+	// (wasi_writer_seek.go).
+	body = inst.InstI32Const(body, writerBoxBytes)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -2033,6 +2035,7 @@ func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []by
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 6)
 	body = memory.InstI32Store(body, 2, 4)
+	body = emitWriterFieldsP2(body, 8, false)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -2116,9 +2119,10 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Writer struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
-	// descriptor @ +12) — close drops both.
-	body = inst.InstI32Const(body, 16)
+	// Writer struct: the rc sentinel, then {stream handle, descriptor}
+	// — close drops both — and the three fields the seek keeps
+	// (wasi_writer_seek.go).
+	body = inst.InstI32Const(body, writerBoxBytes)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -2133,6 +2137,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 6)
 	body = memory.InstI32Store(body, 2, 4)
+	body = emitWriterFieldsP2(body, 8, true)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -2519,6 +2524,9 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 			body = inst.InstReturn(body)
 		}
 		body = inst.InstEnd(body)
+		// The bytes landed: the file offset a later seek reports moves
+		// with them (wasi_writer_seek.go).
+		body = emitWriterAdvanceP2(body, 0, 8)
 		// cur += chunk_len
 		body = inst.InstLocalGet(body, 7)
 		body = inst.InstLocalGet(body, 8)

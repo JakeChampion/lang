@@ -662,7 +662,8 @@ func New() *Interp {
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
-	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinReaderSeek}
+	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
+	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
@@ -2681,12 +2682,13 @@ func builtinSync(_ *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
-// builtinReaderSeek answers `r.seek(offset, whence)`: lseek(2), with the
-// new offset back. A pipe answers ESPIPE, which reaches the caller as
-// `Other("Illegal seek")`, exactly as the compiled backends report it.
-func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
+// builtinHandleSeek answers `r.seek(offset, whence)` and `w.seek(offset,
+// whence)`: lseek(2), with the new offset back. A pipe answers ESPIPE,
+// which reaches the caller as `Other("Illegal seek")`, exactly as the
+// compiled backends report it.
+func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
-		return nil, fmt.Errorf("Reader.seek: expected 3 args")
+		return nil, fmt.Errorf("seek: expected 3 args")
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
@@ -2697,11 +2699,11 @@ func builtinReaderSeek(i *Interp, args []Value) (Value, error) {
 	}
 	off, ok := args[1].(Number)
 	if !ok {
-		return nil, fmt.Errorf("Reader.seek: offset must be a number")
+		return nil, fmt.Errorf("seek: offset must be a number")
 	}
 	whence, ok := args[2].(Number)
 	if !ok {
-		return nil, fmt.Errorf("Reader.seek: whence must be a number")
+		return nil, fmt.Errorf("seek: whence must be a number")
 	}
 	if f == nil {
 		return resultErr(ioErrorOther("", syscall.ESPIPE)), nil
