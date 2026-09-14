@@ -12,7 +12,7 @@
 // treatment of unreachable code after a `br` or a `return`. That is not a
 // coincidence: the IR is a wasm-shaped stack machine, so a stack-discipline
 // break here is a module wasm_ir.fern cannot emit and one the register
-// backends will silently paper over — a `pushq` nobody pops is a frame that
+// backends will silently hide — a `pushq` nobody pops is a frame that
 // grows every loop iteration, not a crash at the op that caused it.
 //
 // # The self-host's model is exact, where native's has to be type-directed

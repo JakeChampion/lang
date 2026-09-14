@@ -27,7 +27,7 @@ import (
 //
 // Crucially the admission gate is the EXISTING whole-program read scan
 // (strfld_reclaim_ok_types_of, via struct_routes_field_reclaim), not a new looser
-// check. That scan carries hard-won history: the per-module compiler self-run
+// check. That scan has history: the per-module compiler self-run
 // segfaulted on exactly this class, because the self-host has no read-side
 // alias-inc for strings, so a field read that escapes is an uncounted alias the
 // free would dangle. Reusing it is what makes this sound; hand-rolling a

@@ -6,7 +6,7 @@
 // abstraction — a `Future[T]`, a not-yet-ready value of type `T`. The
 // concurrency points are explicit (you call `gather` / `race`), the
 // model is colorless (no function coloring, no compiler transform),
-// and it has a real wasm story (it drives the universal `poll`
+// and it has a real wasm path (it drives the universal `poll`
 // builtin, not stackful green threads).
 //
 // PORTABILITY: every combinator compiles and runs on all backends.

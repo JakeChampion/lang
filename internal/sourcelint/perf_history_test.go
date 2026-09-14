@@ -23,7 +23,7 @@ func perfHistoryScript(t *testing.T) string {
 
 // gitEnv is ciEnv with every inherited GIT_* variable dropped.
 //
-// GIT_DIR is the one that bites: with it set, the fixture repositories below
+// GIT_DIR is the one that matters: with it set, the fixture repositories below
 // are never touched and every command runs against the caller's own checkout
 // instead — including the `add` and `commit` that build the fixture.
 func gitEnv(extra ...string) []string {

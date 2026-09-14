@@ -200,7 +200,7 @@ func TestFlattenKeepsStructuredCFBalanced(t *testing.T) {
 // stack-effect guard skips the flatten and the original if-void
 // + payload-load shape stays.
 //
-// Caught in the wild by fernsmith seed 3089; the offending
+// Caught in practice by fernsmith seed 3089; the offending
 // program nested `?` two deep inside `Some(...)`'s payload, and
 // the wasm validator surfaced it as "expected i32 but nothing
 // on stack at offset 547".

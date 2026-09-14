@@ -31,7 +31,7 @@
 //   - SIGNED division and remainder by 2^k. Signed `div_s` rounds
 //     toward zero (`-1 / 2 == 0`); `shr_s` rounds toward negative
 //     infinity (`-1 >> 1 == -1`). Replacing one with the other would
-//     silently change behaviour for negative dividends. Same story
+//     silently change behaviour for negative dividends. The same
 //     for signed `% 2^k` vs `& (2^k - 1)`. Only the divisor-1 case
 //     (always exact) and the unsigned variants are rewritten.
 //   - Floats. They're handled by Fold when both operands are

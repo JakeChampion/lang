@@ -32,7 +32,7 @@ import (
 // param append released, and the caller's exit-sweep dec of its own stale
 // pointer frees the value it was just handed. `caller-reads-seed-after-callee-append`
 // below is the aliasing-only shape and passes even unfixed — it is kept
-// precisely to document that distinction; the other two carry the teeth.
+// precisely to document that distinction; the other two catch the bug.
 //
 // That is the live shape: `slc_walk` / `e065_stmts` self-append their
 // `localarr` / `sbacked` param while building the `Diag[]` they return, so
@@ -40,7 +40,7 @@ import (
 // out and the diagnostic codes read back as recycled memory (`E063` as ` E06`,
 // `E065` as `)E06`).
 //
-// Verified to have teeth: reverting the `|| slot < s.n_params` gate turns
+// Verified to catch it: reverting the `|| slot < s.n_params` gate turns
 // `param-append-recycled-by-return` and `param-append-i32-recycled` red (both
 // exit 3, want 4). Worth keeping alongside the corpus pin — it fails in
 // seconds on a standalone program instead of via a multi-minute checker build

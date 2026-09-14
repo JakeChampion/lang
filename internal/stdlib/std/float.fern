@@ -456,7 +456,7 @@ function __float_to_string_prec(n: f64, prec: i32): string {
 // `to_string_prec(prec)` — fixed-precision rendering with exactly
 // `prec` fractional digits (rounded half away from zero). The
 // precision-controlled counterpart to `to_string()`, for the
-// width/precision table-output story (issue #2684).
+// width/precision table output (issue #2684).
 pub function (n: f32) to_string_prec(prec: i32): string {
     return __float_to_string_prec(n as f64, prec);
 }

@@ -508,7 +508,7 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // `avg_i64` / `avg_f64` and the running / statistical reductions
 // (`cumsum_f64`, `cumprod_f64`, `diff_f64`, `variance_f64`,
 // `stddev_f64`, …) that have no generic bounded equivalent. The
-// per-width `sum_*` / `max_*` / `min_*` zoo that once lived here was
+// per-width `sum_*` / `max_*` / `min_*` family that once lived here was
 // retired in favour of the generic bounded verbs
 // (`num.sum[T: Add + Zero]`, `cmp.max_of` / `cmp.min_of[T: Ord]`, #4387
 // item 2 / #5349); those cover i64 / u32 / u64 / f64 with the same
@@ -1723,7 +1723,7 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] { return min_by(xs,
 // specific hand-written receivers. Each is READ-ONLY over its inputs
 // (no copy-on-write), so it is correct on the self-host IR path as well
 // as native; a *mutating* sort method (`xs.sorted()` → `cmp.sort`) is
-// deferred until the self-host RC copy-on-write story matches native.
+// deferred until the self-host RC copy-on-write matches native.
 // (Bounded-receiver generic methods: carried on the self-host IR path by
 // the same fold that already lowers `map`/`filter`/`fold`.)
 

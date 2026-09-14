@@ -17,7 +17,7 @@ import (
 // map after the first goes dead stress the freelist: a double-free or corrupted
 // mapbox from the reclaim would poison the recycled block and skew the result.
 //
-// This is the regression gate for the wasm landmine: before the __fern_map_free
+// This is the regression gate for the wasm defect: before the __fern_map_free
 // helper, emit_map_buffers_free emitted `op_raw_load_ptr`, which the wasm backend
 // did not select, leaving the operand stack imbalanced so wasmtime rejected the
 // module ("values remaining on stack at end of block"). The helper routes wasm to
@@ -80,7 +80,7 @@ func TestSelfHostMapReclaimIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostMapReclaimIRWasm runs the same cases through the wasm IR backend —
-// the backend the raw_load_ptr landmine broke. A reclaimable map local must now
+// the backend the raw_load_ptr defect broke. A reclaimable map local must now
 // yield valid wat that wasmtime accepts and runs to the right exit code.
 func TestSelfHostMapReclaimIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

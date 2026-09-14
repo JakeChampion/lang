@@ -324,7 +324,7 @@ function __rx_has(xs: i32[], v: i32): boolean {
 
 // __rx_fold lowercases an ASCII uppercase byte when case-insensitive
 // matching (`ci`) is on; otherwise returns the byte unchanged. The whole
-// case-insensitive story is ASCII A–Z ↔ a–z.
+// case-insensitive rule is ASCII A–Z ↔ a–z.
 function __rx_fold(c: i32, ci: boolean): i32 {
     if (ci && c >= 65 && c <= 90) { return c + 32; }
     return c;

@@ -1345,6 +1345,15 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // and re-push with param[0] (pid) on top.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_signal_send\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
             s = s.need("heap"); s = s.need("signal_send");
+        } else if (o.kind_tag == 282) {  // priority
+            // no args -> __fern_priority() -> this process's nice value in x0.
+            // Nothing is boxed, so no heap need.
+            s = s.write("    bl __fn___fern_priority\n    str x0, [sp, #-16]!\n");
+            s = s.need("priority");
+        } else if (o.kind_tag == 283) {  // set_priority
+            // [nice] IS param[0] -> Result[void, IoError].
+            s = s.write("    bl __fn___fern_set_priority\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("set_priority");
         } else if (o.kind_tag == 272) {  // rlimit_nofile
             // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
             // full-width i64 in x0.
@@ -7190,6 +7199,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename(tgt); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod(tgt); }
         if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send(tgt); }
+        if (s.has_need("set_priority")) { fs_src = fs_src + " " + asmcore.rt_src_set_priority(tgt); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate(tgt); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod(tgt); }
         if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size(tgt); }
@@ -7197,6 +7207,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times(tgt); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link(tgt); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask(tgt); }
+        if (s.has_need("priority")) { fs_src = fs_src + " " + asmcore.rt_src_priority(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
@@ -7703,7 +7714,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    fmul d3, d3, d2\n");
     s = s.write("    fadd d0, d0, d3\n");
     s = s.write("    ret\n");
-    // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz dance recovers the
+    // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz rewrite recovers the
     // bits 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
     s = s.write("__fern_kcos:\n");
     s = s.write("    fmul d1, d0, d0\n");
@@ -8102,7 +8113,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-        "reader", "signal_send"
+        "reader", "signal_send", "set_priority"
     ]);
 }
 

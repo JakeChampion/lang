@@ -354,7 +354,7 @@ func statCases(t *testing.T) []invocation {
 
 	// The zone. GNU renders a timestamp in LOCAL time, so the same inode
 	// reads differently under a different TZ and the offset moves with the
-	// date — which is the whole of what makes these three cases worth
+	// date — which is all that makes these three cases worth
 	// having over a fourth UTC one.
 	for _, zone := range []string{
 		"UTC", "America/New_York", "Asia/Kolkata", "Australia/Lord_Howe",

@@ -948,6 +948,8 @@ pub function all_runtime_need_roots(): string[] {
         // The liveness of one pid, delivering a signal to one, and this
         // process's descriptor ceiling.
         "process_alive", "signal_send", "rlimit_nofile",
+        // And how it competes for the CPU.
+        "priority", "set_priority",
         // sockets + readiness (the edge-handler serve loop):
         "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",

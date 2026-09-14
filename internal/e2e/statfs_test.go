@@ -2,7 +2,7 @@
 //
 // The numbers are whatever filesystem the runner is on, so the probe is
 // handed the ones the harness read through Go and compares them. That is the
-// check with teeth: every way this helper can be wrong produces a
+// discriminating check: every way this helper can be wrong produces a
 // plausible-looking record. Reading Linux's `struct statfs` one word early
 // puts f_type in `block_size` and f_blocks in `blocks_free`; taking
 // `blocks_free` for `blocks_avail` hides the superuser reserve that `df`

@@ -11,7 +11,7 @@ import (
 // prFile writes `content` under `dir` as `name` with a PINNED
 // modification time and returns its path.
 //
-// The mtime is the whole of what makes pr's default header
+// The mtime is all that makes pr's default header
 // reproducible: with a named FILE operand the header's date is that
 // file's st_mtime, not the wall clock, so two runs seconds apart agree
 // byte for byte. Every fixture here gets one, and the few cases whose

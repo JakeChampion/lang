@@ -103,7 +103,7 @@ pub function json_encode(v: JsonValue): string {
     // Single shared `buf` and `i` across match arms — the
     // wasm emitter names locals by lang identifier, so
     // re-declaring a `var` in nested scopes collides
-    // (same footgun parse_float hit). Only one composite arm
+    // (same mistake parse_float hit). Only one composite arm
     // runs per call, so the shared `buf` needs no reset.
     var buf: u8[] = [];
     var i: i32 = 0;

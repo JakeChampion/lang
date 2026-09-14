@@ -97,7 +97,7 @@ func buildConcatDriver(t *testing.T, gcc string) (string, string) {
 // The assertions are ordered so a failure says which half broke:
 //   - concat produced this, not the merged/AST path (assertConcatProduced).
 //   - assembles + links  =>  no duplicate or dangling cross-unit symbols. This is
-//     the half that actually bites: the units emit one-per-program symbols that
+//     the half that actually fails: the units emit one-per-program symbols that
 //     rely on dedupe_weak_defs, and a dangling runtime-helper reference links
 //     nowhere. Exactly this caught a real arm64 defect (see the arm64 sibling).
 //   - runs to exit 0  =>  the cross-unit calls compute the right value. main

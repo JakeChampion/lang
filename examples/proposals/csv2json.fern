@@ -12,7 +12,7 @@
 // (quote a field iff it contains a comma, a quote or a newline; double an
 // embedded quote), parsing is where they are undone, and a round trip fails
 // the moment the two disagree about any of it. On top of that the corpus is
-// generated: every combination of a small set of nasty cell values, at every
+// generated: every combination of a small set of awkward cell values, at every
 // position of a 2x2 table, which is ~2 400 tables nobody had to think up and
 // which contains the cases an author would not have.
 //
@@ -320,7 +320,7 @@ function show_table(t: Table): string {
     return out;
 }
 
-// Every nasty cell at every position of a 2x2 table: 11^1 choices at one
+// Every awkward cell at every position of a 2x2 table: 11^1 choices at one
 // position against a fixed background, four positions, plus the all-same
 // tables. Enough combinations that the interesting interactions (a quote
 // beside a comma, a newline beside an empty) actually occur.

@@ -24,7 +24,7 @@ import (
 //	return address column   16 (rip)                   30 (LR)
 //	initial rules           def_cfa rsp+8, RA at -8    def_cfa sp+0, no RA rule
 //
-// The code alignment is the one with teeth beyond the CIE: an advance is
+// The code alignment is the one that matters beyond the CIE: an advance is
 // encoded in INSTRUCTIONS here, so every FDE delta is a quarter of the byte
 // distance. Reusing the x86 encoder unchanged would have produced advances
 // four times too long, on an image that decodes cleanly.

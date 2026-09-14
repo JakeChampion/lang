@@ -1383,7 +1383,7 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 //     and the verdict propagated up through to_string / to_hex / to_binary. That
 //     call always copies, which is now stated where the fixpoint can use it.
 //
-// The pass-through leg is the one with teeth on the first gate: it pads to a
+// The pass-through leg is the one that can fail the first gate: it pads to a
 // width the receiver already exceeds, so `pad_start` returns its argument and
 // the post-call dec lands on a buffer the RESULT still needs. If the counted-
 // alias reasoning were wrong that is a use-after-free — a wrong exit code or a

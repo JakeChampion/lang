@@ -1,6 +1,6 @@
 // `defer`, a labelled `continue`, `let … else`, the `|>` pipe and a trait
 // impl each had exactly one conformance case, and no case combined them.
-// Interaction is where these bite, so this one runs them together.
+// Interaction is where these break, so this one runs them together.
 //
 // The contract being pinned:
 //   - defers run LIFO when the scope that registered them finishes: at

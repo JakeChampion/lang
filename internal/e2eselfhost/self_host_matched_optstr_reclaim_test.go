@@ -179,7 +179,7 @@ function round(i: i32): i32 { var s: string = w("zz"); return run(s, i); }` + ma
 		},
 		{
 			// REFUSED: reassigned AND the payload escapes. The escape gate must
-			// still bite once reassignment is admitted.
+			// still apply once reassignment is admitted.
 			name: "refuses_reassigned_escaping",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     var held: string = "";

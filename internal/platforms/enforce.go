@@ -57,6 +57,18 @@ var gatedBuiltins = map[string]string{
 	// still having them.
 	"rlimit_nofile": "rlimit",
 
+	// How this process competes for the CPU (`priority` /
+	// `set_priority`). Its own capability for the same reason
+	// `rlimit` is: `proc` is the authority to have processes at all,
+	// while a scheduler knob is a property a host can lack while
+	// still running them. Neither WASI preview has one, and neither
+	// constant that could stand in is honest — answering 0 from
+	// `priority` claims the default nice value was measured, and
+	// letting `set_priority` succeed claims a change that did not
+	// happen.
+	"priority":     "sched",
+	"set_priority": "sched",
+
 	// The filesystem itself — how large it is and what it will accept as
 	// a name — rather than the files on it, which is `fs`. A host can
 	// serve files and have no volume to measure.

@@ -183,7 +183,7 @@ function test_take_zero_pulls_nothing(): test.TestOutcome {
     return test.pass();
 }
 
-// A filter that rejects must end the element's journey. Applying the later
+// A filter that rejects must stop the element there. Applying the later
 // stages anyway is invisible in the output — the value is discarded either
 // way — so this is a cost the results cannot see. Taking 3 of the doubled
 // evens means 3 map applications; a pipeline that maps before checking the

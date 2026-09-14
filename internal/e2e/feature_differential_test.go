@@ -406,7 +406,7 @@ function main(): i32 {
 }`},
 
 	// ---- Map copy-on-write (M1) ----
-	// Aliasing a map then mutating the alias must NOT bleed into the
+	// Aliasing a map then mutating the alias must NOT reach the
 	// original — the interp now does rc-based COW like every backend.
 	// (Old interp aliased the shared *Map and printed 999/999.)
 	{"map_cow_alias_isolation", `import "std/i32";

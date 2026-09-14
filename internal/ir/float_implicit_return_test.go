@@ -45,7 +45,7 @@ func TestImplicitFloatReturnMatchesDeclaredWidth(t *testing.T) {
 	}
 
 	want := map[string]OpKind{"fall64": OpConstF64, "fall32": OpConstF32}
-	// Both pointer widths: the wasm one (4) is where this bites, the native
+	// Both pointer widths: the wasm one (4) is where this shows, the native
 	// one (8) guards against fixing it only on the width that complained.
 	for _, ptrW := range []int{4, 8} {
 		ip, err := LowerWith(prog, info, ptrW)

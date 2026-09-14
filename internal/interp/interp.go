@@ -172,7 +172,7 @@ type Map struct {
 
 // clone returns an independent copy of the map (rc 0 — an unowned
 // temporary the binding store will retain to 1). Used by set/delete/
-// clear when the receiver is shared (rc > 1) so the mutation can't bleed
+// clear when the receiver is shared (rc > 1) so the mutation can't reach
 // into an aliased holder.
 func (m *Map) clone() *Map {
 	return &Map{
@@ -488,7 +488,7 @@ type Interp struct {
 	// Exiter is invoked by the `exit(code)` builtin. Defaults to
 	// os.Exit; tests override it to capture the requested code
 	// without actually killing the process. A non-returning
-	// function is expected — the interpreter has no story for
+	// function is expected — the interpreter has no path for
 	// resuming after an exit call.
 	Exiter func(code int)
 	// openFiles maps the `fd` field of a Reader / Writer Struct
@@ -1182,6 +1182,8 @@ func New() *Interp {
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
 	i.Builtins["umask"] = &Builtin{Fn: builtinUmask}
+	i.Builtins["priority"] = &Builtin{Fn: builtinPriority}
+	i.Builtins["set_priority"] = &Builtin{Fn: builtinSetPriority}
 	i.Builtins["rename"] = &Builtin{Fn: builtinRename}
 	i.Builtins["chmod"] = &Builtin{Fn: builtinChmod}
 	i.Builtins["truncate"] = &Builtin{Fn: builtinTruncate}
@@ -1419,7 +1421,7 @@ func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 // the native backends (a socket's readiness token IS its fd). It lets
 // std/async's `fetch_future` be portable; the interp has no real poll, so a
 // Pending future built from it never resolves (the in-interp `poll` stub
-// returns -1), exactly like the native/wasm portability story.
+// returns -1), exactly like the native/wasm portability rule.
 func builtinTcpPollable(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("tcp_pollable: expected 1 arg, got %d", len(args))
@@ -1607,7 +1609,7 @@ func builtinIntToStringU64(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__int_to_string_u64: expected number neg, got %T", args[1])
 	}
-	// `Number` is int64 under the hood; treat as unsigned for
+	// `Number` is int64 underneath; treat as unsigned for
 	// the u64 / u32 callers by re-reading the bits via uint64.
 	out := strconv.FormatUint(uint64(int64(mag)), 10)
 	if int64(neg) != 0 {
@@ -1954,7 +1956,7 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 
 // cowTarget returns the map a mutating method should write to: the
 // receiver itself when it has at most one owner (mutate in place), or a
-// fresh copy when it is shared (rc > 1) so the mutation can't bleed into
+// fresh copy when it is shared (rc > 1) so the mutation can't reach into
 // an aliased holder. Mirrors core/map.fern's __map_cow_inplace.
 func cowTarget(m *Map) *Map {
 	if m.rc <= 1 {
@@ -3530,6 +3532,34 @@ func builtinUmask(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("umask: expected number mask, got %T", args[0])
 	}
 	return Number(setUmask(int(mask) & 0o7777)), nil
+}
+
+// builtinPriority is getpriority(PRIO_PROCESS, 0): this process's nice
+// value, where -20 is the most favourable and 19 the least.
+func builtinPriority(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("priority: expected 0 args, got %d", len(args))
+	}
+	return Number(getProcPriority()), nil
+}
+
+// builtinSetPriority is setpriority(PRIO_PROCESS, 0, nice).
+//
+// The interpreter shares its process with the Go runtime, so this
+// renices `fern` itself for as long as the program runs — the same
+// one-process scope a compiled program has, and the same scope
+// `signal_ignore` moves in.
+func builtinSetPriority(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("set_priority: expected 1 arg, got %d", len(args))
+	}
+	nice, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("set_priority: expected number nice value, got %T", args[0])
+	}
+	// The path is empty for the same reason signal_send's is: the
+	// primitive never saw the text its caller parsed the value out of.
+	return ioResult("", setProcPriority(int(nice))), nil
 }
 
 // builtinCreateDirAll creates `path` and every missing parent.
@@ -5206,7 +5236,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		//
 		// Float belongs here: armMatchesScalar and valuesEqual have both
 		// handled it all along, and the compiled backends match a float
-		// scrutinee happily. Only this gate said otherwise, so a program
+		// scrutinee. Only this gate said otherwise, so a program
 		// the natives and wasm ran refused to interpret at all.
 		switch tag.(type) {
 		case Number, Float, Bool, String:

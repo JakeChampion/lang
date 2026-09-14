@@ -63,7 +63,7 @@ func TestSolveOwnershipReadsTheLocalDemand(t *testing.T) {
 	}
 }
 
-// The lesson of the 921: a retain and a release together demand
+// What the 921 showed: a retain and a release together demand
 // nothing. The body borrowed the value, held it for a local use, and
 // gave the hold back.
 func TestSolveOwnershipTreatsABalancedPairAsABorrow(t *testing.T) {

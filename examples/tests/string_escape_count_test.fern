@@ -52,7 +52,7 @@ function test_escape_shell_plain(): test.TestOutcome {
 }
 
 function test_escape_shell_quote(): test.TestOutcome {
-    // interior ' → the '\'' close/escape/reopen dance.
+    // interior ' → the '\'' close/escape/reopen sequence.
     return test.assert_eq("a'b".escape_shell(), "'a'\\''b'");
 }
 

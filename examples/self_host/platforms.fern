@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -209,6 +209,17 @@ pub function gated_builtins(): Gate[] {
         // processes at all, while this is a property a host can lack while
         // still having them.
         Gate { builtin: "rlimit_nofile", capability: "rlimit" },
+
+        // How this process competes for the CPU. Its own capability for
+        // the same reason `rlimit` is: `proc` is the authority to have
+        // processes at all, while a scheduler knob is a property a host
+        // can lack while still running them. Neither WASI preview has
+        // one, and neither stand-in is honest — answering 0 from
+        // `priority` claims the default nice value was measured, and
+        // letting `set_priority` succeed claims a change that did not
+        // happen.
+        Gate { builtin: "priority", capability: "sched" },
+        Gate { builtin: "set_priority", capability: "sched" },
 
         // The filesystem itself — how large it is and what it will accept
         // as a name — rather than the files on it, which is `fs`. A host

@@ -160,7 +160,7 @@ func leakSummaryLine(stderr string) string {
 // box is released twice and none is left unreleased.
 //
 // The exit code is the load-bearing assertion here and the byte count is the
-// guard rail. An over-release does not move `live_bytes` — the block returns to
+// secondary guard. An over-release does not move `live_bytes` — the block returns to
 // the freelist — so only `__rc_underflow()` separates a correct compiler from the
 // broken one. `allocs == frees` is what catches the opposite failure: a site key
 // that resolves to nothing would deny the credit and leak instead.

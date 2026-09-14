@@ -6819,7 +6819,7 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 // from an OOM kill, which is how the same container cost the native writer
 // (#6000) a diagnosis too. Raw `svc #0x80` syscalls are fine; it is the
 // dyld-free CONTAINER the kernel rejects. The requirements, in the order
-// they bite:
+// they apply:
 //
 //   * MH_PIE. Without it the kernel refuses the image before dyld runs.
 //   * LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN. Every arm64 main

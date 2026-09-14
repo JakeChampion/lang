@@ -111,7 +111,7 @@ func trigKsin(r float64) float64 {
 	return r + float64(p*v)
 }
 
-// trigKcos — cos r for |r| <= pi/4. The (1-w)-hz dance recovers the bits
+// trigKcos — cos r for |r| <= pi/4. The (1-w)-hz rewrite recovers the bits
 // 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
 func trigKcos(r float64) float64 {
 	z := r * r

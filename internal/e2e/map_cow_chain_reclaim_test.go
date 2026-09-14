@@ -31,7 +31,7 @@ package e2e
 // on the string data, so a missing release inflates a count on a block the
 // chain keeps reachable anyway, where the two-word claim ALLOCATES a cell per
 // entry per copy. The bounded leg below is therefore non-vacuous on wasm and
-// arm64 and vacuous on x86-64, which is stated rather than papered over.
+// arm64 and vacuous on x86-64, which is stated rather than hidden.
 //
 // A release may only cover the columns the copy CLAIMS, or it frees what the
 // new handle reads — so the value cases below are what keeps the widened walk

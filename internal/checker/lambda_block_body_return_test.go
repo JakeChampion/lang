@@ -21,7 +21,7 @@ import (
 // the friction #2673 is about: that spelling cannot be retired while the form
 // meant to replace it is worse at the same job.
 //
-// `never` absorbing in unifyReturnType is the other half of the inference story
+// `never` absorbing in unifyReturnType is the other half of the inference rule
 // and still holds: it is the bottom type, ast.NeverType's contract says it
 // "unifies with any type", and assignability and if / match arm unification
 // already read it that way.

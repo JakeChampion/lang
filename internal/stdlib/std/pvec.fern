@@ -22,7 +22,7 @@
 // `PVec` makes the shared case O(log32 n): a write copies at most
 // seven small nodes and shares the rest. For a vector nothing else
 // holds, the compiler's reuse pass gives the same source line the
-// in-place path (see `std/ordmap` for the two-path story), so the
+// in-place path (see `std/ordmap` for the two-path rule), so the
 // unique case stays close to a plain array.
 //
 // # Layout

@@ -194,7 +194,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 				// Surface everything a CI-only failure needs: the
 				// assembler's stderr (wasmtime prints trap/validation
 				// detail there) plus size + hash of both inputs, so a
-				// local repro can confirm it is chewing the same bytes.
+				// local repro can confirm it is processing the same bytes.
 				var stderr []byte
 				if ee, ok := err.(*exec.ExitError); ok {
 					stderr = ee.Stderr

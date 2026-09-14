@@ -118,7 +118,7 @@ function main(): i32 { if (fold(RangeIter { cur: 0, end: 4 }, true, (a: boolean,
 
 // TestNativeGenericFoldCrossType pins the A≠T closure-accumulator fold on the
 // native backends (interp / x86-64 / wasm). See foldCrossTypeProg for the
-// #2686-tail story (fn-arg in an `if` condition now lifts on the self-host path).
+// #2686 tail case (fn-arg in an `if` condition now lifts on the self-host path).
 func TestNativeGenericFoldCrossType(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "main.fern")

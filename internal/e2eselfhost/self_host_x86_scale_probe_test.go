@@ -13,7 +13,7 @@ import (
 
 // TestSelfHostX86ScaleProbe guards the self-hosted assembler at scale:
 // large (many-function) programs must assemble + run correctly, matching
-// gcc's assembly of the same .s. It also pins the lesson behind a retracted
+// gcc's assembly of the same .s. It also pins the finding behind a retracted
 // "assembler-at-scale bug": the earlier nfn=400 "failure" (exit 144, want
 // 400) was just the Unix 8-bit exit-code truncation (400 & 0xFF == 144),
 // not a miscompile, and the "150-fn → 85" figure came from a malformed test

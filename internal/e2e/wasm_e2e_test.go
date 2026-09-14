@@ -778,7 +778,7 @@ function main(): i32 {
 // `eprint` lands on stderr (fd=2). wasmtime keeps fds 1 and 2
 // separate, so the test can confirm that `print("hi")` shows up
 // on stdout and `eprint("err")` shows up on stderr — without
-// either bleeding into the other stream.
+// either reaching the other stream.
 func TestWASMEprintBuiltin(t *testing.T) {
 	src := `function main(): i32 {
 		print("hi");
@@ -2056,7 +2056,7 @@ function main(): i32 {
     if (tail.len() != 4) { return 4; }
     if (tail[0] != 101) { return 5; }   // 'e'
 
-    // Empty string -> zero-length view, no allocation drama.
+    // Empty string -> zero-length view, no allocation.
     var es: string = "";
     var ev: [u8] = es.as_bytes();
     if (ev.len() != 0) { return 6; }
@@ -2620,7 +2620,7 @@ function main(): i32 {
 	}
 }
 
-// Wide-V Map: Map[K, i64] / Map[K, f64] need a boxing dance
+// Wide-V Map: Map[K, i64] / Map[K, f64] need a boxing step
 // since the shared wat helpers see all values as i32. The IR
 // allocates an 8-byte cell on each set / get_or-fallback, stores
 // the wide value there, and passes / returns the cell pointer

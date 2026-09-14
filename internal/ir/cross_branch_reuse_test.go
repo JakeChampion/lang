@@ -92,7 +92,7 @@ function main(): i32 {
 	}
 }
 
-// The class gate still bites: a wider donor cannot hand its box to a
+// The class gate still applies: a wider donor cannot hand its box to a
 // narrower construction (the runtime class check would decline anyway).
 func TestCrossKindReuseDeclinesClassMismatch(t *testing.T) {
 	ip := lowerForTest(t, `struct Wide { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32 }

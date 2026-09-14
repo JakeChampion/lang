@@ -856,7 +856,7 @@ func (b *builder) readOnlyCallArg(call *ast.Call, i int) bool {
 //     counted, so rhsTainted's TryOp case credits the binding as owned and
 //     the exit sweep balances it. Other pointer payloads (struct / array /
 //     tuple / enum / Map) keep today's sound box+payload leak until their
-//     ownership-transfer story is wired;
+//     ownership transfer is wired;
 //   - the enum is EnumRcPayloads-eligible, so an aliased payload (`Ok(pre)`)
 //     was inc'd at construction — the move hands the binding a counted
 //     reference, never an uncounted borrow.
@@ -2595,7 +2595,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 // to __fern_arr_dec for the rc-dec / freelist return. Element structs
 // are pointer-shaped, so the stride is ptrW and the length lives at
 // [ptr-4]. Slots: 0=ptr (param), 1=i, 2=len (scratch).
-// genArrElemDropFn is the shared skeleton for the "array of pointer-shaped
+// genArrElemDropFn is the shared template for the "array of pointer-shaped
 // elements, each reclaimed through a single 1-arg per-element drop callee"
 // family (#4401 part 4). It builds `fnName(ptr)` which, on the array's last
 // reference (rc==1), walks each element (a ptrW-stride pointer), drops it via

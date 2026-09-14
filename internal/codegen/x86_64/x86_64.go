@@ -111,7 +111,7 @@ func (g *generator) emitSeccompRuntime() {
 	// install a filter of its own choosing.
 	//
 	// rt_sigreturn is likewise absent, which is a classic seccomp
-	// footgun — it is required whenever a signal handler returns. Fern
+	// mistake — it is required whenever a signal handler returns. Fern
 	// installs no signal handlers, and an unhandled fatal signal kills
 	// the process without ever returning, so there is nothing to permit.
 	// Adding a handler would mean adding rt_sigreturn here.
@@ -264,6 +264,12 @@ const (
 	sysSymlinkat  = 266
 	sysReadlinkat = 267
 	sysUmask      = 95
+	// getpriority(2) and setpriority(2). The numbers are SWAPPED
+	// between the two ABIs — x86-64 has get at 140 and set at 141,
+	// while the asm-generic table aarch64 uses has set at 140 and get
+	// at 141 — so neither backend's pair can be copied to the other.
+	sysGetpriority = 140
+	sysSetpriority = 141
 	// The filesystem-metadata primitives: renameat(2) 264,
 	// fchmodat(2) 268 and utimensat(2) 280. Linux's fchmodat takes
 	// THREE arguments, not four: the flags-taking form is fchmodat2
@@ -997,6 +1003,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesUmask {
 		g.emitUmaskRuntime()
 	}
+	if g.usesPriority {
+		g.emitPriorityRuntime()
+	}
+	if g.usesSetPriority {
+		g.emitSetPriorityRuntime()
+	}
 	if g.usesRename {
 		g.emitRenameRuntime()
 	}
@@ -1402,7 +1414,7 @@ type generator struct {
 	// provides (behaviour-identical — the inline path mirrors the helper
 	// instruction-for-instruction), shrinking the `.s` and its assembler
 	// footprint. Every normal function (all user code, and every self-host
-	// function but the one monster) stays on the inline fast path. Unlike
+	// function but the largest) stays on the inline fast path. Unlike
 	// arm64 — where the same field also dodges the ±128 MB branch-reach
 	// overflow — x86-64's rel32 jumps never overflow, so here the sole
 	// motive is `.s` size / assembler memory.
@@ -1604,6 +1616,8 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	usesPriority      bool
+	usesSetPriority   bool
 	// The filesystem-metadata primitives (#9059): renameat, fchmodat
 	// and utimensat, each one syscall over one or two path operands.
 	usesRename       bool
@@ -2130,6 +2144,12 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "umask":
 		g.usesUmask = true
+	case "priority":
+		g.usesPriority = true
+	case "set_priority":
+		g.usesSetPriority = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "rename":
 		g.usesRename = true
 		g.usesAlloc = true
@@ -2683,7 +2703,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// Stash the raw 32-bit bit pattern as an i32 on the
 		// operand stack — same shape as arm64, where floats
 		// live as raw bits on the stack and only move into
-		// xmm registers at op time. Two-line dance: zero-
+		// xmm registers at op time. Two-line sequence: zero-
 		// extend the bit pattern into rax, push.
 		bits := math.Float32bits(op.F32)
 		g.emit(fmt.Sprintf("mov eax, %d", int32(bits)))
@@ -3767,6 +3787,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_link"
 		case "umask":
 			target = "__fern_umask"
+		case "priority":
+			target = "__fern_priority"
+		case "set_priority":
+			target = "__fern_set_priority"
 		case "rename":
 			target = "__fern_rename"
 		case "chmod":
@@ -7208,7 +7232,7 @@ func (g *generator) emitAllocRuntime() {
 	// big lazy arena from Linux's overcommit accounting — without it the
 	// heuristic refuses the single 8 GiB anonymous map outright on hosts
 	// with RAM+swap below the arena size, failing every binary AT STARTUP
-	// (the arm64 backend does the same; its comment has the full story).
+	// (the arm64 backend does the same; its comment has the full detail).
 	g.emit("mov r10d, 0x4022")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
@@ -9494,7 +9518,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// __fern_kcos(xmm0=r, |r| <= pi/4) → cos r.
 	//   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
 	//   cos = w + (((1-w) - hz) + z*(z*p))
-	// The (1-w)-hz dance recovers the bits 1-hz threw away; computing
+	// The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
 	// 1 - hz + z*z*p directly loses them and costs ~2 ulp.
 	g.line("")
 	g.label("__fern_kcos")
@@ -9767,7 +9791,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_log_f64")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
 	logNoScale := g.freshLabel("logNoScale")
-	// Domain guards. The bit-twiddling below happily extracts an exponent
+	// Domain guards. The bit-twiddling below extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
 	// values call for. log(-0) == log(0) == -Inf, which the equality
@@ -10769,7 +10793,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("add rsi, 16")
 	g.emit("sub edx, 16")
 	// Priming the other three accumulators costs 48 bytes, so the wide loop
-	// only pays for itself with a fourth block's worth beyond them.
+	// only wins with a fourth block's worth beyond them.
 	g.emit("cmp edx, 112")
 	g.emit("jb .Lcrc32_fold1")
 	for i, reg := range []string{"xmm6", "xmm7", "xmm8"} {
@@ -13180,7 +13204,7 @@ const linuxPathMax = 4096
 // — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
 // linuxStatfsFields. System V: rdi = path string value.
 //
-// Built on the same skeleton as __fern_stat: a NUL-terminated heap copy
+// Built on the same shape as __fern_stat: a NUL-terminated heap copy
 // of the path for the syscall, the buffer left live across
 // __fern_alloc_box so the record is copied out after the box exists, and
 // the errno classified against the ORIGINAL path value so the IoError
@@ -15538,6 +15562,84 @@ func (g *generator) emitUmaskRuntime() {
 	g.line(".size __fern_umask, .-__fern_umask")
 }
 
+// emitPriorityRuntime emits `__fern_priority() → nice value` —
+// getpriority(PRIO_PROCESS, 0).
+//
+// The kernel returns the value BIASED by 20, so that a nice value of 19
+// comes back as 1 and -20 as 40 and the syscall never has to return a
+// negative on success. Undoing the bias is the caller's job on every
+// libc, and it is what makes the helper's answer the number the caller
+// asked for rather than the kernel's internal one.
+//
+// It cannot fail for this process — PRIO_PROCESS is a valid `which` and
+// pid 0 always exists — so there is no errno to classify and no box to
+// allocate.
+func (g *generator) emitPriorityRuntime() {
+	g.line("")
+	g.line(".globl __fern_priority")
+	g.line(".type __fern_priority, @function")
+	g.label("__fern_priority")
+	g.emit("xor edi, edi") // PRIO_PROCESS
+	g.emit("xor esi, esi") // this process
+	g.emitSyscall(sysGetpriority)
+	g.emit("mov ecx, 20")
+	g.emit("sub ecx, eax")
+	g.emit("mov eax, ecx")
+	g.emit("ret")
+	g.line(".size __fern_priority, .-__fern_priority")
+}
+
+// emitSetPriorityRuntime emits `__fern_set_priority(nice)` →
+// Result[void, IoError] — setpriority(PRIO_PROCESS, 0, nice).
+//
+// No bias on this side: setpriority takes the nice value as written,
+// which is the asymmetry to know about — only the READ is biased.
+//
+// EACCES and EPERM are what an unprivileged caller gets for asking to
+// go below its current value, and neither is a named IoError variant,
+// so each arrives as Other(path, strerror) with the shared empty path.
+//
+// System V: edi = nice; the Result box in rax.
+func (g *generator) emitSetPriorityRuntime() {
+	g.line("")
+	g.line(".globl __fern_set_priority")
+	g.line(".type __fern_set_priority, @function")
+	g.label("__fern_set_priority")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8") // 2 pushes + this ⇒ 16-byte aligned at the calls
+	g.emit("movsxd rdx, edi")
+	g.emit("xor edi, edi") // PRIO_PROCESS
+	g.emit("xor esi, esi") // this process
+	g.emitSyscall(sysSetpriority)
+	g.emit("test rax, rax")
+	g.emit("js .Lsetprio_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lsetprio_ret")
+
+	g.label(".Lsetprio_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax") // the IoError box, across the Result alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lsetprio_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_set_priority, .-__fern_set_priority")
+}
+
 // emitCreateDirAllRuntime emits `__fern_create_dir_all(path) →
 // Result[void, IoError]` — mkdirat(AT_FDCWD, path, 0777) for every
 // missing component of `path`, POSIX `mkdir -p`.
@@ -16008,7 +16110,7 @@ func (g *generator) emitReadDirRuntime() {
 
 // linuxStatFields maps each FileStat field onto the Linux x86-64
 // `struct stat` field it is read from: the box offset, the statbuf
-// offset, and how many bytes to load. It is the whole of what makes
+// offset, and how many bytes to load. It is all that makes
 // this target-specific — everything else about the helper is shared.
 //
 // Two loads are narrower than the field they fill. `st_nlink` is a

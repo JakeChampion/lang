@@ -12,7 +12,7 @@
 // module can depend on it without pulling in the lexer/parser. The
 // module grows one helper at a time as files are converted off
 // their local copies; keeping each conversion small bounds the
-// blast radius on the Go-side test staging lists (each test that
+// churn in the Go-side test staging lists (each test that
 // compiles a converted module must also stage util.fern).
 
 // i32_to_string renders a signed 32-bit integer in base 10 — the

@@ -4,7 +4,7 @@ package component
 // subsumes the shape-specific composers (CLI-stream / TCP / UDP / HTTP).
 //
 // The shape-specific composers each hand-assembled Phase A (import +
-// shared-type surfacing) and the Phase B–H lowering dance for one fixed
+// shared-type surfacing) and the Phase B–H lowering sequence for one fixed
 // import shape, so every new cross-shape combination (TCP+UDP, UDP+files,
 // …) needed its own bespoke wiring. This engine replaces that: a caller
 //

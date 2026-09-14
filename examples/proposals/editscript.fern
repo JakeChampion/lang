@@ -152,7 +152,7 @@ function apply(a: string, edits: Edit[]): string {
         i = i + 1;
     }
     // Anything the script never consumed is a bug in the script, not something
-    // to paper over by appending the remainder.
+    // to hide by appending the remainder.
     if (pos != a.len()) { return "<script consumed " + pos.to_string()
         + " of " + a.len().to_string() + ">"; }
     return out;

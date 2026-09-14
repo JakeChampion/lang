@@ -69,7 +69,7 @@ func TestSelfHostCharMethodsX86_64(t *testing.T) {
 // TestSelfHostSortX86_64 proves the self-hosted compiler compiles the
 // real std/sort (which needed i32.to_lower) and the result sorts. Exercises
 // the `own`-consuming `sort_i32_inplace_asc` — one of std/sort's remaining
-// monomorphic sorts after the per-width zoo retired to core/cmp (#5397).
+// monomorphic sorts after the per-width family retired to core/cmp (#5397).
 func TestSelfHostSortX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

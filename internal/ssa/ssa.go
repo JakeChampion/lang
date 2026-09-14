@@ -112,7 +112,7 @@ const (
 	// Int ↔ float conversions. Signed/unsigned distinction is
 	// encoded in the OpKind (S vs U). The float side is f64
 	// in SSA; backend codegen decides f32 vs f64 from the
-	// upcoming type-tagging story.
+	// upcoming type tagging.
 	OpIToFS // int64 → float64 (signed integer)
 	OpIToFU // int64 → float64 (unsigned integer)
 	OpFToIS // float64 → int64 (signed truncation)

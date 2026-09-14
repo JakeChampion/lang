@@ -634,7 +634,7 @@ pub function (s: string) escape_c(): string {
 // `(s: string) escape_shell()` — POSIX-shell-safe quoting.
 // Wraps s in single quotes and replaces any interior `'`
 // with the standard close-quote / escaped-single-quote /
-// reopen-quote dance: `'` → `'\''`. The result can be
+// reopen-quote sequence: `'` → `'\''`. The result can be
 // concatenated into a shell command line without word
 // splitting or substitution.
 pub function (s: string) escape_shell(): string {
@@ -816,7 +816,7 @@ pub function (s: string) is_valid_identifier(): boolean {
 // accepts ONLY a run of 1..3 ASCII digits, so a leading sign
 // ("+1" / "-1"), embedded whitespace, or an empty octet is
 // rejected — the strict shape an IPv4 octet needs (parse_int
-// would happily read "+1" / "-1" as 1). (An earlier version of
+// would read "+1" / "-1" as 1). (An earlier version of
 // this note blamed a since-fixed parse_int i64-comparison bug;
 // parse_int("127") returns Some(127) on every backend today.)
 pub function (s: string) is_ipv4(): boolean {
@@ -871,7 +871,7 @@ pub function (s: string) is_email_like(): boolean {
 // shape check, like `is_email_like`; defer to a real URL
 // parser when one lands.
 pub function (s: string) is_url_like(): boolean {
-    var rest: str = "";
+    var rest: string = "";
     if (s.starts_with("https://")) {
         rest = s.remove_prefix("https://");
     } else if (s.starts_with("http://")) {
@@ -888,7 +888,7 @@ pub function (s: string) is_url_like(): boolean {
 // JSON validator — just a fast pre-flight check before
 // attempting a parse. Empty strings return false.
 pub function (s: string) is_json_like(): boolean {
-    var t: str = s.trim();
+    var t: string = s.trim();
     var n: i32 = t.len();
     if (n < 2) { return false; }
     var first: i32 = t[0] as i32;

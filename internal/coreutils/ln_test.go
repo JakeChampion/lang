@@ -12,7 +12,7 @@ import (
 // its own freshly built working directory and compares everything under it,
 // so a stray temporary name fails as loudly as a missing link.
 //
-// The three places that comparison earns its keep:
+// The three places that comparison matters:
 //
 //   - A backup is the destination MOVED, not copied. `ln a b; ln -b a b`
 //     leaves a, b and b~ all on one inode with three links, and an

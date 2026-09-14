@@ -1995,7 +1995,7 @@ var runtimeHelperDeps = map[string][]string{
 // routines in an rc-carrying program — `__fern_rc_inc` / `_dec` run once per
 // rc op — so a helper's entry address decides whether its body shares one
 // 32-byte instruction-fetch window. Letting that fall out of wherever the
-// preceding helper happened to end is a landmine: removing two subsumed
+// preceding helper happened to end is a hazard: removing two subsumed
 // instructions from an EARLIER helper doubled examples/bench/string_rfind_byte,
 // 61 ms to 122 ms, without changing one instruction that program runs (#8193).
 func emitRuntimeHelpers(w func(string, ...any), helpers []string) {

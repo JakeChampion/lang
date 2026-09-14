@@ -66,7 +66,7 @@ func machoSegments(t *testing.T, path string) []machoSegment {
 // macho_executable decided `has_data` from `data.len() > 0` alone, so an image
 // with bss but no initialized data got NO __DATA segment — and every .bss symbol
 // then resolved to an address in no mapped segment. `__fern_scratch` is the one
-// that bites: the syscall helpers stage their timeval/timespec structs there, so
+// that fails: the syscall helpers stage their timeval/timespec structs there, so
 // the first write faults.
 //
 // Nothing hit it while the arm64 emitter emitted its f64 constant pool
