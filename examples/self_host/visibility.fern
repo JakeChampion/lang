@@ -120,9 +120,69 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
     return out;
 }
 
+// package_of returns the PACKAGE a module belongs to: its directory. Two
+// modules are in the same package iff they sit in the same directory, and the
+// whole embedded stdlib (`std/…` + `core/…`) counts as one. See
+// docs/PUB-PACKAGE.md.
+function package_of(module_name: string): string {
+    if (module_name.len() >= 4 && slice_unchecked(module_name, 0, 4) == "std/") { return "stdlib"; }
+    if (module_name.len() >= 5 && slice_unchecked(module_name, 0, 5) == "core/") { return "stdlib"; }
+    var cut: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < module_name.len()) {
+        if (module_name[i] == b'/') { cut = i; }
+        i = i + 1;
+    }
+    if (cut < 0) { return ""; }
+    return slice_unchecked(module_name, 0, cut) + "";
+}
+
+// package_keys is private_keys' `pub(package)` sibling: declarations visible
+// within their own package and nowhere else. They are not in private_keys —
+// a package-scoped decl IS exported, just not to everyone — so the reference
+// check consults this list only when the referring module is in a DIFFERENT
+// package.
+function package_keys(loaded: flatten.LoadedModule[]): string[] {
+    var out: string[] = [];
+    for lm in loaded {
+        for f in lm.mod.funcs {
+            if (f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
+                out = out.append(lm.name + "." + f.name);
+            }
+        }
+        for sd in lm.mod.structs {
+            if (sd.is_package && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
+                out = out.append(lm.name + "." + sd.name);
+            }
+        }
+        for en in lm.mod.enums {
+            if (en.is_package) { out = out.append(lm.name + "." + en.name); }
+        }
+        for al in lm.mod.aliases {
+            if (al.is_package) { out = out.append(lm.name + "." + al.name); }
+        }
+    }
+    return out;
+}
+
+// module_name_of returns the loaded module `qual` resolves to, or "" when the
+// qualifier names nothing loaded.
+function module_name_of(loaded: flatten.LoadedModule[], qual: string): string {
+    for lm in loaded {
+        if (lm.name == qual) { return lm.name; }
+    }
+    for lm in loaded {
+        if (package_of(lm.name).len() > 0 && lm.name.len() > qual.len()) {
+            var tail: string = slice_unchecked(lm.name, lm.name.len() - qual.len(), lm.name.len()) + "";
+            if (tail == qual) { return lm.name; }
+        }
+    }
+    return "";
+}
+
 // module_diags reports every `<qual>.<name>` in `src`'s own functions that names
 // a private top-level declaration of the module `qual` resolves to.
-function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: string[], priv_consts: string[]): util.Diag[] {
+function module_diags(src_name: string, src: parser.Module, loaded: flatten.LoadedModule[], priv: string[], priv_consts: string[], pkg: string[]): util.Diag[] {
     var out: util.Diag[] = [];
     var quals: string[] = import_quals(src);
     if (quals.len() == 0) { return out; }
@@ -134,6 +194,22 @@ function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: 
     }
     for r in refs {
         var key: string = r.qual + "." + r.name;
+        // A `pub(package)` declaration is out of reach only from OUTSIDE its
+        // package. An unknown referrer (src_name "") is left alone rather than
+        // guessed at: a false "not exported" on a legal sibling reference is
+        // worse than the missed diagnostic, and matches the checker's
+        // zero-false-positive stance elsewhere.
+        if (src_name.len() > 0 && util.has_str(pkg, key)) {
+            var owner: string = module_name_of(loaded, r.qual);
+            if (owner.len() > 0 && package_of(owner) != package_of(src_name)) {
+                out = out.append(util.Diag {
+                    code: "",
+                    message: key + " is package-scoped: it is visible only inside " + package_of(owner) + " (declare it as `pub " + r.name + " …` to export it)",
+                    line: r.line,
+                    col: r.col
+                });
+            }
+        }
         if (util.has_str(priv, key)) {
             var kw: string = "function";
             if (util.has_str(priv_consts, key)) { kw = "const"; }
@@ -155,13 +231,13 @@ function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: 
 // bundle-level one produced.
 pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): util.Diag[] {
     var priv: string[] = private_keys(loaded);
-    if (priv.len() == 0) { return []; }
     var priv_consts: string[] = private_const_keys(loaded);
-    var out: util.Diag[] = module_diags(entry, loaded, priv, priv_consts);
+    var pkg: string[] = package_keys(loaded);
+    var out: util.Diag[] = module_diags("", entry, loaded, priv, priv_consts, pkg);
     var td: util.Diag[] = type_diags(entry, loaded, priv);
     for d in td { out = out.append(d); }
     for lm in loaded {
-        for d in module_diags(lm.mod, loaded, priv, priv_consts) { out = out.append(d); }
+        for d in module_diags(lm.name, lm.mod, loaded, priv, priv_consts, pkg) { out = out.append(d); }
         for d in type_diags(lm.mod, loaded, priv) { out = out.append(d); }
     }
     return out;

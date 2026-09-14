@@ -2095,6 +2095,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
     // enforces. `async` selects the WASI Preview-3 `canon lift async` export
     // surface, so dropping it changes what a `-emit core-module` build exports.
     if (fd.is_pub) { out = out + "pub "; }
+    if (fd.is_package) { out = out + "pub(package) "; }
     if (fd.fip || fd.fbip) {
         if (fd.fip) { out = out + "fip"; } else { out = out + "fbip"; }
         if (fd.fip_allowance > 0) { out = out + "(" + util.i32_to_string(fd.fip_allowance) + ")"; }
@@ -2165,6 +2166,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
     }
     if (sd.must_consume) { out = out + "@must_consume\n"; }
     if (sd.is_pub) { out = out + "pub "; }
+    if (sd.is_package) { out = out + "pub(package) "; }
     out = out + "struct " + sd.name;
     // Type parameters, for the same reason a function's matter: `struct Set { xs: T[] }`
     // leaves T unbound.
@@ -2219,6 +2221,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
 function print_const_decl(fd: parser.FuncDecl): string {
     var out: string = "";
     if (fd.is_pub) { out = out + "pub "; }
+    if (fd.is_package) { out = out + "pub(package) "; }
     out = out + "const " + fd.name;
     if (fd.ret_type.len() > 0) { out = out + ": " + fd.ret_type; }
     var i: i32 = 0;
@@ -2275,6 +2278,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
     }
     if (ed.must_consume) { out = out + "@must_consume\n"; }
     if (ed.is_pub) { out = out + "pub "; }
+    if (ed.is_package) { out = out + "pub(package) "; }
     out = out + "enum " + ed.name;
     if (ed.type_params.len() > 0) {
         out = out + "[";
@@ -2447,6 +2451,7 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
 function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
     var out: string = "";
     if (td.is_pub) { out = out + "pub "; }
+    if (td.is_package) { out = out + "pub(package) "; }
     out = out + "trait " + td.name;
     if (td.type_params.len() > 0) {
         out = out + "[";
@@ -2509,6 +2514,7 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
 function print_type_alias(a: parser.TypeAlias): string {
     var out: string = "";
     if (a.is_pub) { out = out + "pub "; }
+    if (a.is_package) { out = out + "pub(package) "; }
     out = out + "type " + a.name + " = ";
     var i: i32 = 0;
     while (i < a.variants.len()) {

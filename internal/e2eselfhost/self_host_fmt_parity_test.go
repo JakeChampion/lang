@@ -61,6 +61,19 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	// `pub(package)` — the third visibility level (docs/PUB-PACKAGE.md). The
+	// self-host consumed the `pub` and left `(package)` on the cursor, so the
+	// declaration lost its visibility and the leftover became a stray
+	// `package;` statement: -fmt both downgraded the decl and invented a
+	// statement. Every decl kind that can carry it is here, since each has its
+	// own printer arm.
+	{"pub-package", `pub(package) struct S { n: i32 }
+pub(package) enum E { A, B }
+pub(package) type T = S | S;
+pub(package) function helper(n: i32): i32 { return n + 1; }
+pub function api(n: i32): i32 { return helper(n); }
+function main(): i32 { return api(1); }
+`},
 	{"inline-hints", `@inline
 function inc(n: i32): i32 { return n + 1; }
 @noinline

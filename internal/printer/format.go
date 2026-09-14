@@ -798,6 +798,14 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		}
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
+		if p.Default != nil {
+			// An optional parameter's default is part of the signature: without
+			// it the formatted function requires an argument every existing
+			// caller omits, so `-fmt` turns a compiling program into one that
+			// does not.
+			f.b.WriteString(" = ")
+			f.formatExpr(p.Default, precLowest)
+		}
 	}
 	f.b.WriteByte(')')
 	if fn.ReturnType != nil {
@@ -1269,6 +1277,10 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteString(writtenName(p.Name))
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(p.Type))
+			if p.Default != nil {
+				f.b.WriteString(" = ")
+				f.formatExpr(p.Default, precLowest)
+			}
 		}
 		f.b.WriteByte(')')
 		if x.ReturnType != nil {
@@ -1773,9 +1785,18 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 						f.b.WriteString(", ")
 					}
 					if i == lhs {
+						// The hole can itself be a NAMED argument's value
+						// (`9 |> f(b = _)`): the name lives in ArgNames[i] and
+						// has to come back with it, or the re-parsed call binds
+						// the piped value to a different parameter — the same
+						// silent change of meaning as dropping it anywhere else.
+						if i < len(x.ArgNames) && x.ArgNames[i] != "" {
+							f.b.WriteString(x.ArgNames[i])
+							f.b.WriteString(" = ")
+						}
 						f.b.WriteByte('_')
 					} else {
-						f.formatExpr(a, precLowest)
+						f.writeCallArg(x, i, a)
 					}
 				}
 				f.b.WriteByte(')')
@@ -1794,7 +1815,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 					if i > 0 {
 						f.b.WriteString(", ")
 					}
-					f.formatExpr(a, precLowest)
+					f.writeCallArg(x, i+1, a)
 				}
 				f.b.WriteByte(')')
 			}
@@ -1810,7 +1831,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			f.formatExpr(a, precLowest)
+			f.writeCallArg(x, i, a)
 		}
 		f.b.WriteByte(')')
 	case *ast.Index:
@@ -2322,4 +2343,18 @@ func formatType(t ast.Type) string {
 		return "own " + x.Resource
 	}
 	return ""
+}
+
+// writeCallArg emits one call argument, restoring the `name = ` prefix of a
+// NAMED argument. Args carries them in source order with the names alongside in
+// ArgNames; dropping the names rewrote `mk(b = 1, a = 9)` as `mk(1, 9)`, which
+// binds the values to the OTHER parameters — `-fmt` silently changed what the
+// program computed. (defaultargs reorders and clears ArgNames before the
+// checker, so only the printer ever sees them.)
+func (f *formatter) writeCallArg(x *ast.Call, i int, a ast.Expr) {
+	if i < len(x.ArgNames) && x.ArgNames[i] != "" {
+		f.b.WriteString(x.ArgNames[i])
+		f.b.WriteString(" = ")
+	}
+	f.formatExpr(a, precLowest)
 }

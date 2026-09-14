@@ -430,6 +430,10 @@ function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
 // in the table has no store width to carry.
 function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): string {
     var declared: boolean = ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
+    // A builtin union names no declaration and needs none: its box carries the
+    // payload's width in the op (`op_opt_make_w`) rather than reading it from a
+    // field table.
+    if (ins.kind_tag == ssasem.variant_new() && enum_layout(f, f.values[ins.result]) == semrecords.layout_option()) { return ""; }
     for arg in ins.args {
         if (narrow_slot(f.values[arg])) { continue; }
         if (!declared) { if (!wide_element_site(ins.kind_tag)) { return "unsupported physical RC construction element"; } }
@@ -917,6 +921,20 @@ function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
     return semrecords.find_variant(f.enums[semrecords.find_enum(f.enums, t)], name);
 }
 
+// A payload wider than the narrow slot rides the box's wide form, chosen from
+// the payload AT THIS SITE rather than from the union: a mixed
+// `Result[i64, string]` writes its Ok through the wide form and its Err — a
+// pointer — through the narrow one, which is what each arm reads back. Making
+// the whole union wide instead pushes the pointer into an i64 slot, and wasm
+// refuses the module for it.
+//
+// An f32 takes the same 8-byte slot as an f64 rather than a narrow one of its
+// own (#7756); `is_float` covers both, and the flag says integer or float
+// rather than which width.
+function wide_payload(t: typeinfo.Type): boolean {
+    return ssasem.is_wide(t) || ssasem.is_float(t);
+}
+
 // A builtin union's box is a tag word and one payload word: the tag IS the
 // variant's position in the schema, so a test compares it and a projection
 // reads the single payload without a field index. `op_opt_none` writes the
@@ -926,7 +944,9 @@ function option_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, who
     var tag: i32 = variant_tag(f, whole, ins.str);
     if (ins.kind_tag == ssasem.variant_new()) {
         if (ins.args.len() == 0 && tag == 1) { return emit(r, ir.op_opt_none()); }
-        if (ins.args.len() == 0) { r = emit(r, ir.op_const_i32(0)); }
+        if (ins.args.len() == 0) { r = emit(r, ir.op_const_i32(0)); return emit(r, ir.op_opt_make(tag)); }
+        var pay: typeinfo.Type = f.values[ins.args[0]];
+        if (wide_payload(pay)) { return emit(r, ir.op_opt_make_w(tag, 64, !ssasem.is_float(pay))); }
         return emit(r, ir.op_opt_make(tag));
     }
     if (ins.kind_tag == ssasem.variant_is()) {
@@ -934,6 +954,8 @@ function option_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, who
         r = emit(r, ir.op_const_i32(tag));
         return emit(r, ir.op_bin("eq", 0, false));
     }
+    var got: typeinfo.Type = f.values[ins.result];
+    if (wide_payload(got)) { return emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(got))); }
     return emit(r, ir.op_opt_payload());
 }
 

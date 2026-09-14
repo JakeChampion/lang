@@ -2363,16 +2363,17 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
 }
 
 // A builtin union is its instantiation: `Option` with no argument names no
-// payload and so has no schema, and a payload wider than one word has no slot
-// in the two-word box, which is the rule an array or tuple element follows for
-// the same reason.
+// payload and so has no schema. A payload wider than the narrow slot rides the
+// box's wide form — `op_opt_make_w` / `op_opt_payload_w`, which every backend
+// carries and the AST lowering already used — chosen from the payload at each
+// site, so a mixed `Result[i64, string]` writes its Ok wide and its Err, a
+// pointer, narrow (ssarc.wide_payload).
 function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     var variants: semrecords.Variant[] = builtin_variants(t);
     if (variants.len() == 0) { return Schemas { ...out, ok: false, why: "unsupported enum type" }; }
     for v in variants {
         for field in v.fields {
             if (!semtypes.concrete(field.ty, false)) { return Schemas { ...out, ok: false, why: "unresolved variant field type" }; }
-            if (ssasem.is_wide(field.ty) || ssasem.is_float(field.ty)) { return Schemas { ...out, ok: false, why: "wide builtin union payload" }; }
         }
     }
     return Schemas { ...out, enums: out.enums.append(semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option() }) };
