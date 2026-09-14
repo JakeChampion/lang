@@ -668,6 +668,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
+	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
+	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
@@ -2653,6 +2655,28 @@ func builtinFdFlags(i *Interp, args []Value) (Value, error) {
 		return resultErr(classifyIoError("", errno)), nil
 	}
 	return resultOk(Number(fernHandleFlags(int(raw)))), nil
+}
+
+// builtinHandleIsatty answers `r.isatty()` / `w.isatty()` against the
+// descriptor the handle holds. Everything without one — a closed handle,
+// a stdio stream a test replaced with a buffer — is not a terminal,
+// which is the same "no" the free form gives for a descriptor that
+// cannot be a terminal.
+func builtinHandleIsatty(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("isatty: expected 1 arg")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return Bool(false), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return Bool(false), nil
+	}
+	return Bool(tty.IsTerminal(int(f.Fd()))), nil
 }
 
 // fernHandleFlags reduces an open(2) flag word to Fern's own three bits.

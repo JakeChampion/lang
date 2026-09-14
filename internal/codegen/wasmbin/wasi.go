@@ -1887,6 +1887,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if (helpers.set["__fern_reader_flags"] || helpers.set["__fern_writer_flags"]) && !opts.Preview2WASI {
 		in.add("wasi_fd_fdstat_get")
 	}
+	if helpers.set["__fern_handle_isatty"] && !opts.Preview2WASI {
+		in.add("wasi_fd_fdstat_get")
+	}
 	if helpers.set["__fern_random_i32"] {
 		if opts.Preview2WASI {
 			in.add("wasi_random_get_u64_p2")
@@ -2862,6 +2865,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_writer_seek":         buildWriterSeekBodyP2,
 	"__fern_reader_flags":        buildReaderFlagsBodyP2,
 	"__fern_writer_flags":        buildWriterFlagsBodyP2,
+	"__fern_handle_isatty":       buildIsattyBodyP2,
 	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,

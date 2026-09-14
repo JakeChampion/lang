@@ -1504,6 +1504,48 @@ unlink. `w.flags()` (#9219) is what tells those apart. The harness reaches all
 three through `stdoutPath` (an append-only fd 1) and `stdoutFile` (a writable
 one, whose whole content is what the case compares).
 
+**What an operand IS decides before any of that.** GNU refuses a FIFO, a
+socket and a TERMINAL with `<name>: invalid file type` and exit 1 — none has a
+length to rewind over — while a character or block DEVICE is overwritten like
+a file, which is what shred was written for. Measured, GNU 9.4: a FIFO with a
+reader held on it gives the refusal, a unix socket never reaches the question
+because its open answers ENXIO (`failed to open for writing: No such device or
+address`), a terminal gives the refusal whether it arrives as a name
+(`/dev/ptmx`, `/dev/pts/0`) or as `-` on a terminal fd 1, and `/dev/null` is
+written and exits 0 even though `fdatasync` on it answers EINVAL — GNU asks
+for a full `fsync`, is refused the same way, and carries on. The corpus gates
+all of it; the terminal is `w.isatty()` (#9229), which is the question a MODE
+cannot answer, since /dev/null and /dev/ptmx are both character devices and
+only one of them is written.
+
+`-f` is an open RETRY rather than an eager chmod, and gating it matters to the
+TREE rather than to the output: GNU makes the entry writable only after an
+open refused for the one reason a mode can fix, so `shred -f <dir>` reports
+`Is a directory` having changed nothing. Retrying on any error instead leaves
+the directory at 0200 on a run GNU performs cleanly.
+
+**A device's length is not in its stat**, and that is the whole of `shred`'s
+classic use. `st_size` is 0 for a block device, so GNU asks
+`lseek(0, SEEK_END)` and writes what that reports; when even that answers 0 —
+every character device — the length is unknown and it writes until a write
+FAILS, which on /dev/null never happens. Both are what `shred.fern` does.
+Measured by hand, since the harness cannot make a device and a case that does
+not terminate is not a case:
+
+```
+$ head -c 262144 /dev/urandom > img && losetup --find --show img
+/dev/loop0
+$ shred -n0 -z /dev/loop0 && tr -d '\0' < img | wc -c
+0                       # the whole 256 KiB, and fern's run leaves the same
+$ shred -n1 -v /dev/loop0        # one `pass 1/1 (random)...`, exit 0
+$ shred -n1 -v /dev/null         # writes forever; only `-s` makes it stop
+```
+
+The one thing left in that family is the write ERROR: GNU says
+`<name>: error writing at offset 262144: No space left on device` and we drop
+the offset, because a `w.write` that fails discards how much of it landed —
+**#9231**, which is the `write_some` that closes it.
+
 **`expr`'s empty alternation branch inside a COUNTED repetition follows no
 branch order at all.** glibc demotes a branch that compiles to nothing — `expr
 aa : '\(\|a\)a*'` reports the empty string, not `a` — and `bre.fern` now does
@@ -2049,7 +2091,10 @@ beside them for the utilities that write at an offset, and `r.flags()` /
 `w.flags()` (#9219) for the one question a descriptor answers and a path
 cannot: what the handle was OPENED for — 1 readable, 2 writable, 4
 appending — which is how `shred -` tells an append-only standard output,
-which it must refuse, from a writable one, which it overwrites. `hostid` wanted a
+which it must refuse, from a writable one, which it overwrites. `isatty` was
+the same shape one step further on: it took a descriptor NUMBER, so only the
+three stdio fds could be asked, and `shred` has to refuse a TERMINAL operand
+it opened by name — `r.isatty()` / `w.isatty()` (#9229) ask it of the handle. `hostid` wanted a
 primitive rather than a fix — `hostname()`, gethostname(2) on every backend
 (#8529) — and got it under its own capability rather than a one-off syscall
 on one backend. Group C's first four wanted three more the same way:

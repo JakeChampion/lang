@@ -203,6 +203,28 @@ func handleStatSeekSource(path, out, app string) string {
         Err(_) => { return 99; },
         Ok(_) => {}
     }
+    // isatty() on a handle: a file is not a terminal, and neither is the
+    // stdout of a test whose output is captured through a pipe. The other
+    // answer needs a pty and lives in the coreutils corpus, where shred's
+    // refusal of a terminal operand is what reads it.
+    match (open_reader(%[1]q)) {
+        Err(_) => { return 100; },
+        Ok(r) => {
+            var t: boolean = r.isatty();
+            r.close();
+            if (t) { return 101; }
+        }
+    }
+    match (open_writer(%[2]q)) {
+        Err(_) => { return 102; },
+        Ok(w) => {
+            var t: boolean = w.isatty();
+            w.close();
+            if (t) { return 103; }
+        }
+    }
+    if (stdout().isatty()) { return 104; }
+    if (stdin().isatty()) { return 105; }
     return 0;
 }
 `, path, out, app)
@@ -471,6 +493,18 @@ func handleStatSeekWasmSource() string {
         Err(_) => { return 99; },
         Ok(_) => {}
     }
+    // isatty() on a handle, which preview 2 answers without asking anyone:
+    // a component has no fd table, so nothing it holds is a terminal.
+    match (open_reader("hello.txt")) {
+        Err(_) => { return 100; },
+        Ok(r) => {
+            var t: boolean = r.isatty();
+            r.close();
+            if (t) { return 101; }
+        }
+    }
+    if (stdout().isatty()) { return 104; }
+    if (stdin().isatty()) { return 105; }
     return 0;
 }
 `
@@ -502,6 +536,24 @@ const handleFlagsPreview1Source = `function main(): i32 {
     return 0;
 }
 `
+
+// handleIsattyPreview1Source is the same question on preview 1, where it
+// IS asked of the host: `fd_fdstat_get` on the handle, whose filetype
+// says character_device for a terminal. wasmtime hands the module a piped
+// stdout and stdin here, so both answers are no — the yes needs a pty,
+// which no wasm runner in this suite provides.
+const handleIsattyPreview1Source = `function main(): i32 {
+    if (stdout().isatty()) { return 1; }
+    if (stdin().isatty()) { return 2; }
+    return 0;
+}
+`
+
+func TestWASMPreview1HandleIsatty(t *testing.T) {
+	if code := compileAndRunWasmbinMain(t, handleIsattyPreview1Source); code != 0 {
+		t.Errorf("preview-1 handle isatty: main = %d, want 0 (1=stdout claims a terminal, 2=stdin does)", code)
+	}
+}
 
 func TestWASMPreview1HandleFlags(t *testing.T) {
 	if code := compileAndRunWasmbinMain(t, handleFlagsPreview1Source); code != 0 {

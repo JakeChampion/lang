@@ -1,9 +1,11 @@
 package coreutils
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -78,6 +80,36 @@ func shredSeed(t *testing.T, dir string) {
 	}
 }
 
+// shredTypesSeed is the tree for the operands shred refuses for WHAT
+// THEY ARE rather than for what they contain. Both need making here
+// because a seedTree is the only thing in the harness that can put a
+// non-regular entry in front of a utility.
+//
+// The FIFO is held open by a reader of our own for the length of the
+// run: a writer's open BLOCKS until a reader arrives, so without it both
+// implementations would wait forever instead of answering. `O_NONBLOCK`
+// is what lets this side open it without the same wait.
+func shredTypesSeed(t *testing.T, dir string) {
+	t.Helper()
+	p := filepath.Join(dir, "p")
+	if err := syscall.Mkfifo(p, 0o644); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	fd, err := syscall.Open(p, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatalf("open fifo for reading: %v", err)
+	}
+	t.Cleanup(func() { syscall.Close(fd) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "sock"))
+	if err != nil {
+		t.Fatalf("unix socket: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // shredCases is shred(1)'s corpus.
 //
 // Two things bound what can be compared here, and both are about the
@@ -97,12 +129,12 @@ func shredSeed(t *testing.T, dir string) {
 // what carries the write path: the block loop, the rewind between
 // passes, and the rounding up to the block size.
 //
-// `-` (shred standard output) is absent, and that is the one carve-out:
-// it needs the handle's open flags to tell an append-only stdout from a
-// writable one, which no primitive answers yet (#9219). This build
-// refuses the operand rather than appending to a file it was asked to
-// erase, so a case for it would be comparing our diagnostic against
-// GNU's answer.
+// Nothing about the operand itself is out of reach any more: the three
+// types GNU refuses are all reachable here, the terminal through
+// /dev/ptmx. What no case can compare is a write that FAILS — it needs a
+// full filesystem or a device, and the harness mounts nothing — so
+// GNU's `error writing at offset N` line is measured by hand
+// (docs/COREUTILS.md, #9231).
 func shredCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(name string, args ...string) {
@@ -214,6 +246,62 @@ func shredCases(t *testing.T) []invocation {
 		invocation{name: "dash-and-a-name", args: []string{"--random-source=src", "-n", "1", "-v", "g", "-"},
 			seedTree: shredSeed, stdoutFile: "f"},
 	)
+
+	// --- what an operand IS, which is decided before anything is written --
+	//
+	// A FIFO and a socket have no length to rewind over, so both are
+	// refused: the FIFO once it is OPEN, with `invalid file type`, and
+	// the socket by the open itself, which answers ENXIO before the
+	// question is reached. A character device is not refused — a device
+	// is what shred was written for — and /dev/null is the one every
+	// machine has. It also cannot be SYNCED, which is not an error
+	// either: `fdatasync` on it answers EINVAL, and the run carries on.
+	addType := func(name string, args ...string) {
+		cases = append(cases, invocation{name: name, args: args, seedTree: shredTypesSeed})
+	}
+	addType("type-fifo", "--random-source=f", "-n", "1", "-v", "p")
+	addType("type-fifo-quiet", "--random-source=f", "-n", "1", "p")
+	addType("type-fifo-size", "--random-source=f", "-n", "1", "-v", "-s", "4", "p")
+	addType("type-fifo-remove", "-n", "0", "-v", "-u", "p")
+	addType("type-fifo-zero-pass", "-n", "0", "-z", "-v", "p")
+	addType("type-fifo-then-file", "--random-source=f", "-n", "0", "-z", "-v", "p", "f")
+	addType("type-socket", "-n", "0", "-z", "-v", "sock")
+	addType("type-socket-force", "-n", "0", "-z", "-v", "-f", "sock")
+	// A TERMINAL is the third refusal, and the one a mode cannot
+	// answer: /dev/null and /dev/ptmx are both character devices and
+	// only one of them is written. /dev/ptmx is the terminal every
+	// machine has — opening it allocates a pty master — so it needs no
+	// seeding, and `w.isatty()` (#9229) is what tells it from /dev/null
+	// below. `-f` is deliberately absent: a chmod of a system device is
+	// not something a corpus should be able to attempt.
+	add("type-terminal", "-n", "1", "-v", "/dev/ptmx")
+	add("type-terminal-size", "-n", "1", "-v", "-s", "64", "/dev/ptmx")
+	add("type-terminal-exact", "-n", "1", "-v", "-x", "/dev/ptmx")
+	add("type-terminal-zero-pass", "-n", "0", "-z", "-v", "/dev/ptmx")
+	add("type-terminal-quiet", "-n", "1", "/dev/ptmx")
+	add("type-terminal-then-file", "--random-source=src", "-n", "1", "-v", "/dev/ptmx", "f")
+
+	// Every device case gives a SIZE. Without one the length comes from
+	// `lseek(0, SEEK_END)`, which a character device answers 0 for, and
+	// both implementations then write until a write FAILS — on
+	// /dev/null, never. A case that does not terminate is not a case;
+	// the length a real device DOES report is measured by hand over a
+	// loop device, and docs/COREUTILS.md carries the commands.
+	add("device-null-size", "-n", "1", "-v", "-s", "1024", "/dev/null")
+	add("device-null-two-passes", "-n", "2", "-v", "-s", "512", "/dev/null")
+	add("device-null-zero-pass", "-n", "0", "-z", "-v", "-s", "512", "/dev/null")
+
+	// --- `-f`, which is an open RETRY and not an eager chmod --------------
+	//
+	// GNU makes the entry writable only after the open was refused for
+	// the one reason a mode can fix, so an operand that could never be
+	// opened for writing is left exactly as it was found — the tree
+	// comparison is what gates that, since the diagnostic alone cannot
+	// tell a chmodded directory from an untouched one.
+	add("force-directory", "-n", "1", "-v", "-f", "d")
+	add("force-directory-zero-pass", "-n", "0", "-z", "-f", "d")
+	add("force-missing", "-n", "1", "-v", "-f", "nosuch")
+	add("force-nested-missing", "-n", "1", "-v", "-f", "sub/nosuch")
 
 	// --- the diagnostics ---------------------------------------------------
 	add("missing-operand")
