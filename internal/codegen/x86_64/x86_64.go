@@ -784,6 +784,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
 	}
+	if g.usesCrc32Cksum {
+		g.emitCrc32CksumRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -1211,6 +1214,11 @@ type generator struct {
 	usesCountByte bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
+	// usesCrc32Cksum gates the carry-less CRC fold (__fern_crc32_cksum).
+	usesCrc32Cksum bool
+	// crc32StepSeq numbers the CRC step's inner label, which is emitted
+	// twice in one function and so cannot be a fixed name.
+	crc32StepSeq int
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1776,6 +1784,8 @@ func (g *generator) recordUse(target string) {
 		g.usesCountByte = true
 	case "__fern_sum_bytes":
 		g.usesSumBytes = true
+	case "__fern_crc32_cksum":
+		g.usesCrc32Cksum = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -10699,6 +10709,158 @@ func (g *generator) emitCountByteRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_count_byte, .-__fern_count_byte")
+}
+
+// emitCrc32CksumRuntime emits `__fern_crc32_cksum(crc, s) -> i32`: the bytes
+// of `s` folded into the running CRC-32 cksum(1) prints (poly 0x04C11DB7, MSB
+// first, unreflected, no final complement).
+//
+// The message is a polynomial with byte 0 most significant, which is the
+// opposite of the order movdqu loads, so every block is byte-reversed with
+// pshufb before it is folded. Getting that backwards still produces a CRC —
+// of a different message — which is why the differential corpus sweeps every
+// length rather than spot-checking.
+//
+// FOUR accumulators, 64 bytes a step. One is correct and much slower: each
+// fold depends on the previous, so a single chain runs at pclmulqdq's ~7-cycle
+// latency for 16 bytes and measures 2.3x over the table it replaces, where
+// four independent chains measure 4.3x.
+//
+// The 128-bit residue is reduced by feeding its sixteen bytes back through the
+// same bit-at-a-time step the tail uses, from a zero CRC. That costs 128
+// iterations once per call and needs no Barrett constants, no second reduction
+// path, and no table.
+func (g *generator) emitCrc32CksumRuntime() {
+	g.line("")
+	g.line(".section .rodata")
+	g.line(".align 16")
+	g.label(".Lcrc32_bswap")
+	g.line(".byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0")
+	g.label(".Lcrc32_k1")
+	g.line(".quad 0x00000000c5b9cd4c") // x^192 mod P, folding one block
+	g.line(".quad 0x00000000e8a45605") // x^128 mod P
+	g.label(".Lcrc32_k4")
+	g.line(".quad 0x000000008833794c") // x^576 mod P, folding four
+	g.line(".quad 0x00000000e6228b11") // x^512 mod P
+	g.line(".text")
+	g.line(".globl __fern_crc32_cksum")
+	g.line(".type __fern_crc32_cksum, @function")
+	g.label("__fern_crc32_cksum")
+	// edi = crc, rsi = string.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emitStrLen("edx", "rsi")
+	g.emitStrDataPtr("rsi", "rsi", "[rbp - 32]")
+	g.emit("mov eax, edi")
+	g.emit("cmp edx, 16")
+	g.emit("jb .Lcrc32_tail")
+	g.emit("movdqa xmm5, xmmword ptr [rip + .Lcrc32_bswap]")
+	g.emit("movdqa xmm2, xmmword ptr [rip + .Lcrc32_k1]")
+	// A = bswap(first block) ^ (crc << 96); the CRC rides the top 32 bits.
+	g.emit("movdqu xmm0, xmmword ptr [rsi]")
+	g.emit("pshufb xmm0, xmm5")
+	g.emit("mov r11d, eax")
+	g.emit("shl r11, 32")
+	g.emit("movq xmm1, r11")
+	g.emit("pslldq xmm1, 8")
+	g.emit("pxor xmm0, xmm1")
+	g.emit("xor eax, eax")
+	g.emit("add rsi, 16")
+	g.emit("sub edx, 16")
+	// Priming the other three accumulators costs 48 bytes, so the wide loop
+	// only pays for itself with a fourth block's worth beyond them.
+	g.emit("cmp edx, 112")
+	g.emit("jb .Lcrc32_fold1")
+	for i, reg := range []string{"xmm6", "xmm7", "xmm8"} {
+		g.emit(fmt.Sprintf("movdqu %s, xmmword ptr [rsi + %d]", reg, i*16))
+		g.emit(fmt.Sprintf("pshufb %s, xmm5", reg))
+	}
+	g.emit("add rsi, 48")
+	g.emit("sub edx, 48")
+	g.emit("movdqa xmm9, xmmword ptr [rip + .Lcrc32_k4]")
+	g.label(".Lcrc32_fold4")
+	g.emit("cmp edx, 64")
+	g.emit("jb .Lcrc32_combine")
+	for i, acc := range []string{"xmm0", "xmm6", "xmm7", "xmm8"} {
+		g.emit(fmt.Sprintf("movdqa xmm3, %s", acc))
+		g.emit(fmt.Sprintf("pclmulqdq %s, xmm9, 16", acc)) // A.hi * K1
+		g.emit("pclmulqdq xmm3, xmm9, 1")                  // A.lo * K2
+		g.emit(fmt.Sprintf("pxor %s, xmm3", acc))
+		g.emit(fmt.Sprintf("movdqu xmm4, xmmword ptr [rsi + %d]", i*16))
+		g.emit("pshufb xmm4, xmm5")
+		g.emit(fmt.Sprintf("pxor %s, xmm4", acc))
+	}
+	g.emit("add rsi, 64")
+	g.emit("sub edx, 64")
+	g.emit("jmp .Lcrc32_fold4")
+	g.label(".Lcrc32_combine")
+	// Fold the four chains together, one block apart each, with the
+	// single-block constants.
+	for _, acc := range []string{"xmm6", "xmm7", "xmm8"} {
+		g.emit("movdqa xmm3, xmm0")
+		g.emit("pclmulqdq xmm0, xmm2, 16")
+		g.emit("pclmulqdq xmm3, xmm2, 1")
+		g.emit("pxor xmm0, xmm3")
+		g.emit(fmt.Sprintf("pxor xmm0, %s", acc))
+	}
+	g.label(".Lcrc32_fold1")
+	g.emit("cmp edx, 16")
+	g.emit("jb .Lcrc32_reduce")
+	g.emit("movdqa xmm3, xmm0")
+	g.emit("pclmulqdq xmm0, xmm2, 16")
+	g.emit("pclmulqdq xmm3, xmm2, 1")
+	g.emit("pxor xmm0, xmm3")
+	g.emit("movdqu xmm4, xmmword ptr [rsi]")
+	g.emit("pshufb xmm4, xmm5")
+	g.emit("pxor xmm0, xmm4")
+	g.emit("add rsi, 16")
+	g.emit("sub edx, 16")
+	g.emit("jmp .Lcrc32_fold1")
+	g.label(".Lcrc32_reduce")
+	// Back to load order so the residue's bytes feed the step most
+	// significant first, which is the order the scalar definition wants.
+	g.emit("pshufb xmm0, xmm5")
+	g.emit("movdqu xmmword ptr [rbp - 16], xmm0")
+	g.emit("xor ecx, ecx")
+	g.label(".Lcrc32_red")
+	g.emit("cmp ecx, 16")
+	g.emit("jae .Lcrc32_tail")
+	g.emit("movzx r8d, byte ptr [rbp - 16 + rcx]")
+	g.emitCrc32Step()
+	g.emit("add ecx, 1")
+	g.emit("jmp .Lcrc32_red")
+	g.label(".Lcrc32_tail")
+	g.emit("test edx, edx")
+	g.emit("jz .Lcrc32_ret")
+	g.emit("movzx r8d, byte ptr [rsi]")
+	g.emitCrc32Step()
+	g.emit("add rsi, 1")
+	g.emit("sub edx, 1")
+	g.emit("jmp .Lcrc32_tail")
+	g.label(".Lcrc32_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_crc32_cksum, .-__fern_crc32_cksum")
+}
+
+// emitCrc32Step folds the byte in r8b into the CRC in eax, inline and
+// branchless: eight shift-and-conditional-xor steps, with the polynomial
+// selected by the sign bit rather than a jump.
+func (g *generator) emitCrc32Step() {
+	g.emit("shl r8d, 24")
+	g.emit("xor eax, r8d")
+	g.emit("mov r9d, 8")
+	g.label(".Lcrc32_bit" + fmt.Sprint(g.crc32StepSeq))
+	g.emit("mov r10d, eax")
+	g.emit("sar r10d, 31")
+	g.emit("and r10d, 0x04c11db7")
+	g.emit("add eax, eax")
+	g.emit("xor eax, r10d")
+	g.emit("sub r9d, 1")
+	g.emit("jnz .Lcrc32_bit" + fmt.Sprint(g.crc32StepSeq))
+	g.crc32StepSeq++
 }
 
 // emitSumBytesRuntime emits `__fern_sum_bytes(s) -> i32`: every byte of `s`
