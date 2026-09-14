@@ -7,7 +7,16 @@
 // only "call target was refused" is charged to the reason at the end of the
 // chain, because that is the construct worth building next.
 //
-//   $ semsource_census_run <entry.fern>
+//   $ fern -embed internal/stdlib -o census semsource_census_run.fern
+//   $ census <entry.fern>
+//
+// The stdlib arrives as the `-embed` bundle, turned into the loader's overlay.
+// Without it `import "std/test"` resolves against the ENTRY's directory, finds
+// nothing, and is dropped in silence: the census then measures the entry's own
+// declarations alone and charges every call into the missing module to
+// whatever leaf its unresolved result lands on. An import that still does not
+// resolve is named and exits non-zero, because a census that quietly measures
+// a third of a program is worse than no census.
 //
 // FERN_CENSUS_LIST=<leaf> also names every declaration refused at that leaf,
 // which is what a probe reads before building against a histogram row.
@@ -151,6 +160,46 @@ function report(merged: parser.Module, tab: irlower.StructTab): void {
     hist_print("-- rc refusals --", rc_why);
 }
 
+// STDLIB_EXT is the suffix an embedded module name carries and an import path
+// does not.
+const STDLIB_EXT: string = ".fern";
+
+// The `-embed` bundle as the loader's overlay, keyed by import path. Not
+// sealed: an entry's own relative imports (`./util`) miss the overlay and fall
+// through to disk, which is where they live.
+function embedded_stdlib(): modloader.Overlay {
+    var paths: string[] = [];
+    var srcs: string[] = [];
+    for a in __fern_assets() {
+        var name: string = a.0;
+        if (name.len() > STDLIB_EXT.len()
+                && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
+            paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
+            srcs = srcs.append(a.1 + "");
+        }
+    }
+    return modloader.Overlay { paths: paths, srcs: srcs, sealed: false };
+}
+
+// Every import, transitively, the loader did not resolve. It drops one without
+// a word, which in a compiler driver is right (an intrinsic looks like an
+// unresolvable import) and in a census is the failure mode that produced a
+// whole phantom refusal class.
+function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]): string[] {
+    var have: string[] = [];
+    for m in loaded { have = have.append(m.name + ""); }
+    var missing: string[] = [];
+    var wanted: parser.Import[] = entry.imports;
+    for m in loaded { wanted = util.append_all(wanted, m.mod.imports); }
+    for imp in wanted {
+        var name: string = modloader.base_name(imp.path);
+        if (!util.has_str(have, name) && !util.has_str(missing, imp.path)) {
+            missing = missing.append(imp.path + "");
+        }
+    }
+    return missing;
+}
+
 function main(): i32 {
     var av: string[] = args();
     if (av.len() < 2) { eprint("usage: semsource_census_run <entry.fern>\n"); return 2; }
@@ -159,7 +208,12 @@ function main(): i32 {
     match (read_file(entry_path)) {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-            var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(embedded_stdlib(), dir, entry);
+            var missing: string[] = unresolved_imports(entry, loaded);
+            if (missing.len() > 0) {
+                for m in missing { eprint("unresolved import: " + m + "\n"); }
+                return 2;
+            }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
             // The driver folds the target's name to its two literals before
