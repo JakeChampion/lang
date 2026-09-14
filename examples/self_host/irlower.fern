@@ -36328,6 +36328,17 @@ struct StructArgStash { state: LowerState, slot: i32 }
 // sole-owns its fields and the same two release shapes apply. A local shadowing
 // the producer's name is refused — the registry is keyed by declaration.
 //
+// A third shape is a call to a COUNTED-return function or method
+// (cnt_struct_ret_fns, #9203): its result holds one count this frame owns
+// whichever return produced it — a fresh box, or the argument's own box the
+// callee retained on the way out — and an argument position is where that
+// count is otherwise stranded, since nothing binds the temp. Such a temp is
+// stashed UNMARKED, so the release below is the bare box dec rather than the
+// field walk: the handback path's box belongs to the caller and its fields are
+// not this frame's to free, and a fresh return's field values are not proven
+// owned here either (`Box { tag: t, … }` takes a parameter's box) — the same
+// floor emit_counted_result_release keeps for a read-through result.
+//
 // Gated like the string sibling: at a borrowable position the callee can
 // neither retain nor return the argument, so the box is dead the moment the
 // call returns, and a counted-retain position admits the same temp because the
@@ -36355,7 +36366,9 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
         },
         _ => {}
     }
-    if (ty.len() == 0) { return StructArgStash { state: s, slot: 0 - 1 }; }
+    var boxonly: boolean = false;
+    if (ty.len() == 0) { boxonly = counted_ret_call_arg(arg, s); }
+    if (ty.len() == 0 && !boxonly) { return StructArgStash { state: s, slot: 0 - 1 }; }
     // Scalar-only (a box dec) or the leak-safe-array / nested-struct set. NOT
     // widened to every type that routes field reclaim, which is what a
     // string-fielded argument temp would need: the borrowability flag proves
@@ -36369,16 +36382,23 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
     // the bisect); closing it needs a callee-side "hands out no field" proof
     // the self-host does not compute yet, so a string-fielded literal
     // argument keeps its leak rather than trading it for a use-after-free.
-    if (!struct_lit_all_scalar(s.frame.structs, ty) && !struct_fields_reusable(s.frame.structs, ty)) {
+    if (!boxonly && !struct_lit_all_scalar(s.frame.structs, ty) && !struct_fields_reusable(s.frame.structs, ty)) {
         return StructArgStash { state: s, slot: 0 - 1 };
     }
     var lsln: string = "$lsl" + util.i32_to_string(s.locals.len());
     var st: LowerState = s.add_local(lsln);
     var lsls: i32 = st.slot_of(lsln);
-    st = st.mark_struct_type(lsls, ty);
+    if (!boxonly) { st = st.mark_struct_type(lsls, ty); }
     st = st.emit(ir.op_store_local(lsls));
     st = st.emit(ir.op_load_local(lsls));
     return StructArgStash { state: st, slot: lsls };
+}
+
+// counted_ret_call_arg: `arg` is a call whose callee is in cnt_struct_ret_fns,
+// so its result carries a count this frame owes exactly one release for.
+function counted_ret_call_arg(arg: ast.Expr, s: LowerState): boolean {
+    var key: string = counted_call_key(arg, s);
+    return key.len() > 0 && util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, key) >= 0;
 }
 
 // free_stashed_struct_args drains stash_fresh_struct_arg's slots after the
