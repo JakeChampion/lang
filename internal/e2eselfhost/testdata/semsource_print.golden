@@ -672,6 +672,70 @@ func string_length {
     ret v1
 }
 
+modes 1 result char
+v0:i32 v1:char
+func codepoint {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result i32
+v0:char v1:i32
+func ordinal {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result i64
+v0:char v1:i64
+func wide_point {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result char
+v0:i64 v1:char
+func narrow_point {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result u8
+v0:char v1:u8
+func byte_point {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result char
+v0:u8 v1:char
+func point_byte {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 1 result boolean
+v0:char v1:char v2:boolean
+func same_point {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = binary == v0 v1
+    ret v2
+}
+
 template instantiated
 refused uninstantiated generic
 modes 1 result i32
