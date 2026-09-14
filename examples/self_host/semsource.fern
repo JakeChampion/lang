@@ -917,8 +917,8 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
 // A map's methods: `insert` (spelled `set` too, as the AST lowering admits
 // both) hands over the receiver's unit and the key's and takes the map back;
 // `has` and `get_or` read through borrowed operands and answer a scalar. The
-// rest of the map surface — a delete, the columns, an iteration — is outside
-// this boundary.
+// delete, the columns and the iteration have backend ops but no contract here
+// yet.
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     if (!ssasem.is_supported_map(t)) { return refused(s, "unsupported map shape"); }

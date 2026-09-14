@@ -450,7 +450,10 @@ Unsupported constructs refuse the whole function with a reason.
   release the key an overwrite supersedes, and `owncols` makes the map the sole
   owner of both column buffers so a grow frees the one it replaced. A lookup
   borrows both operands and answers a scalar the map goes on owning. The rest
-  of the map surface — a delete, the columns, an iteration — is not here.
+  of the map surface — `op_map_delete`, `op_map_keys` / `op_map_values` and the
+  `op_map_iter` cluster — is not ADMITTED here. Those ops exist and every
+  backend lowers them; what this boundary lacks is a contract stating what each
+  one owns, which is the work of reaching them.
 
   A map names no element in its construction, so the DESTINATION is the only
   place its shape is written: `map_new(2)` at an annotated binding or a
