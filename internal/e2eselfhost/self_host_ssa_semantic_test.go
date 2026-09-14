@@ -86,9 +86,9 @@ function type_checks(): i32 {
     var nw: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
     var un: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i] };
     var unw: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [wide] };
-    var sig: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], ret_type: f, params_known: true };
-    var opaque: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], ret_type: f, params_known: false };
-    var sv: typeinfo.Type = typeinfo.TypeFunc { param_types: [v], ret_type: f, params_known: true };
+    var sig: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], param_own: [], ret_type: f, params_known: true };
+    var opaque: typeinfo.Type = typeinfo.TypeFunc { param_types: [s], param_own: [], ret_type: f, params_known: false };
+    var sv: typeinfo.Type = typeinfo.TypeFunc { param_types: [v], param_own: [], ret_type: f, params_known: true };
     var tuple: typeinfo.Type = typeinfo.TypeTuple { elements: [n, sig] };
     var tuple2: typeinfo.Type = typeinfo.TypeTuple { elements: [nw, sig] };
     var map: typeinfo.Type = typeinfo.TypeMap { key: s, value: un };
@@ -136,7 +136,7 @@ func semanticCases() []struct{ name, change, want string } {
 		{"missing-return", "var b = graph.blocks[0]; b = ssa.SBlock { ...b, term: ret(0 - 1) }; graph = ssa.SFunc { ...graph, blocks: [b] };", "missing return value"},
 		{"unknown-type", "types = types.with(5, typeinfo.unchecked());", "unresolved value type"},
 		{"polymorphic-type", "types = types.with(5, typeinfo.TypeFloat { width: 64, polymorphic: true });", "unresolved value type"},
-		{"opaque-signature", "types = types.with(5, typeinfo.TypeFunc { param_types: [], ret_type: st, params_known: false });", "unresolved value type"},
+		{"opaque-signature", "types = types.with(5, typeinfo.TypeFunc { param_types: [], param_own: [], ret_type: st, params_known: false });", "unresolved value type"},
 		{"string-constant", `graph = change(graph, 5, ssa.SInst { kind_tag: 5, result: 5, args: [], imm: 0, str: "a" });`, ""},
 		{"string-constant-type", `graph = change(graph, 9, ssa.SInst { kind_tag: 5, result: 9, args: [], imm: 0, str: "a" });`, "string constant type"},
 		{"string-concat", `graph = change(graph, 5, ssa.SInst { kind_tag: 9, result: 5, args: [4, 4], imm: 0, str: "+" });`, ""},

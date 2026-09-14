@@ -382,8 +382,8 @@ function stmts_have_assert(stmts: ast.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         found = astwalk.fold_stmt_nodes(stmts[i], found,
-            (st: ast.Stmt, acc: boolean) => acc || is_assert_stmt(st),
-            (e: ast.Expr, acc: boolean) => acc,
+            (st: ast.Stmt, own acc: boolean) => acc || is_assert_stmt(st),
+            (e: ast.Expr, own acc: boolean) => acc,
             (e: ast.Expr) => true);
         i = i + 1;
     }

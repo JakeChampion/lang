@@ -657,10 +657,7 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		// signature in FuncSigs so indirect-call dispatch can
 		// resolve the (type $tN) slot for OpCallIndirect.
 		fn.Params = append(fn.Params, ast.Param{Name: "__env", Type: ast.NumberType{}})
-		hoistedSig := &ast.FuncType{Result: fn.ReturnType}
-		for _, p := range fn.Params {
-			hoistedSig.Params = append(hoistedSig.Params, p.Type)
-		}
+		hoistedSig := paramSig(fn.Params, fn.ReturnType)
 		c.info.FuncSigs[hoistedName] = hoistedSig
 		// Rewrite body references through lamCtx so captures
 		// become CaptureRef and the rest passes through unchanged.
@@ -1050,10 +1047,7 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	// outer body's calls keep type-checking; add a hoisted-name entry
 	// (with the env param) so codegen can look up the indirect-call
 	// signature.
-	hoistedSig := &ast.FuncType{Result: fn.ReturnType}
-	for _, p := range fn.Params {
-		hoistedSig.Params = append(hoistedSig.Params, p.Type)
-	}
+	hoistedSig := paramSig(fn.Params, fn.ReturnType)
 	c.info.FuncSigs[hoistedName] = hoistedSig
 
 	// Rewrite the body's captured-name references and any nested
@@ -1099,10 +1093,7 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 	// The original local-name FuncSig describes the user-visible
 	// signature without the env param; that's what calls bind
 	// against. Indirect-call codegen knows to add the env arg.
-	userSig := &ast.FuncType{Result: fn.ReturnType}
-	for _, p := range fn.Params[:len(fn.Params)-1] { // drop trailing __env
-		userSig.Params = append(userSig.Params, p.Type)
-	}
+	userSig := paramSig(fn.Params[:len(fn.Params)-1], fn.ReturnType) // drop trailing __env
 
 	v := &ast.Var{
 		P:    fn.P,
@@ -1127,4 +1118,16 @@ func (c *converter) hoist(fn *ast.FuncDecl, parentCtx *captureCtx) (ast.Stmt, er
 		c.info.Locals[host] = append(c.info.Locals[host], v)
 	}
 	return v, nil
+}
+
+// paramSig is a declared parameter list's function TYPE, carrying the `own`
+// flags that say which slots the callee consumes.
+func paramSig(params []ast.Param, result ast.Type) *ast.FuncType {
+	types := make([]ast.Type, len(params))
+	owns := make([]bool, len(params))
+	for i, p := range params {
+		types[i] = p.Type
+		owns[i] = p.Own
+	}
+	return &ast.FuncType{Params: types, ParamOwn: ast.OwnFlags(owns, len(types)), Result: result}
 }

@@ -291,14 +291,26 @@ function t_tuple(elements: typeinfo.Type[]): typeinfo.Type {
   return typeinfo.TypeTuple { elements: elements };
 }
 
+// A fresh, empty diagnostic list. A fold's CONSUMING accumulator takes a value
+// the caller owns; a local initialised from a literal is not provably one, and
+// a call with no reference parameter is.
+function no_diags(): util.Diag[] { return []; }
+
 function t_func(param_types: typeinfo.Type[], ret_type: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeFunc { param_types: param_types, ret_type: ret_type, params_known: true };
+  return typeinfo.TypeFunc { param_types: param_types, param_own: [], ret_type: ret_type, params_known: true };
+}
+
+// t_func_own is t_func carrying the callable's CONSUMING slots — the `own`
+// each parameter spelling wrote. A caller hands its unit over at one of those
+// and does not release it.
+function t_func_own(param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type): typeinfo.Type {
+  return typeinfo.TypeFunc { param_types: param_types, param_own: typeinfo.own_flags(param_own, param_types), ret_type: ret_type, params_known: true };
 }
 
 // t_func_opaque builds the callable whose parameter list was never recorded,
 // so its emptiness carries no information and no caller may arity-check it.
 function t_func_opaque(ret_type: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeFunc { param_types: [], ret_type: ret_type, params_known: false };
+  return typeinfo.TypeFunc { param_types: [], param_own: [], ret_type: ret_type, params_known: false };
 }
 
 function t_map(key: typeinfo.Type, value: typeinfo.Type): typeinfo.Type {
@@ -1000,7 +1012,7 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, type_param_count: i32, type_params: string[], param_bound: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, type_param_count: i32, type_params: string[], param_bound: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -1791,7 +1803,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function"), type_param_count: 0, type_params: [], param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
+  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), type_param_count: 0, type_params: [], param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -2939,7 +2951,7 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
     params = params.append(sig.param_types[i]);
     i = i + 1;
   }
-  return typeinfo.TypeFunc { param_types: params, ret_type: sig.ret_type, params_known: true };
+  return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(sig.param_own, params), ret_type: sig.ret_type, params_known: true };
 }
 
 // check_call_expr types an ExprCall (plain / closure / method call).
@@ -4365,6 +4377,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
       continue;
     }
     var pts: typeinfo.Type[] = [];
+    var powns: boolean[] = [];
     var pbnd: string[] = [];
     var ptn: string[] = [];
     for param in fd.params {
@@ -4377,10 +4390,11 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
         fpt = type_from_name_erasing_tparams(param.type_name, fd.type_params, struct_names, union_names);
       }
       pts = pts.append(fpt);
+      powns = powns.append(param.own);
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(param.type_name);
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -4684,12 +4698,14 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
 function callable_from_ref_names(r: parser.TypeRef, struct_names: string[], union_names: string[]): typeinfo.Type {
   var f: parser.TypeRef = parser.ref_ungroup(r);
   var params: typeinfo.Type[] = [];
+  var owns: boolean[] = [];
   var i: i32 = 0;
   while (i + 1 < f.args.len()) {
-    params = params.append(type_from_ref_names(f.args[i], struct_names, union_names));
+    owns = owns.append(parser.ref_is_own(f.args[i]));
+    params = params.append(type_from_ref_names(parser.ref_without_own(f.args[i]), struct_names, union_names));
     i = i + 1;
   }
-  return t_func(params, type_from_ref_names(parser.ref_fn_result(r), struct_names, union_names));
+  return t_func_own(params, owns, type_from_ref_names(parser.ref_fn_result(r), struct_names, union_names));
 }
 
 // type_from_ref_subst resolves a field's declared type spelling against a
@@ -4719,12 +4735,14 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
   if (parser.ref_is_fn_value(r)) {
     var f: parser.TypeRef = parser.ref_ungroup(r);
     var pts: typeinfo.Type[] = [];
+    var owns: boolean[] = [];
     var i: i32 = 0;
     while (i + 1 < f.args.len()) {
-      pts = pts.append(type_from_ref_subst(f.args[i], tparams, targs, struct_names, union_names));
+      owns = owns.append(parser.ref_is_own(f.args[i]));
+      pts = pts.append(type_from_ref_subst(parser.ref_without_own(f.args[i]), tparams, targs, struct_names, union_names));
       i = i + 1;
     }
-    return t_func(pts, type_from_ref_subst(parser.ref_fn_result(r), tparams, targs, struct_names, union_names));
+    return t_func_own(pts, owns, type_from_ref_subst(parser.ref_fn_result(r), tparams, targs, struct_names, union_names));
   }
   if (r.is_tuple && r.args.len() >= 2) {
     var elems: typeinfo.Type[] = [];
@@ -5027,12 +5045,14 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
 // a genuine empty parameter list from an opaque tag with no signature at all.
 function declared_callable_type(name: string, ret: string, params: string, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
   var pts: typeinfo.Type[] = [];
+  var powns: boolean[] = [];
   if (params.len() > 0) {
     for seg in split_fn_param_spellings(params) {
-      pts = pts.append(type_from_name_erasing_tparams(seg, tparams, struct_names, union_names));
+      powns = powns.append(parser.spelling_is_own(seg));
+      pts = pts.append(type_from_name_erasing_tparams(parser.spelling_without_own(seg), tparams, struct_names, union_names));
     }
   }
-  var ft: typeinfo.Type = t_func(pts, type_from_name_erasing_tparams(ret, tparams, struct_names, union_names));
+  var ft: typeinfo.Type = t_func_own(pts, powns, type_from_name_erasing_tparams(ret, tparams, struct_names, union_names));
   if (name == "fn[]") { return t_array(ft); }
   return ft;
 }
@@ -5798,13 +5818,13 @@ function mc_mentions_list(list: ast.Expr[], name: string): boolean {
 // astwalk covers it. The hand-written pair each ended in a `_ => false` arm,
 // which silently did not search whatever it did not name.
 function mc_mentions_expr(e: ast.Expr, name: string): boolean {
-  function see_expr(n: ast.Expr, acc: boolean): boolean {
+  function see_expr(n: ast.Expr, own acc: boolean): boolean {
     match (n) {
       ast.ExprIdent(id) => { return acc || id.name == name; },
       _ => { return acc; }
     }
   }
-  function see_stmt(st: ast.Stmt, acc: boolean): boolean {
+  function see_stmt(st: ast.Stmt, own acc: boolean): boolean {
     match (st) {
       ast.StmtAssign(a) => { return acc || a.target == name; },
       _ => { return acc; }
@@ -5814,13 +5834,13 @@ function mc_mentions_expr(e: ast.Expr, name: string): boolean {
 }
 
 function mc_mentions_stmts(stmts: ast.Stmt[], name: string): boolean {
-  function see_expr(n: ast.Expr, acc: boolean): boolean {
+  function see_expr(n: ast.Expr, own acc: boolean): boolean {
     match (n) {
       ast.ExprIdent(id) => { return acc || id.name == name; },
       _ => { return acc; }
     }
   }
-  function see_stmt(st: ast.Stmt, acc: boolean): boolean {
+  function see_stmt(st: ast.Stmt, own acc: boolean): boolean {
     match (st) {
       ast.StmtAssign(a) => { return acc || a.target == name; },
       _ => { return acc; }
@@ -7108,7 +7128,7 @@ function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): bool
       },
       ast.StmtDefer(_) => {},
       _ => {
-        if (astwalk.fold_stmt_pruned(stmt, false, (e: ast.Expr, a: boolean): boolean => {
+        if (astwalk.fold_stmt_pruned(stmt, false, (e: ast.Expr, own a: boolean): boolean => {
           return a || value_block_can_break(e, label, nested);
         }, not_a_scope_root)) {
           return true;
@@ -7121,7 +7141,7 @@ function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): bool
 
 // expr_can_break is loop_can_break over the value blocks one expression holds.
 function expr_can_break(e: ast.Expr, label: string, nested: boolean): boolean {
-  return astwalk.fold_expr_pruned(e, false, (x: ast.Expr, a: boolean): boolean => {
+  return astwalk.fold_expr_pruned(e, false, (x: ast.Expr, own a: boolean): boolean => {
     return a || value_block_can_break(x, label, nested);
   }, not_a_scope_root);
 }
@@ -7178,8 +7198,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // does not lower in the self-host — `append` on an array-of-arrays of a union
 // resolves to `i32.append` and the module falls off the IR path.
 function loop_diags_in_exprs(st: ast.Stmt, in_loop: boolean, labels: string[]): util.Diag[] {
-  var acc: util.Diag[] = [];
-  return astwalk.fold_stmt_pruned(st, acc, (e: ast.Expr, a: util.Diag[]): util.Diag[] => {
+  return astwalk.fold_stmt_pruned(st, no_diags(), (e: ast.Expr, own a: util.Diag[]): util.Diag[] => {
     match (e) {
       ast.ExprCall(c) => {
         if (parser.is_value_block(c)) { return util.append_diags(a, loop_diags(parser.vb_body(c), in_loop, labels)); }
@@ -7515,7 +7534,7 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unio
 // match_diags call already covers the whole body, nested lambdas included, so
 // descending would report each inner one once per enclosing lambda.
 function match_stmt_own_lambdas(st: ast.Stmt, structs: StructSig[], unions: UnionTable): util.Diag[] {
-  function at_lambda(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
         return util.append_diags(acc, match_diags(lm.body, structs, unions));
@@ -7529,8 +7548,7 @@ function match_stmt_own_lambdas(st: ast.Stmt, structs: StructSig[], unions: Unio
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
 }
 
 // match_diags keeps its own statement recursion rather than folding onto
@@ -7703,7 +7721,7 @@ function int_lit_as_written(text: string, negated: boolean): string {
 // duplicate-set, which is what the per-block rule wants. Pruned at ExprLambda:
 // that call already covers the whole body, nested lambdas included.
 function dupvar_stmt_own_lambdas(st: ast.Stmt): util.Diag[] {
-  function at_lambda(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
         return util.append_diags(acc, dupvar_diags(lm.body));
@@ -7717,8 +7735,7 @@ function dupvar_stmt_own_lambdas(st: ast.Stmt): util.Diag[] {
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
 }
 
 // dupvar_diags emits the structural `var`-declaration diagnostics, per
@@ -7787,7 +7804,7 @@ struct LitSign { line: i32, col: i32, minuses: i32 }
 // sign from here. Every unary in a chain is visited by the fold below and
 // contributes its own count, so the LARGEST count for a position is the whole
 // chain's: `- -5` is positive.
-function lit_sign_chain(e: ast.Expr, minuses: i32, acc: LitSign[]): LitSign[] {
+function lit_sign_chain(e: ast.Expr, minuses: i32, own acc: LitSign[]): LitSign[] {
   match (e) {
     ast.ExprUnary(u) => {
       if (u.op == "-") { return lit_sign_chain(u.operand, minuses + 1, acc); }
@@ -7803,7 +7820,7 @@ function lit_sign_chain(e: ast.Expr, minuses: i32, acc: LitSign[]): LitSign[] {
 }
 
 function lit_signs_stmts(stmts: ast.Stmt[]): LitSign[] {
-  function at_unary(n: ast.Expr, acc: LitSign[]): LitSign[] {
+  function at_unary(n: ast.Expr, own acc: LitSign[]): LitSign[] {
     match (n) {
       ast.ExprUnary(_) => { return lit_sign_chain(n, 0, acc); },
       _ => { return acc; }
@@ -7842,7 +7859,7 @@ function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
 
 function suffix_range_stmts(stmts: ast.Stmt[]): util.Diag[] {
   var signs: LitSign[] = lit_signs_stmts(stmts);
-  function at_number(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at_number(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprNumber(num) => {
         return util.append_diags(acc, suffix_range_diag(num, lit_negated(signs, num.line, num.col)));
@@ -10044,7 +10061,7 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
 // lambda is not flagged. Letting astwalk descend into the body instead would
 // check it against the enclosing scope and report the shadowed name.
 function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
-  function at(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprIdent(id) => {
         if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name))) {
@@ -10064,8 +10081,7 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_expr_pruned(e, none, at, not_into_lambda);
+  return astwalk.fold_expr_pruned(e, no_diags(), at, not_into_lambda);
 }
 
 // vref_stmts is the scope-threaded statement walk behind vref_expr (so a
@@ -10141,7 +10157,7 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
 // statement; pruned at ExprLambda because the recursive call already covers the
 // whole body, nested lambdas included.
 function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
-  function at_lambda(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
         return util.append_diags(acc, stmts_assign_diags(lm.body, lambda_body_scope(lm, cur), unions));
@@ -10155,8 +10171,7 @@ function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): 
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
 }
 
 function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
@@ -10803,6 +10818,16 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
   return util.has_str(ctx.owned, name);
 }
 
+// A slot where `own` says something: a reference, whose unit changes hands. A
+// SCALAR carries none, so `own` on one transfers nothing and there is no
+// affine discipline to police — a second mention of it is an ordinary read,
+// not a use after move. A generic `own acc: T` reaches every instantiation,
+// and its scalar ones would otherwise report one.
+function ow_ownable_type(type_name: string): boolean {
+  var scalars: string[] = ["boolean", "i32", "i64", "u8", "u32", "u64", "f64", "f32", "char", "usize", "void"];
+  return !util.has_str(scalars, type_name);
+}
+
 // ow_nested_ctx layers a nested function's parameters over the enclosing
 // owned set: an `own` parameter is owned inside the body it belongs to, and
 // any other parameter SHADOWS an outer owned name it repeats.
@@ -10810,7 +10835,7 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
   var names: string[] = ctx.owned;
   var borrowed: string[] = ctx.borrowed;
   for param in params {
-    if (param.own) {
+    if (param.own && ow_ownable_type(param.type_name)) {
       if (!util.has_str(names, param.name)) {
         names = names.append(param.name);
       }
@@ -10880,7 +10905,18 @@ function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
 // concat) or another owned parameter, or a variant-constructor call.
 // Anything else (borrowed param, projection, plain local, ordinary call)
 // is not provably owned → E051.
+// ow_scalar_literal: a literal carrying no unit. A consuming position takes
+// nothing from the caller there, so there is nothing to prove owned — and a
+// generic `own acc: T` reaches every instantiation, so refusing the scalar one
+// would make the consuming convention unspellable for a fold that counts.
+function ow_scalar_literal(e: ast.Expr): boolean {
+  if let ast.ExprNumber(_) = e { return true; }
+  if let ast.ExprBool(_) = e { return true; }
+  return false;
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_scalar_literal(e)) { return true; }
   match (e) {
     ast.ExprStructLit(_) => {
       return true;
@@ -10947,7 +10983,7 @@ function ow_count_ident_list(list: ast.Expr[], name: string): i32 {
 // moment astwalk reaches it; the hand-written version ended in a `_ => 0` arm
 // that silently did not look inside whatever it did not name.
 function ow_count_ident(e: ast.Expr, name: string): i32 {
-  function tally(n: ast.Expr, acc: i32): i32 {
+  function tally(n: ast.Expr, own acc: i32): i32 {
     match (n) {
       ast.ExprIdent(id) => {
         if (id.name == name) { return acc + 1; }
@@ -11025,7 +11061,7 @@ function ow_is_field_read(e: ast.Expr, target: string, field: string): boolean {
 // ow_count_field_reads tallies the `target.<field>` reads in `e` — every
 // field of `target` when `field` is "".
 function ow_count_field_reads(e: ast.Expr, target: string, field: string): i32 {
-  function tally(n: ast.Expr, acc: i32): i32 {
+  function tally(n: ast.Expr, own acc: i32): i32 {
     match (n) {
       ast.ExprFieldAccess(fa) => {
         if (ow_ident_name(fa.obj) == target && (field.len() == 0 || fa.field == field)) { return acc + 1; }
@@ -11568,7 +11604,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
     var owned: string[] = [];
     var borrowed: string[] = [];
     for param in fn.params {
-      if (param.own) {
+      if (param.own && ow_ownable_type(param.type_name)) {
         owned = owned.append(param.name);
       } else {
         borrowed = borrowed.append(param.name);
@@ -11743,7 +11779,7 @@ function e049_nt_names(nts: NameTy[]): string[] {
 // itself, and each lambda body is handed on with that lambda's own locals, so
 // every lambda is reached exactly once however deep it nests.
 function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[]): util.Diag[] {
-  function at_lambda(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
         return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
@@ -11757,8 +11793,7 @@ function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[]): util.Diag[] {
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_stmt_own_pruned(st, none, at_lambda, not_into_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
 }
 
 function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: NameTy[]): util.Diag[] {
@@ -11810,7 +11845,7 @@ function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: Name
 // with that lambda's own locals, so letting astwalk descend into it as well
 // would report each nested lambda once per enclosing one.
 function e049_expr_lambdas(e: ast.Expr, enclosing: NameTy[]): util.Diag[] {
-  function at_lambda(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
         return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
@@ -11824,8 +11859,7 @@ function e049_expr_lambdas(e: ast.Expr, enclosing: NameTy[]): util.Diag[] {
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_expr_pruned(e, none, at_lambda, not_into_lambda);
+  return astwalk.fold_expr_pruned(e, no_diags(), at_lambda, not_into_lambda);
 }
 
 // e049_find walks a statement list for lambda-bearing expressions (var
@@ -12042,7 +12076,7 @@ function collect_annots(stmts: ast.Stmt[]): Annot[] {
   return acc;
 }
 
-function annot_of_stmt(st: ast.Stmt, acc: Annot[]): Annot[] {
+function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
   match (st) {
     ast.StmtVar(v) => { return acc.append(Annot { type_name: v.type_name, line: v.line, col: v.col }); },
     _ => { return acc; }
@@ -12050,7 +12084,7 @@ function annot_of_stmt(st: ast.Stmt, acc: Annot[]): Annot[] {
   return acc;
 }
 
-function annot_of_expr(e: ast.Expr, acc: Annot[]): Annot[] {
+function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
   match (e) {
     ast.ExprLambda(lm) => {
       if (lm.line == 0) { return acc; }
@@ -12442,7 +12476,7 @@ struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[]
 // pass. Both are printer-only nodes, every other parse having desugared them
 // (parser.fern), and the desugared forms are already flagged as concatenation
 // and `.to_string()` calls.
-function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, out: util.Diag[]): util.Diag[] {
+function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]): util.Diag[] {
   match (n) {
     ast.ExprArray(a) => {
       return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", a.line, a.col));
@@ -12541,11 +12575,10 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, out: util.Diag[]): u
 // a loop-mutated binding is a different question from one closing over a
 // parameter.
 function e053_own_exprs(stmt: ast.Stmt, fx: E053Ctx, cur: Scope): util.Diag[] {
-  function at_node(n: ast.Expr, out: util.Diag[]): util.Diag[] {
+  function at_node(n: ast.Expr, own out: util.Diag[]): util.Diag[] {
     return e053_at_node(n, fx, cur, out);
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_stmt_own(stmt, none, at_node);
+  return astwalk.fold_stmt_own(stmt, no_diags(), at_node);
 }
 
 // e053_stmts keeps its own statement loop rather than folding: `cur` advances
@@ -13071,7 +13104,7 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
 // rather than letting astwalk descend: a lambda body's `use` bindings are
 // statements, and e032_stmts is what knows how to read them.
 function e032_expr(e: ast.Expr, lastfn: string[], cur: Scope): util.Diag[] {
-  function at(n: ast.Expr, acc: util.Diag[]): util.Diag[] {
+  function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprCall(c) => { return util.append_diags(acc, e032_call_check(c, lastfn, cur)); },
       ast.ExprLambda(lm) => { return util.append_diags(acc, e032_stmts(lm.body, lastfn, cur)); },
@@ -13084,8 +13117,7 @@ function e032_expr(e: ast.Expr, lastfn: string[], cur: Scope): util.Diag[] {
       _ => { return true; }
     }
   }
-  var none: util.Diag[] = [];
-  return astwalk.fold_expr_pruned(e, none, at, not_into_lambda);
+  return astwalk.fold_expr_pruned(e, no_diags(), at, not_into_lambda);
 }
 
 function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] {
@@ -13581,7 +13613,7 @@ function e021_dyn_target(type_name: string): string {
 // so it is a top-level function rather than a nested one — the convention
 // irlower's assign-targets visitors already follow, and what keeps the feature
 // census's closure count measuring closures.
-function e021_dyn_local_at(st: ast.Stmt, a: string[]): string[] {
+function e021_dyn_local_at(st: ast.Stmt, own a: string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
       var t: string = e021_dyn_target(v.type_name);
@@ -13596,7 +13628,7 @@ function e021_dyn_local_at(st: ast.Stmt, a: string[]): string[] {
 
 // e021_no_expr is the expression half, for a scan that is purely
 // statement-shaped. Top-level for the same reason.
-function e021_no_expr(e: ast.Expr, a: string[]): string[] {
+function e021_no_expr(e: ast.Expr, own a: string[]): string[] {
   return a;
 }
 
@@ -13723,7 +13755,7 @@ function e060_trait_declares(mod: parser.Module, trait_name: string, m: string):
 // it needs fold_stmt_nodes rather than a plain expression fold: a `var`'s name
 // and annotation are fields on the statement.
 function e060_collect_dyn_locals(stmts: ast.Stmt[], acc: string[]): string[] {
-  function at_stmt(st: ast.Stmt, a: string[]): string[] {
+  function at_stmt(st: ast.Stmt, own a: string[]): string[] {
     match (st) {
       ast.StmtVar(v) => {
         var out: string[] = a;
@@ -13751,7 +13783,7 @@ function e060_collect_dyn_locals(stmts: ast.Stmt[], acc: string[]): string[] {
   }
   var res: string[] = acc;
   for stmt in stmts {
-    res = astwalk.fold_stmt_nodes(stmt, res, at_stmt, (e: ast.Expr, a: string[]) => a, astwalk.descend_all);
+    res = astwalk.fold_stmt_nodes(stmt, res, at_stmt, (e: ast.Expr, own a: string[]) => a, astwalk.descend_all);
   }
   return res;
 }
@@ -13798,7 +13830,7 @@ function e060_is_primitive_name(t: string): boolean {
 // the printer, every other parse having desugared them (parser.fern:150-162).
 // A dropped variant is a hole only if it REACHES this pass.
 function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, acc: util.Diag[]): util.Diag[] {
-  function at_node(n: ast.Expr, out: util.Diag[]): util.Diag[] {
+  function at_node(n: ast.Expr, own out: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprUnary(u) => {
         if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
@@ -15670,7 +15702,7 @@ function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module
   return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls };
 }
 
-function unchecked_capture(e: ast.Expr, found: boolean): boolean {
+function unchecked_capture(e: ast.Expr, own found: boolean): boolean {
   if let ast.ExprLambda(lm) = e { return found || !lm.captures_known; }
   return found;
 }
@@ -16112,7 +16144,7 @@ function vb_stmts(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
 
 // vb_at_value_local is the pre-scan's per-node contribution: a value block that
 // routes its value through a local.
-function vb_at_value_local(x: ast.Expr, acc: boolean): boolean {
+function vb_at_value_local(x: ast.Expr, own acc: boolean): boolean {
   if (acc) {
     return true;
   }

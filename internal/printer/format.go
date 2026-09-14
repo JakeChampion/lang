@@ -1263,6 +1263,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
+			if p.Own {
+				f.b.WriteString("own ")
+			}
 			f.b.WriteString(writtenName(p.Name))
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(p.Type))
@@ -1967,6 +1970,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
+			if p.Own {
+				f.b.WriteString("own ")
+			}
 			// A destructuring parameter prints the pattern it was
 			// written with, not the holder the desugar minted.
 			if p.Pattern != nil {
@@ -2290,6 +2296,12 @@ func formatType(t ast.Type) string {
 		for i, p := range x.Params {
 			if i > 0 {
 				out += ", "
+			}
+			// A consuming slot spells its `own`: it is part of the type, so a
+			// reformatted signature that dropped it would say the opposite of
+			// what the source said.
+			if x.OwnAt(i) {
+				out += "own "
 			}
 			out += formatType(p)
 		}

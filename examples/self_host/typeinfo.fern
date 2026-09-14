@@ -48,7 +48,49 @@ pub struct TypeTuple { elements: Type[] }
 // callable) from one that was never recorded: a bare legacy "fn" tag carries
 // no signature, so its TypeFunc has an empty list it cannot vouch for. Retained
 // declaration sidecars do record a signature. Only a known list is an arity.
-pub struct TypeFunc { param_types: Type[], ret_type: Type, params_known: boolean }
+// param_own marks the slots this callable CONSUMES — `(own T) => T`. A caller
+// hands its unit over there and does not release it; every other reference
+// argument is lent. The flags are part of the type, so a consuming function
+// value cannot reach a lending position or the reverse. Empty where nothing
+// consumes.
+pub struct TypeFunc { param_types: Type[], param_own: boolean[], ret_type: Type, params_known: boolean }
+
+// fn_own_at reports whether parameter `i` of this callable consumes its argument.
+pub function fn_own_at(f: TypeFunc, i: i32): boolean {
+  if (i < 0 || i >= f.param_own.len()) { return false; }
+  return f.param_own[i];
+}
+
+// A slot where CONSUMING says something: a reference, whose unit changes
+// hands, or an erased word, which may be one at some instantiation. A scalar
+// carries no unit, so `own` on one is not part of the type — dropping it here
+// is what lets a generic `(own T) => T` instantiated at a scalar match the
+// callable a scalar body actually hands out.
+pub function ownable(t: Type): boolean {
+  if let TypeI32(_) = t { return false; }
+  if let TypeBool(_) = t { return false; }
+  if let TypeFloat(_) = t { return false; }
+  if let TypeVoid(_) = t { return false; }
+  return true;
+}
+
+// own_flags normalises a per-parameter consuming mask against the parameter
+// types: a slot that carries no unit drops its flag, and a mask with nothing
+// left is EMPTY — so a callable that owns nothing keeps one spelling and
+// compares equal to one built without the mask.
+pub function own_flags(flags: boolean[], params: Type[]): boolean[] {
+  var kept: boolean[] = [];
+  var any: boolean = false;
+  var i: i32 = 0;
+  while (i < params.len()) {
+    var on: boolean = i < flags.len() && flags[i] && ownable(params[i]);
+    kept = kept.append(on);
+    if (on) { any = true; }
+    i = i + 1;
+  }
+  if (!any) { return []; }
+  return kept;
+}
 
 // TypeMap models `Map[K, V]` — a runtime hash-map keyed by K
 // values yielding V values. The actual runtime + method
@@ -172,7 +214,7 @@ pub function spelling(t: Type): string {
     },
     TypeFunc(f) => {
       if (!f.params_known) { return ""; }
-      var params: string = type_list_spelling(f.param_types);
+      var params: string = param_list_spelling(f);
       if (params.len() == 0 && f.param_types.len() > 0) { return ""; }
       var ret: string = spelling(f.ret_type);
       if (ret.len() == 0) { return ""; }
@@ -195,6 +237,22 @@ pub function spelling(t: Type): string {
     TypeErased(_) => { return ""; }
   }
   return "";
+}
+
+// A consuming slot spells its `own`, so a callable's spelling round-trips the
+// whole type rather than the lending half of it.
+function param_list_spelling(f: TypeFunc): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < f.param_types.len()) {
+    var one: string = spelling(f.param_types[i]);
+    if (one.len() == 0) { return ""; }
+    if (i > 0) { out = out + ", "; }
+    if (fn_own_at(f, i)) { out = out + "own "; }
+    out = out + one;
+    i = i + 1;
+  }
+  return out;
 }
 
 function type_list_spelling(ts: Type[]): string {
