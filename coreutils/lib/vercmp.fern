@@ -18,9 +18,16 @@ function is_alnum_b(c: i32): boolean {
 }
 
 // `compare(a, b)` — the two strings whole, for a caller that has them
-// as strings already.
+// as strings already. It does NOT concatenate them: `ls -v` calls this
+// once per comparison of a sort, and the join was an allocation and a
+// copy of both names per call.
 pub function compare(a: string, b: string): i32 {
-  return compare_range(a + b, 0, a.len(), a.len(), a.len() + b.len());
+  return compare_texts(a, 0, a.len(), b, 0, b.len());
+}
+
+// The range form over ONE buffer, which is what `sort` holds.
+pub function compare_range(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+  return compare_texts(text, a0, a1, text, b0, b1);
 }
 
 function ver_order(c: i32): i32 {
@@ -36,19 +43,19 @@ function ver_order(c: i32): i32 {
   return c + 256;
 }
 
-function verrevcmp(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function verrevcmp(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   var a: i32 = a0;
   var b: i32 = b0;
   while (a < a1 || b < b1) {
     var first_diff: i32 = 0;
-    while (a < a1 && !gnu.is_digit(text[a] as i32) || b < b1 && !gnu.is_digit(text[b] as i32)) {
+    while (a < a1 && !gnu.is_digit(ta[a] as i32) || b < b1 && !gnu.is_digit(tb[b] as i32)) {
       var ca: i32 = 0;
       if (a < a1) {
-        ca = ver_order(text[a] as i32);
+        ca = ver_order(ta[a] as i32);
       }
       var cb: i32 = 0;
       if (b < b1) {
-        cb = ver_order(text[b] as i32);
+        cb = ver_order(tb[b] as i32);
       }
       if (ca != cb) {
         return ca - cb;
@@ -56,23 +63,23 @@ function verrevcmp(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
       a = a + 1;
       b = b + 1;
     }
-    while (a < a1 && text[a] as i32 == 48) {
+    while (a < a1 && ta[a] as i32 == 48) {
       a = a + 1;
     }
-    while (b < b1 && text[b] as i32 == 48) {
+    while (b < b1 && tb[b] as i32 == 48) {
       b = b + 1;
     }
-    while (a < a1 && b < b1 && gnu.is_digit(text[a] as i32) && gnu.is_digit(text[b] as i32)) {
+    while (a < a1 && b < b1 && gnu.is_digit(ta[a] as i32) && gnu.is_digit(tb[b] as i32)) {
       if (first_diff == 0) {
-        first_diff = text[a] as i32 - text[b] as i32;
+        first_diff = ta[a] as i32 - tb[b] as i32;
       }
       a = a + 1;
       b = b + 1;
     }
-    if (a < a1 && gnu.is_digit(text[a] as i32)) {
+    if (a < a1 && gnu.is_digit(ta[a] as i32)) {
       return 1;
     }
-    if (b < b1 && gnu.is_digit(text[b] as i32)) {
+    if (b < b1 && gnu.is_digit(tb[b] as i32)) {
       return 0 - 1;
     }
     if (first_diff != 0) {
@@ -82,13 +89,18 @@ function verrevcmp(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
   return 0;
 }
 
-function is_alpha_b(c: i32): boolean {
-  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
-}
-
 // Where the file suffix starts, or `end` when there is none: the
 // longest tail matching `(\.[A-Za-z~][A-Za-z0-9~]*)*` that is not the
 // whole of a non-empty string.
+//
+// Asking forward, per position, whether everything from here to the end
+// is a chain of segments re-walks the tail — and `ls -v` asks it twice
+// per COMPARISON, which is a third of that sort's cost. A single
+// backward pass over the segments was written and MEASURED, and it lost
+// by 20% on a listing of names with one dot each: the forward scan
+// stops at the first dot where the backward one walks the whole prefix,
+// and the names a sort sees look like that. The cost is the per-byte
+// call, not the shape.
 function file_prefixlen(text: string, from: i32, end: i32): i32 {
   var i: i32 = from;
   while (i < end) {
@@ -130,7 +142,11 @@ function suffix_runs_to_end(text: string, at: i32, end: i32): boolean {
   return true;
 }
 
-pub function compare_range(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i32 {
+function is_alpha_b(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+function compare_texts(ta: string, a0: i32, a1: i32, tb: string, b0: i32, b1: i32): i32 {
   if (a0 == a1) {
     if (b0 == b1) {
       return 0;
@@ -140,8 +156,8 @@ pub function compare_range(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i3
   if (b0 == b1) {
     return 1;
   }
-  if (text[a0] as i32 == 46) {
-    if (text[b0] as i32 != 46) {
+  if (ta[a0] as i32 == 46) {
+    if (tb[b0] as i32 != 46) {
       return 0 - 1;
     }
     var adot: boolean = a1 - a0 == 1;
@@ -155,8 +171,8 @@ pub function compare_range(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i3
     if (bdot) {
       return 1;
     }
-    var add: boolean = a1 - a0 == 2 && text[a0 + 1] as i32 == 46;
-    var bdd: boolean = b1 - b0 == 2 && text[b0 + 1] as i32 == 46;
+    var add: boolean = a1 - a0 == 2 && ta[a0 + 1] as i32 == 46;
+    var bdd: boolean = b1 - b0 == 2 && tb[b0 + 1] as i32 == 46;
     if (add) {
       if (bdd) {
         return 0;
@@ -166,15 +182,15 @@ pub function compare_range(text: string, a0: i32, a1: i32, b0: i32, b1: i32): i3
     if (bdd) {
       return 1;
     }
-  } else if (text[b0] as i32 == 46) {
+  } else if (tb[b0] as i32 == 46) {
     return 1;
   }
-  var ap: i32 = file_prefixlen(text, a0, a1);
-  var bp: i32 = file_prefixlen(text, b0, b1);
+  var ap: i32 = file_prefixlen(ta, a0, a1);
+  var bp: i32 = file_prefixlen(tb, b0, b1);
   var one_pass: boolean = ap == a1 && bp == b1;
-  var r: i32 = verrevcmp(text, a0, ap, b0, bp);
+  var r: i32 = verrevcmp(ta, a0, ap, tb, b0, bp);
   if (r != 0 || one_pass) {
     return r;
   }
-  return verrevcmp(text, a0, a1, b0, b1);
+  return verrevcmp(ta, a0, a1, tb, b0, b1);
 }

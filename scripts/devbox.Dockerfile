@@ -66,6 +66,7 @@ RUN set -eux; \
     rm -rf /opt/gnu-coreutils/share /opt/gnu-coreutils/libexec; \
     cd /; rm -rf "/tmp/coreutils-$ver" "/tmp/coreutils-$ver.tar.xz"; \
     /opt/gnu-coreutils/bin/uptime --version | head -1 | grep -q '(GNU coreutils)'; \
+    /opt/gnu-coreutils/bin/kill --version | head -1 | grep -q '(GNU coreutils)'; \
     /opt/gnu-coreutils/bin/yes --version | head -1 | grep -q '(GNU coreutils)'
 
 # hyperfine and python3 for scripts/coreutils-bench: it is the repo's own
@@ -108,4 +109,5 @@ RUN set -eux; \
     test -f "$FERN_WASI_ADAPTER"; \
     "${FERN_GNU_COREUTILS%%:*}/yes" --version | head -1 | grep -q '(GNU coreutils)' \
       || (echo "the corpus oracle is not GNU coreutils; internal/coreutils would have none" >&2; exit 1); \
-    "${FERN_GNU_COREUTILS%%:*}/uptime" --version | head -1
+    "${FERN_GNU_COREUTILS%%:*}/uptime" --version | head -1; \
+    "${FERN_GNU_COREUTILS%%:*}/kill" --version | head -1

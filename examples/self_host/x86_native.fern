@@ -4496,9 +4496,29 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm
                     while (zi < zn) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; zi = zi + 1; }
                 }
             } else if (x86_str_starts_with(line, ".byte")) {
-                // A single byte of initialised data; dropping it shifts
-                // every later .rodata symbol (SH-005).
-                a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(slice_unchecked(line, 5, line.len()))) & 255) };
+                // `.byte a, b, …`: EVERY comma-separated value, the way
+                // `.long` above takes them. Taking only the first laid ONE
+                // byte down for a sixteen-byte pshufb table — so the table
+                // was a different constant, and every later .rodata symbol
+                // shifted fifteen bytes, which is the SH-005 hazard this
+                // branch's own comment named. `cksum -a crc` of a 512-byte
+                // file then segfaulted on the `movdqa` that read the next
+                // symbol, at an address `.align 16` no longer reached.
+                var brest: string = x86_gas_trim(slice_unchecked(line, 5, line.len()));
+                var btok: string = "";
+                var bci: i32 = 0;
+                while (bci < brest.len()) {
+                    if (brest[bci] == b',') {
+                        a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255) };
+                        btok = "";
+                    } else {
+                        btok = btok + slice_unchecked(brest, bci, bci + 1);
+                    }
+                    bci = bci + 1;
+                }
+                if (x86_gas_trim(btok).len() > 0) {
+                    a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255) };
+                }
             } else if (x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".balign") || x86_str_starts_with(line, ".p2align")) {
                 a = x86_gas_align(a, section, line);
             } else if (!x86_gas_directive_ignorable(line)) {

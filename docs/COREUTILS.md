@@ -226,7 +226,10 @@ below the floor, and the container spent its life comparing against it, which
 is not a gate (#9162). The image now builds 9.4 and puts it ahead of
 `/usr/bin`, so a green run in the container means what a green lane means.
 That also supplies the two binaries Debian does not build at all, `uptime`
-and `kill`. Benchmarks
+and `kill`, and asserts both rather than only the first. CI's `test-units`
+lane builds the same 9.4 and installs those two beside `/usr/bin`, with both
+in the cache key — a cache written when the step installed `uptime` alone
+cannot satisfy a run that needs both. Benchmarks
 compare against both GNU coreutils and Rust uutils, recording their actual
 versions. Install missing comparison implementations before measuring.
 A case whose behaviour changed between versions records the version it needs in a
@@ -599,6 +602,10 @@ Where Fern loses, by cause:
   copies removed; the rest is codegen.
 - **The fd-relative filesystem primitive (#9074)** — `du` (0.5–0.9x), whose
   full-path `stat` costs 9 µs a call against 4.
+- **A format string re-parsed per record (#9281)** — `ls -l` and `vdir`
+  (0.90x), where 8.7% of a long listing goes to reading `%b %e %H:%M`
+  four thousand times. See the ls subsection below, which also carries
+  what the rest of that profile is.
 - **Within noise or a single row** — `head -n 10` from a pipe, `tail -n
   4000000`, `split -n r/8`, `cut -s`, `comm -12` (0.77x), `uniq -f1 -c`
   (0.61x: the field walk and the key copy on the non-plain path), `env`
@@ -1503,6 +1510,63 @@ and reaching cksum's non-reflected CRC from that reflected instruction is an
 
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
+
+### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
+
+The same 4-core container, so read the columns against each other. The
+`ls-tree` workload is 4000 names in one directory, 1500 mixed entries
+(files, directories and symlinks) in another, and a 40-deep tree.
+
+| workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|
+| 4000 names, no stat | 4.10 ± 0.47 | 3.53 ± 0.95 | 5.72 ± 0.77 | 0.86× | 1.40× |
+| `-l` over 4000 names | 14.03 ± 1.41 | 12.59 ± 1.32 | 14.31 ± 1.69 | 0.90× | 1.02× |
+| `-U` (unsorted) over 4000 names | 2.88 ± 0.30 | 2.27 ± 0.21 | 4.56 ± 0.41 | 0.79× | 1.58× |
+| `-v` (filevercmp) over 4000 names | 11.64 ± 1.38 | 4.97 ± 0.53 | 22.98 ± 2.30 | 0.43× | 1.97× |
+| `-t` over 4000 names | 8.54 ± 1.31 | 6.52 ± 0.84 | 8.18 ± 0.90 | 0.76× | 0.96× |
+| `-S` over 4000 names | 8.20 ± 1.22 | 6.63 ± 0.94 | 7.05 ± 0.80 | 0.81× | 0.86× |
+| `-C -w 200` over 4000 names | 5.20 ± 0.74 | 4.41 ± 0.65 | 5.54 ± 0.73 | 0.85× | 1.06× |
+| `-x -w 200` over 4000 names | 5.22 ± 0.52 | 3.81 ± 0.40 | 5.53 ± 0.56 | 0.73× | 1.06× |
+| `-m -w 200` over 4000 names | 4.52 ± 0.48 | 3.77 ± 0.51 | 5.56 ± 0.66 | 0.83× | 1.23× |
+| `-i -s` over 4000 names | 8.87 ± 0.92 | 7.02 ± 0.72 | 9.35 ± 1.02 | 0.79× | 1.05× |
+| `-F` over 1500 mixed entries | 3.82 ± 0.63 | 2.55 ± 0.44 | 3.71 ± 0.52 | 0.67× | 0.97× |
+| `-l` over 1500 mixed entries | 5.69 ± 0.77 | 5.90 ± 0.65 | 7.50 ± 0.96 | 1.04× | 1.32× |
+| `--color=always` over 1500 mixed | 3.61 ± 0.45 | 2.87 ± 0.38 | 3.98 ± 0.36 | 0.80× | 1.10× |
+| `-R` over a 40-deep tree | 2.48 ± 0.27 | 1.70 ± 0.26 | 3.25 ± 0.47 | 0.69× | 1.31× |
+| `-lR` over a 40-deep tree | 3.87 ± 0.55 | 5.23 ± 0.53 | 4.91 ± 0.44 | 1.35× | 1.27× |
+| `-b` over 4000 names | 4.93 ± 1.13 | 3.60 ± 0.41 | 6.13 ± 1.06 | 0.73× | 1.24× |
+| `--quoting-style=shell-escape` | 4.76 ± 0.77 | 3.50 ± 0.44 | 7.08 ± 0.95 | 0.73× | 1.49× |
+| `--time-style=full-iso -l` | 15.12 ± 1.89 | 13.98 ± 4.83 | 15.74 ± 7.04 | 0.92× | 1.04× |
+
+Faster than uutils on thirteen of eighteen rows and faster than GNU on
+two. The first run of the port was **0.09× GNU on `-l`** and 0.17× on
+`-lR`, and what closed that was four things asking per ENTRY for work
+needed once: the owner and group databases were re-read per entry (the
+`pwdb` header says its path-taking lookups are "quadratic for one asking
+per entry", and a long listing asks twice per entry), the name
+comparison was a byte loop where `<` is one `memcmp`, `mode_string`
+allocated twelve times per line, and `pad_left` allocated once per byte
+of padding. 151 ms to 13.9 on the `-l` row.
+
+What is left is measured and not ls's own:
+
+- **`timefmt` re-parses the format string per call (#9281)** — 8.7% of a
+  long listing. A shared lib with seven consumers, five of which format
+  per record, so the compiled-format API is its own change.
+- **Allocation and refcount churn, ~23%** — what remains after the
+  per-entry allocations above: one `to_string()` per number and one
+  buffer per line, which is the floor for this shape.
+- **The merge sort's bookkeeping, ~14%** — ~100 instructions per merge
+  step over an `i32[]` index array, where `dst.with(at, v)` is the step.
+  There is no array primitive that writes in place without the
+  uniqueness check. It is the whole of the `-U` row's gap and most of
+  the plain one's.
+- **filevercmp is ~10× GNU's cost per comparison**, which is the `-v`
+  row. A backward single-pass `file_prefixlen` was written and MEASURED
+  against the forward one and lost by 20%: the names a sort sees have
+  one dot near the end, where the forward scan stops at the first dot
+  and the backward one walks the whole prefix. The cost is the per-byte
+  call, not the shape.
 
 ### The fold, 2026-09-14, Linux x86-64 (GNU coreutils 9.4)
 
