@@ -2723,13 +2723,11 @@ pub function (s: EmitState) mark_str_lines(): EmitState {
     return s.need("heap").need("arr_push").need("arr_push_owned").need("str_concat").need("str_lines");
 }
 
-// str_bytes's helper builds the result array with `.append()`, which the
-// ownership analysis lowers to the reclaim-on-grow __fern_arr_push_owned
-// (sole-owner local reassigned) rather than plain __fern_arr_push, so both
-// symbols must be present. Marked directly here; runtime_need_deps declares the
-// same edges (arr_push_owned → arr_push).
+// str_bytes's helper pre-sizes its result with __raw_arr_box and stores each
+// slot, so it needs the allocator and nothing else. The arr_push /
+// arr_push_owned pair it used to demand went with the .append() loop.
 pub function (s: EmitState) mark_str_bytes(): EmitState {
-    return s.need("heap").need("arr_push").need("arr_push_owned").need("str_bytes");
+    return s.need("heap").need("str_bytes");
 }
 
 // str_split's Fern helper builds the result string[] with .append()
@@ -3006,13 +3004,15 @@ pub function rt_src_str_split(): string {
 
 // rt_src_str_bytes backs `s.bytes()` / `s.as_bytes()` (#2649). Returns an i32[]
 // of the string's byte values (each zero-extended into the array's uniform 8-byte
-// slot). Composite / Tier-1: builds the result by appending each byte
-// (s[i] yields the zero-extended byte as i32) — .append() lowers to __fern_arr_push
-// (existing), so no new primitive. The hand-asm it replaces pre-sized the array to
-// len via __fern_arr_box; the append-loop grows it instead — same i32[] result
-// (logical length + elements), just a different internal capacity.
+// slot; s[i] yields the zero-extended byte).
+//
+// PRE-SIZED with __raw_arr_box, the shape __fern_random_bytes / __fern_tcp_recv /
+// __fern_read_file_bytes already use: slot 0 is the length and slot i+1 element i.
+// Growing from `[]` with .append() instead reallocated and copied the whole array
+// about log2(n) times per call, which on a 64 KiB chunk is sixteen copies of up
+// to half a megabyte — `cksum -a bsd` spent 4x its own runtime there (#9277).
 pub function rt_src_str_bytes(): string {
-    return "function __fern_str_bytes(s: string): i32[] { var n: i32 = s.len(); var r: i32[] = []; var i: i32 = 0; while (i < n) { r = r.append(s[i]); i = i + 1; } return r; }";
+    return "function __fern_str_bytes(s: string): i32[] { var n: i32 = s.len(); var b: i32 = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, s[i]); i = i + 1; } return __raw_array(b); }";
 }
 
 // rt_src_str_lines backs `s.lines()` (#2649).
@@ -5082,15 +5082,15 @@ pub function runtime_need_deps(name: string): string[] {
         return d5;
     }
     if (name == "str_bytes") {
-        // __fern_str_bytes builds the byte array with .append() — AST: __fern_arr_push;
-        // IR (sole-owner local): __fern_arr_push_owned. Both, plus heap.
-        var d6: string[] = ["heap", "arr_push", "arr_push_owned"];
+        // __fern_str_bytes pre-sizes with __raw_arr_box and stores each slot, so
+        // the allocator is all it reaches for.
+        var d6: string[] = ["heap"];
         return d6;
     }
     if (name == "str_split") {
         // __fern_str_split builds the result string[] by appending each s[start:i]
-        // slice — same arr_push / arr_push_owned pairing as str_bytes, and the
-        // same #7230 str_concat edge as str_lines.
+        // slice — the arr_push / arr_push_owned pairing str_lines has, and the
+        // same #7230 str_concat edge.
         var d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
         return d8;
     }
