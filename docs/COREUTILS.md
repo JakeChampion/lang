@@ -272,7 +272,10 @@ which needs `fsmode` — a mode word no wasm host has — so E066 refuses it
 post-tree-shake. That is the same answer `sort --batch-size` gets, and for
 the same reason: the alternative is a `-f` that silently does not force.
 Writer.seek, the primitive shred is built on, is covered on both previews
-by `internal/e2e/handle_stat_seek_test.go` instead.
+by `internal/e2e/handle_stat_seek_test.go` instead. `dd`, built on the same
+seek and reaching no mode word, does build and is in the leg — the one
+utility there that WRITES a file, so the leg covers a preopened
+directory's `path_open` and the write loop behind it.
 
 ## Layout
 
@@ -693,6 +696,23 @@ were a strcmp per entry.
 | `date` | date -f 10000 lines | 83.31 ± 2.09 | 40.54 ± 2.19 | 13.61 ± 1.04 | 0.49× | 0.16× |
 | `date` | date -u -R | 0.35 ± 0.09 | 1.34 ± 0.15 | 2.20 ± 0.20 | 3.88× | 6.35× |
 | `date` | date --debug | 0.35 ± 0.09 | 1.34 ± 0.12 | 2.89 ± 0.21 | 3.87× | 8.33× |
+
+**dd has no row here yet, and the reason is a compiler bug rather than a
+workload.** Measured 2026-09-14 on the same host, 64 MiB of /dev/zero into
+/dev/null at `bs=64k`: 40.2 ms against GNU's 3.6 ms, with 37.6 ms of the
+40.2 in SYSTEM time. `strace -c` puts 33 ms of it inside `read`, at 32 µs a
+call where a bare Fern read/write loop over the same bytes takes under 1 µs
+and beats GNU outright (2.4 ms against 3.2). The difference is that dd's
+buffer is never reclaimed, so every record's read faults sixteen fresh pages
+in instead of reusing one block: `ru_minflt` 17,531 against 41, `ru_maxrss`
+69,760 kB for a copy that holds 64 KiB at a time. Three reference-counting
+leaks account for it, each bisected to a reproducer of its own — #9244 (a
+local aliasing a borrowed parameter, fixed), #9245 (the per-call Result box,
+once the failure arm binds its payload) and #9246 (`x = f(x)` where the
+callee can hand its argument back, which is `convert_record`'s
+`out = apply_case(out, …)`). `scripts/coreutils-bench.d/dd.sh` carries the
+workloads, so the row is one run away once those land; taking a number now
+would bake the leak into the table.
 
 **shred, 2026-09-14**, the same host, its workloads file run alone (mean ±
 σ, ≥20 runs; ratios above 1 mean Fern is faster).
@@ -1551,6 +1571,82 @@ ways, byte for byte against GNU: a 256 KiB loop device asked for 400,000
 bytes, and a 256k tmpfs asked the same. Neither is a corpus case, because the
 harness mounts nothing.
 
+**What a `dd` corpus can compare, and what nothing can.** The third report
+line carries the elapsed time and a rate computed from it, so two correct
+implementations can never agree on it. A mask cannot reach it either — the
+harness masks stdout and the tree, never stderr, and the whole report is on
+stderr — so every case in the corpus names `status=noxfer` or `status=none`
+and the third line's SHAPE is pinned separately, on our own output
+(`TestDDTransferLine`). Everything else is comparable and it is most of dd:
+the two record-count lines, every byte of the output file, the operand
+grammar with its five diagnostics, and what each `conv=` does to the bytes.
+
+`status=progress` is the one place the durations are worth masking rather
+than avoiding. It writes one `\r`-prefixed transfer line per second, and
+the seconds THERE are a whole number: an elapsed 1.7 s reads `2 s`, so it
+rounds rather than truncates. A record that outlasts several seconds still
+produces one line, not one per second, because GNU's alarm handler only
+raises a flag that the copy loop reads at a record boundary — which is why
+this needs no signal handler to match, and `dd.fern` takes the same look at
+the same place. `TestDDProgress` drives both sides over a FIFO fed one byte
+and then another after a sleep, so the bytes at the tick are identical, and
+compares stderr with only the fractional durations rewritten.
+
+**dd's number grammar is not gnulib's.** On top of the block suffixes every
+utility here shares it adds `c` (1) and `w` (2), an `x` between two numbers
+that MULTIPLIES (`1kx2` is 2048, `2x3x4` is 24), and a trailing `B` that
+makes a count BYTES rather than blocks. Measured, GNU 9.4, because none of
+the four is stated precisely in the man page:
+
+- `c` and `w` take no `iB` form and no second multiplier, so `1ciB` and
+  `1kc` are refused while a bare `c` is 1 and `3w` is 6;
+- the `B` is read off a piece's END, which means the multiplier grammar's
+  own endings carry it — `count=1kB` is 1000 BYTES where `count=1k` is 1024
+  blocks, and `1KiB` is 1024 bytes — and a `B` left over after a number or
+  a block suffix is dropped, so `2B` is 2 and `1bB` is 512. One `B`
+  anywhere in the product marks the whole operand, so `1cx7Bx2` is 14
+  bytes. It reaches the same bit as `iflag=count_bytes` and its two
+  siblings;
+- a piece that is a single `0` in front of an `x` is WARNED about rather
+  than refused (`warning: '0x' is a zero multiplier; use '00x' if that is
+  intended`), once per piece, and the zero still wins — which for a block
+  size is then the invalid `bs=0`;
+- a value past INTMAX_MAX is a different line from a value that is not a
+  number: `invalid number: '1x': Value too large for defined data type`
+  against a bare `invalid number: 'q'`.
+
+`iseek` and `oseek` are aliases for `skip` and `seek`, so the pair is one
+operand for the last-wins rule: `skip=1 iseek=3` skips 3 and the reverse
+skips 1.
+
+`conv=fdatasync` on a descriptor with no data-only sync reports
+`fsync failed`, not `fdatasync failed`: EINVAL there is the descriptor
+saying it has no such call rather than a failure, so GNU promotes the
+request to a full `fsync` and reports THAT one's errno. /dev/null is where
+it shows.
+
+**What dd here does not do yet**, each an accepted-operand gap rather than a
+wrong answer — the name is refused as `invalid conversion` / `invalid
+input flag`, which is itself the divergence:
+
+- `conv=ascii`, `conv=ebcdic` and `conv=ibm` need the two EBCDIC tables
+  (#9240);
+- `conv=sparse` needs a write that punches a hole rather than writing NULs,
+  which is `w.seek` past the gap — the primitive is here, the accounting is
+  not (#9241);
+- `iflag`/`oflag` `direct`, `directory`, `dsync`, `sync`, `noatime`,
+  `nocache`, `noctty` and `nofollow` are all open-time bits, and Fern's
+  `open_reader_with` / `open_writer_with` flags word carries two: create
+  and non-blocking (#9242);
+- the SIGUSR1 report mid-copy needs a signal a program can OBSERVE, and
+  Fern has only the three disposition calls (`signal_send`,
+  `signal_ignore`, `signal_default`) — nothing that runs or records on
+  delivery (#9243);
+- `conv=excl` that CREATES its output leaves mode 0600 where GNU leaves
+  0666 through the umask, since Fern's exclusive open fixes the mode;
+  #9237 is the flags-word bit that closes it, and it is why the corpus
+  holds only the taken-name half of that case.
+
 **`expr`'s empty alternation branch inside a COUNTED repetition follows no
 branch order at all.** glibc demotes a branch that compiles to nothing — `expr
 aa : '\(\|a\)a*'` reports the empty string, not `a` — and `bre.fern` now does
@@ -2197,8 +2293,11 @@ groups are the order of work. Each sub-issue names its group.
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
   those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `timeout` `nice`
   `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
-  (its primitive is here: `w.seek(offset, whence)`, lseek on a Writer,
-  which is what writing at an offset without rewriting the file needs)
+  (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
+  writing at an offset without rewriting the file needs; the operand
+  families it does NOT have are in the divergences above, each with its
+  own issue, and the biggest of them wants a signal a program can
+  OBSERVE rather than only dispose of, #9243)
   `shred` (done, on that same seek — see the divergences above) `stty`, `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
   clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are

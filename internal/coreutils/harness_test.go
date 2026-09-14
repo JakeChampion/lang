@@ -496,7 +496,10 @@ func gnuVersionOf(bin string) (string, error) {
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
 	first, _, _ := strings.Cut(string(out), "\n")
-	if !strings.Contains(first, "(GNU coreutils)") {
+	// `dd` is the one utility whose version line does not carry the word
+	// GNU — it says `dd (coreutils) 9.4` where every sibling says
+	// `(GNU coreutils)` — so both spellings are the package's.
+	if !strings.Contains(first, "(GNU coreutils)") && !strings.Contains(first, "(coreutils)") {
 		if len(out) == 0 && readErr != nil {
 			return "", fmt.Errorf("%s: %w", bin, readErr)
 		}

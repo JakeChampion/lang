@@ -155,7 +155,7 @@ function main(): i32 { return scan_nested(mks()); }`)
 // programs still exit 0 on all three backends (escape sites take their own
 // transfer inc, and the one uncounted route, move-on-return, is absorbed as
 // a LEAK by the caller's may-alias-result flat dec). Per-case coverage,
-// also measured by knockout: returned falls to forinElemReturnsConfined (a
+// also measured by knockout: returned falls to aliasReturnsConfined (a
 // bare y in a return value) with confinement behind it, bound_alias to walk
 // 2's role marking, stored_into_array to movedLocals, match_scrutinee to
 // scrutinee[y], reassigned_elem to reassigned[y].
