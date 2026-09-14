@@ -165,13 +165,17 @@ func TestSelfHostBlockRcPayloadNestedMatchX86_64(t *testing.T) {
 		})
 	}
 
+	// The arm binding escapes to an outer local. That once refused the
+	// consuming match and stranded the payload, which this row pinned as
+	// live != 0; a scalar-array payload's store-out is a counted claim, so the
+	// match is admitted and the row balances like its siblings. Exit agreement
+	// above is still the real detector of a release under a live reference.
 	t.Run("arm_binding_escapes", func(t *testing.T) {
 		allocs, frees, live := counts(t, "arm_binding_escapes", blkRcEscapeSrc)
-		if live == 0 {
-			t.Errorf("arm_binding_escapes: allocs=%d frees=%d live_bytes=%d — the arm "+
-				"binding escapes to an outer local, so the payload must be stranded rather "+
-				"than released. Exit agreement above is the real detector; a full balance "+
-				"here means the escape gate was bypassed", allocs, frees, live)
+		if live != 0 || allocs != frees {
+			t.Errorf("arm_binding_escapes: allocs=%d frees=%d live_bytes=%d — want an exact "+
+				"balance: the escaping binding's store retains, so the box's own release "+
+				"lands on the claim that is left", allocs, frees, live)
 		}
 	})
 }
