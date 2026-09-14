@@ -11835,9 +11835,12 @@ func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
 	switch x := e.(type) {
 	case *ast.Lambda:
 		ft := &ast.FuncType{Result: x.ReturnType}
+		owns := make([]bool, 0, len(x.Params))
 		for _, p := range x.Params {
 			ft.Params = append(ft.Params, p.Type)
+			owns = append(owns, p.Own)
 		}
+		ft.ParamOwn = ast.OwnFlags(owns, len(ft.Params))
 		return ft
 	case *ast.MakeClosure:
 		sig, ok := b.info.FuncSigs[x.FuncName]
@@ -11847,6 +11850,7 @@ func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
 		ft := &ast.FuncType{Result: sig.Result}
 		if len(sig.Params) > 0 {
 			ft.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
+			ft.ParamOwn = ast.OwnFlags(sig.ParamOwn, len(ft.Params))
 		}
 		return ft
 	}
@@ -14159,7 +14163,7 @@ func (b *builder) call(n *ast.Call) error {
 	// pair pointer and dispatches through OpCallIndirect like any other
 	// function-typed value.
 	if ft := b.closureLiteralType(n.Callee); ft != nil {
-		slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
+		slots, types, err := b.emitIndirectCallArgs(n.Args, ft)
 		if err != nil {
 			return err
 		}
@@ -15790,6 +15794,20 @@ func (b *builder) callBody(n *ast.Call) error {
 	// stage-(b) post-call dec at those positions (else the temp is freed twice).
 	ownArgFlags := b.info.OwnFuncs[id.Name]
 	calleeSig := b.info.FuncSigs[id.Name]
+	// A call through a function-typed LOCAL has no declaration to read the
+	// consuming positions from; the function TYPE carries them instead
+	// (`(own i32[]) => i32`). Without this the caller reclaimed a fresh temp
+	// the callee had already freed — a double free on every such call.
+	// A call through a function-typed LOCAL has no declaration to read the
+	// consuming positions from; the function TYPE carries them
+	// (`(own i32[]) => i32`). Without this the caller reclaimed a fresh temp
+	// the callee had already freed — a double free on every such call.
+	if len(ownArgFlags) == 0 {
+		if lt := b.indirectCalleeType(id.Name); lt != nil {
+			ownArgFlags = lt.ParamOwn
+			calleeSig = lt
+		}
+	}
 	// ownedByCallee: the callee reclaims this argument — either an explicit `own`
 	// param or (Slice 2) an owned-by-default one. Both suppress the stage-(b)
 	// caller-side reclaim (the callee frees it) and, for owned-by-default, the
@@ -16025,11 +16043,25 @@ func (b *builder) callBody(n *ast.Call) error {
 // reclaimIndirectArgTemps: the result cannot be or contain the argument, a
 // closure cannot retain it in a capture (E049), and a function VALUE has no
 // `own` position for the callee to reclaim it through.
-func (b *builder) emitIndirectCallArgs(args []ast.Expr, resultType ast.Type) ([]int32, []ast.Type, error) {
-	reclaim := ast.RcFreeEnabled && resultCannotAliasArg(resultType)
+func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]int32, []ast.Type, error) {
+	reclaim := ast.RcFreeEnabled && resultCannotAliasArg(sig.Result)
 	var slots []int32
 	var types []ast.Type
-	for _, a := range args {
+	for ai, a := range args {
+		// A slot the function type spells `own` is CONSUMING: the argument
+		// is the callee's to release, so the caller neither stashes it for
+		// a post-call drop nor keeps a reference of its own.
+		if sig.OwnAt(ai) {
+			if err := b.expr(a); err != nil {
+				return nil, nil, err
+			}
+			if b.ownArgNeedsRetain(a) {
+				b.emitAliasInc(a)
+			} else {
+				b.emitBorrowedArrayOwnArgRetain(a)
+			}
+			continue
+		}
 		if reclaim {
 			slot, tt, ok, err := b.stashOwnedArgTemp(a)
 			if err != nil {
@@ -16184,6 +16216,42 @@ func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guard
 // localFuncType returns the static FuncType of the named local. Calls
 // through a non-function-typed local are a checker bug, but we surface
 // them as IR errors rather than panicking.
+// indirectCalleeType is the FUNCTION TYPE of a callee that is a local — a
+// parameter, a var, or a pattern binding holding a function value — when that
+// type spells a CONSUMING slot. Such a call has no declaration to read the
+// consuming positions from; the type carries them, and caller and callee would
+// otherwise disagree about who releases the argument. Nil when the name is not
+// a function-typed local or its type consumes nothing.
+func (b *builder) indirectCalleeType(name string) *ast.FuncType {
+	ft, err := b.localFuncType(name)
+	if err != nil || ft == nil || !ft.AnyOwn() {
+		return nil
+	}
+	return ft
+}
+
+// calleeOwnFlags is the consuming mask of whatever `name` names at this call.
+// A function-typed LOCAL shadows a declaration of the same name and carries
+// its own mask in its TYPE; anything else is the declared function's `own`
+// flags. Empty when nothing at that name consumes.
+//
+// Every rule that decides who releases an argument reads the mask here, so a
+// call through a function value and a direct call to the same signature get
+// the identical protocol: the caller's overwrite-dec is suppressed, the
+// transfer is claimed, and no compensating retain is bought.
+func (b *builder) calleeOwnFlags(name string) []bool {
+	if ft := b.indirectCalleeType(name); ft != nil {
+		return ft.ParamOwn
+	}
+	if _, isLocal := b.locals[name]; isLocal {
+		return nil // shadowed by a local — not a direct call
+	}
+	if b.paramNamed(name) != nil {
+		return nil // shadowed by a parameter — not a direct call
+	}
+	return b.info.OwnFuncs[name]
+}
+
 func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 	for _, p := range b.fn.Params {
 		if p.Name == name {
@@ -18527,8 +18595,8 @@ func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
 	if !ok {
 		return false
 	}
-	flags, isOwn := b.info.OwnFuncs[id.Name]
-	if !isOwn {
+	flags := b.calleeOwnFlags(id.Name)
+	if len(flags) == 0 {
 		return false
 	}
 	for i, a := range call.Args {
@@ -21618,6 +21686,38 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 // `__fern_rc_dec` (dropFnNameFor declines a FuncType), which decrements
 // without re-entering a closure release, so `g = f` supersedes an element on
 // a cyclic graph without the recursion #8637 traced.
+// callConsumesCellElem reports whether `e` is a call that hands the element of
+// the boxcapture cell `cellName` to a CONSUMING parameter — the cell-read form
+// of callConsumesIdent, reading the same mask through the same accessor so a
+// direct call and one through a function value cannot disagree.
+func (b *builder) callConsumesCellElem(e ast.Expr, cellName string) bool {
+	if cellName == "" {
+		return false
+	}
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	flags := b.calleeOwnFlags(id.Name)
+	for i, a := range call.Args {
+		if i >= len(flags) || !flags[i] {
+			continue
+		}
+		idx, isIdx := a.(*ast.Index)
+		if !isIdx || idx.IsSlice {
+			continue
+		}
+		if arr, isID := idx.Array.(*ast.Ident); isID && arr.Name == cellName {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind, storeWidth int, idxHelper string) error {
 	elem := t.ElemType
 	counted := elem != nil && ast.RcFreeEnabled && ast.IsPointerType(elem)
@@ -21685,8 +21785,14 @@ func (b *builder) emitBoxedCellStore(t *ast.Index, n *ast.Assign, storeOp OpKind
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
 	// Release the superseded element through the same ladder a container
-	// slot's replacement takes.
-	if !guarded {
+	// slot's replacement takes — unless the value expression CONSUMED it. A
+	// boxcapture cell holds the binding's one reference, so handing `cell[0]`
+	// to a consuming parameter gives that reference away and the callee
+	// releases it; releasing here as well frees the box twice. The plain-local
+	// form of the same rebind (`x = f(…, x, …)`) is suppressed by
+	// callConsumesIdent, which cannot see the cell read closureconv rewrote
+	// the name into.
+	if !guarded && !b.callConsumesCellElem(n.Value, cellName) {
 		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 		b.emit(payloadLoadOpFor(elem, b.ptrW))
 		b.dropStructField(elem)
