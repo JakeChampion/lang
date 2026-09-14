@@ -5466,8 +5466,16 @@ func (p *parser) parsePipe() (ast.Expr, error) {
 				r.Args[hole] = left
 				r.PipeHole = hole + 1
 			} else {
-				// `x |> f(a, b)` — prepend x to f's arg list.
+				// `x |> f(a, b)` — prepend x to f's arg list. ArgNames is
+				// PARALLEL to Args, so it has to grow too: without the
+				// leading "" the names sat one slot left of the arguments
+				// they name, and `x |> f(b = 1)` was rejected as "positional
+				// argument after named argument" (defaultargs reading
+				// ArgNames[0] = "b" against the piped LHS).
 				r.Args = append([]ast.Expr{left}, r.Args...)
+				if r.ArgNames != nil {
+					r.ArgNames = append([]string{""}, r.ArgNames...)
+				}
 			}
 			r.IsPipe = true
 			left = r
