@@ -23,7 +23,7 @@ import (
 // not assert balance. Removing the payload-out half makes
 // payload_out_via_alias exit 99 with allocs=300 frees=300 live_bytes=0 — a
 // PERFECTLY BALANCED census on a build that over-releases, cleaner-looking than
-// the correct build's 300/200 with 4000 live. A balance assertion would pass
+// the correct build's 300/100 with 8000 live. A balance assertion would pass
 // the unsafe build and fail the safe one.
 // See docs/rc-log/2026-08-28-option-alias-match-consumed.md.
 //
@@ -91,7 +91,10 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
     return out.len();
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, wantFrees: 200,
+			// 100 since the Some binding is spelled as an array (#9190): the
+			// carried-out payload is a counted reference, and the refused box
+			// keeps it, as it always did under a call scrutinee.
+			want: 68, wantFrees: 100,
 		},
 		{
 			// The alias ESCAPES the frame; not confined, source keeps its

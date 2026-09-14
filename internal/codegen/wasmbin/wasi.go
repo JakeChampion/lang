@@ -2691,6 +2691,25 @@ func buildExitBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildExitBodyP2 is __fern_exit under wasi:cli/exit, whose argument
+// is a `result<_, _>` discriminant rather than a status: 0 is ok and
+// every other code is 1, the one bit of failure a preview-2 host
+// reports (the synthesised `_start` folds main's result the same way).
+// Passing the code through would trap the host on `exit(2)`.
+func buildExitBodyP2(idxs map[string]uint32) []byte {
+	procExit := idxs["wasi_proc_exit"]
+	var body []byte
+	if ast.LeakCheckEnabled {
+		body = inst.InstCall(body, idxs["__fern_lc_report"])
+	}
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstCall(body, procExit)
+	body = inst.InstUnreachable(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildLcReportBodyP2 assembles __fern_lc_report() for preview 2: the
 // same line, written through wasi:cli/stderr's output-stream instead of
 // fd 2. The handle is cached in the same slots __fern_eprint uses — it
@@ -2818,6 +2837,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_reader_read_line_fd": buildReaderReadLineFdBodyP2,
 	"__fern_reader_read_chunk":   buildReaderReadChunkBodyP2,
 	"__fern_fd_stat":             buildFdStatBodyP2,
+	"__fern_exit":                buildExitBodyP2,
 	"__fern_fd_fsync":            buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
 	"__fern_fd_fdatasync":        buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
 	"__fern_fd_syncfs":           buildFdSyncfsBody,

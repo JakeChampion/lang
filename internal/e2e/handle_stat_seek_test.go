@@ -145,8 +145,9 @@ func TestInterpHandleStatSeek(t *testing.T) {
 // descriptor, `seek` reopens the stream at the target and records the
 // position, which is what makes SEEK_CUR answerable at all. stdin and
 // stdout are streams with no descriptor, so `seek` on stdin is ESPIPE
-// exactly as on a kernel, and `stat` on either is Unsupported rather
-// than an invented record.
+// exactly as on a kernel, and `stat` on either is the all-zero record a
+// preview-1 host reports for the same stream: not a file, not a
+// directory, no size.
 func handleStatSeekWasmSource() string {
 	return `function main(): i32 {
     match (open_reader("hello.txt")) {
@@ -204,22 +205,12 @@ func handleStatSeekWasmSource() string {
         }
     }
     match (stdin().stat()) {
-        Ok(_) => { return 18; },
-        Err(e) => {
-            match (e) {
-                Unsupported => {},
-                _ => { return 19; }
-            }
-        }
+        Err(_) => { return 18; },
+        Ok(st) => { if (st.is_file || st.is_dir || st.size != 0 as i64) { return 19; } }
     }
     match (stdout().stat()) {
-        Ok(_) => { return 21; },
-        Err(e) => {
-            match (e) {
-                Unsupported => {},
-                _ => { return 22; }
-            }
-        }
+        Err(_) => { return 21; },
+        Ok(st) => { if (st.is_file || st.is_dir || st.size != 0 as i64) { return 22; } }
     }
     return 0;
 }

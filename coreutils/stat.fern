@@ -216,7 +216,9 @@ function max_width(): i32 {
 
 // ---- the format scanner -----------------------------------------------------
 // A piece of a scanned format: literal bytes, or a directive.
-struct Piece { literal: string, dir: Directive, is_dir: boolean }
+// A literal piece keeps the format text as written; `escapes` says
+// `--printf` reads it, so its backslashes are resolved as it prints.
+struct Piece { literal: string, dir: Directive, is_dir: boolean, escapes: boolean }
 
 function is_digit_byte(b: i32): boolean {
   return b >= 48 && b <= 57;
@@ -224,8 +226,10 @@ function is_digit_byte(b: i32): boolean {
 
 // `scan(fmt)` — the format as a list of pieces. A `%` whose directive
 // is `%%` wearing a modifier is fatal here, before any operand is
-// looked at, which is where GNU reports it too.
-function scan(fmt: string, fs_mode: boolean): Piece[] {
+// looked at, which is where GNU reports it too. Under `--printf` a
+// backslash takes the byte after it into the literal, so `\%n` and
+// `\045n` print `%n` rather than a name.
+function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
   var out: Piece[] = [];
   var lit: u8[] = [];
   var i: i32 = 0;
@@ -234,6 +238,10 @@ function scan(fmt: string, fs_mode: boolean): Piece[] {
     if (b != 37) {
       lit = lit.append(b as u8);
       i = i + 1;
+      if (escapes && b == 92 && i < fmt.len()) {
+        lit = lit.append(fmt[i]);
+        i = i + 1;
+      }
       continue;
     }
     // A trailing `%` is a literal `%`.
@@ -307,9 +315,9 @@ function scan(fmt: string, fs_mode: boolean): Piece[] {
     if (i >= fmt.len()) {
       // `%` plus modifiers and nothing to apply them to: the unknown
       // directive, with no byte left to resume on.
-      out = flush_literal(out, lit);
+      out = flush_literal(out, lit, escapes);
       lit = [];
-      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true });
+      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true, escapes: false });
       continue;
     }
     var conv: i32 = fmt[i] as i32;
@@ -321,9 +329,9 @@ function scan(fmt: string, fs_mode: boolean): Piece[] {
       // literal `x`, where a plain unknown conversion swallows its own
       // byte (`%q` is `?`, not `?q`).
       i = i - 1;
-      out = flush_literal(out, lit);
+      out = flush_literal(out, lit, escapes);
       lit = [];
-      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true });
+      out = out.append(Piece { literal: "", dir: Directive { ...d, conv: 0, mod: 0, text: slice_unchecked(fmt, start, i) + "" }, is_dir: true, escapes: false });
       continue;
     }
     d = Directive { ...d, conv: conv, text: slice_unchecked(fmt, start, i) + "" };
@@ -331,19 +339,19 @@ function scan(fmt: string, fs_mode: boolean): Piece[] {
       lit = lit.append(37 as u8);
       continue;
     }
-    out = flush_literal(out, lit);
+    out = flush_literal(out, lit, escapes);
     lit = [];
-    out = out.append(Piece { literal: "", dir: d, is_dir: true });
+    out = out.append(Piece { literal: "", dir: d, is_dir: true, escapes: false });
   }
-  return flush_literal(out, lit);
+  return flush_literal(out, lit, escapes);
 }
 
-function flush_literal(out: Piece[], lit: u8[]): Piece[] {
+function flush_literal(out: Piece[], lit: u8[], escapes: boolean): Piece[] {
   if (lit.len() == 0) {
     return out;
   }
   var empty: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
-  return out.append(Piece { literal: string_from_bytes_unchecked(lit), dir: empty, is_dir: false });
+  return out.append(Piece { literal: string_from_bytes_unchecked(lit), dir: empty, is_dir: false, escapes: escapes });
 }
 
 // ---- backslash escapes (--printf only) --------------------------------------
@@ -360,12 +368,15 @@ function hex_value(b: i32): i32 {
   return 0 - 1;
 }
 
-// `unescape(s)` — the backslash table `--printf` reads. An escape the
-// table does not hold is a warning naming it and the backslash
-// dropped, which is GNU's `warning: unrecognized escape '\q'` followed
-// by a literal `q`; a backslash at the end of the format is its own
-// warning and stays.
-function unescape(s: string): string {
+// `put_unescaped(o, s)` — `s` written through the backslash table
+// `--printf` reads. An escape the table does not hold is a warning
+// naming it and the backslash dropped, which is GNU's `warning:
+// unrecognized escape '\q'` followed by a literal `q`; a backslash at
+// the end of the format is its own warning and stays. GNU resolves
+// the escapes as it prints each operand, so a warning repeats per
+// operand and lands after the text written before it.
+function put_unescaped(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o;
   var out: u8[] = [];
   var i: i32 = 0;
   while (i < s.len()) {
@@ -376,7 +387,8 @@ function unescape(s: string): string {
       continue;
     }
     if (i + 1 >= s.len()) {
-      gnu.error("warning: backslash at end of format");
+      w = gnu.error_out(gnu.put(w, string_from_bytes_unchecked(out)), "warning: backslash at end of format");
+      out = [];
       out = out.append(92 as u8);
       i = i + 1;
       continue;
@@ -416,7 +428,8 @@ function unescape(s: string): string {
     } else if (c == 120) {
       // `\x` wants at least one hex digit and takes at most two.
       if (i >= s.len() || hex_value(s[i] as i32) < 0) {
-        gnu.error("warning: unrecognized escape '\\x'");
+        w = gnu.error_out(gnu.put(w, string_from_bytes_unchecked(out)), "warning: unrecognized escape '\\x'");
+        out = [];
         out = out.append(120 as u8);
       } else {
         var hv: i32 = hex_value(s[i] as i32);
@@ -428,11 +441,12 @@ function unescape(s: string): string {
         out = out.append(hv as u8);
       }
     } else {
-      gnu.error("warning: unrecognized escape '\\" + string_from_bytes_unchecked([c as u8]) + "'");
+      w = gnu.error_out(gnu.put(w, string_from_bytes_unchecked(out)), "warning: unrecognized escape '\\" + string_from_bytes_unchecked([c as u8]) + "'");
+      out = [];
       out = out.append(c as u8);
     }
   }
-  return string_from_bytes_unchecked(out);
+  return gnu.put(w, string_from_bytes_unchecked(out));
 }
 
 // ---- padding ----------------------------------------------------------------
@@ -860,7 +874,7 @@ function ok_rendered(s: string): Rendered {
   return Rendered { text: s, failed: false };
 }
 
-function render_file(d: Directive, it: Item, z: tz.Zone): Rendered {
+function render_file(d: Directive, it: Item, z: tz.Zone, style: i32): Rendered {
   var st: FileStat = it.st;
   var c: i32 = d.conv;
   if (d.mod != 0) {
@@ -926,7 +940,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone): Rendered {
     return ok_rendered(out_string(d, it.name));
   }
   if (c == 78) {
-    return ok_rendered(quoted_name(d, it));
+    return ok_rendered(quoted_name(d, it, style));
   }
   if (c == 111) {
     return ok_rendered(out_unsigned(d, st.blksize as u64));
@@ -973,16 +987,16 @@ function render_file(d: Directive, it: Item, z: tz.Zone): Rendered {
   return unknown_rendered();
 }
 
-// `%N`. A BARE `%N` quotes with gnulib's shell-escape-always, which is
-// `gnu.quotea`; a directive carrying any flag, width or precision
-// prints the raw name instead and applies the modifiers to the name
-// and to a link target separately.
-function quoted_name(d: Directive, it: Item): string {
+// `%N`. A BARE `%N` quotes in the style QUOTING_STYLE chose; a
+// directive carrying any flag, width or precision prints the raw name
+// instead and applies the modifiers to the name and to a link target
+// separately.
+function quoted_name(d: Directive, it: Item, style: i32): string {
   if (!d.raw) {
     if (it.is_link) {
-      return gnu.quotea(it.name) + " -> " + gnu.quotea(it.link);
+      return gnu.quote_style(it.name, style) + " -> " + gnu.quote_style(it.link, style);
     }
-    return gnu.quotea(it.name);
+    return gnu.quote_style(it.name, style);
   }
   if (it.is_link) {
     return out_string(d, it.name) + " -> " + out_string(d, it.link) + link_tail(d);
@@ -1090,13 +1104,17 @@ function blocked(d: Directive, fs_mode: boolean): string {
 // wearing a modifier, and on a directive this build cannot answer. Both
 // leave the text already written in place, which is what makes
 // `stat -c '[%5%]' f` write its `[` before the diagnostic.
-function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone): (io_buffered.BufWriter, boolean) {
+function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, style: i32): (io_buffered.BufWriter, boolean) {
   var w: io_buffered.BufWriter = o;
   var failed: boolean = false;
   var i: i32 = 0;
   while (i < pieces.len()) {
     if (!pieces[i].is_dir) {
-      w = gnu.put(w, pieces[i].literal);
+      if (pieces[i].escapes) {
+        w = put_unescaped(w, pieces[i].literal);
+      } else {
+        w = gnu.put(w, pieces[i].literal);
+      }
       i = i + 1;
       continue;
     }
@@ -1112,7 +1130,7 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
     if (fs_mode) {
       r = render_fs(d, fs);
     } else {
-      r = render_file(d, it, z);
+      r = render_file(d, it, z, style);
     }
     w = gnu.put(w, r.text);
     if (r.failed) {
@@ -1152,7 +1170,7 @@ function is_symlink(st: FileStat): boolean {
   return (st.mode & s_ifmt()) == 0xa000 as u32;
 }
 
-function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, builtin: string): (io_buffered.BufWriter, boolean) {
+function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, style: i32, builtin: string): (io_buffered.BufWriter, boolean) {
   var w: io_buffered.BufWriter = o;
   match (stat_of(name, deref)) {
     Ok(st) => {
@@ -1173,7 +1191,7 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], name: string, deref:
       }
       var it: Item = Item { name: name, st: st, link: link, is_link: is_link };
       var empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, false, it, empty_fs, z);
+      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, false, it, empty_fs, z, style);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
@@ -1196,7 +1214,7 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
       }
       var it: FsItem = FsItem { name: name, fs: fs };
       var empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false };
-      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone());
+      var rendered: (io_buffered.BufWriter, boolean) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), 0);
       w = rendered.0;
       if (newline) {
         w = gnu.put(w, "\n");
@@ -1283,10 +1301,13 @@ function main(): i32 {
     }
   }
 
-  if (escapes) {
-    format = unescape(format);
+  // GNU reads QUOTING_STYLE only when the format as written holds the
+  // two bytes `%N`, so `%-N` and `\045N` never warn and `%%N` does.
+  var style: i32 = gnu.quoting_style_default();
+  if (have_format && format.index_of("%N") >= 0) {
+    style = gnu.quoting_style_from_env();
   }
-  var pieces: Piece[] = scan(format, fs_mode);
+  var pieces: Piece[] = scan(format, fs_mode, escapes);
 
   var z: tz.Zone = tz.utc_zone();
   if (needs_zone(pieces)) {
@@ -1307,7 +1328,7 @@ function main(): i32 {
     if (fs_mode) {
       res = do_fs(o, pieces, name, !escapes, builtin);
     } else {
-      res = do_file(o, pieces, name, deref, !escapes, z, builtin);
+      res = do_file(o, pieces, name, deref, !escapes, z, style, builtin);
     }
     o = res.0;
     if (!res.1) {
