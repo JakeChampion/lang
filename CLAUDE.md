@@ -236,6 +236,12 @@ posted comment cannot be edited; only a follow-up can correct it.
 When a PR merges with no more specific instruction, the default next task is the
 next increment toward goal 2.
 
+**The self-host compiler is becoming the default, so its output wins performance
+ties.** A change that makes self-host-built code faster and native-built code
+slower is a GOOD trade — take it, and say what it cost. This does not license a
+caller-side workaround: fix the compiler where the compiler is what is slow, so
+every caller gains on both backends instead of one caller gaining on one.
+
 **Verify tracker state against the code before picking anything up.** Issues here
 have repeatedly lagged reality — #4451 / #4363 / #4346 all described work that
 was already done. Check the code, not the issue.
