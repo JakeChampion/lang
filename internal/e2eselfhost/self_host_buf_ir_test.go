@@ -45,6 +45,11 @@ var bufIRCases = []struct {
 	// of eight bytes out of a 16-byte reserve. Answers with the length and the
 	// last of the 320 bytes, so a short grow-copy shows up.
 	{"push-u64-grow", `function main(): i32 { var b: usize = buf_new(16); var v: u64 = 0; var k: i32 = 0; while (k < 8) { v = v * 256 + 65; k = k + 1; } var i: i32 = 0; while (i < 40) { buf_push_u64(b, v); i = i + 1; } var s: string = buf_take(b); buf_free(b); return s.len() / 10 + (s[319] as i32); }`, ""},
+	// An INLINE `as u64` at the parameter, which is the shape that has to
+	// reach lower_arg_u64's widening arm: a 32-bit value cast where the
+	// call is built, rather than a wide literal or a wide slot. Answers
+	// with the byte that landed, having checked the seven zeros above it.
+	{"push-u64-cast", `function main(): i32 { var b: usize = buf_new(16); var x: i32 = 66; buf_push_u64(b, x as u64); var s: string = buf_take(b); buf_free(b); if (s.len() != 8) { return 1; } var k: i32 = 1; while (k < 8) { if (s[k] as i32 != 0) { return 2; } k = k + 1; } return s[0] as i32; }`, ""},
 }
 
 // bufExpectedExit returns the want exit code for an exit-code-checked case, or
@@ -58,6 +63,8 @@ func bufExpectedExit(name string) int {
 	case "push-u64-grow":
 		// 320 bytes, every one of them 'A'.
 		return 32 + 65
+	case "push-u64-cast":
+		return 66
 	}
 	return -1
 }
