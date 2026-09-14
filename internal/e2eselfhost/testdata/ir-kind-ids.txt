@@ -284,3 +284,5 @@ fd_fdatasync=300
 fd_syncfs=301
 arr_push_owned_i64=302
 arr_push_owned_f64=303
+open_reader_with=304
+open_writer_with=305

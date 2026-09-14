@@ -852,25 +852,38 @@ function stat_u32(t: string, name: string): string {
 // O_WRONLY|O_CREAT|O_TRUNC is 577 on both Linux arches (O_CREAT and O_TRUNC are
 // generic) and 1537 on XNU.
 pub function oflag(t: string, name: string): string {
-    if (t == "arm64-darwin") {
-        if (name == "wr_creat_trunc") { return "1537"; }
-        if (name == "wr_creat_append") { return "521"; }
-        if (name == "wr_creat_excl") { return "2561"; }
-        if (name == "rd_directory") { return "1048576"; }
-        return "0";
-    }
-    if (t == "x86_64") {
-        if (name == "wr_creat_trunc") { return "577"; }
-        if (name == "wr_creat_append") { return "1089"; }
-        if (name == "wr_creat_excl") { return "193"; }
-        if (name == "rd_directory") { return "65536"; }
-        return "0";
-    }
-    // arm64 (Linux).
+    if (t == "arm64-darwin") { return oflag_darwin(name); }
+    if (t == "x86_64") { return oflag_x86_64(name); }
+    return oflag_arm64(name);
+}
+
+function oflag_darwin(name: string): string {
+    if (name == "wr_creat_trunc") { return "1537"; }
+    if (name == "wr_creat_append") { return "521"; }
+    if (name == "wr_creat_excl") { return "2561"; }
+    if (name == "rd_directory") { return "1048576"; }
+    if (name == "creat") { return "512"; }
+    if (name == "nonblock") { return "4"; }
+    return "0";
+}
+
+function oflag_x86_64(name: string): string {
+    if (name == "wr_creat_trunc") { return "577"; }
+    if (name == "wr_creat_append") { return "1089"; }
+    if (name == "wr_creat_excl") { return "193"; }
+    if (name == "rd_directory") { return "65536"; }
+    if (name == "creat") { return "64"; }
+    if (name == "nonblock") { return "2048"; }
+    return "0";
+}
+
+function oflag_arm64(name: string): string {
     if (name == "wr_creat_trunc") { return "577"; }
     if (name == "wr_creat_append") { return "1089"; }
     if (name == "wr_creat_excl") { return "193"; }
     if (name == "rd_directory") { return "16384"; }
+    if (name == "creat") { return "64"; }
+    if (name == "nonblock") { return "2048"; }
     return "0";
 }
 
@@ -979,6 +992,16 @@ pub function rt_src_open_res(t: string): string {
               + "if (f == " + oflag("x86_64", "wr_creat_excl") + ") { f = " + oflag(t, "wr_creat_excl") + "; } ";
     }
     return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); var pathz_own: string = __raw_string(pathz, plen + 1); if (fd >= 0 && fd < 3) { var moved: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd, 0, 3); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); fd = moved; } if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz, plen))); } return Ok(fd); }";
+}
+
+// rt_src_open_with backs `open_reader_with` / `open_writer_with(path, flags)`:
+// Fern's flags word — 1 create, 2 non-blocking — and the access mode become
+// the target's open(2) word HERE, since the op site has no target, and the
+// rest is __fern_open_res, whose Darwin translation rewrites only the three
+// fixed words and passes this one through. Mode 0666, never O_TRUNC or
+// O_APPEND.
+pub function rt_src_open_with(t: string): string {
+    return "function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] { var f: i32 = 0; if (write != 0) { f = 1; } if ((flags & 1) != 0) { f = f | " + oflag(t, "creat") + "; } if ((flags & 2) != 0) { f = f | " + oflag(t, "nonblock") + "; } return __fern_open_res(path, f, 438); }";
 }
 
 // rt_src_writer_write backs `w.write(s)` (#4372, #2649 syscall-leaf) →
@@ -4389,7 +4412,8 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // fd — `r.read_chunk` / `w.write` / `.close` take it directly —
     // but the TYPE is nominal, so `var r: i32 = open_reader(p)` is
     // the E003 native reports rather than a silently-accepted box.
-    if (id.name == "open_reader") { return ty_result(ty_named("Reader")); }
+    if (id.name == "open_reader" || id.name == "open_reader_with") { return ty_result(ty_named("Reader")); }
+    if (id.name == "open_writer_with") { return ty_result(ty_named("Writer")); }
     if (id.name == "open_writer" || id.name == "open_appender" || id.name == "open_exclusive") { return ty_result(ty_named("Writer")); }
     if (id.name == "stdin") { return ty_named("Reader"); }
     if (id.name == "stdout" || id.name == "stderr") { return ty_named("Writer"); }

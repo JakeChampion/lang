@@ -1651,7 +1651,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
-        "remove_dir_all", "open_file", "writer_write", "reader",
+        "remove_dir_all", "open_file", "open_with", "writer_write", "reader",
         "signal_send"
     ]);
 }
@@ -5303,6 +5303,15 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $" + util.i32_to_string(open_mode) + ", %rdx\n");
             s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_res\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("open_file");
+        } else if (o.kind_tag == 304 || o.kind_tag == 305) {  // open_reader_with / open_writer_with
+            // [path box, flags]; __fn___fern_open_with(path, flags, write) ->
+            // a fresh Result[Reader|Writer, IoError] box, through open_res,
+            // so both needs.
+            var open_write: i32 = 0;
+            if (o.kind_tag == 305) { open_write = 1; }
+            s = s.write("    popq %rsi\n    popq %rdi\n    movq $" + util.i32_to_string(open_write) + ", %rdx\n");
+            s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_with\n    addq $24, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("open_file"); s = s.need("open_with");
         } else if (o.kind_tag == 219) {  // clz
             // LZCNT (BMI1) is DEFINED at zero -- it returns the operand width,
             // which is exactly what the op defines -- so there is no zero
@@ -8853,6 +8862,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86_64"); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64"); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
+        if (s.has_need("open_with")) { fs_src = fs_src + " " + asmcore.rt_src_open_with("x86_64"); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86_64"); }
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
