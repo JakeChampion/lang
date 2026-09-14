@@ -134,6 +134,12 @@ pub function kind_id(name: string): i32 {
 // names cost kind_id / kind_name one test apiece. `binary` is the only other
 // kind starting with 'b' and it is six bytes, so the length guard separates
 // them without a second compare.
+//
+// `buf_push_u64` is deliberately absent. This backend stores a string as one
+// byte per EIGHT-byte word, so the single store the op exists for (#9221)
+// would be eight stores here and the op would lose its whole reason to be one.
+// An unknown callee bails calls_all_known, so a module using it takes the IR
+// path — the same answer wasm's SSA lowering gives the family entire.
 function buf_kind_id(name: string): i32 {
     if (name == "buf_new") { return 28; }
     if (name == "buf_push") { return 29; }

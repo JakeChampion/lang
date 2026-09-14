@@ -1355,6 +1355,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"buf_push":                      emitBufPushHelper,
 	"buf_push_range":                emitBufPushRangeHelper,
 	"buf_push_byte":                 emitBufPushByteHelper,
+	"buf_push_u64":                  emitBufPushU64Helper,
 	"buf_len":                       emitBufLenHelper,
 	"buf_take":                      emitBufTakeHelper,
 	"buf_free":                      emitBufFreeHelper,
@@ -2566,9 +2567,15 @@ func emitCPUCountHelper(w func(string, ...any)) {
 // kernel-CSPRNG bytes (getrandom(2), flags=0), in the __alloc_u8 box shape
 // (16-byte header; cap@-12, rc=1@-8, len@-4). Returns the data pointer in x0.
 // Leaf: it bump-allocates inline and the getrandom svc preserves all
-// registers but x0, so n (x9) and the data pointer (x10) survive the syscall
-// without callee-saved spills. No zero-fill: getrandom overwrites all n data
-// bytes. x0=n.
+// registers but x0, so the cursor and the data pointer survive the syscall
+// without callee-saved spills. x0=n.
+//
+// The call LOOPS. getrandom returns how many bytes it wrote, and for a
+// request past one page it may write fewer and return early when a signal
+// arrives — or -EINTR having written none. One call would leave the tail of
+// the buffer as the allocator left it, which is zeros: silence where the
+// caller asked for randomness (#9221). A hard error ends the loop rather
+// than spinning; the signature has nowhere to report one.
 func emitRandomBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("random_bytes"))
@@ -2588,12 +2595,26 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("\tmov w7, #1")
 	w("\tstur w7, [x10, #-8]") // rc = 1
 	w("\tstur w9, [x10, #-4]") // len = n
-	// getrandom(data, n, 0).
-	w("\tmov x0, x10")
-	w("\tmov x1, x9")
+	// getrandom(cursor, remaining, 0), until the buffer is full.
+	w("\tmov x11, x10") // write cursor
+	w("\tmov x12, x9")  // bytes still wanted
+	w(".Lssa_randbytes_loop:")
+	w("\tcbz x12, .Lssa_randbytes_done")
+	w("\tmov x0, x11")
+	w("\tmov x1, x12")
 	w("\tmov x2, #0")
 	w("\tmov x8, #278") // getrandom
 	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.gt .Lssa_randbytes_wrote")
+	w("\tcmn x0, #4") // -EINTR: nothing written, try again
+	w("\tb.eq .Lssa_randbytes_loop")
+	w("\tb .Lssa_randbytes_done")
+	w(".Lssa_randbytes_wrote:")
+	w("\tadd x11, x11, x0")
+	w("\tsub x12, x12, x0")
+	w("\tb .Lssa_randbytes_loop")
+	w(".Lssa_randbytes_done:")
 	w("\tmov x0, x10") // return data ptr
 	w("\tret")
 }
@@ -3565,6 +3586,7 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push":                      {"__fern_buf_reserve"},
 	"buf_push_range":                {"__fern_buf_reserve"},
 	"buf_push_byte":                 {"__fern_buf_reserve"},
+	"buf_push_u64":                  {"__fern_buf_reserve"},
 	"buf_take":                      {"__alloc"},
 	"buf_free":                      {"__free"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
@@ -8501,6 +8523,37 @@ func emitBufPushByteHelper(w func(string, ...any)) {
 	w("\tadd x9, x9, x13")
 	w("\tstrb w2, [x9]")
 	w("\tadd x13, x13, #1")
+	w("\tstr x13, [x1, #8]")
+	w("\tmov x0, xzr")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitBufPushU64Helper writes buf_push_u64(H, v): append the eight bytes of
+// v, least significant first. One store, where the byte form would be eight
+// calls (#9221). The store is unaligned as often as not, which aarch64 takes
+// on normal memory.
+func emitBufPushU64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("buf_push_u64"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tstr x1, [sp, #24]")
+	w("\tldr x13, [x0, #8]")
+	w("\tadd x14, x13, #8")
+	w("\tldr x15, [x0, #16]")
+	w("\tcmp x14, x15")
+	w("\tb.ls .Lssa_bufu64_fits")
+	w("\tmov x1, x14")
+	w("\tbl %s", fnLabel("__fern_buf_reserve"))
+	w(".Lssa_bufu64_fits:")
+	w("\tldr x1, [sp, #16]")
+	w("\tldr x2, [sp, #24]")
+	w("\tldr x13, [x1, #8]")
+	w("\tldr x9, [x1]")
+	w("\tadd x9, x9, x13")
+	w("\tstr x2, [x9]")
+	w("\tadd x13, x13, #8")
 	w("\tstr x13, [x1, #8]")
 	w("\tmov x0, xzr")
 	w("\tldp x29, x30, [sp], #32")

@@ -6854,6 +6854,39 @@ func (g *generator) emitStrBuilderRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_buf_push_byte")
 
+	// __fern_buf_push_u64(H, v): append the eight bytes of `v`, least
+	// significant first. One store, where the byte form would be eight
+	// calls (#9221); unaligned as often as not, which aarch64 takes on
+	// normal memory.
+	g.line("")
+	g.line(".global __fern_buf_push_u64")
+	g.typeDirective("__fern_buf_push_u64")
+	g.label("__fern_buf_push_u64")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0")
+	g.emit("mov x20, x1")
+	g.emit("ldr x0, [x19, #8]")
+	g.emit("add x0, x0, #8")
+	g.emit("ldr x1, [x19, #16]")
+	g.emit("cmp x0, x1")
+	g.emit("b.ls .Lbufu64_fits")
+	g.emit("mov x1, x0")
+	g.emit("mov x0, x19")
+	g.emit("bl __fern_buf_reserve")
+	g.label(".Lbufu64_fits")
+	g.emit("ldr x0, [x19]")
+	g.emit("ldr x1, [x19, #8]")
+	g.emit("add x0, x0, x1")
+	g.emit("str x20, [x0]")
+	g.emit("add x1, x1, #8")
+	g.emit("str x1, [x19, #8]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_buf_push_u64")
+
 	// __fern_buf_len(H) -> len
 	g.line("")
 	g.line(".global __fern_buf_len")
@@ -8673,10 +8706,34 @@ func (g *generator) emitRandomBytesRuntime() {
 		// Lives in `linuxOnlySysno` — `g.syscall("getrandom")`
 		// asserts at codegen time if it gets reached on Darwin
 		// (the if/else above is the inline Darwin branch).
-		g.emit("mov x0, x19")
-		g.emit("mov x1, x20")
+		//
+		// LOOPED, like the Darwin arm above but for a different
+		// reason: getrandom returns how many bytes it wrote, and
+		// for a request past one page it may write fewer and
+		// return early when a signal arrives — or -EINTR having
+		// written none. One call would leave the tail as the
+		// allocator left it, which is zeros: silence where the
+		// caller asked for randomness (#9221). A hard error ends
+		// the loop rather than spinning; the signature has
+		// nowhere to report one.
+		g.emit("mov x21, x19") // write cursor
+		g.emit("mov x22, x20") // bytes still wanted
+		g.label(".Lrb_loop")
+		g.emit("cbz x22, .Lrb_done")
+		g.emit("mov x0, x21")
+		g.emit("mov x1, x22")
 		g.emit("mov x2, #0")
 		g.syscall("getrandom")
+		g.emit("cmp x0, #0")
+		g.emit("b.gt .Lrb_wrote")
+		g.emit("cmn x0, #4") // -EINTR: nothing written, try again
+		g.emit("b.eq .Lrb_loop")
+		g.emit("b .Lrb_done")
+		g.label(".Lrb_wrote")
+		g.emit("add x21, x21, x0")
+		g.emit("sub x22, x22, x0")
+		g.emit("b .Lrb_loop")
+		g.label(".Lrb_done")
 	}
 	g.emit("mov x0, x19") // return data ptr
 	g.emit("ldp x21, x22, [sp, #32]")
@@ -18603,7 +18660,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// call never comes back.
 			target = "__fern_exit"
 			g.usesExit = true
-		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_len", "buf_take", "buf_free":
+		case "buf_new", "buf_push", "buf_push_range", "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free":
 			target = "__fern_" + target
 			g.usesStrBuilder = true
 			// Every entry point but buf_len can reach the allocator, the

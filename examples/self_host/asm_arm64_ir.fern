@@ -1771,7 +1771,7 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // the drop.
             s = s.mark_heap(); s = s.need("strbuf");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_strbuf_append\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag >= 291 && o.kind_tag <= 297) {  // the buf_* builder
+        } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306) {  // the buf_* builder
             s = emit_arm64_op_buf(o, s);
         } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
@@ -2172,6 +2172,9 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 294) {                                  // buf_push_byte
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_byte\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind_tag == 306) {                                  // buf_push_u64
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_buf_push_u64\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind_tag == 295) {                                  // buf_len
         return s.write("    ldr x0, [sp], #16\n    bl __fern_buf_len\n    str x0, [sp, #-16]!\n");
@@ -5069,6 +5072,35 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_buf_push_byte, .-__fern_buf_push_byte\n");
+        // __fern_buf_push_u64(x0 = H, x1 = v): append the eight bytes of v,
+        // least significant first.
+        s = s.write(".globl __fern_buf_push_u64\n");
+        s = s.write(".type __fern_buf_push_u64, %function\n");
+        s = s.write("__fern_buf_push_u64:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    mov x20, x1\n");
+        s = s.write("    ldr x0, [x19, #8]\n");
+        s = s.write("    add x0, x0, #8\n");
+        s = s.write("    ldr x1, [x19, #16]\n");
+        s = s.write("    cmp x0, x1\n");
+        s = s.write("    b.ls .Lbufu64_fits\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_buf_reserve\n");
+        s = s.write(".Lbufu64_fits:\n");
+        s = s.write("    ldr x0, [x19]\n");
+        s = s.write("    ldr x1, [x19, #8]\n");
+        s = s.write("    add x0, x0, x1\n");
+        s = s.write("    str x20, [x0]\n");
+        s = s.write("    add x1, x1, #8\n");
+        s = s.write("    str x1, [x19, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_buf_push_u64, .-__fern_buf_push_u64\n");
         // __fern_buf_len(x0 = H) -> x0 = len.
         s = s.write(".globl __fern_buf_len\n");
         s = s.write(".type __fern_buf_len, %function\n");

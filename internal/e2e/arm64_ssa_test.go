@@ -1548,6 +1548,35 @@ function main(): i32 {
 }`,
 			want: 42,
 		},
+		{
+			// The eight-byte push (#9221), whose whole point is the single
+			// store: the byte order, a value with the high bit set, and
+			// growth, on the backend whose helper is its own copy.
+			name: "buf_push_u64",
+			src: `function main(): i32 {
+  var b: usize = buf_new(8);
+  buf_push_u64(b, 0x0807060504030201);
+  buf_push_byte(b, 9);
+  var s: string = buf_take(b);
+  if (s.len() != 9) { return 1; }
+  if (s[0] != 1) { return 2; }
+  if (s[7] != 8) { return 3; }
+  if (s[8] != 9) { return 4; }
+  buf_push_u64(b, 0xff00000000000080);
+  var t: string = buf_take(b);
+  if (t[0] != 128) { return 5; }
+  if (t[3] != 0) { return 6; }
+  if (t[7] != 255) { return 7; }
+  var i: i32 = 0;
+  while (i < 500) { buf_push_u64(b, 0x0202020202020202); i = i + 1; }
+  var big: string = buf_take(b);
+  if (big.len() != 4000) { return 8; }
+  if (big[3999] != 2) { return 9; }
+  buf_free(b);
+  return 42;
+}`,
+			want: 42,
+		},
 	}
 
 	for _, c := range cases {

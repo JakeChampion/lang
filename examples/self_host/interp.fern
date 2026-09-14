@@ -2482,7 +2482,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // error internal/interp answers one with.
 function is_buf_builtin(name: string): boolean {
     if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") { return true; }
-    return name == "buf_push_byte" || name == "buf_len" || name == "buf_take" || name == "buf_free";
+    if (name == "buf_push_byte" || name == "buf_push_u64") { return true; }
+    return name == "buf_len" || name == "buf_take" || name == "buf_free";
 }
 function v_buf_handle(h: usize): Value { return v_wide(h as i64, true); }
 function buf_handle_of(v: Value): usize { return vint_as_i64(v) as usize; }
@@ -2514,13 +2515,19 @@ function call_buf_push_range(h: usize, args: Value[]): Value {
     return v_void();
 }
 
-// The two whole-argument appends: a string's bytes, or the low byte of a
-// number.
+// The three whole-argument appends: a string's bytes, the low byte of a
+// number, or the eight bytes of one.
 function call_buf_append(name: string, h: usize, args: Value[]): Value {
     if (name == "buf_push") {
         if (args.len() != 2) { return v_err("buf_push: expected 2 args (b, s)"); }
         if (!is_string_arg(args[1])) { return v_err("buf_push: expected string arg"); }
         buf_push(h, vstr_of(args[1]));
+        return v_void();
+    }
+    if (name == "buf_push_u64") {
+        if (args.len() != 2) { return v_err("buf_push_u64: expected 2 args (b, v)"); }
+        if (!is_int_like(args[1])) { return v_err("buf_push_u64: expected number"); }
+        buf_push_u64(h, vint_as_i64(args[1]) as u64);
         return v_void();
     }
     if (name != "buf_push_byte") { return v_err(name + ": not a builder append"); }
@@ -2547,7 +2554,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
     if (args.len() == 0 || !is_int_like(args[0])) { return v_err(name + ": expected a builder handle"); }
     var h: usize = buf_handle_of(args[0]);
     if (name == "buf_push_range") { return call_buf_push_range(h, args); }
-    if (name == "buf_push" || name == "buf_push_byte") { return call_buf_append(name, h, args); }
+    if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64") { return call_buf_append(name, h, args); }
     return call_buf_read(name, h, args);
 }
 

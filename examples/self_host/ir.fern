@@ -1244,13 +1244,14 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 // `buf_take` zero-copy: it stamps the length and hands the same pointer back as
 // a string, leaving the builder empty but still armed at its reserve. `buf_new`
 // pops a capacity and pushes a handle; `buf_push` / `buf_push_range` /
-// `buf_push_byte` / `buf_free` are statement ops (pushing a dummy so a
+// `buf_push_byte` / `buf_push_u64` / `buf_free` are statement ops (pushing a dummy so a
 // statement-level drop balances); `buf_len` and `buf_take` are value ops. All
 // lower to each backend's __fern_buf_* helpers.
 pub function op_buf_new(): Op { return op0("buf_new"); }
 pub function op_buf_push(): Op { return op0("buf_push"); }
 pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
 pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
+pub function op_buf_push_u64(): Op { return op0("buf_push_u64"); }
 pub function op_buf_len(): Op { return op0("buf_len"); }
 pub function op_buf_take(): Op { return op0("buf_take"); }
 pub function op_buf_free(): Op { return op0("buf_free"); }
@@ -2205,6 +2206,7 @@ function kind_id_len12(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "arr_push_i64") { return 94; }
     if (c == b'a' && name == "arr_push_f64") { return 95; }
+    if (c == b'b' && name == "buf_push_u64") { return 306; }
     if (c == b'c' && name == "const_struct") { return 218; }
     if (c == b'f' && name == "fd_fdatasync") { return 300; }
     if (c == b'd' && name == "dyn_dispatch") { return 147; }
@@ -2527,6 +2529,7 @@ function kind_name_4(id: i32): string {
     if (id == 201) { return "tcp_accept"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
+    if (id == 306) { return "buf_push_u64"; }
     if (id == 304) { return "open_reader_with"; }
     if (id == 305) { return "open_writer_with"; }
     if (id == 204) { return "syscall3"; }
@@ -2793,6 +2796,9 @@ function pops3(t: i32): boolean {
 // answers in one place rather than scattering seven tags across the pops1_* /
 // pops2_* predicates.
 function pops_buf(t: i32): i32 {
+    // buf_push_u64 arrived after the block had closed over 291-297, so it
+    // carries the next free id instead of extending it.
+    if (t == 306) { return 2; }
     if (t < 291 || t > 297) { return 0 - 1; }
     if (t == 293) { return 4; }                       // buf_push_range: handle + string + lo + hi
     if (t == 292 || t == 294) { return 2; }           // buf_push, buf_push_byte
