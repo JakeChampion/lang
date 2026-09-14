@@ -8613,8 +8613,10 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 		for i := range e.Params {
 			// A consuming slot and a lending one promise opposite things of
 			// the same call, so neither stands in for the other — inference
-			// binds the type variable but never relaxes this.
-			if e.OwnAt(i) != a.OwnAt(i) {
+			// binds the type variable but never relaxes this. At a slot the
+			// argument shows to be a scalar nothing changes hands, so `own`
+			// there says nothing, as the self-host's own_flags reads it.
+			if e.OwnAt(i) != a.OwnAt(i) && !definitelyScalar(a.Params[i]) {
 				return false
 			}
 			if !c.unifyType(e.Params[i], a.Params[i], sub) {
