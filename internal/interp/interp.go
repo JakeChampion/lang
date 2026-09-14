@@ -3678,7 +3678,7 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 		flag |= os.O_CREATE
 	}
 	if int(flags)&2 != 0 {
-		flag |= syscall.O_NONBLOCK
+		flag |= oNonblock
 	}
 	return openHelper(i, args[:1], structName, flag, 0o666)
 }
