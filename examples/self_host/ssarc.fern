@@ -140,9 +140,15 @@ function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
 }
 
 function fields_have_children(fields: semrecords.Field[]): boolean {
-    for field in fields { if (reference(field.ty)) { return true; } }
+    for field in fields { if (walked(field.ty)) { return true; } }
     return false;
 }
+
+// The field types a record's release walks. A function value is the one
+// reference it does not: a closure box borrows its captures of that type, so
+// the box they name is released by the frame that owns it, which is the only
+// frame whose schema names the captures that release must walk.
+function walked(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_func(t); }
 
 // A string box is released by its own helper: its block starts before the
 // value, where an array's starts before the data words.
@@ -334,7 +340,7 @@ function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecord
     r = reserve(r, child + 1);
     var i: i32 = 0;
     while (i < fields.len()) {
-        if (reference(fields[i].ty)) {
+        if (walked(fields[i].ty)) {
             r = emit(r, ir.op_load_local(slot));
             if (env) { r = emit(r, ir.op_const_i32(i)); r = emit(r, ir.op_arr_get(32)); }
             else { r = emit(r, ir.op_struct_get(i, 0)); }

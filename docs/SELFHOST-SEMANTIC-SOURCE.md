@@ -371,7 +371,16 @@ Unsupported constructs refuse the whole function with a reason.
   so `__env[k]` is the record projection of field `k` typed by the capture,
   the constructor is checked against the same list (count and type, one lift
   writes both sides), and the box's release walks the captures with the
-  record's own drop helper. A function type names no capture, so a box is
+  record's own drop helper. A capture that is itself a FUNCTION value is the
+  one the box BORROWS rather than takes: only the frame that built the
+  captured box can walk its captures, so a unit of it here would promise a
+  release this frame cannot perform. The borrow holds because the capture
+  must be a borrowed PARAMETER, whose owner is the caller and so outlives
+  every box built here; a function value reaches a frame no other way that
+  outlives it, since a function value result and an owning function parameter
+  are both refused and a local closure dies with the frame that captures it.
+  So the field is never walked, and the box it names is released by its own
+  owner. A function type names no capture, so a box is
   matched at run time: the drop compares slot 0 with the address of each
   environment the function's schema table names and calls that helper, and a
   box that matches none — one whose captures own nothing, or one built by an
@@ -569,7 +578,13 @@ visitor, a consuming visitor and a lambda, with a heap value held ACROSS the
 fold and read back after churn so an over-release answers a sentinel rather
 than a length. The driver AST-lowers each template's own erased body for
 main's calls and emits the instances beside it, so the two symbol conventions
-link in one program. The print golden pins the instance names, a template's
+link in one program. That arrangement has one trap worth knowing when writing
+a fixture: a closure box built by the AST-lowered main and lent to a produced
+callee is owned by neither, so it leaks the box under leakcheck. The
+production compiler never mixes the two — a module takes one path or bails
+whole (`FERN_STRICT_IR=1`) — so a fixture that wants a box at a borrowed
+function slot builds it in produced code, the way `cap_fn` hands `dbl` and
+`negate` to `via_cap`. The print golden pins the instance names, a template's
 "template instantiated" verdict, a fold that reads an OWNED accumulator after
 handing it to a consuming visitor (a retain in the `string[]` instance,
 nothing in the i32 one), and one that abandons an owned parameter unconsumed,
@@ -708,7 +723,16 @@ path the earlier leaves had moved one step further in. That leaf was the
 checker's, not the boundary's: the spelling resolved to unknown, so every
 declaration naming it was unresolved before any contract was read.
 
-Measured against the whole loaded self-hosted compiler, 7,808 of its 7,827
+A closure's borrowed function capture crosses as above, worth +5 against the
+5 it held: `astwalk.splice_stmts_with_lambda` builds a lambda over two of its
+own function parameters, and its three callers came with it. The refusal it
+replaces was the placement rule reading an environment record as any other
+record, where a captured function value is the one field a record never walks.
+A cell of a function value is refused with the elements now, which the rule
+had missed: a cell outlives the frame that filled it, so nothing it holds can
+be borrowed.
+
+Measured against the whole loaded self-hosted compiler, 7,813 of its 7,827
 functions produce, plan and physically lower, through 102 instances of its
 generic declarations. The three stages report the same number: neither the
 unit planner nor physical RC refuses anything a producer admitted, so every
@@ -727,9 +751,8 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now the `Map` vocabulary (14: `map_new` 10 and the `insert`
-/ `has` sites of `wasm_ir`) and a function value stored in a record field
-(5); the closure env box, which stood at 482 captures and 84 bindings,
+The one leaf left is the `Map` vocabulary (14: `map_new` 10 and the `insert`
+/ `has` sites of `wasm_ir`); the closure env box, which stood at 482 captures and 84 bindings,
 is at zero, worth +564 across the environment record and the `own` a lambda's
 binding spells. Callees with no semantic contract are 47, none of them a
 declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
@@ -1087,16 +1110,17 @@ base name under the array suffix and which `parser.ref_is_own` answered false
 for. Each of those was a checker or lift bug the boundary's exact-type rule
 found, fixed where it lived rather than relaxed here.
 
-What is left is 19 functions: the `Map` vocabulary (14: `map_new` and the
-`insert` / `has` sites, whose runtime manages a value's ownership
-differently on each backend, so it is a runtime question before a boundary
-one) and a function value stored in a record field (5, the
-`astwalk.splice_stmts_with_lambda` shape, which needs a module-wide
-environment table). The void-`Result` builtins and `target_os` closed, worth
+What is left is 14 functions, all of them the `Map` vocabulary: `map_new`
+and the `insert` / `has` sites. Each backend's map runtime manages a value's
+ownership differently — the register runtimes do not refcount a value per
+insert and settle it at reclaim, wasm retains every pointer value it is not
+told to consume — so a contract naming what a call takes and gives back is a
+runtime question before it is a boundary one, and `op_map_set` carries six
+flags that say so. The void-`Result` builtins and `target_os` closed, worth
 +10 against their 26, the cell vocabulary +6 against its 34, the 32-bit
-float +8 against its 47 and the pointer width +64 against its 46: each moved
-the interpreter's callers one leaf further in, and the pointer width was the
-last of them. Then a
+float +8 against its 47, the pointer width +64 against its 46 and the
+borrowed function capture +5 against its 5: each moved the interpreter's
+callers one leaf further in, and the pointer width was the last of them. Then a
 production consumer that lowers produced functions through this pipeline and
 feeds `caller_sigs` to the remaining AST callers — a union result being the
 position that fixture measured a leak at.
