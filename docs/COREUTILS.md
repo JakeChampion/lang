@@ -1375,19 +1375,20 @@ kept as the before side of it; the re-measure is the block under this table.
 | `cksum` | cksum of a small file | 0.31 ± 0.53 | 1.69 ± 0.97 | 1.85 ± 0.34 | 5.54× | 6.04× |
 | `cksum` | `-a sha256 -c` over 500 small files | 10.49 ± 2.20 | 3.68 ± 1.18 | 2.01 ± 0.63 | 0.35× | 0.19× |
 
-**cksum does not meet the epic's bar**, and the three groups of rows fail it
-for three different reasons:
+**cksum did not meet the epic's bar when this table was taken**, and the
+three groups of rows failed it for three different reasons. The CRC group is
+answered below; the other two stand.
 
 - **The CRC rows are the worst in this document, and the cause is one
   instruction.** GNU's 14 ms over 62 MiB is 0.23 ns a byte, which no
   byte-at-a-time loop reaches: it folds the message with `pclmulqdq`, the
   carry-less multiply, sixteen bytes at a time. uutils' 199 ms is a table,
   so the Fern-to-uutils ratio is the codegen comparison and the ratio
-  against GNU is not. `std/hash`'s `Cksum` is now a slicing-by-8 table,
-  which closed the uutils half; closing the GNU half still needs the
-  instruction, and `pclmulqdq` is inside the Haswell baseline — this is the
-  first workload here that wants a SIMD intrinsic rather than better scalar
-  code. #9056.
+  against GNU is not. `std/hash`'s `Cksum` went to a slicing-by-8 table,
+  which closed the uutils half, and then to the `__crc32_cksum` fold
+  (#9128), which closes the GNU half: the fold table below measures 0.92×
+  against a GNU that is itself on `pclmulqdq`. These rows are the before
+  side. #9056.
 - **The digest rows are #8782 again**, unchanged by anything cksum does: the
   driver is the same `lib/digest.fern` the seven `*sum` utilities run, and
   raising the read block moves nothing. `sha256` is 0.12× because GNU is on
@@ -1418,9 +1419,9 @@ register allocation — and not a missing instruction. uutils' 9.8 ms is
 0.06 ns a byte, which only the carry-less fold reaches, and THAT is the
 column the `pclmulqdq` / `pmull` encodings would be for.
 
-Both encodings now exist in all four assemblers (#9128), so the fold is no
-longer blocked below the IR; the kernel itself still has to be written. Both
-are inside their baselines and neither needs runtime dispatch — `pclmulqdq`
+Both encodings exist in all four assemblers and the kernel is written
+(#9128) — see the fold table below for what it measures. Both are inside
+their baselines and neither needs runtime dispatch — `pclmulqdq`
 always was, and the arm64 baseline was raised to ARMv8.2-A with the crypto
 extensions to take `pmull.1q`. arm64 has a second option worth measuring
 against the fold rather than assuming past: `crc32` is in the same baseline,
@@ -1429,6 +1430,39 @@ and reaching cksum's non-reflected CRC from that reflected instruction is an
 
 Ranking the three on this host, which is the honest summary: uutils (folding)
 9.8 ms, GNU (generic table) 35.7 ms, Fern (slicing-by-8) 199.7 ms.
+
+### The fold, 2026-09-14, Linux x86-64 (GNU coreutils 9.4)
+
+`Cksum.update` calls the `__crc32_cksum` kernel now (#9128), so the CRC is
+folded sixteen bytes a step with `pclmulqdq` against four accumulators rather
+than walked through a table. A third machine again — a 4-core container, not
+either box above — so read the columns against each other and not against the
+two tables above. 62 MiB of text, 20 runs each, wall time; `uutils` is not
+installed here, so that column is absent rather than guessed.
+
+| workload | fern before (ms) | fern after (ms) | gnu (ms) | gnu / fern after |
+|---|---|---|---|---|
+| `cksum` of a 62 MiB file | 157.5 ± 6.4 | 18.1 ± 1.7 | 16.6 ± 1.5 | 0.92× |
+| `cksum` of a 62 MiB file from a pipe | 161.5 ± 6.6 | 19.5 ± 1.5 | 17.8 ± 1.2 | 0.91× |
+| `--raw` of a 62 MiB file | 153.0 ± 5.8 | 17.5 ± 1.7 | 15.6 ± 1.2 | 0.89× |
+| `cksum` of a small file | 2.04 ± 0.15 | 2.07 ± 0.13 | 3.26 ± 0.13 | 1.57× |
+
+**8.7×, and this host's GNU is folding too** — `cksum --debug` prints "using
+pclmul hardware support" — so 0.92× is fold against fold, which is the
+comparison #9056 asked for and the one neither table above could make. The
+`0.04×` and `0.18×` rows are answered: what was missing was the instruction,
+exactly as they said.
+
+The remaining 8% is the tail and the call, not the loop: the kernel reduces
+its 128-bit residue by feeding sixteen bytes back through the bit-at-a-time
+step rather than a Barrett reduction, and `update` is a call per read block
+where GNU inlines. Both are worth what they cost — the residue path needs no
+constants and no second reduction — and neither is where the 23× lived.
+
+The small-file row does not move, which is the point of checking it: the
+table is still built per hasher (`finish` folds the length through it, and
+`update_bytes` has no string to hand the kernel), so nothing about startup
+changed in either direction.
 
 `sum -s` on the same host and the same file, one hyperfine run, before and
 after `SysvSum` moved onto `__sum_bytes` (#9052). The kernel is SCALAR on

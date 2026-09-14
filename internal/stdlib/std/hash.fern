@@ -88,9 +88,22 @@ function __cksum_absorb(c: Cksum, bs: [u8]): Cksum {
     return Cksum { ...c, crc: crc, len: c.len + (n as u64) };
 }
 
+// update(chunk) — the fused kernel rather than the table
+// (docs/ATLAS-PLATFORM-PLAN.md §3; #9128). Every backend answers
+// __crc32_cksum, and the two natives fold sixteen bytes a step with a
+// carry-less multiply where this loop reads one. The bytes never leave the
+// string either: `as_bytes` was a second walk over the same memory before
+// the table walk that followed it.
+//
+// The crc rides as an i32 because that is the only 32-bit integer the
+// builtin family speaks; the cast is a reinterpretation, and the polynomial
+// steps are the same arithmetic on either signedness.
+//
+// __cksum_absorb stays for update_bytes, which has no string to hand the
+// kernel, and finish() still folds the length through the table.
 pub function (c: Cksum) update(chunk: string): Cksum {
-    c = __cksum_absorb(c, chunk.as_bytes());
-    return c;
+    return Cksum { ...c, crc: __crc32_cksum(c.crc as i32, chunk) as u32,
+                   len: c.len + (chunk.len() as u64) };
 }
 
 pub function (c: Cksum) update_bytes(chunk: [u8]): Cksum {
