@@ -95,7 +95,7 @@ function main(): i32 { return scan_local() + scan_call(); }`)
 }
 
 // The user-callee leg of bindingConfinedToArm delegates to the paramEscapes
-// oracle (borrowingCallArg): a callee whose parameter provably does not escape
+// oracle (readOnlyCallArg): a callee whose parameter provably does not escape
 // accepts the borrow, one that stores its parameter refuses it. This pins both
 // directions of that delegation through the for-in path.
 func TestForinElemBorrowUserCalleeEscape(t *testing.T) {
