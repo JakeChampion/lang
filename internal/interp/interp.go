@@ -3354,12 +3354,15 @@ func builtinChownAt(_ *Interp, args []Value) (Value, error) {
 
 // The bits of set_file_times' `flags` word. They are Fern's own, not the
 // kernel's: AT_SYMLINK_NOFOLLOW is 0x100 on Linux and 0x20 on Darwin,
-// and the two omit bits are not a flags word at all — each is UTIME_OMIT
-// written into the nanosecond half of the timespec being skipped.
+// and the omit and now bits are not a flags word at all — each is
+// UTIME_OMIT or UTIME_NOW written into the nanosecond half of the
+// timespec it names.
 const (
 	timesNoFollow  = 1
 	timesOmitAtime = 2
 	timesOmitMtime = 4
+	timesNowAtime  = 8
+	timesNowMtime  = 16
 )
 
 // builtinSetFileTimes writes the access and modification timestamps of
@@ -3385,6 +3388,12 @@ func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
 	times := [2]syscall.Timespec{
 		{Sec: n[0], Nsec: n[1]},
 		{Sec: n[2], Nsec: n[3]},
+	}
+	if flags&timesNowAtime != 0 {
+		times[0] = syscall.Timespec{Nsec: utimeNow}
+	}
+	if flags&timesNowMtime != 0 {
+		times[1] = syscall.Timespec{Nsec: utimeNow}
 	}
 	if flags&timesOmitAtime != 0 {
 		times[0] = syscall.Timespec{Nsec: utimeOmit}

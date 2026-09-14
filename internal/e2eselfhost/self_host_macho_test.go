@@ -447,9 +447,12 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// attribute list naming only the timestamps that are not omitted, packed
 	// in ASCENDING attribute-bit order — modification time before access
 	// time, the reverse of the timespec pair Linux wants. Both halves of both
-	// timestamps and the omit bit are read back through stat, so a list built
-	// in the wrong order, a dropped nanosecond half or an ignored omit bit is
-	// a wrong number rather than a plausible one.
+	// timestamps, the omit bit and the now bits are read back through stat,
+	// so a list built in the wrong order, a dropped nanosecond half, an
+	// ignored omit bit or a now bit that named nothing is a wrong number
+	// rather than a plausible one; the now bits name a gettimeofday reading,
+	// and with both set the options carry FSOPT_UTIMES_NULL, which stat
+	// cannot see (the caller owns the file) and the arm64 codegen test pins.
 	sftPath := filepath.Join(dir, "sft_target.txt")
 	runCase("set_file_times_roundtrip",
 		`function main(): i32 {
@@ -474,6 +477,22 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
     Err(e) => { return 12; }
   }
   match (set_file_times("`+filepath.Join(dir, "no_such_sft_zzz")+`", 1, 0, 1, 0, 0)) { Ok(_) => { return 13; }, Err(e) => {} }
+  match (set_file_times("`+sftPath+`", 5, 5, 5, 5, 12)) { Err(e) => { return 14; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime <= (1750000000 as i64)) { return 15; }
+      if (f.mtime != (1777888999 as i64)) { return 16; }
+    },
+    Err(e) => { return 17; }
+  }
+  match (set_file_times("`+sftPath+`", 5, 5, 5, 5, 24)) { Err(e) => { return 18; }, Ok(_) => {} }
+  match (stat("`+sftPath+`")) {
+    Ok(f) => {
+      if (f.atime <= (1750000000 as i64)) { return 19; }
+      if (f.mtime <= (1750000000 as i64)) { return 20; }
+    },
+    Err(e) => { return 21; }
+  }
   return 42;
 }`,
 		42)

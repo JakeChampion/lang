@@ -1938,13 +1938,15 @@ pub function rt_src_chown_at(t: string): string {
 // IoError].
 //
 // `flags` is Fern's own word: 1 do not follow a final symlink, 2 leave the
-// access time alone, 4 leave the modification time alone. How the last two are
-// spelled is the whole of the per-target difference.
+// access time alone, 4 leave the modification time alone, 8 and 16 set the
+// access and modification time to the clock. How the last four are spelled is
+// the whole of the per-target difference.
 //
 // Linux is utimensat(AT_FDCWD, path, times, flags): two `struct timespec`s in
-// scratch, access time first, with UTIME_OMIT (1<<30 - 2) in the nanosecond
-// half of either one to be left alone — an omit is a sentinel VALUE, not a
-// flag, and the seconds half is then not read. Bit 0 becomes
+// scratch, access time first, with UTIME_NOW (1<<30 - 1) or UTIME_OMIT
+// (1<<30 - 2) in the nanosecond half of either one to be set to the clock or
+// left alone — each is a sentinel VALUE, not a flag, and the seconds half is
+// then not read; omit is written last so that it wins over now. Bit 0 becomes
 // AT_SYMLINK_NOFOLLOW (0x100).
 //
 // The four halves go out through __store_i64, not __raw_store_ptr, whose value
@@ -1957,16 +1959,21 @@ pub function rt_src_chown_at(t: string): string {
 // resolved against the process's own directory, and setattrlistat takes SIX
 // arguments where the self-host's syscall floor stops at __syscall5. An omitted
 // timestamp is simply not named in the list, which is what makes omitting both
-// a no-op there as it is on Linux. The attributes are packed in ASCENDING
+// a no-op there as it is on Linux. The list has no "now" either, so a now bit
+// reads gettimeofday first and names that value, as libc does — before the
+// attribute list is laid out, since both come from scratch — and, as libc does
+// when both halves are now, sets FSOPT_UTIMES_NULL (0x40) in the options,
+// which is what makes the kernel ask for write access rather than ownership.
+// The attributes are packed in ASCENDING
 // attribute-bit order, which puts ATTR_CMN_MODTIME (0x400) before
 // ATTR_CMN_ACCTIME (0x1000) — the reverse of the timespec order Linux wants —
 // and both bits live in byte 5 of the little-endian commonattr word, which is
 // why the flag byte is written straight there. Bit 0 is FSOPT_NOFOLLOW (1).
 pub function rt_src_set_file_times(t: string): string {
     if (t == "arm64-darwin") {
-        return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var al: i32 = __raw_scratch(64); var z: i32 = 0; while (z < 24) { __raw_store8(al, z, 0); z = z + 1; } __raw_store8(al, 0, 5); var buf: i32 = __raw_addr(al, 32); var n: i32 = 0; var hi: i32 = 0; if ((flags & 4) == 0) { hi = hi + 4; __store_i64(__raw_addr(buf, n), msec); __store_i64(__raw_addr(buf, n + 8), mnsec); n = n + 16; } if ((flags & 2) == 0) { hi = hi + 16; __store_i64(__raw_addr(buf, n), asec); __store_i64(__raw_addr(buf, n + 8), ansec); n = n + 16; } __raw_store8(al, 5, hi); var opt: i32 = 0; if ((flags & 1) != 0) { opt = 1; } var rc: i32 = __syscall5(" + sysno(t, "setattrlist") + ", pathz, al, buf, n, opt); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+        return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 24) != 0) { " + clock_read(t, "0") + " if ((flags & 8) != 0) { a0 = sec; a1 = sub * (1000 as i64); } if ((flags & 16) != 0) { m0 = sec; m1 = sub * (1000 as i64); } } var al: i32 = __raw_scratch(64); var z: i32 = 0; while (z < 24) { __raw_store8(al, z, 0); z = z + 1; } __raw_store8(al, 0, 5); var buf: i32 = __raw_addr(al, 32); var n: i32 = 0; var hi: i32 = 0; if ((flags & 4) == 0) { hi = hi + 4; __store_i64(__raw_addr(buf, n), m0); __store_i64(__raw_addr(buf, n + 8), m1); n = n + 16; } if ((flags & 2) == 0) { hi = hi + 16; __store_i64(__raw_addr(buf, n), a0); __store_i64(__raw_addr(buf, n + 8), a1); n = n + 16; } __raw_store8(al, 5, hi); var opt: i32 = 0; if ((flags & 1) != 0) { opt = 1; } if ((flags & 30) == 24) { opt = opt | 64; } var rc: i32 = __syscall5(" + sysno(t, "setattrlist") + ", pathz, al, buf, n, opt); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
     }
-    return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 2) != 0) { a0 = (0 as i64); a1 = (1073741822 as i64); } if ((flags & 4) != 0) { m0 = (0 as i64); m1 = (1073741822 as i64); } var ts: i32 = __raw_scratch(32); __store_i64(ts, a0); __store_i64(__raw_addr(ts, 8), a1); __store_i64(__raw_addr(ts, 16), m0); __store_i64(__raw_addr(ts, 24), m1); var kf: i32 = 0; if ((flags & 1) != 0) { kf = 256; } var rc: i32 = __syscall4(" + sysno(t, "utimensat") + ", " + at_fdcwd(t) + ", pathz, ts, kf); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+    return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 8) != 0) { a0 = (0 as i64); a1 = (1073741823 as i64); } if ((flags & 16) != 0) { m0 = (0 as i64); m1 = (1073741823 as i64); } if ((flags & 2) != 0) { a0 = (0 as i64); a1 = (1073741822 as i64); } if ((flags & 4) != 0) { m0 = (0 as i64); m1 = (1073741822 as i64); } var ts: i32 = __raw_scratch(32); __store_i64(ts, a0); __store_i64(__raw_addr(ts, 8), a1); __store_i64(__raw_addr(ts, 16), m0); __store_i64(__raw_addr(ts, 24), m1); var kf: i32 = 0; if ((flags & 1) != 0) { kf = 256; } var rc: i32 = __syscall4(" + sysno(t, "utimensat") + ", " + at_fdcwd(t) + ", pathz, ts, kf); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_umask backs `umask(mask)` (#8883, syscall-leaf) → the previous mask.

@@ -237,11 +237,12 @@ rather than discovering:
     one, and the destination descriptor handed to `rename-at` is that same
     preopen. A kernel's `EXDEV` has no counterpart here; the failure is
     `ENOTCAPABLE` for the operand that left.
-  - **The omit and nofollow flags are honoured**, each in the preview's own
-    spelling: preview 1 clears an `fstflags` bit and passes `lookupflags` 0,
-    preview 2 passes the `new-timestamp` variant's `no-change` arm and clears
-    `path-flags`. So `touch -a` / `touch -m` / `touch -h` are expressible on
-    a component, unlike `chmod`.
+  - **The omit, now and nofollow flags are honoured**, each in the preview's
+    own spelling: preview 1 clears an `fstflags` bit or sets its `*_NOW`
+    sibling and passes `lookupflags` 0, preview 2 passes the `new-timestamp`
+    variant's `no-change` or `now` arm and clears `path-flags`. So `touch -a`
+    / `touch -m` / `touch -h` and a plain `touch` are expressible on a
+    component, unlike `chmod`.
 
 `chmod` is the third of that set and is refused there, by construction rather
 than by a missing case: no wasi profile grants `fsmode`, so E066 names it at

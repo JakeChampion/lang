@@ -105,6 +105,7 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// `own` is a modifier AND an ordinary name.
 		{"own as modifier", `function f(own xs: string[]): i32 { return 0; }`},
 		{"own as parameter name", `function f(rl: i32, own: string[]): i32 { return 0; }`},
+		{"own lambda parameter", `function main(): i32 { var g: (own i32[]) => i32 = (own xs: i32[]) => xs.len(); return 0; }`},
 
 		// A stdlib module whose name is a primitive-type keyword.
 		{"primitive-named module call", `function main(): i32 { if (string.from_codepoint(1) == "a") { return 1; } return 0; }`},
