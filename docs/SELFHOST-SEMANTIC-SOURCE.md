@@ -238,9 +238,8 @@ Unsupported constructs refuse the whole function with a reason.
   `Result[FileStat, IoError]`.
   Each contract names the INSTANTIATION, because that is what says what the
   caller owns — the box owns its payload, and the payload owns whatever it
-  owns in turn. Fern erases generics, so a union with an erased argument
-  could carry no unit rule at all; these carry one because each has
-  exactly ONE instantiation, fixed by the builtin rather than by a call site.
+  owns in turn. Each has exactly ONE instantiation, fixed by the builtin
+  rather than by a call site, so none is a template.
   A declared generic enum is still refused. `map_new` and `cell_new` are the
   builtins that cannot join them: the destination type drives `Map`'s and
   `Cell`'s arguments, so one contract could not name the instantiation.
@@ -334,22 +333,29 @@ Unsupported constructs refuse the whole function with a reason.
   parameter the body reads its captures through — so the body joins the call
   table and a refused one refuses its constructor exactly as a refused callee
   refuses its caller, and the address it names is a symbol the module defines.
-  The box is a fresh unit of the constructing function's own, released when
-  dead by the ordinary decrement. The capture COUNT is not checked: a contract
-  records the body's signature, not how many words it reads out of its
-  environment, and one lift writes both sides.
+  The box is a fresh unit of the constructing function's own, and it owns one
+  unit of every capture that is a reference.
 
-  Every capture is a VALUE. That release is one decrement with no walk of the
-  box's slots — a function type names no capture for a drop helper to be
-  derived from, and no static helper could serve a phi joining two bodies with
-  different layouts — so a counted capture would be a unit nothing owns. It is
-  refused ("closure capture is a reference"), which is where the payoff stops
-  anyway: a body capturing one reads it back out of the `i32[]` environment at
-  a type that is not the slot's and refuses on its own account. A wide capture
-  is refused at the physical layer for the reason a wide TUPLE element is —
-  the env box stores each slot through `op_arr_make` at width 32, the one
-  array construction here that is not written at its element's own width —
-  and the lift declines one before that.
+  The captures are named by the body's ENVIRONMENT RECORD. The lift hoists a
+  capturing body with `__env: i32[]` first and reads each capture at the top
+  of the body as `var cap: T = __env[1 + i]`, one per slot in slot order, so
+  those leading reads say what the box holds: the producer types the `__env`
+  parameter as `__env$<body>` with the capture types as its arguments
+  (`semtypes.is_env`), a record whose fields are the address word and then
+  one per capture. A record's fields ride the slots an array's elements do —
+  a shape word where the array keeps its length, then one word per field —
+  so `__env[k]` is the record projection of field `k` typed by the capture,
+  the constructor is checked against the same list (count and type, one lift
+  writes both sides), and the box's release walks the captures with the
+  record's own drop helper. A function type names no capture, so a box is
+  matched at run time: the drop compares slot 0 with the address of each
+  environment the function's schema table names and calls that helper, and a
+  box that matches none — one whose captures own nothing, or one built by an
+  AST-lowered caller, which lends its captures — is released alone. A wide
+  capture is refused at the physical layer for the reason a wide TUPLE
+  element is — the env box stores each slot through `op_arr_make` at width
+  32, the one array construction here that is not written at its element's
+  own width — and the lift declines one before that.
 
   Calling a bound name that holds one is `call_indirect`, environment-FIRST:
   the box, the written arguments, then the address out of slot 0. That is the
@@ -361,11 +367,9 @@ Unsupported constructs refuse the whole function with a reason.
   is LENT. The result is a unit of the caller's own the way a direct call's is.
   The box itself is lent too, never consumed.
 
-  A CONSUMING slot is one the type spells `own` — or one it spells with an
-  erased type variable, which is consuming on its own account, since a generic
-  body cannot release such a word (`docs/ERASED-GENERICS-RC.md`). At either the
-  caller hands its unit over and takes back the one the call returns, and the
-  indirect call supplies a move rather than a read.
+  A CONSUMING slot is one the type spells `own`: the caller hands its unit
+  over and takes back the one the call returns, and the indirect call
+  supplies a move rather than a read.
 
   `ssasem.closure_type` builds the mask a box hands out from the BODY's
   declared modes — a counted parameter is a consuming slot — so the type every
@@ -407,25 +411,24 @@ Unsupported constructs refuse the whole function with a reason.
   a produced function receives, stores, projects and drops cells but never
   makes or reads one.
 
-- An ERASED type variable, as `typeinfo.TypeErased` — a type of its own,
-  distinct from the unknown a checker failure produces. It is ONE MACHINE WORD
-  and nothing at run time tells a pointer instantiation from a scalar one, so
-  a body holding one emits neither retain nor release on it: every erased
-  position is a MOVE and the caller of a generic hands over its unit and takes
-  back the one the call returns (`docs/ERASED-GENERICS-RC.md`). The word is a
-  value, a parameter, a result and a function-signature slot, and never an
-  element, a field or an operand — each of those needs a store width or an
-  element drop the variable does not name, so `T[]` and `(ast.Expr, T, boolean)`
-  refuse. A contract carrying one is a TEMPLATE the call site instantiates,
-  structurally and left to right, one type per variable. The move is PROVED,
-  not assumed: `ssaunits.erased_move_error` refuses a function where the
-  planner chose a retain for an erased value — one still live at its own
-  consumption, read after being passed or passed to two calls — or a drop for
-  one abandoned unconsumed. A REFERENCE instantiation is admitted exactly when
-  every position the variable occupies CONSUMES it: the contract's own counted
-  parameter, or a function-typed parameter's slot the type spells `own`. One
-  LENDING occurrence refuses the whole instantiation ("erased instantiation
-  carries a unit") — the unit would reach it and nothing would release it.
+- A GENERIC declaration, as a TEMPLATE produced once per instantiation
+  (`docs/SEMANTIC-GENERICS.md`). Its contract keeps each type variable as
+  `typeinfo.TypeErased`, a type of its own distinct from the unknown a checker
+  failure produces, and a call site binds the variables structurally and left
+  to right, one type per variable — a variable inside a function type, an
+  array, a tuple, a map or a nominal type's arguments binds against the same
+  shape on the argument's side. The call then names an INSTANCE,
+  `fold_stmt_nodes$FwdScan`, produced under that binding on the call's
+  request, and `build_module` runs the requests to a fixpoint. Inside an
+  instance every type is concrete, so `T[]` is an array with a store width
+  and a drop and `(ast.Expr, T, boolean)` a tuple whose element can be
+  released; a parameter declared `own acc: T` is counted where `T` binds a
+  reference and a value where it binds a scalar, and `own` in a function type
+  drops at a scalar slot the same way. A closure body hoisted out of a
+  template is instantiated under the enclosing body's binding. The template's
+  own entry reports produced when every instance it was asked for did, and a
+  template no produced body reaches is "uninstantiated generic". No produced
+  value carries a variable: `ssasem.schema_error` refuses one as unresolved.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, the 32-bit float, the pointer integer width,
@@ -534,17 +537,19 @@ census measures.
   produced caller, an `own` parameter handed to the join from the first arm and
   from the second, and a chained `else if`.
 
-The erased-generic fixtures are where the move rule executes: a fold whose
+The generic fixtures are where the instances execute: a fold whose
 accumulator is replaced once per call, one nested through a SECOND generic so
-a variable binds a variable, and one carried through a loop phi — each at a
-scalar instantiation, with a heap value held ACROSS the fold and read back
-after churn so an over-release answers a sentinel rather than a length. The
-print golden pins the other direction, which no execution can reach: a fold
-that reads its accumulator after passing it ("erased value is live across its
-consumption"), one that abandons an erased word unconsumed ("erased value is
-abandoned unconsumed"), and a call whose variable binds a reference ("erased
-instantiation carries a unit") beside the `$wrapN` trampoline whose borrowed
-accumulator is the reason for that last one.
+an instance requests an instance, and one carried through a loop phi — each
+at a scalar instantiation and again at a `string[]` one through a lending
+visitor, a consuming visitor and a lambda, with a heap value held ACROSS the
+fold and read back after churn so an over-release answers a sentinel rather
+than a length. The driver AST-lowers each template's own erased body for
+main's calls and emits the instances beside it, so the two symbol conventions
+link in one program. The print golden pins the instance names, a template's
+"template instantiated" verdict, a fold that reads an OWNED accumulator after
+handing it to a consuming visitor (a retain in the `string[]` instance,
+nothing in the i32 one), and one that abandons an owned parameter unconsumed,
+dropped by the instance that knows its type.
 
 The byte and cast fixtures pin what only an execution can show: a byte
 arithmetic result that wraps at eight bits, an i32 one that wraps at
@@ -609,8 +614,7 @@ caller hands over, which is the row-less reading already.
 
 The producer does not yet admit the pointer integer width, the
 32-bit float, the remaining builtins, the struct and nested destructuring
-forms, a closure capturing a reference, or a generic whose erased variable
-instantiates to a reference, so no production consumer is switched and no AST
+forms, or a generic method, so no production consumer is switched and no AST
 ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
@@ -641,10 +645,11 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 6,732 of its 7,807
-functions produce, plan and physically lower. The three stages now report the
-same number: neither the unit planner nor physical RC refuses anything a
-producer admitted, so every remaining refusal is a producer's.
+Measured against the whole loaded self-hosted compiler, 7,720 of its 7,809
+functions produce, plan and physically lower, through 102 instances of its
+generic declarations. The three stages report the same number: neither the
+unit planner nor physical RC refuses anything a producer admitted, so every
+remaining refusal is a producer's.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
 module tree the way the production compiler does and counts the stage each
@@ -659,13 +664,15 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by `util.append_all` (475), a closure capturing a
-reference (389) and a binding whose type is not its value's (84). Callees with
-no semantic contract are 561, and 475 of those are that one callee: its erased
-variable rides in an ARRAY, which is the container question rather than the
-accumulator's unit rule. The three `map_*_acc` walkers are 39 more of it, their
-erased accumulator riding in a returned TUPLE. The erased instantiation that
-carried a unit — 693 before the consuming convention — is at zero. The destructuring declaration, the record literal, the cast and
+The leaves are now led by the `Cell` and `Map` method vocabulary (30 call
+targets plus `map_new` 7 and `cell_new` 3), `target_os` (14) and the 32-bit
+float (10); the closure env box, which stood at 482 captures and 84 bindings,
+is at zero, worth +564 across the environment record and the `own` a lambda's
+binding spells. Callees with no semantic contract are 47, none of them a
+declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
+whose variable rode in an array and a returned tuple, closed outright when the
+boundary began producing a generic body per instantiation, worth +424. The destructuring
+declaration, the record literal, the cast and
 operator contracts, the literal width and the escaping view are all at zero. The string view was
 worth +355 once the sites that stored
 one were made to copy, and the f64 +273 — each measured, against a leaf
@@ -914,28 +921,27 @@ zero.
 `fold_expr`, `fold_stmt`, `fold_expr_pruned`, `fold_stmt_pruned`,
 `fold_expr_nodes`, `fold_stmt_nodes`, `fold_stmt_spine`, `fold_stmt_own`,
 `fold_stmt_own_pruned` — and the `$wrapN` trampolines the lift builds inside
-them, under the consuming-accumulator rule `docs/ERASED-GENERICS-RC.md`
-states: an erased position is a MOVE, so one body is correct at every
-instantiation without knowing which it has, and the unit planner proves the
-move rather than assuming it.
+them, once as a TEMPLATE and then once per instantiation the compiler's own
+callers bind (`docs/SEMANTIC-GENERICS.md`). A function TYPE spells its
+consuming slots, the visitors declare `own acc: T`, the `$wrapN` trampoline
+mirrors its target's modes, and the AST lowering reads the same mask off the
+callee's type at an indirect call — so a call through a function value and a
+direct call to the same signature agree on who releases the argument, and
+`own` at a slot a scalar binds drops out of the type on both sides.
 
-The leaf of 685 the family led is gone, and so is the 693 that stood behind
-it: **erased instantiation carries a unit** was every caller of a fold whose
-`T` binds to a `string[]`, a `util.Diag[]` or a record, and the consuming
-convention now runs END TO END. A function TYPE spells its consuming slots, the
-visitors declare `own acc: T`, the `$wrapN` trampoline mirrors its target's
-modes, and the AST lowering reads the same mask off the callee's type at an
-indirect call — so a call through a function value and a direct call to the
-same signature agree on who releases the argument.
-
-What it was worth, measured: 6597 produced before, 7090 after.
-
-Two erased shapes stay refused for a reason the rule does not reach, and both
-are the same one: an erased word under a CONTAINER. `util.append_all[T]`'s
-`T[]` result and `astwalk.map_expr_acc`'s `(ast.Expr, T, boolean)` are refused
-as an unresolved result type, because releasing an array or a tuple walks its
-slots and an erased slot names no drop. That is the question Option 2's
-uniform boxing answers, not one the move rule can.
+The family first lowered under an ERASED rule — one body per template, every
+erased position a move the unit planner proved — which bought the scalar
+instantiations, then with the consuming convention the reference ones, and
+stopped at a variable under a CONTAINER: `util.append_all[T]`'s `T[]` and
+`astwalk.map_expr_acc`'s `(ast.Expr, T, boolean)` were refused as unresolved,
+because releasing an array or a tuple walks its slots and an erased slot names
+no drop, and 514 functions stood behind those two. Producing an instance per
+binding instead — what `internal/monomorph` does for native — dissolved the
+question rather than answering it: inside `append_all$arr$FuncDecl` the
+element is a record with a drop, and the erased rule, its proof and its two
+runtime alternatives (boxing every erased value, or a drop word beside it)
+left with it. Measured: 6,732 produced before, 7,156 after, +424 against a
+leaf of 514, with 60 instances requested and every one produced.
 
 The builtins whose result is an instantiated builtin union were worth +82
 lowered, against a leaf of 215 that ranked them at twice that. A probe —
@@ -1000,28 +1006,31 @@ one); one result is `Result[void, IoError]`, a union instantiated at `void`,
 which the builtin-contract leaf needs anyway; and two are `$wrap0` trampolines
 of the `astwalk` folds, which stay refused for the reason below.
 
-The erased instantiation that carried a unit is at zero: the consuming
-convention landed end to end and the folds whose variable binds a reference
-lower. But READ THE NET, not the leaf. That leaf was 693 and the census moved
-+135, because 469 of those functions refuse again one leaf further in at
-`util.append_all`, which goes 6 -> 475 and is now the largest leaf here. Its
-erased variable rides in an ARRAY, so it needs a store width and a drop the
-erased word does not name — the container question `docs/ERASED-GENERICS-RC.md`
-parks under option 2, not the accumulator's unit rule this change settled. The
-three `map_*_acc` walkers (39) are the same shape in a returned tuple.
+The container of a type variable is at zero: a generic body is produced per
+instantiation, so `util.append_all` and the `map_*_acc` walkers lower at every
+type the compiler binds them to, and the 514 functions behind them with
+them. Read the net: the leaf was 514 and the census moved +424, because 90 of
+those functions refused again one leaf further in at the closure env box,
+which went 389 -> 482.
 
-Next, by measured leaf, two questions hold 1,014 of the 1,075 still refused:
-the container of an erased value (`util.append_all` 475 plus the walkers 39)
-and the closure env box (a capture that is a reference 389, plus the binding
-whose type is not its value's 84, which is the same box read back at a type
-that is not the slot's).
+The closure env box is at zero too, worth +564 against the 566 it held. The
+environment record bought the captures (482 -> 0) and moved the binding leaf
+84 -> 130 -> 107 before it closed, each step a shape a probe named: a lambda
+or nested function with an OWNING parameter bound to a name, whose binding
+the checker typed without the `own` its body declared (three sites, plus the
+box type read off the hoisted signature with its flags one slot out), then
+one whose owning parameter is an ARRAY, whose `own` sits on the spelling's
+base name under the array suffix and which `parser.ref_is_own` answered false
+for. Each of those was a checker or lift bug the boundary's exact-type rule
+found, fixed where it lived rather than relaxed here.
 
-What is left beyond those two is 61 functions: the `Cell` and `Map` method
-vocabulary (30 call targets plus `map_new` 7 and `cell_new` 3), `target_os`
-(14), the 32-bit float (10), the builtins whose result is
-`Result[void, IoError]` (12 across `create_dir_all`, `write_file`,
-`remove_dir_all` and `write_output`), and `usize`, which the checker resolves
-to unknown because a pointer width is a target decision. Then a production
-consumer that lowers produced functions through this pipeline and feeds
-`caller_sigs` to the remaining AST callers — a union result being the position
-that fixture measured a leak at.
+What is left is 89 functions: the `Cell` and `Map` method vocabulary (30
+call targets plus `map_new` 7 and `cell_new` 3), `target_os` (14), the
+32-bit float (10), the builtins whose result is `Result[void, IoError]` (12
+across `create_dir_all`, `write_file`, `remove_dir_all` and `write_output`),
+`usize` (7), which the checker resolves to unknown because a pointer width is
+a target decision, a function value stored in a record field (5, the
+`astwalk.splice_stmts_with_lambda` shape), and one interpreter callee. Then a
+production consumer that lowers produced functions through this pipeline and
+feeds `caller_sigs` to the remaining AST callers — a union result being the
+position that fixture measured a leak at.

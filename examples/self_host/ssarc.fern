@@ -48,7 +48,7 @@ function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return !ssasem.is_view(t) && !semtypes.erased(t) && supported(t, f);
+    return !ssasem.is_view(t) && supported(t, f);
 }
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
@@ -91,11 +91,7 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
 // The types whose stack representation needs no declaration looked up: a
 // boolean and a void ride one word, a string is its own box, and a function
 // value is the env box its captures ride in.
-// An erased type variable is one i32-shaped word, and every unit of one is
-// moved rather than retained or released (ssaunits.erased_move_error), so it
-// needs no representation beyond that word: no slot class, no release helper.
 function supported_leaf(t: typeinfo.Type): boolean {
-    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
@@ -107,7 +103,7 @@ function supported_leaf(t: typeinfo.Type): boolean {
 // its element.
 function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (semtypes.is_cell(t)) { return walkable(semtypes.cell_elem(t), f); }
-    if let typeinfo.TypeStruct(r) = t { return r.args.len() == 0 && semrecords.find(f.records, t) >= 0; }
+    if let typeinfo.TypeStruct(r) = t { return (r.args.len() == 0 || semtypes.is_env(t)) && semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
     return false;
 }
@@ -190,6 +186,7 @@ function reserve(r: irlower.LowerResult, end: i32): irlower.LowerResult {
 // their own unit; the final parent release walks children before its box.
 // Array/tuple/struct opcodes preserve the production native/Wasm layouts.
 function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
+    if let typeinfo.TypeFunc(_) = t { return env_records(f).len() > 0; }
     if let typeinfo.TypeArray(a) = t { return reference(a.elem); }
     if let typeinfo.TypeTuple(tup) = t {
         for elem in tup.elements { if (reference(elem)) { return true; } }
@@ -202,11 +199,42 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     return false;
 }
 
+// The environments this function's schema table names whose captures own a
+// unit: the boxes a function value here may hold, each walked by its record's
+// own helper.
+function env_records(f: ssasem.Func): semrecords.Record[] {
+    var out: semrecords.Record[] = [];
+    for rec in f.records { if (semtypes.is_env(rec.ty) && fields_have_children(rec.fields)) { out = out.append(rec); } }
+    return out;
+}
+
+// A function value's static type names no captures, so its box is matched at
+// run time: slot 0 holds the body's address, and each environment this
+// function knows is tried against it. A box whose captures own nothing
+// matches none and is released alone. A box built in another frame is only
+// ever lent to this one — the producer refuses an owning function parameter
+// and a function value result — so the frame that walks a box to zero is
+// the frame whose schema names its captures.
+function drop_captures(r: irlower.LowerResult, slot: i32, f: ssasem.Func): irlower.LowerResult {
+    for rec in env_records(f) {
+        r = emit(r, ir.op_load_local(slot));
+        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, ir.op_arr_get(32));
+        r = emit(r, ir.op_const_func(0, semtypes.env_body(rec.ty)));
+        r = emit(r, ir.op_bin("eq", 0, false));
+        r = emit(r, ir.op_if(0));
+        r = helper(r, slot, drop_helper_name(rec.ty));
+        r = emit(r, ir.op_end());
+    }
+    return r;
+}
+
 function drop_value(r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     if (has_children(t, f)) {
         r = emit(r, ir.op_load_local(slot));
         r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
         r = emit(r, ir.op_if(0));
+        if let typeinfo.TypeFunc(_) = t { r = drop_captures(r, slot, f); }
         if let typeinfo.TypeArray(a) = t { r = drop_elements(r, slot, a.elem, scratch, f); }
         if (semtypes.is_cell(t)) { r = drop_elements(r, slot, semtypes.cell_elem(t), scratch, f); }
         if let typeinfo.TypeTuple(tup) = t { r = drop_tuple_fields(r, slot, tup, scratch, f); }
@@ -251,7 +279,7 @@ function drop_variant_fields(r: irlower.LowerResult, slot: i32, t: typeinfo.Type
             r = emit(r, ir.op_load_local(slot));
             r = emit(r, ir.op_variant_is(v.name));
             r = emit(r, ir.op_if(0));
-            r = drop_record_fields(r, slot, v.fields, scratch, f);
+            r = drop_record_fields(r, slot, v.fields, scratch, f, false);
             r = emit(r, ir.op_end());
         }
     }
@@ -301,14 +329,15 @@ function drop_tuple_fields(r: irlower.LowerResult, slot: i32, tup: typeinfo.Type
     return r;
 }
 
-function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irlower.LowerResult {
+function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean): irlower.LowerResult {
     var child: i32 = scratch;
     r = reserve(r, child + 1);
     var i: i32 = 0;
     while (i < fields.len()) {
         if (reference(fields[i].ty)) {
             r = emit(r, ir.op_load_local(slot));
-            r = emit(r, ir.op_struct_get(i, 0));
+            if (env) { r = emit(r, ir.op_const_i32(i)); r = emit(r, ir.op_arr_get(32)); }
+            else { r = emit(r, ir.op_struct_get(i, 0)); }
             r = emit(r, ir.op_store_local(child));
             r = drop_value(r, child, fields[i].ty, child + 1, f);
         }
@@ -450,37 +479,7 @@ function named(t: typeinfo.Type): string {
 //
 // Distinct from the AST path's __struct_drop_<T>, which guards each nested
 // field itself and hands back the box. The two are not interchangeable.
-pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + type_key(t); }
-
-// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
-// nominal name: `Option[string]` releases a string where `Option[i32]`
-// releases nothing, so the two cannot share a drop helper. `$` separates the
-// arguments, as it does in a lifted lambda's symbol.
-function type_key(t: typeinfo.Type): string {
-    if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
-    if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
-    if let typeinfo.TypeArray(a) = t { return "arr$" + type_key(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t { return key_args("tup", tup.elements); }
-    return leaf_key(t);
-}
-
-function key_args(name: string, args: typeinfo.Type[]): string {
-    var out: string = name;
-    for a in args { out = out + "$" + type_key(a); }
-    return out;
-}
-
-function leaf_key(t: typeinfo.Type): string {
-    if (ssasem.is_view(t)) { return "str"; }
-    if (ssasem.is_string(t)) { return "string"; }
-    if (ssasem.is_i64(t)) { return "i64"; }
-    if (ssasem.is_u64(t)) { return "u64"; }
-    if (ssasem.is_u8(t)) { return "u8"; }
-    if (ssasem.is_u32(t)) { return "u32"; }
-    if (ssasem.is_f64(t)) { return "f64"; }
-    if (ssasem.is_integer(t)) { return "i32"; }
-    return "bool";
-}
+pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + ssasem.type_key(t); }
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
@@ -488,7 +487,7 @@ function leaf_key(t: typeinfo.Type): string {
 function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
-    if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f); }
+    if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f, semtypes.is_env(t)); }
     if let typeinfo.TypeUnion(_) = t { r = drop_variant_fields(r, 0, t, 1, f); }
     // The one value the caller's `drop` after the call discards.
     r = emit(r, ir.op_const_i32(0));
@@ -632,7 +631,7 @@ function result_kind(t: typeinfo.Type): i32 {
 function frame(f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = empty("");
     r = irlower.LowerResult { ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
-        result_kind: result_kind(f.result) };
+        name: f.graph.name, result_kind: result_kind(f.result) };
     var vi: i32 = 0;
     while (vi < f.values.len()) {
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
@@ -810,8 +809,16 @@ function load_width(t: typeinfo.Type): i32 {
     if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
     return 0;
 }
+// An environment record is the closure box, physically the word array the
+// lift builds: its field k is the box's slot k, read with the array op, since
+// only the register backends give a record's fields and an array's elements
+// the same stride.
 function field_get(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var t: typeinfo.Type = f.values[ins.result];
+    if (semtypes.is_env(f.values[ins.args[0]])) {
+        r = emit(r, ir.op_const_i32(ins.imm));
+        return emit(r, ir.op_arr_get(32));
+    }
     if (ssasem.is_wide(t)) { return emit(r, ir.op_struct_get_i64(ins.imm)); }
     return emit(r, ir.op_struct_get(ins.imm, load_width(t)));
 }

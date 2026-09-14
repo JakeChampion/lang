@@ -48,6 +48,9 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// reading derives one and fails the other.
 		{"arrow lambda returning a tuple", `function main(): i32 { var f = (x: i32): (i32, i32) => g(x); return 0; }`},
 		{"arrow lambda returning a function type", `function main(): i32 { var f = (x: i32): (i32) => i32 => g(x); return 0; }`},
+		// A lambda parameter declares `own` the way a named parameter does;
+		// the compiler's own fold visitors are written with one.
+		{"arrow lambda with an owning parameter", `function main(): i32 { var f = (st: i32, own a: string[]): string[] => a; return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
 
 		// Header expressions must leave the following brace for the body,

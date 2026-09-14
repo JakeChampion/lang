@@ -6,8 +6,8 @@ import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
 
-pub function value_mode(): i32 { return 1; }
-pub function borrow_mode(): i32 { return 2; }
+pub function value_mode(): i32 { return ssasem.value_mode(); }
+pub function borrow_mode(): i32 { return ssasem.borrow_mode(); }
 pub function counted_mode(): i32 { return ssasem.counted_mode(); }
 pub function retain_unit(): i32 { return 1; }
 pub function move_unit(): i32 { return 2; }
@@ -46,12 +46,7 @@ function successors(b: ssa.SBlock): i32[] {
     return [];
 }
 // Admit only representations whose counted layout is defined by this pass.
-// An erased type variable is one of them: it carries an ABSTRACT unit that
-// every step of this pass balances, and no physical operation at all — every
-// supply of one is a move, which emits nothing, so the plan is the same
-// whether the instantiation is a pointer or a scalar.
 function reference(t: typeinfo.Type): boolean {
-    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
@@ -74,7 +69,6 @@ function unit_free(t: typeinfo.Type): boolean {
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }
-    if (semtypes.erased(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
@@ -88,13 +82,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
     var i: i32 = 0;
     while (i < modes.len()) {
-        if (semtypes.erased(params[i])) {
-            // An erased position is consuming: the caller hands over a unit
-            // and takes back the one the call returns. Borrowing one would
-            // leave the abandoned intermediates to a body that cannot release
-            // them (docs/ERASED-GENERICS-RC.md, option 1).
-            if (modes[i] != counted_mode()) { return "erased parameter mode"; }
-        } else if (reference(params[i])) {
+        if (reference(params[i])) {
             if (modes[i] != borrow_mode() && modes[i] != counted_mode()) { return "reference parameter mode"; }
         } else if (modes[i] != value_mode()) { return "scalar parameter mode"; }
         i = i + 1;
@@ -126,8 +114,7 @@ function schema_fields_error(f: ssasem.Func): string {
 // arguments carry are read off the function TYPE the box hands out. A counted
 // parameter is a CONSUMING slot and the type spells one with `own`: what
 // ssasem.closure_type builds from these same modes is what every call through
-// the box is checked against, so the two sides cannot disagree. An ERASED slot
-// is consuming too and says so through the variable itself.
+// the box is checked against, so the two sides cannot disagree.
 //
 // The environment parameter is the box, which is lent like any other receiver
 // and never appears in the type the box hands out, so a counted one there would
@@ -168,8 +155,11 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
 // binary operator's result are fresh; only a reference-typed one is a unit of
 // this function's own (a string concatenation), so a scalar operator's result
 // is never owned. A projection or a copy borrows its source.
+// A closure box is a construction too: it owns one unit per reference capture,
+// released when the box is.
 function construction(kind: i32): boolean {
-    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new();
+    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new()
+        || kind == ssasem.closure_new();
 }
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || kind == ssasem.call()
@@ -226,17 +216,15 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     return out;
 }
 // An indirect call LENDS every reference it is handed except at a slot the
-// function type spells CONSUMING — `own T`, or an erased variable, which is
-// consuming on its own account (docs/ERASED-GENERICS-RC.md). The callee box
-// itself (operand 0) is lent like any other.
+// function type spells CONSUMING, `own T`. The callee box itself (operand 0)
+// is lent like any other.
 function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
     var out: boolean[] = [false];
     var callee: typeinfo.Type = f.values[ins.args[0]];
     var params: typeinfo.Type[] = ssasem.func_params(callee);
     var i: i32 = 0;
     while (i < params.len()) {
-        var consuming: boolean = semtypes.erased(params[i]) || ssasem.func_param_own(callee, i);
-        out = out.append(consuming && reference(f.values[ins.args[i + 1]]));
+        out = out.append(ssasem.func_param_own(callee, i) && reference(f.values[ins.args[i + 1]]));
         i = i + 1;
     }
     return out;
@@ -291,33 +279,6 @@ function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]):
         i = i + 1;
     }
     return Step { ...s, supplies: selected, drops: drops };
-}
-
-// An erased word is ONE MACHINE WORD whose instantiation the body holding it
-// cannot see, so it may emit neither retain nor release on one: `__fern_rc_inc`
-// and `__fern_rc_dec` would touch a refcount at one instantiation and an
-// integer at another. Every erased unit is therefore a MOVE — supplied exactly
-// once at a consuming position and never read after. A RETAIN is what the
-// planner chooses for a value still live at its own consumption (read after
-// being passed, or passed to two calls), and a DROP what it chooses for one
-// abandoned unconsumed; neither has an emission here, so either refuses the
-// whole function rather than being miscompiled at some instantiation.
-function erased_step_error(f: ssasem.Func, s: Step): string {
-    for supply in s.supplies {
-        if (semtypes.erased(f.values[supply.value]) && supply.mode != move_unit()) { return "erased value is live across its consumption"; }
-    }
-    for value in s.drops {
-        if (semtypes.erased(f.values[value])) { return "erased value is abandoned unconsumed"; }
-    }
-    return "";
-}
-
-function erased_move_error(f: ssasem.Func, p: Plan): string {
-    for s in p.steps {
-        var why: string = erased_step_error(f, s);
-        if (why != "") { return why; }
-    }
-    return "";
 }
 
 pub function plan(f: ssasem.Func, modes: i32[]): Plan {
@@ -580,5 +541,5 @@ pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
         bi = bi + 1;
     }
     if (count != p.steps.len()) { return "extra unit plan steps"; }
-    return erased_move_error(f, p);
+    return "";
 }

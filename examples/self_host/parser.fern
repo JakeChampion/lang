@@ -8811,15 +8811,16 @@ pub function spelling_without_own(spelling: string): string {
 }
 
 // ref_is_own / ref_without_own read the same marker off a parsed reference.
-// Only a leaf carries it — `own (i32) => i32` is not a spelling this grammar
-// admits — so the array and tuple shapes answer false on their own account.
+// The marker sits on the base name, so a leaf and an array of one — `own T`,
+// `own string[]` — both carry it; `own (i32) => i32` is not a spelling this
+// grammar admits, so a fn and a tuple answer false on their own account.
 pub function ref_is_own(r: TypeRef): boolean {
-    return r.array_depth == 0 && !r.is_tuple && !r.is_fn && spelling_is_own(r.base);
+    return !r.is_tuple && !r.is_fn && spelling_is_own(r.base);
 }
 
 pub function ref_without_own(r: TypeRef): TypeRef {
     if (!ref_is_own(r)) { return r; }
-    return parse_type_ref(spelling_without_own(r.base));
+    return TypeRef { ...r, base: spelling_without_own(r.base) };
 }
 
 // ref_fn_result returns the RESULT type of a fn `r` — parse_type_ref puts the
