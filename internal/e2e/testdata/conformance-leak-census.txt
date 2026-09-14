@@ -92,13 +92,17 @@
 # (docs/rc-log/2026-09-07-io-result-boxes-are-counted.md).
 #
 # json_object (9 -> 8) and try_result_struct_payload (3 -> 2) come from
-# #9254: a counted member's result read THROUGH a field now takes the
-# sole-owner-gated field walk before the box dec, where it took the bare dec
-# and stranded whatever counts the fields held. try_result_struct_payload is
-# the shape in the name — a struct payload read out of a Result — and
-# json_object reaches it through the same read. The pins were not regenerated
-# with that PR because it merged before its own CI reported, so the gate
-# failed on main rather than on the PR that earned the improvement.
+# #9245: a confinement asks less of a callee than an arg-temp reclaim does, so
+# a match arm that BINDS its failure payload — Some(x) reading a json field,
+# Err(e) carrying a struct out of a failed Result — frees the box instead of
+# stranding it. Bisected by measuring both fixtures either side: 9 / 3 at the
+# parent, 8 / 2 at the commit, unchanged since. The pins were not regenerated
+# when it landed, so the gate fails on main rather than on the PR that earned
+# the improvement.
+#
+# This census measures the NATIVE x86-64 emitter (emitWithTracer calls
+# x86_64.Emit), so no self-host change can move a row here — worth stating,
+# because the note that first recorded these two credited a self-host PR.
 #
 # The counts are pinned; the alloc SITES are not. A site is a runtime
 # return address, so it moves with any codegen change and would churn

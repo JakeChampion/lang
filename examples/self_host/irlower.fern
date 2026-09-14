@@ -7914,8 +7914,9 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
 //     string_from_bytes_unchecked / __raw_string, the str_to_upper / str_to_lower /
 //     str_repeat free-fns, and the .to_upper / .to_lower / .reverse / .repeat
 //     methods — is OWNED: a fresh rc=1 box the field-drop reclaims;
-//   - a view `slice_unchecked(s, a, b)` / `.trim()` is a VIEW: a zero-copy
-//     immortal box (rc=-1, #4294) sharing the source buffer, never freed;
+//   - a view `slice_unchecked(s, a, b)` is a VIEW: a zero-copy immortal box
+//     (rc=-1, #4294) sharing the source buffer, never freed. `.trim()` is NOT
+//     one: it has copied since #7393, and the arm below answers Owned;
 //   - a string LITERAL is STATIC — its DATA is interned .rodata, but since #2649
 //     Option A the BOX around it is freshly __fern_str_box'd at rc=1 on every
 //     evaluation, so a Static value is as sole-owned as an Owned one. Callers

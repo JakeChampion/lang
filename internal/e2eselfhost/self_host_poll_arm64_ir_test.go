@@ -50,17 +50,21 @@ func TestSelfHostPollIRArm64(t *testing.T) {
 		t.Error("the ppoll(2) number (73) was not baked into the Fern helper source")
 	}
 	// __syscall5 marshals six registers (five args + the number) and traps.
-	// Only the TAIL of that run is a fixed shape: the first pop is adjacent to
-	// the push that produced its value, so peephole_push_pop_arm64 folds the
-	// pair into a `mov x4, <reg>` (or removes it outright when the source
-	// register is already x4). The five pops below it have a pop above them,
-	// not a push, so nothing folds there — and `ldr x8` in particular has to
-	// survive, since darwinize keys the Mach-O rewrite off it.
-	if !strings.Contains(string(asm), "ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
-		t.Error("__syscall5 did not emit the arm64 pop-to-x3..x0 + number + svc sequence ppoll needs")
+	// Only the TAIL of that run is a fixed shape. Each argument's push reaches
+	// its pop across register-only lines, so peephole_push_pop_arm64 reroutes
+	// the value through a `mov` ahead of the run and drops the pop — P1 for the
+	// innermost pair, P7 for the rest — until it reaches the number, whose pop
+	// it refuses: darwinize keys the Mach-O rewrite off that `ldr x8`, so the
+	// last argument pop, the number load and the trap are what must survive.
+	if !strings.Contains(string(asm), "ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
+		t.Error("__syscall5 did not emit the arm64 argument pop + number + svc sequence ppoll needs")
 	}
-	if !strings.Contains(string(asm), "mov x4, ") && !strings.Contains(string(asm), "ldr x4, [sp], #16") {
-		t.Error("__syscall5's fifth argument never reaches x4")
+	// Every argument register is still written before the trap, whether the
+	// peephole rerouted its pop into a `mov` or left the pop standing.
+	for _, reg := range []string{"x1", "x2", "x3", "x4"} {
+		if !strings.Contains(string(asm), "mov "+reg+", ") && !strings.Contains(string(asm), "ldr "+reg+", [sp], #16") {
+			t.Errorf("a __syscall5 argument never reaches %s", reg)
+		}
 	}
 	bin := buildBinArm64(t, arm64gcc, dir, "poll_empty_arm64", string(asm))
 	cmd := runArm64Bin(qemu, bin)

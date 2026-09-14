@@ -19,6 +19,10 @@ var lowerWithFixpoints = []string{
 	"findReturnsNoParamEscape",
 	"inferParamEscapes",
 	"inferParamCountedRetain",
+	// Its weaker sibling, over the same walk with a bare `return p`
+	// credited — a second pass rather than a relaxed table, so the
+	// refusals pinned on the strict one stand (#9246).
+	"inferParamNoUncountedAlias",
 	"findReturnsFreshBox",
 	"findReturnsConstructedBox",
 	"computeGrowParams",

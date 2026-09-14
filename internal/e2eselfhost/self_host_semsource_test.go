@@ -170,9 +170,10 @@ function same_point(a: char, b: char): boolean { return a == b; }
 // way a record's is keyed by its declaration.
 //
 // The third fold, a method with its own type variables on a generic-struct
-// receiver, is refused before it can be reached: a parameterised struct is not
-// admitted as a VALUE here, so via_smm stops at its parameter rather than at
-// the call.
+// receiver, is refused AT the call, not before it: the parameter is concrete
+// and admitted, and the boundary keys no __smm_ prefix, so via_smm reaches
+// the lookup and refuses on the contract its receiver's spelling does not
+// name — which is the unsupported call target the golden pins.
 struct Holder[T] { item: T }
 function (xs: T[]) second_or(d: T): T { if (xs.len() < 2) { return d; } return xs[1]; }
 function (h: Holder[T]) tagged[U](u: U): i32 { return h.item.len(); }

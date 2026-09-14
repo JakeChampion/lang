@@ -697,22 +697,48 @@ were a strcmp per entry.
 | `date` | date -u -R | 0.35 ± 0.09 | 1.34 ± 0.15 | 2.20 ± 0.20 | 3.88× | 6.35× |
 | `date` | date --debug | 0.35 ± 0.09 | 1.34 ± 0.12 | 2.89 ± 0.21 | 3.87× | 8.33× |
 
-**dd has no row here yet, and the reason is a compiler bug rather than a
-workload.** Measured 2026-09-14 on the same host, 64 MiB of /dev/zero into
-/dev/null at `bs=64k`: 40.2 ms against GNU's 3.6 ms, with 37.6 ms of the
-40.2 in SYSTEM time. `strace -c` puts 33 ms of it inside `read`, at 32 µs a
-call where a bare Fern read/write loop over the same bytes takes under 1 µs
-and beats GNU outright (2.4 ms against 3.2). The difference is that dd's
-buffer is never reclaimed, so every record's read faults sixteen fresh pages
-in instead of reusing one block: `ru_minflt` 17,531 against 41, `ru_maxrss`
-69,760 kB for a copy that holds 64 KiB at a time. Three reference-counting
-leaks account for it, each bisected to a reproducer of its own — #9244 (a
-local aliasing a borrowed parameter, fixed), #9245 (the per-call Result box,
-once the failure arm binds its payload) and #9246 (`x = f(x)` where the
-callee can hand its argument back, which is `convert_record`'s
-`out = apply_case(out, …)`). `scripts/coreutils-bench.d/dd.sh` carries the
-workloads, so the row is one run away once those land; taking a number now
-would bake the leak into the table.
+**dd, 2026-09-14**, the same host, its workloads file run alone (mean ± σ
+over ≥20 runs; a ratio above 1 means Fern is faster):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `dd` | dd one small copy | 0.47 ± 0.18 | 1.24 ± 0.24 | 2.39 ± 0.69 | 2.65× | 5.10× |
+| `dd` | dd 8MiB bs=512 | 17.63 ± 1.80 | 14.97 ± 1.92 | 17.26 ± 1.90 | 0.85× | 0.98× |
+| `dd` | dd 8MiB bs=4096 | 8.16 ± 0.76 | 7.94 ± 0.83 | 8.19 ± 0.97 | 0.97× | 1.00× |
+| `dd` | dd 8MiB bs=64k | 3.63 ± 0.40 | 3.96 ± 0.48 | 5.23 ± 0.55 | 1.09× | 1.44× |
+| `dd` | dd 8MiB bs=1M | 4.10 ± 0.42 | 4.09 ± 0.49 | 5.69 ± 0.64 | 1.00× | 1.39× |
+| `dd` | dd 8MiB default block | 17.23 ± 1.48 | 14.11 ± 1.24 | 16.82 ± 1.47 | 0.82× | 0.98× |
+| `dd` | dd 8MiB ibs 4k obs 64k | 4.63 ± 0.62 | 4.48 ± 0.83 | 6.12 ± 0.66 | 0.97× | 1.32× |
+| `dd` | dd 8MiB conv=swab | 22.25 ± 2.05 | 4.96 ± 0.51 | 7.86 ± 0.82 | 0.22× | 0.35× |
+| `dd` | dd 8MiB conv=ucase | 25.72 ± 3.14 | 6.51 ± 1.14 | 7.52 ± 0.72 | 0.25× | 0.29× |
+| `dd` | dd 8MiB conv=sync | 3.81 ± 0.40 | 3.69 ± 0.45 | 5.36 ± 0.59 | 0.97× | 1.41× |
+| `dd` | dd conv=block cbs=16 | 38.30 ± 4.57 | 15.68 ± 1.52 | 28.52 ± 3.47 | 0.41× | 0.74× |
+| `dd` | dd conv=unblock cbs=16 | 58.97 ± 5.97 | 12.00 ± 1.90 | 8.09 ± 0.85 | 0.20× | 0.14× |
+| `dd` | dd 8MiB skip and seek | 4.12 ± 0.46 | 4.49 ± 0.54 | 6.05 ± 0.63 | 1.09× | 1.47× |
+| `dd` | dd 64MiB zero to null bs=512 | 52.46 ± 5.98 | 32.68 ± 3.70 | 42.24 ± 4.17 | 0.62× | 0.81× |
+| `dd` | dd 64MiB zero to null bs=64k | 2.12 ± 0.27 | 2.61 ± 0.33 | 4.03 ± 0.45 | 1.23× | 1.90× |
+| `dd` | dd 8MiB from a pipe | 8.26 ± 6.74 | 7.24 ± 5.38 | 7.57 ± 1.91 | 0.88× | 0.92× |
+| `dd` | dd 8MiB from a pipe fullblock | 8.18 ± 6.84 | 6.73 ± 2.64 | 7.10 ± 0.66 | 0.82× | 0.87× |
+
+**The `bs=64k` copy row was 0.09× a day earlier, and the fix was three
+reference-counting bugs rather than anything in dd.** Worth recording
+because the SHAPE of that measurement is what found them: 40.2 ms against
+GNU's 3.6 with 37.6 ms of it in SYSTEM time, while a bare Fern read/write
+loop over the same bytes beat GNU outright. The loop was never the problem —
+the read buffer was never reclaimed, so every record faulted sixteen fresh
+pages in instead of reusing the block (`ru_minflt` 17,531 against 158 now).
+#9244 (a local aliasing a borrowed parameter), #9245 (the per-call Result
+box, once the failure arm binds its payload) and #9246 (`x = f(x)` where the
+callee can hand its argument back) each have a reproducer of its own in
+`docs/rc-log/`.
+
+What is still behind is the byte-rewriting conversions — `conv=swab`,
+`conv=ucase`, `conv=block` and `conv=unblock` — and the small-`bs` rows.
+The conversions build their output through `__alloc_u8` plus a `.with` per
+byte, which is the same shape `tr` uses and a different optimisation from
+this one; `bs=512` is 128× the syscalls of `bs=64k` for the same bytes, so
+the gap there is per-call overhead rather than throughput. Neither is a
+correctness question and neither is dd-specific.
 
 **shred, 2026-09-14**, the same host, its workloads file run alone (mean ±
 σ, ≥20 runs; ratios above 1 mean Fern is faster).
