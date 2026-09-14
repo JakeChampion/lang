@@ -64,8 +64,8 @@ baselines are *declared*, and binaries are static with no runtime dispatch —
 
 | Target | Declared baseline | 128-bit SIMD | 256-bit SIMD |
 | --- | --- | --- | --- |
-| x86-64 | Haswell-class, **SSE4.2 + BMI1** assumable | **guaranteed** (SSE2/SSE4.2) | *not* assumable — AVX2 is outside the declared set |
-| arm64 | plain ARMv8-A, **Advanced SIMD included** | **guaranteed** (NEON) | n/a (SVE is a separate tier) |
+| x86-64 | **x86-64-v3** assumable | **guaranteed** (SSE2/SSE4.2/SSSE3) | **guaranteed** (AVX2), and the default backend's byte kernels already use it |
+| arm64 | **ARMv8.2-A + crypto**, Advanced SIMD included | **guaranteed** (NEON, and `pmull` for carry-less) | n/a — SVE is a separate tier and Apple Silicon has none |
 | wasm | wasmtime v46.0.1 pinned | **guaranteed** (`v128`, standardised, on by default) | n/a |
 
 So the entire 128-bit tier — which is where `memchr`, `memcmp`, UTF-8
@@ -75,9 +75,10 @@ statically available on every target Fern supports. Building a dispatcher
 first would be paying the cost of a mechanism whose only consumer does not
 exist yet.
 
-Dispatch becomes necessary exactly at the point Fern wants AVX2/AVX-512 on
-x86-64 or SVE/RVV elsewhere, because those *are* outside the declared
-baselines. That is a real future tier with a real prerequisite — and note it
+Dispatch becomes necessary exactly at the point Fern wants AVX-512 on x86-64
+or SVE/RVV elsewhere, because those *are* outside the declared baselines.
+AVX2 is not one of them: it is inside x86-64-v3 and already emitted
+unconditionally. That is a real future tier with a real prerequisite — and note it
 is a **project decision, not a codegen one** (`docs/BACKEND-PARITY.md`): the
 alternative to a dispatcher is raising the declared baseline, which is
 cheaper and may well be the right answer. Either way it is sequenced *after*

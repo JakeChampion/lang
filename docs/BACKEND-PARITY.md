@@ -63,12 +63,14 @@ the prefix and executes BSR / BSF, which answer a different question and are
 undefined at a zero input. So a sub-baseline CPU miscomputes **silently** there
 instead of crashing.
 
-**The x86-64 level is what the backends already emit, not a raise.** The byte
-kernels run 32-byte AVX2 main loops — `vmovdqu` / `vpcmpeqb` / `vpbroadcastb` /
-`vpmovmskb` on `ymm`, 29 sites across `internal/codegen/x86_64` and
-`internal/codegen/x86_64ssa`, with no cpuid check anywhere — so AVX2 has been a
-hard requirement of every emitted binary for as long as those kernels have
-existed. x86-64-v3 is the standard name for the class that has it, and no real
+**The x86-64 level is what the default backend already emits, not a raise.**
+`internal/codegen/x86_64`'s byte kernels run 32-byte AVX2 main loops —
+`vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, 16 emitted
+instructions with no cpuid check anywhere — so any binary linking one of those
+kernels has required AVX2 for as long as they have existed. The experimental
+`-target *-ssa` backend is SSE2 only (16-byte `movdqu` / `pcmpeqb` /
+`pmovmskb` on `xmm`) and reaches no further than the old level did; it is the
+default backend that fixes the floor. x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
 and Piledriver are AVX1 parts and never ran this output.
 
