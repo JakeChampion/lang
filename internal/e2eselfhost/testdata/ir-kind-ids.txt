@@ -288,3 +288,4 @@ open_reader_with=304
 open_writer_with=305
 buf_push_u64=306
 fd_flags=307
+write_some=308

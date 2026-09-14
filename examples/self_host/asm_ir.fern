@@ -5317,6 +5317,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
             s = s.write("    call __fn___fern_writer_write\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("writer_write");
+        } else if (o.kind_tag == 308) {  // write_some (#9231)
+            // [fd, str box], marshalled exactly as writer_write's are; the
+            // Fern __fn___fern_writer_write_some(fd, s) pushes a fresh
+            // Result[i64, IoError] box, so heap + its own need.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_writer_write_some\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("write_some");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
             // [path box]; the Fern __fn___fern_open_res(path, flags(imm), mode)
             // -> a fresh Result[Reader|Writer, IoError] box via the stack ABI:
@@ -8903,6 +8910,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
         if (s.has_need("open_with")) { fs_src = fs_src + " " + asmcore.rt_src_open_with("x86_64"); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86_64"); }
+        if (s.has_need("write_some")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write_some("x86_64"); }
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64"); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64"); }
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64"); }

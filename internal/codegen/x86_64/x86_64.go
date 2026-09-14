@@ -901,6 +901,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesHandleIsatty {
 		g.emitHandleIsattyRuntime()
 	}
+	if g.usesWriteSome {
+		g.emitWriterWriteSomeRuntime()
+	}
 	if g.usesWindowSize {
 		g.emitWindowSizeRuntime()
 	}
@@ -1311,6 +1314,7 @@ type generator struct {
 	// The same question asked of a Reader or a Writer, which needs
 	// `__fern_isatty` beside it.
 	usesHandleIsatty bool
+	usesWriteSome    bool
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
@@ -1962,6 +1966,10 @@ func (g *generator) recordUse(target string) {
 	case "__method_Reader_isatty", "__method_Writer_isatty":
 		g.usesHandleIsatty = true
 		g.usesIsatty = true
+	case "__method_Writer_write_some":
+		g.usesWriteSome = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "window_size":
 		g.usesWindowSize = true
 		g.usesAlloc = true
@@ -3817,6 +3825,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_flags"
 		case "__method_Reader_isatty", "__method_Writer_isatty":
 			target = "__fern_handle_isatty"
+		case "__method_Writer_write_some":
+			target = "__fern_writer_write_some"
 		case "__method_Writer_truncate":
 			target = "__fern_writer_truncate"
 		case "__method_Reader_close",
@@ -16188,6 +16198,64 @@ func (g *generator) emitFdFlagsRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_fd_flags, .-__fern_fd_flags")
+}
+
+// emitWriterWriteSomeRuntime emits `__fern_writer_write_some(handle_ptr,
+// s) → Result[i64, IoError]` — ONE write(2) and the count it returned.
+// `__fern_writer_write` above is the same call in a loop, which is why
+// its Option cannot carry the count: a failure there has already
+// forgotten what landed before it.
+//
+// Zero is a real answer and not an error, so the Ok arm takes it
+// unchanged; the caller decides whether a stalled write is progress.
+// System V: rdi = handle ptr, rsi = string.
+func (g *generator) emitWriterWriteSomeRuntime() {
+	g.line("")
+	g.line(".globl __fern_writer_write_some")
+	g.line(".type __fern_writer_write_some, @function")
+	g.label("__fern_writer_write_some")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")   // fd, then the box payload
+	g.emit("push r12")   // data ptr
+	g.emit("push r13")   // length
+	g.emit("sub rsp, 8") // 8-byte scratch for emitStrDataPtr's SSO spill
+	g.emit("mov ebx, [rdi]")
+	// The length comes from the ORIGINAL tagged value; only then is the
+	// byte pointer taken, since an inline (SSO) string has to be spilled
+	// to the frame first.
+	g.emitStrLen("r13d", "rsi")
+	g.emitStrDataPtr("r12", "rsi", "[rbp - 32]")
+	g.emit("mov edi, ebx")
+	g.emit("mov rsi, r12")
+	g.emit("mov rdx, r13")
+	g.emitSyscall(1)
+	g.emit("test rax, rax")
+	g.emit("js .Lwws_err")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lwws_ret")
+	g.label(".Lwws_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lwws_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_writer_write_some, .-__fern_writer_write_some")
 }
 
 // emitHandleIsattyRuntime emits `__fern_handle_isatty(handle_ptr)` —

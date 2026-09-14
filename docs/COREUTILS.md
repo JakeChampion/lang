@@ -1541,10 +1541,15 @@ $ shred -n1 -v /dev/loop0        # one `pass 1/1 (random)...`, exit 0
 $ shred -n1 -v /dev/null         # writes forever; only `-s` makes it stop
 ```
 
-The one thing left in that family is the write ERROR: GNU says
-`<name>: error writing at offset 262144: No space left on device` and we drop
-the offset, because a `w.write` that fails discards how much of it landed —
-**#9231**, which is the `write_some` that closes it.
+The write ERROR in that family matches too, offset included:
+`<name>: error writing at offset 262144: No space left on device`. The offset
+is the byte the failing write stopped at, which for ENOSPC lands INSIDE a
+block, so counting the blocks handed to `w.write` could not produce it — the
+pass loop goes through `w.write_some` (#9231), one write and the count it
+returned, and adds that count before it builds the message. Measured both
+ways, byte for byte against GNU: a 256 KiB loop device asked for 400,000
+bytes, and a 256k tmpfs asked the same. Neither is a corpus case, because the
+harness mounts nothing.
 
 **`expr`'s empty alternation branch inside a COUNTED repetition follows no
 branch order at all.** glibc demotes a branch that compiles to nothing — `expr

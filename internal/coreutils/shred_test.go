@@ -132,9 +132,10 @@ func shredTypesSeed(t *testing.T, dir string) {
 // Nothing about the operand itself is out of reach any more: the three
 // types GNU refuses are all reachable here, the terminal through
 // /dev/ptmx. What no case can compare is a write that FAILS — it needs a
-// full filesystem or a device, and the harness mounts nothing — so
-// GNU's `error writing at offset N` line is measured by hand
-// (docs/COREUTILS.md, #9231).
+// full filesystem or a device, and the harness mounts neither — so GNU's
+// `error writing at offset N` line is measured by hand instead, over a
+// loop device and a tiny tmpfs, and docs/COREUTILS.md carries both
+// commands.
 func shredCases(t *testing.T) []invocation {
 	var cases []invocation
 	add := func(name string, args ...string) {

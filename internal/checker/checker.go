@@ -2997,6 +2997,27 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	registerStructMethod("Reader", "isatty", nil, ast.BoolType{})
 	registerStructMethod("Writer", "isatty", nil, ast.BoolType{})
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+	// write_some(s) is ONE write(2) and the count it returned: the write
+	// may land in full, in part, or not at all, and the caller loops.
+	// `write` above is the same syscall with the loop inside it, which
+	// is what almost every caller wants — and what makes the count
+	// unobservable, since a failure there discards how much of it
+	// landed.
+	//
+	// That count is output. GNU `shred` names the offset a failing write
+	// stopped at (`error writing at offset 262144: No space left on
+	// device`), and for ENOSPC the failure lands INSIDE a block, so no
+	// caller counting whole blocks can reconstruct it (#9231). `dd` is
+	// the other: its record counts are about what each call moved.
+	//
+	// The count is the number of BYTES written, never negative and never
+	// more than the string's length. Zero is a real answer rather than
+	// an error — a pipe with no room and a device at its end both give
+	// it — so a caller that loops on it must make progress some other
+	// way or it spins.
+	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, optionIoErr)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set
 	// to `len`, growing with a hole that reads as zeros or discarding the

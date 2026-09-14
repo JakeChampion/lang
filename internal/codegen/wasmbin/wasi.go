@@ -2314,7 +2314,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_filestat_set_size")
 		}
 	}
-	if helpers.set["__fern_writer_write"] {
+	if helpers.set["__fern_writer_write"] || helpers.set["__fern_writer_write_some"] {
 		if opts.Preview2WASI {
 			in.add("wasi_blocking_write_and_flush_p2")
 		} else {
@@ -2866,6 +2866,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_reader_flags":        buildReaderFlagsBodyP2,
 	"__fern_writer_flags":        buildWriterFlagsBodyP2,
 	"__fern_handle_isatty":       buildIsattyBodyP2,
+	"__fern_writer_write_some":   buildWriterWriteSomeBodyP2,
 	"__fern_writer_truncate":     buildWriterTruncateBodyP2,
 	"__fern_open_reader":         buildOpenReaderBodyP2,
 	"__fern_open_writer":         buildOpenWriterBodyP2,

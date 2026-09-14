@@ -2777,6 +2777,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__method_Reader_isatty":     "__fern_handle_isatty",
 	"__method_Writer_isatty":     "__fern_handle_isatty",
 	"__method_Writer_write":      "__fern_writer_write",
+	"__method_Writer_write_some": "__fern_writer_write_some",
 	"__method_Writer_close":      "__fern_writer_close",
 	"__method_Writer_stat":       "__fern_fd_stat",
 	"__method_Reader_fsync":      "__fern_fd_fsync",
