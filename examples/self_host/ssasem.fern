@@ -811,6 +811,7 @@ function key_args(name: string, args: typeinfo.Type[]): string {
 }
 
 function leaf_key(t: typeinfo.Type): string {
+    if (is_void(t)) { return "void"; }
     if (is_view(t)) { return "str"; }
     if (is_string(t)) { return "string"; }
     if (is_i64(t)) { return "i64"; }

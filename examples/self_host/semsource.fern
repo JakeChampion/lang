@@ -432,23 +432,27 @@ function builtin_variants(t: typeinfo.Type): semrecords.Variant[] {
     return [];
 }
 
+// A `void` payload is no payload: the variant carries nothing, as None does.
 function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
+    if (is_void(ty)) { return semrecords.Variant { name: name, fields: [] }; }
     return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
 }
 
 // The payload types one variant declares, and whether the union has such a
-// variant at all.
-struct Payloads { found: boolean, types: typeinfo.Type[] }
+// variant at all. `unit` marks a variant declared with a `void` payload: it
+// carries no field, but a pattern still writes the one binding its
+// declaration has, and that binding names nothing.
+struct Payloads { found: boolean, types: typeinfo.Type[], unit: boolean }
 
 function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
     for v in builtin_variants(whole) {
         if (v.name == name) {
             var types: typeinfo.Type[] = [];
             for field in v.fields { types = types.append(field.ty); }
-            return Payloads { found: true, types: types };
+            return Payloads { found: true, types: types, unit: v.fields.len() == 0 && name != "None" };
         }
     }
-    return Payloads { found: false, types: [] };
+    return Payloads { found: false, types: [], unit: false };
 }
 
 // A pattern reaches a member of either kind of declared union; a literal only
@@ -456,13 +460,13 @@ function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
 function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
     if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
     var sig: checker.StructSig = checker.variant_shape_sig(s.scope, name, union_name(whole));
-    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
 }
 
 function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
     if (layout == semrecords.layout_option()) { return builtin_payloads(whole, name); }
     var sig: checker.StructSig = checker.variant_sig(s.scope, name, union_name(whole));
-    return Payloads { found: sig.name.len() > 0, types: sig.field_types };
+    return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
 }
 
 // The union a variant literal builds. The checker types a declared enum's
@@ -1457,7 +1461,7 @@ function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, lay
     // A struct-union member's box IS the value, so its arm binds one name
     // whatever the member's field count; an enum variant binds one name per
     // payload position.
-    if (layout == semrecords.layout_member()) {
+    if (layout == semrecords.layout_member() || shape.unit) {
         if (pv.extra_bindings.len() > 0) { return "pattern arity"; }
         return "";
     }
@@ -1475,10 +1479,11 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
 }
 
 // Each named payload position is a projection of the scrutinee, bound for
-// the arm's body; `_` and an absent payload list bind nothing.
+// the arm's body; `_`, an absent payload list and a `void` payload's binding
+// bind nothing.
 function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State, layout: i32): State {
     if (layout == semrecords.layout_member()) { return narrowed(pv, scrut, s); }
-    if (pv.binding == "") { return s; }
+    if (pv.binding == "" || fields.len() == 0) { return s; }
     var names: string[] = [pv.binding];
     for n in pv.extra_bindings { names = names.append(n); }
     var k: i32 = 0;
@@ -2273,11 +2278,13 @@ function builtin_contracts(): ssasem.Contract[] {
 // owns: each reads the string it is lent and copies whatever it keeps, so the
 // box owns every part of itself — `env`'s value, `read_line`'s line,
 // `read_file`'s contents, `read_file_bytes`'s buffer, `read_dir`'s names,
-// `stat`'s record, and the IoError an error arm carries. Nothing here is
-// generic: each builtin has exactly one instantiation, so none is a template.
+// `stat`'s record, and the IoError an error arm carries. The writers and the
+// two directory walks read their path and contents the same way and hand back
+// only the outcome, `Result[void, IoError]`. Nothing here is generic: each
+// builtin has exactly one instantiation, so none is a template.
 function union_result_contracts(): ssasem.Contract[] {
     var path: i32[] = [ssaunits.borrow_mode()];
-    return [
+    var out: ssasem.Contract[] = [
         ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
         ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
         ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
@@ -2285,6 +2292,21 @@ function union_result_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string() }) },
         ssasem.Contract { name: "stat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) },
         ssasem.Contract { name: "lstat", params: [t_string()], modes: path, result: t_io_result(t_file_stat()) }
+    ];
+    for c in outcome_contracts() { out = out.append(c); }
+    return out;
+}
+
+function outcome_contracts(): ssasem.Contract[] {
+    var path: i32[] = [ssaunits.borrow_mode()];
+    var written: i32[] = [ssaunits.borrow_mode(), ssaunits.borrow_mode()];
+    var done: typeinfo.Type = t_io_result(t_void());
+    return [
+        ssasem.Contract { name: "write_file", params: [t_string(), t_string()], modes: written, result: done },
+        ssasem.Contract { name: "write_file_exec", params: [t_string(), t_string()], modes: written, result: done },
+        ssasem.Contract { name: "create_dir_all", params: [t_string()], modes: path, result: done },
+        ssasem.Contract { name: "remove_dir_all", params: [t_string()], modes: path, result: done },
+        ssasem.Contract { name: "remove_file", params: [t_string()], modes: path, result: done }
     ];
 }
 

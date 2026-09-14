@@ -851,13 +851,14 @@ function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
 
 // A builtin union's box is a tag word and one payload word: the tag IS the
 // variant's position in the schema, so a test compares it and a projection
-// reads the single payload without a field index. The payloadless variant is
-// the one at position 1 — `op_opt_none` writes that tag itself — because
-// neither Some nor Ok is ever built without a payload.
+// reads the single payload without a field index. `op_opt_none` writes the
+// tag at position 1 itself; an Ok carrying `void` is the box at position 0
+// with a zero payload word, as the writers hand it back.
 function option_site(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irlower.LowerResult {
     var tag: i32 = variant_tag(f, whole, ins.str);
     if (ins.kind_tag == ssasem.variant_new()) {
-        if (ins.args.len() == 0) { return emit(r, ir.op_opt_none()); }
+        if (ins.args.len() == 0 && tag == 1) { return emit(r, ir.op_opt_none()); }
+        if (ins.args.len() == 0) { r = emit(r, ir.op_const_i32(0)); }
         return emit(r, ir.op_opt_make(tag));
     }
     if (ins.kind_tag == ssasem.variant_is()) {
@@ -1040,6 +1041,16 @@ function union_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "stat") { return Lowered { found: true, r: emit(r, ir.op_stat()) }; }
     if (ins.str == "lstat") { return Lowered { found: true, r: emit(r, ir.op_lstat()) }; }
     if (ins.str == "read_line") { return Lowered { found: true, r: emit(emit(r, ir.op_const_i32(0)), ir.op_read_line()) }; }
+    return outcome_builtin_site(r, ins);
+}
+
+// The builtins whose result is the outcome of a write: `Result[void, IoError]`.
+function outcome_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "write_file") { return Lowered { found: true, r: emit(r, ir.op_write_file()) }; }
+    if (ins.str == "write_file_exec") { return Lowered { found: true, r: emit(r, ir.op_write_file_exec()) }; }
+    if (ins.str == "create_dir_all") { return Lowered { found: true, r: emit(r, ir.op_create_dir_all()) }; }
+    if (ins.str == "remove_dir_all") { return Lowered { found: true, r: emit(r, ir.op_remove_dir_all()) }; }
+    if (ins.str == "remove_file") { return Lowered { found: true, r: emit(r, ir.op_remove_file()) }; }
     return Lowered { found: false, r: r };
 }
 

@@ -645,7 +645,25 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 7,720 of its 7,809
+The outcome of a write crosses too (`made_dir`, `wrote`, `unlinked`,
+`removed`, and `saved` / `saved_exec` in the print fixture): `write_file`,
+`write_file_exec`, `create_dir_all`, `remove_dir_all` and `remove_file` each
+have a contract whose result is `Result[void, IoError]`. A `void` type
+argument is a PAYLOAD that carries nothing, so the union's `Ok` variant has
+no field — the same shape as `None` — and a pattern's one binding over it
+names nothing, while `Err(e)` projects the IoError as it does off a read. The
+box is the tag word with a zero behind it, which is what the writers hand
+back and what a literal `Ok` at `void` builds. The RC leg runs the writers in
+a directory of the test's own on every target, mapped in as wasm's one
+preopen; the executable-bit writer is proved by the print fixture only, since
+wasm grants no `fsmode` and a program naming it never reaches that emitter.
+
+`target_os()` and `target_arch()` have no contract and never will: the driver
+folds both to their literals before anything lowers, so the census folds them
+the same way, against the default target, and counts the calls as the
+literals the boundary actually sees.
+
+Measured against the whole loaded self-hosted compiler, 7,730 of its 7,809
 functions produce, plan and physically lower, through 102 instances of its
 generic declarations. The three stages report the same number: neither the
 unit planner nor physical RC refuses anything a producer admitted, so every
@@ -665,8 +683,8 @@ lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
 The leaves are now led by the `Cell` and `Map` method vocabulary (30 call
-targets plus `map_new` 7 and `cell_new` 3), `target_os` (14) and the 32-bit
-float (10); the closure env box, which stood at 482 captures and 84 bindings,
+targets plus `map_new` 10 and `cell_new` 3) and the 32-bit float (24, up
+from 10 once the target fold let its callers reach it); the closure env box, which stood at 482 captures and 84 bindings,
 is at zero, worth +564 across the environment record and the `own` a lambda's
 binding spells. Callees with no semantic contract are 47, none of them a
 declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
@@ -1024,13 +1042,14 @@ base name under the array suffix and which `parser.ref_is_own` answered false
 for. Each of those was a checker or lift bug the boundary's exact-type rule
 found, fixed where it lived rather than relaxed here.
 
-What is left is 89 functions: the `Cell` and `Map` method vocabulary (30
-call targets plus `map_new` 7 and `cell_new` 3), `target_os` (14), the
-32-bit float (10), the builtins whose result is `Result[void, IoError]` (12
-across `create_dir_all`, `write_file`, `remove_dir_all` and `write_output`),
-`usize` (7), which the checker resolves to unknown because a pointer width is
-a target decision, a function value stored in a record field (5, the
-`astwalk.splice_stmts_with_lambda` shape), and one interpreter callee. Then a
+What is left is 79 functions: the `Cell` and `Map` method vocabulary (30
+call targets plus `map_new` 10 and `cell_new` 3), the 32-bit float (24:
+`f32_bits` takes an `f32`, a width this vocabulary has no slot for), `usize`
+(6), which the checker resolves to unknown because a pointer width is a
+target decision, a function value stored in a record field (5, the
+`astwalk.splice_stmts_with_lambda` shape), and one interpreter callee. The
+void-`Result` builtins and `target_os` closed, worth +10 against their 26:
+the fold moved 14 callers one leaf further in, to the float and the map. Then a
 production consumer that lowers produced functions through this pipeline and
 feeds `caller_sigs` to the remaining AST callers — a union result being the
 position that fixture measured a leak at.
