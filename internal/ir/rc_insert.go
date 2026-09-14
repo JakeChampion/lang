@@ -821,6 +821,17 @@ func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
 	if _, isFunc := b.info.FuncSigs[id.Name]; !isFunc {
 		return false
 	}
+	// A hand-audited copying builtin states both of this gate's claims
+	// outright — the callee moves no count on the argument AND the call's
+	// result cannot alias it (copyingBuiltinArg's contract) — so it needs
+	// neither the resultCannotAliasArg proxy for the second nor an escape
+	// oracle for the first. `w.write(s)` and `w.write_some(s)` are the
+	// shapes that want it: both hand the bytes to write(2) and keep
+	// nothing, yet both answer with a boxed Option / Result, which
+	// resultCannotAliasArg refuses (#9244).
+	if copyingBuiltinArg(id.Name, i) {
+		return true
+	}
 	if !resultCannotAliasArg(b.exprType(call)) {
 		return false
 	}

@@ -178,7 +178,7 @@ function main(): i32 {
 		// wrong borrow degrades to a leak). @noinline keeps the call
 		// boundary real — inlined, the return becomes an assignment that
 		// takes its own transfer inc and the case goes vacuous.
-		// Verified non-vacuous: with forinElemReturnsConfined and
+		// Verified non-vacuous: with aliasReturnsConfined and
 		// bindingConfinedToArm knocked out of walk 3 this fails under
 		// free-on on x86-64, arm64 AND wasm (recycled churn read), and
 		// passes with the guards restored.
