@@ -430,6 +430,36 @@ Unsupported constructs refuse the whole function with a reason.
   `call_indirect` this boundary emits describes each slot as one, and a
   funcref type is structural on wasm.
 
+- `Map[string, V]` at a NARROW SCALAR `V` — the runtime hash map, at the one
+  shape whose release this boundary can state. `__fern_map_free_ks` releases
+  every key in the string column and frees the scalar value column and the box;
+  a reference value column would be freed whole, dropping boxes its elements
+  still name, and a key column that is not strings is one that release does not
+  walk. Both are refused ("unsupported map shape").
+
+  A map's unit is LINEAR. Its box on the register backends is the raw
+  `{keys, vals}` pair that helper frees, with no reference count in it, so a
+  plan that would RETAIN one is refused ("map unit is not shared") — the one
+  rule in physical RC that reads the plan rather than the graph. Every ordinary
+  use moves: `m = m.insert(k, v)` leaves the receiver dead at the insert.
+
+  The vocabulary is `map_new(cap)`, `insert` (spelled `set` too, as the AST
+  lowering admits both), `has` and `get_or`. An insert takes the receiver's
+  unit and the KEY's, which the key column owns until the map is released;
+  `kconsume` tells the runtime to hold that unit rather than retain it and to
+  release the key an overwrite supersedes, and `owncols` makes the map the sole
+  owner of both column buffers so a grow frees the one it replaced. A lookup
+  borrows both operands and answers a scalar the map goes on owning. The rest
+  of the map surface — `op_map_delete`, `op_map_keys` / `op_map_values` and the
+  `op_map_iter` cluster — is not ADMITTED here. Those ops exist and every
+  backend lowers them; what this boundary lacks is a contract stating what each
+  one owns, which is the work of reaching them.
+
+  A map names no element in its construction, so the DESTINATION is the only
+  place its shape is written: `map_new(2)` at an annotated binding or a
+  contract's parameter produces, and one reaching a slot that spells no shape
+  is refused.
+
 - `Cell[T]`, the language's one mutable slot, as a VALUE and a declared field.
   It is a nominal name over a one-element box rather than a declared record —
   no declaration names it, and what it holds is one slot of its element — so
@@ -651,9 +681,10 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the `Map` builtins, the struct and nested
-destructuring forms, or a generic method, so no production consumer is
-switched and no AST ownership analysis is deleted.
+The producer does not yet admit the struct and nested destructuring forms or
+a generic method, so no production consumer is switched and no AST ownership
+analysis is deleted. Those forms appear nowhere in the self-hosted compiler,
+so nothing in it refuses for want of them.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -723,6 +754,21 @@ path the earlier leaves had moved one step further in. That leaf was the
 checker's, not the boundary's: the spelling resolved to unknown, so every
 declaration naming it was unresolved before any contract was read.
 
+The map vocabulary crosses as above (`map_tally`, `map_words`, `map_eat` /
+`map_hand` in the executable fixture, `seen_twice` and `flagged` in the print
+fixture): a map built and grown in a loop over fresh, borrowed and element
+keys, one key inserted twice so an overwrite releases the key it supersedes,
+and a map handed to a callee that takes its unit. It was the last leaf, and
+closing it took the count to every function the compiler has.
+
+`ssasem.type_key` had no arm for a map, so one spelled what the fall-through
+leaf does — `bool` — and `Map[string, i32]`, `Map[string, boolean]` and a
+boolean would have shared one drop helper and one instance name the moment
+maps crossed. A `char` spelled the same way, for the same reason: every
+integer predicate here excludes it. Both have keys of their own now, and the
+rejects fixture pins that a map and a boolean, and two maps of different
+value types, spell three.
+
 A closure's borrowed function capture crosses as above, worth +5 against the
 5 it held: `astwalk.splice_stmts_with_lambda` builds a lambda over two of its
 own function parameters, and its three callers came with it. The refusal it
@@ -732,11 +778,11 @@ A cell of a function value is refused with the elements now, which the rule
 had missed: a cell outlives the frame that filled it, so nothing it holds can
 be borrowed.
 
-Measured against the whole loaded self-hosted compiler, 7,813 of its 7,827
-functions produce, plan and physically lower, through 102 instances of its
-generic declarations. The three stages report the same number: neither the
-unit planner nor physical RC refuses anything a producer admitted, so every
-remaining refusal is a producer's.
+Measured against the whole loaded self-hosted compiler, **all 7,836 of its
+7,836 functions produce, plan and physically lower**, through 107 instances of
+its generic declarations. There is no leaf left, and no refusal of any kind:
+the producer admits every function the compiler has, and neither the unit
+planner nor physical RC refuses anything it admits.
 
 `examples/self_host/semsource_census_run.fern` is the instrument: it loads a
 module tree the way the production compiler does and counts the stage each
@@ -751,11 +797,11 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The one leaf left is the `Map` vocabulary (14: `map_new` 10 and the `insert`
+The `Map` vocabulary was the last leaf (14: `map_new` 10 and the `insert`
 / `has` sites of `wasm_ir`); the closure env box, which stood at 482 captures and 84 bindings,
 is at zero, worth +564 across the environment record and the `own` a lambda's
-binding spells. Callees with no semantic contract are 47, none of them a
-declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
+binding spells. Callees with no semantic contract got down to 47, none of them
+a declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
 whose variable rode in an array and a returned tuple, closed outright when the
 boundary began producing a generic body per instantiation, worth +424. The destructuring
 declaration, the record literal, the cast and
@@ -787,16 +833,17 @@ contract whose result is the checked type — a reference to a function VALUE is
 typed as a function, never as the result, so it takes the address form above
 instead. Nearly every constant's reader refuses again at the callee leaf. The
 void call and the six builtin contracts were worth +201 together; keyed by
-callee, the leaf that remains is the function value — the `astwalk` folds and
-the closures behind them — and the builtins whose result is an enum (`env`,
-`read_file`) or whose vocabulary is not here yet. The record-literal leaf is
+callee, what was left after them was the function value — the `astwalk` folds
+and the closures behind them — and the builtins whose result is an enum
+(`env`, `read_file`) or whose vocabulary had not arrived. The record-literal leaf is
 the same leaf in disguise: a probe keyed by the checker's reason showed every
 one a field whose value is such a call. The literal tree, the
 destination-typed literal and the string loop were worth +62 together: the
 iterable leaf (67) closed outright and the two literal mismatches with it.
-What remains of the binding-mismatch leaf is the lifted lambda body reading
-its captures out of the untyped `__env` word array, which is also what the
-closure form's reference-capture refusal reaches from the other side. A shift
+What was left of the binding-mismatch leaf after them was the lifted lambda
+body reading its captures out of the untyped `__env` word array, which is also
+what the closure form's reference-capture refusal reached from the other side;
+the typed environment record closed both. A shift
 whose count is another integer width — `n << k` with `n: i64` and `k: i32` —
 was the operator leaf (52); the count now reaches the operator through a
 `cast` to the value's width, which is the masking the runtime does anyway,
@@ -834,10 +881,10 @@ and which still gets a live exit block here, the constant condition being
 unfolded. No function in the compiler's own sources has it, so folding the
 condition is worth a measured zero and was not built.
 
-**Both binding-shape leaves are the closure ABI, not a binding rule.** Each
-was probed before building and neither is what its reason reads as:
+**Both binding-shape leaves were the closure ABI, not a binding rule.** Each
+was probed before building and neither was what its reason read as:
 
-- The 75 `binding type does not match its semantic value` are every one an
+- The 75 `binding type does not match its semantic value` were every one an
   `ExprIndex` initializer whose declared type is a reference and whose value
   is i32, and the binding NAME is the CAPTURE's (`$binding$1$name`,
   `$binding$5$mfuncs`), never `__env`. `irlower.make_clo_func` writes
@@ -884,11 +931,11 @@ and all but three of those an expression naming a `for` element the scope had
 never bound. The same binding closed the unresolved-binding-type leaf outright
 and carried every other construct whose type the checker settles inside a loop
 body with it — array, tuple and variant literals, an unannotated binding, an
-operator's width. What remains of the record-literal leaf is three sites and
-no record shape: two are a field whose value calls a runtime builtin the
-self-host CHECKER has no signature for (`string_from_bytes_unchecked`,
-`f64_bits`), so `check_expr` hands back the unknown that collapses the
-literal, and one is a field whose value is a call taking function values.
+operator's width. What was left of the record-literal leaf was three sites and
+no record shape: two a field whose value calls a runtime builtin the self-host
+CHECKER had no signature for (`string_from_bytes_unchecked`, `f64_bits`), so
+`check_expr` handed back the unknown that collapses the literal, and one a
+field whose value is a call taking function values.
 
 Typing those two in `check_expr` took the record-literal leaf from 74 to the
 one function the third site holds, and it was not a record change: the leaf
@@ -918,7 +965,7 @@ holds is one slot of its element, so `semrecords.resolved`, `schema_of`,
 box IS a one-element array box — `cell_new(v)` lowers to `[v]` — so the drop
 walks the slot with the array machinery and releases the box the way an
 array's is released. That was worth +51 lowered of the 98, measured; the
-other 47 refuse again one leaf further in.
+other 47 refused again one leaf further in.
 
 **The AST lowering does not reclaim a cell-typed struct field at all**, which
 is the self-host half of `docs/CELL-TYPE-PLAN.md` §RC and is unrelated to this

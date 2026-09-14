@@ -65,6 +65,10 @@ pub function call_value(): i32 { return 0 - 21; }
 pub function cell_new(): i32 { return 0 - 22; }
 pub function cell_get(): i32 { return 0 - 23; }
 pub function cell_set(): i32 { return 0 - 24; }
+pub function map_new(): i32 { return 0 - 25; }
+pub function map_insert(): i32 { return 0 - 26; }
+pub function map_has(): i32 { return 0 - 27; }
+pub function map_get_or(): i32 { return 0 - 28; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -191,10 +195,43 @@ pub function is_view(t: typeinfo.Type): boolean {
 // operator — is blind to which box holds them.
 pub function is_text(t: typeinfo.Type): boolean { return is_string(t) || is_view(t); }
 
+// A unicode scalar. Every integer predicate here excludes it, so without a key
+// of its own it spells what the fall-through leaf does.
+pub function is_char(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(i) = t { return i.is_char; }
+    return false;
+}
+
 // A function value: the env box a closure is carried in.
 pub function is_func(t: typeinfo.Type): boolean {
     if let typeinfo.TypeFunc(_) = t { return true; }
     return false;
+}
+
+pub function is_map(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeMap(_) = t { return true; }
+    return false;
+}
+
+pub function map_key(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeMap(m) = t { return m.key; }
+    return typeinfo.unchecked();
+}
+
+pub function map_value(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeMap(m) = t { return m.value; }
+    return typeinfo.unchecked();
+}
+
+// The one map shape this boundary admits: a string KEY column over a NARROW
+// SCALAR value column. It is the shape __fern_map_free_ks releases — each key
+// through the string dec, the value column freed whole — and the shape whose
+// insert needs none of the value flags the runtime reads.
+pub function is_supported_map(t: typeinfo.Type): boolean {
+    if (!is_map(t)) { return false; }
+    if (!is_string(map_key(t))) { return false; }
+    var v: typeinfo.Type = map_value(t);
+    return is_bool(v) || (is_integer(v) && !is_wide(v));
 }
 
 pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
@@ -593,13 +630,18 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 }
 
 // The builtins this vocabulary admits: a container's length, one element
-// pushed onto an array or replaced in it, a window onto a string, and one of
-// its bytes.
+// pushed onto an array or replaced in it, a window onto a string, one of its
+// bytes, and the cell and map vocabularies.
 function is_builtin_op(kind: i32): boolean {
-    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index() || is_cell_op(kind);
+    return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
+        || is_cell_op(kind) || is_map_op(kind);
 }
 
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
+
+pub function is_map_op(kind: i32): boolean {
+    return kind == map_new() || kind == map_insert() || kind == map_has() || kind == map_get_or();
+}
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
@@ -607,6 +649,7 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == str_index()) { return str_index_error(ins, f, result); }
     if (ins.kind_tag == with()) { return with_error(ins, f, result); }
     if (is_cell_op(ins.kind_tag)) { return cell_error(ins, f, result); }
+    if (is_map_op(ins.kind_tag)) { return map_error(ins, f, result); }
     return append_error(ins, f, result);
 }
 
@@ -642,6 +685,55 @@ function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
     if (!semtypes.is_cell(cell)) { return "cell write type"; }
     if (!semtypes.equal(semtypes.cell_elem(cell), f.values[ins.args[1]])) { return "cell element type"; }
     if (!is_void(result)) { return "cell write result"; }
+    return "";
+}
+
+// The map is the runtime hash map at the one shape is_supported_map admits.
+// Construction is fresh; an insert takes a unit of the map and of the key,
+// which the key column owns until the map is released, and hands the map back
+// so the caller holds one owner at a time; a lookup borrows both and answers a
+// scalar, which the map goes on owning.
+function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == map_new()) { return map_construction_error(ins, f, result); }
+    if (ins.kind_tag == map_insert()) { return map_insert_error(ins, f, result); }
+    if (ins.kind_tag == map_has()) { return map_has_error(ins, f, result); }
+    return map_get_or_error(ins, f, result);
+}
+
+function map_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "map construction arity"; }
+    if (!is_supported_map(result)) { return "map construction type"; }
+    if (!is_i32(f.values[ins.args[0]])) { return "map capacity type"; }
+    return "";
+}
+
+function map_insert_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "map insert arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map insert type"; }
+    if (!semtypes.equal(m, result)) { return "map insert result"; }
+    return map_operand_error(m, f.values[ins.args[1]], f.values[ins.args[2]]);
+}
+
+function map_has_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "map has arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map has type"; }
+    if (!is_bool(result)) { return "map has result"; }
+    return map_operand_error(m, f.values[ins.args[1]], map_value(m));
+}
+
+function map_get_or_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 3) { return "map get_or arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map get_or type"; }
+    if (!semtypes.equal(map_value(m), result)) { return "map get_or result"; }
+    return map_operand_error(m, f.values[ins.args[1]], f.values[ins.args[2]]);
+}
+
+function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo.Type): string {
+    if (!semtypes.equal(map_key(m), key)) { return "map key type"; }
+    if (!semtypes.equal(map_value(m), value)) { return "map value type"; }
     return "";
 }
 
@@ -863,6 +955,7 @@ pub function type_key(t: typeinfo.Type): string {
     if let typeinfo.TypeArray(a) = t { return "$arr$" + type_key(a.elem); }
     if let typeinfo.TypeTuple(tup) = t { return key_args("$tup", tup.elements); }
     if let typeinfo.TypeFunc(fn) = t { return key_args("$fn", fn.param_types.append(fn.ret_type)); }
+    if let typeinfo.TypeMap(m) = t { return key_args("$map", [m.key, m.value]); }
     return leaf_key(t);
 }
 
@@ -883,6 +976,7 @@ function leaf_key(t: typeinfo.Type): string {
     if (is_usize(t)) { return "usize"; }
     if (is_f64(t)) { return "f64"; }
     if (is_f32(t)) { return "f32"; }
+    if (is_char(t)) { return "char"; }
     if (is_integer(t)) { return "i32"; }
     return "bool";
 }

@@ -113,6 +113,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeFloat(_) = t { return ssasem.is_float(t); }
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
+    if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
     return supported_nominal(t, f);
 }
 
@@ -123,6 +124,7 @@ function reference(t: typeinfo.Type): boolean {
     if let typeinfo.TypeStruct(_) = t { return true; }
     if let typeinfo.TypeUnion(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
+    if let typeinfo.TypeMap(_) = t { return true; }
     return false;
 }
 
@@ -157,9 +159,14 @@ function walked(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_f
 // sentinel and takes the ordinary path otherwise, which is what makes one
 // release symbol correct on both the register backends and wasm (whose slices
 // copy, so the result is an ordinary counted box).
+// A map is freed whole by one helper rather than released by a count: its box
+// is a raw {keys, vals} pair on the register backends, with no count to read.
+// __fern_map_free_ks releases every key in the string column and frees the
+// scalar value column and the box.
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
+    if (ssasem.is_map(t)) { return "__fern_map_free_ks"; }
     return "__fern_rc_dec";
 }
 
@@ -198,6 +205,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
         for elem in tup.elements { if (reference(elem)) { return true; } }
     }
     if (semtypes.is_cell(t)) { return reference(semtypes.cell_elem(t)); }
+    // A map's own release walks its columns, and the uniqueness guard this
+    // answers would read a count its box does not carry.
+    if (ssasem.is_map(t)) { return false; }
     if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
     if let typeinfo.TypeUnion(_) = t {
         for v in variants_of(t, f) { if (fields_have_children(v.fields)) { return true; } }
@@ -566,10 +576,26 @@ function types_error(f: ssasem.Func): string {
     return "";
 }
 
+// A map box carries no reference count on the register backends — it is the
+// raw {keys, vals} pair __fern_map_free_ks frees — so a unit of one cannot be
+// shared: every unit the plan supplies has to be a MOVE. A retain would
+// increment a word that is not a count.
+function shared_map_error(f: ssasem.Func, p: ssaunits.Plan): string {
+    for step in p.steps {
+        for supply in step.supplies {
+            if (supply.mode != ssaunits.retain_unit()) { continue; }
+            if (ssasem.is_map(f.values[supply.value])) { return "map unit is not shared"; }
+        }
+    }
+    return "";
+}
+
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
     var why: string = ssaunits.verify(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
+    if (why != "") { return why; }
+    why = shared_map_error(f, p);
     if (why != "") { return why; }
     // Keep this physical vocabulary closed when semantic analysis grows new
     // operations. Verification of a new operation does not implement its ABI.
@@ -608,7 +634,7 @@ function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index()], k)
-        || variant_op(k) || ssasem.is_cell_op(k);
+        || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -822,9 +848,24 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
+    if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_wide(f.values[ins.result]))); }
     return field_get(r, f, ins);
+}
+
+// The map ops at the one shape this boundary admits: a string key column
+// (keykind 0, no derived equality symbol) over a narrow scalar value column
+// (widekind 0, no value pointerness, so no value retain or consume). An insert
+// is handed the key's unit, which `kconsume` tells the runtime to hold rather
+// than retain and to release when an overwrite supersedes it; `owncols` makes
+// the map the sole owner of both column buffers, so a grow frees the buffer it
+// replaced instead of leaking it.
+function map_op(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(0, "")); }
+    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(0, false, false, true, true, false, "", 0)); }
+    if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(0, "")); }
+    return emit(r, ir.op_map_get_or(0, "", 0));
 }
 
 // A field read at the width its type names. Every slot is 8 bytes on every
