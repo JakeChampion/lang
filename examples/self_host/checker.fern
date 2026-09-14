@@ -411,14 +411,16 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
 }
 
 // The free builtins whose RESULT the expression written around the call needs:
-// the byte-array string constructor and the two f64 bit reinterpretations,
-// typed as native's FuncSigs type them. Left unknown they collapsed the struct
-// literal, array or operator holding the call.
+// the byte-array string constructor and the bit reinterpretations of both
+// float widths, typed as native's FuncSigs type them. Left unknown they
+// collapsed the struct literal, array or operator holding the call.
 function free_builtin_result(name: string, argc: i32): typeinfo.Type {
   if (argc != 1) { return t_unknown("not a typed free builtin"); }
   if (name == "string_from_bytes_unchecked") { return t_string(); }
   if (name == "f64_bits") { return t_i64(); }
   if (name == "f64_from_bits") { return t_float(); }
+  if (name == "f32_bits") { return t_i32(); }
+  if (name == "f32_from_bits") { return t_f32(); }
   return t_unknown("not a typed free builtin");
 }
 
