@@ -1152,7 +1152,7 @@ pub function grapheme_count(s: string): i32 {
 // `reverse_bytes` keeps its name and its place: it is the honest one,
 // carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
-    var gs: str[] = graphemes(s);
+    var gs: string[] = graphemes(s);
     var out: string = "";
     var i: i32 = gs.len() - 1;
     while (i >= 0) {
@@ -1369,7 +1369,7 @@ pub function word_segments(s: string): string[] {
 // and `3.14` whole, splits `hello,world` without a space to help it,
 // and works on text with no ASCII spaces in it at all.
 pub function words(s: string): string[] {
-    var segs: str[] = word_segments(s);
+    var segs: string[] = word_segments(s);
     var out: string[] = [];
     var i: i32 = 0;
     var off: i32 = 0;
