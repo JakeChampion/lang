@@ -1301,7 +1301,7 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     // in irlower; grep that shape when adding one.
     var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name,
         ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
-         "FRESHSELF:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
+         "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
     if let typeinfo.TypeTuple(tup) = f.result {
         tuples = tuples.append(name);
         var flags: string = tuple_flags(tup);
@@ -1309,9 +1309,18 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     }
     if (scalar_array(f.result)) { arrays = arrays.append("ARROWN:" + name); }
     if (box_only_result(f)) { arrays = arrays.append(name); }
+    // The counted-return class ("CNTRET:") is read through two more fields of
+    // its own, so erasing the prefixed row alone would leave the caller still
+    // told the result carries a count: cnt_struct_ret_fns names the callee and
+    // cnt_handback_params its bare-returned positions. A result this boundary
+    // lowered carries the contract above instead — one counted reference whose
+    // release is the caller's — and an AST caller that ALSO gave back a
+    // handback's extra count would release twice. Both go with the row.
     var tiers: string[] = counted_tiers(f, modes);
     var borrows: string[] = borrow_rows(sg.borrowable_params, name, tiers);
     return irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays,
+        cnt_struct_ret_fns: without_rows(sg.cnt_struct_ret_fns, name, [""]),
+        cnt_handback_params: without_rows(sg.cnt_handback_params, name, [""]),
         param_counted: counted_rows(sg.param_counted, name, tiers),
         borrowable_params: borrows, borrow_bare: irlower.borrow_reg_bare_index(borrows) };
 }

@@ -84,13 +84,60 @@ given back. The field-read half, the issue's other bullet, is the next slice.
 `alloc_flat_method_identity_return` reads 1,052 / 1,050 and "flat" before and
 after.
 
+## Every consumer of a counted result owes the release
+
+The convention's cost is that a counted result binds every consumer, not just
+the ones this slice set out to fix — the hazard the SFRRECV entry named when it
+chose a runtime pointer compare over an inc ("adding that inc UNPAIRED measures
+strictly worse"). The positions a result can die in are enumerable, and the
+first cut covered three of them: a binding (the struct credit), a discarded
+statement, and a read-through field access. The fourth, an ARGUMENT temp, it
+did not: `take(b.me())` left the callee's retain with no owner, so `b`'s box
+never reached rc 1 and its fields never went —
+`TestSelfHostRecvBorrowDeepDrop/recvident-borrowable-arg-flat` read 98 (the
+receiver's fields leaked) on both register legs, where the same shape had been
+flat before.
+
+The argument temp is parked and released at the site that already does this for
+a fresh struct literal and a strict-fresh producer call
+(`stash_fresh_struct_arg` / `free_stashed_struct_args`), with one difference:
+the counted temp is stashed UNMARKED, so its release is the bare box dec rather
+than the field walk. On the handback path the box is the caller's own and its
+fields are not this frame's to free; on the fresh path a returned literal's
+field values are not proven owned (`Box { tag: t, … }` takes a parameter's
+box). That is the same floor `emit_counted_result_release` keeps one position
+over. A strict-fresh producer's argument is classified first and keeps its
+deeper release.
+
+## The ssarc caller boundary moves with the registry
+
+`ssarc.caller_sigs` erases every row an AST caller could have written for a
+result the SSA boundary lowers instead, and its own comment says the list
+mirrors irlower's readers by hand with nothing tying the two together. This
+slice added a reader and left the list behind: the dead `"FRESHSELF:"` row is
+now `"CNTRET:"`, and because the class is read through two fields of its own
+rather than the prefixed row alone, `cnt_struct_ret_fns` and
+`cnt_handback_params` are erased for that name too. Without them an AST caller
+would still be told the result carries a count — and, for a handback position,
+would give back a count the boundary never added. The erase direction is a
+leak, never a double release.
+
 ## Gates
 
 Four rows in `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `struct-handback-bind`, `struct-handback-free-fn`, `struct-handback-last-use`,
 `struct-handback-rebind-loop` (each allocs / 0 on the parent commit).
 `TestSelfHostBorrowedStructParamReturn` (#8240) stands on its answers and
-underflow count with the convention reversed. Also green: the struct,
-leak-matrix, alloc-differential, block-scoped and reclaim families of
-`internal/e2eselfhost`, the whole-compiler emit-all fixpoint, the complexity
-ratchet, `make fmt-check`.
+underflow count with the convention reversed.
+
+The argument-temp release has its gate already:
+`TestSelfHostRecvBorrowDeepDrop{X86_64,Arm64}/recvident-borrowable-arg-flat`
+measures the shape by heap growth and reads 98 without it. The ssarc row has
+none of its own — the boundary's own tests cover its shape, and the change only
+erases rows, whose failure direction is a leak rather than a release the
+boundary never earned.
+
+Also green: the struct, leak-matrix, alloc-differential, block-scoped,
+reclaim, fresh-producer, literal-argument and ssa / semsource families of
+`internal/e2eselfhost`, the three-backend cow table, the whole-compiler
+emit-all fixpoint, the complexity ratchet, `make fmt-check`.
