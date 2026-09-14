@@ -66,6 +66,19 @@ function t_u64(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 64, unsigned: true };
 }
 
+// The pointer-width unsigned integer, an address: what native's WidthPtr
+// spells, resolved by each backend.
+function t_usize(): typeinfo.Type {
+  return typeinfo.TypeI32 { is_char: false, width: typeinfo.width_ptr(), unsigned: true };
+}
+
+function is_usize(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeI32(i) => { return i.width == typeinfo.width_ptr() && !i.is_char; },
+    _ => { return false; }
+  }
+}
+
 function t_u8(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 8, unsigned: true };
 }
@@ -145,6 +158,9 @@ function int_label(t: typeinfo.TypeI32): string {
     }
     if (t.width == 8) {
       return "u8";
+    }
+    if (t.width == typeinfo.width_ptr()) {
+      return "usize";
     }
     return "u32";
   }
@@ -514,14 +530,15 @@ function is_integer(t: typeinfo.Type): boolean {
 // result domain, and getting it silently wrong is worse than asking. Differing
 // WIDTHS at the same signedness auto-widen and are fine.
 //
-// Native's two carve-outs both survive without code here. A polymorphic literal
-// is read at the other operand's width, which is what int_literal_tree says on
-// the EXPR (`b + 1` over a u8 stays legal; a literal the width cannot hold is
-// the RANGE rule's to report, not a signedness clash). And `usize` — native's
-// pointer-width case — types to unknown in this checker, so every caller has
-// already skipped the operand before reaching this.
+// Native's two carve-outs are here too. A polymorphic literal is read at the
+// other operand's width, which is what int_literal_tree says on the EXPR
+// (`b + 1` over a u8 stays legal; a literal the width cannot hold is the RANGE
+// rule's to report, not a signedness clash). And `usize`, native's
+// pointer-width case, mixes with either signedness: an address is offset by
+// whatever integer the source has.
 function int_operands_agree(lt: typeinfo.Type, rt: typeinfo.Type, le: ast.Expr, re: ast.Expr): boolean {
   if (int_literal_tree(le) || int_literal_tree(re)) { return true; }
+  if (is_usize(lt) || is_usize(rt)) { return true; }
   return int_is_unsigned(lt) == int_is_unsigned(rt);
 }
 
@@ -4566,6 +4583,9 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   }
   if (name == "u64") {
     return t_u64();
+  }
+  if (name == "usize") {
+    return t_usize();
   }
   if (name == "boolean") {
     return t_bool();
@@ -9277,14 +9297,11 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       // 32 bits were lost when the value became i32, so this
       // recovers a corrupt pointer once the heap exceeds 4 GiB
       // (arm64-darwin). A `usize` source is pointer-width and
-      // stays allowed — but `usize` types to `unknown` here (not
-      // a primitive), so it never reaches this arm: the guard is
-      // zero-false-positive over the primitives the self-host
-      // knows. Only the `string` target is modelled (an array /
-      // struct target is not is_primitive_type here), matching the
-      // sound-subset conservatism of E033/E042 above; the Go
-      // checker carries the full array/struct-target rule.
-      if (type_eq(tgt, t_string()) && (is_integer(cot) || type_eq(cot, t_u32()))) {
+      // stays allowed. Only the `string` target is modelled (an
+      // array / struct target is not is_primitive_type here),
+      // matching the sound-subset conservatism of E033/E042 above;
+      // the Go checker carries the full array/struct-target rule.
+      if (type_eq(tgt, t_string()) && !is_usize(cot) && (is_integer(cot) || type_eq(cot, t_u32()))) {
         out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
       } else if (!as_cast_allowed(cot, tgt)) {
         out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));

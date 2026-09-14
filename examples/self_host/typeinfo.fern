@@ -15,6 +15,11 @@
 // the flag is read for. Replaces a dead `tag` filler field that nothing read.
 pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean }
 
+// The POINTER width, which a `usize` carries: an address, 32 bits on wasm and
+// the whole 64-bit slot on the register backends, resolved by each backend
+// rather than named here (native's ir.WidthPtr).
+pub function width_ptr(): i32 { return 0 - 1; }
+
 pub struct TypeBool { tag: i32 }
 
 pub struct TypeString { tag: i32 }
@@ -157,6 +162,7 @@ function char_spelling(i: TypeI32): string {
 }
 
 function unsigned_spelling(i: TypeI32): string {
+  if (i.width == width_ptr()) { return "usize"; }
   if (i.width == 8) { return "u8"; }
   if (i.width == 32) { return "u32"; }
   if (i.width == 64) { return "u64"; }

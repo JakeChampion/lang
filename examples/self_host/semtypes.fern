@@ -115,7 +115,7 @@ pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
 
 function concrete_integer(i: typeinfo.TypeI32): boolean {
     if (i.is_char) { return i.width == 32 && !i.unsigned; }
-    return i.width == 32 || i.width == 64 || (i.width == 8 && i.unsigned);
+    return i.width == 32 || i.width == 64 || (i.width == 8 && i.unsigned) || (i.width == typeinfo.width_ptr() && i.unsigned);
 }
 
 function concrete_numeric(t: typeinfo.Type): boolean {
