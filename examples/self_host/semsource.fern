@@ -315,14 +315,21 @@ function integer_literal(text: string): boolean {
     return decimal(text);
 }
 
-// A literal's width is the suffix the lexer read, which a byte literal
-// (`b'x'`) carries as much as a written `7u8` does. An unsuffixed decimal is
-// an i32; the pointer width has no constant form here yet.
+// A literal's width is the suffix it carries, which a byte literal (`b'x'`)
+// has as much as a written `7u8` does. An unsuffixed decimal is an i32 unless
+// its destination names another integer type.
+//
+// `usize` is here although no source can write it: the value-block desugar
+// (checker.fern's vb_zero_of) stamps the tag as the suffix of the placeholder
+// zero it builds, so an if-expression at the pointer width hands this table a
+// `usize`-suffixed literal. Without the arm it typed to unknown and the
+// function was refused for a WIDTH that was never the problem.
 function literal_type(suffix: string): typeinfo.Type {
     if (suffix == "u8") { return t_u8(); }
     if (suffix == "u32") { return t_u32(); }
     if (suffix == "i64") { return t_i64(); }
     if (suffix == "u64") { return t_u64(); }
+    if (suffix == "usize") { return t_usize(); }
     if (suffix == "" || suffix == "i32") { return t_i32(); }
     return typeinfo.unchecked();
 }
@@ -353,9 +360,13 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
-    // An address has no literal: the pointer width is the backend's, so no
-    // immediate here names a value at it.
-    if (!semtypes.concrete(ty, false) || ssasem.is_usize(ty)) { return refused(s, "unsupported literal width"); }
+    if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
+    // An address rides the i32 immediate, which carries every value below
+    // 2^31 exactly. Past that the register backends sign-extend the constant
+    // and wasm wraps it, and the pointer width has no immediate of its own to
+    // fall back on, so the literal is refused for its RANGE rather than for
+    // being written at the width at all.
+    if (ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) { return refused(s, "address literal past the immediate"); }
     if (ssasem.text_constant(ty)) { return define(s, 1, [], 0, n.text, ty); }
     return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
 }
