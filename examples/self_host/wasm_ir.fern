@@ -5645,6 +5645,17 @@ pub function reader_seek_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_reader_seek (param $fd i32) (param $off i64) (param $whence i32) (result i32)\n";
     o = o + "    (local $err i32) (local $rb i32) (local $res i32) (local $path i32)\n";
+    // fd_seek's whence is a three-valued ENUM in the witx and wasmtime
+    // traps the guest on anything else ("Invalid enum value Whence"),
+    // where a kernel answers EINVAL. The refusal is ours, before the
+    // host call.
+    o = o + "    (if (i32.gt_u (local.get $whence) (i32.const 2)) (then\n";
+    o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 28) (local.get $path)))\n";
+    o = o + "      (return (local.get $res))))\n";
     o = o + "    (local.set $rb (call $__fern_alloc (i32.const 8)))\n";
     o = o + "    (local.set $err (call $fd_seek (local.get $fd) (local.get $off) (local.get $whence) (local.get $rb)))\n";
     o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";

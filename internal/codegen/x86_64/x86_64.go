@@ -2019,7 +2019,7 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "sync":
 		g.usesSync = true
-	case "__method_Reader_seek":
+	case "__method_Reader_seek", "__method_Writer_seek":
 		g.usesReaderSeek = true
 		g.usesAlloc = true
 		g.usesIoError = true
@@ -3785,7 +3785,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_syncfs"
 		case "sync":
 			target = "__fern_sync"
-		case "__method_Reader_seek":
+		case "__method_Reader_seek", "__method_Writer_seek":
 			target = "__fern_reader_seek"
 		case "__method_Writer_truncate":
 			target = "__fern_writer_truncate"
@@ -15992,8 +15992,10 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 }
 
 // emitReaderSeekRuntime emits `__fern_reader_seek(handle_ptr, offset,
-// whence) → Result[i64, IoError]` — lseek(2) on the Reader's fd, the new
-// offset back. A pipe answers ESPIPE, classified against an empty path.
+// whence) → Result[i64, IoError]` — lseek(2) on the handle's fd, the new
+// offset back; a Reader and a Writer hold the fd at the same place, so
+// both seek methods land here. A pipe answers ESPIPE, classified against
+// an empty path.
 // System V: rdi = handle ptr, rsi = offset, edx = whence.
 func (g *generator) emitReaderSeekRuntime() {
 	g.line("")
