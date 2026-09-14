@@ -1,0 +1,24 @@
+// Named arguments and default parameters, in every call shape the printer has
+// a separate emission path for. The corpus properties (format → reparse → same
+// AST, still type-checks, idempotent) then cover the whole class rather than
+// the shapes a substring assertion happens to name.
+//
+// Each name is bound to the parameter it subtracts FROM or subtracts, so a
+// dropped or misplaced name changes the value rather than only the spelling.
+
+function diff(a: i32 = 0, b: i32 = 0): i32 { return a - b; }
+
+// Plain call, names out of declaration order.
+function plain(): i32 { return diff(b = 1, a = 9); }
+
+// Pipe-prepend: the LHS becomes the first argument and the name applies to the
+// one written.
+function piped(): i32 { return 9 |> diff(b = 1); }
+
+// Pipe-hole: the piped value IS the named argument's value.
+function hole(): i32 { return 9 |> diff(b = _); }
+
+// Defaults relied on, so dropping them stops the program compiling.
+function defaulted(): i32 { return diff(a = 4); }
+
+function main(): i32 { return plain() + piped() + hole() + defaulted(); }
