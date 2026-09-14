@@ -227,9 +227,8 @@ function main(): i32 {
             // unresolved result. These passes fold such a method into the
             // ordinary free generic the boundary already instantiates, exactly
             // as the production pipeline does before it lowers. The struct
-            // pass runs for parity with production; its fold is not reachable
-            // here, since a parameterised struct is refused as a value before
-            // a method on one is looked up.
+            // pass runs for parity with production; the boundary keys no
+            // `__smm_` prefix, so what it folds is refused at the call.
             merged = parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(merged)));
             merged = irlower.lift_lambdas(merged);
             var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
