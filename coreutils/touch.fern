@@ -99,14 +99,18 @@ function ch_mtime(): i32 {
   return 2;
 }
 
-// The two timestamps to set, each as seconds and nanoseconds.
-struct Times { asec: i64, ansec: i64, msec: i64, mnsec: i64 }
+// The two timestamps to set, each as seconds and nanoseconds. `now`
+// says the kernel's clock is written instead: a file's writer may set
+// its times to now where only its owner may set them to a value, so a
+// clock reading passed as a value would be refused on a file the
+// caller can write and does not own.
+struct Times { asec: i64, ansec: i64, msec: i64, mnsec: i64, now: boolean }
 
 function now(): Times {
   var ns: i64 = now_ns();
   var sec: i64 = ns / (1000000000 as i64);
   var nsec: i64 = ns % (1000000000 as i64);
-  return Times { asec: sec, ansec: nsec, msec: sec, mnsec: nsec };
+  return Times { asec: sec, ansec: nsec, msec: sec, mnsec: nsec, now: true };
 }
 
 // `date_relative(text, sec, nsec, hint)` — `-d STRING` from a base
@@ -185,6 +189,9 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
   var flags: i32 = 0;
   if (no_deref) {
     flags = flags | 1;
+  }
+  if (t.now) {
+    flags = flags | 24;
   }
   if (change == ch_mtime()) {
     flags = flags | 2;
@@ -277,7 +284,7 @@ function main(): i32 {
             exit(1);
           }
           hint = pt.2;
-          t = Times { asec: pt.1, ansec: 0, msec: pt.1, mnsec: 0 };
+          t = Times { asec: pt.1, ansec: 0, msec: pt.1, mnsec: 0, now: false };
           date_set = true;
         } else if (m.id == opt_time()) {
           var names: string[] = ["atime", "access", "use", "mtime", "modify"];
@@ -334,7 +341,7 @@ function main(): i32 {
       gnu.error("failed to get attributes of " + gnu.quotea(ref_file) + ": " + err);
       exit(1);
     }
-    t = Times { asec: st_a, ansec: st_an, msec: st_m, mnsec: st_mn };
+    t = Times { asec: st_a, ansec: st_an, msec: st_m, mnsec: st_mn, now: false };
     date_set = true;
     if (has_flex) {
       if ((change & ch_atime()) != 0) {
@@ -352,7 +359,7 @@ function main(): i32 {
     var base: Times = now();
     var r: datetime.Result = date_relative(flex_date, base.asec, base.ansec, hint);
     hint = r.hint;
-    t = Times { asec: r.sec, ansec: r.nsec, msec: r.sec, mnsec: r.nsec };
+    t = Times { asec: r.sec, ansec: r.nsec, msec: r.sec, mnsec: r.nsec, now: false };
     date_set = true;
     // `-d now` is the same as no -d, which lets a file that is
     // writable but not owned still be touched; a string that merely
@@ -375,7 +382,7 @@ function main(): i32 {
     var pt: (boolean, i64, i64) = datetime.posixtime(operands[0], 2 + 16, zone, t.asec, hint);
     if (pt.0) {
       hint = pt.2;
-      t = Times { asec: pt.1, ansec: 0, msec: pt.1, mnsec: 0 };
+      t = Times { asec: pt.1, ansec: 0, msec: pt.1, mnsec: 0, now: false };
       date_set = true;
       match (env("POSIXLY_CORRECT")) {
         Some(_) => {},

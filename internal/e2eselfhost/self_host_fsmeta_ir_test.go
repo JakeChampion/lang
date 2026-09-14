@@ -146,9 +146,19 @@ func selfHostFsMetaSource(prefix string, withChmod bool) string {
     }
 `, p("meta.txt"), p("missing.txt"), fsMetaModeSuid, fsMetaModePlain)
 	}
-	src += `    return 0;
+	src += fmt.Sprintf(`    // Bits 3 and 4 write the kernel's own clock reading (UTIME_NOW) into the
+    // half they name; the value passed for that half is not read, and an
+    // omit bit on the other half still holds it.
+    match (set_file_times(%[1]q, 5, 5, 5, 5, 12)) { Ok(_) => {}, Err(_) => { return 39; } }
+    match (stat(%[1]q)) { Ok(f) => { if (f.atime <= (1750000000 as i64)) { return 40; } if (f.mtime != (%[2]d as i64)) { return 41; } }, Err(_) => { return 42; } }
+    match (set_file_times(%[1]q, 5, 5, 5, 5, 18)) { Ok(_) => {}, Err(_) => { return 43; } }
+    match (stat(%[1]q)) { Ok(f) => { if (f.mtime <= (1750000000 as i64)) { return 44; } if (f.atime <= (1750000000 as i64)) { return 45; } }, Err(_) => { return 46; } }
+    // A value written after a clock reading lands too; the tree check below
+    // reads this one back through Go's own stat.
+    match (set_file_times(%[1]q, %[3]d, %[4]d, %[2]d, %[5]d, 0)) { Ok(_) => {}, Err(_) => { return 47; } }
+    return 0;
 }
-`
+`, p("meta.txt"), fsMetaMTime2Sec, fsMetaATime2Sec, fsMetaATime2Nsec, fsMetaMTime2Nsec)
 	return src
 }
 

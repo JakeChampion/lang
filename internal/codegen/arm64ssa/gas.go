@@ -6081,10 +6081,11 @@ func emitChownAtHelper(w func(string, ...any)) {
 //
 // The two `struct timespec`s go on the stack in the kernel's order,
 // access time first. `flags` is Fern's word rather than the kernel's:
-// bit 0 becomes AT_SYMLINK_NOFOLLOW, and bits 1 and 2 become UTIME_OMIT
-// in the nanosecond half of the timespec being skipped — an omit is a
-// sentinel value to utimensat, not a flag, and the seconds half is then
-// not read.
+// bit 0 becomes AT_SYMLINK_NOFOLLOW, bits 3 and 4 become UTIME_NOW and
+// bits 1 and 2 UTIME_OMIT in the nanosecond half of the timespec they
+// name — each is a sentinel value to utimensat, not a flag, and the
+// seconds half is then not read. Omit is written after now so that it
+// wins when both name one half.
 //
 // Non-leaf (calls __fern_io_error), so the path, the flags and the
 // address of the pair live in callee-saved registers across the copy.
@@ -6100,6 +6101,13 @@ func emitSetFileTimesHelper(w func(string, ...any)) {
 	w("\tmov x21, x5")     // flags
 	w("\tstp x1, x2, [sp]")
 	w("\tstp x3, x4, [sp, #16]")
+	w("\tmov x6, #1073741823") // UTIME_NOW
+	w("\ttbz x21, #3, .Lssa_sft_na")
+	w("\tstp xzr, x6, [sp]")
+	w(".Lssa_sft_na:")
+	w("\ttbz x21, #4, .Lssa_sft_nm")
+	w("\tstp xzr, x6, [sp, #16]")
+	w(".Lssa_sft_nm:")
 	w("\tmov x6, #1073741822") // UTIME_OMIT
 	w("\ttbz x21, #1, .Lssa_sft_a")
 	w("\tstp xzr, x6, [sp]")

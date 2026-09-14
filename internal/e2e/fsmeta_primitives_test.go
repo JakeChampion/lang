@@ -136,9 +136,16 @@ func fsMetaSource(prefix string, withChmod, withNoFollow bool) string {
     match (stat(%[2]q)) { Ok(st) => { if (st.mtime != 1500000000) { return 42; } }, Err(_) => { return 43; } }
 `, p("link"), p("b.txt"))
 	}
-	src += `    return 0;
+	src += fmt.Sprintf(`    // Bits 3 and 4 write the kernel's own clock reading (UTIME_NOW) into
+    // the half they name; the value passed for that half is not read, and
+    // an omit bit on the other half still holds it.
+    match (set_file_times(%[1]q, 5, 5, 5, 5, 8 | 4)) { Ok(_) => {}, Err(_) => { return 46; } }
+    match (stat(%[1]q)) { Ok(st) => { if (st.atime <= 1750000000) { return 47; } if (st.mtime != 1500000000) { return 48; } }, Err(_) => { return 49; } }
+    match (set_file_times(%[1]q, 5, 5, 5, 5, 16 | 2)) { Ok(_) => {}, Err(_) => { return 50; } }
+    match (stat(%[1]q)) { Ok(st) => { if (st.mtime <= 1750000000) { return 51; } if (st.atime <= 1750000000) { return 52; } }, Err(_) => { return 53; } }
+    return 0;
 }
-`
+`, p("b.txt"))
 	return src
 }
 
