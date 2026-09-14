@@ -56,6 +56,19 @@ with every other case excluded and the mask is restored before the next starts;
 every other case holds the read side of the same lock and they still run
 concurrently, which the self-host leg needs.
 
+A case may also name a `nice`, for the one utility whose whole answer is that
+number. `nice` with no COMMAND prints the niceness it was started at, and the
+0 the suite inherits is exactly the value a broken read produces by accident —
+Linux's `getpriority` answers the nice value BIASED by 20, so a helper that
+forwards it says 20 where the truth is 0 — which is why the cases that matter
+name a nonzero one. It rides the same lock as the mask, and one thing more:
+`PRIO_PROCESS` is a misnomer on Linux, where the nice value is PER-THREAD with
+no per-process form, so the run holds its OS thread across the set, the fork
+and the restore. Without that the value is set on one thread and the child
+forked from another, which reads the untouched one — and it failed the way a
+race does, with cases reading each other's niceness and the two SIDES of one
+case disagreeing.
+
 A case may also name a `mask`, for the one utility whose correct answer
 differs run to run: `mktemp`'s whole output is a run of random characters.
 The mask rewrites that run BY POSITION on stdout and in the names of the
@@ -739,6 +752,30 @@ byte, which is the same shape `tr` uses and a different optimisation from
 this one; `bs=512` is 128× the syscalls of `bs=64k` for the same bytes, so
 the gap there is per-call overhead rather than throughput. Neither is a
 correctness question and neither is dd-specific.
+
+**nice, 2026-09-14**, the same host, its workloads file run alone (mean ±
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `nice` | nice reads the niceness | 0.21 ± 0.20 | 1.13 ± 0.65 | 1.86 ± 0.56 | 5.47× | 9.00× |
+| `nice` | nice runs a command | 1.31 ± 0.54 | 1.76 ± 0.57 | 2.78 ± 0.58 | 1.35× | 2.12× |
+| `nice` | nice -n 5 a command | 1.11 ± 1.00 | 1.71 ± 0.52 | 2.62 ± 0.72 | 1.54× | 2.37× |
+| `nice` | nice -5 a command | 1.22 ± 0.55 | 1.72 ± 0.44 | 2.55 ± 0.39 | 1.41× | 2.09× |
+| `nice` | nice --adjustment=5 a command | 1.17 ± 0.45 | 2.03 ± 0.80 | 2.67 ± 0.62 | 1.74× | 2.29× |
+| `nice` | nice -n -5 a command | 1.13 ± 0.60 | 1.84 ± 0.54 | 2.76 ± 0.62 | 1.63× | 2.43× |
+| `nice` | nice a command not found | 0.31 ± 0.38 | 1.18 ± 0.74 | 2.15 ± 1.89 | 3.79× | 6.88× |
+| `nice` | nice an invalid adjustment | 0.24 ± 0.23 | 1.02 ± 0.49 | 1.78 ± 0.55 | 4.18× | 7.27× |
+
+Every row wins, and the shape says why: `nice` is startup plus one syscall
+in the rows that do not exec, and startup plus `setpriority` and `execve` in
+the ones that do. So the two rows with no exec at all — the niceness read
+and the invalid-adjustment refusal — are the whole of the startup margin a
+static binary with no dynamic loader gets, 5.5× and 4.2×, while the rows
+that exec pay the same `execve` on all three sides and land at 1.3–1.7×.
+The argument handling does not appear: `-5`, `-n 5` and
+`--adjustment=5` are within a σ of each other, so the obsolescent form's
+pre-pass and getopt_long's prefix match both cost nothing next to the exec.
 
 **shred, 2026-09-14**, the same host, its workloads file run alone (mean ±
 σ, ≥20 runs; ratios above 1 mean Fern is faster).
@@ -1500,12 +1537,27 @@ registry cost five times:
     create_symlink(target, path)  symlinkat; the target is stored verbatim
     read_link(path)               readlinkat into a PATH_MAX buffer
     umask(mask)                   umask(2), which sets and reads in one step
+    priority()                    getpriority(PRIO_PROCESS, 0), bias undone
+    set_priority(nice)            setpriority(PRIO_PROCESS, 0, nice)
 
 The five filesystem ones take `fs` and WASI implements every one of them, so
 they are provided on wasm rather than classified out. `umask` takes `fsmode`
 beside `access` and `write_file_exec` and is refused there — WASI has no
 file-mode creation mask, and `path_create_directory` has no mode either, which
 is the same fact twice. `docs/FREESTANDING-CORE.md` carries both.
+
+The `priority` pair (#8375's primitive, what `nice` waited on) takes a
+capability of its own, `sched`, and is refused on wasm for the reason
+`umask` is: neither preview has a scheduler knob, and neither stand-in is
+honest — answering 0 from the read claims the default nice value was
+measured, and letting the write succeed claims a change that did not happen.
+Two ABI facts there are not shareable between backends. The syscall numbers
+are SWAPPED between the tables (x86-64 has get at 140 and set at 141; the
+asm-generic table aarch64 uses has set at 140 and get at 141), and Linux
+returns the nice value BIASED by 20 so a success is never negative where BSD
+returns it directly and reports failure through errno alone — so the read
+undoes the bias on Linux and not on Darwin, and a copied table silently runs
+the other half of the pair.
 
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
@@ -2317,8 +2369,12 @@ groups are the order of work. Each sub-issue names its group.
   every diagnostic before the context change; the change itself has no
   primitive, see the divergence above), `stat` `ls` `dir` `vdir` `du` `df`
   (full stat, statfs, d_type), `dircolors` (done — it needed none of
-  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `timeout` `nice`
-  `nohup` `kill` `stdbuf` `chroot` (signals, setpriority, exec), `dd`
+  those: `env()` for $SHELL / $TERM / $COLORTERM and no new primitive), `date` (done — the grammar behind `-d`, `-f` and `touch -d` is `lib/datetime.fern`, a port of gnulib's parse_datetime with its mktime emulation and the `--debug` trace, over `lib/tz.fern`; the `-s` and `MMDDhhmm` forms parse as GNU does and then report `cannot set date`, because no builtin sets the system clock — see the divergence below), `nice` (done, on the
+  new `priority()` / `set_priority(n)` pair under the `sched` target
+  capability — and on `gnu.exec_command`, which `env` moved its own
+  execvp emulation into so the PATH search and the `/bin/sh` retry for a
+  shebang-less script are written once, #9262), `timeout`
+  `nohup` `kill` `stdbuf` `chroot` (signals, exec), `dd`
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
   families it does NOT have are in the divergences above, each with its

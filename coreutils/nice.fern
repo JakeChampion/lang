@@ -1,0 +1,284 @@
+// nice.fern — GNU-compatible `nice`.
+//
+//   nice [-n ADJ] [COMMAND [ARG]...]    run COMMAND at an adjusted niceness
+//   nice                                print the current niceness
+//
+// The niceness is the number `priority()` reads: -20 is the most
+// favourable to the process and 19 the least, and it runs the other way
+// round to what "priority" suggests. An adjustment is ADDED to the value
+// this process already has, so `nice -n 5 nice -n 5 nice` prints 10, and
+// the sum is then clamped to the kernel's range rather than refused —
+// `nice -n 2147483647` is 19, not an error.
+//
+// Four measured behaviours the shape here exists for.
+//
+//   - **The last adjustment wins; they do not accumulate.** `-n 7 -n 3`
+//     is 3, and `-5 -n 3` is 3. GNU's own documentation reads as though
+//     they add, and they do not.
+//   - **`-N` is an obsolescent spelling of `-n N`**, and it is a
+//     PRE-PASS rather than an option: `--5` is an adjustment of -5 while
+//     `--x` is an unrecognized long option, and `-+5` is 5 while `-+`
+//     alone is an invalid option. The trigger is a digit after the
+//     optional sign — see `is_dash_number` — and everything after the
+//     first `-` is the value, so `--5` parses the string `-5`.
+//   - **A failed renice is a WARNING, not a failure.** Lowering the
+//     value needs privilege, so an unprivileged `nice -n -5 cmd` prints
+//     `cannot set niceness: Permission denied` and then runs the command
+//     anyway, at the value it already had.
+//   - **An adjustment with no command is an error**, while no adjustment
+//     and no command prints the current niceness. `nice` is 0 and
+//     `nice --` is 0, but `nice -n 5` and `nice -n 5 --` are both
+//     `a command must be given with an adjustment`.
+//
+// Usage errors exit 125, a command that cannot be invoked 126, one that
+// cannot be found 127; otherwise the command's own status passes
+// through. The exec is `gnu.exec_command`, so the PATH search and
+// execvp's `/bin/sh` retry for a shebang-less script are shared with
+// `env` rather than written twice.
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] [COMMAND [ARG]...]\n";
+  out = out + "Run COMMAND with an adjusted niceness, which affects process scheduling.\n";
+  out = out + "With no COMMAND, print the current niceness.  Niceness values range from\n";
+  out = out + "-20 (most favorable to the process) to 19 (least favorable to the process).\n";
+  out = out + "\n";
+  out = out + "  -n, --adjustment=N   add integer N to the niceness (default 10)\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Exit status:\n";
+  out = out + "  125  if the nice command itself fails\n";
+  out = out + "  126  if COMMAND is found but cannot be invoked\n";
+  out = out + "  127  if COMMAND cannot be found\n";
+  out = out + "  -    the exit status of COMMAND otherwise\n";
+  return out;
+}
+
+function opt_adjust(): i32 {
+  return 1;
+}
+
+// The default adjustment, applied when a command is given and `-n` is
+// not.
+function default_adjustment(): i64 {
+  return 10 as i64;
+}
+
+// `is_dash_number(a)` — whether `a` is the obsolescent `-N` spelling.
+//
+// The trigger is a DIGIT after the optional sign, which is what
+// separates the forms that reach this path from the ones that stay
+// options: `-5`, `-+5` and `--5` are adjustments, while `-+`, `--+5`,
+// `---5`, `--x` and `--adjustment=5` are not. A false positive here
+// would swallow a long option; a false negative would report an invalid
+// option where GNU reports an invalid adjustment.
+function is_dash_number(a: string): boolean {
+  if (a.len() < 2 || a[0] as i32 != 45) {
+    return false;
+  }
+  var i: i32 = 1;
+  if (a[1] as i32 == 43 || a[1] as i32 == 45) {
+    i = 2;
+  }
+  return i < a.len() && gnu.is_digit(a[i] as i32);
+}
+
+// Whether `a` is an option at all: a `-` with something after it. A bare
+// `-` is an operand, and a COMMAND named `-` is what GNU tries to exec.
+function is_option(a: string): boolean {
+  return a.len() > 1 && a[0] as i32 == 45;
+}
+
+// Whether the option `a` takes its value from the NEXT argument, so the
+// pre-pass must step over it without examining it. Only `-n` and the
+// long form spelled without `=` do, and the look-ahead is load-bearing:
+// `nice -n -5 cmd` means an adjustment of -5, and rewriting that `-5`
+// as a second `-n` would make the value the string `-n`.
+function takes_next_value(a: string): boolean {
+  if (a == "-n") {
+    return true;
+  }
+  if (!a.starts_with("--") || a.index_of("=") >= 0) {
+    return false;
+  }
+  var name: string = slice_unchecked(a, 2, a.len()) + "";
+  return name.len() > 0 && "adjustment".starts_with(name);
+}
+
+// `rewrite_obsolete(argv)` — turn each `-N` into the `-n N` pair the
+// option table understands, stopping where option parsing stops.
+//
+// Stopping matters as much as rewriting: after `--`, and after the first
+// operand, a `-5` belongs to the COMMAND. `nice /bin/echo -5` passes -5
+// to echo, and `nice -- -5` tries to exec a program called `-5`.
+function rewrite_obsolete(argv: string[]): string[] {
+  var out: string[] = [];
+  if (argv.len() > 0) {
+    out = out.append(argv[0]);
+  }
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "--") {
+      break;
+    }
+    if (is_dash_number(a)) {
+      out = out.append("-n");
+      out = out.append(slice_unchecked(a, 1, a.len()) + "");
+      i = i + 1;
+      continue;
+    }
+    if (!is_option(a)) {
+      break;
+    }
+    out = out.append(a);
+    i = i + 1;
+    if (takes_next_value(a) && i < argv.len()) {
+      out = out.append(argv[i]);
+      i = i + 1;
+    }
+  }
+  while (i < argv.len()) {
+    out = out.append(argv[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// nice's adjustment grammar: strtol's, with the whole string required.
+// Leading blanks are allowed because strtol skips them, TRAILING ones are
+// not because nothing consumes them — `-n ' 5'` is 5 and `-n '5 '` is
+// invalid. Decimal only, so `0x5` is refused rather than read as 5.
+//
+// A value past the width SATURATES rather than failing, which is
+// strtol's ERANGE going unread: `-n 99999999999999999999` is 19. The
+// saturation point here is far below i64's, because every value at or
+// past 20 clamps to the same 19 and every one at or past -20 to the same
+// -20, so a nearer bound cannot change an answer and cannot overflow the
+// sum with the current niceness either.
+struct Adj { value: i64, ok: boolean }
+
+function saturation(): i64 {
+  return 1000000 as i64;
+}
+
+function parse_adjustment(v: string): Adj {
+  var i: i32 = 0;
+  while (i < v.len() && is_blank(v[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < v.len() && (v[i] as i32 == 43 || v[i] as i32 == 45)) {
+    neg = v[i] as i32 == 45;
+    i = i + 1;
+  }
+  if (i >= v.len() || !gnu.is_digit(v[i] as i32)) {
+    return Adj { value: 0 as i64, ok: false };
+  }
+  var n: i64 = 0 as i64;
+  while (i < v.len() && gnu.is_digit(v[i] as i32)) {
+    if (n < saturation()) {
+      n = n * (10 as i64) + (v[i] as i32 - 48) as i64;
+      if (n > saturation()) {
+        n = saturation();
+      }
+    }
+    i = i + 1;
+  }
+  if (i != v.len()) {
+    return Adj { value: 0 as i64, ok: false };
+  }
+  if (neg) {
+    n = 0 as i64 - n;
+  }
+  return Adj { value: n, ok: true };
+}
+
+// strtol's leading-blank set, which is isspace and not just a space.
+function is_blank(c: i32): boolean {
+  return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+}
+
+// The kernel's range. Clamping here rather than leaving it to
+// setpriority is not defensive: the SUM is what needs bounding, since an
+// adjustment near the width would otherwise wrap into a value the caller
+// did not ask for — and asking to go DOWN is the one direction that
+// needs privilege.
+function clamp_nice(n: i64): i32 {
+  if (n < 0 as i64 - 20 as i64) {
+    return 0 - 20;
+  }
+  if (n > 19 as i64) {
+    return 19;
+  }
+  return n as i32;
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.valued("n", "adjustment", opt_adjust()));
+
+  var adj: i64 = default_adjustment();
+  var given: boolean = false;
+  var g: gnu.Getopt = gnu.getopt_new(rewrite_obsolete(args()), opts, "nice", help_text(), 125).in_order();
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        if (m.id == opt_adjust()) {
+          var p: Adj = parse_adjustment(m.value);
+          if (!p.ok) {
+            // No `Try …` line: gnulib reports this one the way it
+            // reports a bad number rather than a bad option.
+            gnu.error("invalid adjustment " + gnu.quote(m.value));
+            exit(125);
+          }
+          adj = p.value;
+          given = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var rest: string[] = g.operands();
+
+  if (rest.len() == 0) {
+    if (given) {
+      gnu.die_usage("a command must be given with an adjustment", 125);
+    }
+    // 125, not 1: gnulib's `exit_failure` is EXIT_CANCELED here, the
+    // same status a usage error takes, so `nice > /dev/full` is 125.
+    gnu.write_out_with(priority().to_string() + "\n", 125);
+    return 0;
+  }
+
+  var target: i32 = clamp_nice(priority() as i64 + adj);
+  match (set_priority(target)) {
+    Ok(_) => {},
+    Err(e) => {
+      // A warning, not a failure: the command still runs, at the
+      // niceness this process already had.
+      gnu.error("cannot set niceness: " + gnu.io_error_text(e));
+    }
+  }
+
+  // Only returns when the exec failed.
+  fail_exec(rest[0], gnu.exec_command(rest[0], rest, environ()));
+  return 126;
+}
+
+// `fail_exec(cmd, errno)` — the diagnostic and status for a command that
+// could not be run: 127 when nothing of that name was found, 126 when
+// something was and could not be invoked.
+function fail_exec(cmd: string, errno: i32): void {
+  gnu.error(gnu.quote(cmd) + ": " + gnu.exec_errno_text(errno));
+  if (errno == 2) {
+    exit(127);
+  }
+  exit(126);
+}
