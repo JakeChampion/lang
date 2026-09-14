@@ -41,7 +41,7 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
 // no store width to be written at. An array's element ops each carry their
 // own width, and a record or variant field stores at the width its
 // declaration names, so neither has to narrow.
-function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_f64(t); }
+function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_float(t); }
 
 function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     return narrow_slot(t) && element_supported(t, f);
@@ -55,10 +55,10 @@ function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 // scalar, one i32-shaped word for everything else. Only wasm packs the narrow
 // slot; the register backends give every element eight bytes and ignore the
 // width. The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take
-// the same ones; the f64 shares the width and differs in the load and store
-// wasm selects.
+// the same ones; a float shares the width and differs in the load and store
+// wasm selects, the f32 riding the f64's slot.
 function elem_width(t: typeinfo.Type): i32 {
-    if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
+    if (ssasem.is_wide(t) || ssasem.is_float(t)) { return 64; }
     return 32;
 }
 
@@ -85,7 +85,7 @@ function arr_set_op(elem: typeinfo.Type): ir.Op {
 // The sole-owner push, which reclaims the superseded buffer when it grows.
 function arr_push_op(elem: typeinfo.Type): ir.Op {
     if (ssasem.is_wide(elem)) { return ir.op_arr_push_owned_i64(); }
-    if (ssasem.is_f64(elem)) { return ir.op_arr_push_owned_f64(); }
+    if (ssasem.is_float(elem)) { return ir.op_arr_push_owned_f64(); }
     return ir.op_arr_push_owned();
 }
 // The types whose stack representation needs no declaration looked up: a
@@ -110,7 +110,7 @@ function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (supported_leaf(t)) { return true; }
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
-    if let typeinfo.TypeFloat(_) = t { return ssasem.is_f64(t); }
+    if let typeinfo.TypeFloat(_) = t { return ssasem.is_float(t); }
     if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     return supported_nominal(t, f);
@@ -624,7 +624,7 @@ function supported_op(k: i32): boolean { return value_op(k) || container_op(k); 
 // 64-bit slot and ignore the distinction.
 function result_kind(t: typeinfo.Type): i32 {
     if (ssasem.is_wide(t)) { return irlower.result_i64(); }
-    if (ssasem.is_f64(t)) { return irlower.result_f64(); }
+    if (ssasem.is_float(t)) { return irlower.result_f64(); }
     return irlower.result_i32();
 }
 
@@ -637,7 +637,7 @@ function frame(f: ssasem.Func): irlower.LowerResult {
         if let typeinfo.TypeArray(_) = f.values[vi] { r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) }; }
         if let typeinfo.TypeString(_) = f.values[vi] { r = irlower.LowerResult { ...r, str_slots: r.str_slots.append(vi) }; }
         if (ssasem.is_wide(f.values[vi])) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) }; }
-        if (ssasem.is_f64(f.values[vi])) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) }; }
+        if (ssasem.is_float(f.values[vi])) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) }; }
         vi = vi + 1;
     }
     return r;
@@ -705,19 +705,41 @@ function string_binary(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerRes
     return r;
 }
 
-// The float operators are the stack IR's own float opcodes, at the one width
-// this boundary admits: arithmetic hands back an f64, a comparison the i32 the
-// boolean rides, and negation flips the sign bit. Nothing wraps.
-function float_scalar(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+// The float operators are the stack IR's own f64 opcodes: arithmetic hands
+// back an f64, rounded to single precision where the result is an f32, a
+// comparison the i32 the boolean rides, and negation flips the sign bit.
+// Nothing wraps.
+function float_scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == 10) { return emit(r, ir.op_funary("fneg")); }
-    return emit(r, ir.op_fbin(irlower.map_fbinop(ins.str)));
+    r = emit(r, ir.op_fbin(irlower.map_fbinop(ins.str)));
+    if (ssasem.is_f32(f.values[ins.result])) { return round_f32(r); }
+    return r;
+}
+
+// An f32 is the f64 on the stack rounded to single precision, which the
+// demote-and-promote pair applies.
+function round_f32(r: irlower.LowerResult): irlower.LowerResult {
+    r = emit(r, ir.op_f32_bits());
+    return emit(r, ir.op_f32_from_bits());
+}
+
+// Into a float: an integer converts at its width and signedness, the other
+// float width is already the f64, and an f32 destination rounds.
+function into_float(r: irlower.LowerResult, from: typeinfo.Type, to: typeinfo.Type): irlower.LowerResult {
+    if (!ssasem.is_float(from)) {
+        var bits: i32 = 32;
+        if (ssasem.is_wide(from)) { bits = 64; }
+        r = emit(r, ir.op_int_to_f64(bits, ssasem.is_unsigned_int(from)));
+    }
+    if (ssasem.is_f32(to)) { return round_f32(r); }
+    return r;
 }
 
 function scalar(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.cast()) { return cast(r, f, ins); }
     if (ins.kind_tag == 9 && ssasem.is_text(f.values[ins.args[0]])) { return string_binary(r, ins); }
     if (ins.kind_tag == 10 && ins.str == "!") { return emit(r, ir.op_bin("not", 0, false)); }
-    if (ssasem.is_f64(f.values[ins.args[0]])) { return float_scalar(r, ins); }
+    if (ssasem.is_float(f.values[ins.args[0]])) { return float_scalar(r, f, ins); }
     var w: i32 = operand_width(f, ins);
     if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false)); }
     else { r = emit(r, ir.op_bin("sub", w, false)); }
@@ -754,18 +776,15 @@ function from_f64(to: typeinfo.Type): ir.Op {
 // separates. Crossing the 64-bit boundary is an explicit extend or wrap, and
 // the SOURCE's signedness is what an extension extends by: only the signed
 // 32-bit width fills the high half from a sign bit. Inside the narrow domain
-// the conversion is the destination's own mask. Into and out of the f64 is a
+// the conversion is the destination's own mask. Into and out of a float is a
 // real conversion: the convert at the operand's width and signedness, and the
-// truncation toward zero at the result's.
+// truncation toward zero at the result's; into the f32 the value is rounded
+// to single precision, and out of it to the f64 it is already the f64.
 function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var from: typeinfo.Type = f.values[ins.args[0]];
     var to: typeinfo.Type = f.values[ins.result];
-    if (ssasem.is_f64(to)) {
-        var bits: i32 = 32;
-        if (ssasem.is_wide(from)) { bits = 64; }
-        return emit(r, ir.op_int_to_f64(bits, ssasem.is_unsigned_int(from)));
-    }
-    if (ssasem.is_f64(from)) { return emit(r, from_f64(to)); }
+    if (ssasem.is_float(to)) { return into_float(r, from, to); }
+    if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
     if (ssasem.is_wide(to)) {
         if (ssasem.is_wide(from)) { return r; }
         return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
@@ -806,7 +825,7 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
 // half, and the schema this boundary verified the projection against is what
 // says so.
 function load_width(t: typeinfo.Type): i32 {
-    if (ssasem.is_wide(t) || ssasem.is_f64(t)) { return 64; }
+    if (ssasem.is_wide(t) || ssasem.is_float(t)) { return 64; }
     return 0;
 }
 // An environment record is the closure box, physically the word array the
@@ -883,6 +902,7 @@ function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) { return emit(r, ir.op_const_i64_text(ins.str)); }
     if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) { return emit(r, ir.op_const_i32_text(ins.str)); }
     if (ins.kind_tag == 1 && ssasem.is_f64(f.values[ins.result])) { return emit(r, ir.op_const_f64_text(ins.str)); }
+    if (ins.kind_tag == 1 && ssasem.is_f32(f.values[ins.result])) { return round_f32(emit(r, ir.op_const_f64_text(ins.str))); }
     if (ins.kind_tag == 5) { return emit(r, ir.op_const_str(ins.str)); }
     return emit(r, ir.op_const_i32(ins.imm));
 }
@@ -891,7 +911,7 @@ function constant(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
 // the operand's own width or the two sides of the subtraction disagree; a
 // float has its own sign-flip opcode and pushes nothing.
 function negation_zero(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_f64(f.values[ins.args[0]])) { return emit(r, zero(f.values[ins.args[0]])); }
+    if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]])) { return emit(r, zero(f.values[ins.args[0]])); }
     return r;
 }
 
@@ -1105,6 +1125,7 @@ function outcome_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 function value_builtin_site(r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "args") { return Lowered { found: true, r: emit(r, ir.op_args()) }; }
     if (ins.str == "putchar") { return Lowered { found: true, r: emit(r, ir.op_putchar()) }; }
+    if (ins.str == "f32_bits") { return Lowered { found: true, r: emit(r, ir.op_f32_bits()) }; }
     if (ins.str == "f32_from_bits") { return Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) }; }
     if (ins.str == "__rc_underflow_count") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) }; }
     if (ins.str == "__arr_push_shared_count") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) }; }

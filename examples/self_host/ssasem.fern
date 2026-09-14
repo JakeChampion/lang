@@ -127,6 +127,17 @@ pub function is_f64(t: typeinfo.Type): boolean {
     return false;
 }
 
+// The 32-bit float rides the f64's slot at single precision: every value of
+// the type is an f64 the f32 round-trip has already rounded, so the width is
+// a rounding applied wherever a value of the type is made — a constant, a
+// conversion, an operator's result — rather than a slot of its own.
+pub function is_f32(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeFloat(fl) = t { return fl.width == 32 && !fl.polymorphic; }
+    return false;
+}
+
+pub function is_float(t: typeinfo.Type): boolean { return is_f64(t) || is_f32(t); }
+
 // The integer types this vocabulary admits. An operator is written for one of
 // them at a time: both operands carry the same type and so does the result.
 // The checker auto-widens the narrower side of a mixed-width operator, but the
@@ -283,7 +294,7 @@ function float_constant_error(ins: ssa.SInst): string {
 
 function constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     if (ins.args.len() != 0) { return "constant arity"; }
-    if (ins.kind_tag == 1 && is_f64(result)) { return float_constant_error(ins); }
+    if (ins.kind_tag == 1 && is_float(result)) { return float_constant_error(ins); }
     if (ins.kind_tag == 1) { return integer_constant_error(ins, result); }
     if (ins.kind_tag == 2 && (!is_bool(result) || (ins.imm != 0 && ins.imm != 1))) { return "boolean constant type or value"; }
     if (ins.kind_tag == 5 && !is_string(result)) { return "string constant type"; }
@@ -860,6 +871,7 @@ function leaf_key(t: typeinfo.Type): string {
     if (is_u8(t)) { return "u8"; }
     if (is_u32(t)) { return "u32"; }
     if (is_f64(t)) { return "f64"; }
+    if (is_f32(t)) { return "f32"; }
     if (is_integer(t)) { return "i32"; }
     return "bool";
 }
@@ -908,7 +920,7 @@ function float_op(op: string): boolean {
 // none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
     if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
-    if (is_f64(left) && is_f64(right)) { return float_result(op, left); }
+    if (is_float(left) && semtypes.equal(left, right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
     return typeinfo.unchecked();
@@ -940,7 +952,7 @@ function string_result(op: string): typeinfo.Type {
 // names, and what the source would mean by it is not the wrap this boundary
 // would emit.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-    if (op == "-" && (is_i32(operand) || is_i64(operand) || is_f64(operand))) { return operand; }
+    if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand))) { return operand; }
     if (op == "!" && is_bool(operand)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
@@ -952,23 +964,25 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "";
 }
 
-// A conversion between the integer types, or between one of the four 32- and
-// 64-bit ones and the f64. An integer conversion is the destination's own mask
-// or extension, which every width here has. A float conversion is a real
-// instruction either way — a convert into the float, a truncation toward zero
-// out of it — so it is not a reinterpretation of the slot, and only the widths
-// the backends have an opcode for are admitted: the byte has none, and reaches
-// the float through the i32 the source writes.
+// A conversion between the integer types, between one of the four 32- and
+// 64-bit ones and a float, or between the two float widths. An integer
+// conversion is the destination's own mask or extension, which every width
+// here has. A float conversion is a real instruction either way — a convert
+// into the float, a truncation toward zero out of it, a rounding to single
+// precision — so it is not a reinterpretation of the slot, and only the
+// widths the backends have an opcode for are admitted: the byte has none, and
+// reaches the float through the i32 the source writes.
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (is_integer(from) && is_integer(to)) { return true; }
-    if (is_f64(to)) { return is_integer(from) && !is_u8(from); }
-    if (is_f64(from)) { return is_integer(to) && !is_u8(to); }
+    if (is_float(from) && is_float(to)) { return !semtypes.equal(from, to); }
+    if (is_float(to)) { return is_integer(from) && !is_u8(from); }
+    if (is_float(from)) { return is_integer(to) && !is_u8(to); }
     return false;
 }
 
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!is_integer(result) && !is_f64(result)) { return "cast result type"; }
+    if (!is_integer(result) && !is_float(result)) { return "cast result type"; }
     if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }
@@ -1042,7 +1056,7 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
 }
 
 function narrow_word(t: typeinfo.Type): boolean {
-    if (is_func(t) || is_wide(t) || is_f64(t) || nests_func(t)) { return false; }
+    if (is_func(t) || is_wide(t) || is_float(t) || nests_func(t)) { return false; }
     return semtypes.concrete(t, false);
 }
 

@@ -150,15 +150,25 @@ Unsupported constructs refuse the whole function with a reason.
   of its own that only wasm spells
   out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
   literal is an f64 — the checker types it polymorphic and settles it where it
-  lands, and this vocabulary has one float width, so only a `f32` suffix or
-  an f32 destination refuses it — and it carries its source text the way a
-  wide integer does, for the backends to splice. The four arithmetic
-  operators are the stack IR's own float opcodes and never wrap, a comparison
-  is a boolean, negation is the sign flip; `%` has no float opcode and the
-  bitwise operators no float meaning, so both refuse. An operator decides its
-  width the way the integer ones do — from the checker's type for the whole
-  expression, or from whichever operand bears one — so a literal on either
-  side takes it. The 32-bit float has no representation here.
+  lands, so a `f32` suffix or an f32 destination makes it an f32 — and it
+  carries its source text the way a wide integer does, for the backends to
+  splice. The four arithmetic operators are the stack IR's own float opcodes
+  and never wrap, a comparison is a boolean, negation is the sign flip; `%`
+  has no float opcode and the bitwise operators no float meaning, so both
+  refuse. An operator decides its width the way the integer ones do — from
+  the checker's type for the whole expression, or from whichever operand
+  bears one — so a literal on either side takes it.
+
+- The f32, riding the f64's slot at single precision: every value of the type
+  is an f64 the `f32_bits` / `f32_from_bits` round-trip has already rounded,
+  so the width is a rounding applied wherever a value of the type is made —
+  a literal, a conversion into it, an operator's result at it — rather than
+  a slot of its own, and its operators are the f64's with the rounding after
+  them. A conversion between the two widths is admitted, as one between an
+  integer and either width is; the bit pair reads and writes the rounded
+  value (`narrow_bits`, `widened`, `narrow_sum`, `narrow_float`; the RC leg
+  pins the odd integer past 2^24 rounding back, a literal's, a sum's and a
+  declared field's bit patterns, and a comparison).
 
 - Integer literals in both bases the lexer writes, decimal and hexadecimal.
   A suffix names the type outright, which is how a byte literal (`b'x'`)
@@ -431,7 +441,7 @@ Unsupported constructs refuse the whole function with a reason.
   value carries a variable: `ssasem.schema_error` refuses one as unresolved.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
-call in expression position, the 32-bit float, the pointer integer width,
+call in expression position, the pointer integer width,
 unsigned negation, generic records, the struct,
 nested and `@`-bound destructuring forms, labelled loops, match guards and
 the pattern shapes above,
@@ -612,10 +622,9 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the pointer integer width, the
-32-bit float, the remaining builtins, the struct and nested destructuring
-forms, or a generic method, so no production consumer is switched and no AST
-ownership analysis is deleted.
+The producer does not yet admit the pointer integer width, the remaining
+builtins, the struct and nested destructuring forms, or a generic method, so
+no production consumer is switched and no AST ownership analysis is deleted.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -676,7 +685,11 @@ every holder. Worth +6 outright against the 34 the vocabulary held: the
 interpreter's cells all sit under its 32-bit float, which the fold had
 already moved 24 more callers onto, so that leaf is now 47.
 
-Measured against the whole loaded self-hosted compiler, 7,736 of its 7,809
+The 32-bit float crosses as above, worth +8 against the 47 it held: the
+interpreter's float paths all sit under its string-builder handle, a `usize`,
+which is now the whole of what holds the interpreter back.
+
+Measured against the whole loaded self-hosted compiler, 7,744 of its 7,809
 functions produce, plan and physically lower, through 102 instances of its
 generic declarations. The three stages report the same number: neither the
 unit planner nor physical RC refuses anything a producer admitted, so every
@@ -695,10 +708,11 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by the 32-bit float (47, every one of them in the
-interpreter, up from 10 as the target fold and then the cell vocabulary let
-its callers reach it) and the `Map` vocabulary (14: `map_new` 10 and the
-`insert` / `has` sites of `wasm_ir`); the closure env box, which stood at 482 captures and 84 bindings,
+The leaves are now led by `usize` (46: one interpreter binding of the
+string-builder handle, four parameters, one result and the 39 functions
+behind them, since the checker resolves the pointer width to unknown) and
+the `Map` vocabulary (14: `map_new` 10 and the `insert` / `has` sites of
+`wasm_ir`); the closure env box, which stood at 482 captures and 84 bindings,
 is at zero, worth +564 across the environment record and the `own` a lambda's
 binding spells. Callees with no semantic contract are 47, none of them a
 declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
@@ -1056,15 +1070,15 @@ base name under the array suffix and which `parser.ref_is_own` answered false
 for. Each of those was a checker or lift bug the boundary's exact-type rule
 found, fixed where it lived rather than relaxed here.
 
-What is left is 73 functions: the 32-bit float (47: `f32_bits` takes an
-`f32`, a width this vocabulary has no slot for, and every interpreter path
-reaches it), the `Map` vocabulary (14: `map_new` and the `insert` / `has`
-sites), `usize` (6), which the checker resolves to unknown because a pointer
-width is a target decision, a function value stored in a record field (5,
-the `astwalk.splice_stmts_with_lambda` shape), and one interpreter callee.
-The void-`Result` builtins and `target_os` closed, worth +10 against their
-26, and the cell vocabulary +6 against its 34: each fold moved the
-interpreter's callers one leaf further in, onto the float. Then a
+What is left is 65 functions: `usize` (46: the interpreter's string-builder
+handle, which the checker resolves to unknown because a pointer width is a
+target decision, and every evaluation path behind it), the `Map` vocabulary
+(14: `map_new` and the `insert` / `has` sites), and a function value stored
+in a record field (5, the `astwalk.splice_stmts_with_lambda` shape). The
+void-`Result` builtins and `target_os` closed, worth +10 against their 26,
+the cell vocabulary +6 against its 34 and the 32-bit float +8 against its
+47: each moved the interpreter's callers one leaf further in, and the
+pointer width is the last of them. Then a
 production consumer that lowers produced functions through this pipeline and
 feeds `caller_sigs` to the remaining AST callers — a union result being the
 position that fixture measured a leak at.
