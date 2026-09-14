@@ -243,9 +243,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		t.Error("__raw_environ did not emit the arm64 envp load")
 	}
 	// write_file's O_CREAT mode arg makes it the __syscall4 user; its number
-	// load rides the same darwinize marker as __syscall3's.
-	if !strings.Contains(asm, "    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
-		t.Error("__syscall4 did not emit the arm64 5-pop + svc sequence")
+	// load rides the same darwinize marker as __syscall3's. The argument pops
+	// mostly fold: each push reaches its pop across register-only lines, so the
+	// peephole reroutes the value through a `mov` ahead of the run (P7) and
+	// only the last argument's pop and the number's survive. The mode argument
+	// in x3 is what __syscall3 does not have, so it is what distinguishes this
+	// marshal from that one.
+	if !strings.Contains(asm, "    mov x3, x0\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n") {
+		t.Error("__syscall4 did not emit the arm64 four-argument marshal + number + svc sequence")
 	}
 	// The __syscall3 op's number load. darwinize rewrites exactly this line to
 	// `ldr x16, ...` and flips the following trap, so a change to the operand
