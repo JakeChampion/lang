@@ -71862,7 +71862,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.read_line") { return "Option[string]"; }
     if (name == "Reader.read_chunk") { return "Result[string, IoError]"; }
     if (name == "Reader.stat" || name == "Writer.stat") { return "Result[FileStat, IoError]"; }
-    if (name == "Reader.seek") { return "Result[i64, IoError]"; }
+    if (name == "Reader.seek" || name == "Writer.seek") { return "Result[i64, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
         || name == "Writer.truncate") { return "Option[IoError]"; }
     if (is_fd_sync_ret(name)) { return "Option[IoError]"; }

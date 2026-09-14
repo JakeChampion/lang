@@ -1326,7 +1326,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_close":         emitReaderCloseHelper,
 	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
 	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
-	"__method_Reader_seek":          emitReaderSeekHelper,
+	"__method_Reader_seek":          emitSeekHelper("__method_Reader_seek", "rsk"),
+	"__method_Writer_seek":          emitSeekHelper("__method_Writer_seek", "wsk"),
 	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
 	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
 	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
@@ -3616,6 +3617,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_stat":          {"__fern_io_error"},
 	"__method_Writer_stat":          {"__fern_io_error"},
 	"__method_Reader_seek":          {"__fern_io_error"},
+	"__method_Writer_seek":          {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"open_exclusive":                {"__fern_io_error"},
 	"open_reader_with":              {"__fern_io_error"},
@@ -3705,6 +3707,7 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_stat":          true,
 	"__method_Writer_stat":          true,
 	"__method_Reader_seek":          true,
+	"__method_Writer_seek":          true,
 	"open_appender":                 true,
 	"open_exclusive":                true,
 	"open_reader_with":              true,
@@ -7519,34 +7522,37 @@ func emitFdStatHelper(name, lp string) func(w func(string, ...any)) {
 	}
 }
 
-// emitReaderSeekHelper writes __method_Reader_seek(handle, offset, whence)
-// -> Result[i64, IoError]: lseek(2) on the handle's fd, the new offset
-// back. A pipe answers ESPIPE, classified against an empty path.
-// x0=handle, x1=offset, x2=whence.
-func emitReaderSeekHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__method_Reader_seek"))
-	w("\tstp x29, x30, [sp, #-32]!")
-	w("\tmov x29, sp")
-	w("\tstr x19, [sp, #16]")
-	w("\tldr w0, [x0, #8]") // fd @ ptr+8; offset and whence are in place
-	w("\tmov x8, #62")      // lseek
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_rsk_err")
-	w("\tmov x19, x0")
-	emitOptionBox(w, 0, "x19")
-	w("\tb .Lssa_rsk_ret")
-	w(".Lssa_rsk_err:")
-	w("\tneg x19, x0") // errno
-	emitEmptyString(w, "x1")
-	w("\tmov x0, x19")
-	w("\tbl %s", fnLabel("__fern_io_error"))
-	w("\tmov x19, x0")
-	emitOptionBox(w, 1, "x19")
-	w(".Lssa_rsk_ret:")
-	w("\tldr x19, [sp, #16]")
-	w("\tldp x29, x30, [sp], #32")
-	w("\tret")
+// emitSeekHelper writes `name`(handle, offset, whence) -> Result[i64,
+// IoError] for __method_Reader_seek and __method_Writer_seek: lseek(2) on
+// the handle's fd, the new offset back. A pipe answers ESPIPE, classified
+// against an empty path. `lp` prefixes the local labels so both can live
+// in one object. x0=handle, x1=offset, x2=whence.
+func emitSeekHelper(name, lp string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-32]!")
+		w("\tmov x29, sp")
+		w("\tstr x19, [sp, #16]")
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8; offset and whence are in place
+		w("\tmov x8, #62")      // lseek
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", lp)
+		w("\tmov x19, x0")
+		emitOptionBox(w, 0, "x19")
+		w("\tb .Lssa_%s_ret", lp)
+		w(".Lssa_%s_err:", lp)
+		w("\tneg x19, x0") // errno
+		emitEmptyString(w, "x1")
+		w("\tmov x0, x19")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		w("\tmov x19, x0")
+		emitOptionBox(w, 1, "x19")
+		w(".Lssa_%s_ret:", lp)
+		w("\tldr x19, [sp, #16]")
+		w("\tldp x29, x30, [sp], #32")
+		w("\tret")
+	}
 }
 
 // emitLstatHelper writes lstat(path): emitStatHelper with AT_SYMLINK_NOFOLLOW

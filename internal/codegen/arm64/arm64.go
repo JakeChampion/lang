@@ -18746,8 +18746,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "sync":
 			target = "__fern_sync"
 			g.usesSync = true
-		case "__method_Reader_seek":
-			// lseek(2) on the handle's fd → Result[i64, IoError].
+		case "__method_Reader_seek", "__method_Writer_seek":
+			// lseek(2) on the handle's fd → Result[i64, IoError]; a Reader
+			// and a Writer hold the fd at the same place.
 			target = "__fern_reader_seek"
 			g.usesReaderSeek = true
 		case "__method_Writer_truncate":
