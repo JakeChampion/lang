@@ -1221,6 +1221,183 @@ function fc_pio2_reduce(prefix: string): string {
         + ".L" + prefix + "_red:\n";
 }
 
+// emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
+// the string box folded into the running CRC-32 that cksum(1) prints (poly
+// 0x04C11DB7, MSB first, unreflected, no final complement).
+//
+// The pclmulqdq fold, register for register the native x86-64 backend's
+// kernel. Sixteen bytes a step against FOUR independent accumulators, 64 bytes
+// an iteration: one accumulator is correct and runs at the multiply's ~7-cycle
+// latency, where four run at its throughput.
+//
+// The message is a polynomial with byte 0 most significant, the opposite of
+// the order movdqu loads, so every block is reversed with pshufb first.
+// Reversing wrongly still yields a CRC, of a different message.
+//
+// The 128-bit residue is reduced by feeding its sixteen bytes back through the
+// same bit-at-a-time step the tail uses, which needs no Barrett constants and
+// no second reduction path.
+//
+// A helper rather than an inline body, gated on the "crc32_cksum" need: the
+// fold's constants live in .rodata, and a label cannot be defined once per
+// call site. %rsi is the string BOX here, not an SSO string — this emitter's
+// strings are two words, [data@0, len@8].
+function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .section .rodata\n");
+    s = s.write("    .align 16\n");
+    s = s.write(".Lcrc32_bswap:\n");
+    s = s.write("    .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n");
+    s = s.write(".Lcrc32_k1:\n");
+    s = s.write("    .quad 0x00000000c5b9cd4c\n");
+    s = s.write("    .quad 0x00000000e8a45605\n");
+    s = s.write(".Lcrc32_k4:\n");
+    s = s.write("    .quad 0x000000008833794c\n");
+    s = s.write("    .quad 0x00000000e6228b11\n");
+    s = s.write("    .section .text\n");
+    s = s.write("    .globl __fern_crc32_cksum\n");
+    s = s.write("    .type __fern_crc32_cksum, @function\n");
+    s = s.write("__fern_crc32_cksum:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $32, %rsp\n");
+    s = s.write("    movq 8(%rsi), %rdx\n");
+    s = s.write("    movq (%rsi), %rsi\n");
+    s = s.write("    movl %edi, %eax\n");
+    s = s.write("    cmpl $16, %edx\n");
+    s = s.write("    jb .Lcrc32_tail\n");
+    s = s.write("    movdqa .Lcrc32_bswap(%rip), %xmm5\n");
+    s = s.write("    movdqa .Lcrc32_k1(%rip), %xmm2\n");
+    s = s.write("    movdqu (%rsi), %xmm0\n");
+    s = s.write("    pshufb %xmm5, %xmm0\n");
+    s = s.write("    movl %eax, %r11d\n");
+    s = s.write("    shlq $32, %r11\n");
+    s = s.write("    movq %r11, %xmm1\n");
+    s = s.write("    pslldq $8, %xmm1\n");
+    s = s.write("    pxor %xmm1, %xmm0\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    addq $16, %rsi\n");
+    s = s.write("    subl $16, %edx\n");
+    s = s.write("    cmpl $112, %edx\n");
+    s = s.write("    jb .Lcrc32_fold1\n");
+    s = s.write("    movdqu (%rsi), %xmm6\n");
+    s = s.write("    pshufb %xmm5, %xmm6\n");
+    s = s.write("    movdqu 16(%rsi), %xmm7\n");
+    s = s.write("    pshufb %xmm5, %xmm7\n");
+    s = s.write("    movdqu 32(%rsi), %xmm8\n");
+    s = s.write("    pshufb %xmm5, %xmm8\n");
+    s = s.write("    addq $48, %rsi\n");
+    s = s.write("    subl $48, %edx\n");
+    s = s.write("    movdqa .Lcrc32_k4(%rip), %xmm9\n");
+    s = s.write(".Lcrc32_fold4:\n");
+    s = s.write("    cmpl $64, %edx\n");
+    s = s.write("    jb .Lcrc32_combine\n");
+    s = s.write("    movdqa %xmm0, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm9, %xmm0\n");
+    s = s.write("    pclmulqdq $1, %xmm9, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm0\n");
+    s = s.write("    movdqu (%rsi), %xmm4\n");
+    s = s.write("    pshufb %xmm5, %xmm4\n");
+    s = s.write("    pxor %xmm4, %xmm0\n");
+    s = s.write("    movdqa %xmm6, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm9, %xmm6\n");
+    s = s.write("    pclmulqdq $1, %xmm9, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm6\n");
+    s = s.write("    movdqu 16(%rsi), %xmm4\n");
+    s = s.write("    pshufb %xmm5, %xmm4\n");
+    s = s.write("    pxor %xmm4, %xmm6\n");
+    s = s.write("    movdqa %xmm7, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm9, %xmm7\n");
+    s = s.write("    pclmulqdq $1, %xmm9, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm7\n");
+    s = s.write("    movdqu 32(%rsi), %xmm4\n");
+    s = s.write("    pshufb %xmm5, %xmm4\n");
+    s = s.write("    pxor %xmm4, %xmm7\n");
+    s = s.write("    movdqa %xmm8, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm9, %xmm8\n");
+    s = s.write("    pclmulqdq $1, %xmm9, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm8\n");
+    s = s.write("    movdqu 48(%rsi), %xmm4\n");
+    s = s.write("    pshufb %xmm5, %xmm4\n");
+    s = s.write("    pxor %xmm4, %xmm8\n");
+    s = s.write("    addq $64, %rsi\n");
+    s = s.write("    subl $64, %edx\n");
+    s = s.write("    jmp .Lcrc32_fold4\n");
+    s = s.write(".Lcrc32_combine:\n");
+    s = s.write("    movdqa %xmm0, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm2, %xmm0\n");
+    s = s.write("    pclmulqdq $1, %xmm2, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm0\n");
+    s = s.write("    pxor %xmm6, %xmm0\n");
+    s = s.write("    movdqa %xmm0, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm2, %xmm0\n");
+    s = s.write("    pclmulqdq $1, %xmm2, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm0\n");
+    s = s.write("    pxor %xmm7, %xmm0\n");
+    s = s.write("    movdqa %xmm0, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm2, %xmm0\n");
+    s = s.write("    pclmulqdq $1, %xmm2, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm0\n");
+    s = s.write("    pxor %xmm8, %xmm0\n");
+    s = s.write(".Lcrc32_fold1:\n");
+    s = s.write("    cmpl $16, %edx\n");
+    s = s.write("    jb .Lcrc32_reduce\n");
+    s = s.write("    movdqa %xmm0, %xmm3\n");
+    s = s.write("    pclmulqdq $16, %xmm2, %xmm0\n");
+    s = s.write("    pclmulqdq $1, %xmm2, %xmm3\n");
+    s = s.write("    pxor %xmm3, %xmm0\n");
+    s = s.write("    movdqu (%rsi), %xmm4\n");
+    s = s.write("    pshufb %xmm5, %xmm4\n");
+    s = s.write("    pxor %xmm4, %xmm0\n");
+    s = s.write("    addq $16, %rsi\n");
+    s = s.write("    subl $16, %edx\n");
+    s = s.write("    jmp .Lcrc32_fold1\n");
+    s = s.write(".Lcrc32_reduce:\n");
+    s = s.write("    pshufb %xmm5, %xmm0\n");
+    s = s.write("    movdqu %xmm0, -16(%rbp)\n");
+    s = s.write("    xorl %ecx, %ecx\n");
+    s = s.write(".Lcrc32_red:\n");
+    s = s.write("    cmpl $16, %ecx\n");
+    s = s.write("    jae .Lcrc32_tail\n");
+    s = s.write("    movzbl -16(%rbp,%rcx), %r8d\n");
+    s = s.write("    shll $24, %r8d\n");
+    s = s.write("    xorl %r8d, %eax\n");
+    s = s.write("    movl $8, %r9d\n");
+    s = s.write(".Lcrc32_redbit:\n");
+    s = s.write("    movl %eax, %r10d\n");
+    s = s.write("    sarl $31, %r10d\n");
+    s = s.write("    andl $0x04c11db7, %r10d\n");
+    s = s.write("    addl %eax, %eax\n");
+    s = s.write("    xorl %r10d, %eax\n");
+    s = s.write("    subl $1, %r9d\n");
+    s = s.write("    jne .Lcrc32_redbit\n");
+    s = s.write("    addl $1, %ecx\n");
+    s = s.write("    jmp .Lcrc32_red\n");
+    s = s.write(".Lcrc32_tail:\n");
+    s = s.write("    testl %edx, %edx\n");
+    s = s.write("    jz .Lcrc32_ret\n");
+    s = s.write("    movzbl (%rsi), %r8d\n");
+    s = s.write("    shll $24, %r8d\n");
+    s = s.write("    xorl %r8d, %eax\n");
+    s = s.write("    movl $8, %r9d\n");
+    s = s.write(".Lcrc32_tailbit:\n");
+    s = s.write("    movl %eax, %r10d\n");
+    s = s.write("    sarl $31, %r10d\n");
+    s = s.write("    andl $0x04c11db7, %r10d\n");
+    s = s.write("    addl %eax, %eax\n");
+    s = s.write("    xorl %r10d, %eax\n");
+    s = s.write("    subl $1, %r9d\n");
+    s = s.write("    jne .Lcrc32_tailbit\n");
+    s = s.write("    addq $1, %rsi\n");
+    s = s.write("    subl $1, %edx\n");
+    s = s.write("    jmp .Lcrc32_tail\n");
+    s = s.write(".Lcrc32_ret:\n");
+    s = s.write("    movq %rbp, %rsp\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    s = s.write("    .size __fern_crc32_cksum, .-__fern_crc32_cksum\n");
+    return s;
+}
+
 // emit_rt_float_transcendentals emits the f64 transcendental bundle — sin, cos,
 // exp, log and pow, none of which x86-64 has an instruction for. Gated on the
 // "float_transcendentals" need, which the op_funary / op_fbin lowerings mark;
@@ -4554,44 +4731,18 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [crc, box] (the box on top) -> the incoming CRC-32
         // with the string's bytes folded in.
         //
-        // SCALAR (§3.4 step 1), and nothing below the IR is in the way:
-        // x86_native.fern encodes pclmulqdq and pshufb, and this emitter
-        // already lays out rodata for the float constants. The native x86-64
-        // twin's fold measures 4.3x over a table. What is missing is a
-        // MEASUREMENT — the self-hosted compiler hashes nothing, so no
-        // workload here asks for the second fold — and §3.4 puts the scalar
-        // lowering in every backend before any of them is vectorised.
+        // A CALL rather than an inline body, which the fold forces: its
+        // constants live in a .rodata block, and a label cannot be defined
+        // once per call site. The helper is emitted once under the
+        // "crc32_cksum" need, the same shape the float transcendentals use.
         //
         // The box is popped FIRST because it is the second operand: the crc
         // was pushed before it. Every other kernel in this family pops its
         // string last, which is exactly the shape a port copies wrong.
-        //
-        // The polynomial is selected by an arithmetic shift of the sign bit
-        // rather than a branch, so the eight bit steps have nothing
-        // unpredictable between them. `movslq` before the push because the
-        // result is a signed i32 whose top bit is live — a zero-extended
-        // 0x80000000 would read back as +2147483648 from the 64-bit slot.
-        var clo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var cc_scan: string = clo.name;
-        var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
-        var cc_bit: string = clo2.name;
-        var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
-        var cc_done: string = clo3.name;
-        s = clo3.state;
-        s = s.write("    popq %rsi\n");
-        s = s.write("    movq 8(%rsi), %r8\n    movq (%rsi), %rsi\n");
-        s = s.write("    popq %rax\n");
-        s = s.write("    xorq %rdx, %rdx\n");
-        s = s.write(cc_scan + ":\n");
-        s = s.write("    cmpq %r8, %rdx\n    jge " + cc_done + "\n");
-        s = s.write("    movzbl (%rsi,%rdx), %r9d\n    shll $24, %r9d\n    xorl %r9d, %eax\n");
-        s = s.write("    movl $8, %r11d\n");
-        s = s.write(cc_bit + ":\n");
-        s = s.write("    movl %eax, %r10d\n    sarl $31, %r10d\n    andl $0x04c11db7, %r10d\n");
-        s = s.write("    addl %eax, %eax\n    xorl %r10d, %eax\n");
-        s = s.write("    subl $1, %r11d\n    jne " + cc_bit + "\n");
-        s = s.write("    addq $1, %rdx\n    jmp " + cc_scan + "\n");
-        s = s.write(cc_done + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+        s = s.need("crc32_cksum");
+        s = s.write("    popq %rsi\n    popq %rdi\n");
+        s = s.write("    call __fern_crc32_cksum\n");
+        s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
         return s;
     }
     if (o.kind_tag == 227) {  // ascii_run
@@ -8572,6 +8723,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // definition anywhere in the link.
     if (s.has_need("float_transcendentals")) {
         s = emit_rt_float_transcendentals(s);
+    }
+    // The CRC fold. Its own gate rather than the heap one: a program that
+    // hashes a borrowed string allocates nothing, and would otherwise
+    // `call __fern_crc32_cksum` with no definition anywhere in the link.
+    if (s.has_need("crc32_cksum")) {
+        s = emit_rt_crc32_cksum(s);
     }
     // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
     // calls, plus the leakcheck counters and exit-time report. Deliberately NOT
