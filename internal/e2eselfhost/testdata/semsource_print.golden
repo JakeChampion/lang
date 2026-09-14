@@ -1895,6 +1895,7 @@ func built {
 
 refused operator contract
 refused cast contract
+refused unsupported literal width
 modes 2 2 result i32
 v0:string v1:string v2:Result[void, IoError] v3:boolean v4:i32 v5:IoError v6:i32
 func saved {
