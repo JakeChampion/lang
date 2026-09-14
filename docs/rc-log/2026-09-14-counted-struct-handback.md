@@ -76,11 +76,6 @@ hundred rounds:
 | `b.mul_pow10(1)` (the bigint shape) | 400 / 0 | 400 / 300 |
 | `take(Big { … })` (an `own` param handed back) | 400 / 400 | 400 / 400 |
 
-The 48 bytes a round still standing on the fresh-path rows are `b.mag`: the
-receiver is "NODEEP:" (a method receiver whose callee is proven neither a
-borrow nor identity-only, since it reads `a.mag` into a local), so `b`'s
-release is box-only and the count the callee's field read added is never
-given back. The field-read half, the issue's other bullet, is the next slice.
 `alloc_flat_method_identity_return` reads 1,052 / 1,050 and "flat" before and
 after.
 
@@ -139,6 +134,62 @@ rather than the prefixed row alone, `cnt_struct_ret_fns` and
 would still be told the result carries a count — and, for a handback position,
 would give back a count the boundary never added. The erase direction is a
 leak, never a double release.
+## The receiver's deep drop under a counted identity method
+
+The 48 bytes a round that stood on the fresh-path rows after the first cut
+were `b.mag`: `id_or_make` reads `a.mag` into a local before forwarding it, so
+it earns neither the receiver-borrow key nor — with `var c = b.id_or_make(1)`
+a move of its result — the identity-only admission, and the caller marked `b`
+"NODEEP:": box-only, with the count the callee's field read added never given
+back. `recv_ident_methods_of` refused the move because the result could be
+b's own box held UNCOUNTED by `c`, which made the deep drop a dangle. With the
+handback counted the result is a claim of its own, both owners are SINKSHARE,
+and whichever reaches rc 1 walks the fields, so a "CNTRECVRET:" method's
+moved result no longer costs the receiver its deep drop:
+
+| shape | after the first cut | now |
+| --- | --- | --- |
+| `var c = b.id_or_make(1)` | 300 / 200 | 300 / 300 |
+| `c = b.id_or_make(0); c = c.id_or_make(1)`, b live | 300 / 200 | 300 / 300 |
+| `b.mul_pow10(1)` | 400 / 300 | 400 / 400 |
+| `mul_pow10` over a fresh `make` (`bi_pow10_fresh`) | 900 / 800 | 900 / 900 |
+
+## Not landed: the producer whose array field is an append
+
+`core/bigint`'s producers are written `BigInt { neg: false, mag: z.append(0 as
+u64) }`, and the strict-fresh classifier admits an array field set from a
+literal, a producer call, a frame-built ident or a counted share — not from
+the `.with` / `.append` copy the ExprStructLit lowering makes for a
+scalar-element field, though that copy is as fresh and sole-owned as a
+literal. `zero()` is therefore in no class and `var d = zero()` earns nothing:
+300 / 0 for a hundred rounds. Admitting the form takes the binding to
+300 / 200.
+
+It cannot land as written, and the reason is worth keeping. The counted class
+asks `return_value_is_strictfresh_struct` first, so widening the strict-fresh
+class widens the COUNTED one — and `reserve`'s `return b` fast path in the
+#8678 tuple-handback loops becomes a counted member whose caller binds the
+result as a SNAPSHOT local. That binding earns no struct credit by design (its
+rebinds reclaim, guarded against the source's box), so the count the callee
+added is never given back and every generation leaks a box and a buffer:
+`TestSelfHostTupleHandbackReclaim` reads 402 blocks at 200 rounds and 4,002 at
+2,000, the same signature as the callee-retains-everywhere first cut.
+Bisected — the receiver admission above is clean on its own, and the tuple
+loops read 87 / 83 with it and 87 / 79 once the widening is on top.
+
+So the widening waits on the caller-side half it exposes: a binding from a
+counted handback either earns the credit whose release pays the count, or it
+does not and the count is owed back at the bind. The snapshot local is the
+case with neither today.
+
+What the `od` / `printf` residue is made of, measured alongside: the
+`ld.Format.from_decimal` shape `var d = bigint.zero(); match (bigint.parse(s))
+{ Some(v) => { d = v; } }` — a STRUCT payload carried out of a consuming
+match into an outer local, which `reassigned_from_alias` refuses and whose
+store-out takes no retain (`store_out_takes_counted_claim` is scalar arrays
+only) — 700 / 100 for a hundred rounds on its own; and a counted method's
+result read through a second METHOD (`d.mul_pow10(k).len()`), 350 / 50, where
+the temp receiver is released by nothing. Both are later slices.
 
 ## Gates
 

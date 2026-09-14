@@ -41183,10 +41183,13 @@ function recv_borrow_methods_of(recv_borrow: string[], sty: string): string[] {
 // that outlives `name`.
 //
 // `t = t + b.relabel("x").tag.len()` is the admitted shape — the result is read
-// through and dies. `var c = b.relabel("x")` is not: `c` outlives nothing here
-// but IS a live alias of b's box at b's death, and relabel is in no fresh-ret
-// registry so `c` is never separately credited, which makes the deep drop a
-// dangle rather than a leak.
+// through and dies. `var c = b.relabel("x")` is admitted only when relabel
+// hands its receiver back COUNTED ("CNTRECVRET:", the cnt_struct_ret_fns
+// class): `c` then holds its own claim on b's box, both are SINKSHARE, and
+// whichever reaches rc 1 walks the fields. An uncounted handback (a method
+// outside the class) leaves `c` a live alias of b's box at b's death with no
+// credit of its own, which makes the deep drop a dangle rather than a leak,
+// so its move positions still refuse.
 //
 // The refused positions are exactly fieldmove's move vocabulary — a bind /
 // assign / return value, a call argument, a container element — asked of the
@@ -41199,7 +41202,8 @@ function recv_ident_methods_of(recv_borrow: string[], sty: string, body: ast.Stm
     while (i < recv_borrow.len()) {
         if (recv_borrow[i].len() > pfx.len() && slice_unchecked(recv_borrow[i], 0, pfx.len()) == pfx) {
             var m: string = slice_unchecked(recv_borrow[i], pfx.len(), recv_borrow[i].len()) + "";
-            if (!method_result_moved_stmts(body, name, m, borrowable)) { out = out.append(m); }
+            if (util.index_of_str(recv_borrow, "CNTRECVRET:" + sty + "." + m) >= 0
+                || !method_result_moved_stmts(body, name, m, borrowable)) { out = out.append(m); }
         }
         i = i + 1;
     }
