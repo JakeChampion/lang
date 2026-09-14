@@ -734,6 +734,88 @@ func same {
 
 refused operator contract
 refused operator contract
+modes 1 1 result usize
+v0:usize v1:i32 v2:usize v3:usize
+func at {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v1
+    v3 = binary + v0 v2
+    ret v3
+}
+
+modes 1 1 result usize
+v0:i32 v1:usize v2:usize v3:usize
+func at_rev {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v0
+    v3 = binary + v2 v1
+    ret v3
+}
+
+modes 1 1 result usize
+v0:usize v1:i64 v2:usize v3:usize
+func at_wide {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v1
+    v3 = binary - v0 v2
+    ret v3
+}
+
+modes 1 1 result usize
+v0:usize v1:u8 v2:usize v3:usize
+func at_byte {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v1
+    v3 = binary + v0 v2
+    ret v3
+}
+
+modes 1 1 result boolean
+v0:usize v1:i32 v2:usize v3:boolean
+func before {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v1
+    v3 = binary < v0 v2
+    ret v3
+}
+
+modes 1 1 result boolean
+v0:i32 v1:usize v2:usize v3:boolean
+func before_rev {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = cast v0
+    v3 = binary < v2 v1
+    ret v3
+}
+
+modes 1 1 1 result usize
+v0:usize v1:i32 v2:i32 v3:usize v4:usize v5:i32 v6:i32 v7:usize v8:usize
+func span {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = param 2
+    v3 = cast v1
+    v4 = binary + v0 v3
+    v5 = const_int 4
+    v6 = binary * v2 v5
+    v7 = cast v6
+    v8 = binary + v4 v7
+    ret v8
+}
+
 modes 1 result char
 v0:i32 v1:char
 func codepoint {
@@ -2160,7 +2242,7 @@ func built {
 
 modes 1 1 result usize
 v0:usize v1:usize v2:usize
-func refused_handle_sum {
+func handle_sum {
   b0:
     v0 = param 0
     v1 = param 1
@@ -2168,10 +2250,27 @@ func refused_handle_sum {
     ret v2
 }
 
-refused cast contract
+modes 1 result i32
+v0:usize v1:i32
+func handle_narrow {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result u8
+v0:usize v1:u8
+func handle_byte {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
 modes result usize
 v0:usize
-func refused_handle_lit {
+func handle_lit {
   b0:
     v0 = const_int 16
     ret v0

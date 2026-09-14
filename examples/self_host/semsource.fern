@@ -781,6 +781,8 @@ function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) |
 // names; a comparison's is not, so it comes from whichever operand names one.
 function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): typeinfo.Type {
     if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) { return expected; }
+    var addr: typeinfo.Type = address_width(b, s);
+    if (ssasem.is_usize(addr)) { return addr; }
     var whole: typeinfo.Type = checked(e, s);
     if (operand_type(whole)) { return whole; }
     if (width_bearing(b.left)) {
@@ -794,11 +796,39 @@ function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typei
     return typeinfo.unchecked();
 }
 
+// An address decides the width of the operator it appears in, on whichever
+// side it appears: the checker widens the other operand to the pointer width
+// rather than running the operator at the narrower one. A comparison is why
+// this is asked of the operands rather than read off the whole expression,
+// whose type is the boolean.
+function address_width(b: ast.ExprBinary, s: State): typeinfo.Type {
+    if (width_bearing(b.left)) {
+        var l: typeinfo.Type = checked(b.left, s);
+        if (ssasem.is_usize(l)) { return l; }
+    }
+    if (width_bearing(b.right)) {
+        var r: typeinfo.Type = checked(b.right, s);
+        if (ssasem.is_usize(r)) { return r; }
+    }
+    return typeinfo.unchecked();
+}
+
+// The widening the checker inserts on the narrower side of a pointer-width
+// operator, which the tree this producer reads does not carry. It is emitted
+// with the operand it converts, since the stack IR's operands are the two
+// values on top of it in order.
+function address_widen(v: Value, want: typeinfo.Type): Value {
+    if (!v.s.ok || !ssasem.is_usize(want)) { return v; }
+    var t: typeinfo.Type = v.s.values[v.id];
+    if (ssasem.is_usize(t) || !ssasem.is_integer(t)) { return v; }
+    return define(v.s, ssasem.cast(), [v.id], 0, "", want);
+}
+
 function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): Value {
     if (b.op == "&&" || b.op == "||") { return logical(b, s); }
     var want: typeinfo.Type = operand_width(e, b, s, expected);
-    var left: Value = expr(b.left, s, want);
-    var right: Value = expr(b.right, left.s, want);
+    var left: Value = address_widen(expr(b.left, s, want), want);
+    var right: Value = address_widen(expr(b.right, left.s, want), want);
     s = right.s;
     if (!s.ok) { return right; }
     right = shift_count(b.op, right, s.values[left.id]);
