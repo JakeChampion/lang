@@ -610,6 +610,29 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+	// The indexed array is a TUPLE element holding a nested array.
+	{"if-expression-tuple-nested-index-leaf-handback", `@noinline
+function mk(): i32[][] {
+    var t: (i32, i32[][]) = (2, [[1, 2], [3]]);
+    var d: i32[] = [4];
+    var b: i32[] = if (t.0 == 2) { t.1[0] } else { d };
+    if (b[0] != 1) { return []; }
+    return t.1;
+}
+@noinline
+function churn(): i32 {
+    var j1: i32[] = [7, 7];
+    var j2: i32[] = [8, 8];
+    var j3: i32[] = [9, 9];
+    return j1[0] + j2[0] + j3[0];
+}
+function main(): i32 {
+    var g: i32[][] = mk();
+    if (churn() != 24) { return 3; }
+    if (g[0][0] != 1 || g[0][1] != 2) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 	{"if-expression-tuple-leaf-exit-sweep", `@noinline
 function exercise(): i32 {
     var t: (i32[], i32) = ([1, 2], 7);

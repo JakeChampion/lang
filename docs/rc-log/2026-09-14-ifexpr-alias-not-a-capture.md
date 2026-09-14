@@ -51,7 +51,10 @@ Two things were wrong at once:
   row the struct still held, and a caller handed the struct read 7 for 1
   once three small allocations had recycled the row (exit 2). The index arm
   now also asks `index_read_is_arr`, the compiler's own indexed-array-read
-  decision, which spells both shapes.
+  decision, which spells both shapes — and, after the reviewer's fourth
+  catch, a tuple element holding a nested array (`t.1[0]`, exit 2 the same
+  way), which that decision's field arm now reads through the element's tag
+  (`field_index_read_is_arr`), on the return path as well.
 
 ## Measured
 
@@ -69,12 +72,12 @@ read of zero were both compatible with the double release.
 
 ## Gates
 
-Ten rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
+Eleven rows added to `TestSelfHostWithCowIR{X86_64,Arm64,Wasm}`:
 `if-expression-alias`, `if-expression-fresh-arm`,
 `if-expression-alias-exit-sweep`, the field (`u64[]`, `i32[]`,
-`boolean[]`) / index / tuple `-leaf-exit-sweep` rows, and the two
-`-handback` rows (a nested-array field indexed, a doubly-indexed element)
-that pin the recycled-row read. Against the parent commit's lowering the
+`boolean[]`) / index / tuple `-leaf-exit-sweep` rows, and the three
+`-handback` rows (a nested-array field indexed, a doubly-indexed element, a
+tuple element's nested array indexed) that pin the recycled-row read. Against the parent commit's lowering the
 first three fail (103 / 3, 102 / 2, exit 99) and the other thirty pass; the
 leaf rows exit 99 with the ident-only guard, and the handback rows exit 2
 with the ident-receiver index arm. Also green: the whole-compiler emit-all fixpoint (gen0 == gen1, 370 s)

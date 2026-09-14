@@ -4887,7 +4887,7 @@ function index_read_is_arr(e: ast.Expr, s: LowerState): boolean {
         ast.ExprIndex(ix) => {
             match (ix.array) {
                 ast.ExprIdent(aid) => { return s.is_arrarr_slot(s.slot_of(aid.name)); },
-                ast.ExprFieldAccess(_) => { return nested_arr_field_read_type(ix.array, s) != ""; },
+                ast.ExprFieldAccess(_) => { return field_index_read_is_arr(ix.array, s); },
                 ast.ExprIndex(_) => { return arrarr_index_elem_kind(ix.array, s) == "arr"; },
                 _ => { return false; }
             }
@@ -4896,6 +4896,14 @@ function index_read_is_arr(e: ast.Expr, s: LowerState): boolean {
         _ => { return false; }
     }
     return false;
+}
+
+// field_index_read_is_arr: `<obj>.f[i]` reads an array when `f` is a nested-array
+// struct field, or a tuple element whose tag spells `T[][]` (arr_tag_of reads
+// the element's tag for a digit field).
+function field_index_read_is_arr(fa: ast.Expr, s: LowerState): boolean {
+    if (nested_arr_field_read_type(fa, s) != "") { return true; }
+    return is_array_type_name(strip_arr_suffix(arr_tag_of(fa, s)));
 }
 
 function arrarr_index_elem_kind(arr: ast.Expr, s: LowerState): string {
