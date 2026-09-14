@@ -149,8 +149,15 @@ const (
 	arrPushCopiedAddr = arrPushSharedAddr + 4
 
 	// fdstatBufAddr is the 24-byte landing area for preview-1
-	// `fd_fdstat_get`, which `isatty` reads `fs_filetype` (byte 0) out of.
-	fdstatBufAddr = arrPushCopiedAddr + 8
+	// `fd_fdstat_get`, which `isatty` reads `fs_filetype` (byte 0) out of
+	// and `flags()` the rights word (byte 8) and fs_flags (byte 2).
+	//
+	// 8-ALIGNED, and the +4 below is what aligns it: wasmtime's preview-1
+	// shim refuses the call outright when the landing area is not — "write
+	// fdstat: Pointer not aligned to 8" — because the record's two rights
+	// fields are u64. The address had been 180 and every `isatty` on this
+	// target would have trapped the moment a host checked.
+	fdstatBufAddr = arrPushCopiedAddr + 8 + 4
 
 	// The string builder's three words: the heap pointer to its byte
 	// buffer, the live length, and the allocated capacity. wasmbin emits

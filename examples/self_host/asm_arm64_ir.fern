@@ -1715,6 +1715,11 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // fresh Result[FileStat, IoError].
             s = s.need("heap"); s = s.need("reader"); s = s.need("fd_stat");
             s = s.write("    bl __fn___fern_fd_stat\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 307) {  // fd_flags
+            // [fd] IS param[0], like fd_stat; __fn___fern_fd_flags pushes a
+            // fresh Result[i64, IoError].
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_flags");
+            s = s.write("    bl __fn___fern_fd_flags\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 242) {  // reader_seek
             // [fd][offset][whence] (whence on top) -> Result[i64, IoError]:
             // pop all three and re-push with param[0] (fd) on top, as
@@ -7149,6 +7154,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, tgt);
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
+        if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags(tgt); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }

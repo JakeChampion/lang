@@ -247,6 +247,8 @@ var providedSigs = map[string]providedSig{
 	"__method_Reader_read_line":     {-1, rWord},
 	"__method_Reader_seek":          {-1, rWord},
 	"__method_Writer_seek":          {-1, rWord},
+	"__method_Reader_flags":         {-1, rWord},
+	"__method_Writer_flags":         {-1, rWord},
 	"__method_Reader_stat":          {-1, rWord},
 	"__method_Writer_stat":          {-1, rWord},
 	"__method_Writer_close":         {-1, rWord},

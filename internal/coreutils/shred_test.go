@@ -185,6 +185,36 @@ func shredCases(t *testing.T) []invocation {
 	add("remove-two-operands", "-n", "0", "-v", "-u", "f", "g")
 	add("remove-quiet", "-n", "0", "-u", "f")
 
+	// --- `-`, whose answer depends on how fd 1 was opened -----------------
+	//
+	// GNU has three, and each is reachable from the harness: a PIPE (what
+	// a captured stdout is) is `invalid file type`, an APPEND-only
+	// descriptor is `cannot shred append-only file descriptor`, and a
+	// plain writable file is overwritten in place — with `-v` naming the
+	// operand `-`, the length rounded up to the block as any other
+	// operand's is, and `-u` standing in for removal by truncating what
+	// it cannot unlink. #9219 is the primitive that makes the three
+	// distinguishable at all.
+	cases = append(cases,
+		invocation{name: "dash-pipe", args: []string{"-n", "1", "-v", "-"}, seedTree: shredSeed},
+		invocation{name: "dash-append", args: []string{"--random-source=src", "-n", "1", "-v", "-"},
+			seedTree: shredSeed, stdoutPath: "f"},
+		invocation{name: "dash-regular", args: []string{"--random-source=src", "-n", "1", "-v", "-"},
+			seedTree: shredSeed, stdoutFile: "f"},
+		invocation{name: "dash-regular-exact", args: []string{"--random-source=src", "-n", "1", "-v", "-x", "-"},
+			seedTree: shredSeed, stdoutFile: "f"},
+		invocation{name: "dash-regular-two-passes", args: []string{"--random-source=src", "-n", "2", "-v", "-x", "-"},
+			seedTree: shredSeed, stdoutFile: "f"},
+		invocation{name: "dash-remove", args: []string{"--random-source=src", "-n", "1", "-v", "-u", "-"},
+			seedTree: shredSeed, stdoutFile: "f"},
+		invocation{name: "dash-zero-length", args: []string{"--random-source=src", "-n", "1", "-v", "-"},
+			seedTree: shredSeed, stdoutFile: "empty"},
+		invocation{name: "dash-zero-pass", args: []string{"-n", "0", "-z", "-v", "-"},
+			seedTree: shredSeed, stdoutFile: "f"},
+		invocation{name: "dash-and-a-name", args: []string{"--random-source=src", "-n", "1", "-v", "g", "-"},
+			seedTree: shredSeed, stdoutFile: "f"},
+	)
+
 	// --- the diagnostics ---------------------------------------------------
 	add("missing-operand")
 	add("no-such-file", "nosuch")

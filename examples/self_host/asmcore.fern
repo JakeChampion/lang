@@ -858,6 +858,7 @@ pub function oflag(t: string, name: string): string {
 }
 
 function oflag_darwin(name: string): string {
+    if (name == "append") { return "8"; }
     if (name == "wr_creat_trunc") { return "1537"; }
     if (name == "wr_creat_append") { return "521"; }
     if (name == "wr_creat_excl") { return "2561"; }
@@ -868,6 +869,7 @@ function oflag_darwin(name: string): string {
 }
 
 function oflag_x86_64(name: string): string {
+    if (name == "append") { return "1024"; }
     if (name == "wr_creat_trunc") { return "577"; }
     if (name == "wr_creat_append") { return "1089"; }
     if (name == "wr_creat_excl") { return "193"; }
@@ -878,6 +880,7 @@ function oflag_x86_64(name: string): string {
 }
 
 function oflag_arm64(name: string): string {
+    if (name == "append") { return "1024"; }
     if (name == "wr_creat_trunc") { return "577"; }
     if (name == "wr_creat_append") { return "1089"; }
     if (name == "wr_creat_excl") { return "193"; }
@@ -2338,6 +2341,17 @@ pub function rt_src_reader_seek(t: string): string {
     return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { var r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd, off, whence); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
 }
 
+// rt_src_fd_flags backs `r.flags()` / `w.flags()` -> Result[i64, IoError]:
+// fcntl(fd, F_GETFL) reduced to Fern's own three bits — 1 readable, 2
+// writable, 4 appending. The kernel's access mode is a VALUE in the low two
+// bits (0 read-only, 1 write-only, 2 read-write) rather than two independent
+// flags, so the two bits come out of two comparisons against it. O_APPEND is
+// one of the bits Linux and XNU disagree about, so it comes from the oflag
+// table like every other open flag here.
+pub function rt_src_fd_flags(t: string): string {
+    return "function __fern_fd_flags(fd: i32): Result[i64, IoError] { var r: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd, 3, 0); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } var acc: i32 = r & 3; var bits: i32 = 0; if (acc != 1) { bits = bits | 1; } if (acc != 0) { bits = bits | 2; } if ((r & " + oflag(t, "append") + ") != 0) { bits = bits | 4; } return Ok(bits as i64); }";
+}
+
 // rt_src_writer_truncate backs `w.truncate(length)` -> Option[IoError]:
 // ftruncate(2) on the handle's fd. The length goes out as an i64 argument, the
 // way __fern_reader_seek passes lseek's offset, so a size past 2 GiB is not
@@ -3044,7 +3058,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                     // Reader.seek / Writer.seek are Result[i64, IoError]; the
                     // integer payload lives in a 64-bit slot like every other
                     // integer here.
-                    if ((ty_struct_name(rcv) == "Reader" || ty_struct_name(rcv) == "Writer") && fa.field == "seek") { return ty_i32(); }
+                    if ((ty_struct_name(rcv) == "Reader" || ty_struct_name(rcv) == "Writer") && (fa.field == "seek" || fa.field == "flags")) { return ty_i32(); }
                     if (fa.field == "get" && is_map(rcv)) { return map_val(rcv); }
                     if ((fa.field == "min" || fa.field == "max") && ty_is_array_i32(rcv)) {
                         return ty_i32();
@@ -4033,7 +4047,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "stat") {
         return ty_result(ty_unknown());
     }
-    if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "seek") { return ty_result(ty_i32()); }
+    if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && (fa.field == "seek" || fa.field == "flags")) { return ty_result(ty_i32()); }
     if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {

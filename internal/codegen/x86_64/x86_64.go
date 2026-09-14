@@ -1036,6 +1036,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesReaderSeek {
 		g.emitReaderSeekRuntime()
 	}
+	if g.usesFdFlags {
+		g.emitFdFlagsRuntime()
+	}
 	if g.usesWriterTruncate {
 		g.emitWriterTruncateRuntime()
 	}
@@ -1547,6 +1550,7 @@ type generator struct {
 	usesLstat          bool
 	usesFdStat         bool
 	usesReaderSeek     bool
+	usesFdFlags        bool
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
@@ -2021,6 +2025,10 @@ func (g *generator) recordUse(target string) {
 		g.usesSync = true
 	case "__method_Reader_seek", "__method_Writer_seek":
 		g.usesReaderSeek = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_flags", "__method_Writer_flags":
+		g.usesFdFlags = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "__method_Writer_truncate":
@@ -3789,6 +3797,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_sync"
 		case "__method_Reader_seek", "__method_Writer_seek":
 			target = "__fern_reader_seek"
+		case "__method_Reader_flags", "__method_Writer_flags":
+			target = "__fern_fd_flags"
 		case "__method_Writer_truncate":
 			target = "__fern_writer_truncate"
 		case "__method_Reader_close",
@@ -16092,6 +16102,74 @@ func (g *generator) emitReaderSeekRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_reader_seek, .-__fern_reader_seek")
+}
+
+// emitFdFlagsRuntime emits `__fern_fd_flags(handle_ptr) → Result[i32,
+// IoError]` — fcntl(fd, F_GETFL) reduced to Fern's own three bits: 1
+// readable, 2 writable, 4 appending. A Reader and a Writer hold the fd at
+// the same place, so both methods land here.
+//
+// The kernel's access mode is a VALUE in the low two bits (0 read-only,
+// 1 write-only, 2 read-write) rather than two independent flags, so the
+// two bits come out of two comparisons against it.
+// System V: rdi = handle ptr.
+func (g *generator) emitFdFlagsRuntime() {
+	const (
+		fGetfl   = 3
+		sysFcntl = 72
+		oAppend  = 0o2000 // Linux; there is no Darwin x86-64 target
+	)
+	g.line("")
+	g.line(".globl __fern_fd_flags")
+	g.line(".type __fern_fd_flags, @function")
+	g.label("__fern_fd_flags")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8")
+	g.emit("mov edi, [rdi]") // fd
+	g.emit(fmt.Sprintf("mov esi, %d", fGetfl))
+	g.emit("xor edx, edx")
+	g.emitSyscall(sysFcntl)
+	g.emit("test rax, rax")
+	g.emit("js .Lfdfl_err")
+	// rbx = Fern's bits.
+	g.emit("mov ecx, eax")
+	g.emit("and ecx, 3")
+	g.emit("xor ebx, ebx")
+	g.emit("cmp ecx, 1")
+	g.emit("je .Lfdfl_nord")
+	g.emit("or ebx, 1")
+	g.label(".Lfdfl_nord")
+	g.emit("test ecx, ecx")
+	g.emit("jz .Lfdfl_nowr")
+	g.emit("or ebx, 2")
+	g.label(".Lfdfl_nowr")
+	g.emit(fmt.Sprintf("test eax, %d", oAppend))
+	g.emit("jz .Lfdfl_noap")
+	g.emit("or ebx, 4")
+	g.label(".Lfdfl_noap")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Lfdfl_ret")
+	g.label(".Lfdfl_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Lfdfl_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_fd_flags, .-__fern_fd_flags")
 }
 
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,

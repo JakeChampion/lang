@@ -1328,6 +1328,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
 	"__method_Reader_seek":          emitSeekHelper("__method_Reader_seek", "rsk"),
 	"__method_Writer_seek":          emitSeekHelper("__method_Writer_seek", "wsk"),
+	"__method_Reader_flags":         emitFdFlagsHelper("__method_Reader_flags", "rfl"),
+	"__method_Writer_flags":         emitFdFlagsHelper("__method_Writer_flags", "wfl"),
 	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
 	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
 	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
@@ -3640,6 +3642,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_stat":          {"__fern_io_error"},
 	"__method_Reader_seek":          {"__fern_io_error"},
 	"__method_Writer_seek":          {"__fern_io_error"},
+	"__method_Reader_flags":         {"__fern_io_error"},
+	"__method_Writer_flags":         {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"open_exclusive":                {"__fern_io_error"},
 	"open_reader_with":              {"__fern_io_error"},
@@ -3730,6 +3734,8 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_stat":          true,
 	"__method_Reader_seek":          true,
 	"__method_Writer_seek":          true,
+	"__method_Reader_flags":         true,
+	"__method_Writer_flags":         true,
 	"open_appender":                 true,
 	"open_exclusive":                true,
 	"open_reader_with":              true,
@@ -7561,6 +7567,55 @@ func emitSeekHelper(name, lp string) func(w func(string, ...any)) {
 		w("\tsvc #0")
 		w("\ttbnz x0, #63, .Lssa_%s_err", lp)
 		w("\tmov x19, x0")
+		emitOptionBox(w, 0, "x19")
+		w("\tb .Lssa_%s_ret", lp)
+		w(".Lssa_%s_err:", lp)
+		w("\tneg x19, x0") // errno
+		emitEmptyString(w, "x1")
+		w("\tmov x0, x19")
+		w("\tbl %s", fnLabel("__fern_io_error"))
+		w("\tmov x19, x0")
+		emitOptionBox(w, 1, "x19")
+		w(".Lssa_%s_ret:", lp)
+		w("\tldr x19, [sp, #16]")
+		w("\tldp x29, x30, [sp], #32")
+		w("\tret")
+	}
+}
+
+// emitFdFlagsHelper writes Result[i64, IoError] for __method_Reader_flags
+// and __method_Writer_flags: fcntl(fd, F_GETFL) reduced to Fern's own three
+// bits — 1 readable, 2 writable, 4 appending. The kernel's access mode is a
+// VALUE in the low two bits (0 read-only, 1 write-only, 2 read-write), so
+// the two bits come out of two comparisons against it. `lp` prefixes the
+// local labels so both methods can live in one object. x0=handle.
+func emitFdFlagsHelper(name, lp string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-32]!")
+		w("\tmov x29, sp")
+		w("\tstr x19, [sp, #16]")
+		w("\tldr w0, [x0, #8]") // fd @ ptr+8
+		w("\tmov x1, #3")       // F_GETFL
+		w("\tmov x2, #0")
+		w("\tmov x8, #25") // fcntl
+		w("\tsvc #0")
+		w("\ttbnz x0, #63, .Lssa_%s_err", lp)
+		w("\tand w2, w0, #3")
+		w("\tmov w19, #0")
+		w("\tcmp w2, #1")
+		w("\tb.eq .Lssa_%s_nord", lp)
+		w("\torr w19, w19, #1")
+		w(".Lssa_%s_nord:", lp)
+		w("\tcbz w2, .Lssa_%s_nowr", lp)
+		w("\torr w19, w19, #2")
+		w(".Lssa_%s_nowr:", lp)
+		w("\tmov w3, #1024") // O_APPEND (Linux; this backend has no Darwin target)
+		w("\ttst w0, w3")
+		w("\tb.eq .Lssa_%s_noap", lp)
+		w("\torr w19, w19, #4")
+		w(".Lssa_%s_noap:", lp)
 		emitOptionBox(w, 0, "x19")
 		w("\tb .Lssa_%s_ret", lp)
 		w(".Lssa_%s_err:", lp)
