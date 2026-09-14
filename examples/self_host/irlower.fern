@@ -236,6 +236,16 @@ pub struct LocalInfo {
     // so under any shadow they were guaranteed to disagree. That is #6191 /
     // #6283's defect class, which each got a hand-guard at its own site.
     fn_dyn: string,
+    // fn_own: the CONSUMING argument positions of the same fn value's type —
+    // `(i32, own T) => T` records "1". The caller hands its reference over
+    // there, so the rebind does not release the value the call supersedes.
+    // fn_own_arr narrows that to the positions taking a SCALAR-element array,
+    // which the direct path (own_scalar_arr_positions) moves outright: the slot
+    // is cleared after the call. The two masks mirror the registry pair, and a
+    // string / struct-element array stays on the threaded convention where the
+    // caller's guarded release still supersedes the old buffer.
+    fn_own: string,
+    fn_own_arr: string,
     fn_sig: string,
     fn_ret: string,
     fn_opt_ret: string,
@@ -278,7 +288,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -303,6 +313,25 @@ pub function li_set_reclaim_site(li: LocalInfo, v: string): LocalInfo {
 
 pub function li_set_fn_dyn(li: LocalInfo, v: string): LocalInfo {
     return LocalInfo { ...li, fn_dyn: v };
+}
+
+pub function li_set_fn_own(li: LocalInfo, v: string): LocalInfo {
+    return LocalInfo { ...li, fn_own: v };
+}
+
+pub function li_set_fn_own_arr(li: LocalInfo, v: string): LocalInfo {
+    return LocalInfo { ...li, fn_own_arr: v };
+}
+
+// li_with_fn_own stamps a fn-typed parameter's CONSUMING positions on its slot:
+// `(i32, own T) => T` hands the caller's reference over at position 1, so the
+// indirect call neither retains what it gives up nor releases what it
+// supersedes. Inert for every other parameter.
+function li_with_fn_own(li: LocalInfo, p: ast.ParamDecl): LocalInfo {
+    if (p.type_name != "fn") { return li; }
+    var all: string = own_positions_of_spellings(p.fn_param_types, false);
+    if (all.len() == 0) { return li; }
+    return li_set_fn_own_arr(li_set_fn_own(li, all), own_positions_of_spellings(p.fn_param_types, true));
 }
 
 pub function li_set_fn_sig(li: LocalInfo, v: string): LocalInfo {
@@ -1427,20 +1456,30 @@ function rebind_call_same_dec(value: ast.Expr, target: string, s: LowerState): b
 // for a struct it either releases it at exit (own_struct_param_release_rows_of)
 // or hands it onward — returned bare, forwarded to a handback position, or
 // escaping through a receiver borrow — so the rebind must not read the old
-// value in either case. A callee reached through a function value or a method
-// cannot declare `own`.
+// value in either case. A callee reached through a function VALUE declares its
+// consuming positions in its type instead of the registry (fn_arg_is_own): a
+// local slot shadows any same-named function, so the slot is asked first.
 function call_owns_arg(value: ast.Expr, target: string, s: LowerState): boolean {
     var cname: string = direct_call_callee_name(value);
     if (cname.len() == 0) { return false; }
+    var fslot: i32 = s.slot_of(cname);
     if let ast.ExprCall(c) = value {
         var i: i32 = 0;
         while (i < c.args.len()) {
-            if (ident_name_or_empty(c.args[i]) == target
-                && util.index_of_str(s.frame.sigs.own_positions, cname + "|" + util.i32_to_string(i)) >= 0) { return true; }
+            if (ident_name_or_empty(c.args[i]) == target && call_arg_pos_owns(s, cname, fslot, i)) { return true; }
             i = i + 1;
         }
     }
     return false;
+}
+
+// call_arg_pos_owns: does argument position `ai` of the callee spelled `cname`
+// consume? A resolvable slot means the callee is the function VALUE held there,
+// whose type carries the mask; otherwise it is a declared free function and the
+// own_positions registry does.
+function call_arg_pos_owns(s: LowerState, cname: string, fslot: i32, ai: i32): boolean {
+    if (fslot >= 0) { return s.fn_arg_is_own(fslot, ai); }
+    return util.index_of_str(s.frame.sigs.own_positions, cname + "|" + util.i32_to_string(ai)) >= 0;
 }
 
 // ownflag_slot_of returns the ownership flag for a borrowed array parameter or
@@ -2447,10 +2486,30 @@ pub function sig_arg_width_char(tag: string, ai: i32): string {
 // fn-typed param carrying dyn positions (parser's fn_param_dyn). #5276.
 pub function (s: LowerState) fn_arg_is_dyn(i: i32, ai: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
-    var e: string = s.locals[i].fn_dyn;
+    return pos_list_has(s.locals[i].fn_dyn, ai);
+}
+
+// fn_arg_is_own reports whether argument index `ai` of an indirect call through
+// the fn-value in slot `i` targets an `own` (consuming) parameter — the sibling
+// of fn_arg_is_dyn, reading the fn_own seed rather than fn_dyn.
+pub function (s: LowerState) fn_arg_is_own(i: i32, ai: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return pos_list_has(s.locals[i].fn_own, ai);
+}
+
+// fn_arg_is_own_arr narrows fn_arg_is_own to the positions the direct path
+// MOVES outright — a consuming scalar-element array parameter.
+pub function (s: LowerState) fn_arg_is_own_arr(i: i32, ai: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return pos_list_has(s.locals[i].fn_own_arr, ai);
+}
+
+// pos_list_has tests membership of `ai` in a comma-separated list of parameter
+// positions ("0" / "0,2") — the shape both fn-value position seeds carry. The
+// numbers are parsed numerically rather than compared as text so "1" does not
+// match position 11.
+function pos_list_has(e: string, ai: i32): boolean {
     if (e.len() == 0) { return false; }
-    // A comma-separated list of dyn positions ("0" / "0,2"). Parse each number
-    // numerically and test membership of `ai`.
     var cur: i32 = 0;
     var started: boolean = false;
     var pj: i32 = 0;
@@ -2514,11 +2573,93 @@ pub function (s: LowerState) stamp_fn_value_facts(v: ast.StmtVar, slot: i32, pre
     return out;
 }
 
+// stamp_fnval_init_own seeds the consuming positions of an UNANNOTATED fn-typed
+// local bound to a bare module-function name (`var f = update`). The binding
+// spells no function type of its own, so the mask comes from the callee's
+// declaration — without it the rebind `xs = f(xs)` releases a reference the
+// callee already consumed.
+pub function (s: LowerState) stamp_fnval_init_own(i: i32, init: ast.Expr): LowerState {
+    var nm: string = ident_name_or_empty(init);
+    // `var f = update` is rewritten to a `__mkclo$<fd>$wrapN()` env box before
+    // lowering, and the trampoline mirrors the target's modes — so its own mask
+    // is the registry's, shifted one place for the `__env` parameter the
+    // declared argument list does not carry.
+    var shift: i32 = 0;
+    if let ast.ExprCall(mc) = init {
+        var cn: string = ident_name_or_empty(mc.callee);
+        if (cn.len() > 8 && slice_unchecked(cn, 0, 8) == "__mkclo$") {
+            nm = slice_unchecked(cn, 8, cn.len()) + "";
+            shift = 1;
+        }
+    }
+    if (nm.len() == 0 || s.slot_of(nm) >= 0) { return s; }
+    return s.mark_fn_own_positions(i, own_positions_of_registry(s.frame.sigs.own_positions, nm, shift),
+        own_positions_of_registry(s.frame.sigs.own_scalar_arr_positions, nm, shift));
+}
+
+// own_positions_of_registry reads the consuming positions of the DECLARED
+// function `fname` out of the "fname|idx" registry, comma-joined — the
+// declaration-keyed source of the same mask own_positions_of_spellings reads
+// off a function TYPE.
+function own_positions_of_registry(own_positions: string[], fname: string, shift: i32): string {
+    var out: string = "";
+    var pfx: string = fname + "|";
+    var i: i32 = 0;
+    while (i < own_positions.len()) {
+        var e: string = own_positions[i];
+        if (e.len() > pfx.len() && slice_unchecked(e, 0, pfx.len()) == pfx) {
+            var idx: i32 = util.digits_to_i32(slice_unchecked(e, pfx.len(), e.len()) + "") - shift;
+            if (idx >= 0) {
+                if (out.len() > 0) { out = out + ","; }
+                out = out + util.i32_to_string(idx);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // Attach the checked declaration to its actual slot, in any lexical block.
 pub function (s: LowerState) stamp_fnval_decl(i: i32, v: ast.StmtVar): LowerState {
     var p: ast.ParamDecl = decltypes.fn_param_from_var(v);
-    if (p.type_name != "fn") { return s; }
-    return s.mark_fn_value_sidecars(i, p.fn_param_dyn, fn_sig_of(p, s.frame.type_params), p.fn_ret);
+    // The consuming mask comes from the INITIALISER whether or not the binding
+    // spells a function type, so it is stamped before the annotation gate.
+    var out: LowerState = s.stamp_fnval_init_own(i, v.init);
+    if (p.type_name != "fn") { return out; }
+    out = out.mark_fn_own_positions(i, own_positions_of_spellings(p.fn_param_types, false),
+        own_positions_of_spellings(p.fn_param_types, true));
+    return out.mark_fn_value_sidecars(i, p.fn_param_dyn, fn_sig_of(p, out.frame.type_params), p.fn_ret);
+}
+
+// own_positions_of_spellings reads the CONSUMING argument positions out of a fn
+// type's comma-joined parameter spellings — parse_decl_type's fn_param_types,
+// where `(i32, own T) => T` records "i32,own T". The `own ` prefix inside a
+// function type's parameter list is the consuming marker (native's
+// parenListIsFuncParams reads it the same way); returns the positions
+// comma-joined, or "" when nothing consumes.
+pub function own_positions_of_spellings(spellings: string, arrays_only: boolean): string {
+    if (spellings.len() == 0) { return ""; }
+    var parts: string[] = parser.split_top_commas(spellings);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var t: string = parts[i];
+        if (t.len() > 4 && slice_unchecked(t, 0, 4) == "own "
+            && (!arrays_only || is_leaksafe_array_field(slice_unchecked(t, 4, t.len()) + ""))) {
+            if (out.len() > 0) { out = out + ","; }
+            out = out + util.i32_to_string(i);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function (s: LowerState) mark_fn_own_positions(i: i32, all: string, arrs: string): LowerState {
+    if (i < 0 || i >= s.locals.len()) { return s; }
+    var li: LocalInfo = s.locals[i];
+    if (all.len() > 0) { li = li_set_fn_own(li, all); }
+    if (arrs.len() > 0) { li = li_set_fn_own_arr(li, arrs); }
+    return LowerState { ...s, locals: s.locals.with(i, li) };
 }
 
 pub function (s: LowerState) mark_fn_value_sidecars(i: i32, dyn_positions: string, sig: string, ret: string): LowerState {
@@ -11064,6 +11205,23 @@ pub function lower_subprocess_call(c: ast.ExprCall, s: LowerState): LowerState {
     return sp.emit(ir.op_subprocess());
 }
 
+// own_arg_move_slots lists the array SLOTS a bare-ident argument hands over at a
+// CONSUMING position of the fn value in `fslot` — the indirect sibling of the
+// direct call's own_arr_moves. The reference goes to the callee, so the slot is
+// cleared once the call returns and neither the rebind nor an exit sweep
+// releases it a second time.
+function own_arg_move_slots(c: ast.ExprCall, fslot: i32, s: LowerState): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var nm: string = ident_name_or_empty(c.args[i]);
+        var sl: i32 = s.slot_of(nm);
+        if (nm.len() > 0 && sl >= 0 && s.is_arr_slot(sl) && s.fn_arg_is_own_arr(fslot, i)) { out = out.append(sl); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // lower_fn_value_arg lowers argument `ai` of an indirect call through the
 // fn-value named `fname` at the width that value's DECLARED signature gives the
 // position — the indirect sibling of the param_is_i64 / param_is_f64 arms a
@@ -11206,7 +11364,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         cls = cls.emit(ir.op_load_local(clslot));
         cls = cls.emit(ir.op_const_i32(0));
         cls = cls.emit(ir.op_arr_get(32));
-        return cls.emit(ir.op_call_indirect_sig(c.args.len() + 1, s.fn_value_sig(clslot, true)));
+        var clmoves: i32[] = own_arg_move_slots(c, clslot, s);
+        cls = cls.emit(ir.op_call_indirect_sig(c.args.len() + 1, s.fn_value_sig(clslot, true)));
+        // The clear is spelled here rather than in a helper, exactly as the
+        // direct call's own_arr_moves sweep is.
+        var clmi: i32 = 0;
+        while (clmi < clmoves.len()) {
+            cls = cls.emit(ir.op_const_i32(0));
+            cls = cls.emit(ir.op_store_local(clmoves[clmi]));
+            clmi = clmi + 1;
+        }
+        return cls;
     }
     var icslot: i32 = s.slot_of(cid.name);
     if (icslot >= 0) {
@@ -11222,7 +11390,15 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
             ica = ica + 1;
         }
         ics = ics.emit(ir.op_load_local(icslot));
-        return ics.emit(ir.op_call_indirect_sig(c.args.len(), s.fn_value_sig(icslot, false)));
+        var icmoves: i32[] = own_arg_move_slots(c, icslot, s);
+        ics = ics.emit(ir.op_call_indirect_sig(c.args.len(), s.fn_value_sig(icslot, false)));
+        var icmi: i32 = 0;
+        while (icmi < icmoves.len()) {
+            ics = ics.emit(ir.op_const_i32(0));
+            ics = ics.emit(ir.op_store_local(icmoves[icmi]));
+            icmi = icmi + 1;
+        }
+        return ics;
     }
     // A user-defined free function shadows any same-named
     // builtin: native + interp resolve `name(args)` to the user
@@ -49328,7 +49504,7 @@ function collect_fresh_cloarr_names(body: ast.Stmt[], caset: string[], closurese
                 var cn: string = ident_name_or_empty(c.callee);
                 if (cn.len() > 0 && util.index_of_str(caset, "CAC:" + cn) >= 0) { cand = true; }
             }
-            if (cand) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
+            if (cand) { return append_str_unique_owned(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
         }
         return acc;
     }
@@ -49355,7 +49531,9 @@ function collect_fresh_cloarr_names(body: ast.Stmt[], caset: string[], closurese
 function closurearr_append_decl_sites(body: ast.Stmt[], closureset: string[]): string[] {
     function box_appended_names(st: ast.Stmt, own acc: string[]): string[] {
         if let ast.StmtAssign(a) = st {
-            if (cloarr_self_append_fresh(a.value, a.target, body, closureset)) { return push_str_unique(acc, a.target); }
+            if (cloarr_self_append_fresh(a.value, a.target, body, closureset)) {
+                return append_str_unique_owned(acc, a.target);
+            }
         }
         return acc;
     }
@@ -58958,7 +59136,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -59000,6 +59178,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         if (fn.params[fpdi].type_name == "fn" && fn.params[fpdi].fn_param_dyn.len() > 0) {
             locals0 = locals0.with(pbase + fpdi, li_set_fn_dyn(locals0[pbase + fpdi], fn.params[fpdi].fn_param_dyn));
         }
+        // The same seeding for the fn-value's CONSUMING positions.
+        locals0 = locals0.with(pbase + fpdi, li_with_fn_own(locals0[pbase + fpdi], fn.params[fpdi]));
         // #6282: the same seeding for the fn-value's WIDTHS. A funcref type in
         // wasm is structural, so a `(i64) => boolean` dispatched through the
         // all-i32 `$fn<argc>` type is a module that will not load and an
@@ -61146,6 +61326,16 @@ function strfld_safe_operand(e: ast.Expr, acc: string[]): string[] {
         _ => {}
     }
     return strfld_collect_unsafe(e, acc);
+}
+
+// append_str_unique_owned is push_str_unique's CONSUMING sibling. push_str_unique
+// BORROWS its list and hands the very same buffer back when it is uniquely
+// owned, which a caller that owns the accumulator would then release under its
+// lender; taking the list means the buffer that comes back is the caller's
+// either way.
+function append_str_unique_owned(own acc: string[], name: string): string[] {
+    if (util.index_of_str(acc, name) >= 0) { return acc; }
+    return acc.append(name);
 }
 
 // strfld_defer_arg parks the verdict on `callee(… <field> …)` at position
@@ -74700,7 +74890,7 @@ function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
 // iife_body_value_use_idents collects the enclosing-scope names a value-position
 // if/match's inlined body uses as VALUES: its body walked with the ordinary
 // statement rule, minus the names the body itself binds.
-function iife_body_value_use_idents(lm: ast.ExprLambda, acc: string[]): string[] {
+function iife_body_value_use_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
     var inner: string[] = [];
     var iu: i32 = 0;
     while (iu < lm.body.len()) { inner = value_use_idents_stmt(lm.body[iu], inner); iu = iu + 1; }

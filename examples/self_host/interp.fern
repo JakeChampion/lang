@@ -721,7 +721,7 @@ function cell_slot_set(slot: Value, v: Value): boolean {
 // WIDENS the old hand-written walk onto a `defer` action's assignment and a
 // match-arm guard's nested lambda — shapes where the write previously landed
 // in a private copy — in the direction every other engine already answers.
-function lam_assign_targets(stmts: ast.Stmt[], acc: string[]): string[] {
+function lam_assign_targets(stmts: ast.Stmt[], own acc: string[]): string[] {
     var a: string[] = acc;
     for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_all); }
     return a;
@@ -753,7 +753,7 @@ function ib_ident_of(e: ast.Expr, own acc: string[]): string[] {
     }
     return acc;
 }
-function ib_idents_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
+function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
     var a: string[] = acc;
     for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, ib_ident_of, astwalk.descend_all); }
     return a;

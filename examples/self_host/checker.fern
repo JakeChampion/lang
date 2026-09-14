@@ -7810,7 +7810,7 @@ struct LitSign { line: i32, col: i32, minuses: i32 }
 // sign from here. Every unary in a chain is visited by the fold below and
 // contributes its own count, so the LARGEST count for a position is the whole
 // chain's: `- -5` is positive.
-function lit_sign_chain(e: ast.Expr, minuses: i32, acc: LitSign[]): LitSign[] {
+function lit_sign_chain(e: ast.Expr, minuses: i32, own acc: LitSign[]): LitSign[] {
   match (e) {
     ast.ExprUnary(u) => {
       if (u.op == "-") { return lit_sign_chain(u.operand, minuses + 1, acc); }
@@ -10911,18 +10911,19 @@ function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
 // concat) or another owned parameter, or a variant-constructor call.
 // Anything else (borrowed param, projection, plain local, ordinary call)
 // is not provably owned → E051.
+// ow_scalar_literal: a literal carrying no unit. A consuming position takes
+// nothing from the caller there, so there is nothing to prove owned — and a
+// generic `own acc: T` reaches every instantiation, so refusing the scalar one
+// would make the consuming convention unspellable for a fold that counts.
+function ow_scalar_literal(e: ast.Expr): boolean {
+  if let ast.ExprNumber(_) = e { return true; }
+  if let ast.ExprBool(_) = e { return true; }
+  return false;
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_scalar_literal(e)) { return true; }
   match (e) {
-    ast.ExprNumber(_) => {
-      // A scalar carries no unit, so a consuming position takes nothing from
-      // the caller and there is nothing to prove owned. A generic `own acc: T`
-      // reaches every instantiation, and refusing a scalar one would make the
-      // consuming convention unspellable for a fold whose accumulator counts.
-      return true;
-    },
-    ast.ExprBool(_) => {
-      return true;
-    },
     ast.ExprStructLit(_) => {
       return true;
     },
@@ -12481,7 +12482,7 @@ struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[]
 // pass. Both are printer-only nodes, every other parse having desugared them
 // (parser.fern), and the desugared forms are already flagged as concatenation
 // and `.to_string()` calls.
-function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, out: util.Diag[]): util.Diag[] {
+function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]): util.Diag[] {
   match (n) {
     ast.ExprArray(a) => {
       return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", a.line, a.col));
