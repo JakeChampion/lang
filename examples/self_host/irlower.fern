@@ -12125,6 +12125,18 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (cid.name == "open_exclusive") { oflags = 193; }
         return ofs.emit(ir.op_open_file(oflags));
     }
+    // Built-in `open_reader_with` / `open_writer_with(path, flags)` — the
+    // same handles under Fern's flags word (1 create, 2 non-blocking). The
+    // runtime translates the word per target, so it travels as an operand
+    // rather than an immediate.
+    if ((cid.name == "open_reader_with" || cid.name == "open_writer_with") && c.args.len() == 2) {
+        var ows: LowerState = lower_expr(c.args[0], s);
+        if (!ows.ok) { return ows; }
+        ows = lower_expr(c.args[1], ows);
+        if (!ows.ok) { return ows; }
+        if (cid.name == "open_reader_with") { return ows.emit(ir.op_open_reader_with()); }
+        return ows.emit(ir.op_open_writer_with());
+    }
     // Built-in `read_line()` — read one line from stdin, return a fresh
     // Option[string]. op_read_line takes the fd as an operand, so the
     // bare builtin pushes fd 0; `r.read_line()` pushes its receiver
@@ -71464,7 +71476,8 @@ function builtin_opt_ret_type(name: string): string {
     // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` recovers both
     // payload types. Reader / Writer are represented by the bare fd, so the
     // Ok binder is an i32 slot the resource intrinsics dispatch off.
-    if (name == "open_reader") { return "Result[Reader, IoError]"; }
+    if (name == "open_reader" || name == "open_reader_with") { return "Result[Reader, IoError]"; }
+    if (name == "open_writer_with") { return "Result[Writer, IoError]"; }
     if (name == "open_writer" || name == "open_appender" || name == "open_exclusive") { return "Result[Writer, IoError]"; }
     // read_line → Option[string] (#4369): so a `match (read_line()) { Some(s) =>
     // .., None => .. }` scrutinee (or a `var o = read_line()` binding) recovers the

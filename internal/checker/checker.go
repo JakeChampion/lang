@@ -1852,6 +1852,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
 	}
+	// open_reader_with(path, flags) / open_writer_with(path, flags):
+	// the same two handles opened under a flags word of Fern's own,
+	// translated by each backend into the kernel's:
+	//
+	//	1  create the file when it is missing, mode 0666 through the umask
+	//	2  do not wait on the open (O_NONBLOCK)
+	//
+	// The writer never truncates and never appends: it is the plain
+	// O_WRONLY open a `touch` or a `dd` wants, where open_writer's
+	// truncation and open_appender's positioning are both wrong. The
+	// non-blocking bit is what lets a FIFO be opened with no peer, as
+	// `sync` and `touch` do: without it a reader's open waits for a
+	// writer and a writer's open waits for a reader. A writer's
+	// non-blocking open of a FIFO with no reader is ENXIO, the kernel's
+	// own answer. WASI preview 1 spells the bit as an fdflag and preview
+	// 2 has no spelling for it — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["open_reader_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_writer_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
 	// now_unix_ms(): i64 — wall-clock milliseconds since the
 	// Unix epoch (1970-01-01 00:00:00 UTC). Wraps Go's
 	// `time.Now().UnixMilli()`. Subject to NTP adjustments

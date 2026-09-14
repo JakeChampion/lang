@@ -1445,6 +1445,14 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             if (o.i32_imm == 193) { open_mode = 384; }
             s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #" + util.i32_to_string(open_mode) + "\n");
             s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_res\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 304 || o.kind_tag == 305) {  // open_reader_with / open_writer_with
+            // [path box, flags] -> __fern_open_with(x0=path, x1=flags, x2=write)
+            // -> a fresh Result[Reader|Writer, IoError] box, through open_res.
+            s = s.need("heap"); s = s.need("open_file"); s = s.need("open_with");
+            var open_write: i32 = 0;
+            if (o.kind_tag == 305) { open_write = 1; }
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(open_write) + "\n");
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_with\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,
@@ -7100,6 +7108,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
+        if (s.has_need("open_with")) { fs_src = fs_src + " " + asmcore.rt_src_open_with(tgt); }
         if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write(tgt); }
         if (s.has_need("reader")) { fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt); }
         if (s.has_need("fd_stat")) { fs_src = fs_src + " " + asmcore.rt_src_fd_stat(tgt); }
@@ -7997,7 +8006,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "mknod", "chown_at", "window_size", "set_file_times", "read_link",
         "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
-        "remove_dir_all", "open_file", "writer_write", "reader",
+        "remove_dir_all", "open_file", "open_with", "writer_write", "reader",
         "signal_send"
     ]);
 }

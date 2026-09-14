@@ -12897,19 +12897,42 @@ func (g *generator) emitReaderWriterRuntime() {
 	// __fern_open_appender(path) / __fern_open_exclusive(path) →
 	// Result[Reader|Writer, IoError].
 	// Each is a thin wrapper around `openat` + handle alloc + the
-	// Result-box build. Flags + mode differ per kind.
+	// Result-box build. Flags + mode differ per kind. The two `_with`
+	// forms take Fern's flags word after the path: bit 0 is O_CREAT and
+	// bit 1 O_NONBLOCK, each in the target's own spelling (64 / 2048 on
+	// Linux, 0x200 / 0x4 on XNU), on top of the access mode in `flags`.
+	oCreat, oNonblock := 64, 2048
+	if g.darwin {
+		oCreat, oNonblock = 0x200, 0x4
+	}
 	twoWord := ast.UseTwoWordStrings(8)
 	for _, e := range []struct {
 		sym, name string
 		flags     int
 		mode      int
+		withFlags bool
 	}{
-		{"__fern_open_reader", "open_reader", 0, 0},
-		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0666},
-		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0666},
-		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600},
+		{"__fern_open_reader", "open_reader", 0, 0, false},
+		{"__fern_open_writer", "open_writer", g.oflagWrite(oflagCreatTrunc), 0666, false},
+		{"__fern_open_appender", "open_appender", g.oflagWrite(oflagCreatAppend), 0666, false},
+		{"__fern_open_exclusive", "open_exclusive", g.oflagWrite(oflagCreatExcl), 0600, false},
+		{"__fern_open_reader_with", "open_reader_with", 0, 0666, true},
+		{"__fern_open_writer_with", "open_writer_with", 1, 0666, true},
 	} {
 		_ = e.name
+		// The flags word lives in a callee-saved register (x22 two-word,
+		// x21 one-word) across the path copy and becomes w2 here.
+		emitWithFlags := func(reg string) {
+			if !e.withFlags {
+				return
+			}
+			g.emit("tbz %s, #0, %s", reg, ".Lorw_nc_"+e.sym)
+			g.emit("orr w2, w2, #%d", oCreat)
+			g.label(".Lorw_nc_" + e.sym)
+			g.emit("tbz %s, #1, %s", reg, ".Lorw_nb_"+e.sym)
+			g.emit("orr w2, w2, #%d", oNonblock)
+			g.label(".Lorw_nb_" + e.sym)
+		}
 		g.line("")
 		g.line(".global " + e.sym)
 		g.typeDirective(e.sym)
@@ -12921,15 +12944,19 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("stp x29, x30, [sp, #-64]!")
 			g.emit("mov x29, sp")
 			g.emit("stp x19, x20, [sp, #16]")
-			g.emit("str x21, [sp, #32]")
-			g.emit("mov x19, x0")                       // path_data
-			g.emit("mov x20, x1")                       // path_len
+			g.emit("stp x21, x22, [sp, #32]")
+			g.emit("mov x19, x0") // path_data
+			g.emit("mov x20, x1") // path_len
+			if e.withFlags {
+				g.emit("mov w22, w2") // the flags word
+			}
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
 			// NUL-terminate for openat (see emitNulTermPath2W).
 			g.emitNulTermPath2W("x21", "x21", "x20")
 			g.emit("mov x0, #%d", g.atFdCwd())
 			g.emit("mov x1, x21")
 			g.emit("mov w2, #%d", e.flags)
+			emitWithFlags("w22")
 			g.emit("mov w3, #%d", e.mode)
 			g.syscall("openat")
 			g.emitFreeNulTermPath2W("x21", "x20")
@@ -12970,20 +12997,25 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emit("str w1, [x0]")
 			g.emit("str x21, [x0, #8]")
 			g.label(".Lorw2w_ret_" + e.sym)
-			g.emit("ldr x21, [sp, #32]")
+			g.emit("ldp x21, x22, [sp, #32]")
 			g.emit("ldp x19, x20, [sp, #16]")
 			g.emit("ldp x29, x30, [sp], #64")
 			g.emit("ret")
 			g.sizeDirective(e.sym)
 			continue
 		}
-		g.emit("stp x29, x30, [sp, #-32]!")
+		g.emit("stp x29, x30, [sp, #-48]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("mov x19, x0")              // stash path
+		g.emit("str x21, [sp, #32]")
+		g.emit("mov x19, x0") // stash path
+		if e.withFlags {
+			g.emit("mov w21, w1") // the flags word
+		}
 		g.emit("mov x0, #%d", g.atFdCwd()) // AT_FDCWD
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
+		emitWithFlags("w21")
 		g.emit("mov w3, #%d", e.mode)
 		g.syscall("openat")
 		g.emit("tbnz x0, #63, %s", ".Lorw_err_"+e.sym)
@@ -13022,8 +13054,9 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("str w1, [x0]")
 		g.emit("str x19, [x0, #8]")
 		g.label(".Lorw_ret_" + e.sym)
+		g.emit("ldr x21, [sp, #32]")
 		g.emit("ldp x19, x20, [sp, #16]")
-		g.emit("ldp x29, x30, [sp], #32")
+		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
 		g.sizeDirective(e.sym)
 	}
@@ -18750,6 +18783,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesIoError = true
 		case "open_exclusive":
 			target = "__fern_open_exclusive"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_reader_with":
+			target = "__fern_open_reader_with"
+			g.usesReaderWriter = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "open_writer_with":
+			target = "__fern_open_writer_with"
 			g.usesReaderWriter = true
 			g.usesAlloc = true
 			g.usesIoError = true

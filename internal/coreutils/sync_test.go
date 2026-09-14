@@ -13,11 +13,9 @@ import (
 // opened, it cannot be flushed, or it cannot be closed. The mode
 // matters per kind: a FIFO and a character device refuse fsync and
 // fdatasync with `Invalid argument` and accept -f, which flushes the
-// file system they sit on rather than the file.
-//
-// A FIFO operand is the one shape answered without the open GNU makes
-// (sync.fern's header says why); its cases here are what pin that the
-// answer is the same.
+// file system they sit on rather than the file. A FIFO with no peer is
+// opened non-blocking, as GNU opens it, and its cases pin what the
+// kernel then says of the descriptor.
 
 func init() {
 	registerCorpus("sync", syncCases)

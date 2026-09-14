@@ -2024,10 +2024,11 @@ groups are the order of work. Each sub-issue names its group.
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
   `mkdir` `rmdir` `rm` (done) `mv` `cp`
-  `install` `touch` (done — the open that creates the file is `open_appender`, which is GNU's `O_WRONLY|O_CREAT` without the `O_NONBLOCK` a FIFO would want, so a FIFO or socket operand is answered by its stat and its times set by path; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
-  `sync` (done, on `sync()` and the fsync / fdatasync / syncfs handle
-  methods from #9181; a FIFO operand is answered from its stat because no
-  Fern open is non-blocking — see `sync.fern`'s header) (rename,
+  `install` `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
+  `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle
+  methods from #9181 and the non-blocking `open_reader_with` /
+  `open_writer_with` from #9197, which is what opens a FIFO with no
+  peer as GNU does) (rename,
   utimensat, ftruncate, mknod, fsync; `mkdir` with a mode and `rmdir` are
   primitives now. `rename`, `chmod` and `set_file_times` landed natively
   with #9059; `rename`, `chmod` and `set_file_times` have since reached

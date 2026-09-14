@@ -702,6 +702,12 @@ pub function op_chown_at(): Op { return op0("chown_at"); }
 // UTIME_NOW sentinels in the timespec on Linux, absent or clock-read attributes
 // on Darwin and fstflags bits on wasm.
 pub function op_set_file_times(): Op { return op0("set_file_times"); }
+// `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
+// word, 1 create and 2 non-blocking, translated per target by the runtime
+// rather than baked into an immediate — and push the same
+// Result[Reader|Writer, IoError] box op_open_file does.
+pub function op_open_reader_with(): Op { return op0("open_reader_with"); }
+pub function op_open_writer_with(): Op { return op0("open_writer_with"); }
 // `hostname` takes no operands and pushes ONE fresh string box holding the
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
 // string on wasm, which has no host identity.
@@ -2269,6 +2275,8 @@ function kind_id_len16(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'm' && name == "mapiter_has_next") { return 134; }
     if (c == b's' && name == "struct_set_shape") { return 141; }
+    if (c == b'o' && name == "open_reader_with") { return 304; }
+    if (c == b'o' && name == "open_writer_with") { return 305; }
     return 0;
 }
 
@@ -2512,6 +2520,8 @@ function kind_name_4(id: i32): string {
     if (id == 201) { return "tcp_accept"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
+    if (id == 304) { return "open_reader_with"; }
+    if (id == 305) { return "open_writer_with"; }
     if (id == 204) { return "syscall3"; }
     if (id == 205) { return "raw_scratch"; }
     if (id == 206) { return "syscall4"; }
@@ -2744,6 +2754,7 @@ function pops2_io(t: i32): boolean {
         || t == 237                                                      // access (path, mode)
         || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
         || t == 273                                                      // truncate (path, length)
+        || t == 304 || t == 305                                          // open_reader_with, open_writer_with (path, flags)
         || t == 281                                                      // writer_truncate (fd, length)
         || t == 285                                                      // signal_send (pid, sig)
         || t == 178 || t == 187                                          // read_chunk, poll
@@ -4388,7 +4399,7 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 169 || tag == 170) { return true; }
     // open_file boxes its Result[Reader|Writer, IoError] result (and the IoError
     // its error path builds), so it needs the heap runtime (#7758).
-    if (tag == 203) { return true; }
+    if (tag == 203 || tag == 304 || tag == 305) { return true; }
     // writer_write boxes its Option[IoError] result (and, on a failing write,
     // the IoError inside it), so it needs the heap runtime too (#7926).
     if (tag == 202) { return true; }
