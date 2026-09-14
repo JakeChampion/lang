@@ -106,7 +106,7 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	// than one. That is the case an x86-only test cannot cover, and the
 	// reason the symtab layer takes the offset and vaddr from its caller.
 	//
-	// nm reads a foreign architecture happily, so the symbols are checked
+	// nm reads a foreign architecture, so the symbols are checked
 	// without needing qemu; execution stays x86-only above.
 	a64 := build(filepath.Join(dir, "a64.bin"), "-target", "arm64-linux", "-g")
 	a64Out, err := exec.Command("nm", a64).Output()

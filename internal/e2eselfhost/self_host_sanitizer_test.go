@@ -50,7 +50,7 @@ const sanSelfHostCleanSrc = `function main(): i32 {
 // a documented no-op in this runtime (irlower.fern: "a no-op under the
 // bump/leak heap"), so unlike the native leg NOTHING here is freed and
 // the census says so — which is the census being accurate about the
-// runtime it is measuring, not a divergence to paper over. Exit code 42
+// runtime it is measuring, not a divergence to hide. Exit code 42
 // rides through the report untouched.
 const sanSelfHostLeakSrc = `function main(): i32 {
     var a: usize = __alloc(60);

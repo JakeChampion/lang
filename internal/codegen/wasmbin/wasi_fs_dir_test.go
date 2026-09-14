@@ -308,7 +308,7 @@ func TestFsCreateDirAll(t *testing.T) {
 	}
 }
 
-// TestFsStatFieldsPreview1 pins the whole of what preview 1 can and cannot
+// TestFsStatFieldsPreview1 pins everything preview 1 can and cannot
 // answer about a file.
 //
 // `filestat` carries dev, ino, nlink, size and the three timestamps; it has no

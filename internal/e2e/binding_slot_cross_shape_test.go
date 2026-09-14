@@ -9,7 +9,7 @@ import "testing"
 // name to the wrong-shaped slot — a later-lowered `var t: string` stored its
 // two words through the binding's one-word slot (operand imbalance /
 // garbage reads), the exit dec sweep swept the wrong slot, and the entry
-// zero-init covered a slot nothing read. Observed in the wild as the
+// zero-init covered a slot nothing read. Observed in practice as the
 // self-host interp's ExprTuple loop trapping its own arm64 bounds check
 // (exit 134) once a sibling arm gained `var t: string` (#4497). The fix
 // makes the cross-shape remap SCOPED: bindingSlotScoped restores the

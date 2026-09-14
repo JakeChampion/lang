@@ -130,7 +130,7 @@ func TestElideKeepsEscapingClosure(t *testing.T) {
 	// `print_closure` returns its arg unchanged. Calling it
 	// with `f` forces `f` to flow through a non-canonical
 	// reader (OpLoadLocal followed by an arg push, not by
-	// the +8/add/load/call dance).
+	// the +8/add/load/call sequence).
 	p := loweredAndDefuncdAndElided(t, `function take(g: () => i32): i32 {
 		return g();
 	}

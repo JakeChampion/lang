@@ -84,7 +84,7 @@ function main(): i32 {
     if (b2 - b1 >= 65536) { return 98; }
     return 0;
 }`, 0},
-	// A CONTROL, not a teeth case: the concat operand path was already flat before
+	// A CONTROL, not a guard: the concat operand path was already flat before
 	// this change and must stay flat. The widening reaches emit_str_concat_reclaim,
 	// map inserts and call arguments as well as the `.len()` receiver, so pinning no
 	// regression there is worth the runtime.

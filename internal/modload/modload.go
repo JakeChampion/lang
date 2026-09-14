@@ -1976,7 +1976,7 @@ func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
 //
 // A nested function or lambda is its own scope and is pruned:
 // rewriteNestedFuncBody seeds one from this set and adds its own
-// binders there, so letting them bleed out would suppress the
+// binders there, so letting them escape would suppress the
 // rewrite of a module name the enclosing body legitimately uses.
 func collectLocals(b *ast.Block, dst map[string]bool) {
 	if b == nil {

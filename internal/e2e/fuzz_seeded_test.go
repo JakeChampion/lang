@@ -66,7 +66,7 @@ function main(): i32 {
     // A passing target passes at any seed.
     if (outcome_failed(fuzz.fuzz_run_seeded(seeds, 200, 7 as i64, always_pass))) { return 6; }
 
-    // Guard rails preserved.
+    // Guards preserved.
     if (!outcome_failed(fuzz.fuzz_run_seeded(seeds, 0, 1 as i64, always_pass))) { return 7; }
     var empty: u8[][] = [];
     if (!outcome_failed(fuzz.fuzz_run_seeded(empty, 10, 1 as i64, always_pass))) { return 8; }

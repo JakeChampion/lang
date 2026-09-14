@@ -1554,7 +1554,7 @@ function file_readable(path: string): boolean {
 //
 // A document declaring `file=PATH` blocks tangles to one module per path,
 // each under a `// ==> path <==` banner, because a multi-module program is
-// one narrative and several files.
+// one document and several files.
 function run_tangle(path: string, out_path: string, chunk: string): i32 {
     var src: string = "";
     var ok: boolean = false;

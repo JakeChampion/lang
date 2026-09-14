@@ -9,7 +9,7 @@ import (
 
 // core/cmp's generic array reductions `max_of[T: Ord](xs) -> Option[T]` and
 // `min_of` — the any-`Ord`-type replacement for std/array's per-width
-// `max_i64` / `min_i64` / … zoo (#4387 item 2). Like the shipped `sort` /
+// `max_i64` / `min_i64` / … family (#4387 item 2). Like the shipped `sort` /
 // `is_sorted`, the `T: Ord` bound monomorphises `.cmp` to a direct call per
 // element type, so the body lowers on the native backends AND the self-host IR
 // path. Empty -> None; ties keep the first extremum (strict `> 0` / `< 0`).

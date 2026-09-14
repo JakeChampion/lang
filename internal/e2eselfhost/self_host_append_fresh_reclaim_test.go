@@ -12,7 +12,7 @@ import (
 // orphan a buffer per copy-grow in the caller. The native fix was in the
 // freshness oracle (computeFreshLocals' COW self-reassign carve-out did not
 // list `__method_Array_push`); this pins that the self-hosted compiler's IR
-// path is bounded on the same shape, so the two reclaim stories stay in step.
+// path is bounded on the same shape, so the two reclaim paths stay in step.
 //
 // Probe is `__heap_bump_bytes()` — the bump high-water, which lowers on the
 // self-host IR path (#3534). Each phase warms up, samples, churns 10x more and

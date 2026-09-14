@@ -4096,7 +4096,7 @@ function main(): i32 {
 // the body with a FRESH env (functions don't see the caller's
 // locals — lexical scope).
 //
-// Single-arg keeps the type story simple: i32 in, i32 out.
+// Single-arg keeps the types simple: i32 in, i32 out.
 // Multi-arg would need parallel param/arg arrays at the Call
 // site; trivially additive but doubles the test's line count
 // without proving anything new about the calling convention.
@@ -5795,7 +5795,7 @@ function main(): i32 {
 //
 // Token surface still ~10% of the real lang lexer but the
 // shape now matches enough that the bigger port can land
-// incrementally without re-deriving the tokenisation skeleton.
+// incrementally without re-deriving the tokenisation structure.
 func TestArm64LexerV3(t *testing.T) {
 	src := `
 import "std/i32";
@@ -9194,7 +9194,7 @@ function main(): i32 {
 //
 //	branches differ: (i32, f32) vs (i64, f32)
 //
-// Same story for `(i64, f64)` mixed with `(i64, f32)` —
+// The same for `(i64, f64)` mixed with `(i64, f32)` —
 // any whole-tuple-Equal failure short-circuited the
 // per-element widening.
 //

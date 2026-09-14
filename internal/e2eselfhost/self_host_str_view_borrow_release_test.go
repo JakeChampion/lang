@@ -32,11 +32,11 @@ import (
 //	slice source            0      54400 -> 0
 //	len(x) builtin          0      48000 -> 0
 //
-// The register columns are 0 on both sides, so these gates only bite on the wasm
+// The register columns are 0 on both sides, so these gates only fail on the wasm
 // leg. They are still run on all three: a future change that made the register
 // path allocate would show up here, and the cost of the extra legs is a second.
 //
-// Blast radius is checked rather than asserted: the compiler's OWN x86-64
+// Reach is checked rather than asserted: the compiler's OWN x86-64
 // emission is byte-identical across both compilers — 1.7M lines — because a
 // parked slot is `0 - 1` on every non-wasm target and free_parked_view_after
 // then emits nothing.

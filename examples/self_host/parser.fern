@@ -8645,7 +8645,7 @@ pub function split_top_commas(s: string): string[] {
 // Types are carried through the self-host compiler as flat STRINGS ("i32",
 // "Map[string, i32]", "Option[(string, string)]", "i32[]", …) that a dozen
 // downstream sites re-decode by hand — depth-tracking byte scans keyed on exact
-// separators ("[", "]", "(", ", "), off-by-one bracket surgery, and unsound
+// separators ("[", "]", "(", ", "), off-by-one bracket arithmetic, and unsound
 // "names never contain X" assumptions (asmcore ty_from_name / split_tuple_ret /
 // tuple_ret_tag_at, checker's six type_from_name* resolvers, wasm). Each is a
 // fresh chance to mis-read a nested generic or tuple.
@@ -12078,7 +12078,7 @@ function ge_inst_of(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): GEInst {
 // (`(i32) => i32`) keys to `_i32_____i32` instead of dragging its parens /
 // spaces / `=>` into an unassemblable symbol. (The sibling `sanitize_key`
 // above handles only bracket/comma keys and is shared with fn/struct mangling,
-// so a fn-only transform stays out of its blast radius.)
+// so a fn-only transform stays out of its reach.)
 function fn_key_sanitize(s: string): string {
     var out: string = "";
     var i: i32 = 0;
@@ -15664,7 +15664,7 @@ function irt_guess(e: ast.Expr, params: ast.ParamDecl[], funcs: FuncDecl[], stru
             if (st2.len() >= 3 && st2[0] == b'[' && st2[st2.len() - 1] == b']') { return st2; }
             return "";
         },
-        // `t.N` on a tuple — the same lifted-lambda story (`() => t.0` over a
+        // `t.N` on a tuple — the same lifted-lambda case (`() => t.0` over a
         // captured tuple). me_tuple_elem_type already decodes a "(T0, T1)"
         // spelling depth-aware; reuse it rather than write a second decoder. A
         // non-numeric field is a struct field, which needs a struct table this

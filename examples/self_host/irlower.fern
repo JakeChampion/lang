@@ -167,7 +167,7 @@ pub struct LocalInfo {
     // is_fnarr: an array of BARE named-function values (`(() => T)[]`), as
     // opposed to is_closurearr's boxes — deliberately separate, because these
     // call through the plain call_indirect path, not env-first. The distinction
-    // bites at `.append(f)`: a bare 0-arg fn name appended to such a slot is a
+    // shows at `.append(f)`: a bare 0-arg fn name appended to such a slot is a
     // fn POINTER (const_func), not a `const`-style call. Without the flag the
     // appended `f` const-calls and stores its RESULT, so `fns[i]()` segfaults.
     is_fnarr: boolean,
@@ -1816,7 +1816,7 @@ function (s: LowerState) defer_alias_slot(name: string): i32 {
 //   - "OPTARR:"'s consuming-match analysis is per-block (#4357) and frees the
 //     value before the block ends, so a sweep claim on that half would be a
 //     second release. The no-match half is what carries the sweep credit.
-//   - "RCENUM:" is the same story one type over: the match-consumed half must
+//   - "RCENUM:" is the same case one type over: the match-consumed half must
 //     not be swept, so #6606 credited the no-match half separately as
 //     "RCENUMS:" instead of widening "RCENUM:". The two are appended against ONE
 //     entry, so they cannot end up keyed differently; the exact-vs-retired
@@ -11202,7 +11202,7 @@ function lower_opt_make_payload(tag: i32, arg: ast.Expr, s: LowerState): LowerSt
     // Perceus alias-inc for a payload that aliases a local: the Option/Result box
     // references the payload, so retain it (rc_inc) so the exit dec-sweep doesn't
     // free the source local out from under the box. Without it `Ok(names)` /
-    // `Some(items)` over-releases — a UAF that only bites once a later allocation
+    // `Some(items)` over-releases — a UAF that only shows once a later allocation
     // reuses the freed cell (the match-arm that extracts the payload already
     // reclaims it at arm exit, so construction must balance that with an inc).
     // Mirrors the enum-variant construction's alias-inc (#3720); only a bare ident
@@ -23024,7 +23024,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // ALL THREE tuple classes, because each is a state a credited source
             // can be in: a scalar tuple is "TUP:", an rc tuple "TUPRC:"/"TUPRCS:",
             // and an alias this very clause MOVED into holds "TUPRCS:" ALONE —
-            // the surgery below drops its "TUP:" row. Gating on fewer desynced
+            // the rewrite below drops its "TUP:" row. Gating on fewer desynced
             // the pair both ways: without "TUPRC:" the rc-tuple alias kept its
             // credit while the retain stopped firing (exit 99 on `var t: (i32,
             // i32[]) = (i, [i, i+1]); var v = t;`); without "TUPRCS:" the second
@@ -23052,7 +23052,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // Dead-alias cancellation, tuple limb (#4402 opt 1): a proven
                 // borrowed VIEW skips the retain, and bind_var_slot elides
                 // the alias slot's shallow "TUP:" box dec under the same
-                // predicate. No credit surgery: the source keeps its deep
+                // predicate. No credit rewrite: the source keeps its deep
                 // release at the exit sweep.
                 else if (!tuple_dead_alias_bind(v, se)) { alias_inc = true; }
             }
@@ -23130,7 +23130,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // Dead-alias cancellation, struct limb (#4402 opt 1): a
                 // proven borrowed VIEW skips the retain, and bind_var_slot
                 // elides the alias slot's box-only sweep dec under the same
-                // predicate. No credit surgery: the source keeps its one
+                // predicate. No credit rewrite: the source keeps its one
                 // deep field walk at the exit sweep.
                 else if (!struct_dead_alias_bind(v, se)) { alias_inc = true; }
             }
@@ -23146,7 +23146,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // `Option[i32[]]` frees the element buffer under the surviving owner.
             //
             // No move-on-alias and no dead-alias cancellation here: both are
-            // credit surgery on classes whose release roles this pairing has
+            // credit rewrites on classes whose release roles this pairing has
             // measured, and neither is needed to close the leak. The bind
             // retains and the alias's box-only sweep gives it back on the same
             // path, which is the duplication contract this ladder is built on.
@@ -30786,7 +30786,7 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // belongs to the caller, which passes this result back in as its alias_ok.
 //
 // The tuple limbs are wired here too (#7750). Their move-on-alias credit
-// SURGERY — the "TUPRCS:" deep class migrates to the alias row at a move and
+// REWRITE — the "TUPRCS:" deep class migrates to the alias row at a move and
 // the alias's "TUP:" row is dropped — leaves a moved-into link holding
 // "TUPRCS:" alone, so the retain gate at the NEXT link has to recognise that
 // state as a credited source (slot_is_credited_tuple); it did not, which is
@@ -36355,7 +36355,7 @@ function stash_fresh_str_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i
 // __fern_str_view_free, not __fern_str_free: the latter skips an immortal rc by
 // design, so draining a slice receiver through it strands the box it was meant
 // to release. On wasm the same slot holds a payload-sized COPY with an ordinary
-// rc, and both helpers free it — the distinction only bites on the backends
+// rc, and both helpers free it — the distinction only matters on the backends
 // where a slice is zero-copy.
 function free_stashed_recv(s: LowerState, slots: i32[], view: boolean): LowerState {
     if (!view) { return free_stashed_str_args(s, slots); }
@@ -38868,7 +38868,7 @@ function collect_fresh_map_in_stmt(st: ast.Stmt, acc: string[]): string[] {
 // the map local `name`, found anywhere in `stmts` (nested if / while / for /
 // match bodies included); "" if unannotated or not found. `want_key` picks the
 // side — this was two functions differing only in which of map_key_of /
-// map_value_of they called, recursion skeleton and all.
+// map_value_of they called, recursion structure and all.
 function map_decl_type(stmts: ast.Stmt[], name: string, want_key: boolean): string {
     for stmt in stmts {
         match (stmt) {
@@ -42958,7 +42958,7 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: StructTab, fnb
 //   - not a PARAMETER: the caller owns that box, and handing it back is the
 //     `return self` shape this whole registry exists to refuse.
 //   - never REASSIGNED, which is what makes the declaration's init the whole
-//     story rather than one of several possible final values.
+//     answer rather than one of several possible final values.
 //   - its init is itself strict-fresh, recursively — a literal, a forwarding
 //     call, or another such local. Fern requires declaration before use, so the
 //     chain walks strictly backwards and terminates.
@@ -46231,7 +46231,7 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     // The WALK runs under __fern_rc_is_unique, the dec unconditionally.
                     // At rc 1 — a fresh struct literal, or a payload the construction
                     // MOVED — the guard passes and this is the release it always was.
-                    // It earns its keep on a COUNTED payload, where the source local
+                    // It matters on a COUNTED payload, where the source local
                     // still holds a claim: two static walks free every field buffer
                     // twice, and the census cannot see it (allocs == frees at
                     // live_bytes 0, only __rc_underflow_count() dissenting). Gated, the
@@ -47044,7 +47044,7 @@ function opt_stmt_binding_escapes(st: ast.Stmt, name: string, variant: string, s
 // the box's rc FIELDS as well, so it needs the stronger property: no field of the
 // binding is extracted whole. `match (o) { Some(p) => { held = p.xs; } … }` passes
 // the box-level gate — `p` itself never escapes — while handing `held` the buffer
-// the deep drop would free, a use-after-free the freelist happily hides.
+// the deep drop would free, a use-after-free the freelist hides.
 //
 // So this walker gates ONLY the deep-drop upgrade: a moved field downgrades the
 // drop back to the shallow box dec (today's sound leak), it never withdraws the
@@ -55191,7 +55191,7 @@ function self_overwrite_reuse_sites(body: ast.Stmt[], structs: StructTab, fresh_
 // tryStructReuseOverwrite spread admission (#6124).
 //
 // The EMITTER needed no port. emit_self_overwrite_reuse already evaluates every
-// override value into a temp before any box surgery (its step 1), which is what
+// override value into a temp before any box rewrite (its step 1), which is what
 // makes an override that reads the base (`n: p.n + 1`) order-safe; the rebind
 // family's extra "no override value may reference d" gate is a property of how
 // its DONOR is proved dead, not of the emitter. What this family adds is the
@@ -55887,7 +55887,7 @@ function lower_stmt_or_self_assign_reuse(st: ast.Stmt, s: LowerState): LowerStat
 // The static escape walk proves d is sole-owner; the __fern_rc_is_unique
 // guard makes any FUTURE hole in that walk degrade instead of corrupting:
 //   1. every override value is evaluated into a temp (reads of d's old
-//      fields complete before any box surgery, on both branches);
+//      fields complete before any box rewrite, on both branches);
 //   2. reused = __fern_rc_is_unique(d); token = reused ? d : 0;
 //   3. box = __fern_alloc_reuse(token, nfields+1 slots) — the SAME block on the
 //      reuse path (same type -> the cap always fits), a fresh rc=1 arr-box
@@ -55917,7 +55917,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
             var nf: i32 = decl_field_count(s.frame.structs, slit.type_name);
             // 1. Evaluate every OVERRIDE value into a temp local FIRST (native
             //    tryStructReuseOverwrite step 1): the reads of d's old fields all
-            //    complete before any box surgery, on both branches.
+            //    complete before any box rewrite, on both branches.
             //    An `own` base's `f: d.f.append(x)` over a scalar-element array
             //    field is the exception (inplace[j]): on the reuse arm it pushes
             //    onto the field the box already owns, so it is evaluated PER ARM
@@ -70724,11 +70724,11 @@ function str_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // struct_dead_alias_bind: the struct sibling — THE one predicate for the
 // struct limb, consulted by the ladder (skip the retain) and by bind_var_slot
 // (skip the alias slot's sweep dec). Under duplication the alias holds only
-// the BOX-ONLY "NODEEP:" release, so that box dec is the whole of what the
+// the BOX-ONLY "NODEEP:" release, so that box dec is all the
 // cancellation elides — the source keeps its one deep field walk at the exit
 // sweep, exactly as before. The slot facts are final: the source must be a
 // credited (non-param) struct slot, and a MOVE site takes the move path
-// (which does credit surgery this predicate must not preempt).
+// (which does credit rewrites this predicate must not preempt).
 function struct_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
         ast.ExprIdent(id) => {
@@ -70747,8 +70747,8 @@ function struct_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // tuple_dead_alias_bind: the tuple sibling — THE one predicate for the tuple
 // limb, consulted by the ladder and bind_var_slot. Under duplication the
 // alias holds only the shallow "TUP:" box dec (the deep "TUPRCS:" release
-// stays with the source), so that box dec is the whole of what the
-// cancellation elides — no credit surgery, and a MOVE site takes the move
+// stays with the source), so that box dec is all the
+// cancellation elides — no credit rewrite, and a MOVE site takes the move
 // path (which transfers the deep class) instead.
 function tuple_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
@@ -77846,7 +77846,7 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
     // arrays — the earlier shape re-walked every function's statements
     // (grow_dying_passes_stmt + registry allocations) on EVERY round, which is
     // pure garbage under the leak-mode self-compile arena (#3425) and helped
-    // push the per-module-built compiler over the wall.
+    // push the per-module-built compiler over the arena limit.
     var e_fk: i32[] = [];
     var e_ck: i32[] = [];
     var e_argi: i32[] = [];
@@ -78815,7 +78815,7 @@ if (is_arr && !is_arrarr && arrarr_e == "") {
         // UNANNOTATED array-of-tuples from a CALL (`var ps = mk()` where
         // `mk(): (i32, f64)[]`). The literal arm above covers the inline
         // form; this is the same gap one step out, and it is the SOURCE of
-        // the missing tag rather than another place to paper over it —
+        // the missing tag rather than another place to hide it —
         // populating arrarr_e here serves every consumer that reads a tuple
         // tag off the slot, including `for p in ps`, which has no
         // ExprIndex node and so cannot use the per-consumer `.ty` fallback

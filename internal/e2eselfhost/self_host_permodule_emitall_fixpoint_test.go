@@ -18,7 +18,7 @@ import (
 // batches of 8 units per process — the exact configuration that OOM'd (exit 137)
 // BEFORE the fix.
 //
-// The pre-fix story (recorded then deferred in docs/SELFHOST-AST-RETIREMENT.md):
+// The pre-fix behaviour (recorded then deferred in docs/SELFHOST-AST-RETIREMENT.md):
 // emit-all runs a whole batch in ONE process, and each unit did TWO full
 // whole-module lowering passes (the eligibility pre-check + the emit). On the
 // self-host bump arena (no GC) those stack, so a unit peaked ~7.6 GB and a batch

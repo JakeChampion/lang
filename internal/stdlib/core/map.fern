@@ -201,7 +201,7 @@ function __map_seed(buf: usize): i32 {
 // __map_hash hashes a Map key. It is now SCALAR-ONLY: `k` is a
 // native i32 / u32 key value, hashed directly. The former
 // string (`k as string`) and wide-scalar (`k as usize` +
-// __load_i64) branches were the #5042 "i32-param footgun" — a
+// __load_i64) branches were the #5042 "i32-param truncation" — a
 // 32-bit param reinterpreted as a pointer, which truncated the
 // high 32 bits once the heap crossed 4 GiB (arm64-darwin). They
 // are dead since #5052 moved every non-scalar key onto its own
@@ -529,7 +529,7 @@ pub function __map_len_impl(m: usize): i32 {
 // __map_fnv_str_seeded / __load_i64): routing through `__map_hash(k as i32, …)`
 // here would TRUNCATE a 64-bit string/cell pointer before the
 // `k as string` reconstruction and silently probe the wrong bucket —
-// exactly the i32-param footgun __map_hash's own doc describes (#5042
+// exactly the i32-param truncation __map_hash's own doc describes (#5042
 // root cause; the legacy monomorphic bodies only avoided it because a
 // usize argument passed to the i32 param happened to keep the full
 // register width).

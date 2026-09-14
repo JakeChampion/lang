@@ -7714,7 +7714,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    fmul d3, d3, d2\n");
     s = s.write("    fadd d0, d0, d3\n");
     s = s.write("    ret\n");
-    // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz dance recovers the
+    // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz rewrite recovers the
     // bits 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
     s = s.write("__fern_kcos:\n");
     s = s.write("    fmul d1, d0, d0\n");

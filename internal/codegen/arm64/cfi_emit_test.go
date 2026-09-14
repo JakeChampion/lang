@@ -201,7 +201,7 @@ func TestDarwinEmitsCFI(t *testing.T) {
 // architecture's — the x86-64 sibling learned that on an aarch64 runner.
 //
 // The object-format half, because being aarch64 is not sufficient. On Apple
-// Silicon `clang` assembles aarch64 happily and targets Mach-O, then rejects
+// Silicon `clang` assembles aarch64 and targets Mach-O, then rejects
 // every ELF directive the emitter writes, so a probe of instructions alone
 // selects a tool that cannot assemble the real input and the test fails where
 // it should have skipped. The probe therefore carries the `.type`, `.size` and

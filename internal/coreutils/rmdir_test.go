@@ -19,7 +19,7 @@ import (
 //     EBUSY only after finding the directory really is non-empty, which is
 //     what `rmdir --ignore-fail-on-non-empty /` exercises.
 //
-// The -p walk is string surgery on the operand rather than a resolved path, so
+// The -p walk is string manipulation on the operand rather than a resolved path, so
 // `./d` climbs to `.` (EINVAL) and `a//b` climbs to `a`; both are here.
 
 // rmdirTree is the fixture: empty directories at several depths, a non-empty

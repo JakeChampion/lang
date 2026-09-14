@@ -246,7 +246,7 @@ var capabilityProfiles = map[string]capabilityProfile{
 	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal"},
 
 	// The proxy world: an HTTP handler and nothing else. No stdout
-	// stream and no filesystem — which is what gives `stdout` its teeth
+	// stream and no filesystem — which is what makes `stdout` meaningful
 	// as a capability distinct from `log` (#6513, #6516) — and no
 	// process, so neither `args` nor `env`: the world imports neither
 	// argv nor `wasi:cli/environment`, and a component carrying one

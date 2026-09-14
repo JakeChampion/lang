@@ -11,7 +11,7 @@
 // chunked transfer encoding, no persistent connections (every
 // response advertises `Connection: close`), max 8 KiB headers,
 // max 1 MiB body. Sufficient for CLI tools and edge handlers;
-// the bigger story (keep-alive, TE chunked, TLS) waits on a
+// the rest (keep-alive, TE chunked, TLS) waits on a
 // richer lang shape.
 
 import "core/int";

@@ -1408,7 +1408,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     // __fern_kcos(%xmm0 = r, |r| <= pi/4) -> cos r.
     //   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
     //   cos = w + (((1-w) - hz) + z*(z*p))
-    // The (1-w)-hz dance recovers the bits 1-hz threw away; computing
+    // The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
     // 1 - hz + z*z*p directly loses them and costs ~2 ulp.
     s = s.write("__fern_kcos:\n");
     s = s.write("    movsd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");   // z
@@ -1508,7 +1508,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     //   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they issue
     //   in parallel instead of as one 7-deep Horner.
     //   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
-    // The bit-twiddling below happily extracts an exponent from 0 or +Inf and
+    // The bit-twiddling below extracts an exponent from 0 or +Inf and
     // carries on, so without the guards log(0) returned -709.09 and log(+Inf)
     // 709.78 — finite garbage. log(-0) == log(0) == -Inf, which the equality
     // branch covers.
@@ -7368,7 +7368,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
         s = asmcore.emit_str_box_data_from(s, lit0);
         s = s.write("    .text\n");
     }
-    // Same story for a static aggregate constant the helper body interns: the
+    // The same applies to a static aggregate constant the helper body interns: the
     // main .data pool was written before this runs, so flush the new blocks here
     // and return to .text. No helper currently builds one, so this is a no-op
     // today — present so a future Fern-written helper that does is not silently

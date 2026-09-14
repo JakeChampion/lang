@@ -90,7 +90,7 @@ func stmtTempStrConcatBumpSrc(n string) string {
 // inner arr_dec clobbers its box return register, the box is stashed in a scratch
 // local and re-loaded for the free (the exit sweep's slot-reload pattern) — a
 // naive box→drop→box chain double-freed the field buffer instead (the __rc_underflow
-// detector below has teeth for exactly that regression).
+// detector below catches exactly that regression).
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function main(): i32 {

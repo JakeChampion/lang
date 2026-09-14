@@ -21,7 +21,7 @@ import (
 // answers agreed throughout and `__rc_underflow_count()` was 0, so nothing but
 // the byte count dissented.
 //
-// The mix is the whole of it, and it falls between two classes that each handle
+// The mix is all of it, and it falls between two classes that each handle
 // one half. `tuple_lit_rc_reclaimable` admits a bare-ident element, so the tuple
 // is "TUPRC:" and out of "TUP:" (the two sets are kept disjoint). But "TUPRC:"
 // is consumed only by the StmtVar rebind path; the scope-exit sweep needs

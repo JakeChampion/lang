@@ -13,7 +13,7 @@ import (
 // generated `__drop_struct_<T>`, the per-element array walk — so the type has
 // to hold for every box of the enum, not just the variant it was read from.
 //
-// The union shape is where that bites: `E { VA(A), VB(B) }` has one droppable
+// The union shape is where that breaks: `E { VA(A), VB(B) }` has one droppable
 // pointer at one shared offset in both variants, so an offset-and-kind
 // signature calls it uniform and hands out A's type for a box that may hold a
 // B. It measured as one leaked buffer per replacement on the enum-reuse

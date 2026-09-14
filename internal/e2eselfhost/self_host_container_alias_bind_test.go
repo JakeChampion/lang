@@ -307,7 +307,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// measured an OVER-RELEASE here that the census cannot see: exit 99
 			// at `200/200 live_bytes 0`.
 			//
-			// The tuple limbs perform move-on-alias credit SURGERY: at a move the
+			// The tuple limbs perform move-on-alias credit REWRITE: at a move the
 			// deep "TUPRCS:" class migrates from the source to the alias row and
 			// the alias's shallow "TUP:" row is dropped. After the first hop `v`
 			// therefore holds "TUPRCS:" ALONE, and the ladder's retain gate at the
@@ -361,7 +361,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 4, allocs: 200, frees: 200,
 		},
 		{
-			// The chain in an IF ARM. Moves are top-level only, so no surgery
+			// The chain in an IF ARM. Moves are top-level only, so no rewrite
 			// happens here: every link retains and takes the shallow dec on the
 			// taken path, and the source deep-frees unconditionally.
 			name: "tuple_alias_chain_conditional",
@@ -391,7 +391,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// The SCALAR tuple chain: no deep class, so a move performs no
-			// surgery and each hop reads a "TUP:" source. This pair leaked
+			// rewrite and each hop reads a "TUP:" source. This pair leaked
 			// under the per-site rule (100/0) and was never at risk of the
 			// over-release; it is here so the two limbs stand or fall together.
 			name: "tuple_alias_scalar_chain",

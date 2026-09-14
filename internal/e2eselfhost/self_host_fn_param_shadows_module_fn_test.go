@@ -34,7 +34,7 @@ import (
 //     puts the parameter in a fn-value ARGUMENT position, which is where the
 //     boxing happens.
 //
-// Teeth verified by removing the guard and rebuilding the self-host compiler:
+// Verified by removing the guard and rebuilding the self-host compiler:
 // `uncalled-module-fn` returns 1 instead of 42, `forwarded-through-two-levels`
 // returns 1 instead of 2.
 //
@@ -49,7 +49,7 @@ import (
 // makes the lambda capture it, and the existing param guard then leaves the
 // capture ident alone.
 //
-// Teeth for those: before the fix `captured-fn-param` returned 1 instead of 2,
+// Verified for those: before the fix `captured-fn-param` returned 1 instead of 2,
 // and `std/fuzz`'s documented `r.fuzz(...)` receiver method reported
 // `not ok 1 - always passes: found 0xFF` where the interpreter reported `ok 1`.
 var fnParamShadowsModuleFnCases = []struct {

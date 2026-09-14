@@ -115,7 +115,7 @@ type invocation struct {
 	// harness's own. A case needs one when an operand has to be
 	// RELATIVE, which is the only way to spell uniq's output operand as
 	// `-c` or `+2` and see what POSIXLY_CORRECT does with it — and it is
-	// the whole of what `pwd` is about, where a path reached through a
+	// all `pwd` is about, where a path reached through a
 	// symbolic link is how the logical and physical answers differ.
 	dir string
 	// prepare runs immediately before each side starts, so a case for a

@@ -6291,7 +6291,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			return p.parseIfExpr()
 		case "match":
 			// `match (e) { Variant(b) => EXPR, _ => EXPR }` in
-			// expression position. Same dispatch story as `if`:
+			// expression position. Same dispatch as `if`:
 			// parseStmt routes `match` to parseMatch (Stmt) before
 			// expression parsing ever sees it, so this branch only
 			// fires from a true expression context.

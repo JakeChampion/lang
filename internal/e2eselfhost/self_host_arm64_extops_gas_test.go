@@ -214,7 +214,7 @@ func TestSelfHostArm64ExtrBitfieldGas(t *testing.T) {
 // the two operand-less-ish branches — every mnemonic the native arm64
 // assembler encoded while the self-host one silently recorded it as unknown.
 //
-// The W rows are the ones with teeth. A 32-bit bitfield instruction is not its
+// The W rows are what catches this. A 32-bit bitfield instruction is not its
 // 64-bit sibling with sf cleared: N drops too, so `ubfx w1, w2, #3, #8` is
 // 0x53032841 and not 0xd3432841. The self-host's ubfx encoder hardcoded the
 // 64-bit base, so every W-form extract it assembled was a 64-bit UBFM.

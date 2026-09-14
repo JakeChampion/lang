@@ -8,7 +8,7 @@ import (
 )
 
 // TestLiftLoopWithConditionalStore — mimics a pattern that
-// failed in the wild: a loop body that conditionally stores
+// failed in practice: a loop body that conditionally stores
 // to a local. Should not trip phi dominance.
 //
 //	var x = 0;

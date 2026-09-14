@@ -411,7 +411,7 @@ func TestDf(t *testing.T) {
 // Under the swap, used becomes blocks - bavail and available becomes
 // bfree, and their sum exceeds blocks by the whole reserve.
 //
-// The reserve has to be real for that to bite, so the filesystem is chosen
+// The reserve has to be real for that to show, so the filesystem is chosen
 // by asking the kernel which of the paths the suite can reach keeps one; a
 // machine where none does fails rather than passing vacuously.
 func TestDfAvailableIsNotFree(t *testing.T) {

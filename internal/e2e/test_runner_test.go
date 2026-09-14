@@ -2863,7 +2863,7 @@ func TestRunnerBenchExample(t *testing.T) {
 
 // `examples/tests/array_reductions_test.fern` exercises the
 // wider-int / float array reductions through the generic bounded
-// verbs that replaced std/array's per-width zoo (#5349):
+// verbs that replaced std/array's per-width family (#5349):
 // `num.sum[T: Add + Zero]` for i64 / u32 / f64 totals and
 // `cmp.max_of` / `cmp.min_of[T: Ord]` for the extrema, plus
 // std/array's own `avg_i64` / `avg_f64` (no generic equivalent).

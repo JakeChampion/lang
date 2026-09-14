@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// resultTupleIRCases close the comma-containing-tuple-element story (after nested
+// resultTupleIRCases close the comma-containing-tuple-element case (after nested
 // tuples): a `Result[T, E]` element of a tuple — `(1, Ok(5))`, accessed via
 // `match (t.1)` — now lowers on the IR path. `Result[T, E]` has an internal comma
 // but is bracketed, so the now-depth-aware tag decoders keep it whole; the only

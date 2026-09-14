@@ -2236,7 +2236,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // methods `std/platform` puts on the handler's bag through the proxy world
 // — the target the bag was designed for (docs/PLATFORM-RESEARCH.md Rec §1).
 // The proxy profile grants log / now / random and nothing else, so this is
-// also where the capability split has teeth: the handler's output stream is
+// also where the capability split matters: the handler's output stream is
 // `plat.log`, there being no stdout to fall back on, and `plat.env` is an
 // E066 here rather than something to call.
 //

@@ -2546,7 +2546,7 @@ function statfs_counts_src(t: string): string {
 // geometry of the filesystem the path resolves on, plus the two length limits a
 // path on it is held to.
 //
-// Same skeleton as rt_src_stat — a NUL-terminated heap copy of the path, the
+// Same shape as rt_src_stat — a NUL-terminated heap copy of the path, the
 // errno classified by the shared __fern_io_error against a FRESH copy of that
 // path — and it diverges only where the kernels do.
 //

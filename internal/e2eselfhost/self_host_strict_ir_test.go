@@ -669,7 +669,7 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrictIRRefusesBail is the teeth: a program that genuinely bails
+// TestSelfHostStrictIRRefusesBail is the gate: a program that genuinely bails
 // must be REFUSED, and the flag must name the bail site. Without this, a green
 // corpus is consistent with the flag doing nothing at all.
 //

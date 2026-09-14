@@ -111,7 +111,7 @@ func (g *generator) emitSeccompRuntime() {
 	// install a filter of its own choosing.
 	//
 	// rt_sigreturn is likewise absent, which is a classic seccomp
-	// footgun — it is required whenever a signal handler returns. Fern
+	// mistake — it is required whenever a signal handler returns. Fern
 	// installs no signal handlers, and an unhandled fatal signal kills
 	// the process without ever returning, so there is nothing to permit.
 	// Adding a handler would mean adding rt_sigreturn here.
@@ -1414,7 +1414,7 @@ type generator struct {
 	// provides (behaviour-identical — the inline path mirrors the helper
 	// instruction-for-instruction), shrinking the `.s` and its assembler
 	// footprint. Every normal function (all user code, and every self-host
-	// function but the one monster) stays on the inline fast path. Unlike
+	// function but the largest) stays on the inline fast path. Unlike
 	// arm64 — where the same field also dodges the ±128 MB branch-reach
 	// overflow — x86-64's rel32 jumps never overflow, so here the sole
 	// motive is `.s` size / assembler memory.
@@ -2703,7 +2703,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// Stash the raw 32-bit bit pattern as an i32 on the
 		// operand stack — same shape as arm64, where floats
 		// live as raw bits on the stack and only move into
-		// xmm registers at op time. Two-line dance: zero-
+		// xmm registers at op time. Two-line sequence: zero-
 		// extend the bit pattern into rax, push.
 		bits := math.Float32bits(op.F32)
 		g.emit(fmt.Sprintf("mov eax, %d", int32(bits)))
@@ -7232,7 +7232,7 @@ func (g *generator) emitAllocRuntime() {
 	// big lazy arena from Linux's overcommit accounting — without it the
 	// heuristic refuses the single 8 GiB anonymous map outright on hosts
 	// with RAM+swap below the arena size, failing every binary AT STARTUP
-	// (the arm64 backend does the same; its comment has the full story).
+	// (the arm64 backend does the same; its comment has the full detail).
 	g.emit("mov r10d, 0x4022")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
@@ -9518,7 +9518,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// __fern_kcos(xmm0=r, |r| <= pi/4) → cos r.
 	//   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
 	//   cos = w + (((1-w) - hz) + z*(z*p))
-	// The (1-w)-hz dance recovers the bits 1-hz threw away; computing
+	// The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
 	// 1 - hz + z*z*p directly loses them and costs ~2 ulp.
 	g.line("")
 	g.label("__fern_kcos")
@@ -9791,7 +9791,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_log_f64")
 	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
 	logNoScale := g.freshLabel("logNoScale")
-	// Domain guards. The bit-twiddling below happily extracts an exponent
+	// Domain guards. The bit-twiddling below extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
 	// values call for. log(-0) == log(0) == -Inf, which the equality
@@ -10793,7 +10793,7 @@ func (g *generator) emitCrc32CksumRuntime() {
 	g.emit("add rsi, 16")
 	g.emit("sub edx, 16")
 	// Priming the other three accumulators costs 48 bytes, so the wide loop
-	// only pays for itself with a fourth block's worth beyond them.
+	// only wins with a fourth block's worth beyond them.
 	g.emit("cmp edx, 112")
 	g.emit("jb .Lcrc32_fold1")
 	for i, reg := range []string{"xmm6", "xmm7", "xmm8"} {
@@ -13204,7 +13204,7 @@ const linuxPathMax = 4096
 // — statfs(2) into a 120-byte stack buffer, projected onto FsStat by
 // linuxStatfsFields. System V: rdi = path string value.
 //
-// Built on the same skeleton as __fern_stat: a NUL-terminated heap copy
+// Built on the same shape as __fern_stat: a NUL-terminated heap copy
 // of the path for the syscall, the buffer left live across
 // __fern_alloc_box so the record is copied out after the box exists, and
 // the errno classified against the ORIGINAL path value so the IoError
@@ -16110,7 +16110,7 @@ func (g *generator) emitReadDirRuntime() {
 
 // linuxStatFields maps each FileStat field onto the Linux x86-64
 // `struct stat` field it is read from: the box offset, the statbuf
-// offset, and how many bytes to load. It is the whole of what makes
+// offset, and how many bytes to load. It is all that makes
 // this target-specific — everything else about the helper is shared.
 //
 // Two loads are narrower than the field they fill. `st_nlink` is a

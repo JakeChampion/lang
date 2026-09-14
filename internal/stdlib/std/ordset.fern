@@ -13,7 +13,7 @@
 //   s.contains(2);      // true
 //   s.union(ordset.ordset_of([9])).len();   // 5
 //
-// See `std/ordmap` for the two-path (shared / unique) update story and
+// See `std/ordmap` for the two-path (shared / unique) update rules and
 // the ordering rules; both carry over unchanged. For an unordered set
 // with O(1)-ish operations use `std/pset`; for the small, insertion-
 // ordered array-backed set use `std/set`.

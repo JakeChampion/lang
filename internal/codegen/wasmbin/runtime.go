@@ -351,7 +351,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__fern_crc32_cksum")
 				case "__fern_print":
-					// fd_write under the hood; transitively
+					// fd_write underneath; transitively
 					// pulls in the byte-copy + alloc helpers.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
@@ -383,11 +383,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					}
 					needs.add("__fern_putchar")
 				case "__fern_exit":
-					// wasi_proc_exit under the hood; nothing
+					// wasi_proc_exit underneath; nothing
 					// else needed.
 					needs.add("__fern_exit")
 				case "__fern_random_i32":
-					// wasi_random_get under the hood; writes
+					// wasi_random_get underneath; writes
 					// 4 random bytes to the fixed scratch slot
 					// and returns them as an i32.
 					needs.add("__fern_random_i32")
