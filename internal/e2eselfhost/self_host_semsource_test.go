@@ -155,12 +155,11 @@ function refused_string_method(s: string): string { return s.trim(); }
 // one: the golden pins the contract's INSTANTIATION as the value type, the
 // exhausted match's last arm with no test of its own, and the refusal of a
 // payload too wide for the box's one word.
-// ---- erased type variables (docs/ERASED-GENERICS-RC.md, option 1) --------
-// An erased type variable is ONE MACHINE WORD, and nothing at run time tells a
-// pointer instantiation from a scalar one, so a generic body emits neither
-// retain nor release on one: every erased position is a MOVE. The accumulator
-// is threaded by REPLACEMENT, the astwalk fold shape, so exactly one unit is
-// live at every point and the body releases nothing.
+// ---- generic declarations (docs/SEMANTIC-GENERICS.md) ---------------------
+// A generic declaration is a TEMPLATE: a call site binds its variables and the
+// body is produced once per instantiation, named by the types bound, so the
+// accumulator is a plain i32 in one instance and a plain string[] in another.
+// The accumulator is threaded by REPLACEMENT, the astwalk fold shape.
 function fold_two[T](a: T, visit: (i32, T) => T): T {
     var acc: T = visit(1, a);
     acc = visit(2, acc);
@@ -168,25 +167,28 @@ function fold_two[T](a: T, visit: (i32, T) => T): T {
 }
 function add_at(n: i32, a: i32): i32 { return a + n; }
 function folded(): i32 { return fold_two(10, add_at); }
-// READING the accumulator after passing it needs a retain this body cannot
-// emit: the runtime increment on an erased word touches a refcount at one
-// instantiation and an integer at another. The unit planner refuses it.
-function refused_reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
+// READING the accumulator after passing it is a retain at a reference
+// instantiation and nothing at a scalar one; each instance plans its own.
+function reread[T](a: T, visit: (i32, T) => T, join: (T, T) => T): T {
     return join(visit(1, a), a);
 }
-// An erased word abandoned UNCONSUMED needs a release this body cannot emit
-// either, so the planner refuses that direction too.
-function refused_abandon[T](a: T, b: T): T { return b; }
-// A REFERENCE instantiation hands a unit to a function value, and a function
-// value LENDS every argument at a slot its TYPE does not spell consuming — so
-// the accumulator each step abandons would leak one unit per step. Refused
-// rather than admitted under a rule that is wrong at that instantiation.
+function join_at(a: i32, b: i32): i32 { return a - b; }
+function reread_int(): i32 { return reread(5, add_at, join_at); }
+// A parameter abandoned UNCONSUMED is dropped by the instance, which knows its
+// type; a template never had one to drop.
+function abandon[T](a: T, b: T): T { return b; }
+function abandon_words(): i32 {
+    var x: string[] = ["x"];
+    var y: string[] = ["y", "z"];
+    return abandon(x, y).len();
+}
+// The variable bound to a REFERENCE through a LENDING visitor: the instance
+// borrows its accumulator as the declaration says, and each step's result is
+// a unit of its own, released when the next step supersedes it.
 function add_word(n: i32, a: string[]): string[] { return a.append("x"); }
-function refused_ref_acc(): i32 { var w: string[] = []; return fold_two(w, add_word).len(); }
-// The same instantiation through a fold whose function type DOES spell the
-// accumulator slot consuming. The caller hands its unit over and takes back
-// the one the call returns, so the pair is what the admission turns on: this
-// one produces, the one above is refused, and the only difference is the own.
+function ref_acc(): i32 { var w: string[] = []; return fold_two(w, add_word).len(); }
+// And through a CONSUMING one, own in the function type: the caller hands
+// its unit over at each step and takes back the one the call returns.
 function fold_own[T](own a: T, visit: (i32, own T) => T): T {
     var acc: T = visit(1, a);
     acc = visit(2, acc);
@@ -467,11 +469,23 @@ function refused_cell_new(n: i32): i32 { var c: Cell[i32] = cell_new(n); return 
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
 import "./parser"; import "./lexer"; import "./util"; import "./irlower";
-// An erased type variable has no declaration spelling, so it is shown by the
-// name it is written with, bracketed to keep it apart from a concrete one.
-function shown(t: typeinfo.Type): string {
-    if let typeinfo.TypeErased(e) = t { return "[" + e.name + "]"; }
-    return typeinfo.spelling(t);
+function show(p: semsource.Produced): void {
+    if (!p.ok) { print("refused " + p.why); return; }
+    if (p.template) { print("template instantiated"); return; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < p.func.values.len()) {
+        if (i > 0) { out = out + " "; }
+        out = out + "v" + util.i32_to_string(i) + ":" + typeinfo.spelling(p.func.values[i]);
+        i = i + 1;
+    }
+    var modes: string = "";
+    for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
+    print("modes" + modes + " result " + typeinfo.spelling(p.func.result));
+    print(out);
+    var plan = ssaunits.plan(p.func, p.modes);
+    if (!plan.ok) { print("plan " + plan.why); }
+    print(ssa.print_func(p.func.graph));
 }
 function main(): i32 {
     var src: string = "";
@@ -481,23 +495,11 @@ function main(): i32 {
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
     var mod = irlower.lift_lambdas(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) });
-    for p in semsource.build_module(mod) {
-        if (!p.ok) { print("refused " + p.why); continue; }
-        var out: string = "";
-        var i: i32 = 0;
-        while (i < p.func.values.len()) {
-            if (i > 0) { out = out + " "; }
-            out = out + "v" + util.i32_to_string(i) + ":" + shown(p.func.values[i]);
-            i = i + 1;
-        }
-        var modes: string = "";
-        for m in p.modes { modes = modes + " " + util.i32_to_string(m); }
-        print("modes" + modes + " result " + shown(p.func.result));
-        print(out);
-        var plan = ssaunits.plan(p.func, p.modes);
-        if (!plan.ok) { print("plan " + plan.why); }
-        print(ssa.print_func(p.func.graph));
-    }
+    // Every declaration in order, then every instance the templates were
+    // produced at.
+    var built = semsource.build_module(mod);
+    for p in built.decls { show(p); }
+    for p in built.instances { show(p); }
     return 0;
 }
 `
@@ -1736,13 +1738,11 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
     if (seen < 0) { return 1; }
     return 0;
 }
-// ---- erased type variables (docs/ERASED-GENERICS-RC.md, option 1) --------
-// An erased type variable is ONE MACHINE WORD and nothing at run time tells a
-// pointer instantiation from a scalar one, so these bodies emit neither retain
-// nor release on the accumulator: every erased position is a MOVE, which
-// ssaunits proves rather than assumes. Consuming and producing are both no-ops
-// at the scalar instantiations run here, which is what makes ONE body correct
-// at every instantiation.
+// ---- generic declarations (docs/SEMANTIC-GENERICS.md) ---------------------
+// A generic declaration is a TEMPLATE, produced once per instantiation its
+// callers bind and named by the types bound, so the accumulator here is a
+// plain i32 or boolean in one instance and a string[] further down; the AST
+// lowering keeps the one erased body for its own callers, main among them.
 @noinline function add_at(n: i32, a: i32): i32 { return a + n; }
 @noinline function or_over(n: i32, a: boolean): boolean { return a || n > 1; }
 @noinline function fold_acc[T](a: T, visit: (i32, T) => T): T {
@@ -1750,8 +1750,8 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
     acc = visit(2, acc);
     return acc;
 }
-// The erased word handed on to a SECOND generic: a variable binds a variable,
-// which is one word at every instantiation.
+// A generic calling a SECOND generic: the instance requests the instance it
+// needs, to a fixpoint over the requests.
 @noinline function fold_twice[T](a: T, visit: (i32, T) => T): T {
     return fold_acc(fold_acc(a, visit), visit);
 }
@@ -1766,7 +1766,7 @@ enum Held { Bare(i32), Celled(Cell[i32], i32) }
 @noinline function folded_twice(): i32 { return fold_twice(0, add_at); }
 @noinline function folded_loop(n: i32): i32 { return fold_loop(0, n, add_at); }
 @noinline function folded_flag(): i32 { if (fold_acc(false, or_over)) { return 1; } return 0; }
-// A heap value HELD ACROSS an erased fold and read back after churn has had
+// A heap value HELD ACROSS a scalar fold and read back after churn has had
 // every chance to reuse a box freed too early. An over-release reads a short
 // array and answers the sentinel rather than the length, so a wrong ANSWER —
 // not a balanced allocation count — is what a mistake here shows as.
@@ -2097,13 +2097,22 @@ function main(): i32 {
     var mod = irlower.lift_lambdas(checker.annotate_module(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
-    var produced = semsource.build_module(mod);
+    var built = semsource.build_module(mod);
     var bodies: irlower.LowerResult[] = [];
     var helpers: irlower.LowerResult[] = [];
+    var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
     var at: i32 = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { bodies = bodies.append(irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() }); at = at + 1; continue; }
-        var p = produced[at];
+        var p = built.decls[at];
+        // main is AST-lowered, and so is a template's own erased body, which
+        // main's calls name; the template's instances are bodies of their own.
+        if (fd.name == "main" || p.template) {
+            if (!p.ok && fd.name != "main") { eprint(fd.name + ": " + p.why); return 4; }
+            if (p.template) { eprint("produced " + fd.name + "\n"); }
+            bodies = bodies.append(skipped);
+            at = at + 1;
+            continue;
+        }
         if (!p.ok) { eprint(fd.name + ": " + p.why); return 4; }
         var plan = ssaunits.plan(p.func, p.modes);
         if (!plan.ok) { eprint(fd.name + ": " + plan.why); return 5; }
@@ -2115,16 +2124,29 @@ function main(): i32 {
         bodies = bodies.append(lowered);
         at = at + 1;
     }
+    var instances: irlower.LowerResult[] = [];
+    for p in built.instances {
+        if (!p.ok) { eprint(p.key + ": " + p.why); return 4; }
+        var plan = ssaunits.plan(p.func, p.modes);
+        if (!plan.ok) { eprint(p.func.graph.name + ": " + plan.why); return 5; }
+        var lowered = ssarc.lower(p.func, p.modes, plan, tab);
+        if (!lowered.ok) { eprint(p.func.graph.name + ": " + lowered.why); return 6; }
+        eprint("instance " + p.func.graph.name + "\n");
+        for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
+        instances = instances.append(lowered);
+    }
     var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi");
     if (!g.ok) { eprint("ast lowering failed"); return 3; }
     var cache: irlower.LowerResult[] = [];
     at = 0;
     for fd in mod.funcs {
-        if (fd.name == "main") { cache = cache.append(g.cache[at]); } else { cache = cache.append(bodies[at]); }
+        if (bodies[at].ok) { cache = cache.append(bodies[at]); } else { cache = cache.append(g.cache[at]); }
         at = at + 1;
     }
-    // The per-type drop helpers are bodies with no declaration, so they go on
-    // the cache tail past mod.funcs, deduped by symbol.
+    // The instances and the per-type drop helpers are bodies with no
+    // declaration, so they go on the cache tail past mod.funcs, deduped by
+    // symbol.
+    cache = ssarc.merge_helpers(cache, instances);
     cache = ssarc.merge_helpers(cache, helpers);
     if (av[1] == "x86-64-linux") {
         print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base));

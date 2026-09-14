@@ -215,16 +215,17 @@ pub function closure_type(c: Contract): typeinfo.Type {
     return typeinfo.TypeFunc { param_types: params, param_own: typeinfo.own_flags(owns, params), ret_type: c.result, params_known: true };
 }
 
-// The unit planner's counted mode. ssaunits reads this module, so the constant
-// is spelled here and that pass's own accessor returns it.
+// The unit planner's three modes. ssaunits reads this module, so the constants
+// are spelled here and that pass's own accessors return them.
+pub function value_mode(): i32 { return 1; }
+pub function borrow_mode(): i32 { return 2; }
 pub function counted_mode(): i32 { return 3; }
 
 // A body's declared mode says what the box it is wrapped in promises: a counted
 // parameter is a CONSUMING slot, and the function type the box hands out has to
-// spell it or the two sides disagree about who releases the argument. An erased
-// slot is consuming on its own account (docs/ERASED-GENERICS-RC.md) and spells
-// it the same way, so one rule covers both. A scalar carries no unit, so
-// `typeinfo.own_flags` drops the flag there whichever side built it.
+// spell it or the two sides disagree about who releases the argument. A scalar
+// carries no unit, so `typeinfo.own_flags` drops the flag there whichever side
+// built it.
 function consuming_mode(modes: i32[], i: i32, t: typeinfo.Type): boolean {
     if (i >= modes.len()) { return false; }
     return modes[i] == counted_mode() && typeinfo.ownable(t);
@@ -573,11 +574,12 @@ function is_variant_op(kind: i32): boolean {
 // is that variant.
 function needs_guard(kind: i32): boolean { return kind == variant_get() || kind == variant_as(); }
 
-// A contract carrying an erased position is a TEMPLATE, and the call site is
-// what instantiates it. Binding runs left to right over the arguments and is
-// structural, so a function-typed parameter's own erased slots bind through
-// it; one variable binds one type for the whole contract, and a second
-// position naming it must carry that same type.
+// A contract carrying a type VARIABLE (`typeinfo.TypeErased`) is a TEMPLATE,
+// and the call site is what instantiates it. Binding runs left to right over
+// the arguments and is structural, so a function-typed parameter's own
+// variable slots bind through it; one variable binds one type for the whole
+// contract, and a second position naming it must carry that same type. The
+// instance is a body of its own, produced under the binding and named by it.
 pub struct Binding { ok: boolean, why: string, names: string[], types: typeinfo.Type[] }
 
 pub function unbound(): Binding { return Binding { ok: true, why: "", names: [], types: [] }; }
@@ -589,29 +591,21 @@ function bound_at(b: Binding, name: string): i32 {
     return 0 - 1;
 }
 
-// What an erased variable may bind to: ONE machine word. A wide scalar has no
-// erased slot to ride in — the invariant `astwalk` states for its accumulator
-// and the wasm erased widening enforces — and a void binds nothing at all.
-// An erased argument binds an erased variable: that is a generic body handing
-// its own word on to another generic, which stays a word at every
-// instantiation.
-function instantiable(t: typeinfo.Type): boolean {
-    return semtypes.erased(t) || narrow_word(t);
-}
-
 pub function bind_type(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
-    if (semtypes.erased(want)) { return bind_variable(b, erased_name(want), got); }
-    if (semtypes.erased(got)) { return unbindable("erased argument at a concrete parameter"); }
+    if (semtypes.erased(want)) { return bind_variable(b, variable_name(want), got); }
+    if (semtypes.erased(got)) { return unbindable("type variable at a concrete parameter"); }
     return bind_within(b, want, got);
 }
 
-function erased_name(t: typeinfo.Type): string {
+function variable_name(t: typeinfo.Type): string {
     if let typeinfo.TypeErased(e) = t { return e.name; }
     return "";
 }
 
+// A variable binds a concrete type: the instance is produced at exactly that
+// type, so a void, an unknown or another template's variable binds nothing.
 function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
-    if (!instantiable(got)) { return unbindable("erased instantiation is not one word"); }
+    if (!semtypes.concrete(got, false)) { return unbindable("type variable binds no concrete type"); }
     var at: i32 = bound_at(b, name);
     if (at >= 0) {
         if (!semtypes.equal(b.types[at], got)) { return unbindable("erased variable binds two types"); }
@@ -620,130 +614,203 @@ function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
     return Binding { ...b, names: b.names.append(name), types: b.types.append(got) };
 }
 
+// Binding is structural: a variable inside a function type, a container or a
+// nominal type's arguments binds through it, against the same shape on the
+// argument's side.
 function bind_within(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
     if let typeinfo.TypeFunc(x) = want {
-        if let typeinfo.TypeFunc(y) = got {
-            if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) { return unbindable("call argument type"); }
-            var i: i32 = 0;
-            while (i < x.param_types.len()) {
-                // The consuming flags must agree, read against the slot the
-                // ARGUMENT actually carries: `own T` at a variable this call
-                // binds to a scalar is vacuous, and the scalar body spells no
-                // `own` there. At a reference the two must still agree.
-                if (typeinfo.fn_own_at(x, i) && typeinfo.ownable(y.param_types[i]) != typeinfo.fn_own_at(y, i)) { return unbindable("call argument type"); }
-                if (!typeinfo.fn_own_at(x, i) && typeinfo.fn_own_at(y, i)) { return unbindable("call argument type"); }
-                b = bind_type(b, x.param_types[i], y.param_types[i]);
-                if (!b.ok) { return b; }
-                i = i + 1;
-            }
-            return bind_type(b, x.ret_type, y.ret_type);
-        }
-        return unbindable("call argument type");
+        if let typeinfo.TypeFunc(y) = got { return bind_callable(b, x, y); }
+        return mismatch();
     }
-    if (!semtypes.equal(want, got)) { return unbindable("call argument type"); }
+    if let typeinfo.TypeArray(x) = want {
+        if let typeinfo.TypeArray(y) = got { return bind_type(b, x.elem, y.elem); }
+        return mismatch();
+    }
+    if let typeinfo.TypeTuple(x) = want {
+        if let typeinfo.TypeTuple(y) = got { return bind_list(b, x.elements, y.elements); }
+        return mismatch();
+    }
+    if let typeinfo.TypeMap(x) = want {
+        if let typeinfo.TypeMap(y) = got { return bind_type(bind_type(b, x.key, y.key), x.value, y.value); }
+        return mismatch();
+    }
+    return bind_nominal(b, want, got);
+}
+
+function mismatch(): Binding { return unbindable("call argument type"); }
+
+function bind_nominal(b: Binding, want: typeinfo.Type, got: typeinfo.Type): Binding {
+    if let typeinfo.TypeStruct(x) = want {
+        if let typeinfo.TypeStruct(y) = got { if (x.name == y.name) { return bind_list(b, x.args, y.args); } }
+        return mismatch();
+    }
+    if let typeinfo.TypeUnion(x) = want {
+        if let typeinfo.TypeUnion(y) = got { if (x.name == y.name) { return bind_list(b, x.args, y.args); } }
+        return mismatch();
+    }
+    if (!semtypes.equal(want, got)) { return mismatch(); }
+    return b;
+}
+
+// The consuming flags must agree, read against the slot the ARGUMENT actually
+// carries: `own T` at a variable this call binds to a scalar is vacuous, and
+// the scalar body spells no `own` there. At a reference the two must still
+// agree.
+function bind_callable(b: Binding, x: typeinfo.TypeFunc, y: typeinfo.TypeFunc): Binding {
+    if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) { return mismatch(); }
+    var i: i32 = 0;
+    while (i < x.param_types.len()) {
+        if (typeinfo.fn_own_at(x, i) && typeinfo.ownable(y.param_types[i]) != typeinfo.fn_own_at(y, i)) { return mismatch(); }
+        if (!typeinfo.fn_own_at(x, i) && typeinfo.fn_own_at(y, i)) { return mismatch(); }
+        b = bind_type(b, x.param_types[i], y.param_types[i]);
+        if (!b.ok) { return b; }
+        i = i + 1;
+    }
+    return bind_type(b, x.ret_type, y.ret_type);
+}
+
+function bind_list(b: Binding, want: typeinfo.Type[], got: typeinfo.Type[]): Binding {
+    if (want.len() != got.len()) { return mismatch(); }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        b = bind_type(b, want[i], got[i]);
+        if (!b.ok) { return b; }
+        i = i + 1;
+    }
     return b;
 }
 
 pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
     if (semtypes.erased(t)) {
-        var at: i32 = bound_at(b, erased_name(t));
+        var at: i32 = bound_at(b, variable_name(t));
         if (at >= 0) { return b.types[at]; }
         return t;
     }
     if let typeinfo.TypeFunc(fn) = t {
-        var params: typeinfo.Type[] = [];
-        for p in fn.param_types { params = params.append(substitute(p, b)); }
+        var params: typeinfo.Type[] = substitute_list(fn.param_types, b);
         // The mask is renormalised against the SUBSTITUTED types: a variable
         // bound to a scalar carries no unit there, so the slot stops being a
         // consuming one and the instantiated type matches the callable a
         // scalar body hands out.
         return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: substitute(fn.ret_type, b) };
     }
+    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: substitute(a.elem, b) }; }
+    if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: substitute_list(tup.elements, b) }; }
+    if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: substitute(m.key, b), value: substitute(m.value, b) }; }
+    if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: substitute_list(r.args, b) }; }
+    if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { ...u, args: substitute_list(u.args, b) }; }
     return t;
 }
 
-// An erased position is CONSUMING: the caller hands over a unit and takes back
-// the one the call returns, so whatever it is handed to must release what it
-// consumed. A SCALAR instantiation is the case where consuming and producing
-// are both no-ops, and an ERASED one is a generic passing its own word on; both
-// are sound wherever the variable appears.
-//
-// A REFERENCE instantiation is a real release, and only a function value that
-// SPELLS the slot `own` performs one — every other reference argument of one is
-// lent, and nothing would release the unit the fold handed over. So the
-// variable's own positions decide: a variable reaching only consuming positions
-// may bind a reference, and one reaching a lending function-value slot may not.
-pub function instantiation_error(c: Contract, b: Binding): string {
-    var i: i32 = 0;
-    while (i < b.types.len()) {
-        if (semtypes.needs_anchor(b.types[i]) && !semtypes.erased(b.types[i])) {
-            if (!variable_wholly_consumed(c, b.names[i])) { return "erased instantiation carries a unit"; }
-        }
-        i = i + 1;
-    }
-    return "";
+function substitute_list(ts: typeinfo.Type[], b: Binding): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    for t in ts { out = out.append(substitute(t, b)); }
+    return out;
 }
 
-// Every position the variable `name` occupies in `c` hands its argument to
-// something that releases it: the contract's own counted parameter at that slot
-// (which this call site supplies as a move), or a function-typed parameter's
-// slot the type spells `own`. One lending occurrence refuses the whole
-// instantiation — the unit would reach it and nothing would release it.
-function variable_wholly_consumed(c: Contract, name: string): boolean {
-    var i: i32 = 0;
-    while (i < c.params.len()) {
-        if (!positions_consumed(c.params[i], name, c.modes[i] == counted_mode())) { return false; }
-        i = i + 1;
-    }
-    return positions_consumed(c.result, name, true);
+// The variables a template's contract spells, in order of first occurrence
+// over its parameters and then its result: the order an instance's name lists
+// their bindings in.
+pub function contract_variables(c: Contract): string[] {
+    var out: string[] = [];
+    for p in c.params { out = variables(p, out); }
+    return variables(c.result, out);
 }
 
-// Whether every occurrence of `name` inside `t` sits at a consuming position.
-// `consumed` is what the ENCLOSING position promises: the variable spelled bare
-// there is consumed exactly when that position is. Inside a function type each
-// slot answers for itself, and the RESULT is a unit of the caller's own, so a
-// variable there is produced rather than consumed.
-function positions_consumed(t: typeinfo.Type, name: string, consumed: boolean): boolean {
-    if (semtypes.erased(t)) { return erased_name(t) != name || consumed; }
-    if let typeinfo.TypeFunc(fn) = t {
-        var i: i32 = 0;
-        while (i < fn.param_types.len()) {
-            if (!positions_consumed(fn.param_types[i], name, typeinfo.fn_own_at(fn, i))) { return false; }
-            i = i + 1;
-        }
-        return positions_consumed(fn.ret_type, name, true);
+function variables(t: typeinfo.Type, out: string[]): string[] {
+    if (semtypes.erased(t)) {
+        var name: string = variable_name(t);
+        for seen in out { if (seen == name) { return out; } }
+        return out.append(name);
     }
+    if let typeinfo.TypeArray(a) = t { return variables(a.elem, out); }
+    if let typeinfo.TypeTuple(tup) = t { return variables_of(tup.elements, out); }
+    if let typeinfo.TypeFunc(fn) = t { return variables(fn.ret_type, variables_of(fn.param_types, out)); }
+    if let typeinfo.TypeMap(m) = t { return variables(m.value, variables(m.key, out)); }
+    if let typeinfo.TypeStruct(r) = t { return variables_of(r.args, out); }
+    if let typeinfo.TypeUnion(u) = t { return variables_of(u.args, out); }
+    return out;
+}
+
+function variables_of(ts: typeinfo.Type[], out: string[]): string[] {
+    for t in ts { out = variables(t, out); }
+    return out;
+}
+
+pub function binds_all(b: Binding, vars: string[]): boolean {
+    for v in vars { if (bound_at(b, v) < 0) { return false; } }
     return true;
 }
 
-function instantiate(c: Contract, args: typeinfo.Type[]): Binding {
-    var b: Binding = unbound();
-    var i: i32 = 0;
-    while (i < args.len()) {
-        b = bind_type(b, c.params[i], args[i]);
-        if (!b.ok) { return b; }
-        i = i + 1;
-    }
-    var why: string = instantiation_error(c, b);
-    if (why != "") { return unbindable(why); }
-    return b;
+// An instance's symbol: the template's key, then the type each variable binds
+// in the contract's own order, `$`-separated the way a lifted lambda's is.
+pub function instance_name(key: string, b: Binding, vars: string[]): string {
+    var out: string = key;
+    for v in vars { out = out + "$" + type_key(b.types[bound_at(b, v)]); }
+    return out;
 }
 
+// The contract an instance honours: every variable substituted, and a
+// parameter whose variable bound a scalar carrying no unit, so its declared
+// mode drops to a value's.
+pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Contract {
+    var params: typeinfo.Type[] = [];
+    var modes: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.params.len()) {
+        var t: typeinfo.Type = substitute(c.params[i], b);
+        params = params.append(t);
+        if (semtypes.needs_anchor(t)) { modes = modes.append(c.modes[i]); } else { modes = modes.append(value_mode()); }
+        i = i + 1;
+    }
+    return Contract { name: instance_name(c.name, b, vars), params: params, modes: modes, result: substitute(c.result, b) };
+}
+
+// A symbol-safe spelling of a type, distinguishing the INSTANTIATIONS of one
+// nominal name: `Option[string]` releases a string where `Option[i32]`
+// releases nothing, so the two cannot share a drop helper, and a template's
+// instances are told apart by it. `$` separates the arguments, as it does in
+// a lifted lambda's symbol.
+pub function type_key(t: typeinfo.Type): string {
+    if let typeinfo.TypeUnion(u) = t { return key_args(u.name, u.args); }
+    if let typeinfo.TypeStruct(r) = t { return key_args(r.name, r.args); }
+    if let typeinfo.TypeArray(a) = t { return "arr$" + type_key(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { return key_args("tup", tup.elements); }
+    if let typeinfo.TypeFunc(fn) = t { return key_args("fn", fn.param_types.append(fn.ret_type)); }
+    return leaf_key(t);
+}
+
+function key_args(name: string, args: typeinfo.Type[]): string {
+    var out: string = name;
+    for a in args { out = out + "$" + type_key(a); }
+    return out;
+}
+
+function leaf_key(t: typeinfo.Type): string {
+    if (is_view(t)) { return "str"; }
+    if (is_string(t)) { return "string"; }
+    if (is_i64(t)) { return "i64"; }
+    if (is_u64(t)) { return "u64"; }
+    if (is_u8(t)) { return "u8"; }
+    if (is_u32(t)) { return "u32"; }
+    if (is_f64(t)) { return "f64"; }
+    if (is_integer(t)) { return "i32"; }
+    return "bool";
+}
+
+// A produced graph's contracts are instances: every parameter and the result
+// are exact types, and a call is held to them.
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     var at: i32 = find_contract(f.calls, ins.str);
     if (at < 0) { return "missing call contract"; }
     var c: Contract = f.calls[at];
     if (ins.args.len() != c.params.len()) { return "call arity"; }
-    var args: typeinfo.Type[] = [];
-    for arg in ins.args { args = args.append(f.values[arg]); }
-    var b: Binding = instantiate(c, args);
-    if (!b.ok) { return b.why; }
     var i: i32 = 0;
-    while (i < args.len()) {
-        if (!semtypes.equal(substitute(c.params[i], b), args[i])) { return "call argument type"; }
+    while (i < ins.args.len()) {
+        if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) { return "call argument type"; }
         i = i + 1;
     }
-    if (!semtypes.equal(substitute(c.result, b), result)) { return "call result type"; }
+    if (!semtypes.equal(c.result, result)) { return "call result type"; }
     return "";
 }
 
@@ -910,7 +977,7 @@ function func_shape_error(fn: typeinfo.TypeFunc): string {
 
 function narrow_word(t: typeinfo.Type): boolean {
     if (is_func(t) || is_wide(t) || is_f64(t) || nests_func(t)) { return false; }
-    return semtypes.word(t, false);
+    return semtypes.concrete(t, false);
 }
 
 // A function value is a value and a parameter, never an element or a field:
@@ -972,12 +1039,12 @@ function schema_error(f: Func): string {
     if (why != "") { return why; }
     why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
     if (why != "") { return why; }
-    if (!semtypes.word(f.result, true)) { return "unresolved result type"; }
+    if (!semtypes.concrete(f.result, true)) { return "unresolved result type"; }
     // A void value is what a call to a void contract defines, and nothing
     // reads it: every operator and container contract asks for a concrete
     // operand, so a read refuses there.
-    for t in f.values { if (!semtypes.word(t, true)) { return "unresolved value type"; } }
-    for t in f.params { if (!semtypes.word(t, false)) { return "unresolved parameter type"; } }
+    for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
+    for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }
     why = placement_error(f);
@@ -994,8 +1061,8 @@ function contracts_error(calls: Contract[]): string {
         if (c.name == "") { return "empty call contract name"; }
         if (find_contract(calls, c.name) != i) { return "duplicate call contract"; }
         if (c.modes.len() != c.params.len()) { return "call contract mode dimensions"; }
-        for t in c.params { if (!semtypes.word(t, false)) { return "unresolved call parameter type"; } }
-        if (!semtypes.word(c.result, true)) { return "unresolved call result type"; }
+        for t in c.params { if (!semtypes.concrete(t, false)) { return "unresolved call parameter type"; } }
+        if (!semtypes.concrete(c.result, true)) { return "unresolved call result type"; }
         i = i + 1;
     }
     return "";
