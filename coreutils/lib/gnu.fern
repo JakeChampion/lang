@@ -644,6 +644,13 @@ pub function quoting_style_default(): i32 {
 // names none (`ignoring invalid value of environment variable
 // QUOTING_STYLE: 'bogus'`). Unset is the default and silent.
 pub function quoting_style_from_env(): i32 {
+  return quoting_style_from_env_with(quoting_style_default());
+}
+
+// The same with the utility's own fallback rather than gnulib's:
+// `ls` off a terminal defaults to `literal`, and an unusable
+// QUOTING_STYLE has to land on THAT rather than on shell-escape.
+pub function quoting_style_from_env_with(fallback: i32): i32 {
   match (env("QUOTING_STYLE")) {
     Some(v) => {
       var names: string[] = quoting_style_names();
@@ -652,10 +659,10 @@ pub function quoting_style_from_env(): i32 {
         return found;
       }
       error("ignoring invalid value of environment variable QUOTING_STYLE: " + quote(v));
-      return quoting_style_default();
+      return fallback;
     },
     None => {
-      return quoting_style_default();
+      return fallback;
     }
   }
 }

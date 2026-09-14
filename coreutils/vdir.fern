@@ -1,0 +1,12 @@
+// vdir.fern — GNU-compatible `vdir`: `ls -l -b`.
+//
+//   vdir [OPTION]... [FILE]...
+//
+// The same program as `ls` (`lib/listing.fern`) with two different
+// defaults: the long format, and `-b`'s escaping of a name that needs
+// it.
+import "./lib/listing";
+
+function main(): i32 {
+  return listing.vdir();
+}
