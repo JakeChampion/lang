@@ -17756,10 +17756,13 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     if (decl_is_struct(s.frame.structs, expr_struct_type(obj, s)) || expr_enum_type(obj, s) != ""
         || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
     if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
-        || field == "flags" || field == "isatty" || field == "write_some"
+        || field == "flags" || field == "isatty"
         || is_fd_sync_method(field)) {
         return s.opt_ret_type("Reader." + field);
     }
+    // Writer-only, so keyed under Writer: a "Reader." key names no method
+    // and answers "", which bails the lowering rather than reading wrong.
+    if (field == "write_some") { return s.opt_ret_type("Writer.write_some"); }
     if (field == "write") { return s.opt_ret_type("Writer.write"); }
     if (field == "truncate") { return s.opt_ret_type("Writer.truncate"); }
     return "";

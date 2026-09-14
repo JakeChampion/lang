@@ -1651,8 +1651,8 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
-        "remove_dir_all", "open_file", "open_with", "writer_write", "reader",
-        "signal_send"
+        "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
+        "reader", "signal_send"
     ]);
 }
 
