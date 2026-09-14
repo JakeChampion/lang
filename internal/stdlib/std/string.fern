@@ -871,7 +871,7 @@ pub function (s: string) is_email_like(): boolean {
 // shape check, like `is_email_like`; defer to a real URL
 // parser when one lands.
 pub function (s: string) is_url_like(): boolean {
-    var rest: str = "";
+    var rest: string = "";
     if (s.starts_with("https://")) {
         rest = s.remove_prefix("https://");
     } else if (s.starts_with("http://")) {
@@ -888,7 +888,7 @@ pub function (s: string) is_url_like(): boolean {
 // JSON validator — just a fast pre-flight check before
 // attempting a parse. Empty strings return false.
 pub function (s: string) is_json_like(): boolean {
-    var t: str = s.trim();
+    var t: string = s.trim();
     var n: i32 = t.len();
     if (n < 2) { return false; }
     var first: i32 = t[0] as i32;
