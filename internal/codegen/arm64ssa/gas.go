@@ -1286,6 +1286,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"create_symlink":                emitCreateSymlinkHelper,
 	"read_link":                     emitReadLinkHelper,
 	"umask":                         emitUmaskHelper,
+	"priority":                      emitPriorityHelper,
+	"set_priority":                  emitSetPriorityHelper,
 	"rename":                        emitRenameHelper,
 	"chmod":                         emitChmodHelper,
 	"truncate":                      emitTruncateHelper,
@@ -3674,6 +3676,7 @@ var runtimeHelperDeps = map[string][]string{
 	"rename":                        {"__fern_io_error"},
 	"chmod":                         {"__fern_io_error"},
 	"signal_send":                   {"__fern_io_error"},
+	"set_priority":                  {"__fern_io_error"},
 	"truncate":                      {"__fern_io_error"},
 	"mknod":                         {"__fern_io_error"},
 	"chown_at":                      {"__fern_io_error"},
@@ -3762,6 +3765,7 @@ var heapUsingHelpers = map[string]bool{
 	"rename":                        true,
 	"chmod":                         true,
 	"signal_send":                   true,
+	"set_priority":                  true,
 	"truncate":                      true,
 	"mknod":                         true,
 	"chown_at":                      true,
@@ -6429,6 +6433,65 @@ func emitUmaskHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitPriorityHelper writes priority() -> this process's nice value:
+// getpriority(PRIO_PROCESS, 0).
+//
+// Linux returns the value BIASED by 20 so a success is never negative —
+// nice 19 arrives as 1, nice -20 as 40 — and undoing that is the caller's
+// job on every libc. It cannot fail for this process, so there is no errno
+// to classify. Leaf: the svc preserves every register but x0.
+func emitPriorityHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("priority"))
+	w("\tmov x0, xzr") // PRIO_PROCESS
+	w("\tmov x1, xzr") // this process
+	w("\tmov x8, #%d", sysGetpriority)
+	w("\tsvc #0")
+	w("\tmov w1, #20")
+	w("\tsub w0, w1, w0")
+	w("\tret")
+}
+
+// emitSetPriorityHelper writes set_priority(nice) -> Result[void, IoError]:
+// setpriority(PRIO_PROCESS, 0, nice). No bias on this side — only the READ
+// is biased.
+//
+// EACCES and EPERM are what an unprivileged caller gets for asking to go
+// below its current value, and neither is an errno __fern_io_error names a
+// variant for, so each becomes Other(path, strerror) against an empty path.
+// Non-leaf (calls __fern_io_error). x0=nice.
+func emitSetPriorityHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("set_priority"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tsxtw x2, w0")
+	w("\tmov x0, xzr") // PRIO_PROCESS
+	w("\tmov x1, xzr") // this process
+	w("\tmov x8, #%d", sysSetpriority)
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_setprio_err")
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
+	w("\tb .Lssa_setprio_ret")
+	w(".Lssa_setprio_err:")
+	w("\tneg x19, x0") // errno, across the inline empty-string alloc
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_setprio_ret:")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
 // emitRemoveFileHelper writes remove_file(path) -> Option[IoError]: unlink the
 // file at `path`. Returns None (tag 1) on success and Some(IoError) (tag 0,
 // box@8) on failure (mirroring os.Remove, a missing target is an ENOENT error,
@@ -8211,7 +8274,12 @@ const (
 	// signal.
 	sysKill = 129
 	// getrlimit(2), asm-generic 163 — rlimit_nofile's soft ceiling.
-	sysGetrlimit   = 163
+	sysGetrlimit = 163
+	// setpriority(2) 140 and getpriority(2) 141, asm-generic. In that
+	// order: x86-64 numbers the pair the other way round, so the two
+	// backends' tables are not interchangeable.
+	sysSetpriority = 140
+	sysGetpriority = 141
 	clockRealtime  = 0
 	clockMonotonic = 1
 )

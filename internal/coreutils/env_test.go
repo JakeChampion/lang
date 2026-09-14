@@ -1,6 +1,8 @@
 package coreutils
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -278,7 +280,50 @@ func envCases(t *testing.T) []invocation {
 	add(invocation{name: "split in a cluster", args: []string{"-vS/bin/echo hi"}})
 	add(invocation{name: "an empty first token is an empty command", args: []string{"-S", "'' /bin/echo"}})
 
+	// ---- execvp's shell retry ----
+	//
+	// A file the kernel cannot load is handed to /bin/sh rather than refused
+	// (#9262), and the everyday case is a script with no `#!` line. The
+	// fixtures are a tree rather than literals because the fallback's shape
+	// is only visible through what the SHELL then reports: `$0` is the path
+	// execve was handed, `$#` counts the caller's own arguments, and a
+	// garbage ELF reaches the shell too, where the diagnostic is the shell's
+	// and not env's.
+	execTree := envExecTree(t)
+	add(invocation{name: "a script with no shebang runs under the shell", dir: execTree, args: []string{"./noshebang"}})
+	add(invocation{name: "the shell sees the resolved path and the caller's arguments", dir: execTree, args: []string{"./showargs", "a", "b"}})
+	add(invocation{name: "the shell retry also applies to a name found on PATH", dir: execTree, args: []string{"showargs"}, env: []string{"PATH=" + execTree}})
+	add(invocation{name: "an empty executable file is a no-op under the shell", dir: execTree, args: []string{"./empty"}})
+	add(invocation{name: "a garbage ELF reaches the shell, which reports it", dir: execTree, args: []string{"./badelf"}})
+	// The refusals the retry must NOT swallow: both are EACCES rather than
+	// ENOEXEC, so they stay env's own diagnostic and 126.
+	add(invocation{name: "a script without the execute bit is still refused", dir: execTree, args: []string{"./unreadable"}})
+	add(invocation{name: "a directory with the execute bit is still refused", dir: execTree, args: []string{"./adir"}})
+
 	return cases
+}
+
+// envExecTree is the fixture for the shell-retry cases: a directory of files
+// that differ only in how the kernel refuses to exec them.
+func envExecTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string, mode os.FileMode) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), mode); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("noshebang", "echo from-script\n", 0o755)
+	write("showargs", "echo \"dollar0=[$0] count=$# args=[$*]\"\n", 0o755)
+	write("empty", "", 0o755)
+	// A valid ELF magic and nothing that follows it: the kernel takes the
+	// four bytes, fails to make sense of the rest, and answers ENOEXEC.
+	write("badelf", "\x7fELFnot-an-elf\n", 0o755)
+	write("unreadable", "echo unreachable\n", 0o644)
+	if err := os.Mkdir(filepath.Join(dir, "adir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	return dir
 }
 
 func TestEnv(t *testing.T) {

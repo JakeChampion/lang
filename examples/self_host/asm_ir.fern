@@ -1652,7 +1652,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-        "reader", "signal_send"
+        "reader", "signal_send", "set_priority"
     ]);
 }
 
@@ -1686,7 +1686,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
-        "signal_send"
+        "signal_send", "set_priority"
     ]);
 }
 
@@ -5225,6 +5225,15 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_signal_send\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("signal_send");
+        } else if (o.kind_tag == 282) {  // priority
+            // no args -> __fern_priority() -> this process's nice value in
+            // %rax. Nothing is boxed, so no heap need.
+            s = s.write("    call __fn___fern_priority\n    pushq %rax\n");
+            s = s.need("priority");
+        } else if (o.kind_tag == 283) {  // set_priority
+            // [nice] IS param[0] (+16) -> Result[void, IoError].
+            s = s.write("    call __fn___fern_set_priority\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("set_priority");
         } else if (o.kind_tag == 272) {  // rlimit_nofile
             // no args -> __fern_rlimit_nofile() -> the soft RLIMIT_NOFILE as a
             // full-width i64 in %rax.
@@ -8939,6 +8948,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
         if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86_64"); }
+        if (s.has_need("set_priority")) { fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86_64"); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64"); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, "x86_64");
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod("x86_64"); }
@@ -8946,6 +8956,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86_64"); }
         if (s.has_need("read_link")) { fs_src = fs_src + " " + asmcore.rt_src_read_link("x86_64"); }
         if (s.has_need("umask")) { fs_src = fs_src + " " + asmcore.rt_src_umask("x86_64"); }
+        if (s.has_need("priority")) { fs_src = fs_src + " " + asmcore.rt_src_priority("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }
         if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86_64"); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64"); }

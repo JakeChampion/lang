@@ -1735,6 +1735,12 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // limit, and every constant that could stand in (a plausible 1024, or
         // "unlimited") would be a measurement a component never took.
         if (util.index_of_str(ids, "rlimit_nofile") >= 0) { return "rlimit_nofile"; }
+        // priority / set_priority (#8375) — neither preview has a scheduler
+        // knob, and neither stand-in is honest: answering 0 from `priority`
+        // claims the default nice value was measured, and letting
+        // `set_priority` succeed claims a change that did not happen.
+        if (util.index_of_str(ids, "priority") >= 0) { return "priority"; }
+        if (util.index_of_str(ids, "set_priority") >= 0) { return "set_priority"; }
         // FFI __c_call<n>(...) (#4375) is written directly as a builtin call, so
         // its callee ident is collected here. Wasm has no C ABI — there is no
         // __c_call runtime on any wasm path — so reject it with a clean diagnostic
@@ -1773,6 +1779,9 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "rlimit_nofile") {
         return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)\n";
+    }
+    if (name == "priority" || name == "set_priority") {
+        return "error: " + name + " is not supported on the wasm target (neither WASI preview has a scheduler knob, so there is no nice value to read and nothing a change could move)\n";
     }
     if (name == "chdir") {
         return "error: chdir is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process working directory to change)\n";

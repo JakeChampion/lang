@@ -8067,6 +8067,9 @@ pub function builtin_function_names(): string[] {
         // The whole of kill(2): deliver `sig` to `pid`, or to the process
         // group a non-positive `pid` names.
         "signal_send",
+        // This process's scheduling priority, read and written. The number
+        // is the NICE value: -20 is the most favourable and 19 the least.
+        "priority", "set_priority",
         // stdin / readers
         "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
         // the two halves of the compile target's name, literals once compiled

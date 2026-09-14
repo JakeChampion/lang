@@ -230,7 +230,14 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// reason it grants `host`: a component is never sent a signal, so
 	// there is nothing to ignore and doing nothing is the whole truth.
 	// wasi-http has no process identity, so it does not get it.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "fsinfo", "fsnode", "fsowner", "tty", "fssync"},
+	//
+	// `sched` — reading and setting this process's scheduling priority
+	// (`priority` / `set_priority`). Native only, and unlike `signal`
+	// there is no truthful no-op: a component that cannot be
+	// reniced would have to be told either that its nice value is 0,
+	// a measurement nothing took, or that a change it asked for
+	// landed.
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

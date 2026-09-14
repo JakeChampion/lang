@@ -12735,6 +12735,8 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "process_alive") { return argc == 1; }
     if (name == "signal_send") { return argc == 2; }
     if (name == "rlimit_nofile") { return argc == 0; }
+    if (name == "priority") { return argc == 0; }
+    if (name == "set_priority") { return argc == 1; }
     return false;
 }
 
@@ -12777,11 +12779,13 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     if (cid.name == "getcwd") { return s.emit(ir.op_getcwd()); }
     if (cid.name == "cpu_count") { return s.emit(ir.op_cpu_count()); }
     if (cid.name == "rlimit_nofile") { return s.emit(ir.op_rlimit_nofile()); }
+    if (cid.name == "priority") { return s.emit(ir.op_priority()); }
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "isatty") { return a0.emit(ir.op_isatty()); }
     if (cid.name == "window_size") { return a0.emit(ir.op_window_size()); }
     if (cid.name == "process_alive") { return a0.emit(ir.op_process_alive()); }
+    if (cid.name == "set_priority") { return a0.emit(ir.op_set_priority()); }
     if (cid.name == "uname_field") { return a0.emit(ir.op_uname_field()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
@@ -72068,6 +72072,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "window_size") { return "Result[WinSize, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     if (name == "signal_send") { return "Result[void, IoError]"; }
+    if (name == "set_priority") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender / open_exclusive ->
     // Result[Writer, IoError], so

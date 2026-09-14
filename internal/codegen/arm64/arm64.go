@@ -206,6 +206,18 @@ var linuxDarwinSysno = map[string][2]int{
 	// umask(2) — Linux asm-generic 166, Darwin BSD 60. One argument,
 	// the previous mask returned, and no error return on either.
 	"umask": {166, 60},
+	// getpriority(2) / setpriority(2) — Linux asm-generic 141 / 140,
+	// Darwin BSD 100 / 101. Note the Linux pair is in the opposite
+	// order to the numbers x86-64 uses (140 get, 141 set), so neither
+	// backend's table can be copied to the other.
+	//
+	// The two kernels also disagree about what getpriority RETURNS.
+	// Linux answers the nice value BIASED by 20, so a success is never
+	// negative; BSD answers it directly and reports failure through
+	// errno alone. `emitPriorityRuntime` undoes the bias on Linux
+	// only.
+	"getpriority": {141, 100},
+	"setpriority": {140, 101},
 	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
 	// mode fixup: openat's mode argument applies only on CREATE, so
 	// writing over a stale output would leave the old mode (#6133).
@@ -970,6 +982,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesUmask {
 		g.emitUmaskRuntime()
+	}
+	if g.usesPriority {
+		g.emitPriorityRuntime()
+	}
+	if g.usesSetPriority {
+		g.emitSetPriorityRuntime()
 	}
 	if g.usesRename {
 		g.emitRenameRuntime()
@@ -11572,6 +11590,93 @@ func (g *generator) emitUmaskRuntime() {
 	g.line(".ltorg")
 }
 
+// emitPriorityRuntime emits `__fern_priority() → nice value` —
+// getpriority(PRIO_PROCESS, 0).
+//
+// Linux returns the value BIASED by 20 so that a success is never
+// negative — nice 19 arrives as 1, nice -20 as 40 — and undoing that is
+// the caller's job on every libc. BSD returns the nice value as it is
+// and reports failure through errno alone, so Darwin needs no
+// correction and applying Linux's would negate the answer.
+//
+// It cannot fail for this process on either kernel — PRIO_PROCESS is a
+// valid `which` and pid 0 always exists — so there is no errno to
+// classify and no box to allocate.
+func (g *generator) emitPriorityRuntime() {
+	g.line("")
+	g.line(".global __fern_priority")
+	g.typeDirective("__fern_priority")
+	g.label("__fern_priority")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x0, xzr") // PRIO_PROCESS
+	g.emit("mov x1, xzr") // this process
+	g.syscall("getpriority")
+	if !g.darwin {
+		g.emit("mov w1, #20")
+		g.emit("sub w0, w1, w0")
+	}
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_priority")
+	g.line(".ltorg")
+}
+
+// emitSetPriorityRuntime emits `__fern_set_priority(nice)` →
+// Result[void, IoError] — setpriority(PRIO_PROCESS, 0, nice).
+//
+// No bias on this side, on either kernel: setpriority takes the nice
+// value as written, and only the READ is biased. `syscall` has already
+// normalised Darwin's carry-flag error into Linux's -errno shape.
+//
+// EACCES and EPERM are what an unprivileged caller gets for asking to
+// go below its current value, and neither is a named IoError variant,
+// so each arrives as Other(path, strerror) against the shared empty
+// path.
+func (g *generator) emitSetPriorityRuntime() {
+	g.line("")
+	g.line(".global __fern_set_priority")
+	g.typeDirective("__fern_set_priority")
+	g.label("__fern_set_priority")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("sxtw x2, w0")
+	g.emit("mov x0, xzr") // PRIO_PROCESS
+	g.emit("mov x1, xzr") // this process
+	g.syscall("setpriority")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lsetprio_err")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lsetprio_ret")
+
+	g.label(".Lsetprio_err")
+	g.emit("neg x0, x0")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // the IoError box, across the Result alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1") // tag = 1 (Err)
+	g.emit("str w1, [x0]")
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsetprio_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_set_priority")
+	g.line(".ltorg")
+}
+
 // emitCreateDirAllRuntime emits `__fern_create_dir_all(path_data,
 // path_len)` in (x0, x1) → Result[void, IoError] — mkdirat(AT_FDCWD,
 // path, 0777) for every missing component of `path`, POSIX `mkdir -p`.
@@ -14601,6 +14706,8 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	usesPriority      bool
+	usesSetPriority   bool
 	// The filesystem-metadata primitives (#9059): renameat, fchmodat and
 	// utimensat — on Darwin, setattrlistat in place of the last.
 	usesRename       bool
@@ -19291,6 +19398,17 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// umask(mask): the previous mask. Cannot fail.
 			target = "__fern_umask"
 			g.usesUmask = true
+		case "priority":
+			// priority(): this process's nice value. Cannot fail.
+			target = "__fern_priority"
+			g.usesPriority = true
+		case "set_priority":
+			// set_priority(nice): Result[void, IoError] — an
+			// unprivileged caller asking to go lower gets EACCES.
+			target = "__fern_set_priority"
+			g.usesSetPriority = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "rename":
 			// rename(from, to): Result[void, IoError] —
 			// renameat, which replaces an existing `to`.

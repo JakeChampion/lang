@@ -264,6 +264,12 @@ const (
 	sysSymlinkat  = 266
 	sysReadlinkat = 267
 	sysUmask      = 95
+	// getpriority(2) and setpriority(2). The numbers are SWAPPED
+	// between the two ABIs — x86-64 has get at 140 and set at 141,
+	// while the asm-generic table aarch64 uses has set at 140 and get
+	// at 141 — so neither backend's pair can be copied to the other.
+	sysGetpriority = 140
+	sysSetpriority = 141
 	// The filesystem-metadata primitives: renameat(2) 264,
 	// fchmodat(2) 268 and utimensat(2) 280. Linux's fchmodat takes
 	// THREE arguments, not four: the flags-taking form is fchmodat2
@@ -997,6 +1003,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesUmask {
 		g.emitUmaskRuntime()
 	}
+	if g.usesPriority {
+		g.emitPriorityRuntime()
+	}
+	if g.usesSetPriority {
+		g.emitSetPriorityRuntime()
+	}
 	if g.usesRename {
 		g.emitRenameRuntime()
 	}
@@ -1604,6 +1616,8 @@ type generator struct {
 	usesCreateSymlink bool
 	usesReadLink      bool
 	usesUmask         bool
+	usesPriority      bool
+	usesSetPriority   bool
 	// The filesystem-metadata primitives (#9059): renameat, fchmodat
 	// and utimensat, each one syscall over one or two path operands.
 	usesRename       bool
@@ -2130,6 +2144,12 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "umask":
 		g.usesUmask = true
+	case "priority":
+		g.usesPriority = true
+	case "set_priority":
+		g.usesSetPriority = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "rename":
 		g.usesRename = true
 		g.usesAlloc = true
@@ -3767,6 +3787,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_link"
 		case "umask":
 			target = "__fern_umask"
+		case "priority":
+			target = "__fern_priority"
+		case "set_priority":
+			target = "__fern_set_priority"
 		case "rename":
 			target = "__fern_rename"
 		case "chmod":
@@ -15536,6 +15560,84 @@ func (g *generator) emitUmaskRuntime() {
 	g.emitSyscall(sysUmask)
 	g.emit("ret")
 	g.line(".size __fern_umask, .-__fern_umask")
+}
+
+// emitPriorityRuntime emits `__fern_priority() → nice value` —
+// getpriority(PRIO_PROCESS, 0).
+//
+// The kernel returns the value BIASED by 20, so that a nice value of 19
+// comes back as 1 and -20 as 40 and the syscall never has to return a
+// negative on success. Undoing the bias is the caller's job on every
+// libc, and it is what makes the helper's answer the number the caller
+// asked for rather than the kernel's internal one.
+//
+// It cannot fail for this process — PRIO_PROCESS is a valid `which` and
+// pid 0 always exists — so there is no errno to classify and no box to
+// allocate.
+func (g *generator) emitPriorityRuntime() {
+	g.line("")
+	g.line(".globl __fern_priority")
+	g.line(".type __fern_priority, @function")
+	g.label("__fern_priority")
+	g.emit("xor edi, edi") // PRIO_PROCESS
+	g.emit("xor esi, esi") // this process
+	g.emitSyscall(sysGetpriority)
+	g.emit("mov ecx, 20")
+	g.emit("sub ecx, eax")
+	g.emit("mov eax, ecx")
+	g.emit("ret")
+	g.line(".size __fern_priority, .-__fern_priority")
+}
+
+// emitSetPriorityRuntime emits `__fern_set_priority(nice)` →
+// Result[void, IoError] — setpriority(PRIO_PROCESS, 0, nice).
+//
+// No bias on this side: setpriority takes the nice value as written,
+// which is the asymmetry to know about — only the READ is biased.
+//
+// EACCES and EPERM are what an unprivileged caller gets for asking to
+// go below its current value, and neither is a named IoError variant,
+// so each arrives as Other(path, strerror) with the shared empty path.
+//
+// System V: edi = nice; the Result box in rax.
+func (g *generator) emitSetPriorityRuntime() {
+	g.line("")
+	g.line(".globl __fern_set_priority")
+	g.line(".type __fern_set_priority, @function")
+	g.label("__fern_set_priority")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8") // 2 pushes + this ⇒ 16-byte aligned at the calls
+	g.emit("movsxd rdx, edi")
+	g.emit("xor edi, edi") // PRIO_PROCESS
+	g.emit("xor esi, esi") // this process
+	g.emitSyscall(sysSetpriority)
+	g.emit("test rax, rax")
+	g.emit("js .Lsetprio_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lsetprio_ret")
+
+	g.label(".Lsetprio_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax") // the IoError box, across the Result alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lsetprio_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_set_priority, .-__fern_set_priority")
 }
 
 // emitCreateDirAllRuntime emits `__fern_create_dir_all(path) →
