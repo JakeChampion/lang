@@ -343,6 +343,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_sum_bytes")
+				case "__fern_crc32_cksum":
+					// The CRC fold. Bit-at-a-time here: wasm has no
+					// carry-less multiply, so there is nothing for the
+					// native kernels' pclmulqdq / pmull to lower to.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_crc32_cksum")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1577,6 +1584,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildSumBytesBody,
+	},
+	"__fern_crc32_cksum": {
+		// (crc, data, len) → i32, the running CRC with the bytes folded in.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCrc32CksumBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -5326,6 +5339,93 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstI32Const(body, -1)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $m
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildCrc32CksumBody assembles wasm bytes for __fern_crc32_cksum: the bytes
+// of the string folded into the running CRC-32 that cksum(1) prints.
+//
+// Bit-at-a-time, which is the definition rather than a transcription of the
+// native kernels: wasm has no carry-less multiply, so there is no fold to
+// lower here, and a 256-entry table would need a data segment the runtime
+// helpers have no way to carry. The inner eight steps are branchless — the
+// polynomial is selected by an arithmetic shift of the sign bit — so the loop
+// costs no misprediction per byte.
+func buildCrc32CksumBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pCrc  = 0
+		pData = 1
+		pLen  = 2
+		lN    = 3
+		lI    = 4
+		lCrc  = 5
+		lK    = 6
+	)
+	var body []byte
+
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+	body = inst.InstLocalGet(body, pCrc)
+	body = inst.InstLocalSet(body, lCrc)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+
+	// crc ^= byte << 24
+	body = inst.InstLocalGet(body, lCrc)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = inst.InstI32Const(body, 24)
+	body = numeric.InstI32Shl(body)
+	body = numeric.InstI32Xor(body)
+	body = inst.InstLocalSet(body, lCrc)
+
+	// eight branchless steps: crc = (crc << 1) ^ (poly & (crc >> 31 as mask))
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstLocalSet(body, lK)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lK)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, lCrc)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Shl(body)
+	body = inst.InstLocalGet(body, lCrc)
+	body = inst.InstI32Const(body, 31)
+	body = numeric.InstI32ShrS(body)
+	body = inst.InstI32Const(body, 0x04C11DB7)
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Xor(body)
+	body = inst.InstLocalSet(body, lCrc)
+	body = inst.InstLocalGet(body, lK)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, lK)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // inner loop
+	body = inst.InstEnd(body) // inner block
+
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, lCrc)
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // $n, $i, $crc, $k
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

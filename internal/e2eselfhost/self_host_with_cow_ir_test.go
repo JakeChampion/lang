@@ -833,6 +833,28 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 2},
+	// A counted member's result read THROUGH a field, both paths in one
+	// expression. The release is the field walk gated on the temp being the sole
+	// owner, then the box dec: on the identity path the receiver still holds the
+	// box so the walk does not fire, and on the fresh path the temp owns the
+	// literal outright. The bare dec alone stranded the count the callee's field
+	// read had added (#9235).
+	{"struct-handback-readthrough", `struct Big { neg: boolean, mag: u64[] }
+@noinline
+function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }
+@noinline
+function (a: Big) id_or_make(k: i32): Big {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    return make(a.neg, mag);
+}
+function main(): i32 {
+    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    var t: i32 = b.id_or_make(0).mag.len() + b.id_or_make(1).mag.len();
+    if (t != 6) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
 	// A forwarding LAYER between the caller and the producer. The layer alone
 	// decided whether the receiver's buffer came back: written as a free function
 	// it balanced, written as a method it leaked one buffer a round, because one
