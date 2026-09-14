@@ -109,6 +109,24 @@ box). That is the same floor `emit_counted_result_release` keeps one position
 over. A strict-fresh producer's argument is classified first and keeps its
 deeper release.
 
+The FIFTH is a method RECEIVER — `b.me().val()`, which read the same 98 and was
+flat before the slice. Its release lives in `lower_call_struct_method`: park the
+lowered receiver, reload it for the call, dec after. What decides whether the
+dec may fire is `counted_recv_release_ok`, and it has two tiers. The plain
+`recv_borrow_fns` key says the outer body lets the receiver escape nowhere, so
+the call cannot hand this box back and the dec frees nothing the caller reads
+next. `RECVIDENT:` says the only escape is the bare `return self`; paired with
+the callee being a counted member, a handback arrives carrying its own added
+count, so the dec still leaves exactly one — which is what makes `b.me().me()`
+balance rather than leak one box a round. A bare UNCOUNTED handback earns
+neither key and keeps its leak: the safe floor, not a fix.
+
+Counting these five is not a proof the list is closed. Each was found by writing
+the shape and reading the round-over-round bump, and the search order was the
+order the shapes occurred to someone. What would close it is a consumer-side
+audit keyed on `cnt_struct_ret_fns` membership rather than on position, and
+nothing computes that today.
+
 ## The ssarc caller boundary moves with the registry
 
 `ssarc.caller_sigs` erases every row an AST caller could have written for a
@@ -132,7 +150,12 @@ underflow count with the convention reversed.
 
 The argument-temp release has its gate already:
 `TestSelfHostRecvBorrowDeepDrop{X86_64,Arm64}/recvident-borrowable-arg-flat`
-measures the shape by heap growth and reads 98 without it. The ssarc row has
+measures the shape by heap growth and reads 98 without it. The receiver
+position takes four rows of the same table, each reading 98 without the
+release and 0 with it: `recvident-chain-recv-flat`, `-array` (an rc-array
+field under the same chain), `-double` (`b.me().me()`, the RECVIDENT tier) and
+`-freecall` (a strict-fresh free producer, which `counted_call_key` reads by
+bare name). The ssarc row has
 none of its own — the boundary's own tests cover its shape, and the change only
 erases rows, whose failure direction is a leak rather than a release the
 boundary never earned.
