@@ -517,7 +517,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if err := g.resolveFernHelpers(); err != nil {
 		return "", err
 	}
-	g.line(`.arch armv8-a`)
+	// The declared baseline (CLAUDE.md, docs/BACKEND-PARITY.md): ARMv8.2-A
+	// with the cryptographic extensions, which is what makes pmull's .1q
+	// form — the carry-less multiply the CRC kernel folds with — assemblable
+	// by an external `as`. Emitted once here rather than as a mid-file
+	// `.arch_extension`, whose scope would silently depend on which kernel
+	// happened to be emitted first.
+	g.line(`.arch armv8.2-a+crypto`)
 	g.line(`.text`)
 	if g.entry == platforms.EntryProcess {
 		g.emitStartRuntime()
@@ -759,6 +765,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesSumBytes {
 		g.emitSumBytesRuntime()
+	}
+	if g.usesCrc32Cksum {
+		g.emitCrc32CksumRuntime()
 	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
@@ -4908,6 +4917,163 @@ func (g *generator) emitCountByteRuntime() {
 //
 // No cursor and no byte operand, so there is no clamp and no range guard: an
 // empty string sums to 0 because it has no bytes.
+// emitCrc32CksumRuntime emits `__fern_crc32_cksum(crc, s) -> i32`: the bytes
+// of `s` folded into the running CRC-32 cksum(1) prints (poly 0x04C11DB7, MSB
+// first, unreflected, no final complement).
+//
+// pmull/pmull2 multiply the low and high doublewords, so the fold constants
+// sit as K2 in element 0 and K1 in element 1 — the opposite order from the
+// x86-64 twin, where the immediate selects the halves instead.
+//
+// The constants are built with movz/movk and inserted rather than loaded from
+// .rodata: this assembler has no adrp, and rev64 + ext does the 16-byte
+// reverse in registers, so the kernel needs no constant pool at all.
+//
+// FOUR accumulators, 64 bytes a step, for the reason the x86-64 twin has
+// them: one chain runs at the multiply's latency rather than its throughput.
+func (g *generator) emitCrc32CksumRuntime() {
+	g.line("")
+	g.line(".global __fern_crc32_cksum")
+	g.typeDirective("__fern_crc32_cksum")
+	g.label("__fern_crc32_cksum")
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	// x0 = crc, x1/x2 = the string's two words.
+	g.emit("mov w10, w0") // running crc
+	g.emit("mov x4, x1")
+	g.emit("mov x5, x2")
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16)
+	g.emitStrLen2W("w6", "x5")
+	g.emit("mov x8, x7")           // cursor
+	g.emit("add x9, x7, w6, uxtw") // end
+	g.emit("mov w0, w10")
+	g.emit("sub x11, x9, x8")
+	g.emit("cmp x11, #16")
+	g.emit("b.lo .Lcrc32_tail")
+	// K1 pair: element 0 = x^128, element 1 = x^192.
+	g.emit("movz w12, #0x5605")
+	g.emit("movk w12, #0xe8a4, lsl #16")
+	g.emit("movz w13, #0xcd4c")
+	g.emit("movk w13, #0xc5b9, lsl #16")
+	g.emit("movi v2.2d, #0")
+	g.emit("ins v2.d[0], x12")
+	g.emit("ins v2.d[1], x13")
+	// A = reverse(first block); the crc rides the top 32 bits.
+	g.emitCrc32LoadBlock("v0", "x8")
+	g.emit("lsl x14, x10, #32")
+	g.emit("movi v1.2d, #0")
+	g.emit("ins v1.d[1], x14")
+	g.emit("eor v0.16b, v0.16b, v1.16b")
+	g.emit("mov w0, wzr")
+	g.emit("add x8, x8, #16")
+	g.emit("sub x11, x9, x8")
+	g.emit("cmp x11, #112")
+	g.emit("b.lo .Lcrc32_fold1")
+	for _, v := range []string{"v6", "v7", "v16"} {
+		g.emitCrc32LoadBlock(v, "x8")
+		g.emit("add x8, x8, #16")
+	}
+	// K4 pair, for the 64-byte stride.
+	g.emit("movz w12, #0x8b11")
+	g.emit("movk w12, #0xe622, lsl #16")
+	g.emit("movz w13, #0x794c")
+	g.emit("movk w13, #0x8833, lsl #16")
+	g.emit("movi v17.2d, #0")
+	g.emit("ins v17.d[0], x12")
+	g.emit("ins v17.d[1], x13")
+	g.label(".Lcrc32_fold4")
+	g.emit("sub x11, x9, x8")
+	g.emit("cmp x11, #64")
+	g.emit("b.lo .Lcrc32_combine")
+	for _, acc := range []string{"v0", "v6", "v7", "v16"} {
+		g.emit("pmull2 v3.1q, %s.2d, v17.2d", acc)
+		g.emit("pmull v4.1q, %s.1d, v17.1d", acc)
+		g.emit("eor %s.16b, v3.16b, v4.16b", acc)
+		g.emitCrc32LoadBlock("v5", "x8")
+		g.emit("eor %s.16b, %s.16b, v5.16b", acc, acc)
+		g.emit("add x8, x8, #16")
+	}
+	g.emit("b .Lcrc32_fold4")
+	g.label(".Lcrc32_combine")
+	for _, acc := range []string{"v6", "v7", "v16"} {
+		g.emit("pmull2 v3.1q, v0.2d, v2.2d")
+		g.emit("pmull v4.1q, v0.1d, v2.1d")
+		g.emit("eor v0.16b, v3.16b, v4.16b")
+		g.emit("eor v0.16b, v0.16b, %s.16b", acc)
+	}
+	g.label(".Lcrc32_fold1")
+	g.emit("sub x11, x9, x8")
+	g.emit("cmp x11, #16")
+	g.emit("b.lo .Lcrc32_reduce")
+	g.emit("pmull2 v3.1q, v0.2d, v2.2d")
+	g.emit("pmull v4.1q, v0.1d, v2.1d")
+	g.emit("eor v0.16b, v3.16b, v4.16b")
+	g.emitCrc32LoadBlock("v5", "x8")
+	g.emit("eor v0.16b, v0.16b, v5.16b")
+	g.emit("add x8, x8, #16")
+	g.emit("b .Lcrc32_fold1")
+	g.label(".Lcrc32_reduce")
+	// Back to load order, so the residue feeds the step most significant
+	// byte first.
+	g.emit("rev64 v0.16b, v0.16b")
+	g.emit("ext v0.16b, v0.16b, v0.16b, #8")
+	g.emit("add x15, x29, #48")
+	g.emit("st1 {v0.16b}, [x15]")
+	g.emit("mov x16, xzr")
+	g.label(".Lcrc32_red")
+	g.emit("cmp x16, #16")
+	g.emit("b.hs .Lcrc32_tail")
+	g.emit("ldrb w17, [x15, x16]")
+	g.emitCrc32Step()
+	g.emit("add x16, x16, #1")
+	g.emit("b .Lcrc32_red")
+	g.label(".Lcrc32_tail")
+	g.emit("cmp x8, x9")
+	g.emit("b.hs .Lcrc32_ret")
+	g.emit("ldrb w17, [x8]")
+	g.emitCrc32Step()
+	g.emit("add x8, x8, #1")
+	g.emit("b .Lcrc32_tail")
+	g.label(".Lcrc32_ret")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_crc32_cksum")
+}
+
+// emitCrc32LoadBlock loads sixteen bytes and reverses them, which is what puts
+// byte 0 in the most significant position the polynomial wants. ld1 rather
+// than `ldr q`: this assembler encodes the structure load and not the other.
+func (g *generator) emitCrc32LoadBlock(v, ptr string) {
+	g.emit("ld1 {%s.16b}, [%s]", v, ptr)
+	g.emit("rev64 %s.16b, %s.16b", v, v)
+	g.emit("ext %s.16b, %s.16b, %s.16b, #8", v, v, v)
+}
+
+// emitCrc32Step folds the byte in w17 into the CRC in w0, branchless: the
+// polynomial is selected by an arithmetic shift of the sign bit.
+//
+// Scratch stays in x12/x13/x14, which the fold finished with once the
+// constants were inserted into v2 and v17. x19 and x20 are AAPCS64
+// callee-saved and generated code parks call-crossing values there BECAUSE
+// callees preserve them, so a kernel using them without a save/restore pair
+// corrupts its caller rather than itself; x18 is the platform register.
+func (g *generator) emitCrc32Step() {
+	lbl := fmt.Sprintf(".Lcrc32_bit%d", g.crc32StepSeq)
+	g.emit("lsl w17, w17, #24")
+	g.emit("eor w0, w0, w17")
+	g.emit("mov w12, #8")
+	g.emit("movz w13, #0x1db7")
+	g.emit("movk w13, #0x04c1, lsl #16")
+	g.label(lbl)
+	g.emit("asr w14, w0, #31")
+	g.emit("and w14, w14, w13")
+	g.emit("lsl w0, w0, #1")
+	g.emit("eor w0, w0, w14")
+	g.emit("sub w12, w12, #1")
+	g.emit("cbnz w12, %s", lbl)
+	g.crc32StepSeq++
+}
+
 func (g *generator) emitSumBytesRuntime() {
 	g.line("")
 	g.line(".global __fern_sum_bytes")
@@ -13992,6 +14158,11 @@ type generator struct {
 	usesCountByte bool
 	// usesSumBytes gates the byte-sum reduction kernel (__fern_sum_bytes).
 	usesSumBytes bool
+	// usesCrc32Cksum gates the carry-less CRC fold (__fern_crc32_cksum).
+	usesCrc32Cksum bool
+	// crc32StepSeq numbers the CRC step's inner label, emitted more than
+	// once in one function.
+	crc32StepSeq int
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesTcp pulls in the full TCP socket runtime
@@ -18504,6 +18675,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesMismatch = true
 		case "__fern_rmemchr":
 			g.usesRmemchr = true
+		case "__fern_crc32_cksum":
+			g.usesCrc32Cksum = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
 		case "__fern_sum_bytes":

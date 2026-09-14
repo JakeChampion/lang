@@ -836,29 +836,6 @@ func (b *builder) readOnlyCallArg(call *ast.Call, i int) bool {
 	return known && i < len(esc) && !esc[i]
 }
 
-// borrowingCallArg is readOnlyCallArg plus the one gate the stage-(b)
-// arg-temp reclaim needs on top: that path decs a FRESH temp immediately
-// after the call, so the result must not BE the temp. A CONCRETE SCALAR
-// result settles it (resultCannotAliasArg), and an unresolved generic
-// result is rejected there too, which is what an identity return hides
-// behind. A hand-audited copying argument states the same fact outright —
-// `w.write(s)` and `w.write_some(s)` hand the bytes to write(2) and keep
-// nothing, yet both answer with a boxed Option / Result that
-// resultCannotAliasArg refuses (#9244).
-//
-// A CONFINEMENT question does not need that gate: it asks whether the
-// pointer can outlive the arm, which the escape oracle answers by itself —
-// so bindingConfinedToArm asks readOnlyCallArg instead (#9245).
-func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
-	if !b.readOnlyCallArg(call, i) {
-		return false
-	}
-	if id, ok := call.Callee.(*ast.Ident); ok && copyingBuiltinArg(id.Name, i) {
-		return true
-	}
-	return resultCannotAliasArg(b.exprType(call))
-}
-
 // reclaimableTryScrutinee reports whether a `?`'s source Option/Result box is
 // a FRESH owned call result the TryOp lowering can free once the success
 // payload is extracted — the value-consuming-position sibling of
