@@ -693,6 +693,10 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, alloc, 16)
+	})
 
 	// open-at(preopen, path-flags=1 symlink-follow, path_buf,
 	//   path_byte_len, open-flags=0, descriptor-flags=1 read, rb)
@@ -1257,6 +1261,10 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 14)
 
 	body = emitPreopenCachedP2(body, getDirs, 4, 9)
+	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 17)
+		return buildWriteFileErr(b, buildIoErr, allocRc1, 17)
+	})
 
 	// open-at(preopen, 1, path_buf, path_byte_len, create|truncate, write, rb)
 	body = inst.InstLocalGet(body, 9)
@@ -1658,6 +1666,10 @@ func buildOpenReaderWithBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 3)
 	body = emitStrNormalize(body, idxs, 0, 1, 4, 5, 11)
 	body = emitPreopenCachedP2(body, getDirs, 3, 6)
+	body = emitPreopenMissing(body, 6, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 12)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
+	})
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 4)
@@ -1728,6 +1740,10 @@ func buildOpenWriterWithBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 3)
 	body = emitStrNormalize(body, idxs, 0, 1, 4, 5, 11)
 	body = emitPreopenCachedP2(body, getDirs, 3, 6)
+	body = emitPreopenMissing(body, 6, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 12)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 12)
+	})
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 4)
@@ -1836,6 +1852,10 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	// Normalize path → path_buf(3), path_byte_len(4).
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 16)
+	})
 	// open-at(preopen, path-flags=1, path_buf, path_byte_len,
 	//   open-flags=0, descriptor-flags=1 read, rb).
 	body = inst.InstLocalGet(body, 5)
@@ -1951,6 +1971,10 @@ func buildOpenWriteViaStreamBodyP2(idxs map[string]uint32, openFlags int32) []by
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 16)
+	})
 	// open-at(preopen, 1, path_buf, path_byte_len, openFlags, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)
@@ -2048,6 +2072,10 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 	body = emitPreopenCachedP2(body, getDirs, 2, 5)
+	body = emitPreopenMissing(body, 5, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 16)
+		return buildReadFileErr(b, idxs, buildIoErr, allocRc1, 16)
+	})
 	// open-at(preopen, 1, path_buf, path_byte_len, create, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)

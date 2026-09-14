@@ -176,22 +176,20 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			}
 		}
 	}
-	// Every filesystem method resolves a preopen first, so
-	// get-directories is the one universal prerequisite and a method
-	// without it is an incomplete chain. open-at is NOT universal: it
-	// opens a path for streaming, which stat / unlink / mkdir do not do
-	// — they take the preopen descriptor and a path directly. Treating
-	// it as a prerequisite made a stat-only or temp_dir-only program
-	// unbuildable, and made every filesystem component declare an
-	// open-at its core might never import.
+	// get-directories alone is an incomplete chain: a preopen is only
+	// ever resolved to hand it to a descriptor method. The reverse is
+	// not — a descriptor method without get-directories is a program
+	// whose only handles are stdio (`stdin().stat()` imports
+	// descriptor.stat and never opens a path), and it builds. open-at
+	// is not a prerequisite either: it opens a path for streaming,
+	// which stat / unlink / mkdir do not do — they take the preopen
+	// descriptor and a path directly.
 	//
 	// Which methods follow is otherwise a free choice: req.File already
 	// carries exactly the set the core imports and the instance type is
 	// built from it, so there is no combination left to reject.
-	if getDirs || req.File.Any() {
-		if !getDirs || !req.File.Any() {
-			unsupported = append(unsupported, "wasi:filesystem (incomplete chain: needs get-directories + at least one descriptor method)")
-		}
+	if getDirs && !req.File.Any() {
+		unsupported = append(unsupported, "wasi:filesystem (incomplete chain: get-directories with no descriptor method)")
 	}
 	return req, unsupported
 }

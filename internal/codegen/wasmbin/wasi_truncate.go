@@ -120,6 +120,10 @@ func buildTruncateBodyP2(idxs map[string]uint32) []byte {
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 4, 5, 6)
 	body = emitPreopenP2(body, alloc, getDirs, 3, 7)
+	body = emitPreopenMissing(body, 7, func(b []byte) []byte {
+		b = setErrnoNoEnt(b, 9)
+		return emitResultErrFor(b, buildIoErr, allocRc1, 9, 0, 1, 10, 11)
+	})
 
 	body = inst.InstLocalGet(body, 7)
 	body = inst.InstI32Const(body, 1) // path-flags: symlink-follow

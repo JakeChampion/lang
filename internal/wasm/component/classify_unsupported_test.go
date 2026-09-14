@@ -69,26 +69,28 @@ func TestClassifyCoreAcceptsKnownImports(t *testing.T) {
 	}
 }
 
-// A descriptor method without get-directories cannot work: every one of
-// them resolves a preopen first. get-directories on its own is equally
-// incomplete — nothing would use the descriptor.
+// get-directories on its own is an incomplete chain — nothing would use
+// the descriptor it resolves.
 func TestClassifyCoreRejectsIncompleteFilesystemChain(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		pairs [][2]string
-	}{
-		{"method without get-directories", [][2]string{
-			{"wasi:filesystem/types@0.2.0", "[method]descriptor.unlink-file-at"},
-		}},
-		{"get-directories without any method", [][2]string{
-			{"wasi:filesystem/preopens@0.2.0", "get-directories"},
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, unsupported := component.ClassifyCore(coreModuleWithImports(tc.pairs))
-			if len(unsupported) == 0 {
-				t.Error("incomplete filesystem chain accepted, want it reported")
-			}
-		})
+	_, unsupported := component.ClassifyCore(coreModuleWithImports([][2]string{
+		{"wasi:filesystem/preopens@0.2.0", "get-directories"},
+	}))
+	if len(unsupported) == 0 {
+		t.Error("get-directories without any method accepted, want it reported")
+	}
+}
+
+// A descriptor method without get-directories is a program whose only
+// handles are stdio — `stdin().stat()` imports descriptor.stat and never
+// resolves a preopen — and it builds.
+func TestClassifyCoreAcceptsHandleMethodAlone(t *testing.T) {
+	req, unsupported := component.ClassifyCore(coreModuleWithImports([][2]string{
+		{"wasi:filesystem/types@0.2.0", "[method]descriptor.stat"},
+	}))
+	if len(unsupported) != 0 {
+		t.Errorf("unsupported = %q, want none", unsupported)
+	}
+	if !req.File.StatSelf {
+		t.Errorf("File = %+v, want StatSelf set", req.File)
 	}
 }
