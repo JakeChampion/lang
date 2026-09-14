@@ -150,6 +150,21 @@ function mapped(xs: i32[], f: (i32) => i32): i32[] { var out: i32[] = []; for x 
 // golden's refusal for this one names the call rather than the record.
 function lifted_field(b: Bag, xs: i32[]): Bag { return Bag { ...b, items: mapped(xs, (v: i32): i32 => v + 1) }; }
 function string_length(s: string): i32 { return s.len(); }
+// An address takes the operators whose lowering never reads the operand width
+// — the backends run these on the whole register — and the golden pins which
+// ones those are. The two it refuses are in the RC fixture's sibling: a shift
+// masks its count to the narrow width and a divide picks its register pair
+// from it, so both would truncate a real address.
+function offset(buf: usize): usize { return buf + 8; }
+function delta(a: usize, b: usize): usize { return a - b; }
+function masked(p: usize): usize { return p & 15; }
+function scaled(p: usize): usize { return p * 2; }
+function above(a: usize, b: usize): boolean { return a > b; }
+function same(a: usize, b: usize): boolean { return a == b; }
+// Refused, and the golden says so: no binary at the pointer width exists for
+// the backends to resolve, so these two stay out until one does.
+function halved(p: usize): usize { return p / 2; }
+function shifted(p: usize): usize { return p >> 3; }
 // A codepoint converts where an i32 does and compares only for equality. The
 // golden pins which conversion each direction is: into and out of the 32-bit
 // widths a mask of the destination, out of the byte none at all since it

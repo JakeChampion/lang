@@ -132,7 +132,7 @@ pub function is_usize(t: typeinfo.Type): boolean {
 // The integer types read without a sign bit. It is what a widening extends by
 // and which form of the sign-reading operators — the orderings, the right
 // shift, division and remainder — the operand takes.
-pub function is_unsigned_int(t: typeinfo.Type): boolean { return is_u8(t) || is_u32(t) || is_u64(t); }
+pub function is_unsigned_int(t: typeinfo.Type): boolean { return is_u8(t) || is_u32(t) || is_u64(t) || is_usize(t); }
 
 // The 64-bit float. Like the i64 it occupies a slot of its own that only wasm
 // spells out; its operators are the float opcodes, which never wrap.
@@ -1024,7 +1024,8 @@ function float_op(op: string): boolean {
 // the conversion is a cast the source has to write. Operator overloads have
 // none either.
 pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type): typeinfo.Type {
-    if (is_integer(left) && !is_usize(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
+    if (is_usize(left) && semtypes.equal(left, right)) { return address_result(op, left); }
+    if (is_integer(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
     if (is_float(left) && semtypes.equal(left, right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     // A codepoint is compared, never ordered or added: native answers E009 to
@@ -1032,6 +1033,18 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
     if (is_char(left) && is_char(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
     return typeinfo.unchecked();
+}
+
+// An address supports the operators whose lowering does not read the operand
+// WIDTH, since the stack IR carries no binary at the pointer width: the
+// backends run add/sub/mul and the bitwise three on the whole register, and a
+// comparison on the whole register too. The shifts mask their count to the
+// operand width and div/rem select their register pair from it, so at the
+// narrow width both would truncate an address — those stay refused until a
+// pointer-width binary exists for the backends to resolve.
+function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
+    if (op == "/" || op == "%" || op == "<<" || op == ">>") { return typeinfo.unchecked(); }
+    return integer_result(op, t);
 }
 
 function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {
