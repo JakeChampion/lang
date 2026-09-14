@@ -125,7 +125,7 @@ pub function path_file_name(p: string): string {
 }
 
 pub function path_extension(p: string): string {
-    var name: str = path_file_name(p);
+    var name: string = path_file_name(p);
     var n: i32 = name.len();
     if (n == 0) { return ""; }
     var i: i32 = n - 1;
