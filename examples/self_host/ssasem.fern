@@ -1027,6 +1027,9 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
     if (is_integer(left) && !is_usize(left) && semtypes.equal(left, right)) { return integer_result(op, left); }
     if (is_float(left) && semtypes.equal(left, right)) { return float_result(op, left); }
     if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
+    // A codepoint is compared, never ordered or added: native answers E009 to
+    // every operator on char but the two equalities.
+    if (is_char(left) && is_char(right) && (op == "==" || op == "!=")) { return typeinfo.TypeBool { tag: 0 }; }
     if (is_text(left) && is_text(right)) { return string_result(op); }
     return typeinfo.unchecked();
 }
@@ -1077,10 +1080,19 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // precision — so it is not a reinterpretation of the slot, and only the
 // widths the backends have an opcode for are admitted: the byte has none, and
 // reaches the float through the i32 the source writes.
+// A codepoint converts exactly where an i32 does. char is an integer width
+// carrying a range restriction, and the restriction is the checker's to
+// enforce at the literal rather than the conversion's to refuse; native takes
+// the same line, admitting char to every integer width and to none of the
+// floats (E033). The address is the one width it does not reach, for the
+// reason no narrow integer reaches it: the pointer-width arms above answer
+// first.
+function converts_as_integer(t: typeinfo.Type): boolean { return is_integer(t) || is_char(t); }
+
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if (is_usize(from)) { return is_wide(to); }
     if (is_usize(to)) { return is_wide(from); }
-    if (is_integer(from) && is_integer(to)) { return true; }
+    if (converts_as_integer(from) && converts_as_integer(to)) { return true; }
     if (is_float(from) && is_float(to)) { return !semtypes.equal(from, to); }
     if (is_float(to)) { return is_integer(from) && !is_u8(from); }
     if (is_float(from)) { return is_integer(to) && !is_u8(to); }
@@ -1089,7 +1101,7 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
 
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!is_integer(result) && !is_float(result)) { return "cast result type"; }
+    if (!converts_as_integer(result) && !is_float(result)) { return "cast result type"; }
     if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }
