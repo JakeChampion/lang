@@ -11798,7 +11798,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					// builder code and blocks tracking owned locals. The method
 					// receiver (Args[0] when Method is set) keeps its own
 					// consume/borrow classification below.
-					flags := c.ownFuncs[id.Name]
+					// A callee reached through a function VALUE declares its
+					// consuming slots in its type, not in the own-func registry
+					// — so a use after `f(xs)` at such a slot is a use after
+					// move, exactly as it is for a declared own-func.
+					flags, isOwn := c.callOwnFlags[x]
+					if !isOwn {
+						flags = c.ownFuncs[id.Name]
+					}
 					for ai, arg := range x.Args {
 						if x.Method != nil && ai == 0 {
 							continue

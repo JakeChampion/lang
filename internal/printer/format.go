@@ -1263,6 +1263,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
+			if p.Own {
+				f.b.WriteString("own ")
+			}
 			f.b.WriteString(writtenName(p.Name))
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(p.Type))
@@ -1966,6 +1969,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		for i, p := range x.Params {
 			if i > 0 {
 				f.b.WriteString(", ")
+			}
+			if p.Own {
+				f.b.WriteString("own ")
 			}
 			// A destructuring parameter prints the pattern it was
 			// written with, not the holder the desugar minted.

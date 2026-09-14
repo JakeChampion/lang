@@ -86,3 +86,16 @@ func TestOwnLambdaParamMatchesOwnFuncType(t *testing.T) {
 function apply(f: (own i32[]) => i32): i32 { return f([1, 2]); }
 function main(): i32 { return apply((own xs: i32[]) => xs.len()); }`)
 }
+
+// Handing a value to a consuming slot of a function VALUE is a move, exactly as
+// it is for a declared own-func: reading the name afterwards is a use after
+// move. The affine walk read the own-func registry alone, which has no entry
+// for a callee reached through a value, so every such argument was classified a
+// borrow and the read went unreported — a use-after-free the codegen then
+// emitted, since the callee had released the buffer.
+func TestOwnFuncTypeIndirectCallMovesArgument(t *testing.T) {
+	wantCheckError(t, "indirect-own-use-after-move", ownFnConsumer+`
+function apply(f: (own i32[]) => i32, own a: i32[]): i32 { var n = f(a); return n + a.len(); }
+function main(): i32 { return apply(eat, [1, 2]); }`,
+		`use of owned parameter "a" after it was consumed`)
+}

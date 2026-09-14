@@ -128,6 +128,9 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 		if i > 0 {
 			b.WriteString(", ")
 		}
+		if p.Own {
+			b.WriteString("own ")
+		}
 		b.WriteString(p.Name)
 		b.WriteString(": ")
 		b.WriteString(printType(p.Type))
@@ -251,6 +254,9 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		for i, p := range x.Params {
 			if i > 0 {
 				b.WriteString(", ")
+			}
+			if p.Own {
+				b.WriteString("own ")
 			}
 			b.WriteString(p.Name)
 			b.WriteString(": ")
