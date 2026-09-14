@@ -645,8 +645,8 @@ Constructions over a loop element cross too (`bump_each`, `line_each`,
 element, an unannotated binding inferred from it, and a string element
 retained into a record whose own unit dies at the end of the step.
 
-Measured against the whole loaded self-hosted compiler, 7,156 of its 7,807
-functions produce, plan and physically lower, through 60 instances of its
+Measured against the whole loaded self-hosted compiler, 7,720 of its 7,809
+functions produce, plan and physically lower, through 102 instances of its
 generic declarations. The three stages report the same number: neither the
 unit planner nor physical RC refuses anything a producer admitted, so every
 remaining refusal is a producer's.
@@ -664,12 +664,14 @@ indexing was the largest leaf and worth +0 until enough of its callers
 lowered; the byte type below was worth +1,200 because it unblocked three
 leaves at once.
 
-The leaves are now led by a closure capturing a reference (482) and a binding
-whose type is not its value's (84), which together are the closure env box.
-Callees with no semantic contract are 47, none of them a declaration:
-`util.append_all` (475) and the three `map_*_acc` walkers (39), whose variable
-rode in an array and a returned tuple, closed outright when the boundary began
-producing a generic body per instantiation, worth +424. The destructuring
+The leaves are now led by the `Cell` and `Map` method vocabulary (30 call
+targets plus `map_new` 7 and `cell_new` 3), `target_os` (14) and the 32-bit
+float (10); the closure env box, which stood at 482 captures and 84 bindings,
+is at zero, worth +564 across the environment record and the `own` a lambda's
+binding spells. Callees with no semantic contract are 47, none of them a
+declaration: `util.append_all` (475) and the three `map_*_acc` walkers (39),
+whose variable rode in an array and a returned tuple, closed outright when the
+boundary began producing a generic body per instantiation, worth +424. The destructuring
 declaration, the record literal, the cast and
 operator contracts, the literal width and the escaping view are all at zero. The string view was
 worth +355 once the sites that stored
@@ -1008,21 +1010,27 @@ The container of a type variable is at zero: a generic body is produced per
 instantiation, so `util.append_all` and the `map_*_acc` walkers lower at every
 type the compiler binds them to, and the 514 functions behind them with
 them. Read the net: the leaf was 514 and the census moved +424, because 90 of
-those functions refuse again one leaf further in at the closure env box,
-which goes 389 -> 482.
+those functions refused again one leaf further in at the closure env box,
+which went 389 -> 482.
 
-Next, by measured leaf, ONE question holds 566 of the 651 still refused: the
-closure env box — a capture that is a reference (482), plus the binding whose
-type is not its value's (84), which is the same box read back at a type that
-is not the slot's.
+The closure env box is at zero too, worth +564 against the 566 it held. The
+environment record bought the captures (482 -> 0) and moved the binding leaf
+84 -> 130 -> 107 before it closed, each step a shape a probe named: a lambda
+or nested function with an OWNING parameter bound to a name, whose binding
+the checker typed without the `own` its body declared (three sites, plus the
+box type read off the hoisted signature with its flags one slot out), then
+one whose owning parameter is an ARRAY, whose `own` sits on the spelling's
+base name under the array suffix and which `parser.ref_is_own` answered false
+for. Each of those was a checker or lift bug the boundary's exact-type rule
+found, fixed where it lived rather than relaxed here.
 
-What is left beyond it is 85 functions: the `Cell` and `Map` method
-vocabulary (30 call targets plus `map_new` 7 and `cell_new` 3), `target_os`
-(14), the 32-bit float (10), the builtins whose result is
-`Result[void, IoError]` (12 across `create_dir_all`, `write_file`,
-`remove_dir_all` and `write_output`), `usize` (7), which the checker resolves
-to unknown because a pointer width is a target decision, one generic no
-produced body reaches, and one interpreter callee. Then a production consumer
-that lowers produced functions through this pipeline and feeds `caller_sigs`
-to the remaining AST callers — a union result being the position that fixture
-measured a leak at.
+What is left is 89 functions: the `Cell` and `Map` method vocabulary (30
+call targets plus `map_new` 7 and `cell_new` 3), `target_os` (14), the
+32-bit float (10), the builtins whose result is `Result[void, IoError]` (12
+across `create_dir_all`, `write_file`, `remove_dir_all` and `write_output`),
+`usize` (7), which the checker resolves to unknown because a pointer width is
+a target decision, a function value stored in a record field (5, the
+`astwalk.splice_stmts_with_lambda` shape), and one interpreter callee. Then a
+production consumer that lowers produced functions through this pipeline and
+feeds `caller_sigs` to the remaining AST callers — a union result being the
+position that fixture measured a leak at.
