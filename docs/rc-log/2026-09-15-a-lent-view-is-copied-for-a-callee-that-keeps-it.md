@@ -83,6 +83,11 @@ x86-64, through the rebuilt compiler:
 The mixed rows leak what the AST-lowered frame leaves, as every mixed
 configuration does; the answer is right in each.
 
+The fixture, with the four lowering files checked out from before the fix:
+`lit_bytes(1)` printed 1822 for 1804 and left 24 bytes live, on x86-64 and
+arm64 alike; the byte sum reads the reissued block, and the 24 bytes are the
+handed box the counted release stood down on.
+
 ## Traps
 
 **A read of freed bytes is invisible to the sanitizer.** The quarantine
