@@ -749,6 +749,12 @@ pub struct LowerFrame {
     // dead_alias_ok: the dead-alias-cancelled bind-site keys (#4402 opt 1,
     // dead_alias_of) — arr_dead_alias_bind's pure half. Threaded read-only.
     dead_alias_ok: string[],
+    // dead_alias_bp: the parameters a dead alias may BORROW from
+    // (dead_alias_borrow_params_of, #9291). A parameter this frame never
+    // releases is held by the CALLER for the whole call, so the four limb
+    // predicates accept it as a source where they otherwise demand a credited
+    // local slot. Threaded read-only.
+    dead_alias_bp: string[],
     // spread_sites: this function's base-spread rows (spread_sites_of). A
     // `T { ...base }` copies a tuple, map, option, closure or unrouted string
     // field into the new box with NO inc, so a counted field share of a type it
@@ -60015,8 +60021,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, rc_ml_compute(fn, structs).names);
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
+    var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, rc_ml_compute(fn, structs).names, da_bp, is_scalar_type_name(fn.ret_type));
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -70439,10 +70446,15 @@ pub struct DeadAliases { sites: string[], srcs: string[] }
 // moves included) — native's movedLocals gate, which is wider than the
 // top-level set the emitting predicates read: a loop-body-moved source keeps
 // the retain-and-cancel path, so its alias pair must keep the retain too.
-pub function dead_alias_of(body: ast.Stmt[], assigned: string[], moved: string[]): DeadAliases {
+//
+// bparams: the parameters an alias may BORROW from
+// (dead_alias_borrow_params_of) — the third leg's source set. ret_scalar: the
+// function returns a flat scalar, so a return mentioning the alias hands out
+// nothing that carries it.
+pub function dead_alias_of(body: ast.Stmt[], assigned: string[], moved: string[], bparams: string[], ret_scalar: boolean): DeadAliases {
     var rets: string[] = da_returned_names(body, []);
     var scruts: string[] = da_scrutinee_names(body, []);
-    return da_scan(body, body, assigned, rets, scruts, moved, DeadAliases { sites: [], srcs: [] });
+    return da_scan(body, body, assigned, rets, scruts, moved, bparams, ret_scalar, DeadAliases { sites: [], srcs: [] });
 }
 
 // da_name_in_sites: is `name` the bound name of any recorded site key
@@ -70640,7 +70652,7 @@ function da_scrutinee_names(stmts: ast.Stmt[], acc: string[]): string[] {
     return a;
 }
 
-function da_scan(stmts: ast.Stmt[], body: ast.Stmt[], assigned: string[], rets: string[], scruts: string[], moved: string[], acc: DeadAliases): DeadAliases {
+function da_scan(stmts: ast.Stmt[], body: ast.Stmt[], assigned: string[], rets: string[], scruts: string[], moved: string[], bparams: string[], ret_scalar: boolean, acc: DeadAliases): DeadAliases {
     var a: DeadAliases = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -70666,17 +70678,40 @@ function da_scan(stmts: ast.Stmt[], body: ast.Stmt[], assigned: string[], rets: 
                                 sites: a.sites.append(reclaim_site_key_of(v.name, v.line, v.col)),
                                 srcs: push_str_unique(a.srcs, id.name)
                             };
+                        } else if (util.index_of_str(bparams, id.name) >= 0
+                            && id.name != v.name
+                            && !da_name_in_sites(a.sites, v.name)
+                            && util.index_of_str(a.srcs, v.name) < 0
+                            && util.index_of_str(assigned, id.name) < 0 && util.index_of_str(assigned, v.name) < 0
+                            && util.index_of_str(scruts, id.name) < 0 && util.index_of_str(scruts, v.name) < 0
+                            && util.index_of_str(moved, id.name) < 0 && util.index_of_str(moved, v.name) < 0
+                            && local_decl_count(body, v.name) == 1
+                            && v.type_name.len() > 0 && !is_scalar_type_name(v.type_name)
+                            && (util.index_of_str(rets, v.name) < 0 || ret_scalar)
+                            && da_bp_confined_body(body, v.name)) {
+                            // The borrowed-PARAMETER leg. The kind gate is y's
+                            // annotation alone — a parameter has no declaration
+                            // in the body for the evidence proxies to read — and
+                            // the emitting predicate settles the kind against the
+                            // slot facts anyway. Native excludes the for-in
+                            // desugar's own iterand alias here; this compiler
+                            // lowers `for` intact, so there is no such binding
+                            // to exclude.
+                            a = DeadAliases {
+                                sites: a.sites.append(reclaim_site_key_of(v.name, v.line, v.col)),
+                                srcs: push_str_unique(a.srcs, id.name)
+                            };
                         }
                     },
                     _ => {}
                 }
             },
-            ast.StmtIf(f) => { a = da_scan(f.then_body, body, assigned, rets, scruts, moved, a); a = da_scan(f.else_body, body, assigned, rets, scruts, moved, a); },
-            ast.StmtWhile(w) => { a = da_scan(w.body, body, assigned, rets, scruts, moved, a); },
-            ast.StmtFor(fo) => { a = da_scan(fo.body, body, assigned, rets, scruts, moved, a); },
+            ast.StmtIf(f) => { a = da_scan(f.then_body, body, assigned, rets, scruts, moved, bparams, ret_scalar, a); a = da_scan(f.else_body, body, assigned, rets, scruts, moved, bparams, ret_scalar, a); },
+            ast.StmtWhile(w) => { a = da_scan(w.body, body, assigned, rets, scruts, moved, bparams, ret_scalar, a); },
+            ast.StmtFor(fo) => { a = da_scan(fo.body, body, assigned, rets, scruts, moved, bparams, ret_scalar, a); },
             ast.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = da_scan(m.arms[mi].body, body, assigned, rets, scruts, moved, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = da_scan(m.arms[mi].body, body, assigned, rets, scruts, moved, bparams, ret_scalar, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -70685,18 +70720,216 @@ function da_scan(stmts: ast.Stmt[], body: ast.Stmt[], assigned: string[], rets: 
     return a;
 }
 
+// --- The borrowed-PARAMETER leg (#9244, ported by #9291) ---
+//
+// `var y = p`, where p is a BORROWED parameter. The bare-ident leg above wants
+// an owned rc LOCAL as the source and the for-in leg a synthetic iterand, so
+// this shape fell between them: the bind took the transfer inc and y's exit
+// dec balanced it, a wasted pair on every call — and on native, whose exit
+// sweep skips an alias entirely, one leaked reference per call.
+//
+// The cancellation is sound for the for-in leg's reason, one step stronger:
+// the CALLER owns p across the whole call and nothing in this frame releases
+// it — a borrowed parameter is in no exit sweep — so y reads through a
+// reference already held and needs none of its own. Recording p in `srcs` is
+// the other half: it refuses the precise drops and the reuse donorship, so a
+// cancelled inc can never leave `.with` seeing rc == 1 and mutating the
+// caller's buffer.
+
+// dead_alias_borrow_params_of: which parameters an alias may borrow from —
+// the ones THIS FRAME never releases, so the only reference in play is the
+// caller's. Native asks that as `!own && !paramOwnedByDefault &&
+// !consumedParams`; here it is `own` (the caller moved its reference in),
+// consumed_params_of (the consume-rebind promotion, native's own
+// computeConsumedParams) and a reassignment, which the caller's `assigned`
+// gate refuses in its own right. This compiler has no owned-by-default
+// parameter class to exclude: every release row the exit sweep grows for a
+// parameter is an `own` one (own_struct_param_release_rows_of).
+//
+// NOT the module's borrow oracle, which reads an aliasing binding of the
+// parameter as a reason to refuse borrowability — asking it here would refuse
+// every source this leg exists for.
+//
+// A parameter a LOCAL of the same name shadows is refused: nothing in a
+// bare-ident init says which of the two it reads. A scalar parameter is
+// refused because it carries no reference at all.
+pub function dead_alias_borrow_params_of(fn: parser.FuncDecl, structs: StructTab): string[] {
+    var out: string[] = [];
+    var consumed: string[] = consumed_params_of(fn, body_assign_targets(fn.body), structs);
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        if (!fn.params[i].own
+            && !is_scalar_type_name(fn.params[i].type_name)
+            && util.index_of_str(consumed, fn.params[i].name) < 0
+            && local_decl_count(fn.body, fn.params[i].name) == 0) {
+            out = push_str_unique(out, fn.params[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// da_bp_pure_read_method: the receiver methods that only READ the receiver —
+// the self-host half of native's pureReadReceiverBuiltin. `len` is the whole
+// set: every other receiver method either hands part of the receiver back or,
+// at rc == 1, mutates the buffer in place, and that buffer is the caller's.
+function da_bp_pure_read_method(field: string): boolean {
+    return field == "len";
+}
+
+// da_bp_confined_expr: every mention of `name` in `e` is a read THROUGH the
+// value — the base of an index, the object of a field read, or the receiver of
+// a pure-read method. A bare mention anywhere else is an escape: handed to a
+// callee, stored in a container, captured by a lambda, sliced into a view or
+// returned whole, the reference can outlive this frame, and the one it reads
+// through belongs to the caller.
+//
+// A whitelist, not a blacklist. Every Expr variant is enumerated rather than
+// tailed with a wildcard, so a new one is a compile error here — the choice
+// between "read through" and "escape" is made deliberately, and the wrong
+// default would be a use-after-free.
+function da_bp_confined_expr(e: ast.Expr, name: string): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name != name; },
+        ast.ExprNumber(_) => { return true; },
+        ast.ExprString(_) => { return true; },
+        ast.ExprBool(_) => { return true; },
+        ast.ExprUnknown(_) => { return true; },
+        ast.ExprBinary(b) => { return da_bp_confined_expr(b.left, name) && da_bp_confined_expr(b.right, name); },
+        ast.ExprUnary(u) => { return da_bp_confined_expr(u.operand, name); },
+        ast.ExprIndex(ix) => {
+            if (ident_name_or_empty(ix.array) != name && !da_bp_confined_expr(ix.array, name)) { return false; }
+            return da_bp_confined_expr(ix.index, name);
+        },
+        ast.ExprFieldAccess(fa) => {
+            return ident_name_or_empty(fa.obj) == name || da_bp_confined_expr(fa.obj, name);
+        },
+        ast.ExprCall(c) => {
+            var callee_ok: boolean = false;
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    if (ident_name_or_empty(fa.obj) == name) { callee_ok = da_bp_pure_read_method(fa.field); }
+                    else { callee_ok = da_bp_confined_expr(fa.obj, name); }
+                },
+                _ => { callee_ok = da_bp_confined_expr(c.callee, name); }
+            }
+            if (!callee_ok) { return false; }
+            for carg in c.args { if (!da_bp_confined_expr(carg, name)) { return false; } }
+            return true;
+        },
+        // An array SLICE is a view of the same buffer, not a read through it.
+        ast.ExprSlice(sl) => {
+            if (!da_bp_confined_expr(sl.array, name)) { return false; }
+            if (!da_bp_confined_expr(sl.start, name)) { return false; }
+            return da_bp_confined_expr(sl.end, name);
+        },
+        ast.ExprArray(ar) => {
+            for ael in ar.elements { if (!da_bp_confined_expr(ael, name)) { return false; } }
+            return true;
+        },
+        ast.ExprTuple(tu) => {
+            for tel in tu.elements { if (!da_bp_confined_expr(tel, name)) { return false; } }
+            return true;
+        },
+        ast.ExprStructLit(sl) => {
+            if (sl.has_base && !da_bp_confined_expr(sl.base, name)) { return false; }
+            for sfv in sl.field_values { if (!da_bp_confined_expr(sfv, name)) { return false; } }
+            return true;
+        },
+        ast.ExprMapLit(ml) => {
+            for mk in ml.keys { if (!da_bp_confined_expr(mk, name)) { return false; } }
+            for mv in ml.vals { if (!da_bp_confined_expr(mv, name)) { return false; } }
+            return true;
+        },
+        ast.ExprFString(fs) => {
+            for fsx in fs.exprs { if (!da_bp_confined_expr(fsx, name)) { return false; } }
+            return true;
+        },
+        // A lambda CAPTURES what it mentions, and its closure box outlives the
+        // statement that built it — any mention at all is an escape.
+        ast.ExprLambda(lm) => {
+            for lst in lm.body {
+                if (util.index_of_str(astwalk.collect_idents_stmt(lst, []), name) >= 0) { return false; }
+            }
+            return true;
+        },
+    }
+    return false;
+}
+
+function da_bp_confined_stmt(st: ast.Stmt, name: string): boolean {
+    match (st) {
+        ast.StmtVar(v) => { return da_bp_confined_expr(v.init, name); },
+        ast.StmtReturn(r) => { return da_bp_confined_expr(r.value, name); },
+        ast.StmtExpr(ex) => { return da_bp_confined_expr(ex.value, name); },
+        // The target is a bare name, so `name = …` is the reassignment the
+        // caller's `assigned` gate refuses; only the value is walked here.
+        ast.StmtAssign(asg) => { return da_bp_confined_expr(asg.value, name); },
+        ast.StmtIf(f) => {
+            if (!da_bp_confined_expr(f.cond, name)) { return false; }
+            for tst in f.then_body { if (!da_bp_confined_stmt(tst, name)) { return false; } }
+            for est in f.else_body { if (!da_bp_confined_stmt(est, name)) { return false; } }
+            return true;
+        },
+        ast.StmtWhile(w) => {
+            if (!da_bp_confined_expr(w.cond, name)) { return false; }
+            for wst in w.body { if (!da_bp_confined_stmt(wst, name)) { return false; } }
+            return true;
+        },
+        ast.StmtFor(fo) => {
+            if (!da_bp_confined_expr(fo.iter, name)) { return false; }
+            for fst in fo.body { if (!da_bp_confined_stmt(fst, name)) { return false; } }
+            return true;
+        },
+        ast.StmtMatch(m) => {
+            if (!da_bp_confined_expr(m.scrutinee, name)) { return false; }
+            for arm in m.arms {
+                if (arm.has_guard && !da_bp_confined_expr(arm.guard, name)) { return false; }
+                for mst in arm.body { if (!da_bp_confined_stmt(mst, name)) { return false; } }
+            }
+            return true;
+        },
+        ast.StmtDefer(d) => { return da_bp_confined_stmt(d.action, name); },
+        ast.StmtBreak(_) => { return true; },
+        ast.StmtContinue(_) => { return true; },
+        ast.StmtUnknown(_) => { return true; },
+    }
+    return false;
+}
+
+function da_bp_confined_body(stmts: ast.Stmt[], name: string): boolean {
+    for bst in stmts { if (!da_bp_confined_stmt(bst, name)) { return false; } }
+    return true;
+}
+
+// da_bp_src_slot: the slot of a borrowed-PARAMETER alias source, or -1 when
+// this source is not one. The four limb predicates ask this INSTEAD of their
+// "credited local slot" test, which is a stand-in for "the source's value
+// outlives the alias's last read" — a fact a parameter this frame never
+// releases establishes outright, since the caller holds it across the call.
+function da_bp_src_slot(se: LowerState, name: string): i32 {
+    var src: i32 = se.slot_of(name);
+    if (src < 0 || src >= se.frame.n_params) { return 0 - 1; }
+    if (util.index_of_str(se.frame.dead_alias_bp, name) < 0) { return 0 - 1; }
+    return src;
+}
+
 // arr_dead_alias_bind: THE one predicate deciding whether this array alias
 // bind is dead-alias-cancelled — consulted by the ladder (skip the retain)
 // and by bind_var_slot (skip the alias slot's sweep dec, via
 // note_moved_elided), so the two halves of the net-zero pair cannot drift.
-// The slot facts are the final authority: source must be an owned (non-param,
-// non-borrowed) array slot, and a MOVE site takes the move path instead.
+// The slot facts are the final authority: the source must be an owned,
+// non-borrowed array slot — or a borrowed PARAMETER (da_bp_src_slot), whose
+// buffer the caller holds across the whole call — and a MOVE site takes the
+// move path instead.
 function arr_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
         ast.ExprIdent(id) => {
             var src: i32 = se.slot_of(id.name);
-            if (src < 0 || src < se.frame.n_params) { return false; }
-            if (!se.is_arr_slot(src) || se.is_borrowed_arr_slot(src)) { return false; }
+            var bp: i32 = da_bp_src_slot(se, id.name);
+            if (src < 0 || (bp < 0 && src < se.frame.n_params)) { return false; }
+            if (!se.is_arr_slot(src)) { return false; }
+            if (bp < 0 && se.is_borrowed_arr_slot(src)) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.frame.moved_names, id.name) >= 0 || util.index_of_str(se.frame.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.frame.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
@@ -70709,16 +70942,19 @@ function arr_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // str_dead_alias_bind: the string sibling of arr_dead_alias_bind — THE one
 // predicate for the string limb, consulted by the ladder (skip the retain)
 // and by bind_var_slot (skip the alias slot's sweep dec). The slot facts are
-// final: the source must be a credited (non-param) string slot, and a MOVE
-// site takes the move path instead. Strings have no precise-drop class, so
-// the pd_filter half of the cancellation is vacuous here — only the inc/dec
-// pair is elided; the source's release stays the exit sweep it already was.
+// final: the source must be a credited local string slot, or a borrowed
+// string PARAMETER (da_bp_src_slot), and a MOVE site takes the move path
+// instead. Strings have no precise-drop class, so the pd_filter half of the
+// cancellation is vacuous here — only the inc/dec pair is elided; the
+// source's release stays the exit sweep it already was.
 function str_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
         ast.ExprIdent(id) => {
             var src: i32 = se.slot_of(id.name);
-            if (src < 0 || src < se.frame.n_params) { return false; }
-            if (!slot_is_reclaimable_str(se, src)) { return false; }
+            var bp: i32 = da_bp_src_slot(se, id.name);
+            if (src < 0 || (bp < 0 && src < se.frame.n_params)) { return false; }
+            if (bp < 0 && !slot_is_reclaimable_str(se, src)) { return false; }
+            if (bp >= 0 && !se.is_str_slot(src)) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.frame.moved_names, id.name) >= 0 || util.index_of_str(se.frame.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.frame.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
@@ -70734,14 +70970,17 @@ function str_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // the BOX-ONLY "NODEEP:" release, so that box dec is all the
 // cancellation elides — the source keeps its one deep field walk at the exit
 // sweep, exactly as before. The slot facts are final: the source must be a
-// credited (non-param) struct slot, and a MOVE site takes the move path
-// (which does credit rewrites this predicate must not preempt).
+// credited local struct slot, or a borrowed struct PARAMETER
+// (da_bp_src_slot), and a MOVE site takes the move path (which does credit
+// rewrites this predicate must not preempt).
 function struct_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
         ast.ExprIdent(id) => {
             var src: i32 = se.slot_of(id.name);
-            if (src < 0 || src < se.frame.n_params) { return false; }
-            if (!slot_is_reclaimable_struct(se, src)) { return false; }
+            var bp: i32 = da_bp_src_slot(se, id.name);
+            if (src < 0 || (bp < 0 && src < se.frame.n_params)) { return false; }
+            if (bp < 0 && !slot_is_reclaimable_struct(se, src)) { return false; }
+            if (bp >= 0 && se.struct_type_of_slot(src).len() == 0) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.frame.moved_names, id.name) >= 0 || util.index_of_str(se.frame.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.frame.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
@@ -70756,13 +70995,16 @@ function struct_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
 // alias holds only the shallow "TUP:" box dec (the deep "TUPRCS:" release
 // stays with the source), so that box dec is all the
 // cancellation elides — no credit rewrite, and a MOVE site takes the move
-// path (which transfers the deep class) instead.
+// path (which transfers the deep class) instead. The source is a credited
+// local tuple slot, or a borrowed tuple PARAMETER (da_bp_src_slot).
 function tuple_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
     match (v.init) {
         ast.ExprIdent(id) => {
             var src: i32 = se.slot_of(id.name);
-            if (src < 0 || src < se.frame.n_params) { return false; }
-            if (!slot_is_credited_tuple(se, src)) { return false; }
+            var bp: i32 = da_bp_src_slot(se, id.name);
+            if (src < 0 || (bp < 0 && src < se.frame.n_params)) { return false; }
+            if (bp < 0 && !slot_is_credited_tuple(se, src)) { return false; }
+            if (bp >= 0 && se.locals[src].tuple_elems.len() == 0) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.frame.moved_names, id.name) >= 0 || util.index_of_str(se.frame.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.frame.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
@@ -71517,7 +71759,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), sig_reg_of(fn_names_of(funcs)), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names).srcs);
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, reasg, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), sig_reg_of(fn_names_of(funcs)), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, reasg, rc_ml_compute(fn, structs).names, dead_alias_borrow_params_of(fn, structs), is_scalar_type_name(fn.ret_type)).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -71631,7 +71873,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
