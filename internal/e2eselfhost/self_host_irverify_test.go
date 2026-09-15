@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -724,13 +725,9 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 					t.Fatalf("resolution driver did not exit normally: %v\n%s", err, out)
 				}
-				_, results[i].calls = parseProvidedTally(string(out))
-				clean := cmd.ProcessState.ExitCode() == 0
-				switch {
-				case !clean && !providedCorpusExpectedDirty[name]:
-					t.Errorf("resolution pass reported problems: %v\n%s", err, out)
-				case clean && providedCorpusExpectedDirty[name]:
-					t.Errorf("fixture is listed as expected-dirty but resolved clean: drop it from providedCorpusExpectedDirty")
+				results[i].calls, err = validateProvidedCorpusVerdict(providedCorpusExpectedDirty[name], cmd.ProcessState.ExitCode(), string(out))
+				if err != nil {
+					t.Errorf("invalid resolution verdict: %v\n%s", err, out)
 				}
 			})
 		}
@@ -749,6 +746,34 @@ func testProvidedCorpus(t *testing.T, bin string) {
 		t.Errorf("pass resolved %d direct calls across the corpus, expected far more: a sweep that resolved nothing proves nothing", calls)
 	}
 	t.Logf("swept %d/%d fixtures, resolved %d direct calls", swept, len(mains), calls)
+}
+
+var providedCorpusVerdict = regexp.MustCompile(`^irverifyprovided: (clean|[1-9][0-9]* problem\(s\)) \(checked ([0-9]+) functions, ([0-9]+) direct calls\)$`)
+
+func validateProvidedCorpusVerdict(expectedDirty bool, exitCode int, out string) (int, error) {
+	// An arena trap or another driver error must never satisfy an expected
+	// invalid fixture. Only the verifier's own exit 1 plus diagnostic counts.
+	if exitCode != 0 && exitCode != 1 {
+		return 0, fmt.Errorf("driver exited %d, want verifier status 0 or 1", exitCode)
+	}
+	header, _, _ := strings.Cut(out, "\n")
+	match := providedCorpusVerdict.FindStringSubmatch(header)
+	if match == nil {
+		return 0, fmt.Errorf("missing or malformed verifier tally")
+	}
+	checked, checkedErr := strconv.Atoi(match[2])
+	calls, callsErr := strconv.Atoi(match[3])
+	if checkedErr != nil || callsErr != nil || checked < 0 || calls < 0 {
+		return 0, fmt.Errorf("invalid verifier counts")
+	}
+	dirty := match[1] != "clean"
+	if dirty != (exitCode == 1) {
+		return 0, fmt.Errorf("verifier header disagrees with exit %d", exitCode)
+	}
+	if dirty != expectedDirty {
+		return 0, fmt.Errorf("dirty=%t, expected dirty=%t", dirty, expectedDirty)
+	}
+	return calls, nil
 }
 
 func stageProvidedFixture(t *testing.T, stdRoot, caseDir string) string {

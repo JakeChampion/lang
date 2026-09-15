@@ -21,11 +21,13 @@ the test process. It is a scheduling reservation, not an OS memory limit.
 
 The full run retains the minimum of 400 fixtures and 2,000 resolved calls,
 the two named deliberately invalid fixtures, and rejection of any unexpected
-dirty or unexpectedly clean verdict. Abnormal subprocess termination now
-fails explicitly even for an expected-dirty fixture. Focused subtest filters
+dirty or unexpectedly clean verdict. Each fixture must produce a well-formed
+verifier header and tally consistent with its exit status: 0 for clean or 1
+for verification problems. Signals, arena exhaustion, other error exits and
+missing or malformed output fail even for an expected-dirty fixture. Focused subtest filters
 check every selected verdict; the aggregate call floor applies to full runs.
 
-## Native measurement
+## Initial native scheduling measurement
 
 Host: Mac15,6, Apple M3 Pro, 12 CPUs, 36 GiB RAM, Go 1.26.0 darwin/arm64.
 Both variants used the same native ARM64 Darwin verifier built from
@@ -50,6 +52,9 @@ verifier sweep, with 4.4% more CPU time. Every trial passed all 581 fixtures
 and counted 325,900 resolved calls. This is not a whole-CI speedup. The RSS
 statistic does not replace measuring total concurrent memory on CI runners.
 
+These measurements preceded the stricter per-fixture verdict checks added
+during integration review; they measure the scheduling change itself.
+
 The initial native race pilot covered `multi_file`, `pub_use_reexport` and
 the deliberately invalid `diag_e065`. The complete 581-fixture run then
 passed with race detection and `-parallel 4`. Source lint also passed.
@@ -59,6 +64,13 @@ verifier executed under QEMU in the Linux ARM64 devbox, again checking all
 581 fixtures and 325,900 calls with race detection. The full Go test process
 took 258.012 seconds. That emulated run is correctness evidence only.
 Package vet, formatting, test selectors and pinned actionlint also passed.
+
+After updating the branch to source-staging head `e70f0698a` and its current
+compiler/library sources, the same focused Linux pilot passed with the
+stricter verdict validation. Regression cases cover expected and unexpected
+diagnostics, clean results, exit 125, exit 137, signals, missing or truncated
+tallies, overflowing counts, and disagreement between header and status.
+Full current-source validation is recorded separately before publication.
 
 ## Reproduction on native Linux x86-64
 
