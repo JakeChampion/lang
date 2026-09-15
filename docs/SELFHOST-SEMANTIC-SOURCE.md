@@ -1364,6 +1364,10 @@ function scan(src: string): string {
 function main(): i32 { return scan("12345 abc").len(); }
 ```
 
+x86-64, `FERN_SANITIZE=1` at compile time: the AST build exits 3 and reports
+only the known leak, and `FERN_SEM_IR=1` faults. It is a fault of the produced
+lowering alone, which is what makes it the check the eventual fix answers to.
+
 Three shapes separate it, and the separation is the finding: a callee returning
 a **scalar** is clean, a callee returning a **fresh** string is clean, and only
 the one that hands the box back faults. The box's IDENTITY is the whole of it —
@@ -1373,9 +1377,12 @@ not the release helper, and not the signature.
 
 - *Refuse `lend`'s retag where the callee's result is text.* Closes the
   reproducer, wrong rule: the danger is a callee that hands the value back,
-  which is a property of the body, and the executable fixture's own
-  `lent_views` returns text without doing so — the refusal took it out of
-  production. It does not close the class either; the lexer probe still faults.
+  which is a property of the body. The executable fixture holds the
+  counterexample — `lent_views` calls `copied()`
+  (`function (s: string) copied(): string { return s + ""; }`) on two lent
+  views, a text-returning callee whose result is FRESH — and the refusal took
+  it out of production. It does not close the class either; the lexer probe
+  still faults.
 - *Use `__fern_str_view_free` for every string release.* Correct as a superset
   and fixes nothing: the fault is a box freed TWICE, which the view-aware
   helper does as readily as the plain one.
@@ -1386,10 +1393,32 @@ not the release helper, and not the signature.
 
 What is left is the only thing that can work: the result of a call that was
 lent a view **is not a unit of this frame's own**, and that has to reach
-`ssaunits.plan`, where units are decided. The AST lowering's own answer is the
-one to port — `irlower.LowerState.str_view_local` plus `str_identity_src`,
+`ssaunits.plan`, where units are decided.
+
+Most of the vocabulary for it is already here, which narrows the work to one
+decision. `ssasem.projects()` **already lists `str_as()`**, so `borrow_parents`
+records the retagged view as borrowing its source — the retag itself is
+correctly a borrow and not a unit. `ssaunits.hands_out()` lists `call()`, so a
+call's result is unconditionally a fresh unit, and that is the whole fault in
+one line: the callee handed back the box it was lent, and `owned_values` marks
+it owned anyway.
+
+The cheap rule is computable from the graph — *a text-returning call one of
+whose arguments is a `str_as` result borrows it rather than owning it* — and it
+is wrong in the other direction. `copied()` returns a genuinely fresh box and
+would then never be released, trading the fault for a leak the executable
+fixture's balance assertions catch. Neither the signature nor the graph shape
+separates "returns the argument" from "returns something new"; only the body
+does, and the contract does not record it.
+
+So the port is the AST lowering's own answer, which does not decide it
+statically either: `irlower.LowerState.str_view_local` plus `str_identity_src`,
 whose comment says such a result "is releasable only behind a guard that the
-two are different pointers" (#9328).
+two are different pointers". A **guarded release** — `ssaunits.Step` carrying a
+guard operand beside its drops, `ssarc` emitting the compare-and-branch around
+`drop_value`, and `verify` learning that a guarded drop satisfies the unit
+obligation on both edges. It would be the first run-time-conditional thing in
+the plan representation, which is the honest sizing note (#9328).
 
 ### The leaves that are left, by measured size
 
