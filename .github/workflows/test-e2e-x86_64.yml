@@ -18,9 +18,16 @@ name: Test e2e x86_64
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      benchmark:
+        description: Compare native worker counts instead of the normal lane
+        type: choice
+        options: ["off", pilot, full]
+        default: "off"
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.benchmark == 'off' }}
     name: test-e2e-x86_64
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +73,7 @@ jobs:
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
 
   seccomp-corpus-x86_64:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.benchmark == 'off' }}
     # #6071's over-tightness gate at corpus scale, and the precondition for
     # ever defaulting the sandbox on. Four hand-written programs cannot show
     # that a filter derived from one program's emitted syscalls is right for
@@ -81,3 +89,35 @@ jobs:
         env:
           RUN_SECCOMP_CORPUS: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
+
+  benchmark-native-workers:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark != 'off' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: astral-sh/setup-uv@v7
+      - name: Verify measurement checks
+        run: uv run --no-project python -m unittest discover -s tools -p test_bench_native_test_workers.py
+      - name: Build fixed test and worker binaries
+        run: |
+          go test -c -o "$RUNNER_TEMP/e2e-x86.test" ./internal/e2e
+          go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
+      - name: Compare worker counts
+        env:
+          SCALE: ${{ inputs.benchmark }}
+        run: >-
+          uv run --no-project python tools/bench_native_test_workers.py
+          --binary "$RUNNER_TEMP/e2e-x86.test"
+          --runner "$RUNNER_TEMP/ci-test-workers"
+          --output "$RUNNER_TEMP/native-worker-benchmark"
+          --scale "$SCALE"
+      - name: Retain measurements and outcomes
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-x86-worker-benchmark-${{ inputs.benchmark }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-worker-benchmark
+          retention-days: 7
+          if-no-files-found: error
