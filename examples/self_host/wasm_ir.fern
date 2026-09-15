@@ -1715,6 +1715,7 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         // feature instead of the loader reporting `unknown func: $proc_fork`.
         if (util.index_of_str(ids, "proc_fork") >= 0) { return "proc_fork"; }
         if (util.index_of_str(ids, "proc_waitpid") >= 0) { return "proc_waitpid"; }
+        if (util.index_of_str(ids, "proc_waitpid_nohang") >= 0) { return "proc_waitpid_nohang"; }
         if (util.index_of_str(ids, "proc_exec") >= 0) { return "proc_exec"; }
         if (util.index_of_str(ids, "proc_exec_as") >= 0) { return "proc_exec_as"; }
         // chdir (#9090) — WASI resolves every path against a preopened
@@ -1772,7 +1773,8 @@ pub function wasm_unsupported_message(name: string): string {
     if (ircore.is_c_call(name)) {
         return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)\n";
     }
-    if (name == "proc_fork" || name == "proc_waitpid" || name == "proc_exec"
+    if (name == "proc_fork" || name == "proc_waitpid"
+        || name == "proc_waitpid_nohang" || name == "proc_exec"
         || name == "proc_exec_as") {
         return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)\n";
     }

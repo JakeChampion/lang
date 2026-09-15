@@ -1,0 +1,25 @@
+name: CI main
+
+# Keep the active validation and only the latest pending main push. A FIFO
+# accumulated hours of obsolete commits before giving feedback on current main.
+# The default single pending slot replaces waiters without cancelling active
+# tests, which must be allowed to finish even when merges arrive frequently.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-main-latest
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    # GitHub validates nested permissions even for skipped release/reaper jobs.
+    # ci.yml narrows ordinary test jobs back to read-only.
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: read

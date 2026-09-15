@@ -12869,6 +12869,7 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
 function is_proc_call(name: string, argc: i32): boolean {
     if (name == "proc_fork") { return argc == 0; }
     if (name == "proc_waitpid") { return argc == 1; }
+    if (name == "proc_waitpid_nohang") { return argc == 1; }
     if (name == "proc_exec") { return argc == 2; }
     if (name == "proc_exec_as") { return argc == 3; }
     return false;
@@ -12889,6 +12890,7 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "proc_waitpid") { return a0.emit(ir.op_proc_waitpid()); }
+    if (cid.name == "proc_waitpid_nohang") { return a0.emit(ir.op_proc_waitpid_nohang()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     if (cid.name == "proc_exec") { return a1.emit(ir.op_proc_exec()); }

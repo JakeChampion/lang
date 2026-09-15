@@ -1150,6 +1150,7 @@ func New() *Interp {
 	i.Builtins["sleep_ns"] = &Builtin{Fn: builtinSleepNS}
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
+	i.Builtins["proc_waitpid_nohang"] = &Builtin{Fn: builtinProcWaitpidNohang}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
@@ -2493,6 +2494,20 @@ func builtinProcWaitpid(_ *Interp, args []Value) (Value, error) {
 	return Number(-10), nil // -ECHILD
 }
 
+// builtinProcWaitpidNohang is the non-blocking reap. The interpreter cannot
+// bare-fork, so there is never a child to report and the answer is the same
+// -ECHILD proc_waitpid gives — not -1, which would claim a child is still
+// running.
+func builtinProcWaitpidNohang(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("proc_waitpid_nohang: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("proc_waitpid_nohang: expected number arg, got %T", args[0])
+	}
+	return Number(-10), nil // -ECHILD
+}
+
 // builtinTempDir creates a fresh temporary directory and
 // returns its path inside `Result[string, IoError]`.
 // `prefix` is appended to a unique random suffix the OS picks
@@ -3186,7 +3201,7 @@ func builtinSetProcessGroup(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("set_process_group: expected number pgid, got %T", args[1])
 	}
-	return ioResult("", syscall.Setpgid(int(pid), int(pgid))), nil
+	return ioResult("", hostSetProcessGroup(int(pid), int(pgid))), nil
 }
 
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.

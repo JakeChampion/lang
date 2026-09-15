@@ -334,6 +334,7 @@ var providedSigs = map[string]providedSig{
 	"proc_exec_as":                  {-1, rWord},
 	"proc_fork":                     {-1, rWord},
 	"proc_waitpid":                  {-1, rWord},
+	"proc_waitpid_nohang":           {1, rWord},
 	"putchar":                       {-1, rVoid},
 	"random_bytes":                  {-1, rWord},
 	"random_i32":                    {-1, rWord},

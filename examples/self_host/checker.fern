@@ -14763,9 +14763,9 @@ pub function module_scopes(mod: parser.Module): Scope[] {
 
 // ill_typed_hint returns a best-effort fallback diagnostic for a module that
 // check_module marked ill-typed but produced NO coded diagnostic for — an
-// expression collapsed to TypeUnknown because the partial `Type` union can't
-// yet model an Option/Result or `dyn` type, or because a builtin the call
-// names is unregistered (#9053). The
+// expression collapsed to TypeUnknown, for example at a dyn method call or
+// an unregistered builtin. Option/Result values and dyn bindings now type;
+// the fallback corpus pins those accepted forms separately (#9053). The
 // `-check` driver calls this ONLY when `all_well_typed` is false and `diags`
 // is empty, so a rejection is never silent. Two deliberate properties keep it
 // safe: (1) it is a driver-only helper — check_module, checker_run, and the
@@ -14781,7 +14781,7 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
   var hint_impls: parser.ImplInfo[] = assoc_func_impls(mod.impls, mod.funcs);
   for func in mod.funcs {
     if (!check_func_body(func, build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(hint_impls, mod.trait_reqs))) {
-      return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (Option/Result, dyn, or an unregistered builtin); it type-checks under the native `fern` — see issue #9053", func.line, func.col)];
+      return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run native `fern -check` for further diagnostics - see issue #4451", func.line, func.col)];
     }
   }
   var s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports);
@@ -14789,10 +14789,10 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
     var r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
     if (is_unknown(r.ty)) {
-      return [dg_at("type", "a top-level expression has a type the self-host checker cannot represent yet (Option/Result, dyn, or an unregistered builtin); it type-checks under the native `fern` — see issue #9053", 0, 0)];
+      return [dg_at("type", "at top level: the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run native `fern -check` for further diagnostics - see issue #4451", 0, 0)];
     }
   }
-  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation, #9053)", 0, 0)];
+  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation, #4451)", 0, 0)];
 }
 
 // =================== VALIDATION ====================

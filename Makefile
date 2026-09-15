@@ -90,6 +90,7 @@ ci-selftest:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
 	node tools/ci-changes-selftest.mjs
+	node tools/main-red-selftest.mjs
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree rather than read off #4451. Fails only on a

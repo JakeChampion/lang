@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// ci.yml is the one workflow a pull request or a push to main launches. Every
+// ci.yml is the workflow a pull request launches and ci-main.yml calls. Every
 // lane is a `workflow_call` it calls, which is what lets one concurrency group
 // hold the whole suite: at most one pull request runs its CI at a time, and
 // that PR's lanes run in parallel inside its run. The gates in this file pin
@@ -19,6 +19,7 @@ import (
 // queue that keeps one pending run would lose the second PR to wait.
 
 const ciFile = "ci.yml"
+const ciMainFile = "ci-main.yml"
 
 // The reaper ci.yml calls once per lane; the one `uses:` target that is not a
 // lane.
@@ -37,10 +38,15 @@ type ciJob struct {
 // ciJobs returns ci.yml's jobs in file order.
 func ciJobs(t *testing.T) []ciJob {
 	t.Helper()
-	src := workflowSource(t, ciFile)
+	return workflowJobs(t, ciFile)
+}
+
+func workflowJobs(t *testing.T, file string) []ciJob {
+	t.Helper()
+	src := workflowSource(t, file)
 	body, ok := topLevelBlock(src, "jobs")
 	if !ok {
-		t.Fatalf("%s has no `jobs:` block", ciFile)
+		t.Fatalf("%s has no `jobs:` block", file)
 	}
 	var (
 		jobLine = regexp.MustCompile(`^  ([A-Za-z0-9_-]+):\s*$`)
@@ -77,7 +83,7 @@ func ciJobs(t *testing.T) []ciJob {
 		}
 	}
 	if len(jobs) == 0 {
-		t.Fatalf("%s: no jobs parsed — did the layout change?", ciFile)
+		t.Fatalf("%s: no jobs parsed: did the layout change?", file)
 	}
 	return jobs
 }
@@ -186,10 +192,9 @@ func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
 			t.Errorf("%s is a called lane that also triggers on push: main would run it "+
 				"twice, once on its own and once inside %s", wf, ciFile)
 		}
-		if _, ok := topLevelBlock(src, "concurrency"); ok {
+		if _, ok := topLevelBlock(src, "concurrency"); ok && wf != ciFile {
 			t.Errorf("%s is a called lane with a workflow-level concurrency group. The "+
-				"group is %s's to hold; a called workflow's own is not honoured and "+
-				"reads as though it were", wf, ciFile)
+				"suite lock belongs to %s; a lane must not acquire another lock", wf, ciFile)
 		}
 	}
 }
@@ -206,7 +211,7 @@ func TestCICallsEveryLane(t *testing.T) {
 	for _, wf := range workflowFiles(t) {
 		src := workflowSource(t, wf)
 		on, ok := onBlock(src)
-		if !ok || !strings.Contains(on, "workflow_call:") || wf == reaperFile {
+		if !ok || !strings.Contains(on, "workflow_call:") || wf == reaperFile || wf == ciFile {
 			continue
 		}
 		ids := called[wf]
@@ -277,10 +282,6 @@ func TestCIQueuesPullRequests(t *testing.T) {
 		t.Errorf("%s: pull requests do not share the one `pr-ci` group — the group name is "+
 			"what serialises them", ciFile)
 	}
-	if !strings.Contains(conc, "github.event_name == 'push'") {
-		t.Errorf("%s: pushes to main are not given their own group; they would either wait "+
-			"behind the PR queue or take a PR's turn", ciFile)
-	}
 	if !strings.Contains(conc, "github.run_id") {
 		t.Errorf("%s: a workflow_dispatch has no per-run group, so a manual run would wait "+
 			"in — or hold — a queue that is not its own", ciFile)
@@ -294,6 +295,40 @@ func TestCIQueuesPullRequests(t *testing.T) {
 		!strings.Contains(string(cfg), ".github/workflows/"+ciFile+":") {
 		t.Errorf(".github/actionlint.yaml no longer ignores the `queue` key for %s — the "+
 			"pinned actionlint rejects it, and `make actionlint` runs in the lint lane", ciFile)
+	}
+}
+
+// Main coalesces only pending runs. The active suite must finish, while the
+// shared implementation must not acquire the outer lock a second time.
+func TestMainCICoalescesPendingRuns(t *testing.T) {
+	main := workflowSource(t, ciMainFile)
+	conc, ok := topLevelBlock(main, "concurrency")
+	if !ok || !strings.Contains(conc, "group: ci-main-latest") ||
+		!strings.Contains(conc, "cancel-in-progress: false") {
+		t.Fatal("main must share one lock and preserve the active run")
+	}
+	for _, line := range strings.Split(conc, "\n") {
+		if queue, ok := strings.CutPrefix(strings.TrimSpace(line), "queue:"); ok && strings.TrimSpace(queue) != "single" {
+			t.Fatal("main must retain only one pending run, using the default or queue: single")
+		}
+	}
+	inner, _ := topLevelBlock(workflowSource(t, ciFile), "concurrency")
+	if strings.Contains(inner, "ci-main-latest") || !strings.Contains(inner, "format('ci-run-{0}', github.run_id)") {
+		t.Fatal("nested CI must use its own per-run group outside the PR queue and main lock")
+	}
+	jobs := workflowJobs(t, ciMainFile)
+	if len(jobs) != 1 || jobs[0].usesFile() != ciFile || jobs[0].keys["name"] != "Validate" ||
+		jobs[0].keys["secrets"] != "inherit" || jobs[0].keys["if"] != "" {
+		t.Fatal("main must call the shared CI unconditionally as Validate with inherited secrets")
+	}
+	for scope, level := range permissionRequests(workflowSource(t, ciFile)) {
+		if jobs[0].perms[scope] != level {
+			t.Errorf("main caller grants %s: %q, nested CI requires %q", scope, jobs[0].perms[scope], level)
+		}
+	}
+	perms, _ := topLevelBlock(workflowSource(t, ciFile), "permissions")
+	if strings.Contains(perms, ": write") || !strings.Contains(perms, "contents: read") {
+		t.Fatal("ordinary CI jobs must narrow the main caller's token to read-only")
 	}
 }
 
@@ -414,5 +449,8 @@ func TestChangesScriptIsSelfTested(t *testing.T) {
 	}
 	if !strings.Contains(string(mk), "node tools/ci-changes-selftest.mjs") {
 		t.Errorf("Makefile's ci-selftest target no longer runs tools/ci-changes-selftest.mjs")
+	}
+	if !strings.Contains(string(mk), "node tools/main-red-selftest.mjs") {
+		t.Error("ci-selftest must exercise main failure reporting across the wrapper transition")
 	}
 }
