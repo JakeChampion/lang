@@ -2830,6 +2830,7 @@ function main(): i32 {
     var keys: string[] = [];
     var funcs: ssasem.Func[] = [];
     var seeds: string[] = [];
+    var consumed: string[] = [];
     var at: i32 = 0;
     for fd in mod.funcs {
         var p = built.decls[at];
@@ -2871,6 +2872,7 @@ function main(): i32 {
         eprint("produced " + fd.name + "\n");
         base = ssarc.caller_sigs(base, fd.name, p.func, p.modes);
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
+        for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
         for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
         bodies = bodies.append(lowered);
         at = at + 1;
@@ -2886,6 +2888,7 @@ function main(): i32 {
         ai = ai + 1;
     }
     base = irlower.regrow_sigs(base, mod.funcs, tab, seeds);
+    base = irlower.consume_sigs(base, mod.funcs, consumed);
     var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi");
     if (!g.ok) { eprint("ast lowering failed"); return 3; }
     var cache: irlower.LowerResult[] = [];

@@ -480,6 +480,36 @@ function main(): i32 {
     return 199;
 }
 `},
+	// An AST-lowered caller moving its accumulator into a produced callee's
+	// OWN array position (#9407): the produced body consumes the buffer — the
+	// push that supersedes it reclaims it — where an AST-lowered callee would
+	// have left it for the caller's rebind to release. The skip leg keeps
+	// `forward` and `census` on the AST lowering, so `census` moves its local
+	// into `forward`, which passes it on to the produced instance; both read
+	// the consuming position through irlower.own_consumed_positions and
+	// transfer their reference instead of releasing it after. Under the
+	// sanitizer leg the second release was a use-after-free.
+	{name: "own-forwarded-into-produced", atLeast: 3, skip: "forward,census", src: `
+function visit(x: string, own acc: string[]): string[] {
+    if (x.len() > 2) { return acc.append(x); }
+    return acc;
+}
+function fold[T](xs: string[], own acc: T, f: (string, own T) => T): T {
+    for x in xs { acc = f(x, acc); }
+    return acc;
+}
+function forward(xs: string[], own acc: string[]): string[] { return fold(xs, acc, visit); }
+function census(rows: string[][], acc: string[]): string[] {
+    var a: string[] = acc;
+    for r in rows { a = forward(r, a); }
+    return a;
+}
+function main(): i32 {
+    var seed: string[] = ["seed-one", "seed-two"];
+    var out: string[] = census([["alpha", "b", "gamma"], ["delta", "e"], ["epsilon"]], seed);
+    return (out.len() * 10 + seed.len()) % 251;
+}
+`},
 	// A write back through a capture is refused (#9320), so this module is
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
 	// ssarc.caller_sigs holding the two sides' release of a shared result

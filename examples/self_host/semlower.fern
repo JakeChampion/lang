@@ -289,6 +289,11 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     // The may-grow masks an AST caller brackets by are rebuilt with every
     // produced declaration's own in place of the one its syntax would give.
     var seeds: string[] = [];
+    // The `own` array positions the produced bodies consume, which an AST
+    // caller reads as a transfer rather than a borrow it releases after
+    // (irlower.own_consumed_positions). An instance is keyed by its template,
+    // since that is the name an AST caller's call spells.
+    var consumed: string[] = [];
     var n: i32 = 0;
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -296,6 +301,9 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
             sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes);
             seeds = seeds.append(call_key(mod.funcs[i]) + "|"
                 + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, mod.funcs[i].receiver_type.len() > 0));
+            if (mod.funcs[i].receiver_type.len() == 0) {
+                consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
+            }
             helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
             bodies = bodies.append(r.body[i]);
             n = n + 1;
@@ -308,10 +316,14 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
         if (r.keep[mod.funcs.len() + at]) {
             helpers = util.append_all(helpers, ssarc.drop_helpers(built.instances[at].func));
             instances = instances.append(r.body[mod.funcs.len() + at]);
+            if (!util.contains(built.instances[at].key, ".")) {
+                consumed = util.append_all(consumed, ssarc.consumed_array_rows(built.instances[at].key, built.instances[at].func, built.instances[at].modes));
+            }
         }
         at = at + 1;
     }
     if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, mod.funcs, structs, seeds); }
+    if (consumed.len() > 0) { sigs = irlower.consume_sigs(sigs, mod.funcs, consumed); }
     report("module", "produced " + util.i32_to_string(n) + " of "
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
         + util.i32_to_string(instances.len()) + " of "
