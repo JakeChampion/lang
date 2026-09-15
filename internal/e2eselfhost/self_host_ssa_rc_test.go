@@ -794,11 +794,19 @@ function main(): i32 {
     for o in ownMapLowered.ops {
         if (o.str == "__fern_rc_inc" || o.str == "__fern_rc_dec") { return 141; }
     }
-    // A map whose VALUE column is a reference has no release: the column is
-    // freed whole, so a box its elements name would be dropped with it.
+    // A STRING value column is counted: the map owns a unit of every value and
+    // its release walks the column, so the plan admits it where it once refused
+    // the whole idea of a reference value.
     var strMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: strTy };
     var strMapFunc = ssasem.Func { ...mapFunc, values: [strMapTy], params: [strMapTy], result: strMapTy };
-    if (ssaunits.plan(strMapFunc, [3]).why != "unsupported counted-unit type") { return 142; }
+    var strMapPlan = ssaunits.plan(strMapFunc, [3]);
+    if (!strMapPlan.ok) { eprint(strMapPlan.why); return 142; }
+    // What is admitted is the shapes whose deep release the runtime provides —
+    // a string column and a column of string arrays — not every reference. A
+    // column of i32 arrays has no such walk and stays refused.
+    var arrMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeArray { elem: i32ty } };
+    var arrMapFunc = ssasem.Func { ...mapFunc, values: [arrMapTy], params: [arrMapTy], result: arrMapTy };
+    if (ssaunits.plan(arrMapFunc, [3]).why != "unsupported counted-unit type") { return 146; }
     // A key that is not a string keys a column that release does not walk.
     var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
     var intMapFunc = ssasem.Func { ...mapFunc, values: [intMapTy], params: [intMapTy], result: intMapTy };
