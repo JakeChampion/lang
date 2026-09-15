@@ -1819,6 +1819,24 @@ pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[],
     return mask;
 }
 
+// The `own` array positions of a produced free function, as irlower's
+// own_consumed_positions spells them: a counted array parameter is one the
+// body consumes — a push that supersedes the buffer reclaims it, and the
+// exit releases what is left — where the AST lowering's pointer-element
+// protocol leaves the superseded buffer for the caller's rebind to release.
+// Its AST callers transfer their reference instead (#9407).
+pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < f.params.len() && i < modes.len()) {
+        if (modes[i] == ssaunits.counted_mode()) {
+            if let typeinfo.TypeArray(_) = f.params[i] { out = out.append(key + "|" + util.i32_to_string(i)); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[]): irlower.FnSigs {
     var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
     // Every row an AST reader could have written for this result is erased,

@@ -1663,8 +1663,13 @@ would not:
   The constant op's `str` field — empty for a real constant, and what
   `const_i32_readable` refuses on — read back as a one-byte string, so the
   Op's box was reissued out from under it. The 200-declaration input's
-  output is byte-identical. #9407 tracks it; it is the next fixpoint blocker, ahead
-  of the memory.
+  output is byte-identical. That was #9407: an AST-lowered caller releasing,
+  on its rebind, an `own` array it had moved into a produced callee that
+  consumed it. The boundary contract is `irlower.own_consumed_positions`,
+  seeded from the produced bodies and closed over the AST-lowered forwarders
+  (`rc-log/2026-09-15-an-own-array-consumed-across-the-mixed-boundary.md`).
+  The produced compiler's output on `lexer.fern` is byte-identical to the AST
+  build's now, and its sanitized build compiles it without an abort.
 
 ### The leaves that are left, by measured size
 
