@@ -1490,13 +1490,80 @@ cut:
 | `n` … `z` | 26 MB | 139 |
 | `n,o,p` | 11,564 MB | 0 |
 | `q,r,s` | 11,554 MB | 0 |
+| `t,u,v` | 30 MB | 139 |
+| `w,x,y,z` | 134 MB | 0 |
 
-So the declaration responsible has a bare name starting t-z. Read a clearing
-exclusion as a cone, per the note above, and keep halving.
+The last row is the AST build's own figure, so `w`-`z` is the cone — the x86
+assembler, whose hot path is `x86_emit_mem(buf: i32[], …)`: append through a
+BORROWED parameter. Eight lines reproduce it, and the reproducer is the thing
+to work against rather than the 7-minute rebuild:
 
-The n-z row's exit 139 is its own finding rather than a consequence of the
-exclusion: an excluded body falls back to the AST lowering, so a mixed module
-that faults is a boundary bug.
+```fern
+function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
+function build(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = push(out, i); i = i + 1; }
+    return out;
+}
+function main(): i32 { return build(40000).len() % 97; }
+```
+
+x86-64: the AST build answers in 2 ms; the produced build takes **23 s and
+8.9 GB**. Every push copies the whole buffer.
+
+**The mechanism.** `ssarc.sole_owned_base` asks `__fern_rc_is_unique` to decide
+between growing in place and un-sharing — but the receiver's Supply has already
+emitted `__fern_rc_inc` before it, because `supplies` runs before `instruction`.
+The count the test reads is the one the test's own supply just added, so it
+answers "shared" for a box nobody else holds, every time:
+
+```
+call __fern_rc_inc          # the Supply
+call __fern_rc_is_unique    # now 2, so never unique
+  ...  __fern_arr_dec ; __fern_arr_slice    # un-share copy of the whole buffer
+call __fern_arr_push_owned
+```
+
+The AST lowering has no such test. It calls the shared, NON-consuming
+`__fern_arr_push`, whose own gate grows in place at rc 1, and retains the result
+only when the pointer comes back unchanged:
+
+```
+call __fern_arr_push
+cmp result, buf ; jne .skip ; call __fern_rc_inc
+```
+
+**Why moving the retain into the unique arm is not the fix.** It was tried:
+`push` then grows through `__fern_arr_push_owned` at rc 2, which re-gates and
+copies anyway, so the reproducer only improves to 3.5 s and 6.4 GB — and the
+same reordering applied to `with` is a MISCOMPILE, because `arr_set` mutates
+unconditionally. This returns 199 on the AST path and 15 with the reorder:
+
+```fern
+function set0(buf: i32[], v: i32): i32[] { return buf.with(0, v); }
+function main(): i32 {
+    var a: i32[] = [];
+    a = a.append(1);
+    a = a.append(2);
+    var b: i32[] = set0(a, 99);
+    return a[0] * 100 + b[0];
+}
+```
+
+**What the fix needs.** The AST shape — the non-consuming helper plus a
+pointer-identity retain — is only safe because the AST path also has the
+caller-side may-grow bracket of #4873: a caller whose receiver is still LIVE
+after the call retains around it, so the callee's gate sees rc 2 and copies.
+The semantic path has no such bracket, and compensates by retaining
+unconditionally, which is correct and quadratic. Giving it one is the work:
+`ssaunits.choose` already computes "dead at this step" for every value and
+discards it for values the frame does not own, which is exactly the fact the
+bracket needs.
+
+The n-z and t-u-v rows' exit 139 is its own finding rather than a consequence
+of the exclusion: an excluded body falls back to the AST lowering, so a mixed
+module that faults is a boundary bug.
 
 ### The leaves that are left, by measured size
 
