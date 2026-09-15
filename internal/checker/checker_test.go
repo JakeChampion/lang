@@ -4656,6 +4656,110 @@ function main(): i32 {
 	}
 }
 
+// A projection in a PARAMETER resolves once an earlier argument has pinned
+// its base. `first[H: Holder](h: H): H::Item` — a projection in the RESULT —
+// has worked since associated types landed, because the generic-call path
+// resolves the result after substitution. Parameters had no equivalent, so
+// `pick[H: Holder](h: H, d: H::Item)` compared argument 2 against an
+// unresolved `H::Item` and rejected every value.
+func TestAssociatedTypesProjectionInParameter(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"concrete impl", `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
+struct IntBox { v: i32 }
+impl Holder for IntBox {
+    type Item = i32;
+    function get(self: Self, d: Self::Item): Self::Item { return self.v; }
+}
+function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
+function main(): i32 {
+    var b: IntBox = IntBox { v: 7 };
+    return pick(b, 0);
+}`},
+		{"parametric impl on a generic struct", `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
+struct Box[T] { v: T }
+impl[T] Holder for Box[T] {
+    type Item = T;
+    function get(self: Self, d: Self::Item): Self::Item { return self.v; }
+}
+function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
+function main(): i32 {
+    var b: Box[i32] = Box { v: 7 };
+    return pick(b, 0);
+}`},
+		{
+			// A generic ENUM base is the case monomorph does not flatten: it
+			// keeps one generic decl, so no mangled instantiation gets a
+			// synthesised concrete impl and the parametric impl carrying the
+			// binding is dropped. The projection has to be resolved while
+			// monomorph substitutes, or the re-check sees a bare `E[i32]::Item`
+			// it can no longer look up.
+			//
+			// The DIRECT `e.get(1)` is load-bearing for a reason that is not
+			// this test's subject: #9308 means a parametric impl on a generic
+			// enum is unreachable through a bound unless the method is also
+			// called directly. Without that call the program fails on #9308
+			// instead, which would make this case test the wrong thing.
+			name: "parametric impl on a generic enum",
+			src: `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
+enum E[T] { A(T), B }
+impl[T] Holder for E[T] {
+    type Item = T;
+    function get(self: Self, d: Self::Item): Self::Item {
+        match (self) { A(x) => { return x; }, B => { return d; } }
+    }
+}
+function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
+function main(): i32 {
+    var e: E[i32] = A(7);
+    return pick(e, 0) + e.get(1);
+}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := checkSource(t, c.src); err != nil {
+				t.Errorf("should type-check: %v", err)
+			}
+		})
+	}
+}
+
+// The resolved parameter type is the real one, so a wrong argument is still
+// rejected — and named as the bound type rather than as the projection. A fix
+// that merely stopped comparing projections would accept both of these.
+func TestAssociatedTypesProjectionInParameterObservable(t *testing.T) {
+	const prelude = `trait Holder { type Item; function get(self: Self, d: Self::Item): Self::Item; }
+struct Box[T] { v: T }
+impl[T] Holder for Box[T] {
+    type Item = T;
+    function get(self: Self, d: Self::Item): Self::Item { return self.v; }
+}
+function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
+`
+	cases := []struct{ src, want string }{
+		{prelude + `function main(): i32 {
+    var b: Box[i32] = Box { v: 7 };
+    return pick(b, "no");
+}`, "expected i32"},
+		{prelude + `function main(): i32 {
+    var b: Box[string] = Box { v: "hi" };
+    return pick(b, 0);
+}`, "expected string"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 func TestAssociatedTypesErrors(t *testing.T) {
 	cases := []struct {
 		src  string
