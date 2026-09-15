@@ -24,7 +24,8 @@ the two named deliberately invalid fixtures, and rejection of any unexpected
 dirty or unexpectedly clean verdict. Each fixture must produce a well-formed
 verifier header and tally consistent with its exit status: 0 for clean or 1
 for verification problems. Signals, arena exhaustion, other error exits and
-missing or malformed output fail even for an expected-dirty fixture. Focused subtest filters
+missing or malformed output fail even for an expected-dirty fixture. Focused
+subtest filters
 check every selected verdict; the aggregate call floor applies to full runs.
 
 ## Initial native scheduling measurement
@@ -70,7 +71,8 @@ compiler/library sources, the same focused Linux pilot passed with the
 stricter verdict validation. Regression cases cover expected and unexpected
 diagnostics, clean results, exit 125, exit 137, signals, missing or truncated
 tallies, overflowing counts, and disagreement between header and status.
-Full current-source validation is recorded separately before publication.
+Full current-source validation is running alongside PR validation; its result
+will be recorded before merging.
 
 ## Reproduction on native Linux x86-64
 
