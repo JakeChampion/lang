@@ -21,18 +21,20 @@ generic library. No eligibility or ownership proof was weakened.
 
 ## Controlled measurement
 
-Native Linux ARM64, four CPUs, 16 GiB limit, original source revision
-`819c5ee8d86ec058630342fc025bfef9479273d8`, 100-function emission budget,
+Native Linux ARM64, four CPUs, 16 GiB limit, baseline source revision
+`78a457c36beeb0b5d01d5a1ecd59b27e8d2c5217`, 100-function emission budget,
 unchanged eight-unit batch [8:16]. Each generation used the order baseline,
 candidate, candidate, baseline. Every output unit matched byte for byte.
+Both generations were rebuilt after the semantic field-append changes merged;
+the candidate includes the instruction-buffer change on that same baseline.
 
 | Compiler | Baseline wall seconds | Candidate wall seconds | Baseline peak RSS | Candidate peak RSS |
 | --- | --- | --- | --- | --- |
-| Go-built | 7.019, 6.714 | 6.151, 6.024 | 3.363 GB | 3.354 GB |
-| Self-built | 12.326, 12.137 | 5.768, 5.569 | 12.496 GB | 3.042 GB |
+| Go-built | 6.894, 6.726 | 6.163, 6.065 | 3.365 GB | 3.358 GB |
+| Self-built | 12.108, 12.528 | 5.709, 5.669 | 12.496 GB | 3.044 GB |
 
-GB here means decimal bytes. Mean wall time is 6.867 -> 6.087 seconds for the
-Go-built compiler and 12.232 -> 5.669 seconds for the self-built compiler.
+GB here means decimal bytes. Mean wall time is 6.810 -> 6.114 seconds for the
+Go-built compiler and 12.318 -> 5.689 seconds for the self-built compiler.
 These are local batch measurements, not whole-CI or x86 performance claims.
 Each measurement followed a passing single-module pilot.
 
@@ -42,8 +44,10 @@ Each measurement followed a passing single-module pilot.
   and self-built generations, using the normal eight-unit emission route.
 - Snapshot regressions pass through x86, ARM64, and Wasm emission, including a
   zero-reference-count-underflow assertion. QEMU execution is correctness-only.
+- The semantic-source ownership regression also passes on ARM64, x86, Wasm,
+  and the x86 sanitizer path. Neither test skips a target in this validation.
 - The native ARM64 Go-built binary shrinks from 11,058,273 to 10,992,749 bytes.
-  The self-built binary grows from 10,636,720 to 10,701,608 bytes. ELF section
+  The self-built binary grows from 10,637,176 to 10,702,064 bytes. ELF section
   comparison attributes 6,569 bytes to added loadable contents; its data segment
   crosses a 64 KiB alignment boundary, explaining most of the file-size growth.
   BSS is unchanged. No size baseline or memory reservation is changed.
