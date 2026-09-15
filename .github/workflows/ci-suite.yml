@@ -1,0 +1,315 @@
+name: Full suite
+
+# One full PR suite at a time, called by ci.yml. Moving the lock
+# here keeps expensive lanes serialized without blocking other PRs linting.
+# Keep main/manual invocations outside this queue: main has its own outer
+# latest-pending lock, and reacquiring that lock here would deadlock.
+on:
+  workflow_call:
+    inputs:
+      lanes:
+        description: Exact changed-lane map computed by ci.yml
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: >-
+    ${{ (github.event_name == 'pull_request' && 'pr-ci')
+     || format('ci-run-{0}', github.run_id) }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+
+  test-units:
+    name: Test units
+    if: fromJSON(inputs.lanes)['test-units']
+    uses: ./.github/workflows/test-units.yml
+    secrets: inherit
+
+  test-e2e-x86_64:
+    name: Test e2e x86_64
+    if: fromJSON(inputs.lanes)['test-e2e-x86_64']
+    uses: ./.github/workflows/test-e2e-x86_64.yml
+    secrets: inherit
+
+  test-e2e-arm64:
+    name: Test e2e arm64
+    if: fromJSON(inputs.lanes)['test-e2e-arm64']
+    uses: ./.github/workflows/test-e2e-arm64.yml
+    secrets: inherit
+
+  test-e2e-wasm:
+    name: Test e2e wasm
+    if: fromJSON(inputs.lanes)['test-e2e-wasm']
+    uses: ./.github/workflows/test-e2e-wasm.yml
+    secrets: inherit
+
+  test-e2e-other:
+    name: Test e2e other
+    if: fromJSON(inputs.lanes)['test-e2e-other']
+    uses: ./.github/workflows/test-e2e-other.yml
+    secrets: inherit
+
+  test-e2e-differential:
+    name: Test e2e differential
+    if: fromJSON(inputs.lanes)['test-e2e-differential']
+    uses: ./.github/workflows/test-e2e-differential.yml
+    secrets: inherit
+
+  test-e2e-selfhost:
+    name: Test e2e self-host
+    if: fromJSON(inputs.lanes)['test-e2e-selfhost']
+    uses: ./.github/workflows/test-e2e-selfhost.yml
+    secrets: inherit
+
+  test-fernsmith:
+    name: Test fernsmith
+    if: fromJSON(inputs.lanes)['test-fernsmith']
+    uses: ./.github/workflows/test-fernsmith.yml
+    secrets: inherit
+
+  fuzz-diff:
+    name: Fuzz
+    if: fromJSON(inputs.lanes)['fuzz-diff']
+    uses: ./.github/workflows/fuzz-diff.yml
+    secrets: inherit
+
+  examples:
+    name: Examples
+    if: fromJSON(inputs.lanes)['examples']
+    uses: ./.github/workflows/examples.yml
+    secrets: inherit
+
+  perf:
+    name: Perf
+    if: fromJSON(inputs.lanes)['perf']
+    uses: ./.github/workflows/perf.yml
+    secrets: inherit
+    # Its jobs push refs/notes/perf on main.
+    permissions:
+      contents: write
+
+  bootstrap:
+    name: Bootstrap
+    if: fromJSON(inputs.lanes)['bootstrap']
+    uses: ./.github/workflows/bootstrap.yml
+    secrets: inherit
+    # Its `release` job requests `contents: write` for the publish path, and
+    # GitHub validates a nested job's permissions against the caller's grant
+    # even for a job the event skips; the lane's own `contents: read` still
+    # narrows its verify jobs.
+    permissions:
+      contents: write
+
+  macos:
+    name: macOS arm64
+    if: fromJSON(inputs.lanes)['macos']
+    uses: ./.github/workflows/macos.yml
+    secrets: inherit
+
+  docs-build:
+    name: Docs build
+    if: fromJSON(inputs.lanes)['docs-build']
+    uses: ./.github/workflows/docs-build.yml
+    secrets: inherit
+
+  playground-e2e:
+    name: Playground E2E
+    if: fromJSON(inputs.lanes)['playground-e2e']
+    uses: ./.github/workflows/playground-e2e.yml
+    secrets: inherit
+
+  vscode-extension:
+    name: VS Code Extension
+    if: fromJSON(inputs.lanes)['vscode-extension']
+    uses: ./.github/workflows/vscode-extension.yml
+    secrets: inherit
+
+  # One reaper per lane, so the run is cancelled the moment ANY lane concludes
+  # failure rather than when all of them have. `!cancelled()` is load-bearing:
+  # without a status function in the condition, `success()` is implied and a
+  # job that waits on a failed one never runs. Pull requests only — a red main
+  # runs to completion so the failing-job list is the whole set.
+  # TestCancelOnFailureWatchesEveryPRLane pins one of these per lane.
+
+  reap-test-units:
+    needs: [test-units]
+    if: ${{ !cancelled() && needs.test-units.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test units
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-x86_64:
+    needs: [test-e2e-x86_64]
+    if: ${{ !cancelled() && needs.test-e2e-x86_64.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e x86_64
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-arm64:
+    needs: [test-e2e-arm64]
+    if: ${{ !cancelled() && needs.test-e2e-arm64.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e arm64
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-wasm:
+    needs: [test-e2e-wasm]
+    if: ${{ !cancelled() && needs.test-e2e-wasm.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e wasm
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-other:
+    needs: [test-e2e-other]
+    if: ${{ !cancelled() && needs.test-e2e-other.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e other
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-differential:
+    needs: [test-e2e-differential]
+    if: ${{ !cancelled() && needs.test-e2e-differential.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e differential
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-e2e-selfhost:
+    needs: [test-e2e-selfhost]
+    if: ${{ !cancelled() && needs.test-e2e-selfhost.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test e2e self-host
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-test-fernsmith:
+    needs: [test-fernsmith]
+    if: ${{ !cancelled() && needs.test-fernsmith.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Test fernsmith
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-fuzz-diff:
+    needs: [fuzz-diff]
+    if: ${{ !cancelled() && needs.fuzz-diff.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Fuzz
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-examples:
+    needs: [examples]
+    if: ${{ !cancelled() && needs.examples.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Examples
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-perf:
+    needs: [perf]
+    if: ${{ !cancelled() && needs.perf.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Perf
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-bootstrap:
+    needs: [bootstrap]
+    if: ${{ !cancelled() && needs.bootstrap.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Bootstrap
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-macos:
+    needs: [macos]
+    if: ${{ !cancelled() && needs.macos.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: macOS arm64
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-docs-build:
+    needs: [docs-build]
+    if: ${{ !cancelled() && needs.docs-build.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Docs build
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-playground-e2e:
+    needs: [playground-e2e]
+    if: ${{ !cancelled() && needs.playground-e2e.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Playground E2E
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-vscode-extension:
+    needs: [vscode-extension]
+    if: ${{ !cancelled() && needs.vscode-extension.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: VS Code Extension
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
