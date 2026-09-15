@@ -275,10 +275,15 @@ function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, 
 // is captured in a scratch local, so the release after the call decrements
 // the buffer that was retained rather than re-reading a field the callee may
 // have replaced.
-struct Held { arrays: i32[], records: i32[], fields: i32[] }
+//
+// A field HANDED on (ssaunits.hands) is gated rather than bracketed: the
+// record's own count says whether a holder this frame cannot see still names
+// it, and a shared record holds a second count on the field across the call,
+// as `append_field` does around its push.
+struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[] }
 
 function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowRow[]): Held {
-    var out: Held = Held { arrays: [], records: [], fields: [] };
+    var out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [] };
     if (ins.kind_tag != ssasem.call()) { return out; }
     var modes: i32[] = ssaunits.callee_modes(f, ins);
     var i: i32 = 0;
@@ -288,6 +293,9 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
             var handed: boolean = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
             if (bracketable(f.values[v]) && !handed && util.index_of_i32(out.arrays, v) < 0) {
                 out = Held { ...out, arrays: out.arrays.append(v) };
+            }
+            if (handed && step.hand_fields[i] >= 0) {
+                out = Held { ...out, gated: out.gated.append(v), gated_roots: out.gated_roots.append(step.hand_roots[i]) };
             }
             if (record_bracketable(f.values[v])) {
                 for field in ssaunits.grow_fields_of(grows, ins.str, i) {
@@ -337,6 +345,16 @@ function bracket_take(r: irlower.LowerResult, f: ssasem.Func, held: Held): irlow
         r = helper(r, slot, "__fern_arr_share_inc");
         k = k + 1;
     }
+    var j: i32 = 0;
+    while (j < held.gated.len()) {
+        var unique: i32 = f.graph.nvals + held.records.len() + j;
+        r = reserve(r, unique + 1);
+        r = emit(r, ir.op_load_local(held.gated_roots[j]));
+        r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+        r = emit(r, ir.op_store_local(unique));
+        r = unless_unique(r, unique, held.gated[j], "__fern_arr_share_inc");
+        j = j + 1;
+    }
     return r;
 }
 
@@ -346,6 +364,11 @@ function bracket_give(r: irlower.LowerResult, f: ssasem.Func, held: Held): irlow
     while (k < held.records.len()) {
         r = helper(r, f.graph.nvals + k, "__fern_arr_share_dec");
         k = k + 1;
+    }
+    var j: i32 = 0;
+    while (j < held.gated.len()) {
+        r = unless_unique(r, f.graph.nvals + held.records.len() + j, held.gated[j], "__fern_arr_share_dec");
+        j = j + 1;
     }
     return r;
 }

@@ -107,7 +107,10 @@ projection whose record this frame reads no further through that field, or a
 borrowed array parameter of its own it reads no further, is handed on without
 a bracket. The buffer's only later holder is the callee's result — retained on
 identity, fresh on a realloc — and the record, or this frame's caller, releases
-the old one. The rows then close transitively (`ssaunits.grow_table`): a
+the old one. A handed FIELD is gated the way the append is: the record's own
+count decides, and a shared record — one stored in a container this frame
+built, say — holds a second count on the field across the call so the callee
+copies (acc_via_shared in the RC fixture). The rows then close transitively (`ssaunits.grow_table`): a
 function handing a buffer unbracketed to a callee whose row says that
 position may grow carries the row at its own parameter and field, and
 `semlower` runs the closure over every produced plan before lowering any.
