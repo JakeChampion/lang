@@ -38,6 +38,27 @@ Go-built compiler and 12.318 -> 5.689 seconds for the self-built compiler.
 These are local batch measurements, not whole-CI or x86 performance claims.
 Each measurement followed a passing single-module pilot.
 
+## Native x86 self-built compiler
+
+[Run 35029998597](https://github.com/JakeChampion/lang/actions/runs/35029998597)
+compared the same baseline and buffer change on one four-CPU Linux x86 host,
+after a passing pilot on the same experiment revision. The self-built compiler
+compiled identical baseline sources in the same eight-unit window [8:16].
+
+| Mode | Wall seconds | Peak RSS |
+| --- | ---: | ---: |
+| Baseline 1 | 13.485 | 11.791 GB |
+| Candidate 1 | 10.029 | 2.954 GB |
+| Candidate 2 | 9.991 | 2.954 GB |
+| Baseline 2 | 13.635 | 11.791 GB |
+
+Mean time is 13.560 -> 10.010 seconds. All eight output units match in every
+trial. Separately, all 75 units of the candidate reproduce between its Go-built
+and self-built generations; the largest of those batches peaks at 2.959 GB.
+The artifact `native-buffer-full-gen1-1` records build identities, environment,
+per-process measurements, exact output hashes and completed verification.
+The Go-built generation still needs its separate native x86 comparison.
+
 ## Correctness and size
 
 - All 75 units of the changed compiler reproduce exactly between the Go-built
@@ -52,5 +73,5 @@ Each measurement followed a passing single-module pilot.
   crosses a 64 KiB alignment boundary, explaining most of the file-size growth.
   BSS is unchanged. No size baseline or memory reservation is changed.
 
-Full repository checks, native x86 measurements, and live CI validation remain
-required before adopting new scheduling or memory budgets.
+Full repository checks, a controlled parallel-batch comparison, and live CI
+validation remain required before adopting new scheduling or memory budgets.
