@@ -28,6 +28,9 @@ a production cutover.
 
 ## End state
 
+This end state was **not reached and is no longer sought** — see the note above.
+It read:
+
 `ir.LowerWith → ssa.LiftFromIR → ssa.Optimize → ssa.Allocate → {x86_64,arm64}ssa.Emit`,
 with the legacy `internal/codegen/x86_64` / `internal/codegen/arm64` stack-machine
 emitters retired once the SSA path reaches parity. The win is twofold: a much
