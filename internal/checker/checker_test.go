@@ -4777,6 +4777,17 @@ function main(): i32 { return total(["ab", "cd"]); }`,
 		{"argument, numeric literals into string[]", `function take(xs: string[]): i32 { return xs.len(); }
 function main(): i32 { return take([1, 2, 3]); }`,
 			"expected string[], got i32[]"},
+		// A polymorphic FLOAT element settles only to a float destination.
+		// Against an integer one it is a mismatch — `var x: i64 = 1.5` is
+		// already E003 as a scalar, and the array literal must not be the one
+		// way round it.
+		{"float literals into i64[]", `function main(): i32 { var xs: i64[] = [1.5, 2.5]; return xs.len(); }`,
+			"cannot assign f64[] to variable of type i64[]"},
+		{"float literal into u8[]", `function main(): i32 { var xs: u8[] = [1.5]; return xs.len(); }`,
+			"cannot assign f64[] to variable of type u8[]"},
+		{"float literals into an i64[] argument", `function total(xs: i64[]): i32 { return xs.len(); }
+function main(): i32 { return total([1.5, 2.5]); }`,
+			"expected i64[], got f64[]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -4799,6 +4810,10 @@ func TestArrayLiteralSettlingStillWorks(t *testing.T) {
 		`function main(): i32 { var xs: i64[] = [1, 2, 3]; return xs.len(); }`,
 		`function main(): i32 { var xs: u8[] = [1, 2, 3]; return xs.len(); }`,
 		`function main(): i32 { var xs: f64[] = [1.5, 2.5]; return xs.len(); }`,
+		// int-to-float promotion: a polymorphic INTEGER element settles into a
+		// float destination, which is the direction that must stay legal.
+		`function main(): i32 { var xs: f64[] = [1, 2]; return xs.len(); }`,
+		`function main(): i32 { var xs: f32[] = [1.5, 2.5]; return xs.len(); }`,
 		`function main(): i32 { var xs: i32[] = []; return xs.len(); }`,
 		`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.len(); }`,
 		`function total(xs: i64[]): i32 { return xs.len(); }

@@ -226,6 +226,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-lit-settles-to-i64-clean", "function main(): i32 { var xs: i64[] = [1, 2, 3]; return xs.len(); }\n", nil},
 		{"array-lit-settles-to-u8-clean", "function main(): i32 { var xs: u8[] = [1, 2, 3]; return xs.len(); }\n", nil},
 		{"array-lit-empty-clean", "function main(): i32 { var xs: i32[] = []; return xs.len(); }\n", nil},
+		// A polymorphic FLOAT element settles only to a float destination; the
+		// scalar `var x: i64 = 1.5` is already E003 in both checkers, so the
+		// array literal must not be the one way round it.
+		{"e003-array-lit-float-into-int", "function main(): i32 { var xs: i64[] = [1.5, 2.5]; return xs.len(); }\n", []string{"E003"}},
+		{"e038-array-lit-float-into-int-arg", "function total(xs: i64[]): i32 { return xs.len(); }\nfunction main(): i32 { return total([1.5, 2.5]); }\n", []string{"E038"}},
+		// int-to-float promotion stays legal, and is the control for the row above.
+		{"array-lit-int-into-float-clean", "function main(): i32 { var xs: f64[] = [1, 2]; return xs.len(); }\n", nil},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a

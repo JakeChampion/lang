@@ -18435,15 +18435,33 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 	if have == nil || want == nil {
 		return true
 	}
-	if isPolymorphicNumeric(have) {
-		// A polymorphic numeric settles to a numeric width, and to nothing
-		// else — `take(xs: string[])` given `[1, 2, 3]` is still a mismatch.
-		switch want.(type) {
-		case ast.NumberType, ast.FloatType:
-			return true
+	// Which destinations a polymorphic element settles to depends on WHICH
+	// polymorphic it is, so split on `have` before looking at `want`.
+	switch h := have.(type) {
+	case ast.NumberType:
+		// A polymorphic INTEGER settles to any numeric width, float
+		// included: int-to-float is a legal promotion, and settleFloat
+		// exists for exactly it (`var xs: f64[] = [1, 2]`).
+		if h.Polymorphic || h.Width == 0 {
+			switch want.(type) {
+			case ast.NumberType, ast.FloatType:
+				return true
+			}
 		}
-		return c.assignable(want, have)
+	case ast.FloatType:
+		// A polymorphic FLOAT settles only to a float destination. Against
+		// an integer one it is a mismatch — `var x: i64 = 1.5` is already
+		// E003 as a scalar, and the array literal must not be the one way
+		// round it.
+		if h.Polymorphic {
+			if _, ok := want.(ast.FloatType); ok {
+				return true
+			}
+		}
 	}
+	// Anything else — a concrete element type, or a polymorphic one against a
+	// destination it cannot settle to — is a plain assignability question, and
+	// `take(xs: string[])` given `[1, 2, 3]` is still a mismatch.
 	return c.assignable(want, have)
 }
 
