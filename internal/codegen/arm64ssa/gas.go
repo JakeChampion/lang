@@ -1314,6 +1314,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"rlimit_nofile":                 emitRlimitNofileHelper,
 	"statfs":                        emitStatfsHelper,
 	"window_size":                   emitWindowSizeHelper,
+	"set_window_size":               emitSetWindowSizeHelper,
 	"signal_ignore":                 emitSignalDispositionHelper("signal_ignore", 1),
 	"signal_default":                emitSignalDispositionHelper("signal_default", 0),
 	"signal_mask":                   emitSignalMaskHelper,
@@ -2185,6 +2186,61 @@ func emitWindowSizeHelper(w func(string, ...any)) {
 	emitStatErrBox(w)
 	w(".Lssawsz_ret:")
 	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
+	w("\tret")
+}
+
+// emitSetWindowSizeHelper writes set_window_size(fd, rows, cols) ->
+// Result[void, IoError]: a TIOCGWINSZ, the two cell counts replaced, and a
+// TIOCSWINSZ back.
+//
+// The read is what keeps the pixel pair the kernel stores beside them: nothing
+// surrenders it to a caller, so nothing but this helper can put it back.
+// ws_row and ws_col are adjacent u16s, so the pair travels in one register and
+// lands in one store. Both counts reach the kernel as u16, so 65536 rows lands
+// as 0 rather than a refusal.
+//
+// A failing first ioctl falls through to the shared check with its errno still
+// in x0, which skips the second call. Non-leaf (calls __fern_io_error).
+// x0=fd, x1=rows, x2=cols.
+func emitSetWindowSizeHelper(w func(string, ...any)) {
+	const (
+		tiocgwinsz = 0x5413
+		tiocswinsz = 0x5414
+	)
+	w("")
+	w("%s:", fnLabel("set_window_size"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tand w20, w1, #0xffff")
+	w("\tand w9, w2, #0xffff")
+	w("\torr w20, w20, w9, lsl #16")
+	w("\tmov w19, w0")
+	w("\tmov x1, #%d", tiocgwinsz)
+	w("\tadd x2, sp, #48")
+	w("\tmov x8, #29") // ioctl
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssaswsz_check")
+	w("\tstr w20, [sp, #48]") // ws_row, ws_col; the pixel pair stays put
+	w("\tmov w0, w19")
+	w("\tmov x1, #%d", tiocswinsz)
+	w("\tadd x2, sp, #48")
+	w("\tmov x8, #29")
+	w("\tsvc #0")
+	w(".Lssaswsz_check:")
+	w("\ttbnz x0, #63, .Lssaswsz_err")
+	emitResultUnitBox(w, true, "")
+	w("\tb .Lssaswsz_ret")
+	w(".Lssaswsz_err:")
+	w("\tneg x19, x0") // errno, across the inline empty-string alloc
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitResultUnitBox(w, false, "x19")
+	w(".Lssaswsz_ret:")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #64")
 	w("\tret")
@@ -3720,6 +3776,7 @@ var runtimeHelperDeps = map[string][]string{
 	"lstat":                         {"__fern_io_error"},
 	"statfs":                        {"__fern_io_error"},
 	"window_size":                   {"__fern_io_error"},
+	"set_window_size":               {"__fern_io_error"},
 	"access":                        {"__fern_io_error"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
@@ -3834,6 +3891,7 @@ var heapUsingHelpers = map[string]bool{
 	"chown_at":                      true,
 	"statfs":                        true,
 	"window_size":                   true,
+	"set_window_size":               true,
 	"set_file_times":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,

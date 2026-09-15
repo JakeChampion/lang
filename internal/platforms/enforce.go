@@ -252,6 +252,10 @@ var gatedBuiltins = map[string]string{
 	// because "no" IS the truthful answer to its question
 	// (docs/FREESTANDING-CORE.md).
 	"window_size": "tty",
+	// And its other half, the write: `stty rows N` sets what `stty size`
+	// prints. A target with no terminal has nothing to resize, and a set
+	// that "succeeded" would claim a change nothing made (#9360).
+	"set_window_size": "tty",
 	// The terminal's LINE SETTINGS, read and written. Same capability and
 	// same reason: there is no truthful answer to what the settings of a
 	// terminal that cannot exist are, and a set that "succeeded" would

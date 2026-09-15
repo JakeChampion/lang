@@ -54,7 +54,7 @@ costs a silent failure on the first target that lacks it.
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
-| `tty` | `window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
+| `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
@@ -501,6 +501,13 @@ restore form reads them back, so a normalised bit set could not reproduce the
 output (#9356). The flag constants are therefore the target's, and a caller
 that names one branches on `target_os()` the way GNU's stty gets them from the
 C headers.
+
+`set_window_size` is `window_size`'s other half and sits under the same
+capability for a shorter reason: a target with no terminal has nothing to
+resize, and a set that "succeeded" would claim a change nothing made (#9360).
+It is a read-modify-write inside the runtime, because `struct winsize` carries
+a pixel pair beside the two cell counts that nothing surrenders to a caller —
+so nothing but the runtime can put it back.
 
 Gated on `tty` beside `window_size`, and refused on both wasm worlds for the
 same reason: there is no truthful answer to what the settings of a terminal

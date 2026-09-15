@@ -1867,6 +1867,21 @@ answer ENOSYS there rather than shipping a number that would answer ENOTTY and
 look like "this is not a terminal". `poll` is on the same line for the same
 target.
 
+The same utility's `rows N` and `cols N` needed the other half of
+`window_size`, which only ever read (#9360):
+
+    set_window_size(fd, rows, cols)   TIOCGWINSZ, then TIOCSWINSZ
+
+Two ioctls rather than one, and GNU makes the same pair: `struct winsize`
+carries `ws_xpixel` and `ws_ypixel` beside the two cell counts and GNU
+PRESERVES them — measured, a pty planted at 640x480 pixels keeps them across
+`stty rows 40`. Since `window_size` surrenders only rows and columns, a caller
+could not put back what it never saw, so the read-modify-write belongs inside
+the runtime. Both numbers reach the kernel's u16 as given, which is why `stty
+rows 65536` reports 0 rows with no diagnostic where `stty rows
+99999999999999` is GNU's own `strtoul` range error — two different limits, and
+the utility keeps them apart.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast

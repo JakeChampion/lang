@@ -3177,6 +3177,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// set_window_size(fd, rows, cols): Result[void, IoError] — the other
+	// half of window_size, `ioctl(fd, TIOCSWINSZ, &ws)`. `stty rows N`
+	// and `stty cols N` are the callers (#9360).
+	//
+	// A read-modify-write inside the runtime, because `struct winsize`
+	// carries a pixel pair beside the two cell counts and the kernel
+	// keeps whatever is written there. GNU preserves it, and a caller
+	// given only rows and columns could not put back what `window_size`
+	// never handed it.
+	//
+	// Both numbers reach the kernel's u16 as given: 65536 rows lands as
+	// 0 rather than an error, which is what GNU is silent about too.
+	//
+	// Gated on `tty` beside window_size and the termios pair.
+	c.info.FuncSigs["set_window_size"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{}, ast.NumberType{}, ast.NumberType{},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{}, ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// termios_get(fd): Result[i64[], IoError] — the terminal's line
 	// settings, as the KERNEL's own words, and termios_set puts them
 	// back. What `stty` is (#8382).

@@ -619,6 +619,7 @@ func New() *Interp {
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
 	i.Builtins["window_size"] = &Builtin{Fn: builtinWindowSize}
+	i.Builtins["set_window_size"] = &Builtin{Fn: builtinSetWindowSize}
 	i.Builtins["termios_get"] = &Builtin{Fn: builtinTermiosGet}
 	i.Builtins["termios_set"] = &Builtin{Fn: builtinTermiosSet}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
@@ -4376,6 +4377,28 @@ func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
 			"cols": Number(int64(cols)),
 		},
 	}), nil
+}
+
+// builtinSetWindowSize answers `set_window_size(fd, rows, cols)` against the
+// real fd the interpreter process holds, so `fern -interp` resizes the same
+// terminal the compiled binary would. internal/tty does the read-modify-write
+// that keeps the pixel pair.
+func builtinSetWindowSize(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("set_window_size: expected 3 args, got %d", len(args))
+	}
+	nums := make([]int64, 3)
+	for i, name := range []string{"fd", "rows", "cols"} {
+		n, ok := args[i].(Number)
+		if !ok {
+			return nil, fmt.Errorf("set_window_size: expected number %s, got %T", name, args[i])
+		}
+		nums[i] = int64(n)
+	}
+	if err := tty.SetWindowSize(int(nums[0]), int(nums[1]), int(nums[2])); err != nil {
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(unitValue()), nil
 }
 
 // builtinTermiosGet answers `termios_get(fd)` against the real fd the
