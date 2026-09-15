@@ -252,11 +252,11 @@ function seen(words: string[], k: string): i32 {
 function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 `},
 	// A callee lent a string VIEW can hand that box straight back (#9328).
-	// Both halves are here: `handed(v)` releases in the frame that sliced the
-	// view, and `laundered` hands the box ON, so the frame that sliced it owns
-	// nothing by the time it returns. Only answers are compared, because the
-	// escaping box outlives every release either path emits — it leaks the
-	// same 24 bytes with the path off.
+	// Both halves are here: `handed(v)` keeps what it is lent, so the produced
+	// caller hands it a copy of the bytes, and `laundered` hands the result
+	// ON, so the frame that sliced the view owns nothing of it by the time it
+	// returns. The AST lowering leaks the escaping box, so the leak check
+	// reads the produced bodies freeing more, never less.
 	{name: "lent-view-handback", atLeast: 4, src: `
 function handed(text: string): string { return text; }
 function laundered(src: string): string {
@@ -274,7 +274,7 @@ function main(): i32 {
 	// keep it — `tok_of` stores it in the token it builds and `add_word` puts
 	// it in the array it hands back, which is what every `*_tok` constructor in
 	// the self-host lexer does. Both reach the caller through the callee's
-	// result, so both have to stop the slicing frame reclaiming the box.
+	// result, so both callees are handed a copy the result may keep.
 	{name: "lent-view-stored", atLeast: 5, src: `
 struct Tok { text: string, line: i32 }
 function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }

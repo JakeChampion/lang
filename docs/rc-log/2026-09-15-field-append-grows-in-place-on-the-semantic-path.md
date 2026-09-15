@@ -149,11 +149,13 @@ same 150 lines. Three zero-minus-one constants — the two
 `var b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
 `test_mixed` — come out as `xorl %eax, %eax; movq $o, %rcx; subq %rcx, %rax`
 instead of `movq $-1, %rax`. The `$o` is the tell: a constant op's immediate is printed
-from its `str` field only when that field is non-empty, and
-`const_i32_readable` refuses to fold such an op — so the Op box for that
-`1` had its `str` word overwritten, which is a box freed and reissued while
-the array still named it. The 200-declaration input's output is
-byte-identical, so the shape needs something `lexer.fern` has. Every earlier
+from its `str` field, the literal's text, and `const_i32_readable` refuses
+to fold text it cannot read — so the byte behind that `1` was reissued
+memory. It was the constant folder's own literal, a view sliced out of a
+string its frame then released
+(`2026-09-15-a-lent-view-is-copied-for-a-callee-that-keeps-it.md`). The
+200-declaration input's output is byte-identical, so the shape needs
+something `lexer.fern` has. Every earlier
 measurement of this compiler read peak and exit code; none compared the
 output, and exit 0 with the wrong assembly is what that misses. Compare the
 emitted text against the AST build's on every measurement from here on.
