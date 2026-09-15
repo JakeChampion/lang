@@ -151,22 +151,12 @@ refresh() {
 
 # extract — pull top-level test durations out of `go tool test2json` output.
 #
-# Only `pass`/`fail` actions carry Elapsed; subtests (a `/` in the name) are
-# rolled up by their parent and dropped. An `output` action can echo arbitrary
-# test stdout, but its embedded quotes are backslash-escaped, so the literal
-# `"Action":"pass"` cannot appear inside one.
+# Parent Elapsed excludes parallel children. Use the full event stream's
+# run-to-terminal span, excluding an explicit top-level pause, and omit cached
+# packages. Child rows are not added again. Terminal-only files cannot supply
+# this measurement and are rejected rather than silently under-weighting tests.
 extract() {
-  awk '
-    /"Action":"(pass|fail)"/ && /"Elapsed":/ {
-      if (!match($0, /"Test":"[^"]+"/)) next
-      name = substr($0, RSTART + 8, RLENGTH - 9)
-      if (index(name, "/")) next
-      if (!match($0, /"Elapsed":[0-9.eE+-]+/)) next
-      secs = substr($0, RSTART + 10, RLENGTH - 10) + 0
-      if (secs > max[name]) max[name] = secs
-    }
-    END { for (n in max) printf "%s\t%.2f\n", n, max[n] }
-  ' "$@" | sort
+  go run "$(dirname "${BASH_SOURCE[0]}")/../cmd/ci-test-durations/main.go" "$@"
 }
 
 # check — compare every measured duration against its declared weight.
