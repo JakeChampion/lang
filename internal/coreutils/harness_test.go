@@ -985,7 +985,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		// in its Files, which closes that descriptor in the child —
 		// the one way through os/exec to hand a child a closed fd 1.
 		cmd.Stdout = (*os.File)(nil)
-		overran = inv.runBoundedThen(cmd, closeSlaves)
+		overran = inv.runBounded(cmd, closeSlaves)
 	case stdoutFull:
 		if runtime.GOOS != "linux" {
 			t.Skip("/dev/full is a Linux device")
@@ -996,7 +996,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		defer f.Close()
 		cmd.Stdout = f
-		overran = inv.runBoundedThen(cmd, closeSlaves)
+		overran = inv.runBounded(cmd, closeSlaves)
 	}
 	if inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 {
 		// Nothing more to read back: either the point is the reaction
@@ -1042,7 +1042,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 				cmd.Stderr = &outBuf
 			}
 		}
-		overran = inv.runBoundedThen(cmd, closeSlaves)
+		overran = inv.runBounded(cmd, closeSlaves)
 		if inv.ttyOut {
 			out = ptyOut.wait()
 		} else {
@@ -1316,27 +1316,18 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 
 // runBounded runs cmd and reports whether inv.timeout ran out first, in
 // which case the child was killed.
-func (inv invocation) runBounded(cmd *exec.Cmd) bool {
-	return inv.runBoundedThen(cmd, nil)
-}
-
-// runBoundedThen is runBounded with something to do once the child exists —
-// closing the parent's copy of a pty slave, which cannot wait until the run
-// is over because the drain of that terminal is what the run is waiting for.
-func (inv invocation) runBoundedThen(cmd *exec.Cmd, afterStart func()) bool {
-	if inv.timeout <= 0 && afterStart == nil {
-		_ = cmd.Run()
-		return false
-	}
+//
+// `afterStart` runs once the child exists and before the wait, which is
+// where closing the parent's copy of a pty slave has to happen: the drain
+// of that terminal is what the wait is waiting for, so a slave still open
+// here never reaches the end of the child's output. Every caller has one,
+// so it is a parameter rather than a second method.
+func (inv invocation) runBounded(cmd *exec.Cmd, afterStart func()) bool {
 	if err := cmd.Start(); err != nil {
-		if afterStart != nil {
-			afterStart()
-		}
+		afterStart()
 		return false
 	}
-	if afterStart != nil {
-		afterStart()
-	}
+	afterStart()
 	if inv.timeout <= 0 {
 		_ = cmd.Wait()
 		return false
