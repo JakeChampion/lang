@@ -38,7 +38,7 @@ Go-built compiler and 12.318 -> 5.689 seconds for the self-built compiler.
 These are local batch measurements, not whole-CI or x86 performance claims.
 Each measurement followed a passing single-module pilot.
 
-## Native x86 self-built compiler
+## Native x86 compilers
 
 [Run 35029998597](https://github.com/JakeChampion/lang/actions/runs/35029998597)
 compared the same baseline and buffer change on one four-CPU Linux x86 host,
@@ -57,7 +57,13 @@ trial. Separately, all 75 units of the candidate reproduce between its Go-built
 and self-built generations; the largest of those batches peaks at 2.959 GB.
 The artifact `native-buffer-full-gen1-1` records build identities, environment,
 per-process measurements, exact output hashes and completed verification.
-The Go-built generation still needs its separate native x86 comparison.
+
+The [Go-built comparison](https://github.com/JakeChampion/lang/actions/runs/35031299472)
+also passed on the same experiment revision, after its own successful pilot.
+Baseline times were 12.113 and 12.285 seconds; candidate times were 10.601
+and 10.625 seconds. Means are 12.199 -> 10.613 seconds. Peak RSS was nearly
+unchanged, 1.927 -> 1.920 GB. All eight measured outputs matched, and the
+candidate's complete 75-unit reproduction check passed again.
 
 ## Correctness and size
 
