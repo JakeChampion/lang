@@ -2318,6 +2318,34 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// set_process_group(pid, pgid): Result[void, IoError] —
+	// setpgid(2). `pid` 0 means the caller and `pgid` 0 means "the
+	// pid's own value", so `set_process_group(0, 0)` is the child's
+	// half of putting itself in a fresh group of its own.
+	//
+	// The name is spelled out rather than `setpgid` because the two
+	// arguments are easy to transpose and the long name makes a call
+	// site readable; the syscall's own name is in this comment for
+	// whoever greps for it.
+	//
+	// A Result, and its failure is ordinary rather than exceptional:
+	// the parent and the child race to make the same call, and whichever
+	// loses gets EACCES once the other has exec'd. Both callers make it
+	// so that neither ordering leaves the child ungrouped, which is the
+	// shape `timeout` uses and the reason the error is worth reading
+	// rather than asserting on.
+	//
+	// Gated on `proc`, with fork / exec / waitpid / signal_send.
+	c.info.FuncSigs["set_process_group"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return a path to it.
 	// `prefix` is appended to a random suffix so concurrent

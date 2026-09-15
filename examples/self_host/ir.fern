@@ -776,6 +776,15 @@ pub function op_process_alive(): Op { return op0("process_alive"); }
 // path being accurate: the op never saw the text its caller parsed the pid from.
 // Native only: neither WASI preview has a process table to name a target in.
 pub function op_signal_send(): Op { return op0("signal_send"); }
+// `set_process_group` takes two operands [pid, pgid] and pushes
+// Result[void, IoError]: setpgid(2). Both arguments reach the kernel as
+// written, so the syscall's zero conventions survive - pid 0 names the caller
+// and pgid 0 names the pid's own value, which makes
+// `set_process_group(0, 0)` a process putting itself in a fresh group.
+// EACCES, EINVAL, EPERM and ESRCH each arrive as Other("", strerror), the
+// empty path being accurate: the op took two integers and never saw a file.
+// Native only: neither WASI preview has process groups.
+pub function op_set_process_group(): Op { return op0("set_process_group"); }
 // `rlimit_nofile` takes no operands and pushes an i64: the SOFT RLIMIT_NOFILE
 // the kernel is enforcing on this process, what `ulimit -n` prints. An
 // unlimited resource reports i64 max — Linux spells RLIM_INFINITY as all ones
@@ -1797,7 +1806,7 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 284, 286..290, then 311 — 281
+// NEXT FREE EXTENSION ID: 286..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -1838,6 +1847,7 @@ pub function kind_id(name: string): i32 {
     if (n == 14) { return kind_id_len14(name); }
     if (n == 15) { return kind_id_len15(name); }
     if (n == 16) { return kind_id_len16(name); }
+    if (n == 17) { return kind_id_len17(name); }
     if (n == 18) { return kind_id_len18(name); }
     if (n == 19) { return kind_id_len19(name); }
     if (n == 21) { return kind_id_len21(name); }
@@ -2351,6 +2361,12 @@ function kind_id_len16(name: string): i32 {
     return 0;
 }
 
+function kind_id_len17(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b's' && name == "set_process_group") { return 284; }
+    return 0;
+}
+
 function kind_id_len18(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'w' && name == "wasm_pollable_drop") { return 190; }
@@ -2668,6 +2684,7 @@ function kind_name_4(id: i32): string {
     if (id == 281) { return "writer_truncate"; }
     if (id == 282) { return "priority"; }
     if (id == 283) { return "set_priority"; }
+    if (id == 284) { return "set_process_group"; }
     if (id == 285) { return "signal_send"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     if (id == 298) { return "sync"; }
@@ -2838,6 +2855,7 @@ function pops2_io(t: i32): boolean {
         || t == 304 || t == 305                                          // open_reader_with, open_writer_with (path, flags)
         || t == 281                                                      // writer_truncate (fd, length)
         || t == 285                                                      // signal_send (pid, sig)
+        || t == 284                                                      // set_process_group (pid, pgid)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some

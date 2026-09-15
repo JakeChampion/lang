@@ -1309,6 +1309,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"isatty":                        emitIsattyHelper,
 	"process_alive":                 emitProcessAliveHelper,
 	"signal_send":                   emitSignalSendHelper,
+	"set_process_group":             emitSetProcessGroupHelper,
 	"rlimit_nofile":                 emitRlimitNofileHelper,
 	"statfs":                        emitStatfsHelper,
 	"window_size":                   emitWindowSizeHelper,
@@ -2056,6 +2057,46 @@ func emitSignalSendHelper(w func(string, ...any)) {
 	w("\tstr w6, [x0]") // tag = 1 (Err)
 	w("\tstr x19, [x0, #8]")
 	w(".Lssa_sigsend_ret:")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitSetProcessGroupHelper writes set_process_group(pid, pgid) ->
+// Result[void, IoError]: setpgid(2) with both arguments as written, so the
+// syscall's zero conventions reach the kernel — pid 0 names the caller and
+// pgid 0 names the pid's own value.
+//
+// EACCES, EINVAL, EPERM and ESRCH are none of the errnos __fern_io_error
+// names a variant for, so each becomes Other(path, strerror) against an
+// empty path: the primitive took two integers and never saw a file.
+// Non-leaf (calls __fern_io_error). x0=pid, x1=pgid.
+func emitSetProcessGroupHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("set_process_group"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tsxtw x0, w0")
+	w("\tsxtw x1, w1")
+	w("\tmov x8, #%d", sysSetpgid)
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_setpgid_err")
+	emitSsaResultBox(w)
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
+	w("\tb .Lssa_setpgid_ret")
+	w(".Lssa_setpgid_err:")
+	w("\tneg x19, x0") // errno, across the inline empty-string alloc
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitSsaResultBox(w)
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_setpgid_ret:")
 	w("\tldr x19, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
@@ -3677,6 +3718,7 @@ var runtimeHelperDeps = map[string][]string{
 	"rename":                        {"__fern_io_error"},
 	"chmod":                         {"__fern_io_error"},
 	"signal_send":                   {"__fern_io_error"},
+	"set_process_group":             {"__fern_io_error"},
 	"set_priority":                  {"__fern_io_error"},
 	"truncate":                      {"__fern_io_error"},
 	"mknod":                         {"__fern_io_error"},
@@ -3767,6 +3809,7 @@ var heapUsingHelpers = map[string]bool{
 	"rename":                        true,
 	"chmod":                         true,
 	"signal_send":                   true,
+	"set_process_group":             true,
 	"set_priority":                  true,
 	"truncate":                      true,
 	"mknod":                         true,
@@ -8294,6 +8337,8 @@ const (
 	// kill(2), asm-generic 129 — signal_send, and process_alive's zero
 	// signal.
 	sysKill = 129
+	// setpgid(2), asm-generic 154 — set_process_group.
+	sysSetpgid = 154
 	// getrlimit(2), asm-generic 163 — rlimit_nofile's soft ceiling.
 	sysGetrlimit = 163
 	// setpriority(2) 140 and getpriority(2) 141, asm-generic. In that

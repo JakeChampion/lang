@@ -483,6 +483,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getpriority") { return "140"; }
         if (name == "setpriority") { return "141"; }
         if (name == "kill") { return "62"; }
+        if (name == "setpgid") { return "109"; }
         if (name == "getrlimit") { return "97"; }
         if (name == "statfs") { return "137"; }
         return "-1";
@@ -574,6 +575,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getpriority") { return "100"; }
         if (name == "setpriority") { return "101"; }
         if (name == "kill") { return "37"; }
+        if (name == "setpgid") { return "82"; }
         if (name == "getrlimit") { return "194"; }
         // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
         // variants, and that is the one libSystem's `statfs` resolves to.
@@ -651,6 +653,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "setpriority") { return "140"; }
     if (name == "getpriority") { return "141"; }
     if (name == "kill") { return "129"; }
+    if (name == "setpgid") { return "154"; }
     if (name == "getrlimit") { return "163"; }
     if (name == "statfs") { return "43"; }
     // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
@@ -1333,6 +1336,21 @@ pub function rt_src_process_alive(t: string): string {
 // spelling of `pid` would not be the operand either.
 pub function rt_src_signal_send(t: string): string {
     return "function __fern_signal_send(pid: i32, sig: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "kill") + ", pid, sig, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
+// rt_src_set_process_group backs `set_process_group(pid, pgid)`
+// (syscall-leaf) -> Result[void, IoError]: setpgid(2).
+//
+// Both arguments go to the kernel as written, so the syscall's zero
+// conventions survive: pid 0 is the caller and pgid 0 is the pid's own
+// value, which makes set_process_group(0, 0) a process putting itself in a
+// fresh group.
+//
+// EACCES, EINVAL, EPERM and ESRCH are none of the errnos __fern_io_error
+// names a variant for, so each becomes Other("", strerror) - the path is
+// empty because the helper took two integers and never saw a file.
+pub function rt_src_set_process_group(t: string): string {
+    return "function __fern_set_process_group(pid: i32, pgid: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "setpgid") + ", pid, pgid, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_rlimit_nofile backs `rlimit_nofile()` (syscall-leaf) -> the SOFT
@@ -4477,6 +4495,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "rename") { return ty_option(ty_unknown()); }
     if (id.name == "chmod") { return ty_option(ty_unknown()); }
     if (id.name == "signal_send") { return ty_option(ty_unknown()); }
+    if (id.name == "set_process_group") { return ty_option(ty_unknown()); }
     if (id.name == "set_priority") { return ty_option(ty_unknown()); }
     if (id.name == "truncate") { return ty_option(ty_unknown()); }
     if (id.name == "sync") { return ty_unknown(); }
@@ -6479,7 +6498,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // one pid's liveness, delivering a signal to one, and this
         // process's descriptor ceiling.
         "__fn___fern_process_alive", "__fn___fern_signal_send",
-        "__fn___fern_rlimit_nofile",
+        "__fn___fern_set_process_group", "__fn___fern_rlimit_nofile",
         // and how it competes for the CPU.
         "__fn___fern_priority", "__fn___fern_set_priority",
         // random_bytes and random_i32 are Fern on BOTH register backends now

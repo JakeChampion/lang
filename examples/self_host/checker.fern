@@ -11692,7 +11692,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
   var out: string[] = [
     "__alloc_u8", "args", "buf_take", "cell_new", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
-    "signal_send",
+    "signal_send", "set_process_group",
     "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",
     "tcp_recv", "uname_field", "window_size"
   ];

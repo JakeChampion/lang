@@ -1317,6 +1317,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // and re-push with param[0] (pid) on top.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_signal_send\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
             s = s.need("heap"); s = s.need("signal_send");
+        } else if (o.kind_tag == 284) {  // set_process_group
+            // [pid][pgid] (pgid on top) -> Result[void, IoError]. The same
+            // two-operand marshalling signal_send needs: pop both and
+            // re-push with param[0] (pid) on top.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_set_process_group\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap"); s = s.need("set_process_group");
         } else if (o.kind_tag == 282) {  // priority
             // no args -> __fern_priority() -> this process's nice value in x0.
             // Nothing is boxed, so no heap need.
@@ -7214,6 +7220,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename(tgt); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod(tgt); }
         if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send(tgt); }
+        if (s.has_need("set_process_group")) { fs_src = fs_src + " " + asmcore.rt_src_set_process_group(tgt); }
         if (s.has_need("set_priority")) { fs_src = fs_src + " " + asmcore.rt_src_set_priority(tgt); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate(tgt); }
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod(tgt); }
@@ -8310,8 +8317,8 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // needs_fs_runtime is the gate on the io_error call-graph bundle: every
 // need whose generated Fern body is emitted from that block, __fern_io_error
 // included — they share one call graph, so they are emitted together. The
-// filesystem is all of it bar `signal_send`, which classifies an errno the
-// same way and so belongs to the same graph.
+// filesystem is all of it bar the two process ops, which classify an errno
+// the same way and so belong to the same graph.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
@@ -8321,7 +8328,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-        "reader", "signal_send", "set_priority"
+        "reader", "signal_send", "set_process_group", "set_priority"
     ]);
 }
 

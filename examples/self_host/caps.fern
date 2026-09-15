@@ -125,6 +125,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "chdir", capability: "fs" },
         BuiltinCap { builtin: "process_alive", capability: "subprocess" },
         BuiltinCap { builtin: "signal_send", capability: "subprocess" },
+        BuiltinCap { builtin: "set_process_group", capability: "subprocess" },
 
         BuiltinCap { builtin: "now_unix_ms", capability: "time" },
         BuiltinCap { builtin: "now_ns", capability: "time" },

@@ -49,7 +49,8 @@ var gatedBuiltins = map[string]string{
 	// merely looked up. Not `signal`: that capability is the disposition
 	// of signals arriving HERE, which wasi-cli can honestly no-op, while
 	// there is no correct no-op for delivering one somewhere else.
-	"signal_send": "proc",
+	"signal_send":       "proc",
+	"set_process_group": "proc",
 
 	// A kernel-enforced ceiling on a process resource. Its own
 	// capability rather than `proc`: that one is the authority to have
