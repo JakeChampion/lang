@@ -1986,6 +1986,21 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
   return dest + suffix;
 }
 
+// `prompt(msg)` — one question on stderr, answered by `yesno()`. The
+// message carries its own `? ` and NO newline: the answer is typed on the
+// same line, which is what every interactive utility here asks for and
+// what four of them used to hand-roll. A caller holding buffered stdout
+// flushes it first, so an earlier `-v` line cannot land after the
+// question it preceded.
+pub function prompt(msg: string): boolean {
+  var w: Writer = stderr();
+  match (w.write(prog() + ": " + msg)) {
+    Some(_) => {},
+    None => {}
+  }
+  return yesno();
+}
+
 // `yesno()` — glibc's yesno(): one line from stdin, yes when it starts
 // with `y` or `Y` in the C locale. End of input is no.
 pub function yesno(): boolean {
