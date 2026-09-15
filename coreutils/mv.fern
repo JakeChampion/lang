@@ -18,18 +18,31 @@
 // subtlety is that the kernel answers EEXIST for a trailing slash on an
 // existing NON-directory, where the lstat answers ENOTDIR.
 //
-// CROSS-DEVICE MOVES ARE NOT IMPLEMENTED. GNU falls back to a recursive
-// copy-then-unlink on EXDEV, preserving mode, timestamps, ownership,
-// hard-link structure and file type; that needs `chmod`, `set_file_times`,
-// `chown` and `mkfifo`, of which the first two are native-only and the
-// last two do not exist as primitives at all. Until they do, an EXDEV
-// rename here reports the errno — which is exactly what GNU's own
-// `--no-copy` does with it.
+// A CROSS-DEVICE move is a rename that cannot happen: `rename` answers
+// EXDEV and GNU falls back to a recursive copy followed by removing the
+// source. The copy is `lib/copy.fern`, the same engine `cp` drives, asked
+// for `-a`'s attributes and `mv`'s wording; the removal is this file's,
+// because it is not `rm`'s walk with the policy stripped out — `rm`'s is
+// inseparable from its prompting, its --preserve-root and -I refusals and
+// its tri-state result, none of which a move consults.
+//
+// Two things separate the fallback from a plain `cp -a`:
+//
+//   - the destination is REMOVED before the copy, because a move replaces
+//     rather than merges. A destination directory that will not go reports
+//     `inter-device move failed: 'src' to 'dest'; unable to remove target:
+//     Directory not empty` and copies nothing.
+//   - the source is removed only if the WHOLE operand copied. A copy that
+//     failed part way leaves every source in place, including the files
+//     that did copy, and a later command-line operand still runs.
+//
+// `--no-copy` is what asks for the errno instead.
 import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/canon";
+import "./lib/copy";
 
 // ---- options ---------------------------------------------------------------
 //
@@ -168,7 +181,7 @@ function help_text(): string {
 }
 
 // `Cfg` — everything the option scan decided, for the per-operand work.
-struct Cfg { ask: i32, update: i32, strip: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string }
+struct Cfg { ask: i32, update: i32, strip: boolean, verbose: boolean, backups: boolean, control: i32, suffix: string, no_copy: boolean }
 
 // ---- stat ------------------------------------------------------------------
 // `StatInfo` — the four facts every caller here wants from a stat, and
@@ -372,7 +385,11 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
       w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.dest) + ": " + d.err);
       return MoveOut { status: 1, out: w };
     }
-    // Nothing is in the way, so the rename above is the whole story.
+    // Nothing is in the way, so the rename above is the whole story —
+    // unless it could not happen at all, which is what the fallback is.
+    if (is_exdev(rename_err) && !cfg.no_copy) {
+      return move_across(cfg, m, "", w);
+    }
     w = gnu.error_out(w, move_failure(m.src, m.dest, rename_err));
     return MoveOut { status: 1, out: w };
   }
@@ -429,11 +446,157 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
   match (rename(m.src, dest_path(m.dest))) {
     Ok(_) => {},
     Err(e2) => {
-      w = gnu.error_out(w, move_failure(m.src, m.dest, gnu.io_error_text(e2)));
+      var text: string = gnu.io_error_text(e2);
+      if (is_exdev(text) && !cfg.no_copy) {
+        return move_across(cfg, m, backup, w);
+      }
+      w = gnu.error_out(w, move_failure(m.src, m.dest, text));
       return MoveOut { status: 1, out: w };
     }
   }
   return verbose(cfg, m, backup, w);
+}
+
+// ---- the cross-device fallback ---------------------------------------------
+// `is_exdev(text)` — the rename could not happen because the two names
+// are on different filesystems. Matched on the strerror text, as the
+// other two errnos this file reads are.
+function is_exdev(text: string): boolean {
+  return text == "Invalid cross-device link";
+}
+
+// The diagnostic for a destination that is in the way and will not go.
+// GNU words it as the move failing rather than as the removal failing,
+// and names both operands: measured, a non-empty destination directory
+// gives `inter-device move failed: 'here/d' to 'there/d'; unable to
+// remove target: Directory not empty`.
+function inter_device_failure(src: string, dest: string, text: string): string {
+  return "inter-device move failed: " + gnu.quotea(src) + " to " + gnu.quotea(dest) + "; unable to remove target: " + text;
+}
+
+// `clear_target(dest)` — remove whatever is at `dest` so the copy creates
+// it rather than merging into it, which is the whole difference between a
+// move and a `cp -a`. `None` when there is nothing there or it went.
+function clear_target(dest: string): Option[string] {
+  var info: StatInfo = lstat_info(dest);
+  if (!info.ok) {
+    return None;
+  }
+  if (info.is_dir) {
+    match (remove_dir(dest)) {
+      Ok(_) => {
+        return None;
+      },
+      Err(e) => {
+        return Some(gnu.io_error_text(e));
+      }
+    }
+  }
+  match (remove_file(dest)) {
+    Ok(_) => {
+      return None;
+    },
+    Err(e2) => {
+      return Some(gnu.io_error_text(e2));
+    }
+  }
+}
+
+// `drop_source(cfg, path, o)` — the removal half, in READDIR order and
+// deepest first. Measured against `rm -rv`, whose walk this reproduces
+// exactly and whose order is NOT the copy's: the copy sorts a directory's
+// entries by inode, this one takes them as `read_dir` hands them back, so
+// a directory holding `x` and `sub` copies `sub` first and removes `x`
+// first.
+function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  var info: StatInfo = lstat_info(path);
+  if (!info.ok) {
+    w = gnu.error_out(w, "cannot remove " + gnu.quotea(path) + ": " + info.err);
+    return MoveOut { status: 1, out: w };
+  }
+  if (info.is_dir) {
+    var names: string[] = [];
+    match (read_dir(path)) {
+      Ok(es) => {
+        names = es;
+      },
+      Err(e) => {
+        w = gnu.error_out(w, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+        return MoveOut { status: 1, out: w };
+      }
+    }
+    var i: i32 = 0;
+    var status: i32 = 0;
+    while (i < names.len()) {
+      var below: MoveOut = drop_source(cfg, gnu.join_path(path, names[i]), w);
+      w = below.out;
+      if (below.status != 0) {
+        status = 1;
+      }
+      i = i + 1;
+    }
+    if (status != 0) {
+      return MoveOut { status: status, out: w };
+    }
+    match (remove_dir(path)) {
+      Ok(_) => {
+        return removed_line(cfg, path, true, w);
+      },
+      Err(e3) => {
+        w = gnu.error_out(w, "cannot remove " + gnu.quotea(path) + ": " + gnu.io_error_text(e3));
+        return MoveOut { status: 1, out: w };
+      }
+    }
+  }
+  match (remove_file(path)) {
+    Ok(_) => {
+      return removed_line(cfg, path, false, w);
+    },
+    Err(e4) => {
+      w = gnu.error_out(w, "cannot remove " + gnu.quotea(path) + ": " + gnu.io_error_text(e4));
+      return MoveOut { status: 1, out: w };
+    }
+  }
+}
+
+// The removal half's two `-v` lines, which are `rm -v`'s and not the
+// copy's.
+function removed_line(cfg: Cfg, path: string, is_dir: boolean, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  if (cfg.verbose) {
+    var what: string = "removed ";
+    if (is_dir) {
+      what = "removed directory ";
+    }
+    w = gnu.put(w, what + gnu.quotea(path) + "\n");
+  }
+  return MoveOut { status: 0, out: w };
+}
+
+// `move_across(cfg, m, backup, o)` — the whole fallback: clear the
+// destination, copy the tree, and remove the source only if all of it
+// arrived. `backup` is the name mv already renamed the destination to, so
+// the copy's own backup machinery stays off and the name is only quoted.
+function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): MoveOut {
+  var w: io_buffered.BufWriter = o;
+  match (clear_target(dest_path(m.dest))) {
+    Some(text) => {
+      w = gnu.error_out(w, inter_device_failure(m.src, m.dest, text));
+      return MoveOut { status: 1, out: w };
+    },
+    None => {}
+  }
+  var ccfg: copy.Cfg = copy.Cfg { ...copy.cfg_new(), attrs: copy.attrs_all(), recursive: true, deref: copy.deref_never(), verbose: cfg.verbose, verbose_style: copy.vstyle_move(), announced_backup: backup };
+  var cst: copy.State = copy.copy_one(ccfg, copy.state_new(w), m.src, dest_path(m.dest), true);
+  w = cst.out;
+  if (cst.status != 0) {
+    // Part of the operand did not arrive, so none of the source goes —
+    // measured, a copy that ran out of space leaves even the files that
+    // copied in place.
+    return MoveOut { status: cst.status, out: w };
+  }
+  return drop_source(cfg, m.src, w);
 }
 
 // The `-v` line a move that worked prints, naming the operands the way
@@ -518,7 +681,7 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  var cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
+  var cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
   var s: Scan = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
   var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
   while (true) {
@@ -565,9 +728,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: Cfg { ...c, ask: ask_never() } };
   }
   if (m.id == opt_no_copy()) {
-    // Nothing to switch off: with no cross-device fallback to skip, every
-    // move here already behaves the way this option asks for.
-    return s;
+    return Scan { ...s, cfg: Cfg { ...c, no_copy: true } };
   }
   if (m.id == opt_no_target_directory()) {
     return Scan { ...s, no_target_dir: true };

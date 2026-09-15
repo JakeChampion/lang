@@ -171,10 +171,10 @@ pub function reflink_values(): i32[] {
 //
 // One value per question the walk asks, filled in by the calling utility's
 // option scan. Nothing here is mutated during a copy.
-pub struct Cfg { attrs: Attrs, recursive: boolean, deref: i32, hard_link: boolean, sym_link: boolean, force: boolean, ask: i32, update: i32, backups: boolean, control: i32, suffix: string, verbose: boolean, debug: boolean, one_fs: boolean, attributes_only: boolean, copy_contents: boolean, remove_destination: boolean, sparse: i32, reflink: i32 }
+pub struct Cfg { attrs: Attrs, recursive: boolean, deref: i32, hard_link: boolean, sym_link: boolean, force: boolean, ask: i32, update: i32, backups: boolean, control: i32, suffix: string, verbose: boolean, debug: boolean, one_fs: boolean, attributes_only: boolean, copy_contents: boolean, remove_destination: boolean, sparse: i32, reflink: i32, verbose_style: i32, announced_backup: string }
 
 pub function cfg_new(): Cfg {
-  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_never() };
+  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_never(), verbose_style: vstyle_copy(), announced_backup: "" };
 }
 
 // ---- the walk's state --------------------------------------------------------
@@ -389,18 +389,50 @@ function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace
 
 // ---- the `-v` line ------------------------------------------------------------
 //
-// `'src' -> 'dest'`, with the backup named when one was taken. Printed
-// BEFORE the copy, and for a directory before its contents, which is the
-// order GNU's own output shows.
+// Printed BEFORE the copy, and for a directory before its contents, which
+// is the order GNU's own output shows. The WORDING depends on which
+// utility is driving, and that is the only thing the two differ in:
+//
+//   cp:  `'src' -> 'dest'`          and the same form for a directory
+//   mv:  `copied 'src' -> 'dest'`   and `created directory 'dest'`
+//
+// The CONDITION is shared — a directory's line belongs to its creation —
+// and an existing destination directory reaches it under `mv` anyway,
+// because a cross-device move removes its target before copying.
+pub function vstyle_copy(): i32 {
+  return 0;
+}
+
+pub function vstyle_move(): i32 {
+  return 1;
+}
+
 function verbose_line(cfg: Cfg, s: State, src: string, dest: string, backup: string): State {
   if (!cfg.verbose) {
     return s;
   }
   var line: string = gnu.quotea(src) + " -> " + gnu.quotea(dest);
+  if (cfg.verbose_style == vstyle_move()) {
+    line = "copied " + line;
+  }
   if (backup.len() > 0) {
     line = line + " (backup: " + gnu.quotea(backup) + ")";
   }
   return State { ...s, out: gnu.put(s.out, line + "\n") };
+}
+
+// A directory's creation line, which is the one place the two wordings
+// are not the same sentence: `mv` names only the destination, and never
+// carries a backup — measured, `mv -b -T` prints `created directory
+// 'there/d'` with the backup it took unmentioned.
+function verbose_dir_line(cfg: Cfg, s: State, src: string, dest: string): State {
+  if (cfg.verbose_style == vstyle_move()) {
+    if (!cfg.verbose) {
+      return s;
+    }
+    return State { ...s, out: gnu.put(s.out, "created directory " + gnu.quotea(dest) + "\n") };
+  }
+  return verbose_line(cfg, s, src, dest, "");
 }
 
 // `--debug`'s second line. GNU's names ITS OWN strategy — copy_file_range
@@ -951,7 +983,7 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
     // A directory's `-v` line belongs to the CREATION, not to the copy:
     // measured, `cp -rv s d` with `d` and `d/sub` already there prints
     // neither `s -> d` nor `s/sub -> d/sub`, only the files under them.
-    st = verbose_line(cfg, st, src_path, dest, "");
+    st = verbose_dir_line(cfg, st, src_path, dest);
     var mi: Info = lstat_of(dest);
     st = State { ...st, made_dev: st.made_dev.append(mi.dev), made_ino: st.made_ino.append(mi.ino) };
   }
@@ -1050,7 +1082,23 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
       existed = false;
     }
   }
-  st = verbose_line(cfg, st, src_path, dest, backup);
+  if (backup.len() == 0 && top) {
+    // A backup the CALLER took before handing the copy its operand, which
+    // the engine cannot discover: `mv` renames the destination aside, so
+    // by the time the copy looks there is nothing there to have backed up.
+    backup = cfg.announced_backup;
+  }
+  // `--preserve=links`: a second name for an inode already copied becomes
+  // a link to the first copy. Asked BEFORE the `-v` line because the two
+  // wordings disagree about it — `cp` names the pair either way, while
+  // `mv`'s line says `copied` and nothing was, so it is not printed.
+  var follower: string = "";
+  if (!cfg.sym_link && !(cfg.hard_link && !src.is_link) && cfg.attrs.links && src.nlink > 1) {
+    follower = link_lookup(st, src);
+  }
+  if (follower.len() == 0 || cfg.verbose_style != vstyle_move()) {
+    st = verbose_line(cfg, st, src_path, dest, backup);
+  }
   // `-l` and `-s` replace the copy entirely.
   if (cfg.sym_link) {
     return make_symlink(st, src_path, dest, existed);
@@ -1058,12 +1106,9 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
   if (cfg.hard_link && !src.is_link) {
     return make_hardlink(st, src_path, dest, existed);
   }
-  // `--preserve=links`: a second name for an inode already copied becomes
-  // a link to the first copy.
   if (cfg.attrs.links && src.nlink > 1) {
-    var first: string = link_lookup(st, src);
-    if (first.len() > 0) {
-      return make_hardlink(st, first, dest, existed);
+    if (follower.len() > 0) {
+      return make_hardlink(st, follower, dest, existed);
     }
     st = link_record(st, src, dest);
   }

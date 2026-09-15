@@ -3,6 +3,7 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,12 +29,23 @@ import (
 //     `mv -b a h` is not, and `mv -b ./a a` is refused again.
 //
 // EXDEV is reached for real — `crossDev` puts the destination on another
-// filesystem — but only under `--no-copy`, because the copy-then-unlink
-// fallback GNU runs without it is not implemented: it preserves mode,
-// timestamps, ownership and file type, which needs chmod, set_file_times,
-// chown and mkfifo. The first two are native-only and the last two are
-// not primitives at all. `mv -v a xdev/c` is the smallest input that
-// diverges today.
+// filesystem — and both answers to it are covered: the errno under
+// `--no-copy`, and the copy-then-remove fallback without it.
+//
+// The fallback's cases are on fixtures whose every directory holds at
+// most ONE entry, or a hard-link PAIR. That is not tidiness. Its copy
+// half walks a directory's entries by ascending inode, and inode numbers
+// are not reproducible between the two working directories the two sides
+// of a comparison each get, so a `-v` run naming two entries of one
+// directory compares unequal for reasons that are not mv's. A hard-link
+// pair is exempt because both names share one inode: the sort ties, and a
+// stable sort leaves them in readdir order, which the filesystem derives
+// from the names and its own seed and so does reproduce.
+//
+// Its REMOVAL half walks readdir order, which is reproducible — and is
+// not the copy's order. TestMvCrossDeviceOrder pins that pair of orders
+// on a multi-entry tree, running both binaries against one tree so the
+// inodes are shared.
 
 func seedWrite(t *testing.T, dir, name, content string) {
 	t.Helper()
@@ -281,6 +293,39 @@ func mvThere(t *testing.T, dir string) {
 	t.Helper()
 	seedWrite(t, dir, "b", "B\n")
 	seedMkdir(t, dir, "sub")
+}
+
+// mvFallHere is the source side of the copy-then-remove fallback: one
+// entry per directory, plus the hard-link pair that is exempt, plus the
+// file types the copy has to recreate rather than read — a symbolic link
+// it must not follow and a FIFO it must not open.
+func mvFallHere(t *testing.T, dir string) {
+	t.Helper()
+	seedWrite(t, dir, "f", "F\n")
+	seedMkdir(t, dir, "chain/sub")
+	seedWrite(t, dir, "chain/sub/leaf", "L\n")
+	seedMkdir(t, dir, "lk")
+	seedWrite(t, dir, "lk/a", "LK\n")
+	seedHardlink(t, dir, "lk/a", "lk/b")
+	seedSymlink(t, dir, "f", "sl")
+	seedFifo(t, filepath.Join(dir, "pipe"))
+	// A mode the umask would not have produced, so a fallback that
+	// created the destination fresh instead of preserving fails here.
+	if err := os.Chmod(filepath.Join(dir, "f"), 0o741); err != nil {
+		t.Fatalf("chmod f: %v", err)
+	}
+}
+
+// mvFallThere is the destination side: the three states a destination can
+// be in that the fallback answers differently — absent, an existing file
+// it replaces, an empty directory it removes and recreates, and a
+// non-empty one it refuses.
+func mvFallThere(t *testing.T, dir string) {
+	t.Helper()
+	seedWrite(t, dir, "g", "G\n")
+	seedMkdir(t, dir, "empty")
+	seedMkdir(t, dir, "full")
+	seedWrite(t, dir, "full/keep", "K\n")
 }
 
 func init() {
@@ -579,9 +624,8 @@ func mvCases(t *testing.T) []invocation {
 
 		// ---- across filesystems -----------------------------------------------------------
 		//
-		// Only --no-copy, which is where GNU reports the EXDEV rather than
-		// falling back to a copy. The fallback itself is not implemented —
-		// see the note at the top of this file.
+		// --no-copy first, which is where the EXDEV is reported rather
+		// than fallen back from; the fallback's own rows follow.
 		{name: "--no-copy across filesystems", args: []string{"--no-copy", "-v", "a", "xdev/c"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "--no-copy across filesystems onto an existing file", args: []string{"--no-copy", "-v", "a", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "--no-copy across filesystems into a directory", args: []string{"--no-copy", "-v", "a", "xdev/sub"}, seedTree: mvHere, crossDev: mvThere},
@@ -592,6 +636,34 @@ func mvCases(t *testing.T) []invocation {
 		{name: "-n stops before the filesystem boundary", args: []string{"-nv", "a", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "--update=none stops before the filesystem boundary", args: []string{"--update=none", "-v", "a", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
 		{name: "the same-file rule spans filesystems", args: []string{"xdev/b", "xdev/b"}, seedTree: mvHere, crossDev: mvThere},
+
+		// ---- the copy-then-remove fallback ------------------------------------------------
+		//
+		// One entry per directory, or a hard-link pair — see the note at
+		// the top of this file for why the copy half cannot be compared
+		// on anything else.
+		{name: "across to a new name", args: []string{"-v", "f", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across onto an existing file", args: []string{"-v", "f", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across into a directory", args: []string{"-v", "f", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across with no -v", args: []string{"f", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across preserves the mode", args: []string{"-v", "f", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a directory across", args: []string{"-v", "chain", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a directory across into a directory", args: []string{"-v", "chain", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a directory across onto an empty directory", args: []string{"-Tv", "chain", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a directory across onto a non-empty directory", args: []string{"-Tv", "chain", "xdev/full"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a directory across onto a file", args: []string{"-Tv", "chain", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a file across onto an empty directory", args: []string{"-Tv", "f", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a symlink across is not followed", args: []string{"-v", "sl", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a fifo across is recreated", args: []string{"-v", "pipe", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a hard-link pair across keeps the group", args: []string{"-v", "lk", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a hard-link pair across with --no-copy", args: []string{"--no-copy", "-v", "lk", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across with a backup", args: []string{"-bv", "f", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "a directory across with a backup", args: []string{"-bTv", "chain", "xdev/full"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across the other way", args: []string{"-v", "xdev/g", "back"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across declining the prompt", args: []string{"-iv", "f", "xdev/g"}, stdin: "n\n", seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across taking the prompt", args: []string{"-iv", "f", "xdev/g"}, stdin: "y\n", seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "across with --update=older on a newer source", args: []string{"--update=older", "-v", "f", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
+		{name: "two operands across", args: []string{"-v", "f", "sl", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
 
 		// ---- operand counts -----------------------------------------------------------------
 		{name: "no operands"},
@@ -684,4 +756,114 @@ func TestMvHelpVersion(t *testing.T) {
 	requireVersion(t, "mv", []string{"--vers"}, 0)
 	requireVersion(t, "mv", []string{"a", "b", "--version"}, 0)
 	requireVersion(t, "mv", []string{"-n", "--version", "-b"}, 0)
+}
+
+// readdirOrder lists the entries of `dir` as the filesystem hands them
+// back, which is the order the removal half of a cross-device move walks
+// in. Reproducible between two directories holding the same names — the
+// filesystem derives it from the names and its own seed — and, on a tree
+// built to make it so, NOT the ascending-inode order the copy half uses.
+func readdirOrder(t *testing.T, dir string) []string {
+	t.Helper()
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatalf("open %s: %v", dir, err)
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		t.Fatalf("readdirnames %s: %v", dir, err)
+	}
+	return names
+}
+
+// TestMvCrossDeviceOrder pins the two walk orders a cross-device move
+// uses, and that they are NOT the same order: the copy half visits a
+// directory's entries by ascending inode, the removal half in readdir
+// order. Measured against GNU 9.4, whose removal half is `rm -rv`'s walk
+// and byte-identical to it.
+//
+// It is not a corpus case because a corpus case cannot see it. The copy
+// half's order depends on inode numbers, which the two working
+// directories the two sides each get do not reproduce. Here each
+// implementation is checked against ITS OWN tree: the two expected orders
+// are read off that tree before the move runs, so no comparison between
+// the two runs is needed and nothing has to be restored — which matters
+// for `mv`, whose whole job is to remove the source it was given.
+func TestMvCrossDeviceOrder(t *testing.T) {
+	for _, side := range []struct {
+		label string
+		bin   func(*testing.T) string
+	}{
+		{"gnu", func(t *testing.T) string { return referenceBin(t, "mv") }},
+		{"fern", func(t *testing.T) string { return fernBin(t, "mv") }},
+	} {
+		t.Run(side.label, func(t *testing.T) {
+			bin := side.bin(t)
+			dir := t.TempDir()
+			far := crossDevDir(t, dir)
+
+			// Created in a scrambled order so that ascending inode is
+			// neither the names sorted nor directories first, and with
+			// enough entries that it is not readdir order either.
+			seedMkdir(t, dir, "src/zzz")
+			seedWrite(t, dir, "src/zzz/deep", "d\n")
+			seedWrite(t, dir, "src/mmm", "m\n")
+			seedMkdir(t, dir, "src/aaa")
+			seedWrite(t, dir, "src/aaa/x", "x\n")
+			seedWrite(t, dir, "src/kkk", "k\n")
+			seedWrite(t, dir, "src/bbb", "b\n")
+
+			srcDir := filepath.Join(dir, "src")
+			byInode := inodeOrder(t, srcDir)
+			byReaddir := readdirOrder(t, srcDir)
+			if strings.Join(byInode, "\x00") == strings.Join(byReaddir, "\x00") {
+				t.Fatalf("this filesystem handed back %v in inode order too, so the case cannot tell the two walks apart — the fixture needs a different scramble here", byReaddir)
+			}
+
+			dest := filepath.Join(far, "dst")
+			out := runCpIn(t, bin, dir, "-v", "src", dest)
+
+			// Only the top level is checked, which is where the order
+			// rule lives. The two halves have to be read off DIFFERENT
+			// sides of the arrow: a file's line names the source
+			// (`copied 'src/mmm' -> …`) while a directory's names only
+			// the destination it created (`created directory 'DST/zzz'`),
+			// so a filter looking for `src/` on every line would see the
+			// files and miss the directories.
+			top := func(prefix, ln string) (string, bool) {
+				rest, ok := strings.CutPrefix(ln, prefix)
+				if !ok {
+					return "", false
+				}
+				name, _, cut := strings.Cut(rest, "'")
+				if !cut || name == "" || strings.Contains(name, "/") {
+					return "", false
+				}
+				return name, true
+			}
+			var copied []string
+			var removed []string
+			for _, ln := range strings.Split(out, "\n") {
+				if name, ok := top("copied 'src/", ln); ok {
+					copied = append(copied, name)
+				}
+				if name, ok := top("created directory '"+dest+"/", ln); ok {
+					copied = append(copied, name)
+				}
+				if name, ok := top("removed 'src/", ln); ok {
+					removed = append(removed, name)
+				}
+				if name, ok := top("removed directory 'src/", ln); ok {
+					removed = append(removed, name)
+				}
+			}
+			if strings.Join(copied, " ") != strings.Join(byInode, " ") {
+				t.Errorf("%s did not COPY src by inode\n want: %v\n  got: %v\n(readdir order was %v)", side.label, byInode, copied, byReaddir)
+			}
+			if strings.Join(removed, " ") != strings.Join(byReaddir, " ") {
+				t.Errorf("%s did not REMOVE src in readdir order\n want: %v\n  got: %v\n(inode order was %v)", side.label, byReaddir, removed, byInode)
+			}
+		})
+	}
 }

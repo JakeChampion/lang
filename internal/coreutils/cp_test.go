@@ -226,7 +226,7 @@ func cpGroup(t *testing.T, dir string) {
 	seedMkdir(t, dir, "d2")
 }
 
-func cpMkfifo(t *testing.T, path string) {
+func seedFifo(t *testing.T, path string) {
 	t.Helper()
 	if err := syscall.Mkfifo(path, 0o644); err != nil {
 		t.Fatalf("mkfifo %s: %v", path, err)
@@ -238,10 +238,10 @@ func cpMkfifo(t *testing.T, path string) {
 // to end the read.
 func cpFifo(t *testing.T, dir string) {
 	t.Helper()
-	cpMkfifo(t, filepath.Join(dir, "fifo"))
+	seedFifo(t, filepath.Join(dir, "fifo"))
 	seedWrite(t, dir, "f1", "hello\n")
 	seedMkdir(t, dir, "hold")
-	cpMkfifo(t, filepath.Join(dir, "hold/inner"))
+	seedFifo(t, filepath.Join(dir, "hold/inner"))
 	seedWrite(t, dir, "hold/plain", "P\n")
 }
 
