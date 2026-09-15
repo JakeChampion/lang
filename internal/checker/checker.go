@@ -18044,9 +18044,11 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// `var arr: i64[] = if cond { [...] } else { [...] }`
 		// reaches each branch's array literal.
 		if al, ok := e.(*ast.ArrayLit); ok {
-			al.ElemType = hn.Elem
-			for _, el := range al.Elems {
-				c.settleNumeric(el, hn.Elem)
+			if c.elemSettleable(al.ElemType, hn.Elem) {
+				al.ElemType = hn.Elem
+				for _, el := range al.Elems {
+					c.settleNumeric(el, hn.Elem)
+				}
 			}
 		} else if call, ok := e.(*ast.Call); ok {
 			c.settleGenericCallByHint(call, hint)
@@ -18067,9 +18069,11 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		}
 	case ast.SliceType:
 		if al, ok := e.(*ast.ArrayLit); ok {
-			al.ElemType = hn.Elem
-			for _, el := range al.Elems {
-				c.settleNumeric(el, hn.Elem)
+			if c.elemSettleable(al.ElemType, hn.Elem) {
+				al.ElemType = hn.Elem
+				for _, el := range al.Elems {
+					c.settleNumeric(el, hn.Elem)
+				}
 			}
 		} else if call, ok := e.(*ast.Call); ok {
 			c.settleGenericCallByHint(call, hint)
@@ -18416,6 +18420,51 @@ func unsettledNumericShape(e ast.Expr) bool {
 // width hasn't been pinned yet. settleInt's generic-call case
 // uses this to decide whether the destination's width hint
 // should override the existing TypeArgs entry.
+// elemSettleable reports whether an array literal whose elements already
+// inferred as `have` may be re-stamped to the destination's `want`.
+//
+// Settling exists to resolve a POLYMORPHIC element — an unsuffixed integer
+// literal that should take the destination's width, or an empty literal with
+// no elements to infer from. A literal that already inferred a concrete,
+// unrelated type is not polymorphic, and stamping it anyway makes it CLAIM the
+// destination's type: postSettleType reports the stamp back as the literal's
+// type, so the assignment then compares i32[] against i32[] and passes. That is
+// how `var xs: i32[] = ["ab", "cd"]` type-checked, and why passing one to an
+// `i32[]` parameter summed strings as integers rather than reporting E038.
+func (c *checker) elemSettleable(have, want ast.Type) bool {
+	if have == nil || want == nil {
+		return true
+	}
+	// Which destinations a polymorphic element settles to depends on WHICH
+	// polymorphic it is, so split on `have` before looking at `want`.
+	switch h := have.(type) {
+	case ast.NumberType:
+		// A polymorphic INTEGER settles to any numeric width, float
+		// included: int-to-float is a legal promotion, and settleFloat
+		// exists for exactly it (`var xs: f64[] = [1, 2]`).
+		if h.Polymorphic || h.Width == 0 {
+			switch want.(type) {
+			case ast.NumberType, ast.FloatType:
+				return true
+			}
+		}
+	case ast.FloatType:
+		// A polymorphic FLOAT settles only to a float destination. Against
+		// an integer one it is a mismatch — `var x: i64 = 1.5` is already
+		// E003 as a scalar, and the array literal must not be the one way
+		// round it.
+		if h.Polymorphic {
+			if _, ok := want.(ast.FloatType); ok {
+				return true
+			}
+		}
+	}
+	// Anything else — a concrete element type, or a polymorphic one against a
+	// destination it cannot settle to — is a plain assignability question, and
+	// `take(xs: string[])` given `[1, 2, 3]` is still a mismatch.
+	return c.assignable(want, have)
+}
+
 func isPolymorphicNumeric(t ast.Type) bool {
 	if n, ok := t.(ast.NumberType); ok {
 		return n.Polymorphic || n.Width == 0

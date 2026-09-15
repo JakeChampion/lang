@@ -209,6 +209,30 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// The control the fix must not blunt: an ordinary element mismatch in a
 		// tuple with no fn in it still draws E003.
 		{"e003-tuple-elem-mismatch", "function main(): i32 { var t: (string, i32) = (1, 2); return t.1; }\n", []string{"E003"}},
+		// An ARRAY literal's elements are checked against the destination's
+		// element type, the way a tuple literal's already were. Native used to
+		// stamp the destination's element type onto the literal unconditionally
+		// — settling, which is right for an unsuffixed numeric and wrong for
+		// anything else — so the literal then CLAIMED that type and the
+		// comparison passed. The self-host has always rejected these, so these
+		// rows were a real divergence before the native fix. Both directions,
+		// because the stamp was reached from either.
+		{"e003-array-lit-elem-mismatch", "function main(): i32 { var xs: i32[] = [\"ab\", \"cd\"]; return xs.len(); }\n", []string{"E003"}},
+		{"e038-array-lit-arg-elem-mismatch", "function total(xs: i32[]): i32 { return xs.len(); }\nfunction main(): i32 { return total([\"ab\", \"cd\"]); }\n", []string{"E038"}},
+		{"e038-array-lit-arg-numeric-into-string", "function take(xs: string[]): i32 { return xs.len(); }\nfunction main(): i32 { return take([1, 2, 3]); }\n", []string{"E038"}},
+		// The controls the fix must not blunt: settling a polymorphic numeric
+		// literal to the destination's width is the whole point of the stamp,
+		// and an empty literal has no elements to contradict it.
+		{"array-lit-settles-to-i64-clean", "function main(): i32 { var xs: i64[] = [1, 2, 3]; return xs.len(); }\n", nil},
+		{"array-lit-settles-to-u8-clean", "function main(): i32 { var xs: u8[] = [1, 2, 3]; return xs.len(); }\n", nil},
+		{"array-lit-empty-clean", "function main(): i32 { var xs: i32[] = []; return xs.len(); }\n", nil},
+		// A polymorphic FLOAT element settles only to a float destination; the
+		// scalar `var x: i64 = 1.5` is already E003 in both checkers, so the
+		// array literal must not be the one way round it.
+		{"e003-array-lit-float-into-int", "function main(): i32 { var xs: i64[] = [1.5, 2.5]; return xs.len(); }\n", []string{"E003"}},
+		{"e038-array-lit-float-into-int-arg", "function total(xs: i64[]): i32 { return xs.len(); }\nfunction main(): i32 { return total([1.5, 2.5]); }\n", []string{"E038"}},
+		// int-to-float promotion stays legal, and is the control for the row above.
+		{"array-lit-int-into-float-clean", "function main(): i32 { var xs: f64[] = [1, 2]; return xs.len(); }\n", nil},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a
