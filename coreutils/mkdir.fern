@@ -41,6 +41,7 @@ import "std/array";
 import "./lib/gnu";
 import "./lib/mode";
 import "./lib/selinux";
+import "./lib/fts";
 
 function opt_context(): i32 {
   return 1;
@@ -157,50 +158,6 @@ function cannot_create(o: Out, dir: string, text: string): Out {
 
 // ---- the -p walk -----------------------------------------------------------
 struct Cfg { plan: Plan, ancestor: i32, parents: boolean, verbose: boolean }
-
-// Whether the byte at `i` of `s` is a slash.
-function is_slash(s: string, i: i32): boolean {
-  return s[i] as i32 == 47;
-}
-
-// The index one past the last component of `dir` that is not empty, or
-// -1 when every component is. That component is the LAST thing `-p`
-// creates, and everything before it is an ancestor: `a//b//c` has three
-// components and two ancestors, `a//` has one component and none, and
-// `/` has none at all — which is why `mkdir -p /` succeeds silently.
-function last_component_end(dir: string): i32 {
-  var end: i32 = 0 - 1;
-  var start: i32 = 0;
-  var i: i32 = 0;
-  while (i <= dir.len()) {
-    if (i == dir.len() || is_slash(dir, i)) {
-      if (i > start) {
-        end = i;
-      }
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  return end;
-}
-
-// Whether the component of `dir` spanning [start, stop) is one the walk
-// steps through rather than creates. GNU chdir's into `.` and `..`
-// instead of trying to make them, and an empty component (a doubled
-// slash) is not a name at all.
-function is_traversed(dir: string, start: i32, stop: i32): boolean {
-  var n: i32 = stop - start;
-  if (n == 0) {
-    return true;
-  }
-  if (n == 1) {
-    return dir[start] as i32 == 46;
-  }
-  if (n == 2) {
-    return dir[start] as i32 == 46 && dir[start + 1] as i32 == 46;
-  }
-  return false;
-}
 
 // What a `chdir` into `dir` would have said. GNU walks `-p` by chdir'ing
 // into each ancestor, so an existing ancestor it cannot enter is
@@ -320,12 +277,12 @@ function existing_final(o: Out, dir: string, text: string): Out {
 function make(o0: Out, cfg: Cfg, dir: string): Out {
   var o: Out = o0;
   if (cfg.parents) {
-    var last: i32 = last_component_end(dir);
+    var last: i32 = fts.last_component_end(dir);
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < last) {
-      if (is_slash(dir, i)) {
-        if (!is_traversed(dir, start, i)) {
+      if (fts.is_slash(dir, i)) {
+        if (!fts.is_traversed(dir, start, i)) {
           var step: (Out, boolean) = make_ancestor(o, cfg, slice_unchecked(dir, 0, i) + "");
           o = step.0;
           if (!step.1) {

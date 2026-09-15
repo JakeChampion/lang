@@ -2554,7 +2554,34 @@ groups are the order of work. Each sub-issue names its group.
   policy stripped out: `rm`'s is inseparable from its prompting, its
   --preserve-root and -I refusals and its tri-state result, none of which
   a move consults)
-  `install` `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
+  `install` (done — the engine's THIRD caller, after cp and mv's EXDEV
+  fallback, and it needed no new primitive: chmod, chown_at,
+  set_file_times and proc_fork/proc_exec/proc_waitpid were all already
+  here. THE UMASK IS NOT CONSULTED, which is the thing cp would mislead
+  you about: the default mode is 0755 under `umask 077` and `-m
+  u=rw,g=r` is 0640, so `copy.Cfg.forced_mode` sets the mode outright
+  rather than filtering anything. `-m`'s symbolic form resolves against a
+  base of ZERO and not against that 0755 — `-m +x` is 0111, `-m go-w` is
+  0, `-m o=` is 0 — so 0755 is what install uses when `-m` is ABSENT and
+  is not something `-m` edits; even the bare `+w`, which POSIX lets
+  consult the umask, is 0222 under every mask. `-m` with `-d` reaches
+  only the LAST component. A directory's line is `install: creating
+  directory 'X'`, on stdout and carrying the program prefix where the
+  file line has none, and the final component is named as the operand was
+  written, trailing slash included. An existing destination is always
+  REMOVED first, so `removed 'X'` precedes the copy line unless `-b`
+  renamed it away. `-C` on a match does nothing at all, mtime included.
+  A failed `-s` prints the `-v` line TWICE and leaves no destination:
+  the `cannot run` message comes from the forked CHILD, and both
+  processes carry the same unflushed stdout across the fork. `--debug`
+  prints cp's own second line, so install widens the FOURTH exemption
+  rather than adding a fifth. `install: cannot change permissions of 'X'`
+  is the one quirk the corpus does not reach, for the reason `cp -f`'s
+  retry does not: as root it needs a destination whose mode cannot be
+  set. Faster than GNU on 11 of its 12 bench rows and at parity on the
+  64 MiB throughput row, which is #9309's copy_file_range gap and not
+  install's)
+  `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle
   methods from #9181 and the non-blocking `open_reader_with` /
   `open_writer_with` from #9197, which is what opens a FIFO with no

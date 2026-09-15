@@ -1,0 +1,934 @@
+// install.fern — GNU-compatible `install`.
+//
+//   install [OPTION]... [-T] SOURCE DEST
+//   install [OPTION]... SOURCE... DIRECTORY
+//   install [OPTION]... -t DIRECTORY SOURCE...
+//   install [OPTION]... -d DIRECTORY...
+//
+// The copying is `lib/copy.fern`, the engine `cp` drives and `mv`'s
+// cross-device fallback reuses; this is its third caller. What install
+// adds is a mode rule of its own, the two directory-creating forms, the
+// `-C` comparison, and `-s`, which hands the destination to another
+// program.
+//
+// THE UMASK IS NOT CONSULTED. This is the thing to get right and the
+// thing `cp` would mislead you about. `cp` has three mode states — the
+// source's bits through the umask, its bits verbatim under `-p`, and the
+// type's default under `--no-preserve=mode` — and install's is a fourth
+// that is not a variation on any of them: measured, the default is 0755
+// under `umask 077`, and `-m u=rw,g=r` lands 0640, so the mask is never
+// applied rather than applied to something else. `copy.Cfg.forced_mode`
+// is how the engine is told.
+//
+// Two more measured rules that do not follow from the first:
+//
+//   - `-m` with `-d` reaches only the LAST component. `install -d -m 700
+//     a/b/c` leaves `a` and `a/b` at 0755 and only `a/b/c` at 0700.
+//   - a directory's `-v` line is `install: creating directory 'X'`, on
+//     STDOUT and carrying the program prefix, where the file line
+//     `'src' -> 'dest'` has none. Both streams are stdout; only one is
+//     prefixed. That is the third verbose style the engine carries.
+//
+// `-C` compares content, ownership and mode. On a match it does NOTHING
+// — not even touching the destination's mtime, checked across a second
+// run — and on a mismatch it removes the destination, says `removed 'X'`
+// under `-v`, and copies. That removal line is the engine's, the same one
+// `cp -v --remove-destination` prints.
+//
+// A symlink source is DEREFERENCED: `deref_always`, not `cp`'s
+// command-line-only default. A directory source is refused outright with
+// `omitting directory 'X'` rather than needing `-r`, which install has no
+// equivalent of.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/copy";
+import "./lib/mode";
+import "./lib/owner";
+import "./lib/fts";
+
+// ---- options ---------------------------------------------------------------
+//
+// Declared in the order GNU's own longopts array has, because the
+// ambiguity lists print candidates in it. Measured: `--s` names
+// '--strip' '--strip-program' '--suffix' in that order, `--p` names
+// '--preserve-timestamps' before '--preserve-context', `--c` '--compare'
+// before '--context', `--d` '--debug' before '--directory', and `--v`
+// '--verbose' before '--version'. That is alphabetical but for the
+// preserve pair, which is the one place GNU's array is not.
+function opt_backup(): i32 {
+  return 1;
+}
+
+function opt_compare(): i32 {
+  return 2;
+}
+
+function opt_context(): i32 {
+  return 3;
+}
+
+function opt_debug(): i32 {
+  return 4;
+}
+
+function opt_directory(): i32 {
+  return 5;
+}
+
+function opt_group(): i32 {
+  return 6;
+}
+
+function opt_mode(): i32 {
+  return 7;
+}
+
+function opt_no_target_directory(): i32 {
+  return 8;
+}
+
+function opt_owner(): i32 {
+  return 9;
+}
+
+function opt_preserve_timestamps(): i32 {
+  return 10;
+}
+
+function opt_preserve_context(): i32 {
+  return 11;
+}
+
+function opt_strip(): i32 {
+  return 12;
+}
+
+function opt_strip_program(): i32 {
+  return 13;
+}
+
+function opt_suffix(): i32 {
+  return 14;
+}
+
+function opt_target_directory(): i32 {
+  return 15;
+}
+
+function opt_verbose(): i32 {
+  return 16;
+}
+
+// The short-only spellings, which no long name reaches.
+function opt_backup_short(): i32 {
+  return 17;
+}
+
+function opt_ignored(): i32 {
+  return 18;
+}
+
+function opt_create_leading(): i32 {
+  return 19;
+}
+
+function opt_context_short(): i32 {
+  return 20;
+}
+
+function option_table(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.optional_long("", "backup", opt_backup()));
+  opts = opts.append(gnu.flag("C", "compare", opt_compare()));
+  opts = opts.append(gnu.optional_long("", "context", opt_context()));
+  opts = opts.append(gnu.flag("", "debug", opt_debug()));
+  opts = opts.append(gnu.flag("d", "directory", opt_directory()));
+  opts = opts.append(gnu.valued("g", "group", opt_group()));
+  opts = opts.append(gnu.valued("m", "mode", opt_mode()));
+  opts = opts.append(gnu.flag("T", "no-target-directory", opt_no_target_directory()));
+  opts = opts.append(gnu.valued("o", "owner", opt_owner()));
+  opts = opts.append(gnu.flag("p", "preserve-timestamps", opt_preserve_timestamps()));
+  opts = opts.append(gnu.flag("", "preserve-context", opt_preserve_context()));
+  opts = opts.append(gnu.flag("s", "strip", opt_strip()));
+  opts = opts.append(gnu.valued("", "strip-program", opt_strip_program()));
+  opts = opts.append(gnu.valued("S", "suffix", opt_suffix()));
+  opts = opts.append(gnu.valued("t", "target-directory", opt_target_directory()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  // After every long name, so the ambiguity lists keep the measured order.
+  opts = opts.append(gnu.flag("b", "", opt_backup_short()));
+  opts = opts.append(gnu.flag("c", "", opt_ignored()));
+  opts = opts.append(gnu.flag("D", "", opt_create_leading()));
+  opts = opts.append(gnu.flag("Z", "", opt_context_short()));
+  return opts;
+}
+
+function help_text(): string {
+  var out: string = "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... SOURCE... DIRECTORY\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY SOURCE...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... -d DIRECTORY...\n";
+  out = out + "\n";
+  out = out + "This install program copies files (often just compiled) into destination\n";
+  out = out + "locations you choose.  If you want to download and install a ready-to-use\n";
+  out = out + "package on a GNU/Linux system, you should instead be using a package manager\n";
+  out = out + "like yum(1) or apt-get(1).\n";
+  out = out + "\n";
+  out = out + "In the first three forms, copy SOURCE to DEST or multiple SOURCE(s) to\n";
+  out = out + "the existing DIRECTORY, while setting permission modes and owner/group.\n";
+  out = out + "In the 4th form, create all components of the given DIRECTORY(ies).\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "      --backup[=CONTROL]  make a backup of each existing destination file\n";
+  out = out + "  -b                  like --backup but does not accept an argument\n";
+  out = out + "  -c                  (ignored)\n";
+  out = out + "  -C, --compare       compare content of source and destination files, and\n";
+  out = out + "                        if no change to content, ownership, and permissions,\n";
+  out = out + "                        do not modify the destination at all\n";
+  out = out + "  -d, --directory     treat all arguments as directory names; create all\n";
+  out = out + "                        components of the specified directories\n";
+  out = out + "  -D                  create all leading components of DEST except the last,\n";
+  out = out + "                        or all components of --target-directory,\n";
+  out = out + "                        then copy SOURCE to DEST\n";
+  out = out + "      --debug         explain how a file is copied.  Implies -v\n";
+  out = out + "  -g, --group=GROUP   set group ownership, instead of process' current group\n";
+  out = out + "  -m, --mode=MODE     set permission mode (as in chmod), instead of rwxr-xr-x\n";
+  out = out + "  -o, --owner=OWNER   set ownership (super-user only)\n";
+  out = out + "  -p, --preserve-timestamps   apply access/modification times of SOURCE files\n";
+  out = out + "                        to corresponding destination files\n";
+  out = out + "  -s, --strip         strip symbol tables\n";
+  out = out + "      --strip-program=PROGRAM  program used to strip binaries\n";
+  out = out + "  -S, --suffix=SUFFIX  override the usual backup suffix\n";
+  out = out + "  -t, --target-directory=DIRECTORY  copy all SOURCE arguments into DIRECTORY\n";
+  out = out + "  -T, --no-target-directory  treat DEST as a normal file\n";
+  out = out + "  -v, --verbose       print the name of each created file or directory\n";
+  out = out + "      --preserve-context  preserve SELinux security context\n";
+  out = out + "  -Z                      set SELinux security context of destination\n";
+  out = out + "                            file and each created directory to default type\n";
+  out = out + "      --context[=CTX]     like -Z, or if CTX is specified then set the\n";
+  out = out + "                            SELinux or SMACK security context to CTX\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
+  out = out + "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
+  out = out + "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
+  out = out + "simple), simple/never.\n";
+  out = out + "\n";
+  out = out + "--preserve-context, -Z and --context parse and carry nothing: SELinux is\n";
+  out = out + "not available here.\n";
+  return out;
+}
+
+// ---- what the scan decided --------------------------------------------------
+//
+// `mode_spec` is kept as TEXT rather than parsed on sight, because `-m`'s
+// symbolic form adjusts a base mode and the base differs between a file
+// (0755) and a directory under `-d`. The parse happens where the base is
+// known.
+struct Scan { target_dir: string, have_target_dir: boolean, no_target_dir: boolean, directory: boolean, create_leading: boolean, compare: boolean, mode_spec: string, have_mode: boolean, owner_spec: string, have_owner: boolean, group_spec: string, have_group: boolean, preserve_timestamps: boolean, strip: boolean, strip_program: string, verbose: boolean, debug: boolean, backups: boolean, control: i32, suffix: string, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_context: boolean, warn_preserve_context: boolean, warn_strip_program: boolean }
+
+function scan_new(): Scan {
+  return Scan { target_dir: "", have_target_dir: false, no_target_dir: false, directory: false, create_leading: false, compare: false, mode_spec: "", have_mode: false, owner_spec: "", have_owner: false, group_spec: "", have_group: false, preserve_timestamps: false, strip: false, strip_program: "strip", verbose: false, debug: false, backups: false, control: gnu.backup_existing(), suffix: "~", backup_given: false, control_given: false, control_text: "", suffix_given: false, warn_context: false, warn_preserve_context: false, warn_strip_program: false };
+}
+
+function apply_option(s: Scan, m: gnu.OptMatch): Scan {
+  if (m.id == opt_backup()) {
+    if (m.has_value) {
+      return Scan { ...s, backups: true, backup_given: true, control_given: true, control_text: m.value };
+    }
+    return Scan { ...s, backups: true, backup_given: true };
+  }
+  if (m.id == opt_backup_short()) {
+    return Scan { ...s, backups: true, backup_given: true };
+  }
+  if (m.id == opt_compare()) {
+    return Scan { ...s, compare: true };
+  }
+  if (m.id == opt_context()) {
+    // A VALUE warns and the bare form does not, exactly as `cp`'s does.
+    if (m.has_value) {
+      return Scan { ...s, warn_context: true };
+    }
+    return s;
+  }
+  if (m.id == opt_context_short()) {
+    // `-Z` alone is silent, and so is a bare `--context`.
+    return s;
+  }
+  if (m.id == opt_preserve_context()) {
+    return Scan { ...s, warn_preserve_context: true };
+  }
+  if (m.id == opt_debug()) {
+    return Scan { ...s, debug: true, verbose: true };
+  }
+  if (m.id == opt_directory()) {
+    return Scan { ...s, directory: true };
+  }
+  if (m.id == opt_create_leading()) {
+    return Scan { ...s, create_leading: true };
+  }
+  if (m.id == opt_group()) {
+    return Scan { ...s, group_spec: m.value, have_group: true };
+  }
+  if (m.id == opt_mode()) {
+    return Scan { ...s, mode_spec: m.value, have_mode: true };
+  }
+  if (m.id == opt_no_target_directory()) {
+    return Scan { ...s, no_target_dir: true };
+  }
+  if (m.id == opt_owner()) {
+    return Scan { ...s, owner_spec: m.value, have_owner: true };
+  }
+  if (m.id == opt_preserve_timestamps()) {
+    return Scan { ...s, preserve_timestamps: true };
+  }
+  if (m.id == opt_strip()) {
+    return Scan { ...s, strip: true };
+  }
+  if (m.id == opt_strip_program()) {
+    return Scan { ...s, strip_program: m.value, warn_strip_program: true };
+  }
+  if (m.id == opt_suffix()) {
+    return Scan { ...s, suffix: m.value, suffix_given: true, backups: true };
+  }
+  if (m.id == opt_target_directory()) {
+    return Scan { ...s, target_dir: m.value, have_target_dir: true };
+  }
+  if (m.id == opt_verbose()) {
+    return Scan { ...s, verbose: true };
+  }
+  // `-c` is accepted and does nothing, which is what its help line says.
+  return s;
+}
+
+function scan_options(argv: string[]): (Scan, string[]) {
+  var s: Scan = scan_new();
+  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "install", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        s = apply_option(s, m);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+// ---- the mode ---------------------------------------------------------------
+//
+// `default_mode(is_dir)` — what install uses when `-m` says nothing:
+// 0755 for both a file and a directory, and NOT filtered by the umask.
+function default_mode(): i32 {
+  return 493;
+}
+
+// `resolve_mode(spec, is_dir)` — `-m`'s value, resolved against a base of
+// ZERO. `None` is `invalid mode 'SPEC'`, which is the whole of that
+// diagnostic: no `Try …` line follows it.
+//
+// The base is the thing to get right, and 0755 is the wrong guess: it is
+// what install uses when `-m` is ABSENT, not what `-m`'s symbolic form
+// adjusts. Measured — `-m u=rw,g=r` is 0640 and not 0645, `-m +x` is
+// 0111 and not 0755, `-m go-w` is 0 and not 0755, `-m o=` is 0. So `-m`
+// is a full specification of the mode rather than an edit to a default.
+//
+// The mask is 0 for the same reason the default is unfiltered: `-m +w` is
+// 0222 under `umask 022`, `077` and `000` alike, so even the bare form
+// that POSIX lets consult the umask does not.
+function resolve_mode(spec: string, is_dir: boolean): Option[i32] {
+  match (mode.compile(spec)) {
+    None => {
+      return None;
+    },
+    Some(changes) => {
+      var adjusted: mode.Adjusted = changes.adjust(0, is_dir, 0);
+      return Some(adjusted.mode);
+    }
+  }
+}
+
+// ---- ownership --------------------------------------------------------------
+//
+// `-o` and `-g` are looked up through `lib/owner.fern`, which `chown` and
+// `chgrp` already use, but the DIAGNOSTIC is install's own: measured,
+// `chown` says `invalid user: 'x'` with a colon and install says
+// `invalid user 'x'` without one, so `owner.Parsed.message` cannot be
+// reused even though the lookup can.
+struct Ids { uid: i64, gid: i64, err: string }
+
+function lookup_ids(s: Scan): Ids {
+  var uid: i64 = 0 - 1;
+  var gid: i64 = 0 - 1;
+  var db: owner.Db = owner.db_load();
+  if (s.have_owner) {
+    var p: owner.Parsed = owner.parse(db, s.owner_spec);
+    if (!p.ok || !p.spec.has_uname && p.spec.uid < 0) {
+      return Ids { uid: 0 - 1, gid: 0 - 1, err: "invalid user " + gnu.quote(s.owner_spec) };
+    }
+    uid = p.spec.uid;
+  }
+  if (s.have_group) {
+    var pg: owner.Parsed = owner.parse_group_only(db, s.group_spec);
+    if (!pg.ok || pg.spec.gid < 0) {
+      return Ids { uid: 0 - 1, gid: 0 - 1, err: "invalid group " + gnu.quote(s.group_spec) };
+    }
+    gid = pg.spec.gid;
+  }
+  return Ids { uid: uid, gid: gid, err: "" };
+}
+
+// ---- the verbose lines ------------------------------------------------------
+//
+// The file line is the engine's, under `vstyle_copy()` — install's is
+// `'src' -> 'dest'`, the same wording `cp` uses. The DIRECTORY line is
+// install's own and is not the engine's under any style: it names only
+// the destination, carries the program prefix, and still goes to stdout.
+function created_directory(s: Scan, path: string, o: io_buffered.BufWriter): io_buffered.BufWriter {
+  if (!s.verbose) {
+    return o;
+  }
+  return gnu.put(o, gnu.prog() + ": creating directory " + gnu.quotea(path) + "\n");
+}
+
+// ---- -d and -D: making directories -----------------------------------------
+//
+// Every component is created, and only the ones actually CREATED are
+// announced — measured, `-v -d` on a directory that is already there
+// prints nothing at all.
+//
+// `last_mode` is the mode for the FINAL component alone. `-m` reaches no
+// further than that: measured, `install -d -m 700 a/b/c` leaves `a` and
+// `a/b` at 0755.
+struct DirOut { status: i32, out: io_buffered.BufWriter }
+
+function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered.BufWriter): DirOut {
+  var w: io_buffered.BufWriter = o;
+  match (lstat(path)) {
+    Ok(info) => {
+      if (info.is_dir) {
+        return DirOut { status: 0, out: w };
+      }
+      w = gnu.error_out(w, "cannot create directory " + gnu.quotea(path) + ": File exists");
+      return DirOut { status: 1, out: w };
+    },
+    Err(_) => {}
+  }
+  match (create_dir(path, want)) {
+    Ok(_) => {},
+    Err(e) => {
+      w = gnu.error_out(w, "cannot create directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return DirOut { status: 1, out: w };
+    }
+  }
+  w = created_directory(s, path, w);
+  // create_dir goes through the umask, so the mode is set again after it
+  // to the value install decided — which is the whole point of the rule
+  // that the mask is never consulted.
+  match (chmod(path, want)) {
+    Ok(_) => {},
+    Err(e2) => {
+      w = gnu.error_out(w, "cannot change permissions of " + gnu.quotea(path) + ": " + gnu.io_error_text(e2));
+      return DirOut { status: 1, out: w };
+    }
+  }
+  return DirOut { status: apply_ids(path, ids), out: w };
+}
+
+// `apply_ids(path, ids)` — the `-o` / `-g` chown, skipped entirely when
+// neither was given so a run without them makes no call at all.
+function apply_ids(path: string, ids: Ids): i32 {
+  if (ids.uid < 0 && ids.gid < 0) {
+    return 0;
+  }
+  match (chown_at(path, ids.uid as i32, ids.gid as i32, true)) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      gnu.error("cannot change ownership of " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return 1;
+    }
+  }
+}
+
+// `make_path(s, path, last_mode, ids, o)` — `path` and every component
+// above it, the last one with `last_mode` and the rest with install's
+// default.
+function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffered.BufWriter): DirOut {
+  var w: io_buffered.BufWriter = o;
+  // The components come from `lib/fts.fern`, which `mkdir -p` walks the
+  // same way: `.` and `..` and an empty component (a doubled slash) are
+  // stepped through rather than created, and `last` marks the final name
+  // so `-m` can reach it and nothing above it.
+  var last: i32 = fts.last_component_end(path);
+  if (last < 0) {
+    // Nothing but slashes, which is a root that already exists.
+    return DirOut { status: 0, out: w };
+  }
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= last) {
+    if (i == last || fts.is_slash(path, i)) {
+      if (!fts.is_traversed(path, start, i)) {
+        var want: i32 = default_mode();
+        if (i == last) {
+          want = last_mode;
+        }
+        // The final component is named as the operand was WRITTEN:
+        // measured, `-d a/b/` says `creating directory 'a/b/'` with the
+        // slash, where every component above it is a bare prefix.
+        var name: string = slice_unchecked(path, 0, i) + "";
+        if (i == last) {
+          name = path;
+        }
+        var r: DirOut = make_one_dir(s, name, want, ids, w);
+        w = r.out;
+        if (r.status != 0) {
+          return DirOut { status: r.status, out: w };
+        }
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return DirOut { status: 0, out: w };
+}
+
+// `make_leading(s, dest, ids, o)` — `-D`'s job: every component of
+// `dest` EXCEPT the last. Its directories get install's default mode,
+// never `-m`'s, because `-m` is the file's.
+function make_leading(s: Scan, dest: string, ids: Ids, o: io_buffered.BufWriter): DirOut {
+  var parent: string = gnu.dir_name(dest);
+  if (parent == "." || parent == "/") {
+    return DirOut { status: 0, out: o };
+  }
+  return make_path(s, parent, default_mode(), ids, o);
+}
+
+// ---- -C: the comparison -----------------------------------------------------
+//
+// True when the destination already holds exactly what installing would
+// put there, so nothing is done at all. Content, mode and ownership, per
+// the option's own help text; a match leaves even the mtime untouched,
+// which is how the option is observed to be a no-op rather than a
+// cheaper copy.
+function same_already(src: string, dest: string, want: i32, ids: Ids): boolean {
+  match (stat(src)) {
+    Ok(si) => {
+      match (stat(dest)) {
+        Ok(di) => {
+          if (!same_metadata(si, di, want, ids)) {
+            return false;
+          }
+          return same_bytes(src, dest);
+        },
+        Err(_) => {
+          return false;
+        }
+      }
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// Everything but the bytes: both must be regular files of one size, the
+// destination already at the mode install would set, and already owned by
+// whatever `-o` / `-g` asked for. An id that was not asked for is not
+// compared, which is why they are checked against the resolved Ids rather
+// than against the source.
+function same_metadata(si: FileStat, di: FileStat, want: i32, ids: Ids): boolean {
+  if (!si.is_file || !di.is_file) {
+    return false;
+  }
+  if (si.size != di.size) {
+    return false;
+  }
+  if ((di.mode % 4096) as i32 != want) {
+    return false;
+  }
+  if (ids.uid >= 0 && di.uid as i64 != ids.uid) {
+    return false;
+  }
+  if (ids.gid >= 0 && di.gid as i64 != ids.gid) {
+    return false;
+  }
+  return true;
+}
+
+// The content half. Both handles are closed on every path, which matters
+// because a run with many operands asks this once per operand.
+function same_bytes(a: string, b: string): boolean {
+  match (open_reader(a)) {
+    Ok(ra) => {
+      match (open_reader(b)) {
+        Ok(rb) => {
+          var same: boolean = compare_streams(ra, rb);
+          ra.close();
+          rb.close();
+          return same;
+        },
+        Err(_) => {
+          ra.close();
+          return false;
+        }
+      }
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// Read in blocks rather than whole, so a large pair costs no more memory
+// than a small one. An unequal block, a short read on one side, or a
+// failure on either is a mismatch; two simultaneous empty reads are the
+// end and the only way to true.
+function compare_streams(ra: Reader, rb: Reader): boolean {
+  while (true) {
+    match (ra.read_chunk(131072)) {
+      Ok(ba) => {
+        match (rb.read_chunk(131072)) {
+          Ok(bb) => {
+            if (ba.len() != bb.len()) {
+              return false;
+            }
+            if (ba.len() == 0) {
+              return true;
+            }
+            if (ba != bb) {
+              return false;
+            }
+          },
+          Err(_) => {
+            return false;
+          }
+        }
+      },
+      Err(_) => {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// ---- -s: handing the destination to another program -------------------------
+//
+// GNU runs `PROGRAM DEST` after the copy. A program that cannot be run
+// gives TWO lines, measured: the exec failure and then the abnormal-exit
+// report.
+struct StripOut { status: i32, out: io_buffered.BufWriter }
+
+function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
+  var w: io_buffered.BufWriter = o;
+  var pid: i32 = proc_fork();
+  if (pid == 0) {
+    var argv: string[] = [s.strip_program, dest];
+    proc_exec(s.strip_program, argv);
+    // Only reached when the exec failed, and the CHILD is what reports
+    // it — which is why a failed `-s` prints the `-v` line TWICE. Both
+    // processes carry the same unflushed stdout across the fork, so the
+    // child's flush emits its copy ahead of this message and the
+    // parent's emits another ahead of the next one. Measured against
+    // GNU, which duplicates it the same way for the same reason.
+    var cw: io_buffered.BufWriter = gnu.error_out(w, "cannot run " + gnu.quote(s.strip_program) + ": No such file or directory");
+    gnu.finish(cw);
+    exit(127);
+  }
+  if (pid < 0) {
+    w = gnu.error_out(w, "fork system call failed");
+    return StripOut { status: 1, out: w };
+  }
+  var status: i32 = proc_waitpid(pid);
+  if (status == 0) {
+    return StripOut { status: 0, out: w };
+  }
+  // The child said what went wrong; this is the parent's half, and its
+  // own flush is the second `-v` line.
+  w = gnu.error_out(w, "strip process terminated abnormally");
+  // And the destination does not survive. Measured: after a failed strip
+  // GNU leaves no `out` at all, having made it and taken it away again,
+  // so a half-installed file is never left behind.
+  match (remove_file(dest)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+  return StripOut { status: 1, out: w };
+}
+
+// ---- installing one file ----------------------------------------------------
+//
+// The engine does the copying, told three things install decides and `cp`
+// does not: the mode outright (`forced_mode`, with the umask no part of
+// it), that a symlink source is followed (`deref_always`), and that a
+// directory source is not a recursion to allow but a refusal.
+struct FileOut { status: i32, out: io_buffered.BufWriter }
+
+function engine_cfg(s: Scan, want: i32, ids: Ids): copy.Cfg {
+  var attrs: copy.Attrs = copy.attrs_none();
+  if (s.preserve_timestamps) {
+    attrs = copy.Attrs { ...attrs, timestamps: true };
+  }
+  return copy.Cfg { ...copy.cfg_new(), attrs: attrs, recursive: false, deref: copy.deref_always(), forced_mode: want, backups: s.backups, control: s.control, suffix: s.suffix, verbose: s.verbose, debug: s.debug, remove_destination: true };
+}
+
+function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o: io_buffered.BufWriter): FileOut {
+  var w: io_buffered.BufWriter = o;
+  match (lstat(src)) {
+    Ok(info) => {
+      if (info.is_dir) {
+        // Not `cp`'s "-r not specified": install has no recursion to ask
+        // for, so a directory source is simply omitted.
+        w = gnu.error_out(w, "omitting directory " + gnu.quotea(src));
+        return FileOut { status: 1, out: w };
+      }
+    },
+    Err(e) => {
+      w = gnu.error_out(w, "cannot stat " + gnu.quotea(src) + ": " + gnu.io_error_text(e));
+      return FileOut { status: 1, out: w };
+    }
+  }
+  if (s.compare && same_already(src, dest, want, ids)) {
+    // Nothing at all, not even a timestamp: measured across a second run.
+    return FileOut { status: 0, out: w };
+  }
+  var cst: copy.State = copy.copy_one(engine_cfg(s, want, ids), copy.state_new(w), src, dest, true);
+  w = cst.out;
+  if (cst.status != 0) {
+    return FileOut { status: cst.status, out: w };
+  }
+  var status: i32 = apply_ids(dest, ids);
+  if (s.strip) {
+    var rs: StripOut = run_strip(s, dest, w);
+    w = rs.out;
+    if (rs.status != 0) {
+      status = rs.status;
+    }
+  }
+  return FileOut { status: status, out: w };
+}
+
+// `from_environment(s)` — what no option said, filled in from
+// SIMPLE_BACKUP_SUFFIX and VERSION_CONTROL, exactly as `cp` reads them.
+// Both are consulted only when backups were asked for at all.
+function from_environment(s0: Scan): Scan {
+  var s: Scan = s0;
+  if (!s.backups) {
+    return s;
+  }
+  if (!s.suffix_given) {
+    match (env("SIMPLE_BACKUP_SUFFIX")) {
+      Some(v) => {
+        if (gnu.usable_suffix(v)) {
+          s = Scan { ...s, suffix: v };
+        }
+      },
+      None => {}
+    }
+  }
+  var control: i32 = gnu.backup_existing();
+  if (s.control_given) {
+    if (s.control_text.len() > 0) {
+      control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
+    }
+  } else {
+    match (env("VERSION_CONTROL")) {
+      Some(v) => {
+        if (v.len() > 0) {
+          control = gnu.argmatch_valued(v, gnu.backup_names(), gnu.backup_values(), "$VERSION_CONTROL");
+        }
+      },
+      None => {}
+    }
+  }
+  if (control == gnu.backup_none()) {
+    return Scan { ...s, backups: false, control: control };
+  }
+  return Scan { ...s, control: control };
+}
+
+// ---- main -------------------------------------------------------------------
+function finish(status: i32, o: io_buffered.BufWriter): i32 {
+  gnu.finish(o);
+  return status;
+}
+
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options(args());
+  var s: Scan = scanned.0;
+  var operands: string[] = scanned.1;
+  s = from_environment(s);
+  // The warnings are the option scan's, not an operand's, so they come
+  // before anything is copied. The two casings are GNU's own and not a
+  // slip: `--context=VALUE` is a lowercase `warning:` and
+  // `--preserve-context` an uppercase `WARNING:`.
+  if (s.warn_context) {
+    gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
+  }
+  if (s.warn_preserve_context) {
+    gnu.error("WARNING: ignoring --preserve-context; this kernel is not SELinux-enabled");
+  }
+  if (s.warn_strip_program && !s.strip) {
+    gnu.error("WARNING: ignoring --strip-program option as -s option was not specified");
+  }
+  if (s.have_target_dir && s.no_target_dir) {
+    // No `Try …` line on this one, as `cp`'s twin has none either.
+    gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
+    return 1;
+  }
+
+  if (operands.len() == 0) {
+    gnu.die_usage("missing file operand", 1);
+  }
+  var ids: Ids = lookup_ids(s);
+  if (ids.err.len() > 0) {
+    // No `Try …` line, unlike the operand-count errors above.
+    gnu.error(ids.err);
+    return 1;
+  }
+
+  // `-d` is its own form: every operand is a directory to create, and
+  // `-m` reaches the last component of each.
+  if (s.directory) {
+    var dir_mode: i32 = default_mode();
+    if (s.have_mode) {
+      match (resolve_mode(s.mode_spec, true)) {
+        None => {
+          gnu.error("invalid mode " + gnu.quote(s.mode_spec));
+          return 1;
+        },
+        Some(m) => {
+          dir_mode = m;
+        }
+      }
+    }
+    var w: io_buffered.BufWriter = gnu.out_new();
+    var status: i32 = 0;
+    var i: i32 = 0;
+    while (i < operands.len()) {
+      var r: DirOut = make_path(s, operands[i], dir_mode, ids, w);
+      w = r.out;
+      if (r.status != 0) {
+        status = 1;
+      }
+      i = i + 1;
+    }
+    return finish(status, w);
+  }
+
+  var file_mode: i32 = default_mode();
+  if (s.have_mode) {
+    match (resolve_mode(s.mode_spec, false)) {
+      None => {
+        gnu.error("invalid mode " + gnu.quote(s.mode_spec));
+        return 1;
+      },
+      Some(m) => {
+        file_mode = m;
+      }
+    }
+  }
+
+  var out: io_buffered.BufWriter = gnu.out_new();
+  var status: i32 = 0;
+
+  if (s.have_target_dir) {
+    if (s.create_leading) {
+      var lead: DirOut = make_path(s, s.target_dir, default_mode(), ids, out);
+      out = lead.out;
+      if (lead.status != 0) {
+        return finish(1, out);
+      }
+    }
+    match (stat(s.target_dir)) {
+      Ok(info) => {
+        if (!info.is_dir) {
+          gnu.error("failed to access " + gnu.quotea(s.target_dir) + ": Not a directory");
+          return finish(1, out);
+        }
+      },
+      Err(e) => {
+        gnu.error("failed to access " + gnu.quotea(s.target_dir) + ": " + gnu.io_error_text(e));
+        return finish(1, out);
+      }
+    }
+    var j: i32 = 0;
+    while (j < operands.len()) {
+      var into: string = gnu.join_path(s.target_dir, gnu.base_name(operands[j]));
+      var fr: FileOut = install_file(s, operands[j], into, file_mode, ids, out);
+      out = fr.out;
+      if (fr.status != 0) {
+        status = 1;
+      }
+      j = j + 1;
+    }
+    return finish(status, out);
+  }
+
+  if (operands.len() < 2) {
+    gnu.die_usage("missing destination file operand after " + gnu.quotea(operands[0]), 1);
+  }
+  if (s.no_target_dir) {
+    if (operands.len() > 2) {
+      gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
+    }
+    if (s.create_leading) {
+      var lead2: DirOut = make_leading(s, operands[1], ids, out);
+      out = lead2.out;
+      if (lead2.status != 0) {
+        return finish(1, out);
+      }
+    }
+    var one: FileOut = install_file(s, operands[0], operands[1], file_mode, ids, out);
+    return finish(one.status, one.out);
+  }
+
+  var last: string = operands[operands.len() - 1];
+  var into_dir: boolean = is_directory(last);
+  if (operands.len() == 2 && !into_dir) {
+    if (s.create_leading) {
+      var lead3: DirOut = make_leading(s, last, ids, out);
+      out = lead3.out;
+      if (lead3.status != 0) {
+        return finish(1, out);
+      }
+    }
+    var two: FileOut = install_file(s, operands[0], last, file_mode, ids, out);
+    return finish(two.status, two.out);
+  }
+  if (!into_dir) {
+    gnu.error("target " + gnu.quotea(last) + ": Not a directory");
+    return finish(1, out);
+  }
+  var k: i32 = 0;
+  while (k < operands.len() - 1) {
+    var dst: string = gnu.join_path(last, gnu.base_name(operands[k]));
+    var fr2: FileOut = install_file(s, operands[k], dst, file_mode, ids, out);
+    out = fr2.out;
+    if (fr2.status != 0) {
+      status = 1;
+    }
+    k = k + 1;
+  }
+  return finish(status, out);
+}
+
+function is_directory(path: string): boolean {
+  match (stat(path)) {
+    Ok(info) => {
+      return info.is_dir;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}

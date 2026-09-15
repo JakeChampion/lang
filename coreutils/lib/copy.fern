@@ -171,10 +171,10 @@ pub function reflink_values(): i32[] {
 //
 // One value per question the walk asks, filled in by the calling utility's
 // option scan. Nothing here is mutated during a copy.
-pub struct Cfg { attrs: Attrs, recursive: boolean, deref: i32, hard_link: boolean, sym_link: boolean, force: boolean, ask: i32, update: i32, backups: boolean, control: i32, suffix: string, verbose: boolean, debug: boolean, one_fs: boolean, attributes_only: boolean, copy_contents: boolean, remove_destination: boolean, sparse: i32, reflink: i32, verbose_style: i32, announced_backup: string }
+pub struct Cfg { attrs: Attrs, recursive: boolean, deref: i32, hard_link: boolean, sym_link: boolean, force: boolean, ask: i32, update: i32, backups: boolean, control: i32, suffix: string, verbose: boolean, debug: boolean, one_fs: boolean, attributes_only: boolean, copy_contents: boolean, remove_destination: boolean, sparse: i32, reflink: i32, verbose_style: i32, announced_backup: string, forced_mode: i32 }
 
 pub function cfg_new(): Cfg {
-  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_never(), verbose_style: vstyle_copy(), announced_backup: "" };
+  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_never(), verbose_style: vstyle_copy(), announced_backup: "", forced_mode: 0 - 1 };
 }
 
 // ---- the walk's state --------------------------------------------------------
@@ -285,6 +285,13 @@ function perm_bits(mode: u32): i32 {
 // would; with it the mode is applied verbatim afterwards, so the creation
 // mode only has to be permissive enough to write through.
 function create_mode(cfg: Cfg, src: Info): i32 {
+  if (cfg.forced_mode >= 0) {
+    // A mode the CALLER decided outright, with the umask no part of it.
+    // `install` is what needs this: measured, its default is 0755 and its
+    // `-m u=rw,g=r` is 0640 under `umask 077`, so the mask is not a
+    // filter it applies late but something it never consults.
+    return cfg.forced_mode;
+  }
   if (cfg.attrs.mode) {
     return perm_bits(src.mode);
   }
