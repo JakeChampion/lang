@@ -28,6 +28,7 @@ import "std/array";
 import "std/io_buffered";
 import "./gnu";
 import "./mode";
+import "./listing";
 
 // ---- what to preserve ------------------------------------------------------
 //
@@ -565,12 +566,26 @@ function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): 
   return Bytes { ok: true, err: "", wrote_hole: wrote_hole };
 }
 
+// existing_mode: what to apply to an EXISTING destination — the source's
+// bits when `--preserve=mode` asked, and "leave it alone" otherwise.
+function existing_mode(cfg: Cfg, src: Info): i32 {
+  if (cfg.attrs.mode) {
+    return perm_bits(src.mode);
+  }
+  return 0 - 1;
+}
+
 // ---- the attributes -----------------------------------------------------------
 //
 // Applied AFTER the contents, and in this order, because each step can
 // undo the one before it: writing bytes moves mtime, and a chown clears
 // setuid and setgid on most kernels, so ownership goes before mode and
 // the timestamps go last.
+// `want_mode` below zero means LEAVE THE MODE ALONE — an existing
+// destination keeps its own permissions, which is what every caller that
+// decided not to preserve the mode wants. The sentinel is the callers'
+// already; the chmod used to ignore it and set the source's bits anyway,
+// so `cp --preserve=timestamps src taken` re-moded `taken`.
 function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32): State {
   var st: State = s;
   if (cfg.attrs.ownership) {
@@ -581,10 +596,12 @@ function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32
       }
     }
   }
-  match (chmod(dest, want_mode)) {
-    Ok(_) => {},
-    Err(e2) => {
-      st = fail(st, "cannot change permissions of " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2));
+  if (want_mode >= 0) {
+    match (chmod(dest, want_mode)) {
+      Ok(_) => {},
+      Err(e2) => {
+        st = fail(st, "cannot change permissions of " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2));
+      }
     }
   }
   if (cfg.attrs.timestamps) {
@@ -653,28 +670,42 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
       return apply_attrs(cfg, st, src, dest, create_mode(cfg, src));
     }
     if (cfg.attrs.mode || cfg.attrs.ownership || cfg.attrs.timestamps) {
-      return apply_attrs(cfg, st, src, dest, perm_bits(src.mode));
+      return apply_attrs(cfg, st, src, dest, existing_mode(cfg, src));
     }
     return st;
+  }
+  // A destination that is a symlink to something that does not exist is
+  // refused OUTRIGHT, before the open: writing through it would create the
+  // target, which is not what the operand named. Measured — GNU says so in
+  // its own words, and `-f` does NOT override it.
+  if (dangling_symlink(dest)) {
+    return fail(st, "not writing through dangling symlink " + gnu.quotea(dest));
   }
   match (open_reader(src_path)) {
     Err(e2) => {
       return fail(st, "cannot open " + gnu.quotea(src_path) + " for reading: " + gnu.io_error_text(e2));
     },
     Ok(r) => {
-      match (open_writer(dest)) {
-        Err(e3) => {
+      var opened: DestOpen = open_dest(cfg, dest, existed);
+      match (opened.err) {
+        Some(e3) => {
           match (r.close()) {
             Some(_) => {},
             None => {}
           }
-          var verb: string = "cannot create regular file ";
-          if (existed) {
-            verb = "cannot open ";
-          }
-          return fail(st, verb + gnu.quotea(dest) + ": " + gnu.io_error_text(e3));
+          return fail(st, e3);
         },
-        Ok(w) => {
+        None => {}
+      }
+      match (opened.w) {
+        None => {
+          match (r.close()) {
+            Some(_) => {},
+            None => {}
+          }
+          return fail(st, "cannot create regular file " + gnu.quotea(dest));
+        },
+        Some(w) => {
           var holes: boolean = wants_holes(cfg, src);
           var b: Bytes = write_data(r, w, holes, src.size, hole_block(src));
           match (r.close()) {
@@ -697,9 +728,60 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
             return apply_attrs(cfg, st, src, dest, want_mode);
           }
           if (cfg.attrs.ownership || cfg.attrs.timestamps) {
-            return apply_attrs(cfg, st, src, dest, perm_bits(src.mode));
+            // The mode was settled above as "leave it": only the other
+            // two attributes are wanted here.
+            return apply_attrs(cfg, st, src, dest, 0 - 1);
           }
           return st;
+        }
+      }
+    }
+  }
+}
+
+// `dangling_symlink(path)` — the entry IS a symlink and what it names does
+// not exist. `lstat` sees the link, `stat` follows it, so the pair is the
+// question; neither alone answers it.
+function dangling_symlink(path: string): boolean {
+  var l: Info = lstat_of(path);
+  if (!l.ok || !l.is_link) {
+    return false;
+  }
+  return !stat_of(path).ok;
+}
+
+// The destination handle, or the diagnostic that replaces it.
+//
+// `-f` lives here and nowhere else: its whole meaning is "if the existing
+// destination cannot be OPENED, unlink it and try again", so it is a retry
+// around this one open. Measured against GNU 9.4 on an immutable file,
+// which is the one unopenable-but-present destination a root-run suite can
+// build: without `-f` the answer is `cannot create regular file 'im':
+// Operation not permitted`, and with it the answer moves to the removal —
+// `cannot remove 'im': Operation not permitted`.
+struct DestOpen { w: Option[Writer], err: Option[string] }
+
+function open_dest(cfg: Cfg, dest: string, existed: boolean): DestOpen {
+  match (open_writer(dest)) {
+    Ok(w) => {
+      return DestOpen { w: Some(w), err: None };
+    },
+    Err(e) => {
+      if (!cfg.force || !existed) {
+        return DestOpen { w: None, err: Some("cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e)) };
+      }
+      match (remove_file(dest)) {
+        Err(re) => {
+          return DestOpen { w: None, err: Some("cannot remove " + gnu.quotea(dest) + ": " + gnu.io_error_text(re)) };
+        },
+        Ok(_) => {}
+      }
+      match (open_writer(dest)) {
+        Ok(w2) => {
+          return DestOpen { w: Some(w2), err: None };
+        },
+        Err(e2) => {
+          return DestOpen { w: None, err: Some("cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2)) };
         }
       }
     }
@@ -759,8 +841,12 @@ function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: bool
       Err(_) => {}
     }
   }
-  var major: i32 = (src.rdev / 256 % 4096) as i32;
-  var minor: i32 = (src.rdev % 256) as i32;
+  // glibc's split, not a byte per component: Linux packs a SECOND minor
+  // byte above the major, so `rdev % 256` truncates every node with a
+  // minor of 256 or more. `listing.fern` already had the encoding for
+  // `ls -l`'s device column, so this reuses it rather than restating it.
+  var major: i32 = listing.dev_major(src.rdev as u64) as i32;
+  var minor: i32 = listing.dev_minor(src.rdev as u64) as i32;
   match (mknod(dest, src.mode as i32, major, minor)) {
     Ok(_) => {},
     Err(e) => {
@@ -815,7 +901,7 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
     // An existing directory keeps its own permissions, as an existing
     // file does.
     if (cfg.attrs.ownership || cfg.attrs.timestamps) {
-      return apply_attrs(cfg, st, src, dest, perm_bits(src.mode));
+      return apply_attrs(cfg, st, src, dest, 0 - 1);
     }
     return st;
   }

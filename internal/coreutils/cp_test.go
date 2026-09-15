@@ -51,6 +51,18 @@ import (
 //     directory) succeeds on both sides and proves nothing. There are no
 //     such cases: one would look like coverage while testing nothing.
 //
+//     `-f`'s unlink-and-retry is the casualty. It IS implemented and it
+//     was verified by hand against GNU 9.4 on an immutable file (`chattr
+//     +i`), the one unopenable-but-present destination a root-run suite
+//     can build: without `-f` the answer is `cannot create regular file
+//     'im': Operation not permitted` and with it the answer moves to
+//     `cannot remove 'im': Operation not permitted`. That is left OUT of
+//     the corpus rather than in it, because `chattr` needs both
+//     CAP_LINUX_IMMUTABLE and a filesystem that supports the flag, and a
+//     case that quietly does something else on overlayfs is worse than
+//     an absent one. The dangling-symlink destination below is the part
+//     of the family that IS reachable, so it is covered.
+//
 // `--debug` is held to its exit status and stream shape rather than its
 // bytes, and docs/COREUTILS.md says why: GNU's second line names its own
 // copy_file_range offload and SEEK_HOLE probing, which is a mechanism
@@ -127,6 +139,12 @@ func cpModes(t *testing.T, dir string) {
 	seedWrite(t, dir, "sd/x", "X\n")
 	if err := os.Chmod(filepath.Join(dir, "sd"), 0o777); err != nil {
 		t.Fatalf("chmod sd: %v", err)
+	}
+	// An EXISTING directory destination, at a mode the source's would
+	// overwrite if the copy wrongly chmodded it.
+	seedMkdir(t, dir, "sdtaken")
+	if err := os.Chmod(filepath.Join(dir, "sdtaken"), 0o700); err != nil {
+		t.Fatalf("chmod sdtaken: %v", err)
 	}
 	seedTouch(t, dir, "src", 1400000000, 123456789)
 }
@@ -229,6 +247,7 @@ func cpSlash(t *testing.T, dir string) {
 	seedWrite(t, dir, "d1/a", "A\n")
 	seedWrite(t, dir, "ff", "F\n")
 	seedMkdir(t, dir, "dst")
+	seedSymlink(t, dir, "nowhere/deeper", "dangledest")
 }
 
 func init() {
@@ -393,6 +412,28 @@ func cpCases(t *testing.T) []invocation {
 	}{
 		{"mode-fresh", []string{"src", "plain"}},
 		{"mode-existing", []string{"src", "taken"}},
+		// The EXISTING-destination half of each --preserve. These are the
+		// shape that caught an unconditional chmod: a caller that had just
+		// decided not to preserve the mode still passed the source's bits
+		// to apply_attrs, so `--preserve=timestamps src taken` re-moded
+		// `taken` from 0700 to the source's 0644. Every case above this
+		// used the fresh destination, which is why a green run missed it.
+		{"mode-existing-preserve-timestamps", []string{"--preserve=timestamps", "src", "taken"}},
+		{"mode-existing-preserve-ownership", []string{"--preserve=ownership", "src", "taken"}},
+		{"mode-existing-preserve-mode", []string{"--preserve=mode", "src", "taken"}},
+		{"mode-existing-preserve-all", []string{"--preserve=all", "src", "taken"}},
+		{"mode-existing-attributes-only", []string{"--attributes-only", "src", "taken"}},
+		{"mode-existing-attributes-only-p", []string{"--attributes-only", "-p", "src", "taken"}},
+		// -T is what makes the existing DIRECTORY the destination rather
+		// than its parent: without it `cp -r sd sdtaken` is the
+		// into-a-directory form and never reaches copy_dir's
+		// existing-destination branch at all. Measured — GNU leaves
+		// `sdtaken` at 0700 under both plain and --preserve=timestamps,
+		// and moves it to the source's 0777 only under -p.
+		{"mode-dir-existing-timestamps", []string{"-rT", "--preserve=timestamps", "sd", "sdtaken"}},
+		{"mode-dir-existing-plain", []string{"-rT", "sd", "sdtaken"}},
+		{"mode-dir-existing-p", []string{"-rT", "-p", "sd", "sdtaken"}},
+		{"mode-dir-existing-ownership", []string{"-rT", "--preserve=ownership", "sd", "sdtaken"}},
 		{"mode-fresh-p", []string{"-p", "src", "plain"}},
 		{"mode-existing-p", []string{"-p", "src", "taken"}},
 		{"mode-preserve-mode", []string{"--preserve=mode", "src", "plain"}},
@@ -575,6 +616,13 @@ func cpCases(t *testing.T) []invocation {
 		{"strip-target-directory", []string{"--strip-trailing-slashes", "-t", "dst", "ff/"}},
 		{"no-strip-target-directory", []string{"-t", "dst", "ff/"}},
 		{"slash-missing-source", []string{"-r", "nosuch/", "dst"}},
+		// A destination that is a symlink to something missing is its own
+		// refusal — `not writing through dangling symlink` — and `-f` does
+		// NOT override it. Reachable as root, unlike the rest of the
+		// unopenable-destination family.
+		{"dangling-dest", []string{"ff", "dangledest"}},
+		{"dangling-dest-force", []string{"-f", "ff", "dangledest"}},
+		{"dangling-dest-remove-destination", []string{"--remove-destination", "ff", "dangledest"}},
 		{"strip-missing-source", []string{"--strip-trailing-slashes", "-r", "nosuch/", "dst"}},
 	} {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpSlash})
