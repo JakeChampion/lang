@@ -1,18 +1,15 @@
 package sourcelint
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
 
 const mainRedFile = "main-red.yml"
 
-// main-red.yml watches the one workflow a push to main launches — ci.yml, the
-// same run that gates a pull request — and reads the lanes off its job names.
-// There is no per-lane list left to drift, but the one entry that remains can:
-// a renamed orchestrator leaves a `workflows:` filter matching nothing, and a
-// red main reported by nothing at all is exactly how nine lanes sat red across
-// two PRs before anyone read them.
+// Watch main's entry workflow and old CI runs finishing during the transition.
+// Renaming an entry without updating this observer would lose failure reports.
 func TestMainRedWatchesCI(t *testing.T) {
 	src := workflowSource(t, mainRedFile)
 	on, ok := onBlock(src)
@@ -26,16 +23,19 @@ func TestMainRedWatchesCI(t *testing.T) {
 	if !ok {
 		t.Fatalf("%s has no top-level `name:`", ciFile)
 	}
+	main, ok := workflowName(workflowSource(t, ciMainFile))
+	if !ok {
+		t.Fatalf("%s has no top-level name", ciMainFile)
+	}
 	watched := watchedWorkflows(on)
-	if len(watched) != 1 || watched[0] != ci {
-		t.Errorf("%s watches %v; it must watch exactly %q, the one workflow a push to "+
-			"main launches — every lane is a job of that run", mainRedFile, watched, ci)
+	if len(watched) != 2 || !slices.Contains(watched, ci) || !slices.Contains(watched, main) {
+		t.Errorf("%s watches %v; it must watch %q and %q during the main workflow transition", mainRedFile, watched, ci, main)
 	}
 	self, ok := workflowName(src)
 	if !ok {
 		t.Fatalf("%s has no top-level `name:`", mainRedFile)
 	}
-	if self == ci {
+	if self == ci || self == main {
 		t.Errorf("%s shares %s's name: it would watch itself and file an issue about "+
 			"failing to file an issue", mainRedFile, ciFile)
 	}

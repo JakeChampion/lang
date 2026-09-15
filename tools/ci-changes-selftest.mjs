@@ -41,6 +41,7 @@ const run = new AsyncFunction("github", "context", "core", script);
 async function decide({ event = "pull_request", files = [], throwOn = false, lanes = table } = {}) {
   process.env.LANES = typeof lanes === "string" ? lanes : JSON.stringify(lanes);
   const outputs = {}, warnings = [], failed = [];
+  let listings = 0;
   const core = {
     setOutput: (k, v) => (outputs[k] = v),
     setFailed: (m) => failed.push(m),
@@ -58,17 +59,20 @@ async function decide({ event = "pull_request", files = [], throwOn = false, lan
   const github = {
     rest: { pulls: { listFiles: "listFiles" }, repos: { compareCommitsWithBasehead: "compare" } },
     paginate: async (fn, opts, map) => {
+      listings++;
       if (throwOn) throw new Error("boom");
       const list = files.map((f) => (typeof f === "string" ? { filename: f } : f));
       return map ? map({ data: { status: "ahead", files: list } }) : list;
     },
   };
   await run(github, context, core);
-  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed };
+  return { lanes: outputs.lanes ? JSON.parse(outputs.lanes) : null, warnings, failed, listings };
 }
 
 let failures = 0;
+let cases = 0;
 const check = (what, got, want) => {
+  cases++;
   if (JSON.stringify(got) === JSON.stringify(want)) return;
   failures++;
   console.error(`FAIL ${what}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
@@ -101,12 +105,20 @@ check("paths-ignore one source", await runs({ "paths-ignore": ["docs/**", "*.md"
 check("rename old name counts", await runs({ paths: ["docs/**"] }, [{ filename: "web/n.js", previous_filename: "docs/o.md" }]), true);
 // The real table.
 const all = (r) => Object.values(r.lanes).every(Boolean);
-let r = await decide({ event: "push", files: ["editors/vscode/x.ts"] });
+let r = await decide({ files: ["editors/vscode/x.ts"] });
 check("real: editor change", [r.lanes["vscode-extension"], r.lanes.macos, r.lanes["test-units"]], [true, false, true]);
 r = await decide({ files: ["docs/x.md", "CLAUDE.md"] });
 check("real: doc-only PR runs no filtered lane", Object.values(r.lanes).some(Boolean), false);
 r = await decide({ files: [".github/workflows/ci.yml"] });
 check("real: ci.yml edit runs every lane", all(r), true);
+r = await decide({ files: [".github/workflows/ci-main.yml"] });
+check("real: ci-main.yml edit runs every lane", all(r), true);
+// A skipped code push followed by a docs-only push must still validate code.
+// Even a successful, empty compare response must not suppress main lanes.
+for (const files of [["docs/x.md"], ["editors/vscode/x.ts"], []]) {
+  r = await decide({ event: "push", files });
+  check(`main validates full tip: ${JSON.stringify(files)}`, [all(r), r.listings], [true, 0]);
+}
 // Fail-open, and the one loud exception.
 check("listing failure runs everything", all(await decide({ throwOn: true })), true);
 check("dispatch runs everything", all(await decide({ event: "workflow_dispatch" })), true);
@@ -119,4 +131,4 @@ if (failures) {
   console.error(`ci-changes-selftest: ${failures} failure(s)`);
   process.exit(1);
 }
-console.log("ci-changes-selftest: 26 cases pass against the `changes` script in ci.yml");
+console.log(`ci-changes-selftest: ${cases} cases pass against the changes script in ci.yml`);

@@ -1,7 +1,7 @@
 name: Main red
 
-# Main's gate lanes already run on every push — ci.yml runs the same lanes on
-# a push to main as on a pull request, under the same filters, because a
+# Main's gate lanes run through ci-main.yml, which calls ci.yml with full
+# coverage at each selected main tip. Pending pushes coalesce because a
 # rebase-merge replays commits onto a main their PR's CI never saw. So the
 # signal exists and is correct. What was missing is anything that CONSUMES it.
 #
@@ -34,9 +34,10 @@ name: Main red
 
 on:
   workflow_run:
-    # The one workflow a push to main launches. TestMainRedWatchesCI pins it.
+    # Retain CI for old runs finishing during the ci-main.yml transition.
     workflows:
       - "CI"
+      - "CI main"
     types: [completed]
 
 permissions:
@@ -90,8 +91,12 @@ jobs:
             // `changes` job) is a lane of its own.
             const lanes = new Map();
             for (const j of jobs) {
-              const i = j.name.lastIndexOf(" / ");
-              const lane = i < 0 ? j.name : j.name.slice(0, i);
+              // Main's wrapper adds one prefix. Preserve existing issue titles
+              // and Bootstrap hints, including while old CI runs still finish.
+              const name = run.name === "CI main" && j.name.startsWith("Validate / ")
+                ? j.name.slice("Validate / ".length) : j.name;
+              const i = name.lastIndexOf(" / ");
+              const lane = i < 0 ? name : name.slice(0, i);
               if (!lanes.has(lane)) lanes.set(lane, []);
               lanes.get(lane).push(j);
             }
@@ -144,7 +149,7 @@ jobs:
                 `- Run: ${run.html_url}\n` +
                 `- Failing jobs: ${failed.map((j) => `\`${j.name}\``).join(", ")}\n` +
                 stage0Hint +
-                `\nMain's lanes run on every push (ci.yml), and cancel-on-failure.yml ` +
+                `\nMain's selected commits run every lane (ci-main.yml), and cancel-on-failure.yml ` +
                 `deliberately spares main — so this lane ran to completion and the ` +
                 `failing-job list above is the whole set for it, not just the first.\n\n` +
                 `This issue closes itself when \`${lane}\` next concludes success on main.`;
