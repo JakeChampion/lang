@@ -163,6 +163,23 @@ pub function is_integer(t: typeinfo.Type): boolean {
     return is_i32(t) || is_u8(t) || is_u32(t) || is_i64(t) || is_u64(t) || is_usize(t);
 }
 
+// The types whose value is a POINTER: a box this vocabulary counts, or a view
+// of one. It is the address's counterpart — the two occupy the same slot on
+// every backend, which is what makes a cast between them a reinterpretation
+// rather than a conversion — and it is also the list whose counted layout the
+// ownership planner defines, so ssaunits reads it from here rather than
+// keeping a second copy.
+pub function reference(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeString(_) = t { return true; }
+    if let typeinfo.TypeArray(_) = t { return true; }
+    if let typeinfo.TypeTuple(_) = t { return true; }
+    if let typeinfo.TypeStruct(_) = t { return true; }
+    if let typeinfo.TypeUnion(_) = t { return true; }
+    if let typeinfo.TypeFunc(_) = t { return true; }
+    if let typeinfo.TypeMap(_) = t { return true; }
+    return false;
+}
+
 // A constant whose value has no i32 immediate to fit in carries the literal's
 // SOURCE TEXT instead, which the backends splice into an immediate of the
 // right width. The 64-bit types do not fit the immediate at all, and neither
@@ -1102,6 +1119,26 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // floats (E033).
 function converts_as_integer(t: typeinfo.Type): boolean { return is_integer(t) || is_char(t); }
 
+// Reading an address back as the box it names is a REINTERPRETATION: the two
+// are the same slot on every backend — the whole register where an address is
+// 64 bits, the i32 on wasm — so the value crosses unchanged and nothing is
+// emitted for it. `k as string`, which core/map's key column hashes and
+// compares, is this direction, and the AST lowering treats it as an ascription
+// for the same reason.
+//
+// The OTHER direction is not admitted, and the asymmetry is the point rather
+// than an omission. An address is not a reference the ownership planner
+// tracks, so `s as usize` is the last typed USE of `s`: the planner drops the
+// box there while the address goes on naming it, and a later `p as string`
+// reads freed memory. core/map knows this — `out as usize` carries an explicit
+// `__fern_rc_inc` for exactly that reason, and its comment calls it severing
+// the escape analysis — but the compensation is the source's, not something
+// this boundary can infer. Admitting it unguarded is a use-after-free the
+// sanitizer catches on the escaping shape.
+function reinterprets(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    return is_usize(from) && reference(to);
+}
+
 // The address converts to and from every integer width, as native admits it
 // to. Neither direction is one opcode: the pointer width is the whole slot on
 // a register backend and the i32 on wasm, so the conversion is written as the
@@ -1111,10 +1148,11 @@ function converts_as_integer(t: typeinfo.Type): boolean { return is_integer(t) |
 // through the 64-bit integer the source writes, and a direct conversion would
 // need the same pairing again in the float domain.
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    if (reinterprets(from, to)) { return true; }
     if (is_usize(from)) { return converts_as_integer(to); }
     if (is_usize(to)) { return converts_as_integer(from); }
     if (converts_as_integer(from) && converts_as_integer(to)) { return true; }
-    if (is_float(from) && is_float(to)) { return !semtypes.equal(from, to); }
+    if (is_float(from) && is_float(to)) { return true; }
     if (is_float(to)) { return is_integer(from) && !is_u8(from); }
     if (is_float(from)) { return is_integer(to) && !is_u8(to); }
     return false;
@@ -1122,7 +1160,7 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
 
 function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "cast arity"; }
-    if (!converts_as_integer(result) && !is_float(result)) { return "cast result type"; }
+    if (!converts_as_integer(result) && !is_float(result) && !reference(result)) { return "cast result type"; }
     if (!cast_admits(f.values[ins.args[0]], result)) { return "cast operand type"; }
     return "";
 }
