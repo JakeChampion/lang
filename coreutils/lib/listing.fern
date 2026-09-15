@@ -467,12 +467,13 @@ function six_months(): i64 {
 // while its total is in kibibytes. `--block-size` and `-h` set both.
 pub struct Cfg { format: i32, ignore_mode: i32, sort_key: i32, reverse: boolean, time_type: i32, deref: i32, immediate_dirs: boolean, recursive: boolean, inode: boolean, show_blocks: boolean, indicator: i32, qstyle: i32, qmark: boolean, show_owner: boolean, show_group: boolean, show_author: boolean, numeric_ids: boolean, show_context: boolean, width: i64, tabsize: i64, ignores: string[], hides: string[], ignore_backups: boolean, dirs_first: boolean, dired: boolean, hyperlink: boolean, color: boolean, zero: boolean, fsize: blocks.Unit, bsize: blocks.Unit, nonrecent_fmt: string, recent_fmt: string, zone: tz.Zone, now: i64, colors: Palette }
 
-// `defaults(format, qstyle)` — the starting configuration the three
-// programs differ in and nothing else: `ls` is one-per-line and
-// literal, `dir` is vertical columns and escape, `vdir` is long and
-// escape.
-pub function defaults(format: i32, qstyle: i32): Cfg {
-  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: false, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: "%b %e  %Y", recent_fmt: "%b %e %H:%M", zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
+// `defaults(format, qstyle, qmark)` — the starting configuration the
+// three programs differ in and nothing else: off a terminal `ls` is
+// one-per-line, literal and control-characters-as-written, `dir` is
+// vertical columns and escape, `vdir` is long and escape. On a terminal
+// `ls` starts from three different answers; see `ls()`.
+pub function defaults(format: i32, qstyle: i32, qmark: boolean): Cfg {
+  return Cfg { format: format, ignore_mode: ignore_default(), sort_key: sort_name(), reverse: false, time_type: time_mtime(), deref: deref_none(), immediate_dirs: false, recursive: false, inode: false, show_blocks: false, indicator: ind_none(), qstyle: qstyle, qmark: qmark, show_owner: true, show_group: true, show_author: false, numeric_ids: false, show_context: false, width: 80 as i64, tabsize: 8 as i64, ignores: [], hides: [], ignore_backups: false, dirs_first: false, dired: false, hyperlink: false, color: false, zero: false, fsize: blocks.plain_unit(1 as u64), bsize: blocks.default_unit(), nonrecent_fmt: "%b %e  %Y", recent_fmt: "%b %e %H:%M", zone: tz.utc_zone(), now: 0 as i64, colors: palette_off() };
 }
 
 // ---- output -----------------------------------------------------------------
@@ -1897,7 +1898,7 @@ function paint_new(): Paint {
 // `write_name(c, o, p, e, code, text)` — the name with its colour, its
 // hyperlink and its byte range recorded for `--dired`. `code` is the
 // colour to wrap it in, "" for none; `text` is the already-quoted name.
-function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean), text: string, record: boolean): (Out, Paint) {
+function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean), text: string, record: boolean, hoist: boolean): (Out, Paint) {
   var out: Out = o;
   var paint: Paint = p;
   var pal: Palette = c.colors;
@@ -1915,16 +1916,31 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
       out = put(out, wrap_seq(pal, colour.0));
     }
   }
+  // A hyperlinked name that wears outer quotes leaves them OUTSIDE the
+  // link, under the same padding regime that gives the bare names their
+  // leading space: the quote is what the space lines up with, so it
+  // belongs to the column and not to the link. Measured — `ls -C
+  // --hyperlink=always --quoting-style=shell-escape` puts the quote
+  // before the OSC 8 and after its terminator, and `-m` and `-1`, which
+  // pad nothing, keep both inside. The colour still wraps the lot.
+  var body: string = text;
+  if (hoist) {
+    out = put(out, slice_unchecked(text, 0, 1) + "");
+    body = slice_unchecked(text, 1, text.len() - 1) + "";
+  }
   if (c.hyperlink) {
     out = put(out, "\x1b]8;;file://" + hostname() + uri_encode(canonical(e.path)) + "\x07");
   }
   if (record) {
-    out = put_name(c, out, text);
+    out = put_name(c, out, body);
   } else {
-    out = put(out, text);
+    out = put(out, body);
   }
   if (c.hyperlink) {
     out = put(out, "\x1b]8;;\x07");
+  }
+  if (hoist) {
+    out = put(out, slice_unchecked(text, text.len() - 1, text.len()) + "");
   }
   if (coloured) {
     out = put(out, reset_seq(pal));
@@ -1996,10 +2012,11 @@ function some_quoted(c: Cfg, es: Ent[]): boolean {
 function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean): (Out, Paint) {
   var text: string = quoted_name(c, e.name);
   var lead: Out = o;
-  if (pad && !wears_quotes(text)) {
+  var quoted: boolean = wears_quotes(text);
+  if (pad && !quoted) {
     lead = put(lead, " ");
   }
-  var r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true);
+  var r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true, c.hyperlink && pad && quoted);
   var out: Out = r.0;
   var paint: Paint = r.1;
   // In the long format an entry that IS a symbolic link never carries
@@ -2023,7 +2040,9 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
     if (!e.link_ok && cap_set(c.colors, cap_mi())) {
       code = (c.colors.code[cap_mi()], true);
     }
-    var t: (Out, Paint) = write_name(c, out, paint, target, code, quoted_name(c, e.target), false);
+    // The link TARGET is not in the column the padding lines up, so its
+    // quotes stay where the quoting put them.
+    var t: (Out, Paint) = write_name(c, out, paint, target, code, quoted_name(c, e.target), false, false);
     out = t.0;
     paint = t.1;
     out = put(out, indicator(c, target));
@@ -3165,6 +3184,16 @@ function scan(argv: string[], start: Cfg): Scan {
     exit(status_usage());
   }
   c = Cfg { ...c, color: when_on(color_when), hyperlink: when_on(link_when) };
+  // `--dired` reports byte offsets into the output, and a hyperlink puts
+  // escape sequences around every name — so the offsets would name
+  // positions inside them. GNU's answer is to drop `--dired` rather than
+  // report offsets nothing can use: measured, `ls -l --dired
+  // --hyperlink=always` prints no `//DIRED//` line at all, while
+  // `--hyperlink=never` prints one, so the test is on the RESOLVED
+  // answer and not on whether the option was typed.
+  if (c.hyperlink) {
+    c = Cfg { ...c, dired: false };
+  }
   if (c.color) {
     var spec: string = "";
     match (env("LS_COLORS")) {
@@ -3265,9 +3294,14 @@ function env_named_block_size(): boolean {
 }
 
 // The terminal width, which decides the column layout: `-w` if it was
-// given, else COLUMNS, else the terminal's own answer, else 80. COLUMNS
+// given, else the terminal's own answer, else COLUMNS, else 80. COLUMNS
 // is read even when standard output is a PIPE, which is what makes the
 // column formats reachable without a terminal at all.
+//
+// A terminal that answers ENDS the question, so COLUMNS is not merely
+// overridden — it is never looked at. Measured: `COLUMNS=abc ls` on a
+// terminal prints no warning at all, where the same thing down a pipe
+// reports the width it could not parse.
 function resolve_width(c: Cfg, seen: boolean): Cfg {
   if (seen) {
     return c;
@@ -3297,25 +3331,47 @@ function resolve_width(c: Cfg, seen: boolean): Cfg {
   return c;
 }
 
-// The three programs, which differ in two defaults and nothing else.
-// Off a terminal `ls` is one entry per line with no quoting; `dir` and
-// `vdir` carry `-b`'s escaping in their defaults, so a space in a name
-// comes out `sp\ ace` from them and raw from `ls`.
+// The three programs, which differ in their starting defaults and
+// nothing else. `dir` and `vdir` carry `-b`'s escaping, so a space in a
+// name comes out `sp\ ace` from them and raw from `ls`.
+//
+// `ls` ALONE asks whether standard output is a terminal, and changes
+// three defaults together when it is: vertical columns instead of one
+// entry per line, shell-escape quoting instead of literal, and
+// nongraphic characters shown as `?`. `dir` and `vdir` ask nothing —
+// measured, each prints the same bytes to a pipe and to a terminal.
 pub function ls(): i32 {
-  return run(fmt_single(), 0);
+  if (isatty(1)) {
+    return run(fmt_vertical(), qstyle_shell_escape(), true);
+  }
+  return run(fmt_single(), qstyle_literal(), false);
 }
 
 pub function dir(): i32 {
-  return run(fmt_vertical(), 7);
+  return run(fmt_vertical(), qstyle_escape(), false);
 }
 
 pub function vdir(): i32 {
-  return run(fmt_long(), 7);
+  return run(fmt_long(), qstyle_escape(), false);
 }
 
-function run(format: i32, qstyle: i32): i32 {
+// The three quoting styles the programs start from, by their index in
+// `gnu.quoting_style_names()`.
+function qstyle_literal(): i32 {
+  return 0;
+}
+
+function qstyle_shell_escape(): i32 {
+  return 3;
+}
+
+function qstyle_escape(): i32 {
+  return 7;
+}
+
+function run(format: i32, qstyle: i32, qmark: boolean): i32 {
   var argv: string[] = args();
-  var start: Cfg = defaults(format, qstyle);
+  var start: Cfg = defaults(format, qstyle, qmark);
   var s: Scan = scan(argv, start);
   var c: Cfg = resolve_width(s.c, s.width_seen);
   c = Cfg { ...c, zone: tz.local_zone(), now: now_unix_ms() / (1000 as i64) };

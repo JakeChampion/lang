@@ -183,10 +183,42 @@ it.
 `internal/coreutils/` is the gate. It is oracle-based: no expected output is
 ever written down. Each case is an invocation (argv, stdin, extra env, where
 stdout goes — captured, closed, or `/dev/full` — for a utility that never
-stops, a byte limit, and for `test -t`, a pseudo-terminal on fd 3); the
+stops, a byte limit, and a pseudo-terminal on any of fds 0, 1, 2 or 3); the
 harness runs GNU and Fern and diffs. A case costs one line, and a case cannot
 record a wrong expectation, which is what makes the corpus cheap to grow and
 hard to get wrong. See the package doc in `harness_test.go`.
+
+**A pseudo-terminal is the only way to reach the isatty half of a utility**,
+and until `ttyIn` / `ttyOut` / `ttyErr` the harness could put one on fd 3
+alone — enough for `test -t 3` and nothing else, because fds 0-2 were pipes
+for every case. Each of the three now replaces its descriptor with the slave
+side of its own pty, with the master drained by a goroutine (a terminal holds
+a few kilobytes, so a child writing more than that into one nobody reads
+deadlocks) and the window size set to 24x80 rather than left at the 0x0 a
+fresh pty carries, so a layout is pinned by the case and not by a fallback.
+One pty per descriptor rather than one shared: a real console gives fds 1 and
+2 the same terminal, but the harness compares the two streams separately and
+a shared one would interleave them.
+
+Two consequences, both of which BOTH sides meet: the line discipline turns
+each `\n` into `\r\n` on the way out, so a terminal case's bytes carry the
+`\r`; and it is Linux-only, because the slave is reached through `TIOCGPTN`
+and Darwin needs `grantpt` out of libc. That is the line `/dev/full` is
+already on.
+
+It found five `ls` bugs on the first run, which is what a gate with no oracle
+looks like from the other side. `ls` alone — not `dir`, not `vdir`, measured —
+changes three defaults together when standard output is a terminal: vertical
+columns instead of one entry per line, shell-escape quoting instead of
+literal, and nongraphic characters shown as `?`. A terminal that answers
+`TIOCGWINSZ` also ENDS the width question rather than merely outranking
+`COLUMNS`: `COLUMNS=abc ls` warns down a pipe and says nothing on a terminal.
+The other two were reachable down a pipe all along and nothing had asked: a
+hyperlinked name wearing outer quotes leaves them OUTSIDE the link under the
+padding regime (`-C`, `-x`, `-l`, where the quote is what the bare names'
+leading space lines up with; `-m` and `-1` keep both inside), and `--dired`
+is DROPPED when hyperlinking, because its byte offsets would name positions
+inside the escape sequences.
 
 **The reference is a BINARY, not a directory.** The harness chooses one
 directory by probing `yes --version`, but it then verifies the utility's own
@@ -313,8 +345,9 @@ utility there that WRITES a file, so the leg covers a preopened
 directory's `path_open` and the write loop behind it.
 
 `ls`, `dir` and `vdir` do not build there either, and for two capabilities
-rather than one: `tty`, because the column layout asks the terminal how wide
-it is, and `cwd`, because `--hyperlink` names the canonical path. Both are
+rather than one: `tty`, because the default format, the default quoting and
+the width all ask whether standard output is a terminal, and `cwd`, because
+`--hyperlink` names the canonical path. Both are
 features of the utility rather than incidental — a `window_size` that
 answered 80 would claim a measurement, and a `--hyperlink` that emitted a
 relative URI would be wrong — and E066 refuses them post-tree-shake for the
