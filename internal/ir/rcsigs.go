@@ -274,6 +274,11 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Reader_flags": true, "__method_Writer_flags": true,
 	"__method_Reader_isatty": true, "__method_Writer_isatty": true,
 	"__method_Reader_dup_onto": true, "__method_Writer_dup_onto": true,
+	// The four terminal questions asked of a handle (#9363). Each reads
+	// the fd out of the box and passes its other arguments straight
+	// through; the word array termios_set takes is read, not retained.
+	"__method_Reader_window_size": true, "__method_Reader_set_window_size": true,
+	"__method_Reader_termios_get": true, "__method_Reader_termios_set": true,
 	"__method_Reader_stat":  true,
 	"__method_Writer_close": true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
@@ -482,8 +487,12 @@ var rcInert = map[string]bool{
 	"__fern_fd_stat": true, "__fern_reader_seek": true, "__fern_writer_seek": true,
 	"__fern_reader_flags": true, "__fern_writer_flags": true,
 	"__fern_fd_fsync": true, "__fern_fd_fdatasync": true, "__fern_fd_syncfs": true,
-	"__fern_fd_dup_onto":       true,
-	"__fern_reader_read_chunk": true, "__fern_reader_read_line": true,
+	"__fern_fd_dup_onto":            true,
+	"__fern_handle_window_size":     true,
+	"__fern_handle_set_window_size": true,
+	"__fern_handle_termios_get":     true,
+	"__fern_handle_termios_set":     true,
+	"__fern_reader_read_chunk":      true, "__fern_reader_read_line": true,
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_create_dir": true, "__fern_remove_dir": true,

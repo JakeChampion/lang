@@ -27,3 +27,39 @@ func TestArmRunSetWindowSizeOnAPipeIsErr(t *testing.T) {
 		t.Errorf("set_window_size(1, 40, 100) with stdout on a pipe returned tag %d, want 1 (Err)", got)
 	}
 }
+
+// The handle forms of the same two, `r.window_size()` and
+// `r.set_window_size(rows, cols)` (#9363): two instructions each, the fd out
+// of the box and a branch into the helper above. The termios pair has no
+// handle form here for the reason it has no free form —
+// docs/BACKEND-PARITY.md.
+//
+// The receiver is a handle box over fd 1, this process's pipe, so both answer
+// Err. A stub reading the fd from the wrong offset would pass a pointer as a
+// descriptor and answer EBADF — still an Err, so the case cannot tell those
+// apart, and what it does prove is that the symbol exists, assembles and
+// returns a well-formed box rather than faulting.
+func TestArmRunHandleWindowSizeOnAPipeIsErr(t *testing.T) {
+	for _, m := range []struct {
+		name string
+		args int
+	}{
+		{"__method_Reader_window_size", 0},
+		{"__method_Reader_set_window_size", 2},
+	} {
+		f := ssa.NewFunc("main")
+		b := f.NewBlock()
+		handle := rcCell(f, b, 16)
+		storeOp(f, b, handle, constOp(f, b, 1), 8) // fd at [handle+8]
+		var box ssa.Value
+		if m.args == 0 {
+			box = addrCallOp(f, b, m.name, handle)
+		} else {
+			box = addrCallOp(f, b, m.name, handle, constOp(f, b, 40), constOp(f, b, 100))
+		}
+		f.SetRet(b, loadOp(f, b, box, 0))
+		if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", arm64ssa.DefaultNumAlloc); got != 1 {
+			t.Errorf("%s over fd 1 returned tag %d, want 1 (Err)", m.name, got)
+		}
+	}
+}

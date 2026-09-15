@@ -14442,6 +14442,28 @@ function fd_sync_op(field: string): ir.Op {
     return ir.op_fd_syncfs();
 }
 
+// The four terminal questions asked of a handle, Reader-only (#9363). Each
+// lowers to the FREE op with the receiver as its first operand, because a
+// handle IS its fd here — so the trio below is a dispatch table and nothing
+// more: which names are these methods, how many arguments each takes, and
+// which op it becomes.
+function is_handle_tty_method(field: string): boolean {
+    return field == "window_size" || field == "set_window_size"
+        || field == "termios_get" || field == "termios_set";
+}
+
+function handle_tty_argc(field: string): i32 {
+    if (field == "window_size" || field == "termios_get") { return 0; }
+    return 2;
+}
+
+function handle_tty_op(field: string): ir.Op {
+    if (field == "window_size") { return ir.op_window_size(); }
+    if (field == "set_window_size") { return ir.op_set_window_size(); }
+    if (field == "termios_get") { return ir.op_termios_get(); }
+    return ir.op_termios_set();
+}
+
 // is_fd_sync_ret is the same trio keyed the way builtin_opt_ret_type keys its
 // table: "<handle type>.<method>", both types answering the one shape.
 function is_fd_sync_ret(name: string): boolean {
@@ -14470,6 +14492,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
             || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some"
             || fa.field == "dup_onto"
+            || is_handle_tty_method(fa.field)
             || is_fd_sync_method(fa.field))
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
@@ -14534,6 +14557,22 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             dpo = lower_expr(c.args[0], dpo);
             if (!dpo.ok) { return dpo; }
             return dpo.emit(ir.op_fd_dup_onto());
+        }
+        // The four terminal questions asked of a handle (#9363). A handle
+        // IS its fd here, so each lowers to the FREE op with the receiver
+        // as its first operand and needs no op of its own — which is
+        // `isatty`'s arrangement, and the whole of why the methods cost
+        // this compiler nothing but the dispatch.
+        if (is_handle_tty_method(fa.field) && c.args.len() == handle_tty_argc(fa.field)) {
+            var htt: LowerState = lower_expr(fa.obj, s);
+            if (!htt.ok) { return htt; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                htt = lower_expr(c.args[ai], htt);
+                if (!htt.ok) { return htt; }
+                ai = ai + 1;
+            }
+            return htt.emit(handle_tty_op(fa.field));
         }
         if (fa.field == "seek" && c.args.len() == 2) {
             var sks: LowerState = lower_expr(fa.obj, s);
@@ -17917,6 +17956,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
         || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
     if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
         || field == "flags" || field == "isatty" || field == "dup_onto"
+        || is_handle_tty_method(field)
         || is_fd_sync_method(field)) {
         return s.opt_ret_type("Reader." + field);
     }
@@ -72522,6 +72562,9 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
         || name == "Writer.truncate") { return "Option[IoError]"; }
     if (name == "Reader.dup_onto" || name == "Writer.dup_onto") { return "Option[IoError]"; }
+    if (name == "Reader.window_size") { return "Result[WinSize, IoError]"; }
+    if (name == "Reader.termios_get") { return "Result[i64[], IoError]"; }
+    if (name == "Reader.set_window_size" || name == "Reader.termios_set") { return "Result[void, IoError]"; }
     if (is_fd_sync_ret(name)) { return "Option[IoError]"; }
     return "";
 }

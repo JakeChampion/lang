@@ -509,6 +509,17 @@ It is a read-modify-write inside the runtime, because `struct winsize` carries
 a pixel pair beside the two cell counts that nothing surrenders to a caller —
 so nothing but the runtime can put it back.
 
+**All four have HANDLE forms, and the `tty` gate does not reach them.**
+`r.window_size()`, `r.set_window_size(rows, cols)`, `r.termios_get()` and
+`r.termios_set(when, words)` exist because a Reader surrenders no descriptor
+number, so `stty -F DEVICE` could otherwise configure fds 0, 1 and 2 and
+nothing it opened itself (#9363). Each carries an `IoError`, so its refusal
+arrives as `Unsupported` AT THE CALL — `syncfs`'s shape rather than
+`window_size`'s — and that is the only shape available: the call reaches
+`internal/platforms` already rewritten to `__method_Reader_termios_get(r)`,
+and `scanGatedCalls` inspects plain identifiers. Do not read the capability
+row above as covering the method forms; it covers the free ones.
+
 Gated on `tty` beside `window_size`, and refused on both wasm worlds for the
 same reason: there is no truthful answer to what the settings of a terminal
 that cannot exist are. Preview 1's `fd_fdstat_get` reports a filetype and

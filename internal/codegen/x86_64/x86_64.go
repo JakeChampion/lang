@@ -919,6 +919,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
+	if g.usesHandleTty {
+		g.emitHandleTtyRuntime()
+	}
 	if g.usesHandleIsatty {
 		g.emitHandleIsattyRuntime()
 	}
@@ -1375,7 +1378,11 @@ type generator struct {
 	// The same question asked of a Reader or a Writer, which needs
 	// `__fern_isatty` beside it.
 	usesHandleIsatty bool
-	usesWriteSome    bool
+	// usesHandleTty pulls in the four terminal questions' handle forms —
+	// each two instructions, the fd out of the box and a jump into the
+	// helper the free builtin already emits (#9363).
+	usesHandleTty bool
+	usesWriteSome bool
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
@@ -2047,6 +2054,26 @@ func (g *generator) recordUse(target string) {
 	case "__method_Reader_isatty", "__method_Writer_isatty":
 		g.usesHandleIsatty = true
 		g.usesIsatty = true
+	case "__method_Reader_window_size":
+		g.usesHandleTty = true
+		g.usesWindowSize = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_set_window_size":
+		g.usesHandleTty = true
+		g.usesSetWindowSize = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_termios_get":
+		g.usesHandleTty = true
+		g.usesTermiosGet = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_termios_set":
+		g.usesHandleTty = true
+		g.usesTermiosSet = true
+		g.usesAlloc = true
+		g.usesIoError = true
 	case "__method_Writer_write_some":
 		g.usesWriteSome = true
 		g.usesAlloc = true
@@ -3950,6 +3977,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_flags"
 		case "__method_Reader_isatty", "__method_Writer_isatty":
 			target = "__fern_handle_isatty"
+		case "__method_Reader_window_size":
+			target = "__fern_handle_window_size"
+		case "__method_Reader_set_window_size":
+			target = "__fern_handle_set_window_size"
+		case "__method_Reader_termios_get":
+			target = "__fern_handle_termios_get"
+		case "__method_Reader_termios_set":
+			target = "__fern_handle_termios_set"
 		case "__method_Writer_write_some":
 			target = "__fern_writer_write_some"
 		case "__method_Writer_truncate":
@@ -16969,6 +17004,32 @@ func (g *generator) emitHandleIsattyRuntime() {
 	g.emit("mov edi, [rdi]") // fd
 	g.emit("jmp __fern_isatty")
 	g.line(".size __fern_handle_isatty, .-__fern_handle_isatty")
+}
+
+// emitHandleTtyRuntime emits the handle forms of the four terminal
+// questions: the fd out of the box and a jump into the helper the free
+// builtin already emits, which leaves every argument after the receiver
+// exactly where that helper wants it (#9363).
+//
+// The receiver's fd is at offset 0 of the handle box, which is where
+// `__fern_handle_isatty` and `__fern_writer_truncate` read it too.
+//
+// System V: rdi = handle ptr, then the method's own arguments.
+func (g *generator) emitHandleTtyRuntime() {
+	for _, m := range []struct{ sym, target string }{
+		{"__fern_handle_window_size", "__fern_window_size"},
+		{"__fern_handle_set_window_size", "__fern_set_window_size"},
+		{"__fern_handle_termios_get", "__fern_termios_get"},
+		{"__fern_handle_termios_set", "__fern_termios_set"},
+	} {
+		g.line("")
+		g.line(".globl " + m.sym)
+		g.line(".type " + m.sym + ", @function")
+		g.label(m.sym)
+		g.emit("mov edi, [rdi]") // fd
+		g.emit("jmp " + m.target)
+		g.line(".size " + m.sym + ", .-" + m.sym)
+	}
 }
 
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,

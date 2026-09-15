@@ -3404,6 +3404,38 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		[]ast.Type{ast.NumberType{}}, optionIoErr)
 	registerStructMethod("Writer", "dup_onto",
 		[]ast.Type{ast.NumberType{}}, optionIoErr)
+	// The four terminal questions asked of a handle instead of a
+	// descriptor number, for `isatty`'s reason: `stty -F DEVICE` opens a
+	// path and a Reader surrenders no number, so without these the
+	// utility could configure fds 0, 1 and 2 and nothing else (#9363).
+	//
+	// Reader only, and not for symmetry's sake: `stty` opens the device
+	// read-only and non-blocking — measured, `stty -F` on a FIFO with no
+	// writer answers at once rather than waiting for a peer — and a
+	// terminal's settings are a property of the DEVICE rather than of
+	// the direction a handle faces, so one side can ask all of it.
+	// `flags` and `isatty` are on both sides because callers appeared
+	// for both; when one appears here the Writer half is one more PR.
+	//
+	// Each carries an IoError, so the wasm refusal has somewhere to go
+	// and arrives as `Unsupported` at the call — `syncfs`'s shape, and
+	// the only one available: the `tty` capability that refuses the FREE
+	// forms at compile time cannot see a method at all, because the call
+	// reaches `internal/platforms` already rewritten to
+	// `__method_Reader_termios_get(r)` and the scan skips `__` names.
+	voidIoErr := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.VoidType{}, ioErrType}}
+	registerStructMethod("Reader", "window_size", nil,
+		ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "WinSize"}, ioErrType}})
+	registerStructMethod("Reader", "set_window_size",
+		[]ast.Type{ast.NumberType{}, ast.NumberType{}}, voidIoErr)
+	registerStructMethod("Reader", "termios_get", nil,
+		ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ioErrType}})
+	registerStructMethod("Reader", "termios_set",
+		[]ast.Type{ast.NumberType{},
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}, voidIoErr)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	// write_some(s) is ONE write(2) and the count it returned: the write
 	// may land in full, in part, or not at all, and the caller loops.

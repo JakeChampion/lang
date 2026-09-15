@@ -672,6 +672,10 @@ func New() *Interp {
 	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
+	i.Builtins["__method_Reader_window_size"] = &Builtin{Fn: builtinHandleWindowSize}
+	i.Builtins["__method_Reader_set_window_size"] = &Builtin{Fn: builtinHandleSetWindowSize}
+	i.Builtins["__method_Reader_termios_get"] = &Builtin{Fn: builtinHandleTermiosGet}
+	i.Builtins["__method_Reader_termios_set"] = &Builtin{Fn: builtinHandleTermiosSet}
 	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
@@ -4208,6 +4212,72 @@ func builtinDupOnto(i *Interp, args []Value) (Value, error) {
 		return optionSome(classifyIoError("", derr)), nil
 	}
 	return optionNone(), nil
+}
+
+// handleFd resolves the four terminal methods' receiver to the real
+// descriptor the interpreter process holds, or reports the failure the method
+// answers instead: EBADF for a closed handle, and Unsupported for a stdio
+// stream with no file behind it, which is what a test overriding
+// Interp.Stdin with a buffer leaves.
+func handleFd(i *Interp, recv Value) (int, Value, error) {
+	f, err := streamFile(i, recv)
+	if errors.Is(err, errClosedHandle) {
+		return 0, resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	if f == nil {
+		return 0, resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	return int(f.Fd()), nil, nil
+}
+
+// The four terminal questions asked of a handle: each resolves the receiver's
+// descriptor and then answers exactly as the free form does, so `fern -interp`
+// reads and writes the same terminal a compiled binary would (#9363).
+func builtinHandleWindowSize(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("window_size: expected 1 arg, got %d", len(args))
+	}
+	fd, refusal, err := handleFd(i, args[0])
+	if refusal != nil || err != nil {
+		return refusal, err
+	}
+	return builtinWindowSize(i, []Value{Number(fd)})
+}
+
+func builtinHandleSetWindowSize(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("set_window_size: expected 3 args, got %d", len(args))
+	}
+	fd, refusal, err := handleFd(i, args[0])
+	if refusal != nil || err != nil {
+		return refusal, err
+	}
+	return builtinSetWindowSize(i, []Value{Number(fd), args[1], args[2]})
+}
+
+func builtinHandleTermiosGet(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("termios_get: expected 1 arg, got %d", len(args))
+	}
+	fd, refusal, err := handleFd(i, args[0])
+	if refusal != nil || err != nil {
+		return refusal, err
+	}
+	return builtinTermiosGet(i, []Value{Number(fd)})
+}
+
+func builtinHandleTermiosSet(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("termios_set: expected 3 args, got %d", len(args))
+	}
+	fd, refusal, err := handleFd(i, args[0])
+	if refusal != nil || err != nil {
+		return refusal, err
+	}
+	return builtinTermiosSet(i, []Value{Number(fd), args[1], args[2]})
 }
 
 // stdin / stdout / stderr return Reader / Writer struct values
