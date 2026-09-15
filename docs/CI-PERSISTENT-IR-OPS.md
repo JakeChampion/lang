@@ -67,6 +67,29 @@ candidate's complete 75-unit reproduction check passed again.
 
 ## Correctness and size
 
+### Ordinary utility compilation
+
+A separate native ARM64 comparison built the ordinary `fern.fern` CLI with
+the same Go bootstrap, then compiled all 104 coreutils sources with each
+compiler. Sources were fixed at the baseline revision above; only the compiler
+contained the buffer change. Each invocation used a fresh process, with the
+whole trial limited to four CPUs and 16 GiB. A SHA256 utility pilot passed
+before scaling to all utilities.
+
+ABBA trial times were 48.807, 47.480, 47.472 and 48.577 seconds. Mean wall time
+was 48.692 seconds before and 47.476 seconds after. Every output binary was
+byte-identical across all four trials, and the SHA256 executable produced the
+known digest for `abc`. Peak child RSS was essentially unchanged:
+4,153,847,808 bytes before and 4,151,791,616 bytes after. These observations
+show a modest benefit in this workload; they do not support increasing its
+compile concurrency on the assumption that the buffer removed its memory peak.
+
+The isolated test does not include corpus execution. Local records and driver:
+`/tmp/lang-ci-buffer-coreutils/results-full` and
+`/tmp/lang-ci-buffer-coreutils/compare.py`.
+
+### Semantic and binary checks
+
 - All 75 units of the changed compiler reproduce exactly between the Go-built
   and self-built generations, using the normal eight-unit emission route.
 - Snapshot regressions pass through x86, ARM64, and Wasm emission, including a
