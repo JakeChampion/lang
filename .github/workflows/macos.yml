@@ -91,7 +91,7 @@ jobs:
         # unmapped .bss tail all shipped: on the Linux shards this test only
         # parses the Mach-O it cannot run.
         run: |
-          gotestsum --format standard-verbose -- -run 'TestSelfHostArm64Darwin' ./internal/e2eselfhost/
+          gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
 
       - name: Compile + run every example for arm64-darwin (native, default)
         # Build each examples/*.fern via the driver's DEFAULT path — the
