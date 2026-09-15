@@ -9941,21 +9941,20 @@ func (g *generator) emitTermiosGetRuntime() {
 	g.line(".global __fern_termios_get")
 	g.typeDirective("__fern_termios_get")
 	g.label("__fern_termios_get")
-	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("stp x29, x30, [sp, #-80]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	if g.darwin {
 		g.emit("mov x0, #-38") // -ENOSYS
 		g.emit("b .Ltcg_err")
 	} else {
-		// The 36-byte struct lands in the 48-byte slot below the frame.
-		g.emit("sub sp, sp, #48")
+		// Keep the 36-byte ioctl buffer inside the live frame until its
+		// contents have been copied. __fern_alloc uses the stack too.
 		g.emit("mov w0, w0")
 		g.emit("mov x1, #%d", linuxTcgets)
-		g.emit("mov x2, sp")
+		g.emit("add x2, sp, #32")
 		g.syscall("ioctl")
-		g.emit("mov x19, sp")
-		g.emit("add sp, sp, #48")
+		g.emit("add x19, sp, #32")
 		g.emit("tbnz x0, #63, .Ltcg_err")
 		g.emit("mov x0, #%d", termiosWords*8+16)
 		g.emit("bl __fern_alloc")
@@ -10002,7 +10001,7 @@ func (g *generator) emitTermiosGetRuntime() {
 
 	g.label(".Ltcg_return")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.sizeDirective("__fern_termios_get")
 	g.line(".ltorg")
