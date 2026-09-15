@@ -1,6 +1,6 @@
 name: Build the e2e test binaries
 description: >
-  Compile the `go test -c` binaries the self-host lane's jobs run through
+  Build the `go test -c` binaries the self-host lane's jobs run through
   `go tool test2json`, into e2eselfhost.test (always) and e2e.test (on
   request) in the working directory.
 
@@ -13,11 +13,11 @@ description: >
   pushed `warm` from a ~9-minute admission to a 32-minute one, and the shards
   behind `warm` inherited all of it.
 
-  So the lane pays the compile ~27 times, at ~40 s each against a warm build
-  cache, and buys back a queue hop for every job in it. That trade is only
-  right while the queue is the binding constraint — it is, at roughly one job
-  admitted every 20-40 seconds — and it depends on the Go build cache actually
-  being warm, which it now is (see .github/actions/setup-fern).
+  Independent jobs still compile locally without waiting for a build job.
+  The x86 shards already wait for warm, so they can reuse the load family's
+  bundle without adding a dependency hop. The optional cache is checked
+  against the checkout, toolchain, image and file checksums; a miss builds
+  locally. Tests still execute in every shard.
 
 inputs:
   e2e:
@@ -27,14 +27,26 @@ inputs:
       else does, and it is a separate ~20 s of compile, so it is opt-in.
     required: false
     default: "false"
+  cache-dir:
+    description: Optional downloaded bundle to verify before compiling locally.
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
     - name: compile test binaries (go test -c)
       shell: bash
+      env:
+        TEST_BINARY_CACHE: ${{ inputs.cache-dir }}
       run: |
         set -euo pipefail
+        if [ -n "$TEST_BINARY_CACHE" ]; then
+          if bash scripts/ci-test-binary-cache restore "$TEST_BINARY_CACHE"; then
+            exit 0
+          fi
+          echo "test-binary cache unavailable or incompatible; compiling locally"
+        fi
         go test -c -o e2eselfhost.test ./internal/e2eselfhost/
         if [ "${{ inputs.e2e }}" = "true" ]; then
           go test -c -o e2e.test ./internal/e2e/

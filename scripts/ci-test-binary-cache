@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Transfer prebuilt Go test binaries only between equivalent build inputs.
+# A failed restore is a cache miss: the caller must compile the binaries.
+set -euo pipefail
+
+mode=${1:?usage: ci-test-binary-cache save|restore ABSOLUTE_CACHE_DIR}
+cache_dir=${2:?usage: ci-test-binary-cache save|restore ABSOLUTE_CACHE_DIR}
+case "$mode" in save|restore) ;; *) exit 2 ;; esac
+case "$cache_dir" in /*) ;; *) echo "cache directory must be absolute" >&2; exit 2 ;; esac
+cd "$(git rev-parse --show-toplevel)"
+files=(e2eselfhost.test e2e.test)
+
+# HEAD alone cannot describe a modified checkout. Ignore only the two output
+# binaries; an untracked source or fixture must prevent cache reuse too.
+git diff --quiet HEAD -- || { echo "tracked inputs changed" >&2; exit 1; }
+while IFS= read -r -d '' path; do
+  case "$path" in e2eselfhost.test|e2e.test) ;; *) echo "untracked input: $path" >&2; exit 1 ;; esac
+done < <(git ls-files --others --exclude-standard -z)
+
+key=$({
+  printf 'fern-e2e-test-binaries-v1\n'
+  git rev-parse HEAD
+  # Go records source paths in test binaries; keep the checkout path equal.
+  pwd -P
+  go env -json GOVERSION GOOS GOARCH GOAMD64 GOARM64 GOARM GOEXPERIMENT GOFLAGS \
+    GOTOOLCHAIN CGO_ENABLED CC CXX CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS
+  printf 'ImageOS=%s\nImageVersion=%s\n' "${ImageOS:-}" "${ImageVersion:-}"
+  getconf GNU_LIBC_VERSION 2>/dev/null || uname -s
+} | sha256sum)
+key=${key%% *}
+
+if [ "$mode" = save ]; then
+  for file in "${files[@]}"; do
+    [ -s "$file" ] || { echo "missing test binary: $file" >&2; exit 1; }
+  done
+  mkdir -p "$cache_dir"
+  rm -f "$cache_dir/input-key"
+  for file in "${files[@]}"; do
+    cp "$file" "$cache_dir/$file"
+    digest=$(sha256sum "$file")
+    printf '%s\n' "${digest%% *}" > "$cache_dir/$file.sha256"
+  done
+  # Written last: a partial producer never advertises a complete bundle.
+  printf '%s\n' "$key" > "$cache_dir/input-key"
+  exit 0
+fi
+
+[ -f "$cache_dir/input-key" ] && [ "$(cat "$cache_dir/input-key")" = "$key" ] || {
+  echo "test-binary cache input mismatch or missing manifest" >&2
+  exit 1
+}
+# Validate every file before replacing either output. Never execute cached
+# binaries or interpret filenames supplied by a checksum manifest.
+for file in "${files[@]}"; do
+  [ -s "$cache_dir/$file" ] && [ -f "$cache_dir/$file.sha256" ] || exit 1
+  expected=$(cat "$cache_dir/$file.sha256")
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || exit 1
+  actual=$(sha256sum "$cache_dir/$file")
+  [ "${actual%% *}" = "$expected" ] || { echo "test-binary checksum mismatch: $file" >&2; exit 1; }
+done
+for file in "${files[@]}"; do
+  cp "$cache_dir/$file" "$file"
+  chmod +x "$file"
+done
+echo "restored verified Go test binaries"
