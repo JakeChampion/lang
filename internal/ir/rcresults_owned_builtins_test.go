@@ -53,3 +53,28 @@ func TestOwnedResultBuiltinsAgreeWithTheResultAxis(t *testing.T) {
 			"it, through the rename rule or under the builtin name as `access` is", name, r, known)
 	}
 }
+
+// The four terminal questions are one family, and every table here holds all
+// four or none: the handle form the runtime allocates, the builtin name the
+// free call is spelled with, and the `__method_Reader_` lowering. Landing them
+// a table at a time is what left `window_size` admitted as a method but not as
+// a free call, so a discarded `window_size(fd);` leaked the box its three
+// siblings reclaimed.
+func TestTerminalQuestionsAreClassifiedAsOneFamily(t *testing.T) {
+	for _, q := range []string{"window_size", "set_window_size", "termios_get", "termios_set"} {
+		if !rcResultOwned["__fern_handle_"+q] {
+			t.Errorf("__fern_handle_%s is missing from rcResultOwned", q)
+		}
+		if !rcResultOwned[q] {
+			t.Errorf("%s is missing from rcResultOwned", q)
+		}
+		if !rcOwnedResultBuiltins["__method_Reader_"+q] {
+			t.Errorf("__method_Reader_%s is missing from rcOwnedResultBuiltins", q)
+		}
+		if !rcOwnedResultBuiltins[q] {
+			t.Errorf("%s is missing from rcOwnedResultBuiltins — the free call's box "+
+				"is reclaimed at no discard or argument site, though the method "+
+				"spelling of the same helper is admitted", q)
+		}
+	}
+}

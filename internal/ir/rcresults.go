@@ -353,6 +353,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"chown_at":                        true,
 	"temp_dir":                        true,
 	"read_dir":                        true,
+	"window_size":                     true,
 	"set_window_size":                 true,
 	"termios_get":                     true,
 	"termios_set":                     true,
