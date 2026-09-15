@@ -93,7 +93,26 @@ func unguardedBumps(asm string) []string {
 	}
 	var bad []string
 	for i, in := range instrs {
-		if !cursorStoreRe.MatchString(in) {
+		// cursorStoreRe is anchored, so a store carrying any trailing comment
+		// would not look like one at all and would slip the scan silently.
+		// Match the instruction without its comment, and decide on the comment
+		// separately.
+		bare := in
+		if c := strings.Index(in, "//"); c >= 0 {
+			bare = strings.TrimSpace(in[:c])
+		}
+		rewind := strings.HasSuffix(in, heapRewindComment)
+		if !cursorStoreRe.MatchString(bare) {
+			if rewind {
+				bad = append(bad, in+" (marked a rewind but does not store through "+heapPtrSym+")")
+			}
+			continue
+		}
+		// A rewind LOWERS the cursor back over space nothing owns, so the
+		// arena end moves no closer and there is nothing for the guard to
+		// check. Requiring the marker is what keeps this from covering a bump
+		// that simply lost its guard.
+		if rewind {
 			continue
 		}
 		guarded := false
