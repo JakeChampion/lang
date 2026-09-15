@@ -1,4 +1,3 @@
-# TestSelfHostWarmStockDriver at 4c006c860, all smoke executions passed.
 fern.fern 12881996
 asm_load_run.fern 8990444
 asm_modload_run.fern 8603900
