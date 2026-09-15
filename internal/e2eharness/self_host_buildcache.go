@@ -124,6 +124,14 @@ func SelfHostImportClosure(t testing.TB, dir, fernName string) []string {
 // a missing stdlib import is not) can be asserted directly instead of through a
 // deliberately-failing sub-test.
 func selfHostImportClosure(dir, fernName string) ([]string, error) {
+	return selfHostImportClosures(dir, fernName)
+}
+
+// selfHostImportClosures shares one traversal across all requested roots.
+// Staging overlapping compiler roots must not reread their common dependencies
+// once per root. The visited set lasts only for this call, so later source
+// changes and missing imports are still observed.
+func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 	seen := map[string]bool{}
 	var order []string
 	var visit func(path string) error
@@ -164,8 +172,10 @@ func selfHostImportClosure(dir, fernName string) ([]string, error) {
 		}
 		return nil
 	}
-	if err := visit(filepath.Join(dir, fernName)); err != nil {
-		return nil, err
+	for _, fernName := range fernNames {
+		if err := visit(filepath.Join(dir, fernName)); err != nil {
+			return nil, err
+		}
 	}
 	return order, nil
 }
@@ -269,21 +279,23 @@ const selfHostSrcDir = "../../examples/self_host"
 // complete set is itself, and HashSelfHostSources rejects a set that is not.
 func CopySelfHostFiles(t testing.TB, dir string, names ...string) {
 	t.Helper()
+	files, err := selfHostImportClosures(selfHostSrcDir, names...)
+	if err != nil {
+		t.Fatal(err)
+	}
 	seen := map[string]bool{}
-	for _, name := range names {
-		for _, p := range SelfHostImportClosure(t, selfHostSrcDir, name) {
-			base := filepath.Base(p)
-			if seen[base] {
-				continue
-			}
-			seen[base] = true
-			src, err := os.ReadFile(filepath.Join(selfHostSrcDir, base))
-			if err != nil {
-				t.Fatalf("read %s: %v", base, err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, base), src, 0o644); err != nil {
-				t.Fatalf("write %s: %v", base, err)
-			}
+	for _, p := range files {
+		base := filepath.Base(p)
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
+		src, err := os.ReadFile(filepath.Join(selfHostSrcDir, base))
+		if err != nil {
+			t.Fatalf("read %s: %v", base, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, base), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", base, err)
 		}
 	}
 }
