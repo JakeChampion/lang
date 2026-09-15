@@ -5574,16 +5574,35 @@ func (g *generator) peepholeTail() bool {
 	// Restricted to a frame slot, which is mapped for the life of the
 	// frame, so dropping the load cannot drop a fault. `mov` leaves the
 	// flags alone, so removing one leaves them as they were.
-	if n >= 2 && isFrameLoadToAcc(w[n-2]) && writesAccBeforeReading(w[n-1]) {
-		g.peepWin = append(w[:n-2], w[n-1])
-		return true
+	//
+	// LABELS DO NOT BLOCK IT. Labels emit no code, so a load separated from
+	// its overwriter by nothing else is just as dead — and that separation is
+	// the common case rather than the exception, because P10 leaves its reload
+	// at the end of a statement and the next statement opens with the block
+	// labels. A scan loop's two fused increments each ended up with a live
+	// dead reload for exactly this reason (#8425), invisibly: P2 had already
+	// removed the only jumps to those labels, so a disassembly showed two
+	// unexplained loads with nothing between them.
+	//
+	// Sound because the deletion only changes the FALL-THROUGH path, which
+	// reaches the overwriter. A path that branches to one of the intervening
+	// labels never executed the load, so nothing can depend on its value.
+	if n >= 2 && writesAccBeforeReading(w[n-1]) {
+		k := n - 2
+		for k >= 0 && isAsmLabel(w[k]) {
+			k--
+		}
+		if k >= 0 && isFrameLoadToAcc(w[k]) {
+			g.peepWin = append(w[:k], w[k+1:]...)
+			return true
+		}
 	}
 
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
 	// no-op fall-through. Drop the jmp; the label stays for other jumps.
 	if n >= 2 {
 		last := w[n-1]
-		if len(last) > 1 && last[len(last)-1] == ':' && last[0] != '\t' && !strings.ContainsRune(last, ' ') {
+		if isAsmLabel(last) {
 			if w[n-2] == "\tjmp "+last[:len(last)-1] {
 				w[n-2] = last
 				g.peepWin = w[:n-1]
@@ -5746,6 +5765,15 @@ func isFrameLoadToAcc(line string) bool {
 	const pfx = "\tmov rax, [rbp-"
 	return strings.HasPrefix(line, pfx) && strings.HasSuffix(line, "]") &&
 		!strings.ContainsAny(line[len(pfx):], " +-")
+}
+
+// isAsmLabel reports whether a window line is a label definition rather than an
+// instruction: unindented, one word, ending in a colon. Emitting one costs no
+// instruction and leaves every register alone, which is what lets P11 look
+// through it.
+func isAsmLabel(line string) bool {
+	return len(line) > 1 && line[len(line)-1] == ':' && line[0] != '\t' &&
+		!strings.ContainsRune(line, ' ')
 }
 
 // matchAluAccImm matches a 64-bit ALU operation on the accumulator with a

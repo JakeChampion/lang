@@ -1388,6 +1388,11 @@ every iteration and two are width fixes. Register allocation removed flat's two
 memory read-modify-writes and its two dead reloads, and the block layout gave
 back more than that.
 
+Flat is **18** instructions a byte now, not 20: the two dead reloads were P10's
+output waiting on a P11 that a label blocked, and P11 walks labels since. So the
+gap this section is about is 23 against 18, and none of what is left on the SSA
+side is the index or the induction variable.
+
 So the ordering #8425 proposed is wrong in its second step. There is no case for
 covering this backend's remaining handle helpers so a utility can select it:
 the utility would get slower. What stands between the two backends on the shape
