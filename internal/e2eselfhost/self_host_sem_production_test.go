@@ -49,11 +49,22 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 			}
 			for _, target := range []string{"x86-64-linux", "x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
-					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false)
-					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true)
+					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "")
+					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
 					if got != base {
 						t.Fatalf("FERN_SEM_IR changed the answer:\n with = %q\nwithout = %q\nreport: %s",
 							got, base, report)
+					}
+					if prog.skip != "" {
+						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip)
+						if mixed != base {
+							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s changed the answer:\n with = %q\nwithout = %q\nreport: %s",
+								prog.skip, mixed, base, mixedReport)
+						}
+						if mixedLeak > baseLeak {
+							t.Fatalf("FERN_SEM_IR with FERN_SEM_IR_SKIP=%s leaked %d bytes where the AST lowering leaks %d",
+								prog.skip, mixedLeak, baseLeak)
+						}
 					}
 					// The sanitizer leg also reports what the run never
 					// released. The AST lowering is the oracle for that too, so
@@ -97,7 +108,7 @@ func semProducedCount(t *testing.T, report string) int {
 // semCompileRun compiles src for target with the semantic path on or off, runs
 // the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
 // bytes the sanitizer reports unreleased (0 on the legs that do not sanitize).
-func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool) (string, string, int) {
+func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool, skip string) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "prog")
@@ -120,6 +131,9 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	}
 	if sem {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
+		if skip != "" {
+			cmd.Env = append(cmd.Env, "FERN_SEM_IR_SKIP="+skip)
+		}
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
 	}
@@ -177,7 +191,13 @@ func sanitizerLeak(t *testing.T, out string) int {
 var semProductionPrograms = []struct {
 	name    string
 	atLeast int
-	src     string
+	// skip, when set, runs the program a third time with FERN_SEM_IR_SKIP
+	// naming these declarations, so they keep the AST lowering while what
+	// they call is produced: the mixed module in the direction the
+	// registries rewritten by ssarc.caller_sigs and irlower.regrow_sigs
+	// hold together.
+	skip string
+	src  string
 }{
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -409,6 +429,49 @@ function main(): i32 {
     var live: B[] = seed(2);
     var e: B[] = twice(live);
     return a.len() * 1000 + b.len() * 100 + c * 10 + d.len() + e.len() + live.len();
+}
+`},
+	// An append through a record FIELD, which is what the self-host x86
+	// assembler does per instruction byte (`x86_gas_mem_op`): the callee
+	// reads the record no further through that field, so the push grows the
+	// buffer in place and moves it out of the field (#9365). `keeps` still
+	// reads its record afterwards, so its bracket on the field makes the
+	// push copy; the same call from an AST-lowered `keeps` — the skip leg —
+	// brackets by the regrown registry. `boxes` appends counted elements,
+	// where a buffer released under both holders reads back as a wrong name.
+	{name: "field-append", atLeast: 7, skip: "keeps,dying,boxes,emit2", src: `
+struct R { ops: i32[], n: i32 }
+struct Box { name: string }
+struct Q { items: Box[], tag: string }
+function emitop(r: R, op: i32): R { return R { ...r, ops: r.ops.append(op) }; }
+function addbox(q: Q, n: string): Q { return Q { ...q, items: q.items.append(Box { name: n }) }; }
+function emit2(r: R, a: i32, b: i32): R { return emitop(emitop(r, a), b); }
+function keeps(): i32 {
+    var r: R = R { ops: [1, 2, 3], n: 7 };
+    var s: R = emitop(r, 4);
+    var u: R = emit2(r, 5, 6);
+    return r.ops.len() * 100 + s.ops.len() * 10 + u.ops.len();
+}
+function dying(n: i32): i32 {
+    var r: R = R { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < n) { r = emitop(r, i); i = i + 1; }
+    return r.ops.len();
+}
+function boxes(n: i32): i32 {
+    var q: Q = Q { items: [], tag: "t" };
+    var i: i32 = 0;
+    while (i < n) { q = addbox(q, "name-" + q.tag); i = i + 1; }
+    var k: Q = addbox(q, "extra-longer-name-payload");
+    var total: i32 = 0;
+    for b in q.items { total = total + b.name.len(); }
+    return total * 1000 + k.items.len() * 10 + q.items.len();
+}
+function main(): i32 {
+    if (keeps() != 345) { return 1; }
+    if (dying(1000) != 1000) { return 2; }
+    if (boxes(5) != 30065) { return 3; }
+    return 199;
 }
 `},
 	// A write back through a capture is refused (#9320), so this module is

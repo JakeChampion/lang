@@ -20,10 +20,52 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 // id only for edges and -1 otherwise. All acquisitions execute before moves,
 // the semantic operation then creates its result, and drops execute last.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[] }
-pub struct Plan { ok: boolean, why: string, steps: Step[], shared: boolean[], owned: boolean[] }
+// `grows` names, at an append's result, the record value whose field buffer
+// the append may grow IN PLACE (field_grow_root), or -1; `grow_fields` holds
+// that field's index at the same position.
+pub struct Plan { ok: boolean, why: string, steps: Step[], shared: boolean[], owned: boolean[], grows: i32[], grow_fields: i32[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], shared: [], owned: [] }; }
+// A callee parameter whose buffer the callee may grow in place: `field` is the
+// index of a record parameter's array field, or -1 for an array parameter's
+// own buffer. A caller still reading such an argument after the call holds a
+// second count on the buffer across it, so the callee's push takes the copy
+// (#4873, #8785).
+pub struct GrowRow { callee: string, param: i32, field: i32 }
+
+pub function grow_fields_of(rows: GrowRow[], callee: string, param: i32): i32[] {
+    var out: i32[] = [];
+    for row in rows {
+        if (row.callee == callee && row.param == param && row.field >= 0) { out = out.append(row.field); }
+    }
+    return out;
+}
+
+// The rows this function's own plan contributes: one per borrowed parameter
+// position an admitted in-place grow reaches. An owned parameter needs no
+// caller bracket — its caller moved the unit in, or retained and so made the
+// record's own count answer "shared".
+pub function grow_rows(callee: string, f: ssasem.Func, p: Plan): GrowRow[] {
+    var out: GrowRow[] = [];
+    var defs: ssa.SInst[] = definitions(f);
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag != ssasem.append()) { continue; }
+            var root: i32 = ins.args[0];
+            var field: i32 = 0 - 1;
+            if (p.grows[ins.result] >= 0) { root = p.grows[ins.result]; field = p.grow_fields[ins.result]; }
+            if (defs[root].kind_tag != 6 || p.owned[root]) { continue; }
+            var at: i32 = defs[root].imm;
+            var seen: boolean = false;
+            for row in out { if (row.param == at && row.field == field) { seen = true; } }
+            if (!seen) { out = out.append(GrowRow { callee: callee, param: at, field: field }); }
+        }
+    }
+    return out;
+}
+
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], shared: [], owned: [], grows: [], grow_fields: [] }; }
+pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [] }; }
 function bits(n: i32): boolean[] {
@@ -323,6 +365,112 @@ function edge_supplies(f: ssasem.Func, b: ssa.SBlock, target: i32, owned: boolea
     return out;
 }
 
+function definitions(f: ssasem.Func): ssa.SInst[] {
+    var none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    var out: ssa.SInst[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { out = out.append(none); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.result >= 0 && ins.result < out.len()) { out = out.with(ins.result, ins); } }
+    }
+    return out;
+}
+
+function is_record(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeStruct(_) = t { return true; }
+    return false;
+}
+
+// A value reached through another: a copy, a projection, or a retag.
+function projection(kind: i32): boolean {
+    return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
+        || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
+        || kind == ssasem.slice() || kind == ssasem.str_as();
+}
+
+// Whether reading `arg` reads `w`: the value itself, or one anchored to it.
+function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
+    if (arg < 0) { return false; }
+    if (arg == w) { return true; }
+    for dep in a.dependencies[arg] { if (dep == w) { return true; } }
+    return false;
+}
+
+// Whether `w` is read after position `pos` of block `bi`: by a later
+// instruction, by the terminator, or on the way out of the block.
+function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
+    var b: ssa.SBlock = f.graph.blocks[bi];
+    if (a.flow.live_out[bi * f.graph.nvals + w]) { return true; }
+    var i: i32 = pos + 1;
+    while (i < b.insts.len()) {
+        for arg in b.insts[i].args { if (reads(a, arg, w)) { return true; } }
+        i = i + 1;
+    }
+    if (b.term.kind_tag == 1 && reads(a, b.term.value, w)) { return true; }
+    if (b.term.kind_tag == 3 && reads(a, b.term.cond, w)) { return true; }
+    return false;
+}
+
+// The projection of `root` that `w` reaches it through: `w` itself when its
+// parent is the root, else the chain element just before the root.
+function first_hop(a: ssasem.Analysis, w: i32, root: i32): i32 {
+    var prev: i32 = w;
+    for dep in a.dependencies[w] {
+        if (dep == root) { return prev; }
+        prev = dep;
+    }
+    return 0 - 1;
+}
+
+function other_field_get(ins: ssa.SInst, root: i32, field: i32): boolean {
+    return ins.kind_tag == ssasem.record_get() && ins.args[0] == root && ins.imm != field;
+}
+
+// The record whose field buffer the append at (`bi`, `pos`) may grow in place,
+// or -1. The receiver is a projection of one field of a record this frame
+// holds as a parameter or owns outright, and after the append the record is
+// read only through projections of its OTHER fields — the functional update
+// `R { ...r, xs: r.xs.append(v) }` — with nothing anchored to the appended
+// field, and nothing anchored to the record any other way, still live. The
+// record must not leave the block either, so a loop that reaches the same
+// record again is refused; a loop-carried record is a fresh phi each round.
+//
+// What this proves is that THIS frame never reads the field again. Whether
+// another holder does is answered at run time: the record's own count when
+// it is shared (the push then takes the copy), and the caller-side bracket
+// (`grow_rows`) for the frame that lent the record and still reads it.
+function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
+    var none: i32 = 0 - 1;
+    var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+    if (ins.kind_tag != ssasem.append()) { return none; }
+    var get: ssa.SInst = defs[ins.args[0]];
+    if (get.kind_tag != ssasem.record_get()) { return none; }
+    var root: i32 = get.args[0];
+    if (!is_record(f.values[root]) || semtypes.is_env(f.values[root])) { return none; }
+    if (defs[root].kind_tag != 6 && !owned[root]) { return none; }
+    if (projection(defs[root].kind_tag)) { return none; }
+    var b: ssa.SBlock = f.graph.blocks[bi];
+    if (a.flow.live_out[bi * f.graph.nvals + root]) { return none; }
+    var i: i32 = pos + 1;
+    while (i < b.insts.len()) {
+        var later: ssa.SInst = b.insts[i];
+        var mentions: boolean = false;
+        for arg in later.args { if (arg == root) { mentions = true; } }
+        if (mentions && !other_field_get(later, root, get.imm)) { return none; }
+        i = i + 1;
+    }
+    if (b.term.kind_tag == 1 && b.term.value == root) { return none; }
+    var w: i32 = 0;
+    while (w < f.graph.nvals) {
+        if (w != root && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
+            var hop: i32 = first_hop(a, w, root);
+            if (hop < 0 || !other_field_get(defs[hop], root, get.imm)) { return none; }
+        }
+        w = w + 1;
+    }
+    return root;
+}
+
 // Last occurrence may move one dead unit; every other occurrence retains.
 function choose(s: Step, supplies: Supply[], dead: boolean[], owned: boolean[]): Step {
     var moved: boolean[] = bits(owned.len());
@@ -354,6 +502,11 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     if (why != "") { return bad(why); }
     var owned: boolean[] = owned_values(f, modes);
     var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+    var defs: ssa.SInst[] = definitions(f);
+    var grows: i32[] = [];
+    var grow_fields: i32[] = [];
+    var vi0: i32 = 0;
+    while (vi0 < f.graph.nvals) { grows = grows.append(0 - 1); grow_fields = grow_fields.append(0 - 1); vi0 = vi0 + 1; }
     var steps: Step[] = [];
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
@@ -379,6 +532,11 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                         }
                     }
                     steps = steps.append(choose(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned));
+                    var root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
+                    if (root >= 0) {
+                        grows = grows.with(ins.result, root);
+                        grow_fields = grow_fields.with(ins.result, defs[ins.args[0]].imm);
+                    }
                 }
                 pos = pos - 1;
             }
@@ -404,7 +562,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, shared: handed_on(f), owned: owned };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, shared: handed_on(f), owned: owned, grows: grows, grow_fields: grow_fields };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;

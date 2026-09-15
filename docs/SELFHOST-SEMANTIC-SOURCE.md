@@ -1037,8 +1037,8 @@ steps allocates 3n + 2 blocks and copies 4n(n-1) bytes, measured at 770
 allocations for n = 256 against 8 for the sole-owner local form, and 2.3 s
 against 0.001 s at n = 16,384. That is the cost the AST lowering pays too
 until its escape analysis (`irlower.field_append_inplace_sites_of`, native's
-`fieldPlaceAppendCopies` inverted) exempts a site; the analogue here is the
-next optimisation this boundary wants, not a correctness gap.
+`fieldPlaceAppendCopies` inverted) exempts a site; the analogue here is
+`ssaunits.field_grow_root` — "The field append, admitted", below.
 
 Next, by measured leaf: the callee leaf is two things, a contract for the
 runtime builtins a body calls, which is a vocabulary question and not a leaf,
@@ -1604,6 +1604,31 @@ ruled out as its cause.
 The n-z and t-u-v rows' exit 139 is its own finding rather than a consequence
 of the exclusion: an excluded body falls back to the AST lowering, so a mixed
 module that faults is a boundary bug.
+
+### The field append, admitted
+
+The shape inside the `w`-`z` cone was the struct-FIELD append of #8785, in the
+x86 GAS assembler: `x86_gas_mem_op`'s `code: i32[]` is the machine-code buffer,
+and `a = X86Asm { ...a, code: a.code.append(op) }` copied it per byte, because
+`a.code` is a projection the plan retains before `sole_owned_base` reads the
+count. `FERN_CLIFF_REPORT=1` on a 200-function input measured it exactly:
+half the copies of the AST build and 664x the bytes — 5.4 GB.
+
+The fix is the plan admitting the site (`ssaunits.field_grow_root`), the
+lowering growing it in place and moving the buffer out of the field
+(`ssarc.append_field`), and both kinds of caller bracketing the fields a
+produced callee may grow: a produced one from the callee's plan
+(`ssaunits.grow_rows`, which is why every body is planned before any is
+lowered), an AST-lowered one through the may-grow registries rerun with the
+produced masks seeded in (`irlower.regrow_sigs`). The record's own count
+covers what no caller names — a record stored in a container, or bound twice.
+Mechanism and traps: `rc-log/2026-09-15-field-append-grows-in-place-on-the-semantic-path.md`.
+
+The 40,000-push reproducer through a borrowed record: 11.1 s and 8.9 GB to
+60 ms, matching the AST lowering. The compiler built through the path,
+against the two compilers of the section above:
+
+FIELD_APPEND_TABLE
 
 ### The leaves that are left, by measured size
 

@@ -91,7 +91,7 @@ struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: str
 function stage_of(p: semsource.Produced, tab: irlower.StructTab): Stage {
     var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
     if (!plan.ok) { return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" }; }
-    var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab);
+    var lr: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, []);
     if (!lr.ok) { return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why }; }
     return Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
 }

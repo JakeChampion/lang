@@ -233,13 +233,16 @@ function supplies(r: irlower.LowerResult, step: ssaunits.Step, defer0: boolean):
 //
 // The cross-frame bracket is `bracketed`, and it is what makes deferring safe
 // — so the deferral reaches exactly as far as that bracket does: a PARAMETER
-// this frame borrows, which its caller either bracketed or is done reading. An
-// array reached some other way the frame does not own — a projection of a
-// borrowed container, say — has no bracket standing behind it, and growing it
-// in place would rewrite what the container still holds.
+// this frame borrows, which its caller either bracketed or is done reading,
+// and a record FIELD the plan admitted (ssaunits.field_grow_root), where the
+// bracket is on the field and the record's own count answers for any holder
+// no caller names. An array reached any other way the frame does not own —
+// an element of a borrowed array of arrays, say — has no bracket standing
+// behind it, and growing it in place would rewrite what the container still
+// holds.
 function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): boolean {
     if (ins.kind_tag != ssasem.append()) { return false; }
-    if (ins.args[0] >= f.graph.nparams) { return false; }
+    if (ins.args[0] >= f.graph.nparams && p.grows[ins.result] < 0) { return false; }
     if (ins.args[0] < p.owned.len() && p.owned[ins.args[0]]) { return false; }
     for supply in step.supplies {
         if (supply.slot == 0 && supply.mode == ssaunits.retain_unit()) { return true; }
@@ -261,20 +264,47 @@ function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, 
 // its own — so a bracket buys nothing there, and a `string` that is really a
 // view at run time carries the immortal count, where the retain is a no-op and
 // the paired reclaim would free a box the frame still reads (#9328).
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst): i32[] {
-    var out: i32[] = [];
+//
+// A RECORD argument is bracketed field by field, and only at the fields the
+// callee's own plan says it may grow (`grows`, from ssaunits.grow_rows):
+// retaining the record's box would answer for the wrong box, since the buffer
+// the callee's push tests is the field's, at its own count. Each held buffer
+// is captured in a scratch local, so the release after the call decrements
+// the buffer that was retained rather than re-reading a field the callee may
+// have replaced.
+struct Held { arrays: i32[], records: i32[], fields: i32[] }
+
+function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowRow[]): Held {
+    var out: Held = Held { arrays: [], records: [], fields: [] };
     if (ins.kind_tag != ssasem.call()) { return out; }
     var modes: i32[] = ssaunits.callee_modes(f, ins);
     var i: i32 = 0;
     while (i < ins.args.len() && i < modes.len()) {
         var v: i32 = ins.args[i];
-        if (modes[i] == ssaunits.borrow_mode() && bracketable(f.values[v])
-            && util.index_of_i32(step.drops, v) < 0 && util.index_of_i32(out, v) < 0) {
-            out = out.append(v);
+        if (modes[i] == ssaunits.borrow_mode() && util.index_of_i32(step.drops, v) < 0) {
+            if (bracketable(f.values[v]) && util.index_of_i32(out.arrays, v) < 0) {
+                out = Held { ...out, arrays: out.arrays.append(v) };
+            }
+            if (record_bracketable(f.values[v])) {
+                for field in ssaunits.grow_fields_of(grows, ins.str, i) {
+                    if (!holds_field(out, v, field)) {
+                        out = Held { ...out, records: out.records.append(v), fields: out.fields.append(field) };
+                    }
+                }
+            }
         }
         i = i + 1;
     }
     return out;
+}
+
+function holds_field(h: Held, rec: i32, field: i32): boolean {
+    var k: i32 = 0;
+    while (k < h.records.len()) {
+        if (h.records[k] == rec && h.fields[k] == field) { return true; }
+        k = k + 1;
+    }
+    return false;
 }
 
 function bracketable(t: typeinfo.Type): boolean {
@@ -283,13 +313,36 @@ function bracketable(t: typeinfo.Type): boolean {
     return false;
 }
 
-function bracket_take(r: irlower.LowerResult, held: i32[]): irlower.LowerResult {
-    for v in held { r = helper(r, v, "__fern_rc_inc"); }
+function record_bracketable(t: typeinfo.Type): boolean {
+    if (semtypes.is_env(t)) { return false; }
+    if let typeinfo.TypeStruct(_) = t { return true; }
+    return false;
+}
+
+// The scratch locals sit above the value ids; a call's own lowering reserves
+// none, so the held buffers keep theirs from the take to the give.
+function bracket_take(r: irlower.LowerResult, f: ssasem.Func, held: Held): irlower.LowerResult {
+    for v in held.arrays { r = helper(r, v, "__fern_rc_inc"); }
+    var k: i32 = 0;
+    while (k < held.records.len()) {
+        var slot: i32 = f.graph.nvals + k;
+        r = reserve(r, slot + 1);
+        r = emit(r, ir.op_load_local(held.records[k]));
+        r = emit(r, ir.op_struct_get(held.fields[k], 0));
+        r = emit(r, ir.op_store_local(slot));
+        r = helper(r, slot, "__fern_arr_share_inc");
+        k = k + 1;
+    }
     return r;
 }
 
-function bracket_give(r: irlower.LowerResult, f: ssasem.Func, held: i32[]): irlower.LowerResult {
-    for v in held { r = helper(r, v, release_name(f.values[v])); }
+function bracket_give(r: irlower.LowerResult, f: ssasem.Func, held: Held): irlower.LowerResult {
+    for v in held.arrays { r = helper(r, v, release_name(f.values[v])); }
+    var k: i32 = 0;
+    while (k < held.records.len()) {
+        r = helper(r, f.graph.nvals + k, "__fern_arr_share_dec");
+        k = k + 1;
+    }
     return r;
 }
 
@@ -1163,12 +1216,12 @@ function negation_zero(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 
 function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
 
-function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean): irlower.LowerResult {
+function instruction(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean): irlower.LowerResult {
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { return emit(function_site(r, ins), ir.op_store_local(ins.result)); }
-    if (ins.kind_tag == ssasem.append()) { return emit(append_push(r, f, ins, defer0), ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.append()) { return emit(append_push(r, f, p, ins, defer0), ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
@@ -1190,7 +1243,7 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
 // exactly one unit goes in and `scratch` holds one nobody else shares.
 //
 // A receiver whose retain was DEFERRED never arrives here: `append_push` sends
-// it to `append_borrowed` instead, and `with` never defers.
+// it to `append_borrowed` or `append_field` instead, and `with` never defers.
 function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
     var elem: typeinfo.Type = elem_type(f.values[base]);
     r = emit(r, ir.op_load_local(base));
@@ -1216,7 +1269,8 @@ function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scra
 // leaves a shared receiver's count alone and hands back an un-share copy — so
 // the release that makes the operation take exactly one unit at every count
 // belongs here rather than in the shared helper the AST lowering also calls.
-function append_push(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
+function append_push(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
+    if (defer0 && p.grows[ins.result] >= 0) { return append_field(r, f, p, ins); }
     if (defer0) { return append_borrowed(r, f, ins); }
     var scratch: i32 = f.graph.nvals;
     r = reserve(r, scratch + 1);
@@ -1264,6 +1318,58 @@ function append_borrowed(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst)
     }
     r = emit(r, ir.op_end());
     return emit(r, ir.op_load_local(scratch));
+}
+
+// The push onto a FIELD buffer of a record this frame reads no further
+// through that field (ssaunits.field_grow_root): the semantic form of
+// irlower.lower_field_append_inplace. The record's own count says whether
+// another holder can still reach the buffer. A shared record holds a second
+// count on the field across the push, so the push copies and the field stays
+// in place; a sole-owned record lets it grow in place, and the identity arm
+// then MOVES the buffer out of the field — nulled, so the record's release
+// finds nothing there — the result being its only remaining name. A grow
+// that reallocated, or a copy, leaves the old buffer in the field for the
+// record's release, its elements now aliased by the result and counted for
+// exactly as `append_borrowed` counts them.
+function append_field(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+    var root: i32 = p.grows[ins.result];
+    var unique: i32 = f.graph.nvals;
+    var res: i32 = unique + 1;
+    r = reserve(r, res + 1);
+    r = emit(r, ir.op_load_local(root));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_store_local(unique));
+    r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_inc");
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, arr_push_borrowed_op(elem));
+    r = emit(r, ir.op_store_local(res));
+    r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_dec");
+    r = emit(r, ir.op_load_local(res));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(root));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
+    if (reference(elem)) {
+        r = emit(r, ir.op_else());
+        r = helper(r, ins.args[0], "__fern_arr_inc_elems");
+    }
+    r = emit(r, ir.op_end());
+    return emit(r, ir.op_load_local(res));
+}
+
+// `if (!unique) { fn(value) }`: one half of the share bracket a shared record
+// holds on its field across the push.
+function unless_unique(r: irlower.LowerResult, unique: i32, value: i32, fn: string): irlower.LowerResult {
+    r = emit(r, ir.op_load_local(unique));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = helper(r, value, fn);
+    return emit(r, ir.op_end());
 }
 
 // The element the store replaces gives back the one count it held.
@@ -1529,20 +1635,20 @@ function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab): irlower.LowerResult {
+function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
     r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f, p.shared);
     var pos: i32 = 0;
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
-            var held: i32[] = bracketed(f, step, ins);
+            var held: Held = bracketed(f, step, ins, grows);
             // One answer for both: the retain `supplies` holds back is the one
             // `instruction` then takes, and two calls could drift apart with
             // nothing to catch it.
             var defer0: boolean = deferred_retain(f, p, step, ins);
             r = supplies(r, step, defer0);
-            r = bracket_take(r, held);
-            r = instruction(r, f, ins, structs, defer0);
+            r = bracket_take(r, f, held);
+            r = instruction(r, f, p, ins, structs, defer0);
             r = bracket_give(r, f, held);
             r = drops(r, step, f, p.shared);
         }
@@ -1628,7 +1734,7 @@ function inner(l: ssalayout.Layout, first: i32, last: i32, looping: boolean, at:
 // Emit layout indices first..last. A looping region is one natural loop:
 // its `loop` label opens first, then a `block` per position inside that no
 // nested loop owns, each closed just before its position is reached.
-function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irlower.StructTab): Emit {
+function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): Emit {
     if (looping) { e = push(e, ir.op_loop(0), first); }
     var target: i32 = last;
     while (target > first) {
@@ -1639,10 +1745,10 @@ function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, 
     while (position <= last) {
         if (position > first) { e = pop(e); }
         if (l.loop_end[position] >= 0 && (position > first || !looping)) {
-            e = region(e, f, p, l, position, l.loop_end[position], true, structs);
+            e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
             position = l.loop_end[position] + 1;
         } else {
-            var r: irlower.LowerResult = block_body(e.r, f, p, f.graph.blocks[l.order[position]], structs);
+            var r: irlower.LowerResult = block_body(e.r, f, p, f.graph.blocks[l.order[position]], structs, grows);
             e = terminator(Emit { ...e, r: r }, f, p, l.order, position);
             position = position + 1;
         }
@@ -1658,6 +1764,34 @@ function region(e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, 
 // shapes those registries can release get a row: a tuple's scalar-element
 // array positions ("ARRF:") and a scalar-element array result ("ARROWN:");
 // every other position keeps the AST caller's leak-mode floor.
+// The AST registries' spelling of what ssaunits.grow_rows found for `callee`,
+// for the callers the AST lowering still emits: irlower.grow_param_flags_of's
+// mask — one token per position, the receiver's first and then one per
+// parameter — "0", "1" for an array parameter's own buffer, or "F:<field>,…"
+// naming a record parameter's fields. A free function's receiver position
+// carries "0".
+pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[], method: boolean): string {
+    var mask: string = "";
+    if (!method) { mask = "0"; }
+    var i: i32 = 0;
+    while (i < f.params.len()) {
+        var tok: string = "0";
+        for row in rows {
+            if (row.callee == callee && row.param == i && row.field < 0) { tok = "1"; }
+        }
+        var grown: i32[] = ssaunits.grow_fields_of(rows, callee, i);
+        if (tok == "0" && grown.len() > 0) {
+            var fields: semrecords.Field[] = record_fields(f.params[i], f);
+            for field in grown {
+                if (tok == "0") { tok = "F:" + fields[field].name; } else { tok = tok + "," + fields[field].name; }
+            }
+        }
+        if (mask.len() == 0) { mask = tok; } else { mask = mask + ";" + tok; }
+        i = i + 1;
+    }
+    return mask;
+}
+
 pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[]): irlower.FnSigs {
     var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
     // Every row an AST reader could have written for this result is erased,
@@ -1816,12 +1950,16 @@ function without_rows(rows: string[], name: string, prefixes: string[]): string[
 // `structs` is the declaration table the backends read a construction's field
 // store widths from; the physical lowering names a declaration by index, as
 // the AST lowering does.
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): irlower.LowerResult {
+//
+// `grows` is the module's table of callee positions whose buffers a produced
+// callee may grow in place (ssaunits.grow_rows over every produced plan), read
+// by the caller-side bracket.
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
     var why: string = validate(f, modes, p, structs);
     if (why != "") { return empty(why); }
     var layout: ssalayout.Layout = ssalayout.compute(f.graph);
     if (!layout.ok) { return empty("physical RC needs reducible graph"); }
-    var e: Emit = region(Emit { r: frame(f), labels: [], why: "" }, f, p, layout, 0, layout.order.len() - 1, false, structs);
+    var e: Emit = region(Emit { r: frame(f), labels: [], why: "" }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
     if (e.why != "") { return empty(e.why); }
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
