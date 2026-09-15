@@ -63,6 +63,62 @@ pub struct Op {
     decl: i32,
 }
 
+// OpBuffer preserves lowering-state snapshots without copying the entire
+// instruction stream on an append. Full chunks form an immutable reverse
+// chain; only the bounded tail changes. Optimizers and backends receive the
+// ordinary forward Op[] produced by to_array.
+pub enum OpChunks { NoOpChunks, OpChunk(Op[], OpChunks) }
+pub struct OpBuffer { count: i32, chunks: OpChunks, tail: Op[] }
+
+pub function op_buffer(): OpBuffer {
+    return OpBuffer { count: 0, chunks: NoOpChunks, tail: [] };
+}
+
+pub function (b: OpBuffer) len(): i32 { return b.count; }
+
+pub function (b: OpBuffer) append(op: Op): OpBuffer {
+    if (b.tail.len() < 32) {
+        var tail: Op[] = [];
+        for item in b.tail { tail = tail.append(item); }
+        tail = tail.append(op);
+        return OpBuffer { count: b.count + 1, chunks: b.chunks, tail: tail };
+    }
+    return OpBuffer { count: b.count + 1, chunks: OpChunk(b.tail, b.chunks), tail: [op] };
+}
+
+pub function (b: OpBuffer) last_or(fallback: Op): Op {
+    if (b.tail.len() == 0) { return fallback; }
+    return b.tail[b.tail.len() - 1];
+}
+
+pub function (b: OpBuffer) to_array(): Op[] {
+    // An iterative traversal avoids stack depth growing with the input. The
+    // temporary table holds chunk references, not copies of their elements.
+    var chunks: Op[][] = [b.tail];
+    var current: OpChunks = b.chunks;
+    var more: boolean = true;
+    while (more) {
+        match (current) {
+            NoOpChunks => { more = false; },
+            OpChunk(items, previous) => {
+                chunks = chunks.append(items);
+                current = previous;
+            }
+        }
+    }
+    var result: Op[] = [];
+    var i: i32 = chunks.len();
+    while (i > 0) {
+        i = i - 1;
+        var j: i32 = 0;
+        while (j < chunks[i].len()) {
+            result = result.append(chunks[i][j]);
+            j = j + 1;
+        }
+    }
+    return result;
+}
+
 // WidthPtr is the backend-resolved pointer-width sentinel (native's
 // ir.WidthPtr). Stored in Op.width for load / store of heap-pointer-typed
 // values; each backend resolves it (wasm32 -> 4, arm64 -> 8).
