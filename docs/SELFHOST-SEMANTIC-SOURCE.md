@@ -1450,6 +1450,54 @@ exclusions (`advance`, `advance_to`, `at_end`) each cleared the lexer probe: the
 are the cone, not the cause. Read a clearing exclusion as "the fault is inside
 this cone", and intersect cones rather than trusting the smallest one.
 
+### What stops it being the FIXPOINT: memory, not answers (#9365)
+
+The compiler this path builds answers correctly on small programs and segfaults
+23 s into the whole self-host tree. The reason is not a wrong answer, it is
+**peak memory**. Both compilers below are built from the same sources by the
+same self-host compiler; the only difference is `FERN_SEM_IR`:
+
+| input | AST-lowered build | semantically lowered build |
+|---|---|---|
+| `manyf.fern` (200 declarations) | 6.9 MB | 43.3 MB |
+| `examples/self_host/lexer.fern` | 134 MB | **11,550 MB** |
+
+It is not a leak. Under `FERN_LEAKCHECK=1` on `manyf.fern` the semantic build
+**frees more and leaves less live** than the AST one — allocs 196,745 / frees
+155,417 / 3.1 MB live, against 154,810 / 38,842 / 7.4 MB. So the memory is
+churn the allocator cannot recycle, not data the program still holds.
+
+The growth is superlinear: 12x the input for 268x the memory, which is the
+signature of a per-item allocation whose SIZE grows with the item count, freed
+into a size-class freelist no later request matches. The runtime's freelist is
+indexed by exact word count (`__fern_freelist`, one class per 8-byte word up to
+512 KB), so a free of N words satisfies only a later request for exactly N.
+
+What it is NOT, measured: appending to `i32[]`, to `string[]`, to a struct
+array, and concatenating a string in a loop all match the AST build within
+noise. The front end is not it either — the lexer-plus-parser probe built
+through this path peaks at 30 MB against the AST build's 107 MB on
+`parser.fern`. That leaves the back end.
+
+The bisect knob is `FERN_SEM_IR_SKIP` with peak RSS as the oracle, one rebuild
+of `fern.fern` per step (about 7 minutes each). Module functions are matched by
+their BARE name, so `lexer.` matches nothing and single letters are the coarse
+cut:
+
+| skip | peak | exit |
+|---|---|---|
+| `a` … `m` | 11,566 MB | 0 |
+| `n` … `z` | 26 MB | 139 |
+| `n,o,p` | 11,564 MB | 0 |
+| `q,r,s` | 11,554 MB | 0 |
+
+So the declaration responsible has a bare name starting t-z. Read a clearing
+exclusion as a cone, per the note above, and keep halving.
+
+The n-z row's exit 139 is its own finding rather than a consequence of the
+exclusion: an excluded body falls back to the AST lowering, so a mixed module
+that faults is a boundary bug.
+
 ### The leaves that are left, by measured size
 
 | leaf | functions refused |
