@@ -161,6 +161,30 @@ function main(): i32 { return code(Interrupted); }
 			"must lower whole.\n%s", got, want, injectedReport)
 	}
 
+	// std/string's segment producers hand every piece to an array whose
+	// declared element type is an OWNED string. A bare slice there is a view
+	// of the receiver, which the array outlives, so the boundary refuses it —
+	// correctly, and that refusal was the largest class in the corpus. The
+	// producers now materialise each piece the way their runtime twins in
+	// asmcore.fern already do, so nothing in this family escapes.
+	segments := filepath.Join(dir, "segments.fern")
+	writeEntry(t, segments, "import \"std/string\";\n"+
+		"function main(): i32 {\n"+
+		"    var s: string = \"a b\" + \" c\";\n"+
+		"    return s.fields().len() + s.to_array().len() + s.chunks(2).len()\n"+
+		"        + s.splitn(\" \", 2).len() + s.lines().len() + s.split(\" \").len();\n"+
+		"}\n")
+	out, err = exec.Command(bin, segments).CombinedOutput()
+	if err != nil {
+		t.Fatalf("census failed on an entry using std/string's segment producers: %v\n%s", err, out)
+	}
+	segmentsReport := string(out)
+	t.Logf("census of an entry over std/string's segment producers:\n%s", segmentsReport)
+	if strings.Contains(segmentsReport, "view element escapes its source") {
+		t.Errorf("a std/string segment producer still hands a view to an owning array; every piece "+
+			"has to be materialised, as the runtime twins in asmcore.fern do.\n%s", segmentsReport)
+	}
+
 	// An import that still does not resolve has to be named, not dropped.
 	orphan := filepath.Join(dir, "orphan.fern")
 	writeEntry(t, orphan, `import "std/definitely_not_a_module";
