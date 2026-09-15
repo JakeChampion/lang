@@ -1536,9 +1536,13 @@ function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b:
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
             var held: i32[] = bracketed(f, step, ins);
-            r = supplies(r, step, deferred_retain(f, p, step, ins));
+            // One answer for both: the retain `supplies` holds back is the one
+            // `instruction` then takes, and two calls could drift apart with
+            // nothing to catch it.
+            var defer0: boolean = deferred_retain(f, p, step, ins);
+            r = supplies(r, step, defer0);
             r = bracket_take(r, held);
-            r = instruction(r, f, ins, structs, deferred_retain(f, p, step, ins));
+            r = instruction(r, f, ins, structs, defer0);
             r = bracket_give(r, f, held);
             r = drops(r, step, f, p.shared);
         }
