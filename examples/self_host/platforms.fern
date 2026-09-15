@@ -331,6 +331,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "window_size", capability: "tty" },
         Gate { builtin: "termios_get", capability: "tty" },
         Gate { builtin: "termios_set", capability: "tty" },
+        Gate { builtin: "set_window_size", capability: "tty" },
 
         // Who an entry BELONGS to. A host can have files, directories and
         // permission bits and still have no users to attach them to, which

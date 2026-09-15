@@ -12791,6 +12791,7 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "window_size") { return argc == 1; }
     if (name == "termios_get") { return argc == 1; }
     if (name == "termios_set") { return argc == 3; }
+    if (name == "set_window_size") { return argc == 3; }
     if (name == "access") { return argc == 2; }
     if (name == "geteuid" || name == "getegid" || name == "hostname") { return argc == 0; }
     if (name == "getuid" || name == "getgid") { return argc == 0; }
@@ -12837,6 +12838,10 @@ function is_os_query_call(name: string, argc: i32): boolean {
 //   set_process_group(pid, pgid)
 //                       → op_set_process_group → Result[void, IoError],
 //                         setpgid(2), resolved the same way.
+//   set_window_size(fd, rows, cols)
+//                       → op_set_window_size → Result[void, IoError], the
+//                         TIOCGWINSZ/TIOCSWINSZ pair that keeps the pixel
+//                         fields, resolved the same way.
 function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
     if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
@@ -12861,14 +12866,15 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     if (!a1.ok) { return a1; }
     if (cid.name == "signal_send") { return a1.emit(ir.op_signal_send()); }
     if (cid.name == "set_process_group") { return a1.emit(ir.op_set_process_group()); }
-    // The one member with a THIRD operand, and the one that WRITES rather
-    // than asks. It lives in this family anyway because it shares the shape,
-    // and because lower_call_named — the tree's complexity ceiling — pays
-    // nothing for it here.
-    if (cid.name == "termios_set") {
+    // The two members with a THIRD operand, and the two that WRITE rather
+    // than ask. They live in this family anyway because they share the
+    // shape, and because lower_call_named — the tree's complexity ceiling —
+    // pays nothing for them here.
+    if (cid.name == "termios_set" || cid.name == "set_window_size") {
         var a2: LowerState = lower_expr(c.args[2], a1);
         if (!a2.ok) { return a2; }
-        return a2.emit(ir.op_termios_set());
+        if (cid.name == "termios_set") { return a2.emit(ir.op_termios_set()); }
+        return a2.emit(ir.op_set_window_size());
     }
     return a1.emit(ir.op_access());
 }
@@ -72479,6 +72485,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "window_size") { return "Result[WinSize, IoError]"; }
     if (name == "termios_get") { return "Result[i64[], IoError]"; }
     if (name == "termios_set") { return "Result[void, IoError]"; }
+    if (name == "set_window_size") { return "Result[void, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     if (name == "signal_send") { return "Result[void, IoError]"; }
     if (name == "set_process_group") { return "Result[void, IoError]"; }

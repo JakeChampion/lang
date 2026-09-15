@@ -355,6 +355,11 @@ to be written a third time, and no caller needs that backend today. x86-64-ssa
 is further out still — it has no handle family at all, so `open_writer` is
 already outside it.
 
+`set_window_size` is NOT in this gap, though it is gated on the same
+capability: three scalar operands and no array, so arm64-ssa emits it like
+every other syscall-shaped builtin (#9360). The array construction is the
+whole of what the termios pair is missing.
+
 ### Line coverage (`-cover`) is native-only
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line

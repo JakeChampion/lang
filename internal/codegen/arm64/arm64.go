@@ -856,6 +856,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesTermiosGet {
 		g.emitTermiosGetRuntime()
 	}
+	if g.usesSetWindowSize {
+		g.emitSetWindowSizeRuntime()
+	}
 	if g.usesTermiosSet {
 		g.emitTermiosSetRuntime()
 	}
@@ -9829,6 +9832,80 @@ func (g *generator) emitWindowSizeRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSetWindowSizeRuntime emits `__fern_set_window_size(fd, rows, cols)`
+// in w0/w1/w2 -> Result[void, IoError] — a TIOCGWINSZ, the two cell
+// counts replaced, and a TIOCSWINSZ back.
+//
+// The read is what keeps the pixel pair the kernel stores beside them:
+// nothing surrenders it to a caller, so nothing but this helper can put
+// it back. ws_row and ws_col are adjacent u16s, so the pair travels in
+// one register and lands in one store, which leaves x19 and x20 enough
+// to survive both calls. Both counts reach the kernel as u16, so 65536
+// rows lands as 0 rather than a refusal.
+//
+// A failing first ioctl falls through to the shared tail with its errno
+// still in x0, so the pop happens once and the second call is skipped.
+func (g *generator) emitSetWindowSizeRuntime() {
+	const linuxTiocgwinsz = 0x5413
+	const linuxTiocswinsz = 0x5414
+	const darwinTiocgwinsz = 0x40087468
+	const darwinTiocswinsz = 0x80087467
+	g.line("")
+	g.line(".global __fern_set_window_size")
+	g.typeDirective("__fern_set_window_size")
+	g.label("__fern_set_window_size")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	// The 8-byte winsize lands in the 16-byte slot below the frame.
+	g.emit("sub sp, sp, #16")
+	g.emit("and w20, w1, #0xffff")
+	g.emit("and w9, w2, #0xffff")
+	g.emit("orr w20, w20, w9, lsl #16")
+	g.emit("mov w19, w0")
+	if g.darwin {
+		g.emit("ldr x1, =%d", darwinTiocgwinsz)
+	} else {
+		g.emit("mov x1, #%d", linuxTiocgwinsz)
+	}
+	g.emit("mov x2, sp")
+	g.syscall("ioctl")
+	g.emit("tbnz x0, #63, .Lswsz_done")
+	g.emit("str w20, [sp]")
+	g.emit("mov w0, w19")
+	if g.darwin {
+		g.emit("ldr x1, =%d", darwinTiocswinsz)
+	} else {
+		g.emit("mov x1, #%d", linuxTiocswinsz)
+	}
+	g.emit("mov x2, sp")
+	g.syscall("ioctl")
+
+	g.label(".Lswsz_done")
+	g.emit("add sp, sp, #16")
+	g.emit("tbnz x0, #63, .Lswsz_err")
+	g.emitPayloadlessResultBox(16, 0) // Ok(())
+	g.emit("b .Lswsz_return")
+
+	g.label(".Lswsz_err")
+	g.emit("neg x0, x0")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lswsz_return")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_set_window_size")
+	g.line(".ltorg")
+}
+
 // The kernel's `struct termios` on the asm-generic ABI: four 32-bit flag
 // words, one line-discipline byte, NCCS = 19 control characters — 36 bytes,
 // and 24 elements in the word array the language sees.
@@ -14659,6 +14736,9 @@ type generator struct {
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
+	// usesSetWindowSize pulls in `__fern_set_window_size(fd, rows, cols)`
+	// — the TIOCGWINSZ/TIOCSWINSZ pair that keeps the pixel fields.
+	usesSetWindowSize bool
 	// usesTermiosGet / usesTermiosSet pull in the two halves of the
 	// terminal's line settings: one TCGETS into a word array, and the
 	// TCSETS family back out of one.
@@ -19356,6 +19436,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// window_size(fd): Result[WinSize, IoError].
 			target = "__fern_window_size"
 			g.usesWindowSize = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "set_window_size":
+			// set_window_size(fd, rows, cols): Result[void, IoError].
+			target = "__fern_set_window_size"
+			g.usesSetWindowSize = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "termios_get":

@@ -1832,7 +1832,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "stat", "lstat", "statfs", "access", "read_file",
         "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "termios_get", "termios_set", "set_file_times",
+        "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
@@ -1850,7 +1850,7 @@ function needs_io_error_shapes(s: asmcore.EmitState): boolean {
         "remove_file", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "termios_get", "termios_set", "set_file_times",
+        "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "writer_truncate", "fd_fsync", "fd_fdatasync", "fd_syncfs"
     ]);
 }
@@ -1866,7 +1866,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
-        "truncate", "mknod", "chown_at", "window_size", "termios_get", "termios_set", "set_file_times",
+        "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
@@ -5413,6 +5413,12 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
             s = s.write("    call __fn___fern_termios_set\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("termios_set");
+        } else if (o.kind_tag == 314) {  // set_window_size
+            // [fd][rows][cols] with cols on top; the same three-operand
+            // marshalling termios_set needs — param[0] (fd) LOWEST.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_set_window_size\n    addq $24, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("set_window_size");
         } else if (o.kind_tag == 276) {  // window_size
             // [fd]; __fern_window_size(fd) -> Result[WinSize, IoError].
             // [fd] IS param[0] already; the stack ABI needs no marshalling.
@@ -9123,7 +9129,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
-        "eprint", "read_int", "udp_send", "isatty", "window_size", "termios_get", "termios_set",
+        "eprint", "read_int", "udp_send", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
@@ -9196,6 +9202,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("lstat")) { fs_src = fs_src + " " + asmcore.rt_src_lstat("x86_64"); }
         if (s.has_need("statfs")) { fs_src = fs_src + " " + asmcore.rt_src_statfs("x86_64"); }
         if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size("x86_64"); }
+        if (s.has_need("set_window_size")) { fs_src = fs_src + " " + asmcore.rt_src_set_window_size("x86_64"); }
         if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access("x86_64"); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64"); }
         if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64"); }

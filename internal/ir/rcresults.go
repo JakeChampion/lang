@@ -230,6 +230,9 @@ var rcResultOwned = map[string]bool{
 	"statfs":            true,
 	"chdir":             true,
 	"window_size":       true,
+	"set_window_size":   true,
+	"termios_get":       true,
+	"termios_set":       true,
 	"signal_send":       true,
 	"set_process_group": true,
 }
@@ -337,6 +340,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"chown_at":                   true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
+	"set_window_size":            true,
 	"termios_get":                true,
 	"termios_set":                true,
 	"read_dir_all":               true,
