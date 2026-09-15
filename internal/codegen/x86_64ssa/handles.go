@@ -12,6 +12,19 @@ package x86_64ssa
 
 import "strconv"
 
+// heapRewindComment marks a cursor store that LOWERS the cursor: a site handing
+// back space nothing owns, which needs no guard because the arena end moves no
+// closer. It is the only legitimate unguarded cursor store, so
+// TestEveryHeapBumpPublishesThroughTheGuard reads the marker rather than
+// exempting the shape. The arm64ssa sibling carries the same contract.
+const heapRewindComment = " // heap rewind"
+
+// ssaHeapRewind publishes a cursor at or below the current one. `valueReg`
+// holds the value to publish.
+func ssaHeapRewind(w func(string, ...any), valueReg string) {
+	w("\tmov [rip + %s], %s%s", heapPtrSym, valueReg, heapRewindComment)
+}
+
 // ssaHandleAlloc writes a handle and leaves its value pointer in rax. `fd` is
 // a 32-bit source operand — an immediate, or a register the caller has kept
 // live — stored AFTER the allocation. `immortal` selects the 0x80000000 rc
@@ -117,6 +130,77 @@ func emitHandleCloseHelper(name, tag string) func(w func(string, ...any)) {
 		w("\tpop rbx")
 		w("\tret")
 	}
+}
+
+// emitReaderReadChunkHelper writes __method_Reader_read_chunk(reader, n) ->
+// Result[string, IoError]: one read(2) of up to n bytes into a fresh
+// single-word rc string.
+//
+// The buffer is sized from the REQUEST and the helper only learns what it owns
+// after the read, so it hands the rest back rather than stranding it: the
+// unread tail of a short read, and the whole buffer at end of input or on an
+// error, where the result carries no bytes at all. A pipe hands back at most
+// 64 KiB, so without the trim a program looping over a 64 KiB request leaks a
+// full block per round (#8698 on the arm64 side).
+//
+// rbx = the cursor before the bump (the rewind target), r12 = data pointer,
+// r13 = fd then errno. All three must be callee-saved: the allocation calls
+// the heap guard and the error path calls __fern_io_error.
+func emitReaderReadChunkHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Reader_read_chunk"))
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	// Three pushes past the return address leave rsp 16-aligned.
+	w("\tmov r13d, dword ptr [rdi + 8]") // fd
+	w("\tmov r12, rsi")                  // n
+	w("\tmov rbx, [rip + %s]", heapPtrSym)
+	// Header + n + trailing NUL.
+	w("\tmov rax, r12")
+	w("\tadd rax, 9")
+	ssaBumpAlloc(w, "rcx", "rax")
+	w("\tmov dword ptr [rcx], 1") // rc = 1
+	w("\tadd rcx, 8")
+	w("\tmov rax, r12") // n, before rcx moves into the arg register
+	w("\tmov r12, rcx") // data pointer
+	// read(fd, data, n)
+	w("\tmov edi, r13d")
+	w("\tmov rsi, r12")
+	w("\tmov rdx, rax")
+	w("\txor eax, eax") // read
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_rrc_err")
+	w("\tje .Lssa_rrc_eof")
+	w("\tmov dword ptr [r12 - 4], eax") // len = bytes read
+	w("\tlea rcx, [r12 + rax]")
+	w("\tmov byte ptr [rcx], 0") // trailing NUL
+	w("\tadd rcx, 1")
+	ssaHeapRewind(w, "rcx")
+	ssaOptionBox(w, 0, "r12")
+	w("\tjmp .Lssa_rrc_ret")
+	w(".Lssa_rrc_eof:")
+	ssaHeapRewind(w, "rbx") // nothing owns the buffer
+	ssaEmptyString(w, "r12")
+	ssaOptionBox(w, 0, "r12")
+	w("\tjmp .Lssa_rrc_ret")
+	w(".Lssa_rrc_err:")
+	ssaHeapRewind(w, "rbx") // nothing owns the buffer
+	w("\tneg rax")
+	w("\tmov r13d, eax") // errno
+	// A read carries no path, so the errno is classified against an empty one,
+	// exactly as a failed write is.
+	ssaEmptyString(w, "rsi")
+	w("\tmov edi, r13d")
+	w("\tcall %s", fnLabel("__fern_io_error"))
+	w("\tmov r12, rax")
+	ssaOptionBox(w, 1, "r12")
+	w(".Lssa_rrc_ret:")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tret")
 }
 
 // emitOpenHandleHelper writes open_reader / open_writer -> Result[handle,
