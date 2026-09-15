@@ -68,11 +68,11 @@ struct State {
     // as a parameter. Replacing the binding that holds one is a write back
     // through a capture — see `assign`.
     foreign: i32[],
-    // The view retags `lend` made. A callee handed one may return that very
-    // box, which is what `aliased_arg` records on the call — see it for why.
+    // The view retags `lend` made. A callee handed one may hand that very box
+    // out, which is what `escaping_args` records on the call — see it for why.
     lent: i32[],
-    // The module declarations whose body may return one of their parameters,
-    // by contract name; `handers` computes it and `aliased_arg` consults it.
+    // The module declarations whose body may hand one of their parameters out,
+    // by contract name; `handers` computes it and `escaping_args` consults it.
     handers: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
@@ -1135,7 +1135,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         i = i + 1;
     }
     if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.call(), ids, aliased_arg(s, ids, contract.result, key), key, contract.result);
+    return define(s, ssasem.call(), ids, escaping_args(s, ids, key), key, contract.result);
 }
 
 // `cell_new(v)` builds the shared one-element box over v's unit. The checker
@@ -1197,32 +1197,32 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
     return Value { s: State { ...t.s, lent: t.s.lent.append(t.id) }, id: t.id };
 }
 
-// The 1-based position in `ids` of an argument this call's result may BE, or 0
-// for none — which is what a call's `imm` carries, the one immediate nothing
-// else reads on a call.
+// The set of arguments this call may hand out, as a BITMASK over positions in
+// `ids` — which is what a call's `imm` carries, the one immediate nothing else
+// reads on a call.
 //
-// A callee lent a string VIEW can hand that box straight back
-// (`function keep(t: string): string { return t; }`). A view's box carries the
-// immortal rc sentinel, so the retain the callee owes for returning a borrowed
-// reference is a NO-OP, and a caller that accounts the result a unit of its own
-// releases, with the frame that sliced the view, one box twice — a
-// use-after-free, and what stopped the compiler compiling itself through this
-// path (#9328).
+// A callee lent a string VIEW can hand that box out
+// (`function keep(t: string): string { return t; }`, and every `*_tok`
+// constructor in the lexer, which stores the view in the token it builds). A
+// view's box carries the immortal rc sentinel, so the retain a callee owes for
+// a borrowed reference it keeps is a NO-OP, and the frame that sliced the view
+// then reclaims the box out from under whatever holds it — a use-after-free,
+// and what stopped the compiler compiling itself through this path (#9328).
 //
-// Whether the callee hands it back is a property of its BODY, which no contract
+// Whether a callee does this is a property of its BODY, which no contract
 // records: a callee returning a fresh string (the fixture's `copied()`) is
 // clean, and refusing on the signature took it out of production. `handers` is
 // that property, read off the bodies once per module, and `ssaunits.handed_on`
-// is what the position recorded here reaches.
-function aliased_arg(s: State, ids: i32[], result: typeinfo.Type, callee: string): i32 {
-    if (!ssasem.is_text(result)) { return 0; }
+// is what the mask recorded here reaches.
+function escaping_args(s: State, ids: i32[], callee: string): i32 {
     if (util.index_of_str(s.handers, callee) < 0) { return 0; }
+    var mask: i32 = 0;
     var i: i32 = 0;
-    while (i < ids.len()) {
-        if (util.index_of_i32(s.lent, ids[i]) >= 0) { return i + 1; }
+    while (i < ids.len() && i < 31) {
+        if (util.index_of_i32(s.lent, ids[i]) >= 0) { mask = mask + (1 << i); }
         i = i + 1;
     }
-    return 0;
+    return mask;
 }
 
 // A call of a bound name whose value is a function: the callee is the closure
@@ -1518,7 +1518,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
         s = request(s, contract.name, callee.name, bound);
     }
     if (ssasem.find_contract(s.calls, callee.name) < 0) { s = State { ...s, calls: s.calls.append(callee) }; }
-    return define(s, ssasem.call(), ids, aliased_arg(s, ids, contract.result, contract.name), callee.name, callee.result);
+    return define(s, ssasem.call(), ids, escaping_args(s, ids, contract.name), callee.name, callee.result);
 }
 
 // An instance a call or a closure constructor names is asked for once.
@@ -2568,35 +2568,77 @@ function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
     return acc;
 }
 
-// Whether a declaration's body may return one of its own parameters. Returning
-// a bare parameter is the direct shape; returning a call to a declaration that
-// already does carries it on, which is why the set closes to a fixpoint below.
-// A method call is matched on its field name alone, since the receiver's type
-// is not in hand here — the direction that over-reports rather than misses.
-function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
-    var names: string[] = decl_param_names(fd);
-    var outs: ast.Expr[] = [];
-    for st in fd.body { outs = astwalk.fold_stmt_spine(st, outs, return_exprs); }
-    for e in outs {
-        if let ast.ExprIdent(id) = e {
-            if (util.index_of_str(names, id.name) >= 0) { return true; }
-        }
-        if let ast.ExprCall(c) = e {
-            if let ast.ExprIdent(callee) = c.callee {
-                if (util.index_of_str(known, callee.name) >= 0) { return true; }
-            }
-            if let ast.ExprFieldAccess(fa) = c.callee {
-                for k in known { if (method_is(k, fa.field)) { return true; } }
-            }
-        }
+// Whether an expression hands the value of one of `names` OUT as itself. A
+// bare name does; so does an aggregate that holds it — a struct literal's
+// field, an array or tuple element — and so does an argument of a call to a
+// declaration already known to hand its arguments out, which is what closes
+// the set below. Nothing else does: `s + ""` and `s.len()` read the value and
+// build something of their own, which is why `copied()` and `view_len()` keep
+// reclaiming the views they are lent.
+function escapes_in(e: ast.Expr, names: string[], known: string[]): boolean {
+    if let ast.ExprIdent(id) = e { return util.index_of_str(names, id.name) >= 0; }
+    if let ast.ExprStructLit(sl) = e {
+        for v in sl.field_values { if (escapes_in(v, names, known)) { return true; } }
+        return sl.has_base && escapes_in(sl.base, names, known);
+    }
+    if let ast.ExprArray(a) = e {
+        for v in a.elements { if (escapes_in(v, names, known)) { return true; } }
+        return false;
+    }
+    if let ast.ExprTuple(t) = e {
+        for v in t.elements { if (escapes_in(v, names, known)) { return true; } }
+        return false;
+    }
+    if let ast.ExprMapLit(m) = e {
+        for v in m.keys { if (escapes_in(v, names, known)) { return true; } }
+        for v in m.vals { if (escapes_in(v, names, known)) { return true; } }
+        return false;
+    }
+    if let ast.ExprCall(c) = e {
+        if (!known_callee(c, known)) { return false; }
+        for a in c.args { if (escapes_in(a, names, known)) { return true; } }
+        if let ast.ExprFieldAccess(fa) = c.callee { return escapes_in(fa.obj, names, known); }
+        return false;
     }
     return false;
 }
 
-// The declarations whose body may hand a caller back the very box it lent,
-// by contract name. `aliased_arg` reads it: a caller that lends a string VIEW
-// to one of these can get that box as the result, and a view's box carries no
-// count to make the two references safe.
+// The builtin calls that put a reference argument INTO something rather than
+// reading it: the container builders, and the union constructors, which the
+// parser spells as a call of a capitalised name.
+function stores_argument(name: string): boolean {
+    if (name.len() == 0) { return false; }
+    if (name[0] >= b'A' && name[0] <= b'Z') { return true; }
+    return name == "append" || name == "with" || name == "insert" || name == "cell_new";
+}
+
+// A call that hands its arguments on: one whose target is already in the set —
+// by plain name, or, since the receiver's type is not in hand here, by method
+// name alone — or one of the builtins that stores what it is given.
+function known_callee(c: ast.ExprCall, known: string[]): boolean {
+    if let ast.ExprIdent(id) = c.callee {
+        return stores_argument(id.name) || util.index_of_str(known, id.name) >= 0;
+    }
+    if let ast.ExprFieldAccess(fa) = c.callee {
+        if (stores_argument(fa.field)) { return true; }
+        for k in known { if (method_is(k, fa.field)) { return true; } }
+        return false;
+    }
+    return false;
+}
+
+function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
+    var names: string[] = decl_param_names(fd);
+    var outs: ast.Expr[] = [];
+    for st in fd.body { outs = astwalk.fold_stmt_spine(st, outs, return_exprs); }
+    for e in outs { if (escapes_in(e, names, known)) { return true; } }
+    return false;
+}
+
+// The declarations that may hand a caller's argument back out — as the result,
+// or inside one — by contract name. `escaping_args` reads it: a caller that
+// lends a string VIEW to one of these loses track of the box, and a view's box
+// carries no count to keep the other reference safe.
 function handers(mod: parser.Module): string[] {
     var out: string[] = [];
     var changed: boolean = true;
