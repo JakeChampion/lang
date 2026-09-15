@@ -78270,10 +78270,19 @@ pub function consumed_arr_positions_of(funcs: parser.FuncDecl[]): string[] {
 // pass-throughs (grow_dying_passes). Returned as "key|mask" entries for
 // functions with at least one non-"0" position, keyed "<Type>.<method>" for a
 // method.
-pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
+pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] { return grow_param_flags_seeded(funcs, []); }
+
+// grow_param_flags_seeded is grow_param_flags_of with a function's own mask
+// supplied from elsewhere: `seeds` are "key|mask" rows for the bodies the
+// semantic lowering produced (ssarc.grow_mask), whose in-place grows are the
+// ones its plan admitted rather than the ones this file's syntax walk would
+// have. The dying-pass closure runs over both alike.
+pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]): string[] {
     // One mask per func, appended in order: the working per-position mask.
     var masks: string[] = [];
     for fnk in funcs {
+        var seeded: string = grow_reg_value(seeds, grow_fn_key(fnk));
+        if (seeded.len() > 0) { masks = masks.append(seeded); continue; }
         var recvs: string[] = [];
         var si: i32 = 0;
         while (si < fnk.body.len()) { recvs = collect_append_recvs_stmt(fnk.body[si], recvs); si = si + 1; }
@@ -78517,6 +78526,16 @@ pub function grow_recv_fns_of(gflags: string[]): string[] {
         out = out.append(slice_unchecked(row, 0, b) + "|" + list);
     }
     return out;
+}
+
+// regrow_sigs recomputes the three registries the may-grow masks feed with
+// the produced bodies' masks seeded in (grow_param_flags_seeded), so an AST
+// caller of a produced callee brackets the buffers that callee's plan grows.
+pub function regrow_sigs(sg: FnSigs, funcs: parser.FuncDecl[], structs: StructTab, seeds: string[]): FnSigs {
+    var growflags: string[] = grow_param_flags_seeded(funcs, seeds);
+    return FnSigs { ...sg, fn_param_sigs: sig_reg_of(fn_param_sigs_of(funcs, structs, growflags)),
+        grow_recv_fns: grow_recv_fns_of(growflags),
+        grow_field_positions: grow_field_positions_of(funcs, growflags) };
 }
 
 // grow_field_positions_of returns "<key>|<idx>|<TypeName>|<field>,…" for every
