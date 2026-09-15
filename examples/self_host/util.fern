@@ -348,6 +348,17 @@ pub function index_of_str(xs: string[], s: string): i32 {
     return 0 - 1;
 }
 
+// index_of_i32 returns the index of `n` in `xs`, or -1 if absent. The integer
+// sibling of index_of_str, and -1 on a miss for the same reason.
+pub function index_of_i32(xs: i32[], n: i32): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == n) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 // str_has_prefix reports whether `s` begins with `prefix`, compared
 // byte-wise — no slice, so a probe at a multibyte character can never
 // materialise a split code point.

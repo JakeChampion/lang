@@ -28398,7 +28398,7 @@ function arr_slot_shallow_release_ok(s: LowerState, slot: i32): boolean {
 function slot_holds_scalar_elems(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     var li: LocalInfo = s.locals[i];
-    if (li.is_cell || is_mcap_cell_name(li.slot_name)) { return false; }
+    if (li.is_cell || capturebox.is_cell_name(li.slot_name)) { return false; }
     if (!li.is_arr || li.is_strarr || li.is_arrarr || li.is_closurearr || li.is_fnarr) { return false; }
     var tags: string = li.opt_type + li.arrarr_elem + li.fnarr_elem + li.map_type;
     return tags.len() == 0 && (li.struct_type.len() == 0 || li.struct_type == "char");
@@ -34877,7 +34877,7 @@ function borrowed_names_of(fn: parser.FuncDecl, own_names: string[]): string[] {
     while (i < fn.params.len()) {
         if (is_array_type_name(fn.params[i].type_name)
             && util.index_of_str(own_names, fn.params[i].name) < 0
-            && !is_mcap_cell_name(fn.params[i].name)) {
+            && !capturebox.is_cell_name(fn.params[i].name)) {
             a = push_str_unique(a, fn.params[i].name);
         }
         i = i + 1;
@@ -76421,19 +76421,6 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: Stru
 //      matching the interpreter (the oracle per #2896). Directly-called
 //      bindings don't need this: the param-lift passes captures at each call
 //      site (#5301), which is already by-reference for reads.
-
-// mcap_cell_name is the cell local for a mutated capture. The `$` prefix cannot
-// collide with a user ident (the guarantee `$lamret$` and `$wc$` already rely
-// on), which is what lets the `.with` gate tell a by-reference capture cell from
-// a caller's array once the lift has turned both into plain array params
-// (#6185): the mode is carried in the name, because ParamDecl carries no mode beyond
-// `own` and a cell is neither owned nor borrowed.
-function mcap_cell_name(c: string): string { return "$cell$" + c; }
-
-// is_mcap_cell_name reports whether `n` names such a cell.
-function is_mcap_cell_name(n: string): boolean {
-    return n.len() > 6 && slice_unchecked(n, 0, 6) == "$cell$";
-}
 
 // append_bound_binder appends a binder name, splitting the comma-joined form a
 // tuple destructure and a two-name `for (k, v) in m` use — unsplit, neither name

@@ -82,6 +82,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
 
+      - name: Install uv for generated-source checks
+        uses: astral-sh/setup-uv@v7
+
+      - name: Generated digest sources
+        if: ${{ !cancelled() }}
+        run: make digest-check
+
       - name: go build ./...
         if: ${{ !cancelled() }}
         run: go build ./...
