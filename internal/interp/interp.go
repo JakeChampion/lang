@@ -4774,7 +4774,7 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		i.runDefers(defers, false)
 		return nil, err
 	}
-	i.runDefers(defers, r.flow == flowReturn && isErrReturnValue(r.val))
+	i.runDefers(defers, r.flow == flowReturn && i.isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
@@ -4872,13 +4872,24 @@ func (i *Interp) runIterDefers(mark int) {
 	i.deferStack[top] = pending[:mark]
 }
 
-// isErrReturnValue reports whether a returned value is the
-// failure variant of an Option/Result — `None` or `Err` (variant
-// index 1) — i.e. whether a plain `return v` of it counts as an
-// error exit for `errdefer`.
-func isErrReturnValue(v Value) bool {
+// isErrReturnValue reports whether a returned value is the failure variant
+// (index 1) of a `?`-able enum — i.e. whether a plain `return v` of it
+// counts as an error exit for `errdefer`.
+//
+// Reads the `@try` marker off the enum decl rather than comparing against
+// Option and Result by name, so a marked enum's failure return replays
+// errdefers exactly as theirs do. The two builtins carry no marker — they
+// predate it — so they are named here, the one place that is still true.
+func (i *Interp) isErrReturnValue(v Value) bool {
 	ev, ok := v.(*Enum)
-	return ok && ev.Index == 1 && (ev.EnumName == "Option" || ev.EnumName == "Result")
+	if !ok || ev.Index != 1 {
+		return false
+	}
+	if ev.EnumName == "Option" || ev.EnumName == "Result" {
+		return true
+	}
+	ed, ok := i.Enums[ev.EnumName]
+	return ok && ed.Try
 }
 
 func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
@@ -6284,23 +6295,23 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("interp: `?` applied to non-enum %T", inner)
 		}
-		switch ev.VariantName {
-		case "Some":
+		// Dispatch on the TAG, not the variant name. Success is variant 0
+		// and failure is variant 1 for every `?`-able enum — the shape rule
+		// the checker enforces at the declaration — so this serves an
+		// `@try` enum and the two builtins with one test, and stops a user
+		// enum that happens to name a variant `Ok` from being mistaken for
+		// one. Matches every compiled backend, which has always branched on
+		// the tag. See docs/TRY.md.
+		switch ev.Index {
+		case 0:
 			if len(ev.Payloads) != 1 {
-				return nil, fmt.Errorf("interp: Some payload arity %d", len(ev.Payloads))
+				return nil, fmt.Errorf("interp: `?` success variant %q payload arity %d", ev.VariantName, len(ev.Payloads))
 			}
 			return ev.Payloads[0], nil
-		case "None":
-			return nil, &tryOpEarlyReturn{val: ev}
-		case "Ok":
-			if len(ev.Payloads) != 1 {
-				return nil, fmt.Errorf("interp: Ok payload arity %d", len(ev.Payloads))
-			}
-			return ev.Payloads[0], nil
-		case "Err":
+		case 1:
 			return nil, &tryOpEarlyReturn{val: ev}
 		}
-		return nil, fmt.Errorf("interp: `?` on unexpected variant %q", ev.VariantName)
+		return nil, fmt.Errorf("interp: `?` on variant %q of %s (index %d): not a two-variant `?` shape", ev.VariantName, ev.EnumName, ev.Index)
 	case *ast.StructLit:
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}}
 		// Struct-update `Foo { ...base, field: v }`: seed from the
@@ -6543,7 +6554,7 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 		i.runDefers(defers, false)
 		return nil, err
 	}
-	i.runDefers(defers, r.flow == flowReturn && isErrReturnValue(r.val))
+	i.runDefers(defers, r.flow == flowReturn && i.isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
