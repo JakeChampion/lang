@@ -561,7 +561,17 @@ function main(): i32 {
     if (!sawPushRow || !sawViaRow || table.len() != 2) { return 156; }
     var viaLowered = ssarc.lower(viaFunc, [2, 1], viaPlan, irlower.struct_tab_empty(), table);
     if (!viaLowered.ok) { eprint(viaLowered.why); return 157; }
-    for o in viaLowered.ops { if (o.str == "__fern_rc_inc" || o.str == "__fern_arr_share_inc") { return 158; } }
+    // No retain up front; the share bracket is there, but GATED on the
+    // record's count, so a record with a holder this frame cannot see still
+    // makes the callee copy.
+    var sawViaGate: boolean = false;
+    var sawViaShare: boolean = false;
+    for o in viaLowered.ops {
+        if (o.str == "__fern_rc_inc") { return 158; }
+        if (o.str == "__fern_rc_is_unique") { sawViaGate = true; }
+        if (o.str == "__fern_arr_share_inc") { sawViaShare = true; }
+    }
+    if (!sawViaGate || !sawViaShare) { return 159; }
     // One element replaced hands the receiver's unit over the same way, and
     // lowers to the count test that chooses the in-place store or the copy;
     // a scalar element retains nothing, a counted one retains the copy's
