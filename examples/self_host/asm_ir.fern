@@ -26,6 +26,7 @@ import "./irlower";
 import "./irverify";
 import "./irverifygate";
 import "./ircore";
+import "./semlower";
 
 // (The hand-written emit_ir_str_search was removed in #2649: the
 // __fern_str_starts_with / _ends_with / _index_of predicates are now Fern
@@ -7761,10 +7762,14 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // per-module tails onto it itself (#8199).
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
-    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false);
+    var g: semlower.SemLowered = semlower.lower_gated_sem(im, imtab, base, known, false);
     if (!g.ok) { return ""; }
-    // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, g.cache, base);
+    // Every function eligible — emit from the cache (no second lowering). The
+    // registry set comes back from the gate rather than going in: with the
+    // semantic path on (FERN_SEM_IR), ssarc.caller_sigs rewrote rows in it from
+    // the produced callees' verified contracts, and the emit reads the same set
+    // the lowering did.
+    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, g.cache, g.sigs);
 }
 
 // ---- The x86-64 peephole ---------------------------------------------------

@@ -30,6 +30,7 @@ import "./irverify";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
+import "./semlower";
 
 // fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
 // (always <= 0 — locals live below the frame pointer). Inlined copies of
@@ -9142,9 +9143,9 @@ pub function emit_module_ir_gated(mod: parser.Module, darwin: boolean): string {
     var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
-    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false);
+    var g: semlower.SemLowered = semlower.lower_gated_sem(im, imtab, base, [], false);
     if (!g.ok) { return ""; }
-    return emit_module_ir_flat(im, imtab, darwin, g.cache, base);
+    return emit_module_ir_flat(im, imtab, darwin, g.cache, g.sigs);
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): string {

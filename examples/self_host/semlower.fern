@@ -1,0 +1,267 @@
+// The production consumer for the typed semantic pipeline.
+//
+// `semsource` produces an `ssasem.Func` from checked syntax and the checker's
+// types, `ssaunits` plans its counted units, and `ssarc` lowers both to the
+// stack IR the backends already emit (docs/SELFHOST-SEMANTIC-SOURCE.md). Until
+// now the only thing that ran that chain over a whole module was a test driver;
+// this is where a whole-program emit path asks for it.
+//
+// The substitution is per function against the AST lowering, which stays the
+// module's eligibility verdict: `ircore.lower_gated` still lowers and judges
+// every function, and a produced body replaces its cache entry afterwards. With
+// FERN_SEM_IR unset, what a backend receives is what it received before, op for
+// op.
+//
+// Two contracts hold the mixed module together, one per direction:
+//
+//   - An AST-lowered CALLER of a produced callee reads registries derived from
+//     that callee's SYNTAX, which disagree with the contract a produced body
+//     honours. `ssarc.caller_sigs` rewrites them from the verified result and
+//     parameter types, and the AST lowering runs with the rewritten set.
+//   - A produced CALLER of an AST-lowered callee has no such repair — the
+//     callee's parameter modes are whatever the interprocedural fixpoints
+//     concluded, not what its declaration says — so such a body keeps the AST
+//     lowering instead, and so does anything that called it. `prune` is that
+//     fixpoint.
+import "./ircore";
+import "./irlower";
+import "./parser";
+import "./semsource";
+import "./ssarc";
+import "./ssaunits";
+import "./util";
+
+// What a whole-program emit path needs back: the cache to emit from, and the
+// registry base to emit it with — `caller_sigs` rewrote rows in it, so the
+// emitter has to read the same set the lowering did.
+pub struct SemLowered {
+    ok: boolean,
+    cache: irlower.LowerResult[],
+    sigs: irlower.FnSigs,
+    // How many of mod.funcs are emitted from a produced body. 0 whenever the
+    // path is off or nothing survived, which is what the report line and the
+    // e2e gates read.
+    produced: i32,
+}
+
+// Every body the substitution is considering, declarations first (aligned with
+// mod.funcs) and then the instances the declarations asked for. `n1` is the
+// symbol a body defines and `n2` the receiver-qualified spelling a method's
+// call op names instead; `keep` is whether the body is still going to be
+// emitted, which `prune` only ever turns off.
+struct Rows {
+    body: irlower.LowerResult[],
+    n1: string[],
+    n2: string[],
+    keep: boolean[],
+}
+
+// sem_ir_on reports whether FERN_SEM_IR selects the semantic lowering. Off is
+// the AST lowering unchanged.
+//
+// An EMPTY value is off. `FERN_SEM_IR=` is how a differential harness spells
+// the control leg, and reading it as "set, therefore on" made one compare the
+// semantic path against itself — green, and measuring nothing.
+pub function sem_ir_on(): boolean {
+    match (env("FERN_SEM_IR")) {
+        Some(v) => { return v.len() > 0; },
+        None => { return false; }
+    }
+}
+
+// sem_report_on reports whether FERN_SEM_IR_REPORT asks for a line per refusal
+// on stderr, and the per-module tally. Nothing about the emitted program
+// changes with it; it only says what was produced and why the rest was not.
+pub function sem_report_on(): boolean {
+    match (env("FERN_SEM_IR_REPORT")) {
+        Some(v) => { return v.len() > 0; },
+        None => { return false; }
+    }
+}
+
+function report(what: string, why: string): i32 {
+    if (sem_report_on()) { eprint("FERN_SEM_IR: " + what + ": " + why + "\n"); }
+    return 0;
+}
+
+// declined is the cache entry for a function this boundary is not emitting:
+// `ok: false` is what the substitution reads as "keep the AST body", and
+// nothing emits from it, so the partial-op shape ircore.lower_failed_refuse
+// guards against cannot arise.
+function declined(why: string): irlower.LowerResult {
+    return irlower.LowerResult { ok: false, why: why, ops: [], n_locals: 0, n_params: 0,
+        erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
+        alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
+}
+
+// produced_body runs one function through the rest of the chain. A refusal at
+// any stage yields the sentinel, so the AST body stands.
+function produced_body(p: semsource.Produced, structs: irlower.StructTab, what: string): irlower.LowerResult {
+    // A template's erased body is not a body this boundary has: its instances
+    // are separate symbols of their own, and the erased symbol keeps the AST
+    // lowering that its own AST callers name.
+    if (p.template) { return declined("generic template"); }
+    if (!p.ok) { report(what, p.why); return declined(p.why); }
+    var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+    if (!plan.ok) { report(what, plan.why); return declined(plan.why); }
+    var r: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, structs);
+    if (!r.ok) { report(what, r.why); return declined(r.why); }
+    return r;
+}
+
+// A per-type drop helper is emitted alongside whichever bodies need it, so it
+// is a provided body during the scan rather than a call that escapes.
+function is_drop_helper(name: string): boolean {
+    return util.str_has_prefix(name, "__sem_drop_");
+}
+
+function live_reg(r: Rows): irlower.SigReg {
+    var rows: string[] = [];
+    var i: i32 = 0;
+    while (i < r.body.len()) {
+        if (r.keep[i]) {
+            rows = rows.append(r.n1[i]);
+            if (r.n2[i].len() > 0) { rows = rows.append(r.n2[i]); }
+        }
+        i = i + 1;
+    }
+    return irlower.sig_reg_of(rows);
+}
+
+// escaping_callee names the first direct call or function value in a produced
+// body that reaches a symbol no surviving produced body defines. The runtime
+// helpers and the C calls are provided bodies with a fixed ABI, so they are
+// not it.
+function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg): string {
+    for o in r.ops {
+        if (o.kind_tag == 149 || o.kind_tag == 6) {  // call_direct, const_func
+            if (!ircore.is_fern_helper(o.str) && !ircore.is_c_call(o.str)
+                && !is_drop_helper(o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
+                return o.str;
+            }
+        }
+    }
+    return "";
+}
+
+// prune turns off every produced body that calls one this boundary is not
+// emitting, to a fixpoint: dropping a body takes its symbol out of the live
+// set, so the next round reaches whatever called it. A round that turns
+// nothing off is the fixpoint, and `keep` only ever shrinks, so there is one.
+function prune(r: Rows): Rows {
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var reg: irlower.SigReg = live_reg(r);
+        var i: i32 = 0;
+        while (i < r.body.len()) {
+            if (r.keep[i]) {
+                var bad: string = escaping_callee(r.body[i], reg);
+                if (bad.len() > 0) {
+                    report(r.n1[i], "calls " + bad + ", which the AST lowering defines");
+                    r = Rows { ...r, keep: r.keep.with(i, false) };
+                    changed = true;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return r;
+}
+
+// rows_of produces every body once and records the symbols each defines.
+function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab): Rows {
+    var r: Rows = Rows { body: [], n1: [], n2: [], keep: [] };
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        var body: irlower.LowerResult = produced_body(built.decls[i], structs, fd.name);
+        var qualified: string = "";
+        if (fd.receiver_type.len() > 0) {
+            qualified = util.base_type_name(fd.receiver_type) + "." + fd.name;
+        }
+        r = Rows { body: r.body.append(body), n1: r.n1.append(fd.name),
+            n2: r.n2.append(qualified), keep: r.keep.append(body.ok) };
+        i = i + 1;
+    }
+    for p in built.instances {
+        var body: irlower.LowerResult = produced_body(p, structs, p.func.graph.name);
+        r = Rows { body: r.body.append(body), n1: r.n1.append(p.func.graph.name),
+            n2: r.n2.append(""), keep: r.keep.append(body.ok) };
+    }
+    return r;
+}
+
+// substituted replaces each surviving function's AST cache entry with its
+// produced body, then appends the instances and the per-type drop helpers,
+// which are bodies with no declaration of their own.
+function substituted(ast: irlower.LowerResult[], r: Rows, decls: i32,
+                     helpers: irlower.LowerResult[]): irlower.LowerResult[] {
+    var cache: irlower.LowerResult[] = [];
+    var i: i32 = 0;
+    while (i < ast.len()) {
+        if (r.keep[i]) { cache = cache.append(r.body[i]); } else { cache = cache.append(ast[i]); }
+        i = i + 1;
+    }
+    var instances: irlower.LowerResult[] = [];
+    var at: i32 = decls;
+    while (at < r.body.len()) {
+        if (r.keep[at]) { instances = instances.append(r.body[at]); }
+        at = at + 1;
+    }
+    cache = ssarc.merge_helpers(cache, instances);
+    return ssarc.merge_helpers(cache, helpers);
+}
+
+// lower_gated_sem is ircore.lower_gated with the semantic substitution around
+// it. `base` is the pre-`append_dyn` registry set the emitters read; the dyn
+// fold happens here so the rows caller_sigs rewrote reach the lowering and the
+// emit from one place.
+pub function lower_gated_sem(mod: parser.Module, structs: irlower.StructTab,
+                             base: irlower.FnSigs, known: string[], for_wasm: boolean): SemLowered {
+    if (!sem_ir_on()) {
+        var plain: ircore.Lowered = ircore.lower_gated(mod, structs,
+            irlower.fn_sigs_with_dyn(base, mod.trait_reqs), known, for_wasm);
+        return SemLowered { ok: plain.ok, cache: plain.cache, sigs: base, produced: 0 };
+    }
+    var built: semsource.Built = semsource.build_module(mod);
+    var r: Rows = prune(rows_of(mod, built, structs));
+    var sigs: irlower.FnSigs = base;
+    var helpers: irlower.LowerResult[] = [];
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (r.keep[i]) {
+            sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes);
+            helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    var at: i32 = 0;
+    while (at < built.instances.len()) {
+        if (r.keep[mod.funcs.len() + at]) {
+            helpers = util.append_all(helpers, ssarc.drop_helpers(built.instances[at].func));
+        }
+        at = at + 1;
+    }
+    var g: ircore.Lowered = ircore.lower_gated(mod, structs,
+        irlower.fn_sigs_with_dyn(sigs, mod.trait_reqs), known, for_wasm);
+    if (!g.ok) { return SemLowered { ok: false, cache: [], sigs: base, produced: 0 }; }
+    report("module", "produced " + util.i32_to_string(n) + " of "
+        + util.i32_to_string(mod.funcs.len()) + " declarations and "
+        + util.i32_to_string(live_count(r, mod.funcs.len())) + " of "
+        + util.i32_to_string(built.instances.len()) + " instances");
+    return SemLowered { ok: true, cache: substituted(g.cache, r, mod.funcs.len(), helpers),
+        sigs: sigs, produced: n };
+}
+
+function live_count(r: Rows, from: i32): i32 {
+    var n: i32 = 0;
+    var i: i32 = from;
+    while (i < r.body.len()) {
+        if (r.keep[i]) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}

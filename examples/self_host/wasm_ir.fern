@@ -34,6 +34,7 @@ import "./irverifygate";
 import "./asmcore";
 import "./astwalk";
 import "./ircore";
+import "./semlower";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
@@ -2665,9 +2666,12 @@ pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, i
     if (asmcore.new_state().use_ir) {
         var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
         var base: irlower.FnSigs = ircore.wp_fn_sigs(lm.funcs, stab);
-        var g: ircore.Lowered = lower_all_gated(lm, stab, base);
+        // The semantic substitution rides the same fused gate (semlower): with
+        // FERN_SEM_IR off this is lower_all_gated op for op, and the registry
+        // set that comes back is the one it went in with.
+        var g: semlower.SemLowered = semlower.lower_gated_sem(lm, stab, base, [], true);
         if (g.ok && ir_route_final(g.cache, component, io)) {
-            return emit_ir_module_mode(lm, g.cache, mode, base);
+            return emit_ir_module_mode(lm, g.cache, mode, g.sigs);
         }
     }
     ircore.eprint_ir_ineligible();
