@@ -32,6 +32,7 @@ import "./ircore";
 import "./irlower";
 import "./parser";
 import "./semsource";
+import "./ssasem";
 import "./ssarc";
 import "./ssaunits";
 import "./util";
@@ -237,13 +238,16 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
     var skip: string = sem_ir_skip();
     var r: Rows = Rows { body: [], n1: [], n2: [], keep: [], grows: [] };
     var plans: ssaunits.Plan[] = [];
+    var keys: string[] = [];
+    var funcs: ssasem.Func[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var plan: ssaunits.Plan = ssaunits.refused("not selected");
         if (selected(only, skip, fd.name)) { plan = produced_plan(built.decls[i], fd.name); }
-        if (plan.ok) { r = Rows { ...r, grows: util.append_all(r.grows, ssaunits.grow_rows(call_key(fd), built.decls[i].func, plan)) }; }
         plans = plans.append(plan);
+        keys = keys.append(call_key(fd));
+        funcs = funcs.append(built.decls[i].func);
         r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)) };
         i = i + 1;
     }
@@ -252,10 +256,12 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
         // knob reaches it through the same prefix test.
         var plan: ssaunits.Plan = ssaunits.refused("not selected");
         if (selected(only, skip, p.func.graph.name)) { plan = produced_plan(p, p.func.graph.name); }
-        if (plan.ok) { r = Rows { ...r, grows: util.append_all(r.grows, ssaunits.grow_rows(p.func.graph.name, p.func, plan)) }; }
         plans = plans.append(plan);
+        keys = keys.append(p.func.graph.name);
+        funcs = funcs.append(p.func);
         r = Rows { ...r, n1: r.n1.append(p.func.graph.name), n2: r.n2.append("") };
     }
+    r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans) };
     i = 0;
     while (i < plans.len()) {
         var body: irlower.LowerResult = produced_body(produced_at(built, mod, i), plans[i], structs, r.grows, r.n1[i]);

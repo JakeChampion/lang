@@ -255,10 +255,13 @@ function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, 
 // place when it is the box's only reader, and it cannot see the caller's
 // binding to know whether it is — so the caller says so, by holding a count
 // while the call runs. A value this step DROPS is not one the caller reads
-// again, so it needs no bracket and the callee is free to work in place.
+// again, so it needs no bracket and the callee is free to work in place; nor
+// is a buffer the plan HANDS on (ssaunits.hands) — a borrowed parameter, or
+// a field of a record, this frame reads no further.
 //
-// Conservative on purpose: no interprocedural may-grow set is consulted, since
-// the cost is one retain and one release on an argument the frame keeps.
+// Conservative on purpose for arrays: no interprocedural may-grow set is
+// consulted, since the cost is one retain and one release on an argument the
+// frame keeps.
 //
 // ARRAYS only. A text box is never updated in place — a concatenation builds
 // its own — so a bracket buys nothing there, and a `string` that is really a
@@ -282,7 +285,8 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
     while (i < ins.args.len() && i < modes.len()) {
         var v: i32 = ins.args[i];
         if (modes[i] == ssaunits.borrow_mode() && util.index_of_i32(step.drops, v) < 0) {
-            if (bracketable(f.values[v]) && util.index_of_i32(out.arrays, v) < 0) {
+            var handed: boolean = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
+            if (bracketable(f.values[v]) && !handed && util.index_of_i32(out.arrays, v) < 0) {
                 out = Held { ...out, arrays: out.arrays.append(v) };
             }
             if (record_bracketable(f.values[v])) {
@@ -535,7 +539,7 @@ function at(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.Ste
         if (step.block == block && step.point == point && step.target == target) { return step; }
     }
     // Unreachable after verification of the complete plan.
-    return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [] };
+    return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
 function block_index(f: ssa.SFunc, id: i32): i32 {

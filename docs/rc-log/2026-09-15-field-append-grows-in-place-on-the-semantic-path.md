@@ -89,11 +89,29 @@ them.
   would give. Without that, a produced admission the AST walk refuses would be
   a grow no AST caller brackets.
 
-A borrowed record passed on to another callee is bracketed at every field the
-callee may grow whether or not this frame reads it again, as a borrowed ARRAY
-already is: the frame holds no unit to move, so the chain copies once per hop
-rather than once per element. That is the transitive dying-pass closure the
-AST side has (`grow_dying_passes`) and this path does not yet.
+## The second shape: the field handed on
+
+With the append admitted, the 200-function input still copied 5.4 GB. The
+assembler's hot site is not an append of its own —
+
+```fern
+a = X86Asm { ...a, code: x86_osz(a.code, size) };
+```
+
+— it hands the field to a callee that appends to its borrowed parameter, and
+`bracketed` held a count on every borrowed array argument the frame did not
+own, a projection included, so the callee copied every time.
+
+The same admission answers it (`ssaunits.hands`): a call operand that is a
+projection whose record this frame reads no further through that field, or a
+borrowed array parameter of its own it reads no further, is handed on without
+a bracket. The buffer's only later holder is the callee's result — retained on
+identity, fresh on a realloc — and the record, or this frame's caller, releases
+the old one. The rows then close transitively (`ssaunits.grow_table`): a
+function handing a buffer unbracketed to a callee whose row says that
+position may grow carries the row at its own parameter and field, and
+`semlower` runs the closure over every produced plan before lowering any.
+That is the AST side's `grow_dying_passes`, over values.
 
 ## Measured
 
@@ -101,6 +119,7 @@ AST side has (`grow_dying_passes`) and this path does not yet.
 |---|---|---|---|
 | `emitop` reproducer, 40,000 pushes through a borrowed record | 60 ms | 11.1 s, 8.9 GB | 60 ms |
 | the same through an `own` record, two pushes per call, 20,000 calls | 60 ms | 10.3 s, 8.9 GB | 60 ms |
+| the field handed to an appending callee, twice per call, 20,000 calls | 60 ms | copies per call | 60 ms |
 
 Under `FERN_SANITIZE=1` the keeping-caller program (a caller that reads its
 record after the call, a nested chain, a loop, counted elements) answers the

@@ -439,23 +439,29 @@ function main(): i32 {
 	// push copy; the same call from an AST-lowered `keeps` — the skip leg —
 	// brackets by the regrown registry. `boxes` appends counted elements,
 	// where a buffer released under both holders reads back as a wrong name.
-	{name: "field-append", atLeast: 7, skip: "keeps,dying,boxes,emit2", src: `
+	{name: "field-append", atLeast: 9, skip: "keeps,dying,boxes,emit2,via", src: `
 struct R { ops: i32[], n: i32 }
 struct Box { name: string }
 struct Q { items: Box[], tag: string }
 function emitop(r: R, op: i32): R { return R { ...r, ops: r.ops.append(op) }; }
 function addbox(q: Q, n: string): Q { return Q { ...q, items: q.items.append(Box { name: n }) }; }
 function emit2(r: R, a: i32, b: i32): R { return emitop(emitop(r, a), b); }
+function osz(code: i32[], size: i32): i32[] {
+    if (size == 16) { return code.append(102); }
+    return code;
+}
+function via(r: R, size: i32): R { return R { ...r, ops: osz(r.ops, size) }; }
 function keeps(): i32 {
     var r: R = R { ops: [1, 2, 3], n: 7 };
     var s: R = emitop(r, 4);
     var u: R = emit2(r, 5, 6);
-    return r.ops.len() * 100 + s.ops.len() * 10 + u.ops.len();
+    var v: R = via(r, 16);
+    return r.ops.len() * 1000 + s.ops.len() * 100 + u.ops.len() * 10 + v.ops.len();
 }
 function dying(n: i32): i32 {
     var r: R = R { ops: [], n: 0 };
     var i: i32 = 0;
-    while (i < n) { r = emitop(r, i); i = i + 1; }
+    while (i < n) { r = emitop(r, i); r = via(r, 16); i = i + 1; }
     return r.ops.len();
 }
 function boxes(n: i32): i32 {
@@ -468,8 +474,8 @@ function boxes(n: i32): i32 {
     return total * 1000 + k.items.len() * 10 + q.items.len();
 }
 function main(): i32 {
-    if (keeps() != 345) { return 1; }
-    if (dying(1000) != 1000) { return 2; }
+    if (keeps() != 3454) { return 1; }
+    if (dying(1000) != 2000) { return 2; }
     if (boxes(5) != 30065) { return 3; }
     return 199;
 }

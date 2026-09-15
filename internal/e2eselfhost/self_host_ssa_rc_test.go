@@ -474,7 +474,7 @@ function main(): i32 {
     var growPlan = ssaunits.plan(growFunc, [2, 1]);
     if (!growPlan.ok) { eprint(growPlan.why); return 140; }
     if (growPlan.grows[3] != 0 || growPlan.grow_fields[3] != 0) { return 141; }
-    var growRows = ssaunits.grow_rows("grow", growFunc, growPlan);
+    var growRows = ssaunits.grow_rows("grow", growFunc, growPlan, []);
     if (growRows.len() != 1 || growRows[0].param != 0 || growRows[0].field != 0) { return 142; }
     if (ssarc.grow_mask("grow", growFunc, growRows, false) != "0;F:xs;0") { return 143; }
     var growLowered = ssarc.lower(growFunc, [2, 1], growPlan, irlower.struct_tab_empty(), []);
@@ -501,7 +501,7 @@ function main(): i32 {
     var readPlan = ssaunits.plan(readFunc, [2, 1]);
     if (!readPlan.ok) { eprint(readPlan.why); return 146; }
     if (readPlan.grows[3] != 0 - 1) { return 147; }
-    if (ssaunits.grow_rows("grow", readFunc, readPlan).len() != 0) { return 148; }
+    if (ssaunits.grow_rows("grow", readFunc, readPlan, []).len() != 0) { return 148; }
     var readLowered = ssarc.lower(readFunc, [2, 1], readPlan, irlower.struct_tab_empty(), []);
     if (!readLowered.ok) { eprint(readLowered.why); return 149; }
     var sawReadNull: boolean = false;
@@ -536,6 +536,32 @@ function main(): i32 {
     if (shareIncs != 1 || shareDecs != 1 || !sawFieldGet) { return 153; }
     var unbracketed = ssarc.lower(callFunc, [2, 1], callPlan, irlower.struct_tab_empty(), []);
     for o in unbracketed.ops { if (o.str == "__fern_arr_share_inc") { return 154; } }
+    // A field HANDED to a callee — R { ...r, xs: g(r.xs) } — is not bracketed
+    // when the record is read no further through it, and the closure gives the
+    // handing function the callee's row at that field: grow_table over both.
+    var viaGraph = ssa.SFunc { name: "via", nparams: 2, nvals: 6, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { kind_tag: ssasem.call(), result: 3, args: [2, 1], imm: 0, str: "push" },
+            ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
+            inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
+    var viaFunc = ssasem.Func { graph: viaGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
+        params: [growType, i32ty], result: growType, records: [growSchema], enums: [],
+        calls: [ssasem.Contract { name: "push", params: [f.result, i32ty], modes: [2, 1], result: f.result }] };
+    var viaPlan = ssaunits.plan(viaFunc, [2, 1]);
+    if (!viaPlan.ok) { eprint(viaPlan.why); return 155; }
+    var pushPlan = ssaunits.plan(appendFunc, [2, 1]);
+    var table = ssaunits.grow_table(["push", "via"], [appendFunc, viaFunc], [pushPlan, viaPlan]);
+    var sawPushRow: boolean = false;
+    var sawViaRow: boolean = false;
+    for row in table {
+        if (row.callee == "push" && row.param == 0 && row.field == 0 - 1) { sawPushRow = true; }
+        if (row.callee == "via" && row.param == 0 && row.field == 0) { sawViaRow = true; }
+    }
+    if (!sawPushRow || !sawViaRow || table.len() != 2) { return 156; }
+    var viaLowered = ssarc.lower(viaFunc, [2, 1], viaPlan, irlower.struct_tab_empty(), table);
+    if (!viaLowered.ok) { eprint(viaLowered.why); return 157; }
+    for o in viaLowered.ops { if (o.str == "__fern_rc_inc" || o.str == "__fern_arr_share_inc") { return 158; } }
     // One element replaced hands the receiver's unit over the same way, and
     // lowers to the count test that chooses the in-place store or the copy;
     // a scalar element retains nothing, a counted one retains the copy's

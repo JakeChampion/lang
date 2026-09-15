@@ -1622,6 +1622,11 @@ produced callee may grow: a produced one from the callee's plan
 lowered), an AST-lowered one through the may-grow registries rerun with the
 produced masks seeded in (`irlower.regrow_sigs`). The record's own count
 covers what no caller names — a record stored in a container, or bound twice.
+
+The assembler's own site is the field HANDED to a callee that appends —
+`a = X86Asm { ...a, code: x86_osz(a.code, size) }` — and the same admission
+lets the caller hand the buffer on without a bracket (`ssaunits.hands`), with
+the rows closed transitively over every produced plan (`ssaunits.grow_table`).
 Mechanism and traps: `rc-log/2026-09-15-field-append-grows-in-place-on-the-semantic-path.md`.
 
 The 40,000-push reproducer through a borrowed record: 11.1 s and 8.9 GB to
