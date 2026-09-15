@@ -1,0 +1,287 @@
+// nohup.fern — GNU-compatible `nohup`.
+//
+//   nohup COMMAND [ARG]...   run COMMAND, ignoring hangup signals
+//
+// Three redirections, each conditional on that descriptor being a terminal,
+// then an exec. That is the whole utility, and until `dup_onto` (#9134) none
+// of it could be expressed: a handle surrenders no descriptor number, so
+// there was no way to install one at 0, 1 or 2.
+//
+//   fd 0 a terminal -> /dev/null opened WRITE-ONLY, so the command can
+//                      neither read the terminal nor read the replacement
+//                      (`cat` there gets EBADF)
+//   fd 1 a terminal -> nohup.out, appended, created 0600; $HOME's copy when
+//                      the working directory's cannot be opened
+//   fd 2 a terminal -> whatever is now on fd 1
+//
+// The stderr line names the clauses that fired, joined with a literal
+// " and ", and goes to the ORIGINAL stderr — before fd 2 is replaced. There
+// is no separate stderr clause when stdout is a terminal too: stderr follows
+// stdout into nohup.out and only the append is announced.
+//
+// Measured against coreutils 9.4, which is the oracle the corpus compares
+// against. Its stderr clause is shorter than 9.10's — `redirecting stderr to
+// stdout` where the newer one spells both streams out. docs/COREUTILS.md
+// carries the difference.
+//
+// Options are honoured only BEFORE the command, which is gnulib's
+// stop-at-the-first-operand scan: `nohup echo --help` runs `echo --help`.
+// Usage errors exit 125, a command found but not invocable 126, one not found
+// 127; otherwise the command's own status passes through.
+import "./lib/gnu";
+
+// SIGHUP, the signal the utility is named for. Ignoring it is inherited
+// across the exec, which is what makes the command survive the terminal.
+function sig_hup(): i32 {
+  return 1;
+}
+
+// The status a failure of nohup ITSELF takes, as its own --help documents.
+function status_canceled(): i32 {
+  return 125;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " COMMAND [ARG]...\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "Run COMMAND, ignoring hangup signals.\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "If standard input is a terminal, redirect it from an unreadable file.\n";
+  out = out + "If standard output is a terminal, append output to 'nohup.out' if possible,\n";
+  out = out + "'$HOME/nohup.out' otherwise.\n";
+  out = out + "If standard error is a terminal, redirect it to standard output.\n";
+  out = out + "To save output to FILE, use '" + gnu.prog() + " COMMAND > FILE'.\n";
+  out = out + "\n";
+  out = out + "Exit status:\n";
+  out = out + "  125  if the " + gnu.prog() + " command itself fails\n";
+  out = out + "  126  if COMMAND is found but cannot be invoked\n";
+  out = out + "  127  if COMMAND cannot be found\n";
+  out = out + "  -    the exit status of COMMAND otherwise\n";
+  return out;
+}
+
+// `open_nohup_out(path)` — nohup.out opened O_WRONLY|O_CREAT|O_APPEND at
+// mode 0600.
+//
+// No `open_*` primitive takes a creation mode: `open_appender`'s is 0666, and
+// the kernel applies the caller's umask to whichever mode it is handed. So
+// widen the umask by the six bits 0600 does NOT name, which turns
+// `0666 & ~mask` into `0600 & ~umask` — the mode GNU asks for, under any
+// umask the caller had. The checker's own note on `umask` names this use: a
+// caller applying a mode verbatim clears the mask and puts it straight back.
+//
+// A mask only affects a CREATION, so an existing nohup.out keeps its own mode
+// — 0644 from an earlier `touch`, say, which is what GNU leaves too.
+function open_nohup_out(path: string): Result[Writer, IoError] {
+  var mask: i32 = umask(0);
+  // 54 is 0066: group and other read/write, the bits 0600 withholds.
+  umask(mask | 54);
+  var r: Result[Writer, IoError] = open_appender(path);
+  umask(mask);
+  return r;
+}
+
+// `redirect(w, fd, what)` — install `w` at `fd` and drop the handle's own
+// copy, which is the pair GNU makes: dup2 leaves BOTH descriptors open, and
+// the spare would otherwise be inherited by the command.
+//
+// Closing is safe here for the reason the method's own comment gives: the
+// descriptor being replaced is a terminal and so occupied when the file was
+// opened, which means the open cannot have returned that number.
+//
+// The failure arm is not GNU's wording, because there is nothing to copy: a
+// dup3 onto a descriptor this process holds open, from one it has just
+// opened, has no reachable errno. It is a nohup-itself failure, so it takes
+// 125. docs/COREUTILS.md records that the line is ours.
+function redirect(w: Writer, fd: i32, what: string): void {
+  match (w.dup_onto(fd)) {
+    None => {},
+    Some(e) => {
+      gnu.error("failed to redirect standard " + what + ": " + gnu.io_error_text(e));
+      exit(status_canceled());
+    }
+  }
+  w.close();
+}
+
+// `ignore_input()` — fd 0 from /dev/null, opened WRITE-only.
+//
+// That is what makes "ignoring input" literal rather than an empty read: a
+// command that reads stdin gets EBADF, not end-of-input. Measured — under
+// `nohup sh -c 'cat'` with a terminal on stdin, `readlink /proc/self/fd/0`
+// says /dev/null and `cat` fails with `Bad file descriptor`, while
+// `echo hi 1>&0` from the same shell succeeds.
+//
+// The open cannot fail in practice and no measurement could make it, so the
+// diagnostic shape is borrowed from the nohup.out failure, which IS measured.
+function ignore_input(): void {
+  match (open_writer("/dev/null")) {
+    Ok(w) => {
+      redirect(w, 0, "input");
+    },
+    Err(e) => {
+      gnu.error("failed to open " + gnu.quote("/dev/null") + ": " + gnu.io_error_text(e));
+      exit(status_canceled());
+    }
+  }
+}
+
+// The name the append is announced for: `nohup.out` for the working
+// directory's copy, the full path for $HOME's. A struct rather than a bare
+// string because it is the only thing `append_output` has to report and a
+// named field says which name it is.
+struct Appended { name: string }
+
+// `append_output()` — fd 1 onto nohup.out, the working directory's copy
+// first and `$HOME`'s after.
+//
+// The FIRST failure is not reported when the fallback saves it — measured:
+// with a directory in the way of ./nohup.out and a writable $HOME, the only
+// line is the append of the $HOME path. Both failing prints both lines, in
+// that order, and exits 125; an unset $HOME prints the first alone.
+//
+// The announced name differs between the two: the bare `nohup.out` for the
+// working directory's, the FULL path for $HOME's.
+function append_output(): Appended {
+  match (open_nohup_out("nohup.out")) {
+    Ok(w) => {
+      redirect(w, 1, "output");
+      return Appended { name: "nohup.out" };
+    },
+    Err(e) => {
+      var first: string = "failed to open " + gnu.quote("nohup.out") + ": " + gnu.io_error_text(e);
+      match (env("HOME")) {
+        None => {
+          gnu.error(first);
+          exit(status_canceled());
+        },
+        Some(home) => {
+          // An EMPTY $HOME is not the same as an unset one: the fallback
+          // path is then the bare `nohup.out` (gnulib's file_name_concat
+          // rule, which `join_path` follows), so the second attempt is the
+          // same file as the first and both failures name it.
+          var path: string = gnu.join_path(home, "nohup.out");
+          match (open_nohup_out(path)) {
+            Ok(w2) => {
+              redirect(w2, 1, "output");
+              return Appended { name: path };
+            },
+            Err(e2) => {
+              gnu.error(first);
+              gnu.error("failed to open " + gnu.quote(path) + ": " + gnu.io_error_text(e2));
+              exit(status_canceled());
+            }
+          }
+        }
+      }
+    }
+  }
+  // Unreachable: every arm above returns or exits. The checker needs a
+  // value here all the same.
+  return Appended { name: "" };
+}
+
+// `redirect_error()` — fd 2 onto whatever fd 1 now is.
+//
+// `stdout()` is the handle for fd 1, which is the descriptor the append (if
+// there was one) has already replaced — so this is the same dup either way,
+// and stderr follows stdout into nohup.out without knowing that it did.
+function redirect_error(): void {
+  match (stdout().dup_onto(2)) {
+    None => {},
+    Some(e) => {
+      gnu.error("failed to redirect standard error: " + gnu.io_error_text(e));
+      exit(status_canceled());
+    }
+  }
+}
+
+// `announce(clauses)` — the one stderr line, or nothing when no descriptor
+// was a terminal.
+function announce(clauses: string[]): void {
+  if (clauses.len() == 0) {
+    return;
+  }
+  var msg: string = clauses[0];
+  var i: i32 = 1;
+  while (i < clauses.len()) {
+    msg = msg + " and " + clauses[i];
+    i = i + 1;
+  }
+  gnu.error(msg);
+}
+
+// `fail_exec(cmd, errno)` — the diagnostic and status for a command that
+// could not be run: 127 when nothing of that name was found, 126 when
+// something was and could not be invoked. The wording is nohup's own —
+// `failed to run command 'X'` where `nice` prints the name alone.
+function fail_exec(cmd: string, errno: i32): void {
+  gnu.error("failed to run command " + gnu.quote(cmd) + ": " + gnu.exec_errno_text(errno));
+  if (errno == 2) {
+    exit(127);
+  }
+  exit(126);
+}
+
+function main(): i32 {
+  // in_order, so the scan stops at the first operand: `nohup echo --help`
+  // runs echo. There are no options of nohup's own beyond the two standard
+  // ones the Getopt handles itself.
+  var none: gnu.Opt[] = [];
+  var g: gnu.Getopt = gnu.getopt_new(args(), none, "nohup", help_text(), status_canceled()).in_order();
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(_) => {},
+      None => {
+        break;
+      }
+    }
+  }
+  var rest: string[] = g.operands();
+  if (rest.len() == 0) {
+    gnu.die_usage("missing operand", status_canceled());
+  }
+
+  // All three answers are taken BEFORE anything is redirected: each
+  // redirection changes what the next question would be answered about.
+  var tty_in: boolean = isatty(0);
+  var tty_out: boolean = isatty(1);
+  var tty_err: boolean = isatty(2);
+
+  var ri: i32 = signal_ignore(sig_hup());
+  if (ri < 0) {
+    gnu.error("failed to set signal action for signal " + sig_hup().to_string() + ": " + gnu.exec_errno_text(0 - ri));
+    exit(status_canceled());
+  }
+
+  var clauses: string[] = [];
+  if (tty_in) {
+    ignore_input();
+    clauses = clauses.append("ignoring input");
+  }
+  if (tty_out) {
+    var a: Appended = append_output();
+    clauses = clauses.append("appending output to " + gnu.quote(a.name));
+  } else {
+    if (tty_err) {
+      clauses = clauses.append("redirecting stderr to stdout");
+    }
+  }
+
+  // Before fd 2 is replaced, so the line reaches the terminal the caller is
+  // looking at rather than the file the command will write to.
+  announce(clauses);
+  if (tty_err) {
+    redirect_error();
+  }
+
+  // Only returns when the exec failed.
+  fail_exec(rest[0], gnu.exec_command(rest[0], rest, environ()));
+  return 126;
+}

@@ -872,6 +872,24 @@ pre-pass and getopt_long's prefix match both cost nothing next to the exec.
 | `shred` | shred -n 0 -u 200 small files | 349.06 ± 17.16 | 578.00 ± 74.66 | 567.56 ± 23.96 | 1.66× | 1.63× |
 | `shred` | shred -s 4096 of a 4MiB file | 7.70 ± 2.20 | 8.38 ± 1.67 | 9.07 ± 1.20 | 1.09× | 1.18× |
 
+**nohup, 2026-09-15**, the same host, its workloads file run alone (mean ±
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `nohup` | nohup a command | 1.27 ± 0.21 | 2.07 ± 0.78 | 3.02 ± 0.39 | 1.63× | 2.37× |
+| `nohup` | nohup a command with arguments | 1.22 ± 0.24 | 2.09 ± 0.67 | 3.13 ± 2.18 | 1.70× | 2.55× |
+| `nohup` | nohup a command not found | 0.35 ± 0.18 | 1.17 ± 0.27 | 2.05 ± 0.21 | 3.31× | 5.78× |
+| `nohup` | nohup no operand | 0.38 ± 0.16 | 1.28 ± 0.31 | 2.22 ± 0.28 | 3.42× | 5.90× |
+| `nohup` | nohup a status passed through | 1.28 ± 0.25 | 2.03 ± 0.32 | 2.94 ± 0.39 | 1.58× | 2.29× |
+
+None of the redirections fire in any of those rows, and no benchmark can make
+them: every one needs a TERMINAL on the descriptor, and hyperfine hands the
+child pipes. What the rows measure is the part a shell script actually pays —
+startup, three isatty questions, a signal disposition and the exec — and the
+two that never exec (a name off PATH, no operand) are where the startup lead
+shows undiluted, at 3.3× and 3.4×.
+
 **timeout, 2026-09-15**, the same host, its workloads file run alone (mean ±
 σ, ≥20 runs; ratios above 1 mean Fern is faster).
 
@@ -1862,6 +1880,23 @@ errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
 
+**`nohup`'s stderr clause is the 9.4 wording, and 9.10 changed it.** The
+clause for a terminal on stderr alone is `redirecting stderr to stdout` here;
+coreutils 9.10 spells both streams out, `redirecting standard error to
+standard output`. The corpus compares against the installed binary and that
+is 9.4, so 9.4 is what the implementation emits. This is the one place a
+coreutils version bump under the oracle would turn a passing case red, and
+the fix then is the new string rather than an exemption.
+
+**`nohup` has one diagnostic GNU has no counterpart for**: a dup3 onto fds 0,
+1 or 2 that fails reports `failed to redirect standard input` / `output` /
+`error` and exits 125. Nothing can measure what GNU says there, because the
+call has no reachable errno — the source descriptor was opened a line earlier
+and the destination is one this process holds open — so rather than guess at
+GNU's wording the line is plainly ours, on a path no corpus case reaches. The
+statuses around it are measured: 125 is what nohup's own `--help` documents
+for a failure of nohup itself.
+
 **What a `shred` corpus can compare, and what nothing can.** GNU's pass
 SCHEDULE is drawn at random: two runs of `-n 10` over identical files disagree
 on both the order of the patterns and the SET of them, so `-v` output past the
@@ -2746,7 +2781,10 @@ groups are the order of work. Each sub-issue names its group.
   section above and the two divergences; the default mode's process group
   is the reason it waited, and the deadline being a forked child rather
   than an alarm is the reason the second primitive exists)
-  `nohup` `kill` `stdbuf` `chroot` (signals, exec), `dd`
+  `nohup` (done, on `dup_onto` — the handle that installs itself at a
+  descriptor, which is what all three of its redirections are; the message
+  wording it emits is 9.4's, see the divergence below) `kill` `stdbuf`
+  `chroot` (signals, exec), `dd`
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
   families it does NOT have are in the divergences above, each with its
