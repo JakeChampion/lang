@@ -1154,6 +1154,7 @@ func New() *Interp {
 	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
 	i.Builtins["signal_send"] = &Builtin{Fn: builtinSignalSend}
+	i.Builtins["set_process_group"] = &Builtin{Fn: builtinSetProcessGroup}
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
@@ -3166,6 +3167,26 @@ func builtinSignalSend(_ *Interp, args []Value) (Value, error) {
 	// spelling of `pid` would put a string in the error that the caller's
 	// own diagnostic must not use.
 	return ioResult("", syscall.Kill(int(pid), syscall.Signal(sig))), nil
+}
+
+// builtinSetProcessGroup is setpgid(2).
+//
+// Both zeroes are the syscall's own conventions, kept rather than
+// reinvented: pid 0 is the caller and pgid 0 is "the pid's own value", so
+// set_process_group(0, 0) is a process putting itself in a fresh group.
+func builtinSetProcessGroup(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("set_process_group: expected 2 args, got %d", len(args))
+	}
+	pid, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("set_process_group: expected number pid, got %T", args[0])
+	}
+	pgid, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("set_process_group: expected number pgid, got %T", args[1])
+	}
+	return ioResult("", syscall.Setpgid(int(pid), int(pgid))), nil
 }
 
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.

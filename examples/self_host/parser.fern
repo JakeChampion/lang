@@ -8121,6 +8121,10 @@ pub function builtin_function_names(): string[] {
         // The whole of kill(2): deliver `sig` to `pid`, or to the process
         // group a non-positive `pid` names.
         "signal_send",
+        // setpgid(2): put `pid` in the process group `pgid`. Both zeroes
+        // carry the syscall's own meanings, so `set_process_group(0, 0)` is
+        // a process moving into a fresh group of its own.
+        "set_process_group",
         // This process's scheduling priority, read and written. The number
         // is the NICE value: -20 is the most favourable and 19 the least.
         "priority", "set_priority",

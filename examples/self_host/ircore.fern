@@ -947,7 +947,7 @@ pub function all_runtime_need_roots(): string[] {
         "isatty", "window_size", "signal_ignore", "signal_default",
         // The liveness of one pid, delivering a signal to one, and this
         // process's descriptor ceiling.
-        "process_alive", "signal_send", "rlimit_nofile",
+        "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
         // And how it competes for the CPU.
         "priority", "set_priority",
         // sockets + readiness (the edge-handler serve loop):

@@ -74,13 +74,34 @@ trait name must be resolvable without an import and Fern has no prelude — see
 
 ## The self-host
 
-The self-host parses `@try` and carries it on `EnumDecl.try_marker`, so a marked
-program round-trips and reports no diagnostic. Its `?` **lowering** is still
-Option/Result-only: a marked enum reaching `lower_try` bails, which under
-`FERN_STRICT_IR=1` names the bail site (`did not lower: unary \`try_\``) and
-emits nothing. That is a capability gap, not a miscompile — generalising
-`lower_try`, `try_opt_type` and the `TyOption` / `TyResult` constructors in
-`asmcore.fern` is the next slice.
+The self-host parses `@try` and carries it on `EnumDecl.try_marker`, enforces
+the same E078 shape rule, and lowers `?` on a marked enum through the IR path on
+all three backends.
+
+Where native reads `checker.Info.TryShapes`, the self-host has no checker `Info`
+at lowering time, so `irlower.try_enum_shape` re-derives the same answer from
+the `StructTab`: exactly two variants on the `ehead`/`enext` chain (which runs in
+declaration order, so "variant 0" is meaningful), the first carrying one `__ev`
+payload, the second zero or one. Admission is therefore by **shape, not by
+marker** — native has already enforced the opt-in, and the self-host compiles
+native-valid programs.
+
+The generated code differs from the Option/Result path because the value
+representation does. An Option / Result box is `[tag@0, payload@8]`, so its
+discriminant is an integer compare and its payload an offset-8 read
+(`opt_tag` / `opt_payload`). A marked enum's box is an ordinary variant box
+carrying its shape at offset 0, so `?` lowers to the ops a `match` arm already
+uses on the same value: `variant_is` for the discriminant, `struct_get` at the
+field's own width for the payload, and `struct_make` with zero fields to build a
+payloadless failure. Reading the payload the same way `match` does is what makes
+an erased generic (`Maybe[T]` at two instantiations in one module) and an f32
+payload come out right.
+
+There is one gap left, and it is in the self-host CHECKER, not the lowering: its
+E042 subset only flags a `?` whose operand is a known scalar primitive, so `?`
+on an UNMARKED user enum is accepted where native reports E042. That
+conservatism predates the marker and covers every non-primitive operand — see
+#9331.
 
 ## Diagnostics
 

@@ -130,7 +130,8 @@ var BuiltinCaps = map[string]string{
 	"process_alive": "subprocess",
 	// Reaching outside this process to ACT on it, which is strictly more
 	// than asking whether it is there.
-	"signal_send": "subprocess",
+	"signal_send":       "subprocess",
+	"set_process_group": "subprocess",
 
 	"now_unix_ms":         "time",
 	"now_ns":              "time",

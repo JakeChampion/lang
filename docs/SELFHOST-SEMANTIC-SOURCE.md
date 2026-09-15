@@ -1320,6 +1320,77 @@ executable fixture pin a 64-bit and an f64 element, each beside a narrow one
 and the f64 beside a string so the drop walk crosses the same box, balanced on
 every target.
 
+### What stops the compiler compiling ITSELF through this path (#9328)
+
+The corpus agreeing 496 times is not the same as a program agreeing. The
+self-hosted compiler compiles itself through the production consumer — exit 0,
+354 s against the AST path's 50 s, **7,490 of 8,206 declarations and 63 of 63
+instances produced**, a 12.76 MB binary against the AST path's 10.26 MB — and
+the binary it produces **segfaults on anything that reads a file**. Its no-file
+modes (usage, `-targets`) work.
+
+That is the shape `docs/TEST-GATES.md` warns about, arriving on schedule: a
+green corpus and a stable miscompile. What found it was not a suite; it was
+running the thing.
+
+`FERN_SEM_IR_ONLY` and `FERN_SEM_IR_SKIP` — prefix lists, the second an
+exclusion — are the bisect knob. Halving with ONLY isolates nothing here,
+because either half prunes the call between a produced caller and a produced
+callee; removing one prefix at a time from the whole set does. Against a
+lexer-plus-parser probe rather than the whole compiler, which takes the loop
+from six minutes to ten seconds:
+
+- The segfault is heap-layout sensitive — 36 different single-function
+  exclusions each "fix" it — so it is a poor oracle. `FERN_SANITIZE=1` at
+  compile time gives a deterministic one: **use-after-free (touched a
+  quarantined block)**, where the AST build of the same program reports only
+  the known leak.
+- Under that oracle, skipping `lexer__` is the ONLY module-level exclusion that
+  clears it, and within the lexer the set is `scan_number` and the chain it
+  calls. Its `slice_unchecked(l.src, begin, l.i)` is the view.
+
+The cause is that a callee lent a view may hand the BOX back. A view's box
+carries the immortal rc sentinel, so the retain the callee owes for returning a
+borrowed reference is a **no-op**, and the produced caller then accounts the
+result a counted unit of its own — the frame that sliced the view and the
+holder of the result release one box twice. Four lines reproduce it:
+
+```fern
+function keep(text: string): string { return text; }
+function scan(src: string): string {
+    var v: str = slice_unchecked(src, 0, 3);
+    return keep(v);
+}
+function main(): i32 { return scan("12345 abc").len(); }
+```
+
+Three shapes separate it, and the separation is the finding: a callee returning
+a **scalar** is clean, a callee returning a **fresh** string is clean, and only
+the one that hands the box back faults. The box's IDENTITY is the whole of it —
+not the release helper, and not the signature.
+
+**Three fixes were tried and reverted**, each ruling something out:
+
+- *Refuse `lend`'s retag where the callee's result is text.* Closes the
+  reproducer, wrong rule: the danger is a callee that hands the value back,
+  which is a property of the body, and the executable fixture's own
+  `lent_views` returns text without doing so — the refusal took it out of
+  production. It does not close the class either; the lexer probe still faults.
+- *Use `__fern_str_view_free` for every string release.* Correct as a superset
+  and fixes nothing: the fault is a box freed TWICE, which the view-aware
+  helper does as readily as the plain one.
+- *Copy a text result of a call that lent a view* (`v + ""`). Verified to fire,
+  and it makes the fault worse — the un-copied call result is still a value of
+  its own, so the plan drops it, which is the second release. Adding an owner
+  cannot fix an over-count.
+
+What is left is the only thing that can work: the result of a call that was
+lent a view **is not a unit of this frame's own**, and that has to reach
+`ssaunits.plan`, where units are decided. The AST lowering's own answer is the
+one to port — `irlower.LowerState.str_view_local` plus `str_identity_src`,
+whose comment says such a result "is releasable only behind a guard that the
+two are different pointers" (#9328).
+
 ### The leaves that are left, by measured size
 
 | leaf | functions refused |

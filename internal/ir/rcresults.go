@@ -221,15 +221,16 @@ var rcResultOwned = map[string]bool{
 	// native-only (E066 refuses them on the wasm worlds), so they are
 	// classified there under the builtin name, which is why they are
 	// spelled the builtin's way here too.
-	"access":          true,
-	"write_file_exec": true,
-	"chmod":           true,
-	"mknod":           true,
-	"chown_at":        true,
-	"statfs":          true,
-	"chdir":           true,
-	"window_size":     true,
-	"signal_send":     true,
+	"access":            true,
+	"write_file_exec":   true,
+	"chmod":             true,
+	"mknod":             true,
+	"chown_at":          true,
+	"statfs":            true,
+	"chdir":             true,
+	"window_size":       true,
+	"signal_send":       true,
+	"set_process_group": true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -326,6 +327,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"rename":                     true,
 	"chmod":                      true,
 	"signal_send":                true,
+	"set_process_group":          true,
 	"set_file_times":             true,
 	"truncate":                   true,
 	"mknod":                      true,

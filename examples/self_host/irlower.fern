@@ -4743,6 +4743,57 @@ pub function decl_is_enum(structs: StructTab, name: string): boolean {
     return stab_enum_first(structs, name) >= 0;
 }
 
+// try_enum_shape describes a two-variant enum for the `?` operator: the success
+// variant's payload type, and whether the failure variant carries one. The
+// third result is false for anything that is not the shape `?` lowers against —
+// exactly two variants, variant 0 with one payload, variant 1 with zero or one.
+//
+// Native has already enforced the `@try` marker AND this same shape (E078)
+// before any of this runs, so this side re-derives only what the lowering
+// needs; it does not re-police the opt-in. That is the standing contract — the
+// self-host compiles native-valid programs.
+//
+// The variant decls chain in declaration order (StructTab.enext is ascending),
+// which is what makes "variant 0" and "variant 1" meaningful here and what the
+// tag test below relies on: success is tag 0, failure is tag 1. See docs/TRY.md.
+pub function try_enum_shape(structs: StructTab, ename: string): (string, boolean, boolean) {
+    if (ename.len() == 0) { return ("", false, false); }
+    var i0: i32 = stab_enum_first(structs, ename);
+    if (i0 < 0) { return ("", false, false); }
+    var i1: i32 = stab_enum_next(structs, i0, ename);
+    if (i1 < 0) { return ("", false, false); }
+    if (stab_enum_next(structs, i1, ename) >= 0) { return ("", false, false); }
+    var okf: parser.StructFieldDecl[] = structs.decls[i0].fields;
+    if (okf.len() != 1) { return ("", false, false); }
+    // The success payload must be an enum variant's synthetic `__ev` field, not
+    // a union member's own first field: the lowering reads it with struct_get(0)
+    // and a union member's box IS the value, so admitting one would read the
+    // value's first word as the payload.
+    if (okf[0].name != "__ev") { return ("", false, false); }
+    var failn: i32 = structs.decls[i1].fields.len();
+    if (failn > 1) { return ("", false, false); }
+    if (failn == 1 && structs.decls[i1].fields[0].name != "__ev") { return ("", false, false); }
+    return (okf[0].type_name, failn == 1, true);
+}
+
+// try_enum_variants returns a `?`-shaped enum's success and failure variant
+// names together with their decl indices, or ("", "", -1, -1). The indices are
+// what op_struct_make needs to resolve field widths when two enums share a
+// variant name. Shape agreement with try_enum_shape is by construction — both
+// walk the same ehead/enext chain in declaration order.
+pub function try_enum_variants(structs: StructTab, ename: string): (string, string, i32, i32) {
+    if (!try_enum_ok(structs, ename)) { return ("", "", 0 - 1, 0 - 1); }
+    var i0: i32 = stab_enum_first(structs, ename);
+    var i1: i32 = stab_enum_next(structs, i0, ename);
+    return (structs.decls[i0].name, structs.decls[i1].name, i0, i1);
+}
+
+// try_enum_ok reports whether `t` names an enum `?` can lower against.
+pub function try_enum_ok(structs: StructTab, t: string): boolean {
+    var (_p, _f, ok) = try_enum_shape(structs, t);
+    return ok;
+}
+
 pub function decl_field_index(structs: StructTab, struct_name: string, field: string): i32 {
     var si: i32 = stab_first(structs, struct_name);
     if (si < 0) { return 0 - 1; }
@@ -7855,17 +7906,17 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
             // string view is `slice_unchecked(s, a, b)`, tracked below.
             return false;
         },
-        // `inner?` unwraps an Option[string]/Result[string, E] to its string
-        // payload, so `var s = f()?` str-tracks `s` (else `s.len()` mis-
-        // dispatches to arr_len, reading 0). The payload type comes from the
-        // same try_opt_type the width / lowering paths use — including the
-        // erased-generic "Option[$arg<i>]" resolution — so a generic
-        // `some1[T](x: T): Option[T]` unwrapped at a string argument tracks too.
+        // `inner?` unwraps an Option[string] / Result[string, E] — or an `@try`
+        // enum whose success payload is a string — to that string, so
+        // `var s = f()?` str-tracks `s` (else `s.len()` mis-dispatches to
+        // arr_len, reading 0). The payload comes from the same
+        // try_operand_type / try_success_type pair the width, slot-typing and
+        // lowering paths use — including the erased-generic "Option[$arg<i>]"
+        // resolution — so a generic `some1[T](x: T): Option[T]` unwrapped at a
+        // string argument tracks too.
         ast.ExprUnary(tu) => {
             if (tu.op == "try_") {
-                var tot: string = try_opt_type(tu.operand, s);
-                if (tot.len() >= 8 && slice_unchecked(tot, 0, 7) == "Option[") { return opt_payload_type(tot, "Some") == "string"; }
-                if (tot.len() >= 8 && slice_unchecked(tot, 0, 7) == "Result[") { return opt_payload_type(tot, "Ok") == "string"; }
+                if (try_success_type(try_operand_type(tu.operand, s), s.frame.structs) == "string") { return true; }
             }
             // A composite `neg` overload returning string — only the checker's
             // tag can see it (#5986), matching the ExprBinary arm above.
@@ -10328,12 +10379,11 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
         ast.ExprUnary(u) => {
             if (u.op == "-") { return neg_width(u, s); }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
-            // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
+            // `inner?` is i64-width when the unwrapped payload is i64/u64, so an
             // unannotated `var x = inner?` width-tracks i64 (StmtVar routes width-64
             // inits through lower_i64, where try_ now lowers).
             if (u.op == "try_") {
-                var ot: string = try_opt_type(u.operand, s);
-                var pt: string = opt_payload_type(ot, "Ok");
+                var pt: string = try_success_type(try_operand_type(u.operand, s), s.frame.structs);
                 if (pt == "i64" || pt == "u64") { return 64; }
                 return 32;
             }
@@ -12747,6 +12797,7 @@ function is_os_query_call(name: string, argc: i32): boolean {
     if (name == "uname_field") { return argc == 1; }
     if (name == "process_alive") { return argc == 1; }
     if (name == "signal_send") { return argc == 2; }
+    if (name == "set_process_group") { return argc == 2; }
     if (name == "rlimit_nofile") { return argc == 0; }
     if (name == "priority") { return argc == 0; }
     if (name == "set_priority") { return argc == 1; }
@@ -12781,6 +12832,9 @@ function is_os_query_call(name: string, argc: i32): boolean {
 //   signal_send(pid,sig)→ op_signal_send → Result[void, IoError], the whole
 //                         of kill(2); opt_ret_type resolves the Result the way
 //                         it does for access.
+//   set_process_group(pid, pgid)
+//                       → op_set_process_group → Result[void, IoError],
+//                         setpgid(2), resolved the same way.
 function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     if (cid.name == "geteuid") { return s.emit(ir.op_geteuid()); }
     if (cid.name == "getegid") { return s.emit(ir.op_getegid()); }
@@ -12803,6 +12857,7 @@ function lower_call_os_query(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState)
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     if (cid.name == "signal_send") { return a1.emit(ir.op_signal_send()); }
+    if (cid.name == "set_process_group") { return a1.emit(ir.op_set_process_group()); }
     return a1.emit(ir.op_access());
 }
 
@@ -17573,11 +17628,24 @@ function lower_expr_dispatch(e: ast.Expr, s: LowerState): LowerState {
 // they do on an explicit return. Out of line so the ExprUnary arm stays small
 // (#2720 guard).
 function lower_try(inner: ast.Expr, s: LowerState): LowerState {
-    var ot: string = try_opt_type(inner, s);
-    if (ot.len() < 8) { return s.fail(); }
-    var is_result: boolean = slice_unchecked(ot, 0, 7) == "Result[";
-    var is_option: boolean = slice_unchecked(ot, 0, 7) == "Option[";
-    if (!is_result && !is_option) { return s.fail(); }
+    var ot: string = try_operand_type(inner, s);
+    if (ot.len() == 0) { return s.fail(); }
+    // A marked enum is named bare, so the bracketed-prefix tests have to run
+    // behind a length guard rather than in front of one.
+    var bracketed: boolean = ot.len() >= 8;
+    var is_result: boolean = bracketed && slice_unchecked(ot, 0, 7) == "Result[";
+    var is_option: boolean = bracketed && slice_unchecked(ot, 0, 7) == "Option[";
+    // An `@try` enum (docs/TRY.md). Which of the two lowerings it takes follows
+    // from its failure variant's SHAPE, exactly as native's TryKind does:
+    // payloadless means build a fresh tag-1 value, a payload means forward the
+    // source box. Option and Result keep their own fast paths above; this arm
+    // is what makes the operator work for any marked enum.
+    var (_mk_pt, mk_forward, mk_ok) = try_enum_shape(s.frame.structs, ot);
+    if (!is_result && !is_option && !mk_ok) { return s.fail(); }
+    var (_mk_ok_name, mk_fail_name, mk_ok_idx, mk_fail_idx) = try_enum_variants(s.frame.structs, ot);
+    if (mk_ok) {
+        if (!decl_at_is_leaksafe(s.frame.structs, mk_ok_idx) || !decl_at_is_leaksafe(s.frame.structs, mk_fail_idx)) { return s.fail(); }
+    }
     // Success payload type. Every payload shape now lowers; what varies is HOW
     // the value is read out of the box, and what types the `var x = inner?`
     // binding's slot so a later `x.field` / `x.len()` / `x.N` / `match (x)`
@@ -17613,7 +17681,7 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     // POINTER whatever its own payload width, so `Option[i64]` needs no width
     // tweak. (#3802 struct, #3810 string + enum, #3824 tuple, #3457-endgame
     // Option/Result.)
-    var pt: string = opt_payload_type(ot, "Ok");
+    var pt: string = try_success_type(ot, s.frame.structs);
     var pt_is_i64: boolean = pt == "i64" || pt == "u64";
     var pt_is_struct: boolean = decl_is_struct(s.frame.structs, pt) && decl_is_leaksafe(s.frame.structs, pt);
     var pt_is_enum: boolean = is_enum_like_name(pt, s.frame.structs);
@@ -17628,10 +17696,19 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     if (!ts.ok) { return ts; }
     ts = ts.emit(ir.op_store_local(tslot));
     // if (tag == failure) { early-return the failure box }
+    //
+    // An Option / Result box is `[tag@0, payload@8]`, so its discriminant is an
+    // integer compare against 1. A marked enum's box is an ordinary variant box
+    // carrying its SHAPE at offset 0, so the same question is op_variant_is on
+    // the failure variant's name — the discriminant `match` already uses.
     ts = ts.emit(ir.op_load_local(tslot));
-    ts = ts.emit(ir.op_opt_tag());
-    ts = ts.emit(ir.op_const_i32(1));            // failure variant idx = 1 (both Option + Result)
-    ts = ts.emit(ir.op_bin("eq", 0, false));
+    if (mk_ok) {
+        ts = ts.emit(ir.op_variant_is(mk_fail_name));
+    } else {
+        ts = ts.emit(ir.op_opt_tag());
+        ts = ts.emit(ir.op_const_i32(1));        // failure variant idx = 1 (both Option + Result)
+        ts = ts.emit(ir.op_bin("eq", 0, false));
+    }
     ts = ts.emit(ir.op_if(0));
     // #4334: the `?` failure path is an early return, so — exactly like a
     // rewritten StmtReturn — it must run the parse-level defer pass's cleanup
@@ -17685,7 +17762,20 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
         },
         _ => {}
     }
-    if (is_result) {
+    if (mk_ok) {
+        // A marked enum's failure path mirrors Result/Option, chosen by the
+        // failure variant's SHAPE (native's TryKind): a payload-carrying failure
+        // FORWARDS the source box — the checker has already pinned the enclosing
+        // return to the same enum, so its tag and payload already satisfy it —
+        // and a payloadless one builds a fresh 0-field variant box. There is no
+        // `From` conversion arm: `?` on a marked enum requires the identical
+        // enum on both sides, so there is no error type to convert between.
+        if (mk_forward) {
+            ts = ts.emit(ir.op_load_local(tslot));
+        } else {
+            ts = ts.emit(ir.op_struct_make(mk_fail_name, 0, mk_fail_idx));
+        }
+    } else if (is_result) {
         // From-converting `?` (#2697): when the source error type E1 differs
         // from the enclosing function's return error type E2, the failure path
         // can't forward the source Err box unchanged — it carries an E1 payload
@@ -17750,7 +17840,15 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     // i64/u64 payload uses the 8-byte width-64 read (mirrors the match path's
     // op_opt_payload_w(64, true)).
     ts = ts.emit(ir.op_load_local(tslot));
-    if (pt_is_i64) { ts = ts.emit(ir.op_opt_payload_w(64, true)); }
+    if (mk_ok) {
+        // A marked enum's payload is the success variant's `__ev` field 0, read
+        // exactly as a `match` arm reads it: struct_get at the field's own
+        // width, past the shape word. struct_field_at_width is what makes an f32
+        // payload read as the 8-byte double the construction side stored.
+        if (pt == "i64" || pt == "u64") { ts = ts.emit(ir.op_struct_get_i64(0)); }
+        else { ts = ts.emit(ir.op_struct_get(0, struct_field_at_width(ts.frame.structs, mk_ok_idx, 0))); }
+    }
+    else if (pt_is_i64) { ts = ts.emit(ir.op_opt_payload_w(64, true)); }
     // An f64 payload is also an 8-byte width-64 read, but the wasm backend keys
     // i64.load vs f64.load off the is_i64 flag (a typed-stack load), so pass
     // false: the success value must land on the stack as an f64 to match the
@@ -17887,11 +17985,48 @@ function arr_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): s
     return s.opt_ret_type(amn);
 }
 
-// try_opt_type recovers the Option/Result type spelling of a try-operator's
-// inner expression, mirroring the match-scrutinee resolution: a direct-call
-// `f()` via opt_ret_fns, a direct `Some(x)` construction via some_opt_type, a
-// map `.get()` (Option[V]), a local/param via its tracked Option/Result type, or
-// an Option/Result struct field. "" when it can't (lower_try then bails).
+// try_operand_type answers "what type does this `?` OPERAND unwrap from": an
+// Option[…] / Result[…] tag exactly as try_opt_type gives it, or — for an
+// `@try` enum (docs/TRY.md) — that enum's bare name. A marked enum is an
+// ordinary nominal enum, so it types through the enum resolvers rather than a
+// bracketed tag: expr_struct_type answers for a local, a parameter, a call and
+// a method result, expr_enum_type for a fresh variant construction. Admission
+// is by SHAPE, which is what lets `?` work for any marked enum; native has
+// already enforced both the marker and the shape (E078), so this side only
+// re-derives what the lowering needs.
+//
+// Deliberately NOT folded into try_opt_type, whose other callers ask about a
+// `match` SCRUTINEE. A plain two-variant enum — `Tree { Leaf(i32), Node(Tree) }`
+// — satisfies the `?` shape by accident, and `match (tree)` must keep typing it
+// as a user enum rather than as something to unwrap.
+function try_operand_type(inner: ast.Expr, s: LowerState): string {
+    var ot: string = try_opt_type(inner, s);
+    if (ot.len() > 0) { return ot; }
+    var mkt: string = expr_struct_type(inner, s);
+    if (!try_enum_ok(s.frame.structs, mkt)) { mkt = expr_enum_type(inner, s); }
+    if (try_enum_ok(s.frame.structs, mkt)) { return mkt; }
+    return "";
+}
+
+// try_success_type is the SUCCESS payload type of whatever try_operand_type
+// returned: the T of an Option[T] / Result[T, E] tag, or the success variant's
+// `__ev` field type for a marked enum. Every caller that asks "what does this
+// `?` produce" goes through it, so the width, str-tracking, slot-typing and
+// lowering paths cannot disagree about a marked enum's payload.
+function try_success_type(ot: string, structs: StructTab): string {
+    var pt: string = opt_payload_type(ot, "Ok");
+    if (pt.len() > 0) { return pt; }
+    var (mkpt, _mkf, mkok) = try_enum_shape(structs, ot);
+    if (mkok) { return mkpt; }
+    return "";
+}
+
+// try_opt_type recovers the Option/Result type spelling of a match scrutinee or
+// try-operator operand: a direct-call `f()` via opt_ret_fns, a direct `Some(x)`
+// construction via some_opt_type, a map `.get()` (Option[V]), a local/param via
+// its tracked Option/Result type, or an Option/Result struct field. "" when it
+// can't. A `?` operand asks through try_operand_type above, which adds the
+// marked-enum answer this one deliberately does not give.
 function try_opt_type(inner: ast.Expr, s: LowerState): string {
     // typed-IR (#5531): an Option/Result-returning call carries its full
     // "Option[T]" / "Result[T, E]" tag on c.ty (the checker resolved any generic
@@ -22309,10 +22444,7 @@ match (v.init) {
             // types, so `t.0` / `t.1` read the right width / kind. Without
             // it an unannotated try-of-tuple left t untyped and a string
             // element's `.len()` read 0.
-            var tuot: string = try_opt_type(tuv.operand, sb);
-            var tupay: string = "";
-            if (tuot.len() >= 8 && slice_unchecked(tuot, 0, 7) == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
-            else if (tuot.len() >= 8 && slice_unchecked(tuot, 0, 7) == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
+            var tupay: string = try_success_type(try_operand_type(tuv.operand, sb), sb.frame.structs);
             if (util.is_tuple_type_name(tupay)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)).mark_tuple_type(slot, tupay); }
             // A STRUCT (or nominal ENUM) success payload: `var u = f()?` where
             // f returns `Result[User, E]` / `Option[User]`. Without the type
@@ -72322,6 +72454,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "window_size") { return "Result[WinSize, IoError]"; }
     if (name == "access") { return "Result[void, IoError]"; }
     if (name == "signal_send") { return "Result[void, IoError]"; }
+    if (name == "set_process_group") { return "Result[void, IoError]"; }
     if (name == "set_priority") { return "Result[void, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender / open_exclusive ->
