@@ -60,6 +60,13 @@ var providedRefusedByPlatform = map[string]bool{
 	// valid no-op: wasi-cli grants `signal` for the DISPOSITION calls,
 	// where ignoring something nothing can deliver really is a no-op.
 	"signal_send": true,
+	// Putting a pid in a process GROUP, which needs the same table and
+	// has no honest no-op either: succeeding would claim a group that
+	// does not exist.
+	"set_process_group": true,
+	// The non-blocking half of the reap, refused for the reason
+	// `proc_waitpid` is: there is no process model to have children in.
+	"proc_waitpid_nohang": true,
 	// `fsinfo` — the size and the length limits of a filesystem, where
 	// `fs` is the files on it. Neither preview has a volume interface,
 	// and a preopen is a capability handle rather than a mount.
