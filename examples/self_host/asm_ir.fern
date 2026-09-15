@@ -3778,6 +3778,38 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0, %rbx\n");
     s = s.write("    jl .Lms_append\n");
     s = s.write(".Lms_found:\n");
+    // An overwrite REPLACES the value pointer, and the reclaim helper only ever
+    // reaches entries still in the column, so a superseded value is freed here
+    // or never (#9300). %r9 bits 2/3 name the column's release: the map owns one
+    // unit per live entry, so releasing what it drops is exactly balanced. Both
+    // helpers are rc-aware and null-safe. The slot address is recomputed after
+    // the call rather than held across it; %r12 / %rbx / %r14 are callee-saved,
+    // so the three inputs it is rebuilt from survive. vkind 0 — the AST path,
+    // and any column the map does not own — skips the block entirely, which is
+    // the historical behaviour.
+    // Gated on the need, not just on the runtime flag: the `call
+    // __fn___fern_str_arr_free` TEXT trips the negative asm-grep contracts
+    // (strarr-elem-alias-excluded) in every unrelated program, the same reason
+    // __fern_arrarr_free and __fern_strarrarr_free are need-gated above. A
+    // program with no counted value column emits none of this.
+    if (s.has_need("map_vfree")) {
+    s = s.write("    movq -40(%rbp), %rcx\n");      // flag bits
+    s = s.write("    testq $12, %rcx\n");           // bits 2|3 = vkind
+    s = s.write("    jz .Lms_found_novf\n");
+    s = s.write("    movq 8(%r12), %rax\n");        // values arr
+    s = s.write("    movq %rbx, %rdx\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write("    pushq (%rax,%rdx,8)\n");       // superseded value
+    s = s.write("    testq $4, %rcx\n");
+    s = s.write("    jz .Lms_found_vsa\n");
+    s = s.write("    call __fn___fern_str_free\n");
+    s = s.write("    jmp .Lms_found_vfdone\n");
+    s = s.write(".Lms_found_vsa:\n");
+    s = s.write("    call __fn___fern_str_arr_free\n");
+    s = s.write(".Lms_found_vfdone:\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write(".Lms_found_novf:\n");
+    }
     s = s.write("    movq 8(%r12), %rax\n");        // values arr
     s = s.write("    movq %rbx, %rdx\n");
     s = s.write("    incq %rdx\n");
@@ -6501,9 +6533,16 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // %r9 bit 1 = 0 → old leak-only grow (its reads raw-alias the
     // buffer), and an i32/interned key is never fresh → bit 0 = 0 → no
     // overwrite key free: exactly the historical behaviour.
+    //   bits 2/3 = vkind (o.width bits 4/5, #9300): the value column owns one
+    //     unit per live entry, so the superseded value on an overwrite is
+    //     released — 1 through __fern_str_free, 2 through __fern_str_arr_free.
+    //     0 keeps the historical behaviour, which is what the AST path passes.
     var r9bits: i32 = 0;
     if ((o.width / 2) % 2 == 1) { r9bits = r9bits + 1; }
     if ((o.width / 4) % 2 == 1) { r9bits = r9bits + 2; }
+    if ((o.width / 16) % 2 == 1) { r9bits = r9bits + 4; }
+    if ((o.width / 32) % 2 == 1) { r9bits = r9bits + 8; }
+    if (r9bits >= 4) { s = s.need("map_vfree"); }
     if (r9bits != 0) { s = s.write("    movq $" + util.i32_to_string(r9bits) + ", %r9\n"); } else { s = s.write("    xorq %r9, %r9\n"); }
     s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
 

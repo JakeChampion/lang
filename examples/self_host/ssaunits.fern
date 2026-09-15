@@ -65,8 +65,9 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     // A cell holds one unit of its own and one slot; no declaration names it.
     if (semtypes.is_cell(t)) { return supported(semtypes.cell_elem(t), f); }
-    // A map holds one unit of its own and one of every key in its column,
-    // released with it; only the shape whose release does that is admitted.
+    // A map holds one unit of its own and one of every key in its column, and
+    // one of every value when that column is counted; only the shapes whose
+    // release does that are admitted.
     if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
     if let typeinfo.TypeStruct(_) = t { return semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
@@ -163,11 +164,13 @@ function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || hands_out(kind);
 }
 // The operations whose result is a unit handed to this function: a call's
-// result, a rebuilt container, a view's box and a cell's element.
+// result, a rebuilt container, a view's box, a cell's element and a map read,
+// which retains what it answers because the value may come from the column or
+// from the caller's default.
 function hands_out(kind: i32): boolean {
     return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
-        || kind == ssasem.map_insert();
+        || kind == ssasem.map_insert() || kind == ssasem.map_get_or();
 }
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
@@ -201,7 +204,8 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 // receiver, which a receiver this function does not own reaches by retaining;
 // a cell write takes one for the element it stores and reads the cell. A map
 // insert takes one for the receiver it hands back and one for the key its
-// column holds until the map is released; its value is a scalar.
+// column holds until the map is released, and one for the value when that
+// column is counted too.
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
     var counted: boolean[] = [];
@@ -212,7 +216,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     } else if (ins.kind_tag == ssasem.cell_set()) {
         counted = [false, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.map_insert()) {
-        counted = [true, true, false];
+        counted = [true, true, ssasem.reference(f.values[ins.args[2]])];
     } else if (ins.kind_tag == ssasem.append()) {
         counted = [true, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.with()) {

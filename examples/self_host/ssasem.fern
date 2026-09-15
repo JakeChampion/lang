@@ -249,8 +249,22 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
 pub function is_supported_map(t: typeinfo.Type): boolean {
     if (!is_map(t)) { return false; }
     if (!is_string(map_key(t))) { return false; }
-    var v: typeinfo.Type = map_value(t);
+    return narrow_map_value(map_value(t)) || counted_map_value(map_value(t));
+}
+
+// A value column the map releases by freeing the buffer alone.
+function narrow_map_value(v: typeinfo.Type): boolean {
     return is_bool(v) || (is_integer(v) && !is_wide(v));
+}
+
+// A value column the map owns a unit of per entry, released with the map. The
+// shapes here are the ones the runtime already frees deeply — a string column
+// and a column of string arrays. A union column has no such helper yet, so it
+// stays refused rather than leaking every payload.
+pub function counted_map_value(v: typeinfo.Type): boolean {
+    if (is_string(v)) { return true; }
+    if let typeinfo.TypeArray(a) = v { return is_string(a.elem); }
+    return false;
 }
 
 pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
@@ -707,11 +721,12 @@ function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
     return "";
 }
 
-// The map is the runtime hash map at the one shape is_supported_map admits.
+// The map is the runtime hash map at the shapes is_supported_map admits.
 // Construction is fresh; an insert takes a unit of the map and of the key,
-// which the key column owns until the map is released, and hands the map back
-// so the caller holds one owner at a time; a lookup borrows both and answers a
-// scalar, which the map goes on owning.
+// which the key column owns until the map is released, and of the value when
+// that column is counted too, and hands the map back so the caller holds one
+// owner at a time; a lookup borrows the map and the key and answers the value,
+// which it retains when the column is counted.
 function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == map_new()) { return map_construction_error(ins, f, result); }
     if (ins.kind_tag == map_insert()) { return map_insert_error(ins, f, result); }
