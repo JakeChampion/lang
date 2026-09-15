@@ -99,9 +99,36 @@ type invocation struct {
 	// reached, and both sides meet the same one.
 	stdout stdoutMode
 	// tty hands the child a pseudo-terminal master as fd 3. Fds 0-2
-	// are pipes here, so this is the one descriptor on which `test -t`
-	// can answer true.
+	// are pipes here unless one of the three below replaces it, so this
+	// is the descriptor `test -t` can answer true for without changing
+	// where the case's output comes from.
 	tty bool
+	// ttyIn / ttyOut / ttyErr replace fd 0 / 1 / 2 with the SLAVE side of
+	// a pseudo-terminal, one pair per descriptor, and the harness works
+	// the master end: `inv.stdin` is written into fd 0's and followed by
+	// ^D so a reader sees EOF, and what the child writes to fd 1 or 2 is
+	// drained from theirs and compared as that stream.
+	//
+	// This is the only way to reach the half of a utility that asks
+	// whether it is talking to a terminal: `ls` lays out columns,
+	// `nohup` decides which descriptors to redirect and which clause to
+	// print, and `stty` is nothing else. A pipe answers no to all of it.
+	//
+	// Two consequences of a real terminal, both of which BOTH sides
+	// meet, so the comparison is unaffected:
+	//
+	//   - the line discipline translates each \n into \r\n on the way
+	//     out, so the bytes a tty case compares carry the \r,
+	//   - the window size is set explicitly to 24x80 rather than left at
+	//     the 0x0 a fresh pty carries, so a layout is pinned by the case
+	//     rather than by whatever a utility falls back to.
+	//
+	// A pty holds only a few kilobytes, so the masters are drained by
+	// their own goroutines: a child writing more than that into a
+	// terminal nobody is reading deadlocks.
+	ttyIn  bool
+	ttyOut bool
+	ttyErr bool
 	// sigint sends SIGINT to the child once `limit` bytes of stdout
 	// have been read, before the read end closes. It needs `limit` and
 	// a stdin long enough to outlast it, which together make the case
@@ -858,6 +885,65 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	// restoring at the end of the run is soon enough.
 	defer applyMask(inv.umask)()
 	cmd.Stdin = strings.NewReader(inv.stdin)
+	// The tty fields OWN their descriptor, so a case that also sends the
+	// same one somewhere else would compare whichever won rather than
+	// what it meant. Refused rather than silently resolved, the way
+	// `merged` already is.
+	if inv.ttyIn && inv.stdinPath != "" {
+		t.Fatalf("%s %s: ttyIn and stdinPath both claim fd 0", bin, quoteArgs(inv.args))
+	}
+	if inv.ttyOut && (inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 || inv.limit > 0 || inv.merged) {
+		t.Fatalf("%s %s: ttyOut and another fd 1 mode both claim it", bin, quoteArgs(inv.args))
+	}
+	if inv.ttyErr && inv.merged {
+		t.Fatalf("%s %s: ttyErr gives fd 2 its own terminal, which merged cannot share with fd 1", bin, quoteArgs(inv.args))
+	}
+	// The bounded-read paths close fd 1's read end to provoke a reaction and
+	// drive the child by how much has arrived. Neither shape has a caller
+	// that also wants a terminal, and a half-supported combination is worse
+	// than a refused one.
+	if (inv.ttyIn || inv.ttyErr) && (len(inv.follow) > 0 || inv.limit > 0 || inv.stdoutPath != "" || inv.stdoutFile != "") {
+		t.Fatalf("%s %s: a terminal and the fd 1 paths that read a file back are not combined", bin, quoteArgs(inv.args))
+	}
+	// One pair per descriptor rather than one terminal shared between
+	// them: a real console gives fds 1 and 2 the same tty, but then the
+	// two streams arrive interleaved in one buffer and the harness
+	// compares them separately. Distinct terminals keep them apart and
+	// answer every isatty the same way.
+	var ptySlaves []*os.File
+	var ptyOut, ptyErr *ptyReader
+	// The parent's own copy of each slave has to go once the child holds
+	// it: while any is open, a read of the master cannot see the end of
+	// the child's output and the drain never finishes. Called right after
+	// the fork, and again on the way out for the paths that never started.
+	closeSlaves := func() {
+		for _, f := range ptySlaves {
+			f.Close()
+		}
+		ptySlaves = nil
+	}
+	defer closeSlaves()
+	if inv.ttyIn {
+		master, slave := openPty(t)
+		defer master.Close()
+		ptySlaves = append(ptySlaves, slave)
+		cmd.Stdin = slave
+		feedPty(master, inv.stdin)
+	}
+	if inv.ttyOut {
+		master, slave := openPty(t)
+		defer master.Close()
+		ptySlaves = append(ptySlaves, slave)
+		cmd.Stdout = slave
+		ptyOut = drainPty(master)
+	}
+	if inv.ttyErr {
+		master, slave := openPty(t)
+		defer master.Close()
+		ptySlaves = append(ptySlaves, slave)
+		cmd.Stderr = slave
+		ptyErr = drainPty(master)
+	}
 	if inv.tty {
 		pty, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 		if err != nil {
@@ -876,7 +962,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 
 	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	if !inv.ttyErr {
+		cmd.Stderr = &errBuf
+	}
 	if inv.merged && (inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 || inv.limit > 0) {
 		t.Fatalf("%s %s: merged needs fd 1 captured into the default buffer, which this case sends elsewhere", bin, quoteArgs(inv.args))
 	}
@@ -897,7 +985,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		// in its Files, which closes that descriptor in the child —
 		// the one way through os/exec to hand a child a closed fd 1.
 		cmd.Stdout = (*os.File)(nil)
-		overran = inv.runBounded(cmd)
+		overran = inv.runBounded(cmd, closeSlaves)
 	case stdoutFull:
 		if runtime.GOOS != "linux" {
 			t.Skip("/dev/full is a Linux device")
@@ -908,7 +996,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		defer f.Close()
 		cmd.Stdout = f
-		overran = inv.runBounded(cmd)
+		overran = inv.runBounded(cmd, closeSlaves)
 	}
 	if inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 {
 		// Nothing more to read back: either the point is the reaction
@@ -944,15 +1032,22 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		_ = cmd.Wait()
 	} else {
 		var outBuf bytes.Buffer
-		cmd.Stdout = &outBuf
-		if inv.merged {
-			// One buffer for both descriptors: the ORDER the child wrote
-			// them in is what the case is about, and two buffers cannot
-			// record it. errBuf stays empty and is compared as such.
-			cmd.Stderr = &outBuf
+		if !inv.ttyOut {
+			cmd.Stdout = &outBuf
+			if inv.merged {
+				// One buffer for both descriptors: the ORDER the child
+				// wrote them in is what the case is about, and two
+				// buffers cannot record it. errBuf stays empty and is
+				// compared as such.
+				cmd.Stderr = &outBuf
+			}
 		}
-		overran = inv.runBounded(cmd)
-		out = outBuf.Bytes()
+		overran = inv.runBounded(cmd, closeSlaves)
+		if inv.ttyOut {
+			out = ptyOut.wait()
+		} else {
+			out = outBuf.Bytes()
+		}
 	}
 
 	// A case the kernel refuses to start at all — an argv holding a NUL,
@@ -961,7 +1056,11 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if cmd.ProcessState == nil {
 		t.Fatalf("%s %s never ran: the invocation is not one exec can deliver", bin, quoteArgs(inv.args))
 	}
-	res := outcome{stdout: out, stderr: errBuf.Bytes(), exit: cmd.ProcessState.ExitCode(), overran: overran}
+	stderr := errBuf.Bytes()
+	if inv.ttyErr {
+		stderr = ptyErr.wait()
+	}
+	res := outcome{stdout: out, stderr: stderr, exit: cmd.ProcessState.ExitCode(), overran: overran}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()
 	}
@@ -1217,12 +1316,20 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 
 // runBounded runs cmd and reports whether inv.timeout ran out first, in
 // which case the child was killed.
-func (inv invocation) runBounded(cmd *exec.Cmd) bool {
-	if inv.timeout <= 0 {
-		_ = cmd.Run()
+//
+// `afterStart` runs once the child exists and before the wait, which is
+// where closing the parent's copy of a pty slave has to happen: the drain
+// of that terminal is what the wait is waiting for, so a slave still open
+// here never reaches the end of the child's output. Every caller has one,
+// so it is a parameter rather than a second method.
+func (inv invocation) runBounded(cmd *exec.Cmd, afterStart func()) bool {
+	if err := cmd.Start(); err != nil {
+		afterStart()
 		return false
 	}
-	if err := cmd.Start(); err != nil {
+	afterStart()
+	if inv.timeout <= 0 {
+		_ = cmd.Wait()
 		return false
 	}
 	fired := make(chan struct{})

@@ -357,7 +357,8 @@ func headCases(t *testing.T) []invocation {
 	}
 }
 
-// itoa is strconv.Itoa without the import, for the two fixture builders.
+// itoa is strconv.Itoa without the import, for the fixture builders here
+// and the pty slave's path in pty_test.go.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

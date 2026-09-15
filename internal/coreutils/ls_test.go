@@ -376,6 +376,21 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("quote-qmark-shell", "-q", "--quoting-style=shell")
 	add("quote-qmark-shell-always", "-q", "--quoting-style=shell-always")
 	add("quote-qmark-shell-escape", "-q", "--quoting-style=shell-escape")
+	// A hyperlinked name wearing outer quotes leaves them OUTSIDE the
+	// link, but only under the padding regime: the quote is what the
+	// bare names' leading space lines up with, so it belongs to the
+	// column rather than to the link. Reachable down a pipe, which is
+	// why these are here rather than among the terminal cases — the
+	// aligned formats pad and the other two do not.
+	add("link-quote-outside-C", "--hyperlink=always", "--quoting-style=shell-escape", "-C", "-w", "80")
+	add("link-quote-outside-across", "--hyperlink=always", "--quoting-style=shell-escape", "-x", "-w", "80")
+	add("link-quote-outside-long", "--hyperlink=always", "--quoting-style=shell-escape", "-l")
+	add("link-quote-inside-commas", "--hyperlink=always", "--quoting-style=shell-escape", "-m", "-w", "80")
+	add("link-quote-inside-one", "--hyperlink=always", "--quoting-style=shell-escape", "-1")
+	add("link-quote-unlimited", "--hyperlink=always", "--quoting-style=shell-escape", "-C", "-w", "0")
+	add("link-quote-coloured", "--hyperlink=always", "--quoting-style=shell-escape", "--color=always", "-C", "-w", "80")
+	add("link-quote-dired", "--hyperlink=always", "--quoting-style=shell-escape", "-l", "--dired")
+	add("link-quote-shell-always", "--hyperlink=always", "--quoting-style=shell-always", "-C", "-w", "80")
 	add("quote-qmark-literal", "-q", "-N")
 	add("quote-show-control", "--show-control-chars")
 	add("quote-show-control-after-q", "-q", "--show-control-chars")
@@ -614,6 +629,43 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("all-ignore-every-dotfile", "-a", "-I", ".*")
 	add("all-ignore-dot", "-a", "-I", ".")
 	add("all-ignore-backups", "-a", "-B")
+
+	// --- a real terminal on standard output -----------------------------------------------
+	//
+	// The half of the utility a pipe cannot reach. Four questions change
+	// their answer: the DEFAULT format is columns rather than one per
+	// line, the width comes from the terminal rather than from COLUMNS or
+	// -w, the default QUOTING becomes shell-escape, and `auto` on the two
+	// frills decides yes. The harness runs the terminal at 24x80, so the
+	// width is the case's rather than a fallback's.
+	tty := func(name string, args ...string) {
+		cases = append(cases, invocation{name: name, args: args, dir: dir, ttyOut: true})
+	}
+	ttyEnv := func(name string, envs []string, args ...string) {
+		cases = append(cases, invocation{name: name, args: args, dir: dir, env: envs, ttyOut: true})
+	}
+	tty("tty-default")
+	tty("tty-one-per-line", "-1")
+	tty("tty-long", "-l")
+	tty("tty-across", "-x")
+	tty("tty-commas", "-m")
+	tty("tty-width-beats-the-terminal", "-w", "40")
+	ttyEnv("tty-columns-env-against-the-terminal", []string{"COLUMNS=40"})
+	ttyEnv("tty-columns-env-zero", []string{"COLUMNS=0"})
+	// A terminal that answers ENDS the width question, so this unparsable
+	// COLUMNS is never looked at and nothing reaches stderr. The warning
+	// the same value draws down a pipe is cols-env-columns-bogus above.
+	ttyEnv("tty-columns-env-bogus", []string{"COLUMNS=abc"})
+	ttyEnv("tty-columns-env-empty", []string{"COLUMNS="})
+	tty("tty-color-auto", "--color=auto")
+	tty("tty-color-never", "--color=never")
+	tty("tty-hyperlink-auto", "--hyperlink=auto")
+	tty("tty-quoting-default", "-a")
+	tty("tty-quoting-literal", "-a", "--quoting-style=literal")
+	tty("tty-quoting-long", "-la")
+	tty("tty-quoting-escape-flag", "-ab")
+	tty("tty-one-entry", "plain")
+	tty("tty-empty-dir", "empty-dir")
 
 	// --- errors ---------------------------------------------------------------------------
 	add("err-missing", "nosuchfile")
