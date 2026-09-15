@@ -4,8 +4,8 @@
 // The oracles in diff_oracle_test.go and printable_stdout_test.go
 // cover arm64, x86_64 and wasmbin — every backend that lowers
 // straight from the IR. Neither covers the SSA path:
-// `internal/ssa`'s `LiftFromIR` feeds only `-target arm64-linux -backend ssa` and
-// `-target wasm32-wasi -backend ssa`, so nothing the generator produces ever reached
+// `internal/ssa`'s `LiftFromIR` feeds only `-backend ssa` and
+// `-backend typed-ssa`, so nothing the generator produces ever reached
 // the lift or the SSA register allocator. That blind spot is not
 // hypothetical: #5729 (the lift dropping an `ir.OpLoad`'s 64-bit
 // width, corrupting every `i64[]` element read) and #5725 (the

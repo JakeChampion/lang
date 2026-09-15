@@ -29,8 +29,10 @@ Native has **two** IRs, and they are not the same layer:
   tokens are all emitted as `OpCallDirect` to `__fern_rc_*` helpers
   during AST→IR lowering.
 - **`internal/ssa`** — an SSA optimiser IR with ~29 passes, **lifted
-  from** `internal/ir` (`ssa.LiftFromIR`) and consumed only by the
-  experimental `wasmssa` backend.
+  from** `internal/ir` (`ssa.LiftFromIR`). Since `docs/SSA-DECISION.md`
+  resolved, its role is analysis (ownership / units / certify) rather than
+  codegen; the `arm64ssa` and `x86_64ssa` emitters consume it behind
+  `-backend ssa`.
 
 The self-host today:
 

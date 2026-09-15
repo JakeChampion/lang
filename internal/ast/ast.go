@@ -1401,7 +1401,7 @@ func init() { ApplySanitize() }
 // __fern_alloc_reuse's in-place path counts as NEITHER an alloc nor a
 // free (see the emitter comments). x86-64 + arm64, and arm64's
 // `-backend ssa` — which counts at its own seams and carries a floor,
-// see docs/TEST-GATES.md; wasm and x86-64's `-backend ssa` ignore the
+// see docs/TEST-GATES.md; wasm and x86-64's SSA emitter ignore the
 // flag. With the flag OFF the emitted asm is byte-identical to a build
 // without the feature. Settable via FERN_LEAKCHECK=1 (the
 // RcReuseDropGuided precedent) so the CLI can toggle it without a fork,

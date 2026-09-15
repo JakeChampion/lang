@@ -595,9 +595,9 @@ and left out its x86-64 twin — `internal/codegen/x86_64ssa`, which `-backend
 ssa -target x86-64-linux` reaches and which carries the same table. The full
 list is three native (`internal/codegen/{x86_64,arm64,wasmbin}`), three
 self-host (`asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`), and BOTH SSA
-legs (`arm64ssa`, `x86_64ssa`). `internal/codegen/wasmssa` is not a ninth: it
-consumes `ssa.Func` directly, has no string-helper table at all, and refuses a
-program that reaches one rather than emitting a scalar body for it.
+legs (`arm64ssa`, `x86_64ssa`). The retired `wasmssa` (#9394) was never a
+ninth: it consumed `ssa.Func` directly, had no string-helper table at all, and
+refused a program that reached one rather than emitting a scalar body for it.
 
 The way each undercount surfaced is worth stating together, because they are
 different failures and only the first is loud. A backend missing the op ENTIRELY

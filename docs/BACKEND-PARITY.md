@@ -1,6 +1,10 @@
 # Backend parity tracker
 
-Three code-generation backends ship today:
+Three code-generation backends ship today — `internal/codegen/{arm64,x86_64,wasmbin}`,
+each lowering the flat `ir.Program`. Two more, `arm64ssa` and `x86_64ssa`, are
+reachable only through `-backend ssa` / `-backend typed-ssa` and are **not
+production paths**; `docs/SSA-DECISION.md` records why they will not become
+ones. A sixth, `wasmssa`, was retired with that decision (#9394).
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no
@@ -17,7 +21,8 @@ bare `arm64` meaning arm64-Linux.
 | arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |
 
 Two axes are deliberately NOT in the name: `-backend ssa` selects an alternate
-emitter for the same target, and `-emit` an alternate output form (#6536).
+emitter for the same target (arm64-linux and x86-64-linux only — wasm's went
+with `wasmssa`), and `-emit` an alternate output form (#6536).
 `wasm32-wasi` has three: the default composes a wasi:cli/run component,
 `-emit core-module` writes the raw core module (no entry point — `wasmtime run`
 on one calls nothing), and `-emit command-module` writes a WASI preview-1
@@ -29,7 +34,7 @@ reaches the host as 1. A `main` that returns NOTHING exits 0 on all three
 the return register, which made the status a stable fact about the emitted
 code — `print(s + "d")` exited 232 on x86-64 and 144 on arm64 — where wasm's
 `SynthCliRun` had always supplied the zero. Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
-what let `wasm-ssa` skip capability enforcement entirely.
+what let the old `wasm-ssa` spelling skip capability enforcement entirely.
 
 The **self-host driver spells targets the same way** since #6635 — it took the
 whole scheme, both axes: `-target <isa>-<environment>`, `-emit asm` for the
@@ -397,8 +402,9 @@ allocating module, including the zero-import core modules and the `--invoke`
 bare-core path, and `internal/codegen/wasmbin/build_test.go` pins import shape
 in both directions. Scope: small in the emitter, wide in what it perturbs.
 
-`internal/codegen/wasmssa` never grows at all — one fixed page — which is a
-separate subset limitation of that relooper-era emitter, not this one.
+This is now the only wasm emitter, so the trap IS the wasm behaviour. The
+retired `wasmssa` never grew at all — one fixed page — which was a separate
+subset limitation of that relooper-era emitter, not this one.
 
 ### Tail-call optimisation — wired on every backend
 

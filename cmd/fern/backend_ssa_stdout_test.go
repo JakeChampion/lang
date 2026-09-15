@@ -29,21 +29,38 @@ func TestArm64SSAWritesAsmToStdoutWithoutO(t *testing.T) {
 	}
 }
 
-// The wasm SSA backend produces a wasm BINARY, not assembly, so there is
-// nothing to write to stdout and -o stays required. The message has to say
-// which target it is refusing for, now that the arm64 one does not refuse.
-func TestWasmSSAStillRequiresOutputPath(t *testing.T) {
+// `-backend ssa` no longer covers wasm: the wasmssa emitter was retired with
+// the SSA-as-codegen shelve (#9394). The refusal has to name the targets that
+// remain, so a stale `-backend ssa -target wasm32-wasi` invocation says where
+// to go rather than failing somewhere deeper with a confusing message.
+func TestWasmSSATargetIsRefused(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 
-	out, err := exec.Command(bin, "-target", "wasm32-wasi", "-backend", "ssa", entry).CombinedOutput()
+	out, err := exec.Command(bin, "-target", "wasm32-wasi", "-backend", "ssa", "-o", filepath.Join(t.TempDir(), "o.wasm"), entry).CombinedOutput()
 	if err == nil {
-		t.Fatal("wasm ssa without -o should fail: it emits a binary, not text")
+		t.Fatal("-backend ssa -target wasm32-wasi should be refused: the wasmssa backend is retired")
 	}
-	for _, want := range []string{"wasm32-wasi", "-o OUTPUT"} {
+	for _, want := range []string{"wasm32-wasi", "arm64-linux", "x86-64-linux"} {
 		if !strings.Contains(string(out), want) {
-			t.Errorf("error missing %q:\n%s", want, out)
+			t.Errorf("refusal missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// The SSA backends carry no instrumentation on any target, so selecting
+// one drops back to the no-checks warning even where the target's
+// default emitter is fully instrumented — arm64-linux's is.
+func TestSanitizeWarnsForSSABackend(t *testing.T) {
+	bin := buildFernForStdoutTest(t)
+	entry := writeFern(t, "function main(): i32 { return 0; }\n")
+	out := filepath.Join(t.TempDir(), "prog")
+	o, err := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-sanitize", "-o", out, entry).CombinedOutput()
+	if err != nil {
+		t.Fatalf("build: %v\n%s", err, o)
+	}
+	if !strings.Contains(string(o), "carries no checks") {
+		t.Errorf("-backend ssa should warn that nothing is instrumented:\n%s", o)
 	}
 }
 
