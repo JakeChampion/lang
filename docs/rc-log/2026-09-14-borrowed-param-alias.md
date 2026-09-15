@@ -94,3 +94,7 @@ guard comment in `rc_analysis.go` records it answering 19 and 30 where both
 natives answer 99 and 54 — so it does not have this leak today. Whoever
 ports the cancellation needs this leg with it, or the leak arrives with the
 optimisation.
+
+That last paragraph was wrong when written: the self-host had all four
+dead-alias limbs and only this leg was missing.
+`2026-09-15-selfhost-borrowed-param-alias.md` has what it took.
