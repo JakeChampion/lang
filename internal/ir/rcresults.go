@@ -195,6 +195,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_fd_fsync":            true,
 	"__fern_fd_fdatasync":        true,
 	"__fern_fd_syncfs":           true,
+	"__fern_fd_dup_onto":         true,
 	"__fern_reader_seek":         true,
 	"__fern_writer_seek":         true,
 	"__fern_reader_flags":        true,
@@ -306,6 +307,8 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_fdatasync":  true, // __fern_fd_fdatasync
 	"__method_Reader_syncfs":     true, // __fern_fd_syncfs
 	"__method_Writer_syncfs":     true, // __fern_fd_syncfs
+	"__method_Reader_dup_onto":   true, // __fern_fd_dup_onto
+	"__method_Writer_dup_onto":   true, // __fern_fd_dup_onto
 	"read_file":                  true,
 	"read_file_bytes":            true,
 	"write_file":                 true,

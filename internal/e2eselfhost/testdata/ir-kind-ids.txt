@@ -295,3 +295,4 @@ fd_flags=307
 write_some=308
 crc32_cksum=309
 read_dir_all=310
+fd_dup_onto=311

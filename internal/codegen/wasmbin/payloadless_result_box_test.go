@@ -71,8 +71,11 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_set_file_times":    true,
 	"__fern_truncate":          true,
 	// Neither preview has a per-filesystem flush, so every path out of
-	// __fern_fd_syncfs is Some(IoError): it has no payloadless arm.
-	"__fern_fd_syncfs": true,
+	// __fern_fd_syncfs is Some(IoError): it has no payloadless arm. Nor does
+	// __fern_fd_dup_onto, and for the same reason — neither preview can do
+	// what it names, so both bodies are the refusal and never build a None.
+	"__fern_fd_syncfs":   true,
+	"__fern_fd_dup_onto": true,
 }
 
 // zeroStoreAt is the byte sequence for `i32.const 0; i32.store offset=off`.

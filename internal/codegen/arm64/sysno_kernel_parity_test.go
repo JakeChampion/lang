@@ -53,6 +53,10 @@ func TestSyscallNumbersMatchTheKernelTable(t *testing.T) {
 		{"sync", pair("sync"), syscall.SYS_SYNC},
 		{"syncfs", only("syncfs"), syscall.SYS_SYNCFS},
 		{"ftruncate", pair("ftruncate"), syscall.SYS_FTRUNCATE},
+		// dup3 is not adjacent to anything it could be confused with, but
+		// its row carries Darwin's dup2 in the other column, so the Linux
+		// half is worth pinning against the kernel rather than eyeballing.
+		{"dup3", pair("dup3"), syscall.SYS_DUP3},
 	} {
 		if uintptr(c.got) != c.want {
 			t.Errorf("%s = %d, the kernel table says %d", c.name, c.got, c.want)

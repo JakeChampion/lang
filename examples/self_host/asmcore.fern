@@ -535,6 +535,11 @@ pub function sysno(t: string, name: string): string {
         if (name == "fsync") { return "95"; }
         if (name == "fdatasync") { return "187"; }
         if (name == "sync") { return "36"; }
+        // The dup3 row carries XNU's dup2(2), BSD 90: there is no dup3 on
+        // Darwin, and dup3 with no flags IS dup2, so the third register
+        // rt_src_fd_dup_onto sets is one this call ignores. The row keeps the
+        // Linux spelling so the two tables pair up.
+        if (name == "dup3") { return "90"; }
         // No syncfs row: XNU has no per-filesystem flush, and rt_src_fd_syncfs
         // branches on the target rather than issuing a number that is not one.
         // XNU has no mknodat — this is mknod(2), which takes no directory
@@ -2400,6 +2405,17 @@ pub function rt_src_fd_syncfs(t: string): string {
     return "function __fern_fd_syncfs(fd: i32): Option[IoError] { var rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd, 0, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
 }
 
+// rt_src_fd_dup_onto backs `r.dup_onto(fd)` / `w.dup_onto(fd)` ->
+// Option[IoError]: dup3(2) of the handle's descriptor onto `newfd`, so the
+// handle is reachable as that number too and whatever it named is closed.
+//
+// One body for every target: the Darwin row is dup2, which is this call
+// without the flags argument it ignores. A handle carries no path, so the
+// errno is classified against an empty one, as fd_stat's is.
+pub function rt_src_fd_dup_onto(t: string): string {
+    return "function __fern_fd_dup_onto(fd: i32, newfd: i32): Option[IoError] { var rc: i32 = __syscall3(" + sysno(t, "dup3") + ", fd, newfd, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+}
+
 // rt_src_sync backs `sync()` -> void: sync(2) over every mounted filesystem.
 // It cannot fail on either host, so the caller has nothing to inspect; the
 // syscall's own return is handed back so the statement-position drop has a
@@ -4153,6 +4169,9 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     // payload slot seek's offset lands in.
     if (ty_struct_name(rt) == "Writer" && fa.field == "write_some") { return ty_result(ty_i32()); }
     if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "truncate")) { return ty_option(ty_unknown()); }
+    // Reader.dup_onto / Writer.dup_onto -> Option[IoError]: the descriptor
+    // either took the handle or reports why not.
+    if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "dup_onto") { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {
         return ty_option(map_val(rt));

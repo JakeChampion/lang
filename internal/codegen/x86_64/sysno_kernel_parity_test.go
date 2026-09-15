@@ -40,6 +40,7 @@ func TestSyscallNumbersMatchTheKernelTable(t *testing.T) {
 		{"fstat", sysFstat, syscall.SYS_FSTAT},
 		{"lseek", sysLseek, syscall.SYS_LSEEK},
 		{"close", sysClose, syscall.SYS_CLOSE},
+		{"dup3", sysDup3, syscall.SYS_DUP3},
 	} {
 		if uintptr(c.got) != c.want {
 			t.Errorf("%s = %d, the kernel table says %d", c.name, c.got, c.want)

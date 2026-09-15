@@ -872,6 +872,24 @@ pre-pass and getopt_long's prefix match both cost nothing next to the exec.
 | `shred` | shred -n 0 -u 200 small files | 349.06 ± 17.16 | 578.00 ± 74.66 | 567.56 ± 23.96 | 1.66× | 1.63× |
 | `shred` | shred -s 4096 of a 4MiB file | 7.70 ± 2.20 | 8.38 ± 1.67 | 9.07 ± 1.20 | 1.09× | 1.18× |
 
+**nohup, 2026-09-15**, the same host, its workloads file run alone (mean ±
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `nohup` | nohup a command | 1.27 ± 0.21 | 2.07 ± 0.78 | 3.02 ± 0.39 | 1.63× | 2.37× |
+| `nohup` | nohup a command with arguments | 1.22 ± 0.24 | 2.09 ± 0.67 | 3.13 ± 2.18 | 1.70× | 2.55× |
+| `nohup` | nohup a command not found | 0.35 ± 0.18 | 1.17 ± 0.27 | 2.05 ± 0.21 | 3.31× | 5.78× |
+| `nohup` | nohup no operand | 0.38 ± 0.16 | 1.28 ± 0.31 | 2.22 ± 0.28 | 3.42× | 5.90× |
+| `nohup` | nohup a status passed through | 1.28 ± 0.25 | 2.03 ± 0.32 | 2.94 ± 0.39 | 1.58× | 2.29× |
+
+None of the redirections fire in any of those rows, and no benchmark can make
+them: every one needs a TERMINAL on the descriptor, and hyperfine hands the
+child pipes. What the rows measure is the part a shell script actually pays —
+startup, three isatty questions, a signal disposition and the exec — and the
+two that never exec (a name off PATH, no operand) are where the startup lead
+shows undiluted, at 3.3× and 3.4×.
+
 **timeout, 2026-09-15**, the same host, its workloads file run alone (mean ±
 σ, ≥20 runs; ratios above 1 mean Fern is faster).
 
@@ -1793,6 +1811,39 @@ than 0 for a live child because 0 is what wait4 itself answers there and what
 a clean exit decodes to; no errno wait4 returns is 1, so the sign separates
 the two.
 
+`nohup` needs one, and it is not a syscall wrapper on a path but a method on
+a handle:
+
+    r.dup_onto(fd) / w.dup_onto(fd)    dup3(own_fd, fd, 0)
+
+Redirecting fds 0, 1 and 2 is not a detail of `nohup`, it is the whole job, and
+nothing in the language could express it: `stdin()` / `stdout()` / `stderr()`
+hand back handles, `open_*` hands back a handle, and a handle surrenders no
+descriptor number to pass to a `dup2`. So the operation goes on the handle,
+which is where `seek`, `flags` and `isatty` already went for the same reason.
+
+The shape that looks more obvious — an exec that takes redirections — gets the
+utility WRONG. Measured against coreutils 9.4: with a terminal on stdin,
+`nohup` leaves fd 0 pointing at `/dev/null` opened WRITE-ONLY, so the command
+can neither read the terminal nor read the replacement (`cat` there fails with
+`Bad file descriptor`, and `echo hi 1>&0` from the same shell succeeds). A
+redirection table that typed fd 0 as a Reader cannot say that; `dup_onto` on a
+Writer can, because the handle's direction and the destination's number are
+independent. The third of nohup's three redirections needs no extra form
+either: fd 1 is nameable, so stderr-follows-stdout is `stdout().dup_onto(2)`.
+
+dup2 semantics mean the handle keeps its own descriptor, so the caller closes
+it afterwards — the pair GNU makes. The trap worth knowing is when the
+handle's own descriptor already IS the destination: dup3 is a no-op and that
+close would close the destination. It cannot arise in `nohup`, where the
+number being replaced is the terminal and so occupied when the file is opened,
+but a caller that closed fd 1 first is not protected by that.
+
+A shell wants the same primitive and needs no new one: fork, redirect in the
+child, exec. `timeout` and `stdbuf` were listed as wanting it too and do not —
+`timeout` redirects nothing and `stdbuf` sets `LD_PRELOAD`, which is
+environment.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast
@@ -1828,6 +1879,23 @@ anything, the second drains a tree and ignores a missing target — and the
 errno they discard is the whole of what those two utilities report.
 
 ## Known divergences
+
+**`nohup`'s stderr clause is the 9.4 wording, and 9.10 changed it.** The
+clause for a terminal on stderr alone is `redirecting stderr to stdout` here;
+coreutils 9.10 spells both streams out, `redirecting standard error to
+standard output`. The corpus compares against the installed binary and that
+is 9.4, so 9.4 is what the implementation emits. This is the one place a
+coreutils version bump under the oracle would turn a passing case red, and
+the fix then is the new string rather than an exemption.
+
+**`nohup` has one diagnostic GNU has no counterpart for**: a dup3 onto fds 0,
+1 or 2 that fails reports `failed to redirect standard input` / `output` /
+`error` and exits 125. Nothing can measure what GNU says there, because the
+call has no reachable errno — the source descriptor was opened a line earlier
+and the destination is one this process holds open — so rather than guess at
+GNU's wording the line is plainly ours, on a path no corpus case reaches. The
+statuses around it are measured: 125 is what nohup's own `--help` documents
+for a failure of nohup itself.
 
 **What a `shred` corpus can compare, and what nothing can.** GNU's pass
 SCHEDULE is drawn at random: two runs of `-n 10` over identical files disagree
@@ -2713,7 +2781,10 @@ groups are the order of work. Each sub-issue names its group.
   section above and the two divergences; the default mode's process group
   is the reason it waited, and the deadline being a forked child rather
   than an alarm is the reason the second primitive exists)
-  `nohup` `kill` `stdbuf` `chroot` (signals, exec), `dd`
+  `nohup` (done, on `dup_onto` — the handle that installs itself at a
+  descriptor, which is what all three of its redirections are; the message
+  wording it emits is 9.4's, see the divergence below) `kill` `stdbuf`
+  `chroot` (signals, exec), `dd`
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
   families it does NOT have are in the divergences above, each with its
