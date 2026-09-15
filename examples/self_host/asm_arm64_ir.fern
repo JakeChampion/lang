@@ -30,7 +30,6 @@ import "./irverify";
 import "./irverifygate";
 import "./lexer";
 import "./ircore";
-import "./semlower";
 
 // fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
 // (always <= 0 — locals live below the frame pointer). Inlined copies of
@@ -8359,6 +8358,11 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // that returns ahead of the type check lets an ill-typed module miscompile
 // silently.
 pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
+    return emit_module_or_error_sub(mod, darwin, ircore.no_sub());
+}
+
+// The `_sub` sibling of the above: see emit_module_ir_gated_sub.
+pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
     var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
     if (parse_errs.len() > 0) {
         eprint(util.format_diags(parse_errs));
@@ -8373,7 +8377,7 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
         exit(1);
         return "";
     }
-    var g: string = emit_module_ir_gated(ircore.lift_lambdas(mod), darwin);
+    var g: string = emit_module_ir_gated_sub(ircore.lift_lambdas(mod), darwin, sub);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
     exit(1);
@@ -9137,15 +9141,23 @@ function peephole_push_pop_arm64(asm: string): string {
 // ineligible sentinel — an eligible module always emits at least
 // `.globl _start\n    .text`.
 pub function emit_module_ir_gated(mod: parser.Module, darwin: boolean): string {
+    return emit_module_ir_gated_sub(mod, darwin, ircore.no_sub());
+}
+
+// emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
+// lowering substituted into it (ircore.Sub) — the arm64 twin of
+// asm_ir.emit_module_ir_gated_sub.
+pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub): string {
     // script_normalized desugars a SCRIPT-shaped module (top-level statements,
     // no `main`) into `function main(): i32 { … }`. Return types are inferred
     // BEFORE the registries are derived so they see the inferred ones.
     var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
-    var g: semlower.SemLowered = semlower.lower_gated_sem(im, imtab, base, [], false);
+    base = ircore.sub_sigs(sub, base);
+    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false);
     if (!g.ok) { return ""; }
-    return emit_module_ir_flat(im, imtab, darwin, g.cache, g.sigs);
+    return emit_module_ir_flat(im, imtab, darwin, ircore.sub_cache(sub, g.cache), base);
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): string {

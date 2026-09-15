@@ -34,7 +34,6 @@ import "./irverifygate";
 import "./asmcore";
 import "./astwalk";
 import "./ircore";
-import "./semlower";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
@@ -2643,6 +2642,14 @@ pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io
 // (docs/SELFHOST-AST-RETIREMENT.md), and in mode 0 it silently dropped an
 // `@export` entirely, so a refusal is strictly better than what it did.
 pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, io: boolean): string {
+    return emit_module_mode_or_error_sub(mod, component, io, ircore.no_sub());
+}
+
+// The `_sub` sibling of the above: the same routing decision with a
+// caller-supplied semantic lowering substituted into it (ircore.Sub). See
+// asm_ir.emit_module_ir_gated_sub for why the substitution is passed as a value
+// rather than produced here.
+pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): string {
     var lm: parser.Module = route_normalized(mod);
     // Builtins with no wasm meaning at all are rejected BEFORE the routing
     // decision, so the diagnostic names the builtin rather than the IR op
@@ -2665,13 +2672,11 @@ pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, i
     // and the registry base it was derived over feed the emit directly).
     if (asmcore.new_state().use_ir) {
         var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-        var base: irlower.FnSigs = ircore.wp_fn_sigs(lm.funcs, stab);
-        // The semantic substitution rides the same fused gate (semlower): with
-        // FERN_SEM_IR off this is lower_all_gated op for op, and the registry
-        // set that comes back is the one it went in with.
-        var g: semlower.SemLowered = semlower.lower_gated_sem(lm, stab, base, [], true);
-        if (g.ok && ir_route_final(g.cache, component, io)) {
-            return emit_ir_module_mode(lm, g.cache, mode, g.sigs);
+        var base: irlower.FnSigs = ircore.sub_sigs(sub, ircore.wp_fn_sigs(lm.funcs, stab));
+        var g: ircore.Lowered = lower_all_gated(lm, stab, base);
+        var cache: irlower.LowerResult[] = ircore.sub_cache(sub, g.cache);
+        if (g.ok && ir_route_final(cache, component, io)) {
+            return emit_ir_module_mode(lm, cache, mode, base);
         }
     }
     ircore.eprint_ir_ineligible();

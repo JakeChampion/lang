@@ -12,6 +12,11 @@
 // FERN_SEM_IR unset, what a backend receives is what it received before, op for
 // op.
 //
+// The result is handed to the emit path as a VALUE (`ircore.Sub`) rather than
+// produced inside it, so that only a driver that wants the path links the
+// pipeline behind it. Linking it everywhere cost the eight backend-carrying
+// drivers 6.7-10.2% of their bytes for a flag they never read.
+//
 // Two contracts hold the mixed module together, one per direction:
 //
 //   - An AST-lowered CALLER of a produced callee reads registries derived from
@@ -30,19 +35,6 @@ import "./semsource";
 import "./ssarc";
 import "./ssaunits";
 import "./util";
-
-// What a whole-program emit path needs back: the cache to emit from, and the
-// registry base to emit it with — `caller_sigs` rewrote rows in it, so the
-// emitter has to read the same set the lowering did.
-pub struct SemLowered {
-    ok: boolean,
-    cache: irlower.LowerResult[],
-    sigs: irlower.FnSigs,
-    // How many of mod.funcs are emitted from a produced body. 0 whenever the
-    // path is off or nothing survived, which is what the report line and the
-    // e2e gates read.
-    produced: i32,
-}
 
 // Every body the substitution is considering, declarations first (aligned with
 // mod.funcs) and then the instances the declarations asked for. `n1` is the
@@ -77,6 +69,51 @@ pub function sem_report_on(): boolean {
         Some(v) => { return v.len() > 0; },
         None => { return false; }
     }
+}
+
+// sem_ir_only is the bisect knob: a comma-separated list of name prefixes, and
+// only a declaration matching one of them is produced. Everything else keeps
+// the AST lowering, and `prune` carries the consequences — so a run under it is
+// a mixed module built the same way any other is. Empty (or unset) produces
+// everything. It exists because a defect this path introduces shows up as a
+// wrong answer from a WHOLE PROGRAM, and halving the produced set is the only
+// way to walk in on it: the conformance corpus agrees with the AST path on 496
+// of 498 cases and the compiler it builds still segfaults.
+function sem_ir_only(): string {
+    match (env("FERN_SEM_IR_ONLY")) {
+        Some(v) => { return v; },
+        None => { return ""; }
+    }
+}
+
+// FERN_SEM_IR_SKIP is the other half of the knob: the same prefix list, read as
+// an exclusion. Halving the produced set with FERN_SEM_IR_ONLY cannot isolate a
+// defect that needs a produced CALLER and a produced CALLEE, because either
+// half prunes the call between them; removing one prefix at a time from the
+// whole set can.
+function sem_ir_skip(): string {
+    match (env("FERN_SEM_IR_SKIP")) {
+        Some(v) => { return v; },
+        None => { return ""; }
+    }
+}
+
+function has_prefix_in(list: string, name: string): boolean {
+    var at: i32 = 0;
+    var field: string = irlower.csv_nth(list, at);
+    while (field.len() > 0) {
+        if (util.str_has_prefix(name, field)) { return true; }
+        at = at + 1;
+        field = irlower.csv_nth(list, at);
+    }
+    return false;
+}
+
+// selected reports whether the bisect knobs admit this declaration.
+function selected(only: string, skip: string, name: string): boolean {
+    if (skip.len() > 0 && has_prefix_in(skip, name)) { return false; }
+    if (only.len() == 0) { return true; }
+    return has_prefix_in(only, name);
 }
 
 function report(what: string, why: string): i32 {
@@ -171,11 +208,14 @@ function prune(r: Rows): Rows {
 
 // rows_of produces every body once and records the symbols each defines.
 function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab): Rows {
+    var only: string = sem_ir_only();
+    var skip: string = sem_ir_skip();
     var r: Rows = Rows { body: [], n1: [], n2: [], keep: [] };
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
-        var body: irlower.LowerResult = produced_body(built.decls[i], structs, fd.name);
+        var body: irlower.LowerResult = declined("not selected");
+        if (selected(only, skip, fd.name)) { body = produced_body(built.decls[i], structs, fd.name); }
         var qualified: string = "";
         if (fd.receiver_type.len() > 0) {
             qualified = util.base_type_name(fd.receiver_type) + "." + fd.name;
@@ -185,83 +225,66 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
         i = i + 1;
     }
     for p in built.instances {
-        var body: irlower.LowerResult = produced_body(p, structs, p.func.graph.name);
+        // An instance is named after the template it came from, so the bisect
+        // knob reaches it through the same prefix test.
+        var body: irlower.LowerResult = declined("not selected");
+        if (selected(only, skip, p.func.graph.name)) { body = produced_body(p, structs, p.func.graph.name); }
         r = Rows { body: r.body.append(body), n1: r.n1.append(p.func.graph.name),
             n2: r.n2.append(""), keep: r.keep.append(body.ok) };
     }
     return r;
 }
 
-// substituted replaces each surviving function's AST cache entry with its
-// produced body, then appends the instances and the per-type drop helpers,
-// which are bodies with no declaration of their own.
-function substituted(ast: irlower.LowerResult[], r: Rows, decls: i32,
-                     helpers: irlower.LowerResult[]): irlower.LowerResult[] {
-    var cache: irlower.LowerResult[] = [];
-    var i: i32 = 0;
-    while (i < ast.len()) {
-        if (r.keep[i]) { cache = cache.append(r.body[i]); } else { cache = cache.append(ast[i]); }
-        i = i + 1;
-    }
-    var instances: irlower.LowerResult[] = [];
-    var at: i32 = decls;
-    while (at < r.body.len()) {
-        if (r.keep[at]) { instances = instances.append(r.body[at]); }
-        at = at + 1;
-    }
-    cache = ssarc.merge_helpers(cache, instances);
-    return ssarc.merge_helpers(cache, helpers);
-}
-
-// lower_gated_sem is ircore.lower_gated with the semantic substitution around
-// it. `base` is the pre-`append_dyn` registry set the emitters read; the dyn
-// fold happens here so the rows caller_sigs rewrote reach the lowering and the
-// emit from one place.
-pub function lower_gated_sem(mod: parser.Module, structs: irlower.StructTab,
-                             base: irlower.FnSigs, known: string[], for_wasm: boolean): SemLowered {
-    if (!sem_ir_on()) {
-        var plain: ircore.Lowered = ircore.lower_gated(mod, structs,
-            irlower.fn_sigs_with_dyn(base, mod.trait_reqs), known, for_wasm);
-        return SemLowered { ok: plain.ok, cache: plain.cache, sigs: base, produced: 0 };
-    }
+// substitution produces every function this boundary admits and hands the
+// result back as a value for the emit path to thread in (ircore.Sub). The
+// caller normalises the module exactly as the emit path does, so the bodies
+// line up with `mod.funcs` position for position.
+//
+// `base` is the pre-`append_dyn` registry set the emitters read; the rows
+// caller_sigs rewrites are returned in the Sub, and the emit and the AST
+// lowering of what is left both read them.
+pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
+    if (!sem_ir_on()) { return ircore.no_sub(); }
     var built: semsource.Built = semsource.build_module(mod);
     var r: Rows = prune(rows_of(mod, built, structs));
     var sigs: irlower.FnSigs = base;
     var helpers: irlower.LowerResult[] = [];
+    var bodies: irlower.LowerResult[] = [];
     var n: i32 = 0;
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (r.keep[i]) {
             sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes);
             helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
+            bodies = bodies.append(r.body[i]);
             n = n + 1;
-        }
+        } else { bodies = bodies.append(declined("kept the AST lowering")); }
         i = i + 1;
     }
+    var instances: irlower.LowerResult[] = [];
     var at: i32 = 0;
     while (at < built.instances.len()) {
         if (r.keep[mod.funcs.len() + at]) {
             helpers = util.append_all(helpers, ssarc.drop_helpers(built.instances[at].func));
+            instances = instances.append(r.body[mod.funcs.len() + at]);
         }
         at = at + 1;
     }
-    var g: ircore.Lowered = ircore.lower_gated(mod, structs,
-        irlower.fn_sigs_with_dyn(sigs, mod.trait_reqs), known, for_wasm);
-    if (!g.ok) { return SemLowered { ok: false, cache: [], sigs: base, produced: 0 }; }
     report("module", "produced " + util.i32_to_string(n) + " of "
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
-        + util.i32_to_string(live_count(r, mod.funcs.len())) + " of "
+        + util.i32_to_string(instances.len()) + " of "
         + util.i32_to_string(built.instances.len()) + " instances");
-    return SemLowered { ok: true, cache: substituted(g.cache, r, mod.funcs.len(), helpers),
-        sigs: sigs, produced: n };
+    // The declaration-less bodies are deduped by symbol and conflict-checked
+    // here, where the rule lives, so the emit path's tail is a plain append.
+    var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers);
+    if (n == 0 && extra.len() == 0) { return ircore.no_sub(); }
+    return ircore.Sub { on: true, bodies: bodies, extra: extra, sigs: sigs };
 }
 
-function live_count(r: Rows, from: i32): i32 {
-    var n: i32 = 0;
-    var i: i32 = from;
-    while (i < r.body.len()) {
-        if (r.keep[i]) { n = n + 1; }
-        i = i + 1;
-    }
-    return n;
+// The module an emit path gates and emits, so a caller can produce the
+// substitution against the same normalisation and the same order. The x86-64
+// and arm64 paths spell it this way; the wasm one has its own
+// (wasm_ir.route_normalized), which its caller asks for instead.
+pub function gated_module(mod: parser.Module): parser.Module {
+    return parser.infer_ret_types_module(ircore.script_normalized(mod));
 }
