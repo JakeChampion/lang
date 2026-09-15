@@ -57,6 +57,14 @@ The binaries were 39,945,026 and 43,349,026 bytes. These are one local
 integration run's timings, not a controlled CI speedup comparison. They do
 not include GitHub upload/download, compression or queueing costs.
 
+A native Linux ARM64 pilot then repeated the same build, restore, execution
+and corrupt-cache fallback sequence with Go 1.26.8 and glibc 2.36. Both smoke
+tests passed after every stage. Its binaries were 38,796,747 and 41,801,477
+bytes. It includes the repair for duplicate termios map entries introduced
+by merging independent changes into main. The repository pilot followed a
+successful sub-minute Linux fixture pilot. This verifies the Linux restore
+path; native x86 GitHub transfer and execution costs still need measuring.
+
 ## Rollout
 
 Measure load-warmup build/upload cost, per-shard download/restore duration,
