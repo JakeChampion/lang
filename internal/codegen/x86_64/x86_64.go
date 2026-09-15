@@ -240,6 +240,9 @@ const (
 	sysFdatasync = 75
 	sysSync      = 162
 	sysSyncfs    = 306
+	// dup3(2), behind the handle `dup_onto` method. Linux/arm64 has no
+	// dup2 at all, so dup3 is the form both Linux architectures carry.
+	sysDup3      = 292
 	sysMmap      = 9
 	sysSocket    = 41
 	sysConnect   = 42
@@ -1055,13 +1058,22 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.emitFdStatRuntime()
 	}
 	if g.usesFdSync {
-		g.emitFdSyncRuntime("__fern_fd_fsync", "fsy", sysFsync)
+		g.emitFdCallRuntime("__fern_fd_fsync", "fsy", sysFsync, nil)
 	}
 	if g.usesFdDatasync {
-		g.emitFdSyncRuntime("__fern_fd_fdatasync", "fds", sysFdatasync)
+		g.emitFdCallRuntime("__fern_fd_fdatasync", "fds", sysFdatasync, nil)
 	}
 	if g.usesFdSyncfs {
-		g.emitFdSyncRuntime("__fern_fd_syncfs", "sfs", sysSyncfs)
+		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", sysSyncfs, nil)
+	}
+	if g.usesFdDupOnto {
+		// dup3(own_fd, fd, 0). The destination is sign-extended rather
+		// than zero-extended so a negative one stays negative and
+		// answers EBADF.
+		g.emitFdCallRuntime("__fern_fd_dup_onto", "dpo", sysDup3, func() {
+			g.emit("movsxd rsi, esi")
+			g.emit("xor edx, edx")
+		})
 	}
 	if g.usesSync {
 		g.emitSyncRuntime()
@@ -1606,6 +1618,7 @@ type generator struct {
 	usesFdSync         bool
 	usesFdDatasync     bool
 	usesFdSyncfs       bool
+	usesFdDupOnto      bool
 	usesSync           bool
 	usesAccess         bool
 	usesEuid           bool
@@ -2087,6 +2100,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "__method_Reader_syncfs", "__method_Writer_syncfs":
 		g.usesFdSyncfs = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
+		g.usesFdDupOnto = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "sync":
@@ -3888,6 +3905,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_fd_fdatasync"
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
+		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
+			target = "__fern_fd_dup_onto"
 		case "sync":
 			target = "__fern_sync"
 		case "__method_Reader_seek", "__method_Writer_seek":
@@ -16308,18 +16327,19 @@ func (g *generator) emitFdStatRuntime() {
 	g.emitStatLikeRuntime("__fern_fd_stat", 0, "fst", true)
 }
 
-// emitFdSyncRuntime emits one of the three write-back helpers —
-// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` — each
-// taking a Reader / Writer handle pointer and answering
-// `Option[IoError]`. One body serves all three: they differ only in the
-// syscall number, and each takes the descriptor as its single argument.
+// emitFdCallRuntime emits a helper that makes ONE syscall on a
+// Reader / Writer handle's descriptor and answers `Option[IoError]` —
+// the three write-back calls (`__fern_fd_fsync` / `__fern_fd_fdatasync`
+// / `__fern_fd_syncfs`) and `__fern_fd_dup_onto`. They differ only in
+// the syscall number and in whether anything beyond the descriptor
+// needs setting up, which is what `prep` emits.
 //
 // The shape is `__fern_close_fd_box`'s, because the contract is the
-// same: a one-argument call on the handle's fd whose errno becomes
-// `Some(IoError)` and whose success is `None`. The errno is classified
-// against an EMPTY path — the handle has no name here, and `sync(1)`
-// supplies the operand's own spelling when it words the diagnostic.
-func (g *generator) emitFdSyncRuntime(sym, lp string, sysno int) {
+// same: a call on the handle's fd whose errno becomes `Some(IoError)`
+// and whose success is `None`. The errno is classified against an EMPTY
+// path — the handle has no name here, and `sync(1)` supplies the
+// operand's own spelling when it words the diagnostic.
+func (g *generator) emitFdCallRuntime(sym, lp string, sysno int, prep func()) {
 	g.line("")
 	g.line(".globl " + sym)
 	g.line(".type " + sym + ", @function")
@@ -16328,6 +16348,9 @@ func (g *generator) emitFdSyncRuntime(sym, lp string, sysno int) {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
+	if prep != nil {
+		prep()
+	}
 	g.emit("mov edi, [rdi]") // fd, at offset 0 of the handle
 	g.emitSyscall(sysno)
 	g.emit("test rax, rax")

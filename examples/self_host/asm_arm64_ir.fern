@@ -1764,6 +1764,12 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // fresh Result[FileStat, IoError].
             s = s.need("heap"); s = s.need("reader"); s = s.need("fd_stat");
             s = s.write("    bl __fn___fern_fd_stat\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 311) {  // fd_dup_onto
+            // [fd][newfd] -> Option[IoError]. newfd is on top but param[0] is
+            // fd, so swap before the call, as writer_truncate does.
+            s = s.need("heap"); s = s.need("reader"); s = s.need("fd_dup_onto");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_fd_dup_onto\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 307) {  // fd_flags
             // [fd] IS param[0], like fd_stat; __fn___fern_fd_flags pushes a
             // fresh Result[i64, IoError].
@@ -7249,6 +7255,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         fs_src = fs_src + asmcore.rt_src_sync_family(s, tgt);
         if (s.has_need("reader_seek")) { fs_src = fs_src + " " + asmcore.rt_src_reader_seek(tgt); }
         if (s.has_need("fd_flags")) { fs_src = fs_src + " " + asmcore.rt_src_fd_flags(tgt); }
+        if (s.has_need("fd_dup_onto")) { fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto(tgt); }
         if (s.has_need("writer_truncate")) { fs_src = fs_src + " " + asmcore.rt_src_writer_truncate(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }

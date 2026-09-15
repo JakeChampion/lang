@@ -2861,6 +2861,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_fd_fsync":            buildFdSyncBodyP2("wasi_descriptor_sync_p2"),
 	"__fern_fd_fdatasync":        buildFdSyncBodyP2("wasi_descriptor_sync_data_p2"),
 	"__fern_fd_syncfs":           buildFdSyncfsBody,
+	"__fern_fd_dup_onto":         buildFdDupOntoBody,
 	"__fern_reader_seek":         buildReaderSeekBodyP2,
 	"__fern_writer_seek":         buildWriterSeekBodyP2,
 	"__fern_reader_flags":        buildReaderFlagsBodyP2,

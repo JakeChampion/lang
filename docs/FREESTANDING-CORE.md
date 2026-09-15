@@ -478,6 +478,22 @@ that loops on the count making the same progress it would on a kernel. Zero
 is a real answer on all three rather than an error, so a caller that treats
 it as progress spins on every target equally.
 
+**`dup_onto` is a handle method that no wasm world can perform**, and the
+answer is the refusal at the CALL rather than E066. `r.dup_onto(fd)` /
+`w.dup_onto(fd)` is dup3(own_fd, fd, 0) — the handle becomes reachable as that
+number too and whatever the number named is closed — which is the whole of
+what GNU `nohup` does, and the caller a shell would be. It is ungated for the
+reason no handle method is: the Reader or Writer had to be obtained first.
+
+Neither preview can do it, so both answer `Unsupported`, which is `syncfs`'s
+shape and not `sync`'s: the method has an error channel, so a caller is TOLD
+the descriptor did not move, where a whole-machine flush returning nothing has
+nowhere to put a refusal and needs the compile-time gate instead. Preview 1's
+`fd_renumber` looks like the lowering and is not — it closes the source, so it
+MOVES a descriptor where this duplicates one, and the handle the caller still
+holds would be left dangling with a drop that closes a number it no longer
+owns. Preview 2 has no numbered table to renumber at all.
+
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the
 classification's. Keeping it out of the capability vocabulary is deliberate — otherwise

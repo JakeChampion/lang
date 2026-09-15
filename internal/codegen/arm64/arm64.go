@@ -235,6 +235,12 @@ var linuxDarwinSysno = map[string][2]int{
 	// setpgid(2) — Linux asm-generic 154, Darwin BSD 82. Backs
 	// `__fern_set_process_group`. Identical shape on both: (pid, pgid).
 	"setpgid": {154, 82},
+	// dup3(2) — Linux asm-generic 24. The Darwin number is dup2(2), BSD
+	// 90: XNU has no dup3, and dup3 with no flags IS dup2, so the third
+	// register the caller sets is one the BSD call ignores. Backs
+	// `__fern_fd_dup_onto`. Unlike utimensat below, this is the same
+	// operation under two names rather than two different calls.
+	"dup3": {24, 90},
 	// getrlimit(2) — Linux asm-generic 163 (arm64 asks for the
 	// set/get-rlimit pair), Darwin BSD 194. Identical shape:
 	// (resource, &rlimit) over a two-u64 record. Only the RESOURCE
@@ -1035,13 +1041,22 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitFdStatRuntime()
 	}
 	if g.usesFdSync {
-		g.emitFdSyncRuntime("__fern_fd_fsync", "fsy", "fsync")
+		g.emitFdCallRuntime("__fern_fd_fsync", "fsy", "fsync", nil)
 	}
 	if g.usesFdDatasync {
-		g.emitFdSyncRuntime("__fern_fd_fdatasync", "fds", "fdatasync")
+		g.emitFdCallRuntime("__fern_fd_fdatasync", "fds", "fdatasync", nil)
 	}
 	if g.usesFdSyncfs {
-		g.emitFdSyncRuntime("__fern_fd_syncfs", "sfs", "syncfs")
+		g.emitFdCallRuntime("__fern_fd_syncfs", "sfs", "syncfs", nil)
+	}
+	if g.usesFdDupOnto {
+		// dup3(own_fd, fd, 0). The destination is sign-extended rather
+		// than zero-extended so a negative one stays negative and
+		// answers EBADF.
+		g.emitFdCallRuntime("__fern_fd_dup_onto", "dpo", "dup3", func() {
+			g.emit("sxtw x1, w1")
+			g.emit("mov x2, #0")
+		})
 	}
 	if g.usesSync {
 		g.emitSyncRuntime()
@@ -13943,11 +13958,14 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.line(".ltorg")
 }
 
-// emitFdSyncRuntime emits one of the three write-back helpers —
-// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` — taking
-// a Reader / Writer handle pointer and answering `Option[IoError]`. They
-// differ only in which syscall the fd goes to, so one body serves all
-// three, shaped like `__fern_close_fd_box`.
+// emitFdCallRuntime emits one of the helpers that make a single
+// syscall on a handle's descriptor —
+// `__fern_fd_fsync` / `__fern_fd_fdatasync` / `__fern_fd_syncfs` and
+// `__fern_fd_dup_onto` — taking a Reader / Writer handle pointer and
+// answering `Option[IoError]`. They differ only in which syscall the fd
+// goes to and in whether anything beyond it needs setting up, which is
+// what `prep` emits, so one body serves all four, shaped like
+// `__fern_close_fd_box`.
 //
 // `syncfs` on Darwin is the exception: XNU has no per-filesystem flush,
 // so the fd is checked with fcntl(F_GETFD) — which answers EBADF for a
@@ -13955,7 +13973,7 @@ func (g *generator) emitReaderWriterRuntime() {
 // is then the whole-machine sync(2). That covers the filesystem the
 // descriptor lives on, so the guarantee the caller asked for holds; it
 // simply flushes more than was asked.
-func (g *generator) emitFdSyncRuntime(sym, lp, call string) {
+func (g *generator) emitFdCallRuntime(sym, lp, call string, prep func()) {
 	g.line("")
 	g.line(".global " + sym)
 	g.typeDirective(sym)
@@ -13963,6 +13981,9 @@ func (g *generator) emitFdSyncRuntime(sym, lp, call string) {
 	g.emit("stp x29, x30, [sp, #-32]!")
 	g.emit("mov x29, sp")
 	g.emit("str x19, [sp, #16]")
+	if prep != nil {
+		prep()
+	}
 	g.emit("ldr w0, [x0]") // fd, at offset 0 of the handle
 	if call == "syncfs" && g.darwin {
 		g.emit("mov x1, #1") // F_GETFD
@@ -14824,6 +14845,7 @@ type generator struct {
 	usesFdSync         bool
 	usesFdDatasync     bool
 	usesFdSyncfs       bool
+	usesFdDupOnto      bool
 	usesSync           bool
 	usesAccess         bool
 	usesEuid           bool
@@ -19394,6 +19416,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__method_Reader_syncfs", "__method_Writer_syncfs":
 			target = "__fern_fd_syncfs"
 			g.usesFdSyncfs = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_dup_onto", "__method_Writer_dup_onto":
+			target = "__fern_fd_dup_onto"
+			g.usesFdDupOnto = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "sync":

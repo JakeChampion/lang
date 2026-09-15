@@ -1793,6 +1793,39 @@ than 0 for a live child because 0 is what wait4 itself answers there and what
 a clean exit decodes to; no errno wait4 returns is 1, so the sign separates
 the two.
 
+`nohup` needs one, and it is not a syscall wrapper on a path but a method on
+a handle:
+
+    r.dup_onto(fd) / w.dup_onto(fd)    dup3(own_fd, fd, 0)
+
+Redirecting fds 0, 1 and 2 is not a detail of `nohup`, it is the whole job, and
+nothing in the language could express it: `stdin()` / `stdout()` / `stderr()`
+hand back handles, `open_*` hands back a handle, and a handle surrenders no
+descriptor number to pass to a `dup2`. So the operation goes on the handle,
+which is where `seek`, `flags` and `isatty` already went for the same reason.
+
+The shape that looks more obvious — an exec that takes redirections — gets the
+utility WRONG. Measured against coreutils 9.4: with a terminal on stdin,
+`nohup` leaves fd 0 pointing at `/dev/null` opened WRITE-ONLY, so the command
+can neither read the terminal nor read the replacement (`cat` there fails with
+`Bad file descriptor`, and `echo hi 1>&0` from the same shell succeeds). A
+redirection table that typed fd 0 as a Reader cannot say that; `dup_onto` on a
+Writer can, because the handle's direction and the destination's number are
+independent. The third of nohup's three redirections needs no extra form
+either: fd 1 is nameable, so stderr-follows-stdout is `stdout().dup_onto(2)`.
+
+dup2 semantics mean the handle keeps its own descriptor, so the caller closes
+it afterwards — the pair GNU makes. The trap worth knowing is when the
+handle's own descriptor already IS the destination: dup3 is a no-op and that
+close would close the destination. It cannot arise in `nohup`, where the
+number being replaced is the terminal and so occupied when the file is opened,
+but a caller that closed fd 1 first is not protected by that.
+
+A shell wants the same primitive and needs no new one: fork, redirect in the
+child, exec. `timeout` and `stdbuf` were listed as wanting it too and do not —
+`timeout` redirects nothing and `stdbuf` sets `LD_PRELOAD`, which is
+environment.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast

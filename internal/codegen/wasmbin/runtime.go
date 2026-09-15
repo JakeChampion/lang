@@ -588,11 +588,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
 					needs.add("__fern_fd_stat")
-				case "__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs":
+				case "__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
+					"__fern_fd_dup_onto":
 					// (r) → i32 — write-back of the handle;
 					// Option[IoError]. syncfs reaches no import:
 					// neither preview has a per-filesystem flush,
-					// so its body is the Unsupported refusal.
+					// so its body is the Unsupported refusal, and
+					// dup_onto — (r, fd) → i32, the same box — is
+					// refused the same way.
 					needs.add("__fern_alloc")
 					needs.add("__fern_alloc_rc1")
 					needs.add("__build_io_error")
@@ -1218,6 +1221,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_fd_fsync":          {"__wasi_errno_of_code"},
 	"__fern_fd_fdatasync":      {"__wasi_errno_of_code"},
 	"__fern_fd_syncfs":         {"__wasi_errno_of_code"},
+	"__fern_fd_dup_onto":       {"__wasi_errno_of_code"},
 	"__fern_reader_seek":       {"__wasi_errno_of_code"},
 	"__fern_writer_seek":       {"__wasi_errno_of_code"},
 	"__fern_reader_flags":      {"__wasi_errno_of_code"},
@@ -1278,6 +1282,7 @@ var helperResultBoxCallers = []string{
 	"__fern_reader_flags", "__fern_writer_flags",
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
+	"__fern_fd_dup_onto",
 	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_read_dir_all",
 	"__fern_remove_dir_all", "__fern_temp_dir",
@@ -2833,6 +2838,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildFdSyncfsBody,
+	},
+	"__fern_fd_dup_onto": {
+		// (r, fd) -> i32 - heap-form Option[IoError], always
+		// Some(Unsupported): neither preview can install a descriptor
+		// at a number the caller chose. See wasi_dup_onto.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildFdDupOntoBody,
 	},
 	"__fern_fd_stat": {
 		// (r) → i32 — heap-form Result[FileStat, IoError]: fstat of

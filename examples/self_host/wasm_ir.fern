@@ -292,6 +292,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "fd_fsync")) { out = out.append("fd_fsync"); }
     if (module_emits_op_cached(cache, "fd_fdatasync")) { out = out.append("fd_fdatasync"); }
     if (module_emits_op_cached(cache, "fd_syncfs")) { out = out.append("fd_syncfs"); }
+    if (module_emits_op_cached(cache, "fd_dup_onto")) { out = out.append("fd_dup_onto"); }
     if (module_emits_op_cached(cache, "reader_seek")) { out = out.append("reader_seek"); }
     if (module_emits_op_cached(cache, "fd_flags")) { out = out.append("fd_flags"); }
     if (module_emits_op_cached(cache, "writer_truncate")) { out = out.append("writer_truncate"); }
@@ -4174,6 +4175,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // Neither preview has a per-filesystem flush, so this one drops the
         // fd and answers Unsupported rather than importing anything.
         parts = parts.append("    call $__fern_fd_syncfs\n");
+    } else if (o.kind_tag == 311) {  // fd_dup_onto
+        // Neither preview can install a descriptor at a chosen number, so this
+        // one drops both operands and answers Unsupported.
+        parts = parts.append("    call $__fern_fd_dup_onto\n");
     } else if (o.kind_tag == 307) {  // fd_flags
         // r.flags() / w.flags() -> Result[i64, IoError]: the fd is already
         // on the stack, as fd_stat's is.
@@ -4983,7 +4988,8 @@ function io_err_field_off(i: i32, slot: i32): string {
 // write-back ops. Two gates ask it, and neither wants three `need` calls
 // spelled out.
 function needs_fd_sync(needs: string[]): boolean {
-    return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs");
+    return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
+        || need(needs, "fd_dup_onto");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -5648,6 +5654,7 @@ pub function fd_sync_funcs(needs: string[]): string {
     if (need(needs, "fd_fsync")) { o = o + fd_sync_func("fsync", "fd_sync"); }
     if (need(needs, "fd_fdatasync")) { o = o + fd_sync_func("fdatasync", "fd_datasync"); }
     if (need(needs, "fd_syncfs")) { o = o + fd_syncfs_func(); }
+    if (need(needs, "fd_dup_onto")) { o = o + fd_dup_onto_func(); }
     return o;
 }
 
@@ -5691,6 +5698,25 @@ pub function fd_sync_func(name: string, imp: string): string {
 pub function fd_syncfs_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_fd_syncfs (param $fd i32) (result i32)\n";
+    o = o + "    (local $res i32) (local $path i32)\n";
+    o = o + "    (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+    o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 58) (local.get $path)))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
+// fd_dup_onto_func emits $__fern_fd_dup_onto(fd, newfd) -> Option[IoError]:
+// always Some(Unsupported). Preview 1's fd_renumber looks like the lowering and
+// is not — it CLOSES the source, so the handle the caller still holds would be
+// dangling, which is a move rather than a duplicate — and preview 2 has no
+// numbered table to renumber at all. ENOTSUP (58) goes through the same errno
+// table every other refusal here uses.
+pub function fd_dup_onto_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_fd_dup_onto (param $fd i32) (param $newfd i32) (result i32)\n";
     o = o + "    (local $res i32) (local $path i32)\n";
     o = o + "    (local.set $path (call $__fern_str_box (i32.const 4)))\n";
     o = o + "    (i32.store (local.get $path) (i32.const 0))\n";
