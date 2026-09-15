@@ -18,9 +18,16 @@ name: Test e2e x86_64
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Profile native deep-stack execution instead of the normal lane
+        type: choice
+        options: ["off", pilot, full]
+        default: "off"
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.profile == 'off' }}
     name: test-e2e-x86_64
     runs-on: ubuntu-latest
     steps:
@@ -84,6 +91,7 @@ jobs:
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
 
   seccomp-corpus-x86_64:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.profile == 'off' }}
     # #6071's over-tightness gate at corpus scale, and the precondition for
     # ever defaulting the sandbox on. Four hand-written programs cannot show
     # that a filter derived from one program's emitted syscalls is right for
@@ -99,3 +107,50 @@ jobs:
         env:
           RUN_SECCOMP_CORPUS: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
+
+  profile-native-stack:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.profile != 'off' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Record crash environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/stack-profile"
+          {
+            git rev-parse HEAD
+            uname -a
+            ulimit -a
+            cat /proc/sys/kernel/core_pattern
+            cat /proc/sys/fs/suid_dumpable
+          } > "$RUNNER_TEMP/stack-profile/environment.txt"
+      - name: Build fixed native test binary
+        run: go test -c -o "$RUNNER_TEMP/stack-profile/e2e.test" ./internal/e2e
+      - name: Profile stack-limited programs
+        env:
+          SCALE: ${{ inputs.profile }}
+        run: |
+          set -euo pipefail
+          pattern='^TestCINativeStackProfilePilot$'
+          if [ "$SCALE" = full ]; then
+            pattern='^TestX86_64Trmc(DeepStack|WidenedDeepStack)$'
+          fi
+          started=$SECONDS
+          cd internal/e2e
+          gotestsum --format standard-verbose --jsonfile "$RUNNER_TEMP/stack-profile/events.jsonl" --raw-command -- \
+            go tool test2json -t -p e2e /usr/bin/env --default-signal=INT \
+            "$RUNNER_TEMP/stack-profile/e2e.test" -test.v=test2json -test.count=1 -test.run "$pattern" -test.timeout=15m
+          if [ "$SCALE" = pilot ]; then
+            test "$((SECONDS - started))" -lt 60
+          fi
+      - name: Retain profiling evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-stack-profile-${{ inputs.profile }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stack-profile/environment.txt
+            ${{ runner.temp }}/stack-profile/events.jsonl
+          retention-days: 7
+          if-no-files-found: error

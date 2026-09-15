@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -125,10 +126,19 @@ function main(): i32 {
 func runWithStackLimit(t *testing.T, kib int, bin string) int {
 	t.Helper()
 	cmd := exec.Command("bash", "-c", fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib), "--", bin)
+	started := time.Now()
 	if out, err := cmd.CombinedOutput(); err != nil && cmd.ProcessState == nil {
 		t.Fatalf("run %s: %v\n%s", bin, err, out)
 	}
+	t.Logf("stack-profile: wall=%s user=%s system=%s status=%s", time.Since(started), cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState)
 	return cmd.ProcessState.ExitCode()
+}
+
+func TestCINativeStackProfilePilot(t *testing.T) {
+	bin, _ := compileX86_64FreeOn(t, "function main(): i32 { return 0; }")
+	if code := runWithStackLimit(t, 16*1024, bin); code != 0 {
+		t.Fatalf("pilot exit = %d", code)
+	}
 }
 
 func TestX86_64TrmcDeepStack(t *testing.T) {
