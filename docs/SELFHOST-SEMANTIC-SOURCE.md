@@ -1320,6 +1320,66 @@ executable fixture pin a 64-bit and an f64 element, each beside a narrow one
 and the f64 beside a string so the drop walk crosses the same box, balanced on
 every target.
 
+### What stops the compiler compiling ITSELF through this path (#9328)
+
+The corpus agreeing 496 times is not the same as a program agreeing. The
+self-hosted compiler compiles itself through the production consumer — exit 0,
+354 s against the AST path's 50 s, **7,490 of 8,206 declarations and 63 of 63
+instances produced**, a 12.76 MB binary against the AST path's 10.26 MB — and
+the binary it produces **segfaults on anything that reads a file**. Its no-file
+modes (usage, `-targets`) work.
+
+That is the shape `docs/TEST-GATES.md` warns about, arriving on schedule: a
+green corpus and a stable miscompile. What found it was not a suite; it was
+running the thing.
+
+`FERN_SEM_IR_ONLY` and `FERN_SEM_IR_SKIP` — prefix lists, the second an
+exclusion — are the bisect knob. Halving with ONLY isolates nothing here,
+because either half prunes the call between a produced caller and a produced
+callee; removing one prefix at a time from the whole set does. Against a
+lexer-plus-parser probe rather than the whole compiler, which takes the loop
+from six minutes to ten seconds:
+
+- The segfault is heap-layout sensitive — 36 different single-function
+  exclusions each "fix" it — so it is a poor oracle. `FERN_SANITIZE=1` at
+  compile time gives a deterministic one: **use-after-free (touched a
+  quarantined block)**, where the AST build of the same program reports only
+  the known leak.
+- Under that oracle, skipping `lexer__` is the ONLY module-level exclusion that
+  clears it, and within the lexer the set is `scan_number` and the chain it
+  calls. Its `slice_unchecked(l.src, begin, l.i)` is the view.
+
+The cause is `ssarc.release_name` choosing a string's release from its TYPE,
+where the AST lowering carries a per-slot "this slot may hold a box over
+another string's bytes" mark (`irlower.LowerState.str_view_local`) and chooses
+from THAT. Four lines reproduce it:
+
+```fern
+function keep(text: string): string { return text; }
+function scan(src: string): string {
+    var v: str = slice_unchecked(src, 0, 3);
+    return keep(v);
+}
+function main(): i32 { return scan("12345 abc").len(); }
+```
+
+`semsource.lend` retags the borrowed view as a `string` so the exact-type rule
+admits the call; `release_name` then picks `__fern_str_free` for it, and a
+callee whose result is text may hand that box straight back to a caller that
+frees what it never owned.
+
+**Refusing the retag where the callee's result is text was tried and reverted.**
+It closes the reproducer and it is the wrong rule: the danger is a callee that
+returns the value derived from the lent view, which is a property of the body
+and not of the signature, and the executable fixture's own `lent_views` is a
+callee that returns text without handing the view back. It also does not close
+the class — the lexer probe still reports a use-after-free with the retag
+refused. The fix is the provenance flag the mark above already is, and
+`__fern_str_view_free` is already the safe superset (its own comment: "frees the
+box alone when the rc is the immortal view sentinel and takes the ordinary path
+otherwise"), so the question is which values carry the flag rather than whether
+a correct symbol exists.
+
 ### The leaves that are left, by measured size
 
 | leaf | functions refused |
