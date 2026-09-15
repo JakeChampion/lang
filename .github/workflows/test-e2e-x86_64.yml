@@ -29,10 +29,15 @@ on:
         type: choice
         options: [gen1, gen0]
         default: gen1
+      batch-scheduling:
+        description: Compare serial and parallel self-built emission on native x86
+        type: choice
+        options: ["off", pilot, full]
+        default: "off"
 
 jobs:
   test:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.buffer-benchmark == 'off' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.buffer-benchmark == 'off' && inputs.batch-scheduling == 'off') }}
     name: test-e2e-x86_64
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +83,7 @@ jobs:
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
 
   seccomp-corpus-x86_64:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.buffer-benchmark == 'off' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.buffer-benchmark == 'off' && inputs.batch-scheduling == 'off') }}
     # #6071's over-tightness gate at corpus scale, and the precondition for
     # ever defaulting the sandbox on. Four hand-written programs cannot show
     # that a filter derived from one program's emitted syscalls is right for
@@ -96,7 +101,7 @@ jobs:
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
 
   benchmark-instruction-buffer:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.buffer-benchmark != 'off' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.buffer-benchmark != 'off' && inputs.batch-scheduling == 'off' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -145,5 +150,77 @@ jobs:
             ${{ runner.temp }}/buffer-profile/*/build.json
             ${{ runner.temp }}/buffer-profile/*/unit-names.json
             ${{ runner.temp }}/buffer-profile/results-*/*.json
+          retention-days: 7
+          if-no-files-found: error
+
+  benchmark-batch-scheduling:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.batch-scheduling != 'off' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Prepare compiler and measurement binary
+        run: |
+          test "$(uname -m)" = x86_64
+          CI_BUFFER_PROFILE_ROOT="$RUNNER_TEMP/batch-profile"
+          CI_BUFFER_BOOTSTRAP="$RUNNER_TEMP/batch-bootstrap"
+          printf 'CI_BUFFER_PROFILE_ROOT=%s\nCI_BUFFER_BOOTSTRAP=%s\n' "$CI_BUFFER_PROFILE_ROOT" "$CI_BUFFER_BOOTSTRAP" >> "$GITHUB_ENV"
+          mkdir "$CI_BUFFER_PROFILE_ROOT"
+          go build -o "$CI_BUFFER_BOOTSTRAP" ./cmd/fern
+          go test -c -o "$CI_BUFFER_PROFILE_ROOT/budget.test" ./internal/e2eselfhost
+          {
+            uname -a
+            lscpu
+            free -b
+            go version
+            gcc --version
+          } > "$CI_BUFFER_PROFILE_ROOT/environment.txt"
+          sha256sum "$CI_BUFFER_PROFILE_ROOT/budget.test" > "$CI_BUFFER_PROFILE_ROOT/binary.sha256"
+          docker pull ubuntu:24.04
+          docker image inspect ubuntu:24.04 > "$CI_BUFFER_PROFILE_ROOT/container.json"
+      - name: Build candidate generations
+        env:
+          CI_BUFFER_BUILD_ROOT: ${{ runner.temp }}/batch-profile/candidate
+        run: go test ./internal/e2eselfhost -run '^TestCIInstructionBufferBuild$' -count=1 -timeout 10m -v
+      - name: Compare serial and parallel emission with fixed resources
+        shell: bash
+        env:
+          BATCH_SCALE: ${{ inputs.batch-scheduling }}
+        run: |
+          mkdir "$CI_BUFFER_PROFILE_ROOT/results"
+          started=$SECONDS
+          index=0
+          for mode in serial parallel parallel serial; do
+            name="$index-$mode"
+            docker run --rm --init --cpus=4 --memory=16g \
+              -v "$CI_BUFFER_PROFILE_ROOT/budget.test:/budget.test:ro" \
+              -v "$CI_BUFFER_PROFILE_ROOT/candidate:/compiler:ro" \
+              -v "$CI_BUFFER_PROFILE_ROOT/results:/results" \
+              -e GOMAXPROCS=4 -e FERN_BUILD_MEM_BUDGET_MB=13926 \
+              -e CI_BATCH_PROFILE_ROOT=/compiler \
+              -e "CI_BATCH_PROFILE_RESULT=/results/$name" \
+              -e "CI_BATCH_PROFILE_MODE=$mode" -e "CI_BATCH_PROFILE_SCALE=$BATCH_SCALE" \
+              ubuntu:24.04 /budget.test -test.run='^TestCISelfBuiltParallelProfile$' -test.v -test.timeout=3m \
+              | tee "$CI_BUFFER_PROFILE_ROOT/results/$name.log"
+            index=$((index + 1))
+          done
+          if [[ "$BATCH_SCALE" == pilot && $((SECONDS - started)) -ge 60 ]]; then
+            echo 'Scheduling pilot exceeded one minute' >&2
+            exit 1
+          fi
+      - name: Retain scheduling measurements and identities
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-batch-${{ inputs.batch-scheduling }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/batch-profile/environment.txt
+            ${{ runner.temp }}/batch-profile/binary.sha256
+            ${{ runner.temp }}/batch-profile/container.json
+            ${{ runner.temp }}/batch-profile/candidate/build.json
+            ${{ runner.temp }}/batch-profile/candidate/unit-names.json
+            ${{ runner.temp }}/batch-profile/results/*.log
+            ${{ runner.temp }}/batch-profile/results/*/summary.json
           retention-days: 7
           if-no-files-found: error
