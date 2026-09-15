@@ -420,7 +420,12 @@ function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered
     },
     Err(_) => {}
   }
-  match (create_dir(path, want)) {
+  var initial: i32 = want;
+  if (ids.uid >= 0 || ids.gid >= 0) {
+    // Keep other users out until ownership and final permissions agree.
+    initial = want & 448;  // 0700
+  }
+  match (create_dir(path, initial)) {
     Ok(_) => {},
     Err(e) => {
       w = gnu.error_out(w, "cannot create directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
@@ -428,34 +433,36 @@ function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered
     }
   }
   w = created_directory(s, path, w);
-  // create_dir goes through the umask, so the mode is set again after it
-  // to the value install decided — which is the whole point of the rule
-  // that the mask is never consulted.
+  return apply_attributes(path, want, ids, true, w);
+}
+
+// Ownership must succeed before final permissions are exposed. chown can
+// also clear set-id bits, so chmod belongs last even on the success path.
+function apply_attributes(path: string, want: i32, ids: Ids, directory: boolean, o: io_buffered.BufWriter): DirOut {
+  var w: io_buffered.BufWriter = o;
+  var mode_error: string = "cannot change permissions of ";
+  if (ids.uid >= 0 || ids.gid >= 0) {
+    var owner_error: string = "cannot change ownership of ";
+    if (directory) {
+      owner_error = "cannot change owner and permissions of ";
+      mode_error = owner_error;
+    }
+    match (chown_at(path, ids.uid as i32, ids.gid as i32, true)) {
+      Ok(_) => {},
+      Err(e) => {
+        w = gnu.error_out(w, owner_error + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+        return DirOut { status: 1, out: w };
+      }
+    }
+  }
   match (chmod(path, want)) {
     Ok(_) => {},
     Err(e2) => {
-      w = gnu.error_out(w, "cannot change permissions of " + gnu.quotea(path) + ": " + gnu.io_error_text(e2));
+      w = gnu.error_out(w, mode_error + gnu.quotea(path) + ": " + gnu.io_error_text(e2));
       return DirOut { status: 1, out: w };
     }
   }
-  return DirOut { status: apply_ids(path, ids), out: w };
-}
-
-// `apply_ids(path, ids)` — the `-o` / `-g` chown, skipped entirely when
-// neither was given so a run without them makes no call at all.
-function apply_ids(path: string, ids: Ids): i32 {
-  if (ids.uid < 0 && ids.gid < 0) {
-    return 0;
-  }
-  match (chown_at(path, ids.uid as i32, ids.gid as i32, true)) {
-    Ok(_) => {
-      return 0;
-    },
-    Err(e) => {
-      gnu.error("cannot change ownership of " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
-      return 1;
-    }
-  }
+  return DirOut { status: 0, out: w };
 }
 
 // `make_path(s, path, last_mode, ids, o)` — `path` and every component
@@ -488,7 +495,11 @@ function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffer
         if (i == last) {
           name = path;
         }
-        var r: DirOut = make_one_dir(s, name, want, ids, w);
+        var component_ids: Ids = Ids { uid: 0 - 1, gid: 0 - 1, err: "" };
+        if (i == last) {
+          component_ids = ids;
+        }
+        var r: DirOut = make_one_dir(s, name, want, component_ids, w);
         w = r.out;
         if (r.status != 0) {
           return DirOut { status: r.status, out: w };
@@ -509,7 +520,7 @@ function make_leading(s: Scan, dest: string, ids: Ids, o: io_buffered.BufWriter)
   if (parent == "." || parent == "/") {
     return DirOut { status: 0, out: o };
   }
-  return make_path(s, parent, default_mode(), ids, o);
+  return make_path(s, parent, default_mode(), Ids { uid: 0 - 1, gid: 0 - 1, err: "" }, o);
 }
 
 // ---- -C: the comparison -----------------------------------------------------
@@ -668,17 +679,16 @@ function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
 // ---- installing one file ----------------------------------------------------
 //
 // The engine does the copying, told three things install decides and `cp`
-// does not: the mode outright (`forced_mode`, with the umask no part of
-// it), that a symlink source is followed (`deref_always`), and that a
+// does not: a private staging mode, that a symlink source is followed, and that a
 // directory source is not a recursion to allow but a refusal.
 struct FileOut { status: i32, out: io_buffered.BufWriter }
 
-function engine_cfg(s: Scan, want: i32, ids: Ids): copy.Cfg {
+function engine_cfg(s: Scan): copy.Cfg {
   var attrs: copy.Attrs = copy.attrs_none();
   if (s.preserve_timestamps) {
     attrs = copy.Attrs { ...attrs, timestamps: true };
   }
-  return copy.Cfg { ...copy.cfg_new(), attrs: attrs, recursive: false, deref: copy.deref_always(), forced_mode: want, backups: s.backups, control: s.control, suffix: s.suffix, verbose: s.verbose, debug: s.debug, remove_destination: true };
+  return copy.Cfg { ...copy.cfg_new(), attrs: attrs, recursive: false, deref: copy.deref_always(), forced_mode: 384, backups: s.backups, control: s.control, suffix: s.suffix, verbose: s.verbose, debug: s.debug, remove_destination: true };
 }
 
 function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o: io_buffered.BufWriter): FileOut {
@@ -701,20 +711,20 @@ function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o
     // Nothing at all, not even a timestamp: measured across a second run.
     return FileOut { status: 0, out: w };
   }
-  var cst: copy.State = copy.copy_one(engine_cfg(s, want, ids), copy.state_new(w), src, dest, true);
+  var cst: copy.State = copy.copy_one(engine_cfg(s), copy.state_new(w), src, dest, true);
   w = cst.out;
   if (cst.status != 0) {
     return FileOut { status: cst.status, out: w };
   }
-  var status: i32 = apply_ids(dest, ids);
   if (s.strip) {
     var rs: StripOut = run_strip(s, dest, w);
     w = rs.out;
     if (rs.status != 0) {
-      status = rs.status;
+      return FileOut { status: rs.status, out: w };
     }
   }
-  return FileOut { status: status, out: w };
+  var changed: DirOut = apply_attributes(dest, want, ids, false, w);
+  return FileOut { status: changed.status, out: changed.out };
 }
 
 // `from_environment(s)` — what no option said, filled in from

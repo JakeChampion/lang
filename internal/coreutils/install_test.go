@@ -238,6 +238,11 @@ func installCases(t *testing.T) []invocation {
 		{"owner-invalid", []string{"-o", "nosuchuser", "src", "out"}},
 		{"group-invalid", []string{"-g", "nosuchgroup", "src", "out"}},
 		{"owner-on-a-directory", []string{"-v", "-d", "-o", "0", "made"}},
+		{"owner-on-nested-directory", []string{"-v", "-d", "-o", "0", "made/inner"}},
+		{"owner-mode-file", []string{"-v", "-o", "0", "-m", "4755", "src", "out"}},
+		{"owner-mode-directory", []string{"-v", "-d", "-o", "0", "-m", "750", "made"}},
+		{"owner-with-leading-directories", []string{"-v", "-D", "-o", "0", "src", "made/inner/out"}},
+		{"owner-before-strip-failure", []string{"-v", "-s", "--strip-program=/bin/false", "-o", "0", "src", "out"}},
 		{"owner-long", []string{"-v", "--owner=0", "src", "out"}},
 		{"group-long", []string{"-v", "--group=0", "src", "out"}},
 	} {
