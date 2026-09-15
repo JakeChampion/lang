@@ -4,7 +4,7 @@ Three code-generation backends ship today — `internal/codegen/{arm64,x86_64,wa
 each lowering the flat `ir.Program`. Two more, `arm64ssa` and `x86_64ssa`, are
 reachable only through `-backend ssa` / `-backend typed-ssa` and are **not
 production paths**; `docs/SSA-DECISION.md` records why they will not become
-ones. A sixth, `wasmssa`, was retired with that decision (#9394).
+ones. A sixth, `wasmssa`, was retired with that decision (#9397).
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no

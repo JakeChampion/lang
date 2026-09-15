@@ -66,5 +66,5 @@ func TestX86_64SSABooleanBranches(t *testing.T) {
 	testNativeSSABooleanBranches(t, "x86-64-linux", x86QemuOrEmpty(t), runX86Bin)
 }
 
-// The wasm arm of this trio went with the wasmssa backend (#9394). The default
+// The wasm arm of this trio went with the wasmssa backend (#9397). The default
 // wasm emitter covers the same source through the ordinary wasm e2e suite.

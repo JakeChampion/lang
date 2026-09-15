@@ -168,7 +168,7 @@ stated goal. What is retired is the redundant second way to reach a machine.
 
 | backend | disposition |
 | ------- | ----------- |
-| `internal/codegen/wasmssa` | **RETIRED** (#9394). The relooper-era emitter, one fixed page of memory that never grows, and the only SSA backend with no corpus differential — its cover was its own hand-written cases. It existed to satisfy the "keep the layer exercised end-to-end" clause below, which `arm64ssa` now discharges far better. `-backend ssa` no longer accepts a wasm target. |
+| `internal/codegen/wasmssa` | **RETIRED** (#9397). The relooper-era emitter, one fixed page of memory that never grows, and the only SSA backend with no corpus differential — its cover was its own hand-written cases. It existed to satisfy the "keep the layer exercised end-to-end" clause below, which `arm64ssa` now discharges far better. `-backend ssa` no longer accepts a wasm target. |
 | `internal/codegen/x86_64ssa` | **KEPT, not as a codegen path.** `arm64ssa` imports its layout and call-coalescing model, so it is shared infrastructure rather than a backend that can be cut on its own. Its own coverage — asm for 256 of 317 corpus programs, a runnable binary for 9, an 84-symbol helper gap — is no longer work anyone is expected to close, because there is no cutover to close it for. |
 | `internal/codegen/arm64ssa` | **KEPT and load-bearing.** It is the emit target for `internal/semir`'s typed pre-RC ownership pipeline (`-backend typed-ssa`, `cmd/fern/typedssa.go`), which is the migration this decision leaves running. Its 281-program corpus differential is what now keeps the SSA layer honest end-to-end. |
 

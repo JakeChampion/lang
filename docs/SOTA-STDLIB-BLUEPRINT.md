@@ -550,7 +550,7 @@ while the language had no intrinsic surface. They are now one-line wrappers over
 (`OpPopcount` / `OpClz` / `OpCtz`) across every backend plus the
 interpreter. At the time of writing that was nine rather than the eight the
 fused SIMD kernels reach, and the difference was instructive: the
-since-retired `wasmssa` (#9394) consumed `ssa.Func` directly and had no
+since-retired `wasmssa` (#9397) consumed `ssa.Func` directly and had no
 string-helper table, so a kernel could not reach it — but a plain scalar op
 family lowered there like anywhere else. Eight and eight since.
 

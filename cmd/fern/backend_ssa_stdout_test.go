@@ -30,7 +30,7 @@ func TestArm64SSAWritesAsmToStdoutWithoutO(t *testing.T) {
 }
 
 // `-backend ssa` no longer covers wasm: the wasmssa emitter was retired with
-// the SSA-as-codegen shelve (#9394). The refusal has to name the targets that
+// the SSA-as-codegen shelve (#9397). The refusal has to name the targets that
 // remain, so a stale `-backend ssa -target wasm32-wasi` invocation says where
 // to go rather than failing somewhere deeper with a confusing message.
 func TestWasmSSATargetIsRefused(t *testing.T) {
