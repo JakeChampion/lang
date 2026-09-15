@@ -1,11 +1,23 @@
 # SSA cutover: the shared lowering, and why Perceus needs it
 
-**Status:** PROPOSED, as input to the `docs/SSA-DECISION.md` re-evaluation due
-**2026-09-01**. That doc says: *"If a tripwire fired, write an
-`SSA-CUTOVER-PLAN.md`"*. One has. This is that document.
+> **⚠️ DECLINED (2026-09-15).** The re-evaluation this document was written for
+> resolved against it: SSA is an analysis representation, not a codegen path.
+> See **`docs/SSA-DECISION.md`** → "Resolution (2026-09-15)".
+>
+> **The diagnosis below still stands and is still being acted on** — this was
+> never rejected as wrong. Tripwire 4 fired exactly as described, the ad-hoc
+> control-flow inventory is real, and the measurement that 32% of the IR's
+> reference-count operations act on unnamed operand-stack values is the reason
+> the ownership work moved onto the lifted form. What was declined is the
+> *remedy* this plan proposed: routing codegen through SSA. The same CFG is
+> reached through `ssa_lift` + `internal/ssa/{ownership,units,certify}`
+> WITHOUT a codegen cutover, which is why the cutover's cost stopped being
+> worth paying.
+>
+> Read §"Which tripwire fired" and §"The measurement that makes this
+> actionable" as live; read the staging plan as the road not taken.
+
 **Owner:** compiler / IR.
-**Supersedes nothing yet** — `SSA-DECISION.md` and `SELFHOST-SSA-DECISION.md`
-stand until the re-eval acts on this.
 
 ## Which tripwire fired
 

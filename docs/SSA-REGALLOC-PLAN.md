@@ -15,10 +15,16 @@ Eliminating those needs a register allocator.
 Per `CLAUDE.md` ("new optimisations should live in `internal/ir` so all backends
 benefit"), the allocator belongs at the **SSA layer** (`internal/ssa`), not bolted
 into each backend. `internal/ssa` is already a full target-independent SSA with
-dominators, RPO, loops, def-use chains, and ~100 ops — but it currently feeds only
-`wasmssa` (a stack machine that needs no registers). So this track adds (1) the
-allocation analysis/passes to `internal/ssa`, and (2) a new SSA→native emit path
-that consumes the allocation, ultimately **replacing** the stack-machine backends.
+dominators, RPO, loops, def-use chains, and ~100 ops — but at the time this was
+written it fed only `wasmssa`, a stack machine that needs no registers. So this
+track adds (1) the allocation analysis/passes to `internal/ssa`, and (2) a new
+SSA→native emit path that consumes the allocation.
+
+**The "ultimately replacing the stack-machine backends" endpoint is no longer
+the plan** — `docs/SSA-DECISION.md` resolved against an SSA codegen cutover on
+2026-09-15, citing this document's own finding that speed is the open blocker.
+The allocator work below stands on its own terms; what it no longer leads to is
+a production cutover.
 
 ## End state
 

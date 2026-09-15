@@ -1,9 +1,14 @@
 # SSA: ship-or-shelve decision
 
-**Status:** SHELVED for production backends (decided 2026-05-31).
-**Re-evaluation date:** 2026-09-01 — REACHED, decision still open. Fresh
-numbers are recorded below; the call has not been made.
+**Status:** RESOLVED (2026-09-15). SSA is **not** a codegen path and will not
+become one. It ships as an **analysis representation**. No further
+re-evaluation date: this closes the question the 2026-05-31 shelve left open,
+rather than deferring it again.
 **Owner:** compiler / IR.
+
+The decision is in "Resolution (2026-09-15)" below. Everything above it is the
+record that led there, kept because the tripwire framework is what made the
+call decidable; read it as history, not as open options.
 
 ## The question
 
@@ -128,27 +133,67 @@ Two things that bear on the choice and are easy to lose:
   route feeds roadmap goal 2 (Perceus in the self-host) directly, where the
   codegen cutover does not.
 
-## The re-evaluation procedure
+## Resolution (2026-09-15)
 
-Revisit with fresh numbers:
+**SSA is an analysis representation, not a codegen path.** The cutover
+described in `SSA-CUTOVER-PLAN.md` is declined; the procedure's third option —
+neither "re-shelve with a date" nor "schedule the cutover" — is taken, because
+a fourth re-shelve would be the third time this question was deferred rather
+than answered.
 
-- If no tripwire has fired, **re-shelve** and set the next date. Record why.
-- If a tripwire fired, write an `SSA-CUTOVER-PLAN.md`: pick the shared
-  lowering point (IR → SSA → all native backends, not one), define the
-  parity gate (the differential oracle must stay byte-identical across
-  interp + every backend), and stage it behind a flag until green.
+The reasoning is in the 2026-09-02 numbers above, and it is that the two routes
+out of tripwire 4 are not equally good:
 
-## Maintenance contract while shelved
+- **What fired tripwire 4 was ad-hoc control-flow analysis**, not slow code.
+  Tripwires 1–3 — the performance ones — remain unfired and unmeasured after
+  three and a half months. Nothing has ever demonstrated an SSA-class
+  optimisation as a bottleneck in a real Fern program.
+- **The analysis route answers tripwire 4 in full and is already built.**
+  `Op.SrcOp` provenance with a totality gate, plus
+  `internal/ssa/{ownership,ownership_solve,ownership_returns,units,certify}.go`,
+  is 2,100+ lines of interprocedural ownership over the lifted form. That is
+  the CFG the hand-rolled `reaches()` / `matchIfBackwards` walks exist for, and
+  it reaches the 32% of reference-count operations that act on unnamed
+  operand-stack values. It feeds roadmap goal 2 directly.
+- **The codegen route does not answer tripwire 4 at all**, and is not paying
+  for itself on its own terms: seven of seventeen arm64 benchmarks run
+  1.11x–1.49x slower under SSA, geomean ~0.92x, with call-clobber awareness
+  still unwritten. `SSA-REGALLOC-PLAN.md` records speed as the open blocker.
+  Fewer instructions is not faster.
 
-So the framework doesn't rot:
+So the framework is kept and funded — in the role that carries the project's
+stated goal. What is retired is the redundant second way to reach a machine.
+
+### What this decides, per backend
+
+| backend | disposition |
+| ------- | ----------- |
+| `internal/codegen/wasmssa` | **RETIRED** (#9394). The relooper-era emitter, one fixed page of memory that never grows, and the only SSA backend with no corpus differential — its cover was its own hand-written cases. It existed to satisfy the "keep the layer exercised end-to-end" clause below, which `arm64ssa` now discharges far better. `-backend ssa` no longer accepts a wasm target. |
+| `internal/codegen/x86_64ssa` | **KEPT, not as a codegen path.** `arm64ssa` imports its layout and call-coalescing model, so it is shared infrastructure rather than a backend that can be cut on its own. Its own coverage — asm for 256 of 317 corpus programs, a runnable binary for 9, an 84-symbol helper gap — is no longer work anyone is expected to close, because there is no cutover to close it for. |
+| `internal/codegen/arm64ssa` | **KEPT and load-bearing.** It is the emit target for `internal/semir`'s typed pre-RC ownership pipeline (`-backend typed-ssa`, `cmd/fern/typedssa.go`), which is the migration this decision leaves running. Its 281-program corpus differential is what now keeps the SSA layer honest end-to-end. |
+
+The self-host mirror of this decision — the stack IR is the single self-host
+production lowering — was already taken on 2026-07-03 and is unchanged:
+`docs/SELFHOST-SSA-DECISION.md`.
+
+## Maintenance contract
+
+The framework is maintained for the analysis role:
 
 - Keep `internal/ssa/` building and its tests green in CI (they already run).
-- Keep `-target wasm32-wasi -backend ssa` in the e2e matrix so the layer stays exercised
-  end-to-end, not just unit-tested.
+- Keep the **arm64 corpus differential**
+  (`internal/e2e/arm64_ssa_differential_test.go`) green, with an empty
+  known-divergences file. This is the clause that replaces "keep
+  `-target wasm32-wasi -backend ssa` in the e2e matrix": it exercises the lift
+  and the register allocator over 281 programs rather than a handful of
+  hand-written cases, so it is a real gate rather than a reminder that the
+  layer compiles.
+- `LiftFromIR` must stay **total** over what `internal/ir` emits — the
+  provenance gate (`internal/e2e/ssa_lift_provenance_test.go`) is the one that
+  matters now, because an analysis that cannot see a construct silently
+  under-reports rather than refusing to emit.
 - New IR ops / language features are **not** required to land in the SSA
-  layer while it is shelved — but if `-backend ssa` (wasm) can't express a feature, that
-  gap is logged here, because a growing gap raises the cutover cost and is
-  itself a signal.
+  *emitters*. They ARE required to lift, for the same reason.
 
 ## Reconciliation: the native `x86_64ssa` / `arm64ssa` backends (2026-07-03, #4391)
 
