@@ -32,6 +32,7 @@ import "./ircore";
 import "./irlower";
 import "./parser";
 import "./semsource";
+import "./ssasem";
 import "./ssarc";
 import "./ssaunits";
 import "./util";
@@ -46,6 +47,7 @@ struct Rows {
     n1: string[],
     n2: string[],
     keep: boolean[],
+    grows: ssaunits.GrowRow[],
 }
 
 // sem_ir_on reports whether FERN_SEM_IR selects the semantic lowering. Off is
@@ -134,17 +136,24 @@ function declined(why: string): irlower.LowerResult {
         alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
 }
 
-// produced_body runs one function through the rest of the chain. A refusal at
-// any stage yields the sentinel, so the AST body stands.
-function produced_body(p: semsource.Produced, structs: irlower.StructTab, what: string): irlower.LowerResult {
+// produced_plan plans one function's units. A refusal at either stage yields a
+// plan that is not ok, and the body it would have lowered keeps the AST one.
+function produced_plan(p: semsource.Produced, what: string): ssaunits.Plan {
     // A template's erased body is not a body this boundary has: its instances
     // are separate symbols of their own, and the erased symbol keeps the AST
     // lowering that its own AST callers name.
-    if (p.template) { return declined("generic template"); }
-    if (!p.ok) { report(what, p.why); return declined(p.why); }
+    if (p.template) { return ssaunits.refused("generic template"); }
+    if (!p.ok) { report(what, p.why); return ssaunits.refused(p.why); }
     var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
-    if (!plan.ok) { report(what, plan.why); return declined(plan.why); }
-    var r: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, structs);
+    if (!plan.ok) { report(what, plan.why); }
+    return plan;
+}
+
+// produced_body lowers a planned function. Every plan is made before any body
+// is lowered, because a caller's bracket reads its callees' plans (`grows`).
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[], what: string): irlower.LowerResult {
+    if (!plan.ok) { return declined(plan.why); }
+    var r: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows);
     if (!r.ok) { report(what, r.why); return declined(r.why); }
     return r;
 }
@@ -209,31 +218,55 @@ function prune(r: Rows): Rows {
     return r;
 }
 
-// rows_of produces every body once and records the symbols each defines.
+// The symbol a call to declaration `i` names: the receiver-qualified spelling
+// for a method, the bare name otherwise.
+function call_key(fd: parser.FuncDecl): string {
+    if (fd.receiver_type.len() > 0) { return util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return fd.name;
+}
+
+// The produced body at row `i`: a declaration first, then an instance.
+function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsource.Produced {
+    if (i < mod.funcs.len()) { return built.decls[i]; }
+    return built.instances[i - mod.funcs.len()];
+}
+
+// rows_of produces every body once and records the symbols each defines: every
+// plan first, then the callee table the brackets read, then every body.
 function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab): Rows {
     var only: string = sem_ir_only();
     var skip: string = sem_ir_skip();
-    var r: Rows = Rows { body: [], n1: [], n2: [], keep: [] };
+    var r: Rows = Rows { body: [], n1: [], n2: [], keep: [], grows: [] };
+    var plans: ssaunits.Plan[] = [];
+    var keys: string[] = [];
+    var funcs: ssasem.Func[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
-        var body: irlower.LowerResult = declined("not selected");
-        if (selected(only, skip, fd.name)) { body = produced_body(built.decls[i], structs, fd.name); }
-        var qualified: string = "";
-        if (fd.receiver_type.len() > 0) {
-            qualified = util.base_type_name(fd.receiver_type) + "." + fd.name;
-        }
-        r = Rows { body: r.body.append(body), n1: r.n1.append(fd.name),
-            n2: r.n2.append(qualified), keep: r.keep.append(body.ok) };
+        var plan: ssaunits.Plan = ssaunits.refused("not selected");
+        if (selected(only, skip, fd.name)) { plan = produced_plan(built.decls[i], fd.name); }
+        plans = plans.append(plan);
+        keys = keys.append(call_key(fd));
+        funcs = funcs.append(built.decls[i].func);
+        r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(call_key(fd)) };
         i = i + 1;
     }
     for p in built.instances {
         // An instance is named after the template it came from, so the bisect
         // knob reaches it through the same prefix test.
-        var body: irlower.LowerResult = declined("not selected");
-        if (selected(only, skip, p.func.graph.name)) { body = produced_body(p, structs, p.func.graph.name); }
-        r = Rows { body: r.body.append(body), n1: r.n1.append(p.func.graph.name),
-            n2: r.n2.append(""), keep: r.keep.append(body.ok) };
+        var plan: ssaunits.Plan = ssaunits.refused("not selected");
+        if (selected(only, skip, p.func.graph.name)) { plan = produced_plan(p, p.func.graph.name); }
+        plans = plans.append(plan);
+        keys = keys.append(p.func.graph.name);
+        funcs = funcs.append(p.func);
+        r = Rows { ...r, n1: r.n1.append(p.func.graph.name), n2: r.n2.append("") };
+    }
+    r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans) };
+    i = 0;
+    while (i < plans.len()) {
+        var body: irlower.LowerResult = produced_body(produced_at(built, mod, i), plans[i], structs, r.grows, r.n1[i]);
+        r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok) };
+        i = i + 1;
     }
     return r;
 }
@@ -253,11 +286,16 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     var sigs: irlower.FnSigs = base;
     var helpers: irlower.LowerResult[] = [];
     var bodies: irlower.LowerResult[] = [];
+    // The may-grow masks an AST caller brackets by are rebuilt with every
+    // produced declaration's own in place of the one its syntax would give.
+    var seeds: string[] = [];
     var n: i32 = 0;
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (r.keep[i]) {
             sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes);
+            seeds = seeds.append(call_key(mod.funcs[i]) + "|"
+                + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, mod.funcs[i].receiver_type.len() > 0));
             helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
             bodies = bodies.append(r.body[i]);
             n = n + 1;
@@ -273,6 +311,7 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
         }
         at = at + 1;
     }
+    if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, mod.funcs, structs, seeds); }
     report("module", "produced " + util.i32_to_string(n) + " of "
         + util.i32_to_string(mod.funcs.len()) + " declarations and "
         + util.i32_to_string(instances.len()) + " of "

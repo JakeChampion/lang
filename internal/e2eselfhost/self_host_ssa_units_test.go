@@ -13,7 +13,7 @@ import (
 const unitHelpers = `
 function find(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.Step {
     for s in p.steps { if (s.block == block && s.point == point && s.target == target) { return s; } }
-    return ssaunits.Step { block: 0 - 1, point: 0 - 1, target: 0 - 1, supplies: [], drops: [] };
+    return ssaunits.Step { block: 0 - 1, point: 0 - 1, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 function replace(p: ssaunits.Plan, replacement: ssaunits.Step): ssaunits.Plan {
     var steps: ssaunits.Step[] = [];
@@ -120,7 +120,7 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 2, 0, ssaunits.move_unit(
 		{"drop-moved-value", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "drop without counted unit"},
 		{"missing-return", unitDuplicate, "", `var steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.return_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate return step"},
 		{"duplicate-step", unitDuplicate, "", `p = ssaunits.Plan { ...p, steps: p.steps.append(p.steps[0]) };`, "missing or duplicate operation step"},
-		{"extra-step", unitDuplicate, "", `p = ssaunits.Plan { ...p, steps: p.steps.append(ssaunits.Step { block: 999, point: 0, target: 0 - 1, supplies: [], drops: [] }) };`, "extra unit plan steps"},
+		{"extra-step", unitDuplicate, "", `p = ssaunits.Plan { ...p, steps: p.steps.append(ssaunits.Step { block: 999, point: 0, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] }) };`, "extra unit plan steps"},
 		{"broken-edge-invariant", semanticPhi + "modes = [1, 3, 3];", "", `var s = find(p, 7, ssaunits.edge_point(), 17); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "edge unit invariant mismatch"},
 		{"changed-parameter-contract", unitDuplicate, "", `modes = [2];`, "move without counted unit"},
 		{"missing-entry", unitDuplicate, "", `var steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.entry_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate entry step"},
