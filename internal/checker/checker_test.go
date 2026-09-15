@@ -4760,6 +4760,57 @@ function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 	}
 }
 
+// An array literal's elements are checked against the destination's element
+// type. settleNumeric stamps that element type onto the literal so the IR
+// picks the right stride, and postSettleType reports the stamp back as the
+// literal's type — so stamping unconditionally made every literal CLAIM
+// whatever it was checked against, and the comparison then trivially passed.
+// `var xs: i32[] = ["ab", "cd"]` type-checked, and an `i32[]` parameter handed
+// one summed strings as integers (exit 224 on x86-64, no diagnostic).
+func TestArrayLiteralElementsAreChecked(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"var destination", `function main(): i32 { var xs: i32[] = ["ab", "cd"]; return xs.len(); }`,
+			"cannot assign string[] to variable of type i32[]"},
+		{"argument", `function total(xs: i32[]): i32 { return xs.len(); }
+function main(): i32 { return total(["ab", "cd"]); }`,
+			"expected i32[], got string[]"},
+		{"argument, numeric literals into string[]", `function take(xs: string[]): i32 { return xs.len(); }
+function main(): i32 { return take([1, 2, 3]); }`,
+			"expected string[], got i32[]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error %q does not contain %q", err.Error(), c.want)
+			}
+		})
+	}
+}
+
+// The controls: settling a POLYMORPHIC element to the destination's width is
+// what the stamp is for, and an empty literal has no element to contradict it.
+// A fix that simply stopped stamping would break all of these.
+func TestArrayLiteralSettlingStillWorks(t *testing.T) {
+	srcs := []string{
+		`function main(): i32 { var xs: i64[] = [1, 2, 3]; return xs.len(); }`,
+		`function main(): i32 { var xs: u8[] = [1, 2, 3]; return xs.len(); }`,
+		`function main(): i32 { var xs: f64[] = [1.5, 2.5]; return xs.len(); }`,
+		`function main(): i32 { var xs: i32[] = []; return xs.len(); }`,
+		`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.len(); }`,
+		`function total(xs: i64[]): i32 { return xs.len(); }
+function main(): i32 { return total([1, 2, 3]); }`,
+	}
+	for _, src := range srcs {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("should type-check: %v\n%s", err, src)
+		}
+	}
+}
+
 func TestAssociatedTypesErrors(t *testing.T) {
 	cases := []struct {
 		src  string
