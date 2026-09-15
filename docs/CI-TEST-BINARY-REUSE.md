@@ -68,6 +68,13 @@ by merging independent changes into main. The repository pilot followed a
 successful sub-minute Linux fixture pilot. This verifies the Linux restore
 path; native x86 GitHub transfer and execution costs still need measuring.
 
+After rebasing onto main `b4c04aee2`, a fresh clean Linux ARM64 repository
+pilot repeated the fixture-first pipeline with four CPUs and a 12 GiB memory
+limit. Build, save, restore with compilation forbidden, corrupt-cache fallback
+and both package smoke tests passed. This run took 17.985s to build, 0.437s
+to save, 0.539s to restore and 1.935s for the warm-cache fallback. Again, these
+are integration observations, not controlled speedup or GitHub transfer claims.
+
 ## Rollout
 
 Measure load-warmup build/upload cost, per-shard download/restore duration,
