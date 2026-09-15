@@ -1,11 +1,11 @@
 # An `own` array consumed across the mixed boundary
 
-#9407. The self-host compiler built through the semantic lowering emitted the
-wrong assembly for `lexer.fern`: three zero-minus-one constants came out as
-`xorl; movq $o, %rcx; subq`, a constant op whose `str` word had been
-overwritten. `FERN_SANITIZE=1` on the produced compiler aborted with a
-use-after-free, and `FERN_RC_TRACE=1` paired the touched block with its
-history:
+The first half of #9407. The self-host compiler built through the semantic
+lowering emitted the wrong assembly for `lexer.fern`, and `FERN_SANITIZE=1` on
+the produced compiler aborted with a use-after-free. The abort was this
+defect; the wrong assembly turned out to be another, silent under the
+sanitizer (`2026-09-15-a-lent-view-is-copied-for-a-callee-that-keeps-it.md`).
+`FERN_RC_TRACE=1` paired the touched block with its history:
 
 | event | site | caller | one above |
 |---|---|---|---|
@@ -57,8 +57,9 @@ and every configuration answers 62 now.
 
 ## Measured
 
-The produced compiler on `lexer.fern`: assembly byte-identical to the AST
-build's, and the sanitized produced compiler compiles it without an abort.
+The sanitized produced compiler compiles `lexer.fern` without an abort. Its
+assembly still differed from the AST build's by the same 150 lines, which is
+how the second defect was told apart from this one.
 
 ## What it leaves
 
