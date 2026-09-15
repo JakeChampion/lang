@@ -7,10 +7,9 @@ name: Test e2e arm64
 # `qemu-aarch64` aren't installed, so the x86 lane would just be a
 # 30-second no-op.
 #
-# The legacy combined CI workflow ran this alongside x86 + wasm +
-# self-host on a single 10-minute box. Splitting it out lets the
-# arm64 lane finish in ~90 seconds and surface as its own status
-# check.
+# Two isolated test processes share the existing runner's CPU budget.
+# Process isolation is required because some tests mutate compiler globals.
+# Measurement and coverage checks: docs/CI-NATIVE-TEST-WORKERS.md.
 #
 # The `cross-host` job below covers what needs BOTH a native x86 host AND the
 # aarch64 cross toolchain on one machine.
@@ -41,7 +40,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+      - name: build native test runners
+        run: |
+          go test -c -o "$RUNNER_TEMP/e2e-arm64.test" ./internal/e2e/
+          go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       - name: go test (arm64 e2e)
+        id: tests
+        working-directory: internal/e2e
         # `^TestArm64` covers internal/e2e/arm64_test.go +
         # cross_module_variant_test.go's Arm64 subset + arm64_ssa_test.go
         # (the experimental `-target arm64-linux -backend ssa` round-trip). Anchored at
@@ -64,7 +69,19 @@ jobs:
         # asserting nothing.
         env:
           FERN_REQUIRE_ARM64_SSA_DIFF: "1"
-        run: gotestsum --format pkgname-and-test-fails -- -run '^TestArm64' ./internal/e2e/
+        run: >-
+          "$RUNNER_TEMP/ci-test-workers"
+          -binary "$RUNNER_TEMP/e2e-arm64.test"
+          -output "$RUNNER_TEMP/arm64-test-results"
+          -workers 2 -timeout 10m -run '^TestArm64'
+      - name: retain native test outcomes
+        if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-arm64-test-outcomes-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arm64-test-results
+          retention-days: 7
+          if-no-files-found: error
 
   # The fifteen cross-compiler-on-host tests — see the header comment. The
   # heavyweight is the native-mmc equivalence gate (the Go arm64 backend's
