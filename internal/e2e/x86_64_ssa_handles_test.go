@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	nativex86_64 "github.com/jakechampion/lang/internal/codegen/x86_64"
 )
 
 // The Reader/Writer handle family on `-backend ssa -target x86-64-linux`.
@@ -90,6 +92,53 @@ var x86SSAHandleCases = []struct {
 }`,
 	},
 	{
+		name: "read_chunk_reads_then_reports_eof",
+		src: `function main(): i32 {
+  match (open_writer("rc_in.txt")) {
+    Ok(w) => {
+      w.write("0123456789abcdef");
+      w.close();
+    },
+    Err(e) => {
+      return 1;
+    },
+  }
+  match (open_reader("rc_in.txt")) {
+    Ok(r) => {
+      var n1: i32 = 0;
+      match (r.read_chunk(65536)) {
+        Ok(s) => {
+          stdout().write("got:" + s + "\n");
+          n1 = s.len();
+        },
+        Err(e) => {
+          return 2;
+        },
+      }
+      if (n1 != 16) {
+        return 3;
+      }
+      match (r.read_chunk(65536)) {
+        Ok(s2) => {
+          if (s2.len() != 0) {
+            return 4;
+          }
+          stdout().write("eof-empty\n");
+        },
+        Err(e) => {
+          return 5;
+        },
+      }
+      r.close();
+      return 0;
+    },
+    Err(e) => {
+      return 6;
+    },
+  }
+}`,
+	},
+	{
 		name: "writer_close_reports_a_bad_descriptor",
 		src: `function main(): i32 {
   match (open_writer("close_twice.txt")) {
@@ -136,6 +185,75 @@ func TestX86_64SSAHandleFamilyMatchesDefaultBackend(t *testing.T) {
 				t.Errorf("stderr differs:\n ssa=%q\nflat=%q", ssaErr, flatErr)
 			}
 		})
+	}
+}
+
+// read_chunk sizes its buffer from the REQUEST and only learns what it owns
+// after the read, so it hands the rest back by lowering the heap cursor. At end
+// of input it owns nothing at all, and without that rewind every probe strands
+// a full 64 KiB block.
+//
+// The observable is ARENA EXHAUSTION, not peak RSS. RSS does not move: the
+// reservation is MAP_NORESERVE and a stranded block is never written, so the
+// cursor runs away while the resident set stays in single-digit megabytes — an
+// RSS bound passes just as happily on the leaking helper, which is how the
+// first version of this test managed to be worthless. The cursor is what moves,
+// and this backend has no __heap_bump_bytes() for a program to read it with
+// (the gate the arm64 sibling uses), so the test drives it into the wall
+// instead: 300,000 probes at 64 KiB is 19 GiB against a 16 GiB arena.
+//
+// Verified in both directions before being committed — as it stands the program
+// exits 0, and with the end-of-input rewind removed it exits
+// ExitArenaExhausted with `fern: out of memory (heap arena exhausted)`.
+func TestX86_64SSAReadChunkKeepsOnlyWhatItRead(t *testing.T) {
+	runner, ok := x86Runner()
+	if !ok {
+		t.Skip("no way to run x86-64 binaries on this host")
+	}
+	fern := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "probe.fern")
+	if err := os.WriteFile(src, []byte(`function main(): i32 {
+  match (open_writer("rs.txt")) {
+    Ok(w) => { w.write("abc"); w.close(); },
+    Err(e) => { return 1; },
+  }
+  match (open_reader("rs.txt")) {
+    Ok(r) => {
+      var i: i32 = 0;
+      while (i < 300000) {
+        match (r.read_chunk(65536)) {
+          Ok(s) => { },
+          Err(e) => { return 5; },
+        }
+        i = i + 1;
+      }
+      r.close();
+      return 0;
+    },
+    Err(e) => { return 6; },
+  }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "probe")
+	if out, err := exec.Command(fern, "-target", "x86-64-linux", "-backend", "ssa", "-o", bin, src).CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+
+	cmd := runX86Bin(runner, bin)
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	if cmd.ProcessState == nil {
+		t.Fatal("probe did not start")
+	}
+	switch code := cmd.ProcessState.ExitCode(); code {
+	case 0:
+	case nativex86_64.ExitArenaExhausted:
+		t.Fatalf("exit=%d: read_chunk stranded its buffer on every end-of-input probe and ran the arena out\n%s", code, out)
+	default:
+		t.Fatalf("exit=%d, want 0 (1/5/6 = the program's own fixture checks)\n%s", code, out)
 	}
 }
 
