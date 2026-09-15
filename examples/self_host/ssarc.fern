@@ -821,8 +821,8 @@ function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.L
     var to: typeinfo.Type = f.values[ins.result];
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
     if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
-    if (ssasem.is_usize(from)) { return emit(r, ir.op_int_extend_ptr()); }
-    if (ssasem.is_usize(to)) { return emit(r, ir.op_int_wrap_ptr()); }
+    if (ssasem.is_usize(from)) { return from_address(r, to); }
+    if (ssasem.is_usize(to)) { return into_address(r, from); }
     if (ssasem.is_wide(to)) {
         if (ssasem.is_wide(from)) { return r; }
         return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
@@ -835,6 +835,28 @@ function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.L
     var mask: string = narrow_mask(from, to);
     if (mask == "") { return r; }
     return emit(r, ir.op_int_cast(mask));
+}
+
+// The pointer width is the whole slot on a register backend and the i32 on
+// wasm, so neither direction of an address conversion is one opcode. Each is
+// written as the pair that is a no-op on whichever of the two the address
+// already matches: the address is taken to the 64-bit domain and wrapped back
+// down to the destination, and a narrow source is extended to 64 bits before
+// being wrapped to the address. On a register backend the pointer-width half
+// moves nothing and the 64-bit half does the extension; on wasm the two halves
+// cancel for a 32-bit destination and the 64-bit half is the real conversion.
+function from_address(r: irlower.LowerResult, to: typeinfo.Type): irlower.LowerResult {
+    if (ssasem.is_usize(to)) { return r; }
+    r = emit(r, ir.op_int_extend_ptr());
+    if (ssasem.is_wide(to)) { return r; }
+    r = emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(to)));
+    if (!ssasem.is_u8(to)) { return r; }
+    return emit(r, ir.op_int_cast("u8"));
+}
+
+function into_address(r: irlower.LowerResult, from: typeinfo.Type): irlower.LowerResult {
+    if (!ssasem.is_wide(from)) { r = emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from))); }
+    return emit(r, ir.op_int_wrap_ptr());
 }
 
 // A record box is named by its declaration, a variant box by its variant. The

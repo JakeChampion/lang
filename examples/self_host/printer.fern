@@ -153,17 +153,20 @@ function arrow_return_type(ret: string): string {
     return ret;
 }
 
-// print_lambda_params renders a lambda's `(p: T, …)` list — shared by the
-// arrow lambda and the nested `function` declaration it desugars from.
-function print_lambda_params(lm: ast.ExprLambda): string {
+// print_lambda_params renders the parameter list of the nested `function`
+// declaration a lambda-valued local desugars from. A nested declaration keeps
+// its parameter DEFAULTS, where the arrow lambda it shares a node with drops
+// them — native draws the same line between its FuncDecl and Lambda cases, and
+// the fmt parity corpus holds both to it.
+function print_lambda_params(lm: ast.ExprLambda, depth: i32): string {
     var (pats, _) = param_patterns_for(lm.params, lm.body);
-    return print_params_with(lm.params, pats);
+    return print_params_with(lm.params, pats, true, depth);
 }
 
 // print_params_with renders a parameter list, spelling a destructuring
 // parameter as the pattern it was written with rather than the holder the
 // desugar minted (#7338).
-function print_params_with(params: ast.ParamDecl[], pats: string[]): string {
+function print_params_with(params: ast.ParamDecl[], pats: string[], defaults: boolean, depth: i32): string {
     var out: string = "(";
     var pi: i32 = 0;
     while (pi < params.len()) {
@@ -180,12 +183,18 @@ function print_params_with(params: ast.ParamDecl[], pats: string[]): string {
         if (params[pi].type_name.len() > 0) {
             out = out + ": " + params[pi].type_name;
         }
-        if (params[pi].has_default) {
-            out = out + " = " + print_expr(params[pi].default_value, 0);
-        }
+        out = out + print_param_default(params[pi], defaults, depth);
         pi = pi + 1;
     }
     return out + ")";
+}
+
+// An optional parameter's default is part of the signature: without it the
+// formatted function requires an argument every existing caller omits, so
+// `-fmt` turns a compiling program into one that does not.
+function print_param_default(p: ast.ParamDecl, defaults: boolean, depth: i32): string {
+    if (!defaults || !p.has_default) { return ""; }
+    return " = " + print_expr(p.default_value, depth);
 }
 
 // drop_prelude returns body with its first `n` statements removed — the `let`s
@@ -514,14 +523,15 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             return "false";
         },
         ast.ExprBinary(b) => {
-            // A named argument `name = value` is not an operator: the parser
-            // records it as the synthetic marker `ExprBinary("__named_arg",
-            // <name ident>, value)` (parser's fda_* helpers). Printing it as
-            // one wrote `b __named_arg 1`, which parses as nothing. The marker
-            // only ever sits directly in a call's argument list, so the value
-            // needs no parentheses of its own.
+            // A named call argument is not an operator: the parser records
+            // `name = value` as a synthetic binary whose op is the marker
+            // parser.fda_* resolve against the callee. Printing it as one wrote
+            // the marker into the source, and the name has to come back either
+            // way — a dropped or misplaced name binds the value to a different
+            // parameter, which changes what the program computes rather than
+            // only how it reads.
             if (b.op == "__named_arg") {
-                return print_expr(b.left, depth) + " = " + print_expr(b.right, depth);
+                return print_expr_prec(b.left, prec_lowest(), depth) + " = " + print_expr_prec(b.right, prec_lowest(), depth);
             }
             var p: i32 = binary_prec(b.op);
             var inner: string = print_expr_prec(b.left, p, depth) + " " + b.op + " " + print_expr_prec(b.right, p + 1, depth);
@@ -633,7 +643,7 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             // Past the desugar's prelude, a lambda with a destructuring
             // parameter has the same body shape as one without (#7338).
             var (pats, npre) = param_patterns_for(lm.params, lm.body);
-            var out: string = print_params_with(lm.params, pats);
+            var out: string = print_params_with(lm.params, pats, false, depth);
             if (lm.ret_type.len() > 0) { out = out + ": " + arrow_return_type(lm.ret_type); }
             out = out + " => ";
             var body: ast.Stmt[] = drop_prelude(lm.body, npre);
@@ -1917,7 +1927,7 @@ function param_patterns_for(params: ast.ParamDecl[], body: ast.Stmt[]): (string[
 function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
     match (v.init) {
         ast.ExprLambda(lm) => {
-            var out: string = "function " + v.name + print_lambda_params(lm);
+            var out: string = "function " + v.name + print_lambda_params(lm, depth);
             if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
             var (body, g) = print_block(lm.body, depth, f);
             return (out + " " + body, g);
@@ -2148,12 +2158,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
         if (fd.params[i].type_name.len() > 0) {
             out = out + ": " + fd.params[i].type_name;
         }
-        // An optional parameter's default is part of the signature: without it
-        // the formatted function requires an argument every existing caller
-        // omits, so `-fmt` turns a compiling program into one that does not.
-        if (fd.params[i].has_default) {
-            out = out + " = " + print_expr(fd.params[i].default_value, 0);
-        }
+        out = out + print_param_default(fd.params[i], true, 0);
         i = i + 1;
     }
     out = out + ")";
@@ -2453,7 +2458,6 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
         if (m.params[i].own) { out = out + "own "; }
         out = out + written_name(m.params[i].name);
         if (m.params[i].type_name.len() > 0) { out = out + ": " + m.params[i].type_name; }
-        if (m.params[i].has_default) { out = out + " = " + print_expr(m.params[i].default_value, 0); }
         first = false;
         i = i + 1;
     }
