@@ -1245,9 +1245,8 @@ func runInterp(srcPath string, argv []string) (int, error) {
 // re-shake idempotently), including wasi-http's drop of the synthesised
 // tcp_serve `main` (see internal/codegen/wasmbin/build.go).
 //
-// Returns nil when the target has no descriptor (e.g. the experimental
-// wasm-ssa) or nothing violates its capability set. NOTE this mutates
-// prog by tree-shaking it.
+// Returns nil when the target has no descriptor or nothing violates its
+// capability set. NOTE this mutates prog by tree-shaking it.
 func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.Info, target string, shared bool, export string) diag.Errors {
 	if platforms.ForTarget(target) == nil {
 		return nil
@@ -1431,7 +1430,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// -shared exports; backends re-shake idempotently), including
 	// wasi-http's drop of the synthesised tcp_serve `main` (see
 	// internal/codegen/wasmbin/build.go). Targets without a descriptor
-	// (e.g. the experimental wasm-ssa) skip enforcement.
+	// skip enforcement.
 	if errs := enforceTargetCapabilities(srcPath, prog, info, target, shared, export); errs != nil {
 		return 1, e.format(errs)
 	}
@@ -2045,7 +2044,7 @@ func execDirect(binPath string, progArgs []string) (int, error) {
 // ir.LowerWith (ptr width 8) → ssa.LiftFromIR + ssa.Optimize per function →
 // arm64ssa.EmitAsmModule — and returns the AArch64 assembly text (a complete
 // `_start` + all functions + referenced runtime helpers), ready for linkNative.
-// Unlike buildWasmSSA (single `main`), it lifts every function so cross-function
+// It lifts every function so cross-function
 // calls and recursion work. Returns an error when the program has no `main`, the
 // lift fails, or emit rejects the SSA (a coverage gap) — never a miscompile.
 // Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the

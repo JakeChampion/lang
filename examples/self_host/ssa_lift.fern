@@ -2,7 +2,7 @@
 // `Op[]`) into SSA form (ssa.fern's `SFunc`). The self-hosted mirror of
 // native's `internal/ssa/lift.go` (`LiftFromIR`): the native compiler lowers
 // AST -> ir.Op[] and then LIFTS that stack stream into SSA before its
-// optimiser and the `wasm-ssa` backend. Lifting from the IR makes SSA a clean
+// optimiser and its SSA backends. Lifting from the IR makes SSA a clean
 // DOWNSTREAM layer over the stack IR that is already the default lowering path
 // (goal 1), so it inherits the IR's coverage rather than re-deriving it (as
 // the parallel AST->SSA `ssa.build_func` does).

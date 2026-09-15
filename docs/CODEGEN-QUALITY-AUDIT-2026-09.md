@@ -559,14 +559,15 @@ The reading: the natives' 26–43% is not sloppiness spread through the emitters
 it is one design decision (an operand-stack IR translated 1:1 onto a register
 machine) charged at every expression. wasm never pays it.
 
-One coverage note that the CLI help does not make: `-backend ssa
--target wasm32-wasi` refuses any program containing a call that is neither
-self-recursion nor a declared import — `buildWasmSSA` (`cmd/fern/main.go:1880`)
-lifts only `main`. It fails cleanly, as promised (`wasmssa: OpCall to "fib" is
-neither self-recursion … nor a declared import`, exit 1, no module written), but
-that is single-function programs only, far narrower than the arm64 SSA path's
-whole-program coverage, and `-backend`'s help text lists the two targets
-together without the qualification.
+One coverage note, recorded as it stood at the time of the audit and since
+overtaken: `-backend ssa -target wasm32-wasi` refused any program containing a
+call that was neither self-recursion nor a declared import, because the wasm
+SSA driver lifted only `main`. It failed cleanly, as promised (`wasmssa: OpCall
+to "fib" is neither self-recursion … nor a declared import`, exit 1, no module
+written), but that was single-function programs only, far narrower than the
+arm64 SSA path's whole-program coverage. The combination is now refused
+outright — `wasmssa` was retired (#9397) and `-backend ssa` takes the two
+native targets only.
 
 ### 5.2 The x86-64 twin, wired but not a lever
 
