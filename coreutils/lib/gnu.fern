@@ -1829,6 +1829,14 @@ pub function dir_name(s: string): string {
 // however many the directory ends with: `ln -t 'd///' s/f` makes `d/f`,
 // not `d///f`.
 pub function join_path(dir: string, name: string): string {
+  // An EMPTY directory contributes nothing, not a leading slash: gnulib's
+  // file_name_concat("", "x") is "x", and `nohup` is the caller that reaches
+  // it — with HOME set to the empty string its fallback path is the same
+  // `nohup.out` the working directory's attempt already used, so both
+  // failures name one file.
+  if (dir.len() == 0) {
+    return name;
+  }
   var end: i32 = dir.len();
   while (end > 1 && is_slash(dir[end - 1])) {
     end = end - 1;
