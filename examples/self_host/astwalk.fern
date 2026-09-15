@@ -903,6 +903,31 @@ pub function collect_idents_stmt(st: ast.Stmt, own acc: string[]): string[] {
     return fold_stmt_nodes(st, acc, assign_target_of, ident_of, not_lambda);
 }
 
+// Count one name with the same assignment-target and lambda-scope rules as
+// collect_idents_stmt. A scalar fold avoids retaining every identifier read
+// when a consumer needs only one name's frequency.
+pub function count_ident_expr(e: ast.Expr, name: string): i32 {
+    function at_expr(node: ast.Expr, own n: i32): i32 {
+        for id in ident_of(node, []) { if (id == name) { n = n + 1; } }
+        return n;
+    }
+    return fold_expr_pruned(e, 0i32, at_expr, not_lambda);
+}
+
+pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
+    function at_stmt(st: ast.Stmt, own n: i32): i32 {
+        for id in assign_target_of(st, []) { if (id == name) { n = n + 1; } }
+        return n;
+    }
+    function at_expr(e: ast.Expr, own n: i32): i32 {
+        for id in ident_of(e, []) { if (id == name) { n = n + 1; } }
+        return n;
+    }
+    var count: i32 = 0;
+    for st in stmts { count = fold_stmt_nodes(st, count, at_stmt, at_expr, not_lambda); }
+    return count;
+}
+
 // append_bound_name appends a binder name, splitting the comma-joined form the
 // multi-name binders use — a tuple destructure `var (a, b) = t` ("a,b", #5173)
 // and a two-binding `for (k, v) in m` ("k,v"). Unsplit, neither name is
