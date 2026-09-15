@@ -1,8 +1,14 @@
 package coreutils
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -254,6 +260,36 @@ func init() {
 	registerCorpus("cp", cpCases)
 }
 
+// cpWalk is the fixture for the destination-inside-the-source shapes and
+// for the rule that a directory's `-v` line belongs to its CREATION.
+//
+// Every directory in it holds at most ONE entry, and that is the whole
+// design. A recursive copy visits entries in ascending inode order, which
+// two fresh working directories do not reproduce, so a case whose source
+// directory holds two entries is not well posed: `cp -r full full` copies
+// `full/x` when the destination it just made sorts after it and copies
+// nothing when it sorts before, and GNU is no more reproducible about that
+// than this implementation. With one entry per directory there is no order
+// to disagree about.
+//
+// The order rule itself, and the abort shapes that need a populated tree,
+// are pinned by TestCpWalkOrder and TestCpIntoItself, which run both
+// implementations against ONE tree so the inodes are the same for both.
+func cpWalk(t *testing.T, dir string) {
+	t.Helper()
+	// A chain: one entry per level, so the walk order is forced.
+	seedMkdir(t, dir, "chain/sub")
+	seedWrite(t, dir, "chain/sub/leaf", "l\n")
+	// An EMPTY directory to copy into: the destination made inside it is
+	// then the only entry its walk sees, so the abort lands in one place.
+	seedMkdir(t, dir, "nest/hole")
+	// Two `-T` destinations: one empty, so every directory under it is
+	// created, and one already holding `sub`, so that one is not.
+	seedMkdir(t, dir, "empty")
+	seedMkdir(t, dir, "part/sub")
+	seedWrite(t, dir, "part/sub/old", "o\n")
+}
+
 func cpCases(t *testing.T) []invocation {
 	t.Helper()
 	var out []invocation
@@ -340,16 +376,13 @@ func cpCases(t *testing.T) []invocation {
 		{"recursive-over-file", []string{"-r", "d1", "f1"}},
 		{"recursive-to-missing-parent", []string{"-r", "d1", "d2/x/y"}},
 		{"verbose", []string{"-v", "f1", "out"}},
-		{"verbose-recursive", []string{"-v", "-r", "d1", "out"}},
 		{"verbose-into-directory", []string{"-v", "f1", "f2", "d2"}},
 		{"clustered", []string{"-rp", "d1", "out"}},
 		{"clustered-upper", []string{"-Rp", "d1", "out"}},
-		{"clustered-verbose", []string{"-vrp", "d1", "out"}},
 		{"dashdash", []string{"--", "f1", "out"}},
 		{"link", []string{"-l", "f1", "out"}},
 		{"link-recursive", []string{"-l", "-r", "d1", "out"}},
 		{"symbolic-link", []string{"-s", "f1", "out"}},
-		{"symbolic-link-recursive", []string{"-s", "-r", "d1", "out"}},
 		{"attributes-only-new", []string{"--attributes-only", "f1", "out"}},
 		{"attributes-only-existing", []string{"--attributes-only", "f1", "f2"}},
 		{"remove-destination", []string{"--remove-destination", "f1", "f2"}},
@@ -362,14 +395,21 @@ func cpCases(t *testing.T) []invocation {
 	}
 
 	// Copying a directory into itself: reported, and still copied.
+	//
+	// Only the shapes whose walk has nothing to disagree about. `-r full
+	// full`, where `full` holds a file AND the destination just made
+	// beside it, is not one: whether `full/x` is copied depends on which
+	// of the two got the lower inode, and GNU is no more reproducible
+	// about that than this implementation. TestCpIntoItself covers the
+	// populated shapes by running both sides against one tree.
 	for _, c := range []struct {
 		name string
 		args []string
 	}{
 		{"self-empty", []string{"-r", "empty", "empty"}},
-		{"self-full", []string{"-r", "full", "full"}},
+		{"self-empty-verbose", []string{"-rv", "empty", "empty"}},
 		{"self-taken", []string{"-r", "taken", "taken"}},
-		{"self-verbose", []string{"-rv", "full", "full"}},
+		{"self-taken-verbose", []string{"-rv", "taken", "taken"}},
 		{"self-into-subdir", []string{"-r", "full", "full/x"}},
 	} {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpSelf})
@@ -584,7 +624,6 @@ func cpCases(t *testing.T) []invocation {
 		{"fifo-recursive-upper", []string{"-R", "fifo", "out"}},
 		{"fifo-in-tree", []string{"-r", "hold", "out"}},
 		{"fifo-in-tree-archive", []string{"-a", "hold", "out"}},
-		{"fifo-in-tree-verbose", []string{"-rv", "hold", "out"}},
 		{"fifo-preserve", []string{"-rp", "fifo", "out"}},
 	} {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpFifo})
@@ -610,7 +649,6 @@ func cpCases(t *testing.T) []invocation {
 		{"slash-file", []string{"ff/", "out"}},
 		{"strip-directory-no-r", []string{"--strip-trailing-slashes", "d1/", "out"}},
 		{"strip-directory-into", []string{"--strip-trailing-slashes", "-r", "d1/", "dst"}},
-		{"strip-directory-verbose", []string{"--strip-trailing-slashes", "-vr", "d1/", "dst"}},
 		{"strip-file-direct", []string{"--strip-trailing-slashes", "ff/", "out"}},
 		{"strip-file-into", []string{"--strip-trailing-slashes", "ff/", "dst"}},
 		{"strip-target-directory", []string{"--strip-trailing-slashes", "-t", "dst", "ff/"}},
@@ -640,9 +678,87 @@ func cpCases(t *testing.T) []invocation {
 		{"reflink-always", []string{"--reflink=always", "f1", "out"}},
 		{"reflink-bare", []string{"--reflink", "f1", "out"}},
 		{"reflink-auto-recursive", []string{"--reflink=auto", "-r", "d1", "out"}},
-		{"reflink-always-recursive", []string{"--reflink=always", "-r", "d1", "out"}},
 	} {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBasic})
+	}
+
+	// Every recursive row that names MORE THAN ONE entry of a directory
+	// on either stream — the `-v` lines, and the per-entry refusals of a
+	// `--reflink=always` that cannot clone or a `-s` whose relative
+	// target does not resolve. Their lines are the comparison and their
+	// order is the filesystem's. See invocation.unordered.
+	for _, c := range []struct {
+		name    string
+		args    []string
+		fixture func(*testing.T, string)
+	}{
+		{"verbose-recursive", []string{"-v", "-r", "d1", "out"}, cpBasic},
+		{"clustered-verbose", []string{"-vrp", "d1", "out"}, cpBasic},
+		{"reflink-always-recursive", []string{"--reflink=always", "-r", "d1", "out"}, cpBasic},
+		{"fifo-in-tree-verbose", []string{"-rv", "hold", "out"}, cpFifo},
+		{"strip-directory-verbose", []string{"--strip-trailing-slashes", "-vr", "d1/", "dst"}, cpSlash},
+		{"symbolic-link-recursive", []string{"-s", "-r", "d1", "out"}, cpBasic},
+	} {
+		out = append(out, invocation{name: c.name, args: c.args, seedTree: c.fixture, unordered: true})
+	}
+
+	// The destination inside the source, and the rule that a directory's
+	// `-v` line is its creation's. One entry per directory throughout, so
+	// nothing here depends on the walk order — see cpWalk.
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"walk-into-nested", []string{"-v", "-r", "nest", "nest/hole"}},
+		{"walk-into-nested-plain", []string{"-r", "nest", "nest/hole"}},
+		{"walk-into-nested-archive", []string{"-a", "-v", "nest", "nest/hole"}},
+		{"walk-into-nested-then-operand", []string{"-v", "-r", "nest", "chain", "nest/hole"}},
+		{"walk-chain-into-directory", []string{"-v", "-r", "chain", "empty"}},
+		{"walk-dir-line-on-creation", []string{"-v", "-r", "-T", "chain", "empty"}},
+		{"walk-dir-line-not-on-existing", []string{"-v", "-r", "-T", "chain", "part"}},
+		{"walk-dir-line-archive", []string{"-a", "-v", "-T", "chain", "part"}},
+	} {
+		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpWalk})
+	}
+
+	// The ORDER of the two streams, which every case above is blind to:
+	// they compare stdout and stderr separately, so a `-v` line and a
+	// diagnostic can be individually right and still reach a terminal the
+	// wrong way round. gnulib's error() flushes stdout first, so the line
+	// describing a copy always precedes a later failure; a utility that
+	// buffered its own stdout and flushed at exit prints them inverted.
+	//
+	// `merged` is what sees it. The failure-then-success row is here on
+	// purpose: without it the whole block would pass on an implementation
+	// that simply wrote every verbose line before every diagnostic.
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"order-copy-then-failure", []string{"-v", "f1", "nosuch", "d2"}},
+		{"order-failure-then-copy", []string{"-v", "nosuch", "f1", "d2"}},
+		{"order-between-two-copies", []string{"-v", "f1", "nosuch", "f2", "d2"}},
+		{"order-parents", []string{"--parents", "-v", "d1/a", "nosuch", "d2"}},
+		{"order-no-verbose", []string{"f1", "nosuch", "d2"}},
+	} {
+		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpBasic, merged: true})
+	}
+
+	// The same question for a recursive copy and for the into-itself
+	// diagnostic, which arrives after the whole operand rather than
+	// before it. On cpWalk rather than cpBasic: `unordered` is no help to
+	// a merged stream — sorting its lines destroys the very order the
+	// case is about — so these need a tree with nothing to disagree
+	// about, which is one entry per directory.
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"order-recursive", []string{"-v", "-r", "chain", "nosuch", "empty"}},
+		{"order-into-itself", []string{"-v", "-r", "nest", "nest/hole"}},
+		{"order-into-itself-then-operand", []string{"-v", "-r", "nest", "chain", "nest/hole"}},
+	} {
+		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpWalk, merged: true})
 	}
 
 	return out
@@ -662,4 +778,215 @@ func TestCpHelpVersion(t *testing.T) {
 	requireVersion(t, "cp", []string{"--vers"}, 0)
 	requireVersion(t, "cp", []string{"a", "b", "--version"}, 0)
 	requireVersion(t, "cp", []string{"-p", "--version", "-r"}, 0)
+}
+
+// runCpIn runs one cp invocation in `dir` with its two streams merged, and
+// returns what it printed. argv[0] is spelled `cp` for both binaries, so a
+// diagnostic's program-name prefix compares directly.
+func runCpIn(t *testing.T, bin, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Args = append([]string{"cp"}, args...)
+	cmd.Dir = dir
+	cmd.Env = []string{"LC_ALL=C", "PATH=/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	var exit int
+	if err != nil {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("run %s %v: %v", bin, args, err)
+		}
+		exit = ee.ExitCode()
+	}
+	return fmt.Sprintf("exit %d\n%s", exit, out)
+}
+
+// inodeOrder lists the entries of `dir` by ascending inode, which is the
+// order a recursive copy visits them in. Read from the tree itself rather
+// than assumed from the seeding order: an inode is reused after a delete,
+// so "created later" does not mean "numbered higher".
+func inodeOrder(t *testing.T, dir string) []string {
+	t.Helper()
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	type ent struct {
+		name string
+		ino  uint64
+	}
+	var es []ent
+	for _, de := range des {
+		info, err := de.Info()
+		if err != nil {
+			t.Fatalf("stat %s/%s: %v", dir, de.Name(), err)
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatalf("no stat for %s/%s", dir, de.Name())
+		}
+		es = append(es, ent{de.Name(), st.Ino})
+	}
+	sort.Slice(es, func(i, j int) bool { return es[i].ino < es[j].ino })
+	var names []string
+	for _, e := range es {
+		names = append(names, e.name)
+	}
+	return names
+}
+
+// TestCpWalkOrder pins the order a recursive copy visits a directory's
+// entries in: ascending INODE, which is neither readdir order nor the
+// names sorted nor directories first.
+//
+// It is not a corpus case because a corpus case cannot see it. The two
+// sides there each get their own working directory and inode numbers are
+// not reproducible between two of them, so a `cp -rv` naming several
+// entries compares unequal for reasons that are not the utility's. Here
+// both binaries run against ONE source tree — GNU first, then its output
+// removed, then ours — so they see the same inodes, and the expected
+// order is computed from that tree rather than assumed.
+func TestCpWalkOrder(t *testing.T) {
+	gnu := referenceBin(t, "cp")
+	ours := fernBin(t, "cp")
+	dir := t.TempDir()
+
+	// Created in a SCRAMBLED order, and directories interleaved with
+	// files, so that ascending inode is none of the three orders it
+	// could be confused with: not the names sorted (`zzz` is made
+	// first), not directories first (`mmm` is made before `aaa`), and
+	// not the filesystem's readdir order (which is a hash of the names).
+	seedMkdir(t, dir, "src/zzz")
+	seedWrite(t, dir, "src/zzz/deep", "d\n")
+	seedWrite(t, dir, "src/mmm", "m\n")
+	seedMkdir(t, dir, "src/aaa")
+	seedWrite(t, dir, "src/aaa/x", "x\n")
+	seedWrite(t, dir, "src/kkk", "k\n")
+	seedWrite(t, dir, "src/bbb", "b\n")
+
+	want := inodeOrder(t, filepath.Join(dir, "src"))
+	// A tree that cannot tell the rules apart proves nothing, and a
+	// filesystem that numbered these in name order would leave the case
+	// passing on an implementation that sorted. That is a fault in the
+	// fixture's reach on this host, so it is reported rather than
+	// skipped past.
+	if sort.StringsAreSorted(want) {
+		t.Fatalf("this filesystem numbered %v in name order, so the case cannot tell inode order from sorted names — the fixture needs a different scramble here", want)
+	}
+
+	var lines []string
+	for _, name := range want {
+		lines = append(lines, fmt.Sprintf("'src/%s' -> 'out/%s'", name, name))
+	}
+
+	for _, side := range []struct {
+		label string
+		bin   string
+	}{{"gnu", gnu}, {"fern", ours}} {
+		if err := os.RemoveAll(filepath.Join(dir, "out")); err != nil {
+			t.Fatalf("clear out: %v", err)
+		}
+		got := runCpIn(t, side.bin, dir, "-v", "-r", "src", "out")
+		// Only the top-level entries are checked: a subdirectory's own
+		// lines follow its creation line, and interleaving them here
+		// would say nothing more about the rule. A line is kept when
+		// the name on its SOURCE side is one of them — the destination
+		// side carries a slash of its own, so the whole line cannot be
+		// tested for one.
+		top := map[string]bool{}
+		for _, name := range want {
+			top["'src/"+name+"'"] = true
+		}
+		var seen []string
+		for _, ln := range strings.Split(got, "\n") {
+			src, _, ok := strings.Cut(ln, " -> ")
+			if ok && top[src] {
+				seen = append(seen, ln)
+			}
+		}
+		if strings.Join(seen, "\n") != strings.Join(lines, "\n") {
+			t.Errorf("%s did not walk src by inode\n want: %v\n  got: %v", side.label, lines, seen)
+		}
+	}
+}
+
+// TestCpIntoItself pins the destination-inside-the-source shapes on a
+// POPULATED tree, which the corpus cannot: where the walk meets the
+// destination decides which entries were copied before it stopped, and
+// that depends on inode numbers the two sides of a corpus case do not
+// share. Both binaries run here against one tree, restored between by
+// removing exactly what the first one created.
+func TestCpIntoItself(t *testing.T) {
+	gnu := referenceBin(t, "cp")
+	ours := fernBin(t, "cp")
+
+	for _, c := range []struct {
+		name string
+		args []string
+		// made is what a run adds and the restore removes, so the
+		// second side meets the tree the first one did.
+		made []string
+	}{
+		{"flat", []string{"-v", "-r", "src", "src"}, []string{"src/src"}},
+		{"nested", []string{"-v", "-r", "src", "src/bdir"}, []string{"src/bdir/src"}},
+		{"nested-plain", []string{"-r", "src", "src/bdir"}, []string{"src/bdir/src"}},
+		{"nested-archive", []string{"-a", "-v", "src", "src/bdir"}, []string{"src/bdir/src"}},
+		{"then-operand", []string{"-v", "-r", "src", "other", "src/bdir"}, []string{"src/bdir/src", "src/bdir/other"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			seedMkdir(t, dir, "src/adir")
+			seedWrite(t, dir, "src/adir/x", "x\n")
+			seedMkdir(t, dir, "src/bdir")
+			seedWrite(t, dir, "src/bdir/inner", "i\n")
+			seedWrite(t, dir, "src/zfile", "z\n")
+			seedMkdir(t, dir, "other")
+			seedWrite(t, dir, "other/o", "o\n")
+
+			restore := func() {
+				for _, p := range c.made {
+					if err := os.RemoveAll(filepath.Join(dir, p)); err != nil {
+						t.Fatalf("restore %s: %v", p, err)
+					}
+				}
+			}
+			restore()
+			want := runCpIn(t, gnu, dir, c.args...)
+			wantTree := treePaths(t, dir)
+			restore()
+			got := runCpIn(t, ours, dir, c.args...)
+			gotTree := treePaths(t, dir)
+			if want != got {
+				t.Errorf("output differs for cp %v\n gnu: %q\nfern: %q", c.args, want, got)
+			}
+			if strings.Join(wantTree, "\n") != strings.Join(gotTree, "\n") {
+				t.Errorf("the files left behind differ for cp %v\n gnu: %v\nfern: %v", c.args, wantTree, gotTree)
+			}
+		})
+	}
+}
+
+// treePaths lists every path under root, relative and sorted, so two runs
+// can be compared without caring which order the walk found them in.
+func treePaths(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		if rel != "." {
+			out = append(out, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	sort.Strings(out)
+	return out
 }

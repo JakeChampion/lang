@@ -654,8 +654,8 @@ function make_parent(cfg: copy.Cfg, st0: copy.State, src: string, dest: string):
       return st;
     },
     Err(e) => {
-      gnu.error("cannot make directory " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
-      return copy.State { ...st, status: 1 };
+      var o: io_buffered.BufWriter = gnu.error_out(st.out, "cannot make directory " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+      return copy.State { ...st, out: o, status: 1 };
     }
   }
 }

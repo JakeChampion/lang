@@ -2521,7 +2521,18 @@ groups are the order of work. Each sub-issue names its group.
   which is what ext4 and overlayfs answer and not what btrfs does:
   FICLONE is the one primitive still missing. Holes are punched at
   st_blksize granularity, which reproduces GNU's SEEK_HOLE result
-  without it. mv's EXDEV fallback is the same engine and is now
+  without it. A recursive copy walks a directory's entries in
+  ascending INODE order — measured, and neither readdir order nor the
+  names sorted nor directories first — so the engine stats each entry
+  for the number readdir already had, which #9317 would give it back.
+  The destination is created BEFORE the entry list is read, because a
+  destination inside the source is then met as one of the walk's own
+  entries: recognising it there is both what stops `cp -r d d/sub`
+  recursing without end and where GNU's into-itself diagnostic comes
+  from, which is why that line arrives after the operand's copy rather
+  than before it. A directory's `-v` line belongs to its CREATION, so
+  an existing destination directory gets none.
+  mv's EXDEV fallback is the same engine and is now
   unblocked for the same reason)
   `install` `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle

@@ -184,6 +184,41 @@ type invocation struct {
 	// — so without it `--sparse=never` and `--sparse=always` compare equal
 	// and the whole option proves nothing. Needs seedTree.
 	sparse bool
+	// merged sends the child's fd 1 and fd 2 to ONE buffer, so what the
+	// case compares is the two streams INTERLEAVED, and stderr on its own
+	// is empty. Off by default, because a merged stream is strictly less
+	// informative when the order is not the point: a diff in it cannot say
+	// which stream the wrong byte came from.
+	//
+	// `cp -v` is what needs it. gnulib's error() flushes stdout before it
+	// writes a diagnostic, so a verbose line describing the copy that then
+	// FAILED arrives ahead of the failure; a utility that buffered the line
+	// and flushed at exit prints the two the other way round. Both sides
+	// write identical bytes on each stream separately, so nothing else in
+	// this harness can see the difference. Not combinable with the
+	// stdout redirections or the bounded readers, which each take fd 1
+	// somewhere else.
+	merged bool
+	// unordered compares stdout as a SET of lines rather than a sequence,
+	// because the order is the filesystem's and not the utility's.
+	//
+	// A recursive copy visits a directory's entries in ascending INODE
+	// order — measured against GNU, and neither readdir order nor names
+	// sorted. Inode numbers are assigned when an entry is created and are
+	// reused after a delete, so two fresh working directories seeded by
+	// the same code do not reliably agree about which entry got the lower
+	// number. The two sides of a comparison each get their own directory,
+	// so a `cp -rv` naming more than one entry per directory is
+	// reproducible in its LINES and not in their order — for GNU against
+	// itself just as much as against this implementation.
+	//
+	// What this gives up is real: a case with it on would pass on an
+	// implementation that emitted the right lines in an arbitrary order.
+	// The order rule itself is pinned instead by TestCpWalkOrder, which
+	// runs both implementations against ONE source tree and derives the
+	// expected order from that tree's actual inodes — so the rule is
+	// gated somewhere deterministic and these cases gate the content.
+	unordered bool
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -842,6 +877,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
+	if inv.merged && (inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 || inv.limit > 0) {
+		t.Fatalf("%s %s: merged needs fd 1 captured into the default buffer, which this case sends elsewhere", bin, quoteArgs(inv.args))
+	}
 
 	var out []byte
 	var overran bool
@@ -907,6 +945,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	} else {
 		var outBuf bytes.Buffer
 		cmd.Stdout = &outBuf
+		if inv.merged {
+			// One buffer for both descriptors: the ORDER the child wrote
+			// them in is what the case is about, and two buffers cannot
+			// record it. errBuf stays empty and is compared as such.
+			cmd.Stderr = &outBuf
+		}
 		overran = inv.runBounded(cmd)
 		out = outBuf.Bytes()
 	}
@@ -1456,10 +1500,10 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			inv.prep(t)
 			got := inv.run(t, ours, util)
 			diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "gnu", "fern")
-			if !bytes.Equal(want.stdout, got.stdout) {
+			if !sameOutput(inv, want.stdout, got.stdout) {
 				t.Errorf("stdout differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
 			}
-			if !bytes.Equal(want.stderr, got.stderr) {
+			if !sameOutput(inv, want.stderr, got.stderr) {
 				t.Errorf("stderr differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stderr), quote(got.stderr))
 			}
 			if want.how() != got.how() {
@@ -1470,6 +1514,28 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			}
 		})
 	}
+}
+
+// sameOutput compares one captured stream. A case that set `unordered`
+// has its lines sorted first, which is the whole of what that field does;
+// every other case is compared byte for byte.
+func sameOutput(inv invocation, want, got []byte) bool {
+	if !inv.unordered {
+		return bytes.Equal(want, got)
+	}
+	return bytes.Equal(sortedLines(want), sortedLines(got))
+}
+
+// sortedLines rewrites a stream with its lines in sorted order. A trailing
+// newline is preserved by splitting on it: "a\nb\n" is two lines and an
+// empty tail, and the tail rejoins so a stream that did not end in a
+// newline still differs from one that did.
+func sortedLines(b []byte) []byte {
+	parts := strings.Split(string(b), "\n")
+	tail := parts[len(parts)-1]
+	lines := parts[:len(parts)-1]
+	sort.Strings(lines)
+	return []byte(strings.Join(append(lines, tail), "\n"))
 }
 
 // treeKind names the entry kind in one word.

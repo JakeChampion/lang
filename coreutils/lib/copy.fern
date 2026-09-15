@@ -183,15 +183,18 @@ pub function cfg_new(): Cfg {
 // with everything else, the exit status so one failed operand costs the
 // status and not the run, the hard-link table `--preserve=links` fills in,
 // and the device `-x` holds the walk to.
-pub struct State { out: io_buffered.BufWriter, status: i32, link_dev: i64[], link_ino: i64[], link_dest: string[], root_dev: i64 }
+pub struct State { out: io_buffered.BufWriter, status: i32, link_dev: i64[], link_ino: i64[], link_dest: string[], root_dev: i64, made_dev: i64[], made_ino: i64[], top_src: string, top_dest: string, aborted: boolean }
 
 pub function state_new(o: io_buffered.BufWriter): State {
-  return State { out: o, status: 0, link_dev: [], link_ino: [], link_dest: [], root_dev: 0 - 1 };
+  return State { out: o, status: 0, link_dev: [], link_ino: [], link_dest: [], root_dev: 0 - 1, made_dev: [], made_ino: [], top_src: "", top_dest: "", aborted: false };
 }
 
 function fail(s: State, msg: string): State {
-  gnu.error(msg);
-  return State { ...s, status: 1 };
+  // Through `error_out` rather than `error`: the buffered stdout is
+  // flushed ahead of the diagnostic, which is what gnulib's error()
+  // does. Without it a `-v` line describing the copy that then failed
+  // arrives AFTER the failure whenever both streams are one pipe.
+  return State { ...s, out: gnu.error_out(s.out, msg), status: 1 };
 }
 
 // ---- stat, in the two forms the engine needs ---------------------------------
@@ -863,13 +866,91 @@ function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: bool
 // because a source directory with no write bit would otherwise be
 // impossible to fill. The creation mode therefore always carries owner
 // write and search, and the final mode replaces it once the contents are in.
-function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
+// One entry of a directory being walked, carrying the inode the order
+// below sorts on. `ino` is 0 for an entry that vanished between the
+// readdir and the stat, which sorts it first — a race either way, and the
+// copy of it then reports its own `cannot stat`.
+struct DirEnt { name: string, dev: i64, ino: i64 }
+
+function dirent_cmp(a: DirEnt, b: DirEnt): i32 {
+  if (a.ino < b.ino) {
+    return 0 - 1;
+  }
+  if (a.ino > b.ino) {
+    return 1;
+  }
+  return 0;
+}
+
+// `walk_order(dir, names)` — the entries of `dir` in the order a copy
+// visits them, which is ASCENDING INODE and not readdir order. Measured:
+// a directory holding `aaa`, `bbb` and a later-created `zzz` is walked
+// `aaa bbb zzz` where readdir hands back `zzz bbb aaa`, and one holding a
+// directory made before two files is walked directory-first — so it is
+// neither the filesystem's order nor names sorted nor directories first.
+//
+// The stat per entry is what readdir's own `d_ino` would give for free;
+// #9317 is the primitive that would remove it.
+function walk_order(dir: string, names: string[]): DirEnt[] {
+  var es: DirEnt[] = [];
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var info: Info = lstat_of(gnu.join_path(dir, names[i]));
+    var dev: i64 = 0;
+    var ino: i64 = 0;
+    if (info.ok) {
+      dev = info.dev;
+      ino = info.ino;
+    }
+    es = es.append(DirEnt { name: names[i], dev: dev, ino: ino });
+    i = i + 1;
+  }
+  return es.sort_by(dirent_cmp);
+}
+
+// `made(st, dev, ino)` — this operand has already CREATED a destination
+// directory with that identity, so a source entry matching it is the copy
+// walking into its own output.
+function made(st: State, dev: i64, ino: i64): boolean {
+  var i: i32 = 0;
+  while (i < st.made_ino.len()) {
+    if (st.made_ino[i] == ino && st.made_dev[i] == dev) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean, top: boolean): State {
   var st: State = s;
-  // The entry list is taken BEFORE the destination is created, and that
-  // order is load-bearing rather than tidy: `cp -r d1 d1` creates `d1/d1`
-  // inside the very directory being walked, and a list read afterwards
-  // would hand the walk its own destination and recurse without end.
-  // Measured — GNU copies exactly what `d1` held before `d1/d1` appeared.
+  if (top) {
+    // Each command-line operand gets its own set: the abort below ends
+    // the operand, not the run, and the diagnostic names this operand's
+    // pair however deep in the walk the destination turns up.
+    st = State { ...st, made_dev: [], made_ino: [], top_src: src_path, top_dest: dest, aborted: false };
+  }
+  // The destination is created BEFORE the entry list is read, and that
+  // order is load-bearing rather than tidy. When the destination lies
+  // inside the source, the walk below MEETS IT as one of its own entries,
+  // and recognising it there is the only thing that stops `cp -r d d/sub`
+  // recursing without end. It is also where the into-itself diagnostic
+  // comes from, which is why that line arrives after the copy rather than
+  // before it.
+  if (!existed) {
+    match (create_dir(dest, (perm_bits(src.mode) | 448) & mode.complement(current_umask() & 511))) {
+      Ok(_) => {},
+      Err(e) => {
+        return fail(st, "cannot create directory " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+      }
+    }
+    // A directory's `-v` line belongs to the CREATION, not to the copy:
+    // measured, `cp -rv s d` with `d` and `d/sub` already there prints
+    // neither `s -> d` nor `s/sub -> d/sub`, only the files under them.
+    st = verbose_line(cfg, st, src_path, dest, "");
+    var mi: Info = lstat_of(dest);
+    st = State { ...st, made_dev: st.made_dev.append(mi.dev), made_ino: st.made_ino.append(mi.ino) };
+  }
   var entries: string[] = [];
   var readable: boolean = true;
   match (read_dir(src_path)) {
@@ -881,19 +962,24 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
       entries = names;
     }
   }
-  if (!existed) {
-    match (create_dir(dest, (perm_bits(src.mode) | 448) & mode.complement(current_umask() & 511))) {
-      Ok(_) => {},
-      Err(e) => {
-        return fail(st, "cannot create directory " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
-      }
-    }
-  }
   if (readable) {
-    // readdir order, not sorted: `cp -rv` prints the entries in the
-    // order the filesystem hands them back, and the corpus pins that.
-    for name in entries {
-      st = copy_one(cfg, st, gnu.join_path(src_path, name), gnu.join_path(dest, name), false);
+    var order: DirEnt[] = walk_order(src_path, entries);
+    var j: i32 = 0;
+    while (j < order.len()) {
+      if (st.aborted) {
+        break;
+      }
+      if (made(st, order[j].dev, order[j].ino)) {
+        // This entry IS the destination. Reported against the operand's
+        // own names, and the rest of the operand is abandoned — measured,
+        // `cp -r src src/bdir` leaves a sibling of `bdir` uncopied while a
+        // later command-line operand still runs.
+        st = fail(st, "cannot copy a directory, " + gnu.quotea(st.top_src) + ", into itself, " + gnu.quotea(st.top_dest));
+        st = State { ...st, aborted: true };
+      } else {
+        st = copy_one(cfg, st, gnu.join_path(src_path, order[j].name), gnu.join_path(dest, order[j].name), false);
+      }
+      j = j + 1;
     }
   }
   var want: i32 = create_mode(cfg, src);
@@ -939,15 +1025,7 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     if (existed && !dst.is_dir) {
       return fail(st, "cannot overwrite non-directory " + gnu.quotea(dest) + " with directory " + gnu.quotea(src_path));
     }
-    if (top && under(src_path, dest)) {
-      // Reported, and the copy still happens: measured at exit 1 with
-      // `d1/d1` created and filled from the snapshot above. The check is
-      // the TOP-LEVEL operand's alone — the entries below it reach their
-      // own destinations without repeating it.
-      st = fail(st, "cannot copy a directory, " + gnu.quotea(src_path) + ", into itself, " + gnu.quotea(dest));
-    }
-    st = verbose_line(cfg, st, src_path, dest, "");
-    return copy_dir(cfg, st, src_path, dest, src, existed);
+    return copy_dir(cfg, st, src_path, dest, src, existed, top);
   }
   if (existed && dst.is_dir) {
     return fail(st, "cannot overwrite directory " + gnu.quotea(dest) + " with non-directory");
@@ -995,19 +1073,6 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     return copy_special(cfg, st, dest, src, existed);
   }
   return copy_file(cfg, st, src_path, dest, src, existed);
-}
-
-// `dest` lies inside the tree rooted at `src` — the shape that would copy
-// a directory into itself. Textual: the walk has not started, so there is
-// nothing to stat yet, and the names are the ones the diagnostic quotes.
-function under(src: string, dest: string): boolean {
-  if (dest.len() <= src.len()) {
-    return false;
-  }
-  if (slice_unchecked(dest, 0, src.len()) != src) {
-    return false;
-  }
-  return dest[src.len()] as i32 == 47;
 }
 
 // `-s` stores the SOURCE OPERAND TEXT as the link target, so a relative
