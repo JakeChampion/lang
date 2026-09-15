@@ -56,7 +56,7 @@ no OOM. The package took 898.295 seconds under QEMU; maximum child RSS was
 2.62 GiB for gen0 and 11.65 GiB for gen1. These are correctness results,
 not native timing measurements.
 
-After rebasing onto main `5a1247235`, both native drivers were rebuilt from
+After rebasing onto main `324d320f1`, both native drivers were rebuilt from
 the updated compiler sources, with the shape change applied to one. The
 plain-module and captured-lambda pilot and all parser cases passed with race
 detection. Full-source comparison then matched the ordered namespaces and
