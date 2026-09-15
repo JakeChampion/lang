@@ -2,7 +2,9 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -32,6 +34,7 @@ func init() {
 func lsTree(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	readPaths := []string{dir}
 	j := func(parts ...string) string { return filepath.Join(append([]string{dir}, parts...)...) }
 	write := func(path string, n int) {
 		t.Helper()
@@ -47,12 +50,14 @@ func lsTree(t *testing.T) string {
 		if err := os.Chmod(path, mode); err != nil {
 			t.Fatal(err)
 		}
+		readPaths = append(readPaths, path)
 	}
 	link := func(target, path string) {
 		t.Helper()
 		if err := os.Symlink(target, path); err != nil {
 			t.Fatal(err)
 		}
+		readPaths = append(readPaths, path)
 	}
 	stamp := func(path string, sec int64) {
 		t.Helper()
@@ -184,6 +189,17 @@ func lsTree(t *testing.T) string {
 	write(j("colon:dir", "in"), 1)
 	mkdir(j("sp dir"), 0o755)
 	write(j("sp dir", "in"), 1)
+
+	// Recursive listings and readlink change access times even though no case
+	// writes. Pin directory and symlink atimes ahead of both mtime and ctime
+	// so Linux relatime cannot change them between the compared processes.
+	// GNU touch -h sets the link's own time, including dangling links. Keep
+	// mtimes and the explicit timestamp edge-case files unchanged.
+	args := append([]string{"-h", "-a", "-d", "@" + strconv.FormatInt(now+30*86400, 10), "--"}, readPaths...)
+	argv := crossArgv(referenceBin(t, "touch"), args...)
+	if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
+		t.Fatalf("pin listing fixture access times: %v\n%s", err, out)
+	}
 
 	return dir
 }
