@@ -197,6 +197,16 @@ type Info struct {
 	// conformance pass. resolveProj uses it to resolve a concrete-base
 	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
 	AssocBindings map[string]map[string]ast.Type
+	// AssocBindingPattern records, for a binding made by a PARAMETRIC impl,
+	// that impl's `for` type pattern (`impl[T] Carrier for Box[T]` with
+	// `type Ok = T;` → AssocBindingPattern["Box"]["Ok"] = Box[T], T a
+	// ParamType). The binding is then written in the impl's own type
+	// parameters, so resolveProj unifies the pattern against the concrete
+	// base (`Box[i32]`) to recover T=i32 before substituting. Keyed exactly
+	// like AssocBindings because two impls on the same type may spell their
+	// parameters differently. Absent for concrete impls, whose bindings need
+	// no substitution. See docs/ASSOCIATED-TYPES.md.
+	AssocBindingPattern map[string]map[string]ast.Type
 	// DynCoercions records every concrete→`dyn Trait` boxing site,
 	// keyed by the holder expression the checker saw flow into a `dyn`
 	// slot (var init, assignment, argument, return, array element,
@@ -908,27 +918,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	c := &checker{
 		info: &Info{
-			VarTypes:        map[*ast.Var]ast.Type{},
-			Locals:          map[*ast.FuncDecl][]*ast.Var{},
-			FuncSigs:        map[string]*ast.FuncType{},
-			Structs:         map[string]*ast.StructDecl{},
-			Enums:           map[string]*ast.EnumDecl{},
-			Resources:       map[string]*ast.ResourceDecl{},
-			Methods:         map[string]string{},
-			TraitMethods:    map[string]string{},
-			MethodOwners:    map[string][]string{},
-			MethodDeclSites: map[string]ast.Position{},
-			MethodSources:   map[string]string{},
-			ModuleImports:   prog.ModuleImports,
-			DirectImports:   prog.DirectImports,
-			GenericFuncs:    map[string]*ast.FuncDecl{},
-			GenericStructs:  map[string]*ast.StructDecl{},
-			Generics:        map[string]ast.GenericDecl{},
-			Traits:          map[string]*ast.TraitDecl{},
-			Impls:           map[string]map[string]bool{},
-			ImplTraitArgs:   map[string]map[string][]ast.Type{},
-			ImplForPattern:  map[string]map[string]ast.Type{},
-			AssocBindings:   map[string]map[string]ast.Type{},
+			VarTypes:            map[*ast.Var]ast.Type{},
+			Locals:              map[*ast.FuncDecl][]*ast.Var{},
+			FuncSigs:            map[string]*ast.FuncType{},
+			Structs:             map[string]*ast.StructDecl{},
+			Enums:               map[string]*ast.EnumDecl{},
+			Resources:           map[string]*ast.ResourceDecl{},
+			Methods:             map[string]string{},
+			TraitMethods:        map[string]string{},
+			MethodOwners:        map[string][]string{},
+			MethodDeclSites:     map[string]ast.Position{},
+			MethodSources:       map[string]string{},
+			ModuleImports:       prog.ModuleImports,
+			DirectImports:       prog.DirectImports,
+			GenericFuncs:        map[string]*ast.FuncDecl{},
+			GenericStructs:      map[string]*ast.StructDecl{},
+			Generics:            map[string]ast.GenericDecl{},
+			Traits:              map[string]*ast.TraitDecl{},
+			Impls:               map[string]map[string]bool{},
+			ImplTraitArgs:       map[string]map[string][]ast.Type{},
+			ImplForPattern:      map[string]map[string]ast.Type{},
+			AssocBindings:       map[string]map[string]ast.Type{},
+			AssocBindingPattern: map[string]map[string]ast.Type{},
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
@@ -4141,6 +4152,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 				for name, bt := range impl.AssocTypeBindings {
 					c.info.AssocBindings[typeName][name] = bt
+					if len(impl.TypeParams) > 0 {
+						if c.info.AssocBindingPattern[typeName] == nil {
+							c.info.AssocBindingPattern[typeName] = map[string]ast.Type{}
+						}
+						c.info.AssocBindingPattern[typeName][name] = impl.Type
+					}
 				}
 			}
 		}
@@ -7114,6 +7131,13 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			params[n] = true
 		}
 		c.resolveType(&impl.Type, params, impl.P)
+		// The associated-type bindings too (`type Ok = T;`): they are the
+		// impl's own type parameters, so leaving them as StructType makes
+		// the resolved projection un-substitutable at an instantiation.
+		for name, bt := range impl.AssocTypeBindings {
+			c.resolveType(&bt, params, impl.P)
+			impl.AssocTypeBindings[name] = bt
+		}
 	}
 }
 
@@ -8120,7 +8144,7 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		if tn, ok := methodTypeName(base); ok {
 			if m, ok := c.info.AssocBindings[tn]; ok {
 				if bound, ok := m[x.Name]; ok {
-					return c.resolveProj(bound)
+					return c.resolveProj(c.substAssocBinding(tn, x.Name, bound, base))
 				}
 			}
 		}
@@ -8161,6 +8185,23 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		return out
 	}
 	return t
+}
+
+// substAssocBinding rewrites a binding made by a parametric impl into the
+// base's own type arguments: `type Ok = T;` on `impl[T] Carrier for Box[T]`
+// is `i32` for a `Box[i32]` base. Unifying the recorded `for` pattern against
+// the base recovers T. A concrete impl records no pattern and is returned
+// unchanged. See docs/ASSOCIATED-TYPES.md.
+func (c *checker) substAssocBinding(typeName, assoc string, bound, base ast.Type) ast.Type {
+	pat, ok := c.info.AssocBindingPattern[typeName][assoc]
+	if !ok {
+		return bound
+	}
+	psub := map[string]ast.Type{}
+	if !c.unifyType(pat, base, psub) || len(psub) == 0 {
+		return bound
+	}
+	return substByName(bound, psub)
 }
 
 // resolveProjWith resolves associated-type projections using an explicit
