@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,66 +244,60 @@ func pmUnitKey(j *pmEmitJob) string {
 // the flat window plan both emit routes use.
 func planWholeCompilerUnits(t *testing.T, drive func(...string) (string, error), dir, label string) []*pmEmitJob {
 	t.Helper()
-	countOut, err := drive("-per-module-count")
+	shapeOut, err := drive("-per-module-shape")
 	if err != nil {
-		t.Fatalf("[%s] -per-module-count: %v", label, err)
+		t.Fatalf("[%s] -per-module-shape: %v", label, err)
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(countOut))
-	if err != nil || n < 10 {
-		t.Fatalf("[%s] -per-module-count = %q (n=%d), want a whole-compiler count >= 10", label, countOut, n)
-	}
-
-	// Post lift_lambdas / infer — the exact set emit_module_funcs windows over.
-	fcOut, err := drive("-per-module-func-counts")
+	shape, err := parsePMModuleShape(shapeOut)
 	if err != nil {
-		t.Fatalf("[%s] -per-module-func-counts: %v", label, err)
+		t.Fatalf("[%s] -per-module-shape: %v", label, err)
 	}
-	var funcCounts []int
-	for _, ln := range strings.Split(strings.TrimSpace(fcOut), "\n") {
-		if s := strings.TrimSpace(ln); s != "" {
-			c, cerr := strconv.Atoi(s)
-			if cerr != nil {
-				t.Fatalf("[%s] -per-module-func-counts: non-int line %q: %v", label, s, cerr)
-			}
-			funcCounts = append(funcCounts, c)
-		}
+	if len(shape) < 10 {
+		t.Fatalf("[%s] -per-module-shape returned %d modules, want a whole-compiler count >= 10", label, len(shape))
 	}
-	if len(funcCounts) != n {
-		t.Fatalf("[%s] -per-module-func-counts returned %d counts, want %d (module count)", label, len(funcCounts), n)
-	}
-
 	// Function count alone under-shards a module of FEW but GIANT functions:
 	// asm_arm64 (32 funcs, ~470 KB — emit_runtime alone is ~235 KB) crossed the
 	// arena ceiling emitted whole while staying far under the 100-func budget.
-	// The manifest lines are `name|hash|hash|deps`; module sources are staged as
-	// dir/<name>.fern by WriteSelfHostModloadProject.
-	manOut, err := drive("-per-module-manifest")
-	if err != nil {
-		t.Fatalf("[%s] -per-module-manifest: %v", label, err)
-	}
-	var modBytes []int
-	for _, ln := range strings.Split(manOut, "\n") {
-		s := strings.TrimSpace(ln)
-		if s == "" {
-			continue
-		}
-		name := s
-		if i := strings.IndexByte(s, '|'); i >= 0 {
-			name = s[:i]
-		}
+	// Keep the independent Go window calculation and staged source sizes.
+	funcCounts := make([]int, len(shape))
+	modBytes := make([]int, len(shape))
+	for i, module := range shape {
+		funcCounts[i] = module.functions
 		// A module without a staged file (the synthesized "__entry") weighs 0:
 		// its window stays func-count based, so the entry is never sharded
 		// (the exactly-one-_start link assertion depends on that).
-		sz := 0
-		if fi, serr := os.Stat(filepath.Join(dir, name+".fern")); serr == nil {
-			sz = int(fi.Size())
+		if fi, serr := os.Stat(filepath.Join(dir, module.namespace+".fern")); serr == nil {
+			modBytes[i] = int(fi.Size())
 		}
-		modBytes = append(modBytes, sz)
-	}
-	if len(modBytes) != n {
-		t.Fatalf("[%s] -per-module-manifest returned %d modules, want %d", label, len(modBytes), n)
 	}
 	return planPmEmitWindows(funcCounts, modBytes, pmFuncBudget)
+}
+
+type pmModuleShape struct {
+	namespace string
+	functions int
+}
+
+func parsePMModuleShape(out string) ([]pmModuleShape, error) {
+	var modules []pmModuleShape
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		namespace, count, ok := strings.Cut(line, "|")
+		n, err := strconv.Atoi(count)
+		if !ok || namespace == "" || err != nil || n < 0 {
+			return nil, fmt.Errorf("invalid module shape row %q", line)
+		}
+		if seen[namespace] {
+			return nil, fmt.Errorf("duplicate module namespace %q", namespace)
+		}
+		seen[namespace] = true
+		modules = append(modules, pmModuleShape{namespace: namespace, functions: n})
+	}
+	return modules, nil
 }
 
 // planPmEmitWindows expands per-module function counts + source bytes into the
