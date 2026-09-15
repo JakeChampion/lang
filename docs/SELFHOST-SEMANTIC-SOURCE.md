@@ -1534,11 +1534,12 @@ call __fern_arr_push
 cmp result, buf ; jne .skip ; call __fern_rc_inc
 ```
 
-**Why moving the retain into the unique arm is not the fix.** It was tried:
-`push` then grows through `__fern_arr_push_owned` at rc 2, which re-gates and
-copies anyway, so the reproducer only improves to 3.5 s and 6.4 GB — and the
-same reordering applied to `with` is a MISCOMPILE, because `arr_set` mutates
-unconditionally. This returns 199 on the AST path and 15 with the reorder:
+**Two shapes that are NOT the fix, both tried.** Moving the retain into the
+unique arm leaves `push` growing through `__fern_arr_push_owned` at rc 2, which
+re-gates and copies anyway — the reproducer only improves to 3.5 s and 6.4 GB —
+and the same reordering applied to `with` is a MISCOMPILE, because `arr_set`
+mutates unconditionally. This returns 199 on the AST path and 15 with the
+reorder:
 
 ```fern
 function set0(buf: i32[], v: i32): i32[] { return buf.with(0, v); }
@@ -1551,15 +1552,54 @@ function main(): i32 {
 }
 ```
 
-**What the fix needs.** The AST shape — the non-consuming helper plus a
-pointer-identity retain — is only safe because the AST path also has the
-caller-side may-grow bracket of #4873: a caller whose receiver is still LIVE
-after the call retains around it, so the callee's gate sees rc 2 and copies.
-The semantic path has no such bracket, and compensates by retaining
-unconditionally, which is correct and quadratic. Giving it one is the work:
-`ssaunits.choose` already computes "dead at this step" for every value and
-discards it for values the frame does not own, which is exactly the fact the
-bracket needs.
+Inferring the MODE instead — a reference parameter an `append` consumes becomes
+counted, so the caller moves its unit in — passes every reproducer, fixes the
+memory, and segfaults the produced compiler on almost every module.
+`ssarc.caller_sigs` reads a counted parameter as "the caller moved its unit in",
+which for a declared `own` position the checker's E051 guarantees and for an
+inferred one nothing does; an AST-lowered caller passing a borrowed value
+supplies nothing, and the produced callee releases what it was never given.
+`FERN_SEM_IR_SKIP=<caller name>` reproduces it in one step. A parameter mode is
+half of a contract whose other half the checker enforces on source the user
+wrote, so it is not free to be inferred.
+
+**What landed.** The AST lowering's shape — hold the receiver's retain back,
+push through the non-consuming `__fern_arr_push`, retain the result on pointer
+identity — plus the caller-side may-grow bracket of #4873, so a caller whose
+array is still live holds a second count across the call and the callee's gate
+sees the copy it owes.
+
+That shape alone corrupts arrays, because of what the grow path does:
+
+> `__fern_arr_push` **frees nothing, ever**. Its grow path allocates a fresh box,
+> memcpy's the element POINTERS into it without retaining them, and abandons the
+> old buffer. The old buffer and the new one then share one count per element.
+
+The AST lowering settles that by never releasing the old buffer — the
+"LOAD-BEARING LEAK" comment in `asm_ir.fern`, and why the AST build leaks 524 KB
+on the reproducer. The semantic path's ledger balances every unit, so its caller
+does release it, and the aliased elements die under the box that now points at
+them.
+
+So the grown arm counts them: `__fern_arr_inc_elems` over the RECEIVER names
+exactly the boxes the fresh one aliases, since the receiver is untouched by the
+push and the element just pushed is not among them. O(n) per grow, amortised
+O(1) against the doubling, and the same shape `sole_owned_base` already uses on
+its copy arm.
+
+Reproducer: 2 ms with allocs and frees balanced.
+
+**It is not what the 11.5 GB is made of.** Measured on `lexer.fern`, both
+exit 0: 11,550 MB without the deferral, 10,726 MB with it. 7%. The 18 MB
+#9388 reported for this same lowering came from a run that exited 139, and
+the mode-inference attempt's 18 MB from one that exited 134 — a peak up to a
+crash, not a figure for completed work.
+
+The issue's reading of its own bisect does not survive reading the code
+either: the `w`-`z` cone is the x86 assembler, but `asmcore.EmitState.write`
+routes through a global strbuf and appends to no array. So the cone is right
+and the shape inside it is still open, with the borrowed-parameter append now
+ruled out as its cause.
 
 The n-z and t-u-v rows' exit 139 is its own finding rather than a consequence
 of the exclusion: an excluded body falls back to the AST lowering, so a mixed
