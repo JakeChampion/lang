@@ -4,12 +4,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // TestSelfHostPerModuleEmitAllFixpointX86_64 is the proof for the
@@ -60,7 +64,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix8_gen0")
 
 	t.Logf("gen0: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
-	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix8_g0", "x86-64-linux", batchUnits)
+	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix8_g0", "x86-64-linux", batchUnits, pmGoBuiltEmitMemoryMB)
 	gen1Bin := filepath.Join(dir, "eafix8_gen1")
 	objsG0 := unitObjPaths(t, dir, "eafix8_g0", unitsG0)
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objsG0, "-o", gen1Bin)...)
@@ -72,7 +76,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	// each unit's peak is ~halved, so the per-process batch accumulation stays
 	// under the arena ceiling.
 	t.Logf("gen1: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
-	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix8_g1", "x86-64-linux", batchUnits)
+	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix8_g1", "x86-64-linux", batchUnits, pmSelfBuiltEmitMemoryMB)
 
 	if len(unitsG1) != len(unitsG0) {
 		t.Fatalf("unit count diverged: gen0 emitted %d units, gen1 emitted %d", len(unitsG0), len(unitsG1))
@@ -111,7 +115,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 // the driver windows internally so -unit-range [b,hi) emits exactly jobs[b:hi].
 // `target` selects the backend the units are emitted for ("x86-64-linux" or
 // "arm64-linux"); the analysis queries ignore it.
-func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir, label, target string, batchUnits int) map[string]string {
+func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir, label, target string, batchUnits, memoryMB int) map[string]string {
 	t.Helper()
 	build := func(args ...string) *exec.Cmd {
 		full := append([]string{entry, "-target", target}, args...)
@@ -151,27 +155,24 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 	}
 
 	start := time.Now()
-	batches := 0
-	var peakRSSKB int64
-	for b := 0; b < totalUnits; b += batchUnits {
-		hi := b + batchUnits
-		if hi > totalUnits {
-			hi = totalUnits
-		}
-		rss, derr := driveRSS("-per-module-emit-all", "-assume-eligible", "-out-dir", outDir,
+	batches := runPMEmitBatches(totalUnits, batchUnits, memoryMB, func(lo, hi int) (int64, error) {
+		return driveRSS("-per-module-emit-all", "-assume-eligible", "-out-dir", outDir,
 			"-func-budget", strconv.Itoa(pmFuncBudget),
-			"-unit-range", strconv.Itoa(b)+":"+strconv.Itoa(hi))
-		if rss > peakRSSKB {
-			peakRSSKB = rss
+			"-unit-range", strconv.Itoa(lo)+":"+strconv.Itoa(hi))
+	})
+	var peakRSSKB int64
+	for _, batch := range batches {
+		if batch.rss > peakRSSKB {
+			peakRSSKB = batch.rss
 		}
-		if derr != nil {
+		if batch.err != nil {
 			// The two memory failures need opposite responses, and until the arena
 			// trap got its own status both arrived as 137 and this hint had to
 			// guess. 125 is the emitted binary exhausting its own fixed arena —
 			// reproducible, a real bound-the-batch bug. 137 is 128+9, the HOST
 			// kernel OOM-killing the process — infra, retry with a smaller budget.
 			hint := ""
-			if ee, ok := derr.(*exec.ExitError); ok {
+			if ee, ok := batch.err.(*exec.ExitError); ok {
 				switch ee.ExitCode() {
 				case 125:
 					hint = " — arena exhausted (exit 125); -assume-eligible did not bound the batch"
@@ -179,9 +180,8 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 					hint = " — SIGKILLed (exit 137): the HOST ran out of RAM, not the arena; lower the concurrency or the budget knobs"
 				}
 			}
-			t.Fatalf("[%s] emit-all batch [%d:%d]: %v%s", label, b, hi, derr, hint)
+			t.Fatalf("[%s] emit-all batch [%d:%d]: %v%s", label, batch.lo, batch.hi, batch.err, hint)
 		}
-		batches++
 	}
 
 	units := map[string]string{}
@@ -205,8 +205,60 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 		t.Fatalf("[%s] emit-all wrote %d units, plan has %d", label, len(units), totalUnits)
 	}
 	t.Logf("[%s] emit-all: %d units in %d batches of <=%d, %.1fs, peak %.2f GB (arena ceiling 16 GiB)",
-		label, len(units), batches, batchUnits, time.Since(start).Seconds(), float64(peakRSSKB)/(1024*1024))
+		label, len(units), len(batches), batchUnits, time.Since(start).Seconds(), float64(peakRSSKB)/(1024*1024))
 	return units
+}
+
+// The Go-built driver peaked at 2.43 GiB in CI run 34979953900. Its
+// self-built successor peaked at 10.63 GiB for the SAME 8-unit batches.
+// Reserve separately: Go-built batches can share a normal CI runner, while
+// self-built batches reserve the full 16 GiB arena before running together.
+const (
+	pmGoBuiltEmitMemoryMB   = 5 * 1024
+	pmSelfBuiltEmitMemoryMB = 16 * 1024
+)
+
+type pmEmitBatchResult struct {
+	lo, hi int
+	rss    int64
+	err    error
+}
+
+// runPMEmitBatches keeps the existing flat unit ranges, bounded by both the
+// Go CPU budget and the shared build-memory budget. Workers own disjoint
+// result slots and disjoint unit files. Wait for all subprocesses before
+// inspecting results or returning to a caller that might remove their files.
+func runPMEmitBatches(totalUnits, batchUnits, memoryMB int, emit func(lo, hi int) (int64, error)) []pmEmitBatchResult {
+	var batches []pmEmitBatchResult
+	for lo := 0; lo < totalUnits; lo += batchUnits {
+		batches = append(batches, pmEmitBatchResult{lo: lo, hi: min(lo+batchUnits, totalUnits)})
+	}
+	pending := make(chan int)
+	var workers sync.WaitGroup
+	workerCount := min(runtime.GOMAXPROCS(0), len(batches))
+	if e2eharness.InterpDriverMode() {
+		// Preserve serial execution until the interpreter's whole-compiler
+		// memory footprint has been measured independently.
+		workerCount = min(1, len(batches))
+	}
+	for range workerCount {
+		workers.Go(func() {
+			for i := range pending {
+				batch := &batches[i]
+				batch.err = withBuildMemoryMB(memoryMB, func() error {
+					var err error
+					batch.rss, err = emit(batch.lo, batch.hi)
+					return err
+				})
+			}
+		})
+	}
+	for i := range batches {
+		pending <- i
+	}
+	close(pending)
+	workers.Wait()
+	return batches
 }
 
 // unitObjPaths returns the on-disk .s paths for an emit-all unit set in
