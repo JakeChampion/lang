@@ -6,7 +6,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern)
 
-.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all ci-selftest fern-test-cache digest-check
 
 all: build test
 
@@ -26,6 +26,12 @@ bin/fern: $(shell find . -name '*.go' -not -path './build/*' -not -path './.clau
 
 test:
 	go test ./...
+
+# Check the generated region without changing the source, and verify the gate
+# rejects drift and malformed markers. Requires uv; missing tooling fails.
+digest-check:
+	uv run --no-project tools/gen_digests.py --check
+	uv run --no-project python -B -m unittest discover -s tools -p test_gen_digests.py
 
 vet:
 	go vet ./...
@@ -217,7 +223,7 @@ lint-all:
 	@status=0; \
 	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \
 	            "$(MAKE) check-sources" "$(MAKE) deadcode" "$(MAKE) actionlint" \
-	            "$(MAKE) testnames" "$(MAKE) ci-selftest" "$(MAKE) freeze"; do \
+	            "$(MAKE) testnames" "$(MAKE) ci-selftest" "$(MAKE) digest-check" "$(MAKE) freeze"; do \
 		echo "==> $$gate"; \
 		if ! sh -c "$$gate"; then echo "FAILED: $$gate"; status=1; fi; \
 	done; \
