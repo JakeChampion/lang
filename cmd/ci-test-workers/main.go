@@ -24,6 +24,7 @@ import (
 
 type config struct {
 	binary, output, pattern string
+	weights                 string
 	workers, cpus           int
 	timeout                 time.Duration
 }
@@ -55,6 +56,7 @@ func main() {
 	flag.StringVar(&c.binary, "binary", "", "absolute path of a compiled Go test binary")
 	flag.StringVar(&c.output, "output", "", "new directory for inventories and test JSON")
 	flag.StringVar(&c.pattern, "run", "", "top-level test selection regular expression")
+	flag.StringVar(&c.weights, "weights", "", "optional measured test-duration weights file")
 	flag.IntVar(&c.workers, "workers", 2, "number of isolated processes")
 	flag.IntVar(&c.cpus, "cpus", runtime.GOMAXPROCS(0), "total CPU budget")
 	flag.DurationVar(&c.timeout, "timeout", 10*time.Minute, "test timeout per worker")
@@ -165,6 +167,18 @@ func run(ctx context.Context, c config, output io.Writer) error {
 	if _, err := regexp.Compile(c.pattern); err != nil {
 		return err
 	}
+	var weights map[string]float64
+	if c.weights != "" {
+		f, err := os.Open(c.weights)
+		if err != nil {
+			return fmt.Errorf("open test weights: %w", err)
+		}
+		weights, err = readWeights(f)
+		err = errors.Join(err, f.Close())
+		if err != nil {
+			return fmt.Errorf("read test weights: %w", err)
+		}
+	}
 	// Bound inventory too: a package TestMain may execute before -test.list.
 	ctx, cancel := context.WithTimeout(ctx, c.timeout+30*time.Second)
 	defer cancel()
@@ -174,7 +188,7 @@ func run(ctx context.Context, c config, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("list tests: %w", err)
 	}
-	groups, err := inventory(listed, c.workers)
+	groups, err := weightedInventory(listed, c.workers, weights)
 	if err != nil {
 		return err
 	}
