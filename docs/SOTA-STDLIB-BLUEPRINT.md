@@ -547,11 +547,12 @@ reverted.
 SWAR sequences — 12-15 ALU ops each, portable and correct, and the right answer
 while the language had no intrinsic surface. They are now one-line wrappers over
 `__popcount*` / `__clz*` / `__ctz*`, each lowering to a SINGLE IR op
-(`OpPopcount` / `OpClz` / `OpCtz`) across all NINE backends plus the
-interpreter. Nine rather than the eight the fused SIMD kernels reach, and the
-difference is instructive: `internal/codegen/wasmssa` consumes `ssa.Func`
-directly and has no string-helper table, so a kernel cannot reach it — but a
-plain scalar op family lowers there like anywhere else.
+(`OpPopcount` / `OpClz` / `OpCtz`) across every backend plus the
+interpreter. At the time of writing that was nine rather than the eight the
+fused SIMD kernels reach, and the difference was instructive: the
+since-retired `wasmssa` (#9397) consumed `ssa.Func` directly and had no
+string-helper table, so a kernel could not reach it — but a plain scalar op
+family lowered there like anywhere else. Eight and eight since.
 
 **Measured, because the estimate mattered.** On x86-64, 20M `count_ones()`
 calls: **0.489s → 0.127s (3.9x)**. `leading_zeros` lands at 0.108s against a

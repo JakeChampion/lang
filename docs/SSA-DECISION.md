@@ -1,9 +1,17 @@
 # SSA: ship-or-shelve decision
 
-**Status:** SHELVED for production backends (decided 2026-05-31).
-**Re-evaluation date:** 2026-09-01 — REACHED, decision still open. Fresh
-numbers are recorded below; the call has not been made.
+**Status:** OPEN for codegen; SHIPPED for analysis. The layer is **not**
+shelved. On the codegen side, size and correctness are SETTLED in the SSA
+backend's favour — 45.3% of flat's `.text` over the corpus, 286/0 on the run
+differential — and speed is the single remaining blocker on an arm64 default
+flip (#4112 phase 4). The x86-64 side is blocked on coverage instead (#8822).
+**Next decision point:** not a date — which of those two tracks to fund.
 **Owner:** compiler / IR.
+
+Read "Where this stands (2026-09-15)" below FIRST. It corrects two things in
+the 2026-09-02 section above: that section says tripwires 1–3 are unfired (one
+has), and it quotes the benchmark geomean as evidence against the backend when
+the ratio runs the other way — 0.92x means SSA is ~8% FASTER on average.
 
 ## The question
 
@@ -128,27 +136,123 @@ Two things that bear on the choice and are easy to lose:
   route feeds roadmap goal 2 (Perceus in the self-host) directly, where the
   codegen cutover does not.
 
-## The re-evaluation procedure
+## Where this stands (2026-09-15)
 
-Revisit with fresh numbers:
+**The codegen question is still OPEN, and the "tripwires 1–3 unfired" line
+above is STALE.** This section corrects it rather than deciding on top of it.
 
-- If no tripwire has fired, **re-shelve** and set the next date. Record why.
-- If a tripwire fired, write an `SSA-CUTOVER-PLAN.md`: pick the shared
-  lowering point (IR → SSA → all native backends, not one), define the
-  parity gate (the differential oracle must stay byte-identical across
-  interp + every backend), and stage it behind a flag until green.
+**Tripwire 1 has fired.** #8822 — open, labelled `backend` / `codegen` /
+`performance` — is a profiled real program, not a microbenchmark:
+`coreutils/sort.fern` is 4–5x slower than GNU, callgrind attributes ~1500
+instructions per comparison, and the issue's own diagnosis names the cause as
+"every local is a memory slot and every temporary goes through push/pop". It
+then names the remedy explicitly:
 
-## Maintenance contract while shelved
+> `-backend ssa` is the register-allocating emitter and **would answer (1)
+> directly**, but it does not cover the I/O surface: building `sort.fern` with
+> it reports 17 undefined call targets.
 
-So the framework doesn't rot:
+The letter of tripwire 1 names LICM / GVN / SCCP and this is register
+allocation, so it is arguably tripwire 1's *spirit* rather than its text. The
+distinction does not rescue the "unfired and unmeasured" claim: a profiled real
+Fern program where the SSA emitter is the demonstrated answer is exactly the
+evidence that clause was waiting for, and it has existed since 2026-09-07.
+
+**And the work is live.** `docs/COREUTILS-SSA-ARGS-2026-09-08.md`,
+`COREUTILS-SSA-BRANCHES-2026-09-08.md` and
+`COREUTILS-X86-SSA-SLICES-2026-09-08.md` are a stream of SSA-backend work under
+epic #8278, and the index-helper inlining landed on both native SSA backends on
+2026-09-15. Each of those documents is careful to say it proposes **no
+default-backend switch** — so the active work is not itself a cutover, but it
+is the opposite of a shelved layer.
+
+**Read the benchmark ratios carefully — the 2026-09-02 note above does not.**
+In `SSA-REGALLOC-PLAN.md`'s tables a ratio is SSA's time as a fraction of the
+flat backend's, so below 1.0 is FASTER (`int_loop 0.44x` is listed as a win).
+The geometric mean of ~0.92x therefore says SSA is about **8% faster on
+average and much smaller** — it is not evidence against the backend, and
+quoting it beside "seven benchmarks are slower" as though it were is a
+misreading.
+
+What the current evidence supports:
+
+- **The analysis route is real, funded and already built** — `Op.SrcOp`
+  provenance with a totality gate, plus
+  `internal/ssa/{ownership,ownership_solve,ownership_returns,units,certify}.go`,
+  2,100+ lines of interprocedural ownership over the lifted form, reaching the
+  32% of reference-count operations that act on unnamed operand-stack values.
+  It answers tripwire 4 and feeds roadmap goal 2 directly. Nothing here is in
+  tension with the codegen question; both roles use the same lift.
+- **Size is settled, and it is not marginal.** Over the corpus the SSA backend
+  emits **45.3% of flat's `.text`**, with 280 of 281 programs individually
+  smaller and the ratio improving with program size — the ten largest land at
+  10–31% (`miniparse` 863,904 → 86,636 bytes). All 17 benchmarks are smaller.
+  Since binary size is epic #4109's whole objective, this is the goal being met.
+- **Correctness is settled** — 286/0 on the `asm_run` corpus differential,
+  285/0/1 on `interp_run`.
+- **Speed is the single open blocker, and it is converging.** Two rounds of
+  fixes have landed since the 09-02 note: static `.rodata` closure cells plus
+  inlined raw pokes (`map_int` 3.25x → 1.61x, `map_string` 2.25x → 1.30x,
+  `tokenize` 1.13x → 0.97x, peak RSS halved onto the flat backend's), and
+  `helperClobbers` call-clobber-aware caller-save (`map_probe_chain` 1.91x →
+  1.56x, `pvec_with` 2.09x → 1.87x, `.text` to 95.79% of what it was,
+  `ordmap_insert`'s stack traffic down 25%). Call-clobber awareness is written,
+  not outstanding.
+
+**Why this still is not a default flip**, in the plan's own words: *"an average
+is the wrong test for a default. Flipping it ships a 20–49% slowdown to anyone
+whose workload looks like `cmp.sort` or `core/map`."* That lands squarely on
+this project — CLAUDE.md records the self-hosted compiler as the biggest
+workload and `core/map` as its most demanding consumer, so defaulting today
+would slow the compiler. The worst remaining rows are `ordmap_insert` 2.28x,
+`pmap_insert` 2.02x, `pvec_with` 1.87x, `map_int` 1.65x, `map_probe_chain`
+1.56x.
+
+**Two tracks, two different blockers — do not conflate them:**
+
+| track | blocker | state |
+| ----- | ------- | ----- |
+| **arm64 default flip** (#4112 phase 4) | codegen quality in loop bodies, with seven named reproducers | size and correctness settled; speed converging, worst rows are persistent collections paying per-call RC helpers |
+| **x86-64** (#8822) | **coverage, not speed** — `sort.fern` does not build under `-backend ssa` (17 undefined call targets), so the claim that it fixes sort's dominant cost is UNMEASURED | the 84-symbol helper gap (#8047), with its step-function unlock curve |
+
+The next decision point is which of those to fund first. They are independent,
+and the x86-64 one is cheaper to make answerable: coverage work is mechanical,
+where loop-body codegen quality is open-ended.
+
+### Per-backend disposition
+
+| backend | disposition |
+| ------- | ----------- |
+| `internal/codegen/wasmssa` | **RETIRED** (#9397). The relooper-era emitter, one fixed page of memory that never grows, and the only SSA backend with no corpus differential — its cover was its own hand-written cases. It existed to satisfy the "keep the layer exercised end-to-end" clause below, which `arm64ssa` now discharges far better. This is independent of the codegen question: the coreutils work is native, wasm is not where a comparison-bound utility runs, and nothing in #8278 or #8822 touches it. `-backend ssa` no longer accepts a wasm target. |
+| `internal/codegen/x86_64ssa` | **KEPT, and its coverage gap is live work.** It is the backend #8822 names as the direct answer to the epic's dominant cost, blocked on 17 undefined call targets in the I/O surface. `arm64ssa` also imports its layout and call-coalescing model, so it could not be cut on its own even if that were wanted. |
+| `internal/codegen/arm64ssa` | **KEPT and load-bearing**, twice over: the emit target for `internal/semir`'s typed pre-RC ownership pipeline (`-backend typed-ssa`, `cmd/fern/typedssa.go`), and the subject of the coreutils perf stream. Its 281-program corpus differential is what keeps the SSA layer honest end-to-end. |
+
+The self-host mirror — the stack IR is the single self-host production
+lowering — was taken on 2026-07-03 and is untouched by any of this:
+`docs/SELFHOST-SSA-DECISION.md`.
+
+## Maintenance contract
+
+The framework is maintained for BOTH roles — analysis, and an emitter that is
+not defaulted but is actively measured:
 
 - Keep `internal/ssa/` building and its tests green in CI (they already run).
-- Keep `-target wasm32-wasi -backend ssa` in the e2e matrix so the layer stays exercised
-  end-to-end, not just unit-tested.
+- Keep the **arm64 corpus differential**
+  (`internal/e2e/arm64_ssa_differential_test.go`) green, with an empty
+  known-divergences file. This is the clause that replaces "keep
+  `-target wasm32-wasi -backend ssa` in the e2e matrix": it exercises the lift
+  and the register allocator over 281 programs rather than a handful of
+  hand-written cases, so it is a real gate rather than a reminder that the
+  layer compiles.
+- `LiftFromIR` must stay **total** over what `internal/ir` emits — the
+  provenance gate (`internal/e2e/ssa_lift_provenance_test.go`) is the one that
+  matters now, because an analysis that cannot see a construct silently
+  under-reports rather than refusing to emit.
 - New IR ops / language features are **not** required to land in the SSA
-  layer while it is shelved — but if `-backend ssa` (wasm) can't express a feature, that
-  gap is logged here, because a growing gap raises the cutover cost and is
-  itself a signal.
+  *emitters*. They ARE required to lift, for the same reason.
+- A gap that blocks a `-backend ssa` build of a real program is logged against
+  #8822, not silently absorbed: the helper-coverage gap is the thing standing
+  between the epic and its measurement.
 
 ## Reconciliation: the native `x86_64ssa` / `arm64ssa` backends (2026-07-03, #4391)
 

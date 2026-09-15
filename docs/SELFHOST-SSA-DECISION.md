@@ -83,15 +83,52 @@ We **declare the stack IR the production lowering** and demote SSA
   already the default). This supersedes `SELFHOST-SSA-ALWAYS.md` Phases 1–4,
   which are shelved (see the banner atop that doc).
 
-- **Retire `ssa.build_func`** (sanctioned follow-up). Remove the second
+- **Retire `ssa.build_func`** (sanctioned follow-up, **not yet done** — see the
+  scope correction below). Remove the second
   AST→SSA frontend — `build_func` / `build_expr` and its per-backend
   Option/Result boxing, closure ABI, and runtime-op derivations — while
   **keeping** `ssa.fern`'s data model + optimiser and `ssa_lift.fern`
   (stack-IR → SSA) as the *downstream* optimiser entry, exactly mirroring
   native's architecture (`ssa_lift.fern` already documents `build_func` as
-  the redundant thing it exists to replace). This deletes ~6.5k lines and a
-  whole parity axis. Land it **before** #3457 so the retirement removes one
-  fallback, not two.
+  the redundant thing it exists to replace). This retires a whole parity
+  axis. Its ordering constraint has expired: #3457 landed, so there is no
+  longer a second fallback to sequence against.
+
+### Scope correction (2026-09-15) — why this has not happened
+
+The paragraph above understates the job in two ways, which is the likeliest
+reason it sat undone for ten weeks. Measured against the current sources:
+
+1. **It is not "~6.5k lines", and the three `ssa_*` backends are not part of
+   it.** That figure counted `ssa_x86.fern` (1,020), `ssa_arm64.fern` (1,029)
+   and `ssa_wasm.fern` (587) as going with the frontend. Two of them cannot:
+   `ssa_lift_emit_run.fern` and `ssa_lift_irlower_run.fern` — the RETAINED
+   lift path's own emit drivers — import `ssa_x86` and `ssa_arm64`. They are
+   the emit side of the layer this decision keeps. Only `ssa_wasm` is
+   build_func-only (its sole driver, `ssa_wasm_emit_run.fern`, is
+   build_func-fed). The frontend itself is the bulk of `ssa.fern`'s 4,048
+   lines.
+
+2. **There is a hard blocker, and it is in the retained path.**
+   `ssa_lift_irlower_run.fern` calls `ssa.build_func_seeded` + `ssa.build_seed`
+   over `ssa.ssa_helpers_src()` to compile the array/slice/map runtime helpers
+   the lift's slice-15/16 lowerings call (`__ssa_arr_push`, `__ssa_arr_slice`,
+   `__ssa_map_keys`, `__ssa_map_values`). Those helpers use `__new_array`, a
+   **build_func-only intrinsic** — `irlower.fern` contains no occurrence of it
+   — so they cannot themselves be lifted. Delete `build_func` today and the
+   lift path loses its ability to emit a runnable program for anything that
+   appends or slices.
+
+So the retirement is gated on making those helpers reachable without
+`build_func`: either teach `irlower` an array-allocation op that lifts, or
+hand-build the helpers as `ir.Op[]` (which `ssa_lift_emit_run.fern` already
+demonstrates is possible). That is the first commit of the retirement, not a
+footnote to it, and it needs the arm64 + x86 lift-emit differentials green
+before the frontend comes out.
+
+**This does not reopen the decision.** The IR path is still the single
+production lowering; `build_func` is still slated to go. The correction is to
+the cost, not the direction.
 
 - **Retire the superseded `ir_x86.fern` + `ir_run` / `ir_x86_run` PoC** ✅
   (done — #4391 follow-up). These were the early stack-IR proof-of-concept

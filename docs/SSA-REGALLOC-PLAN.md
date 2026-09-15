@@ -15,12 +15,22 @@ Eliminating those needs a register allocator.
 Per `CLAUDE.md` ("new optimisations should live in `internal/ir` so all backends
 benefit"), the allocator belongs at the **SSA layer** (`internal/ssa`), not bolted
 into each backend. `internal/ssa` is already a full target-independent SSA with
-dominators, RPO, loops, def-use chains, and ~100 ops — but it currently feeds only
-`wasmssa` (a stack machine that needs no registers). So this track adds (1) the
-allocation analysis/passes to `internal/ssa`, and (2) a new SSA→native emit path
-that consumes the allocation, ultimately **replacing** the stack-machine backends.
+dominators, RPO, loops, def-use chains, and ~100 ops — but at the time this was
+written it fed only `wasmssa`, a stack machine that needs no registers. So this
+track adds (1) the allocation analysis/passes to `internal/ssa`, and (2) a new
+SSA→native emit path that consumes the allocation.
+
+**The "ultimately replacing the stack-machine backends" endpoint is
+UNSCHEDULED, not cancelled.** `docs/SSA-DECISION.md` leaves the cutover open:
+this document's own finding that speed is the open blocker argues against
+defaulting today, while #8822 — `coreutils/sort.fern` at 4–5x GNU, with
+`-backend ssa` named as the direct answer to its dominant cost — argues for
+funding the coverage work that would let it be measured. The allocator work
+below stands on its own terms either way.
 
 ## End state
+
+Not reached, and unscheduled — see the note above.
 
 `ir.LowerWith → ssa.LiftFromIR → ssa.Optimize → ssa.Allocate → {x86_64,arm64}ssa.Emit`,
 with the legacy `internal/codegen/x86_64` / `internal/codegen/arm64` stack-machine

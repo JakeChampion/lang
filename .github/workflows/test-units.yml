@@ -57,7 +57,7 @@ jobs:
         id: day
         run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       # wasmtime, because this lane owns the wasm UNIT packages and no other
-      # lane runs them: internal/codegen/{wasmbin,wasmssa},
+      # lane runs them: internal/codegen/wasmbin,
       # internal/wasm/{component,componenttype,simd,playground} and cmd/fern's
       # component-runtime cases. 902 test sites across internal/ open with
       # `exec.LookPath("wasmtime")` and t.Skip() without it, and a skipped test

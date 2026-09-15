@@ -740,9 +740,8 @@ type Func struct {
 	// for builders that don't populate it.
 	ParamWidths []int8
 	// ReturnWidth is the bit-width of the function's return
-	// value. 0 (or 32) means i32; 64 means i64. Reserved
-	// values for float types will be added when the wasmssa
-	// backend gains float support.
+	// value. 0 (or 32) means i32; 64 means i64. Float returns
+	// are carried by ReturnFloat rather than by a width.
 	ReturnWidth int8
 
 	// ParamFloats is parallel to ParamWidths — true at index i

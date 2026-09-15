@@ -76,7 +76,6 @@ import (
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
 	arm64ssa "github.com/jakechampion/lang/internal/codegen/arm64ssa"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/codegen/wasmssa"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/codegen/x86_64ssa"
 	"github.com/jakechampion/lang/internal/constfold"
@@ -643,7 +642,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
-	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm32-wasi, -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
+	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
 	flag.Lookup("backend").Usage += " `typed-ssa` is the experimental typed pre-RC ownership pipeline for arm64-linux only: immutable array/tuple values, projections, direct calls, local replacement, branches and loops with i32 induction; unsupported constructs are errors. See docs/TYPED-OWNERSHIP-IR-MIGRATION.md."
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
@@ -1246,9 +1245,8 @@ func runInterp(srcPath string, argv []string) (int, error) {
 // re-shake idempotently), including wasi-http's drop of the synthesised
 // tcp_serve `main` (see internal/codegen/wasmbin/build.go).
 //
-// Returns nil when the target has no descriptor (e.g. the experimental
-// wasm-ssa) or nothing violates its capability set. NOTE this mutates
-// prog by tree-shaking it.
+// Returns nil when the target has no descriptor or nothing violates its
+// capability set. NOTE this mutates prog by tree-shaking it.
 func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.Info, target string, shared bool, export string) diag.Errors {
 	if platforms.ForTarget(target) == nil {
 		return nil
@@ -1432,7 +1430,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// -shared exports; backends re-shake idempotently), including
 	// wasi-http's drop of the synthesised tcp_serve `main` (see
 	// internal/codegen/wasmbin/build.go). Targets without a descriptor
-	// (e.g. the experimental wasm-ssa) skip enforcement.
+	// skip enforcement.
 	if errs := enforceTargetCapabilities(srcPath, prog, info, target, shared, export); errs != nil {
 		return 1, e.format(errs)
 	}
@@ -1459,8 +1457,8 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 			return 1, fmt.Errorf("-backend typed-ssa does not implement coverage or sanitizer instrumentation")
 		}
 	case "ssa":
-		if target != "wasm32-wasi" && target != "arm64-linux" && target != "x86-64-linux" {
-			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, x86-64-linux, wasm32-wasi)", target)
+		if target != "arm64-linux" && target != "x86-64-linux" {
+			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, x86-64-linux)", target)
 		}
 	default:
 		return 1, fmt.Errorf("unknown -backend %q (want ssa or typed-ssa, or omit it for the target's default emitter)", backend)
@@ -1484,44 +1482,6 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
 		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
-	}
-
-	if backend == "ssa" && target == "wasm32-wasi" {
-		// Experimental SSA-direct backend (internal/codegen/wasmssa)
-		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR
-		// → ssa.Optimize → wasmssa.EmitModule. Covers i32/i64/f32/
-		// f64 programs with memory ops, string literals, recursion,
-		// and the full reducible-CFG surface — see
-		// internal/codegen/wasmssa/emit.go's package doc.
-		//
-		// Output modes:
-		//   - no flag: write the raw core module to outPath. Run
-		//     with `wasmtime run --invoke main module.wasm`.
-		//   - -component-wrap-cli: wrap as a preview-2 component
-		//     exporting wasi:cli/run@0.2.0. Run with plain
-		//     `wasmtime run prog.wasm` (no --invoke). main must
-		//     have signature () -> i32 for the canonical lift.
-		if outPath == "" {
-			return 1, fmt.Errorf("-backend ssa for -target wasm32-wasi requires -o OUTPUT: it produces a wasm binary, not assembly text")
-		}
-		bin, err := buildWasmSSA(prog, info)
-		if err != nil {
-			return 1, fmt.Errorf("wasm/ssa: %v", err)
-		}
-		if componentWrapCli {
-			// Wrap as a wasi:cli/run-exporting component. The
-			// wasmssa module already exports `main`; lift it as
-			// the component-level `run` function.
-			comp := component.BuildWasiCliRunComponent(bin, "main")
-			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
-				return 1, err
-			}
-			return 0, nil
-		}
-		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
-			return 1, err
-		}
-		return 0, nil
 	}
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
@@ -2080,46 +2040,11 @@ func execDirect(binPath string, progArgs []string) (int, error) {
 // linkDarwin writes asm to a temp .s file and invokes clang with
 // the aarch64-apple-darwin triple + lld's Mach-O backend to
 // produce a native arm64 macOS binary at outPath. Works on both
-// buildWasmSSA lowers the program through ir.LowerWith →
-// ssa.LiftFromIR → ssa.Optimize → wasmssa.EmitModule and
-// returns the wasm core module bytes that export `main`.
-// Returns an error when the program has no `main` function,
-// when the lift fails (gap in lift coverage), or when emit
-// rejects the SSA (gap in wasmssa coverage).
-//
-// Used by -target wasm-ssa. Ptr-width is fixed at 4 (wasm32).
-func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
-	irProg, err := ir.LowerWith(prog, info, 4)
-	if err != nil {
-		return nil, fmt.Errorf("ir.LowerWith: %v", err)
-	}
-	var target *ir.Func
-	for _, fn := range irProg.Funcs {
-		if fn.Name == "main" {
-			target = fn
-			break
-		}
-	}
-	if target == nil {
-		return nil, fmt.Errorf("no `main` function in program")
-	}
-	f, err := ssa.LiftFromIRWith(target, ir.NewCallShapes(irProg))
-	if err != nil {
-		return nil, fmt.Errorf("ssa.LiftFromIR: %v", err)
-	}
-	ssa.Optimize(f)
-	// Same contract as buildArm64SSA, and after Optimize for the same reason.
-	if err := ssa.Verify(f); err != nil {
-		return nil, fmt.Errorf("ssa.Verify: %v", err)
-	}
-	return wasmssa.EmitModule(f, "main")
-}
-
 // buildArm64SSA lowers a whole program through the SSA-direct arm64 pipeline —
 // ir.LowerWith (ptr width 8) → ssa.LiftFromIR + ssa.Optimize per function →
 // arm64ssa.EmitAsmModule — and returns the AArch64 assembly text (a complete
 // `_start` + all functions + referenced runtime helpers), ready for linkNative.
-// Unlike buildWasmSSA (single `main`), it lifts every function so cross-function
+// It lifts every function so cross-function
 // calls and recursion work. Returns an error when the program has no `main`, the
 // lift fails, or emit rejects the SSA (a coverage gap) — never a miscompile.
 // Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the

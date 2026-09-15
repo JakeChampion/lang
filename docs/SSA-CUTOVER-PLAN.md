@@ -1,11 +1,24 @@
 # SSA cutover: the shared lowering, and why Perceus needs it
 
-**Status:** PROPOSED, as input to the `docs/SSA-DECISION.md` re-evaluation due
-**2026-09-01**. That doc says: *"If a tripwire fired, write an
-`SSA-CUTOVER-PLAN.md`"*. One has. This is that document.
+> **Status (2026-09-15): still PROPOSED, and the case for it has grown.** The
+> re-evaluation date passed without a call; see `docs/SSA-DECISION.md` →
+> "Where this stands (2026-09-15)".
+>
+> Two things have changed since this was written, pulling in opposite
+> directions. **For:** #8822 is a profiled real program (`coreutils/sort.fern`,
+> 4–5x GNU) whose diagnosis names `-backend ssa` as the direct answer to its
+> dominant cost — evidence of the kind tripwire 1 was waiting for, which this
+> plan did not have and explicitly did not claim. **Against:** the ownership
+> work this plan motivates reached the lifted form WITHOUT a codegen cutover
+> (`internal/ssa/{ownership,units,certify}`), so tripwire 4 — the one this plan
+> does rest on — no longer needs the cutover to be answered.
+>
+> So the strongest version of this plan today is narrower than what is written
+> below: not "IR → SSA → all native backends", but closing `x86_64ssa`'s
+> helper-coverage gap far enough to MEASURE #8822's claim. The shared-lowering
+> endpoint stays unscheduled.
+
 **Owner:** compiler / IR.
-**Supersedes nothing yet** — `SSA-DECISION.md` and `SELFHOST-SSA-DECISION.md`
-stand until the re-eval acts on this.
 
 ## Which tripwire fired
 

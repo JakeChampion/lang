@@ -132,18 +132,6 @@ func TestSanitizeWarnsWasmCarriesTheCensusOnly(t *testing.T) {
 	}
 }
 
-// The SSA backends carry no instrumentation on any target, so selecting
-// one drops back to the no-checks warning even where the target's
-// default emitter is fully instrumented.
-func TestSanitizeWarnsForSSABackend(t *testing.T) {
-	bin := buildFernForStdoutTest(t)
-	entry := writeFern(t, "function main(): i32 { return 0; }\n")
-	out := filepath.Join(t.TempDir(), "prog.wasm")
-	o, err := exec.Command(bin, "-target", "wasm32-wasi", "-backend", "ssa", "-sanitize", "-o", out, entry).CombinedOutput()
-	if err != nil {
-		t.Fatalf("build: %v\n%s", err, o)
-	}
-	if !strings.Contains(string(o), "carries no checks") {
-		t.Errorf("-backend ssa should warn that nothing is instrumented:\n%s", o)
-	}
-}
+// TestSanitizeWarnsForSSABackend lives in backend_ssa_stdout_test.go with the
+// rest of the `-backend ssa` CLI surface: the warning is a property of that
+// backend, not of the wasm target it used to be exercised through.
