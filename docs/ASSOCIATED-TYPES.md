@@ -52,6 +52,18 @@ function first[I: Iterator](it: I): I::Item {
   `for` pattern against the base, which is why a binding may be a composite
   of the parameter (`type Item = Option[T];`) or name any parameter the impl
   declares, in any order.
+- A projection resolves in a **parameter** as well as in the result, once an
+  earlier argument has pinned its base:
+
+  ```fern
+  function pick[H: Holder](h: H, d: H::Item): H::Item { … }
+  pick(b, 0)            // H = Box[i32] from argument 1, so `d` is i32
+  ```
+
+  Inference is a single left-to-right pass, so the base must be pinned by an
+  argument BEFORE the one whose type projects on it. A projection the call
+  cannot pin stays unresolved, exactly as before — `X::Residual` alone does not
+  determine X.
 - **Object safety**: a trait with associated types is usable as a trait
   object only when the `dyn` type PINS every one —
   `dyn Holder[Item = i32]`. A `dyn` value erases the concrete type, so an
@@ -79,7 +91,11 @@ type before codegen, so the IR / backends / interpreter never see one.
 - **monomorph**: `substituteType` carries `ProjType` (substituting the
   base) and `rewriteType` flattens the base to its mangled instantiation, so
   the re-check sees the `Box__i32::Ok` the synthesised concrete impl records
-  its binding under.
+  its binding under. A generic **enum** base has no such instantiation —
+  `rewriteType` keeps one generic decl for it — so `rewriteType` resolves that
+  projection outright (`resolveAssocBinding`) while the first check's bindings
+  are still in hand, which is the moment "when the generic is monomorphised"
+  names above.
 
 A parametric impl's binding is written in the impl's own type parameters, so
 two extra steps carry it: `resolveTypeNames` resolves those references to

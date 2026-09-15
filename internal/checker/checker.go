@@ -8204,6 +8204,60 @@ func (c *checker) substAssocBinding(typeName, assoc string, bound, base ast.Type
 	return substByName(bound, psub)
 }
 
+// resolveProjWithSub resolves every associated-type projection in `t` whose
+// BASE the inference map has already pinned, and leaves everything else alone.
+//
+// Only projections are rewritten. A bare `T` must stay a ParamType for
+// unifyType to bind it from this argument, so substituting the whole type
+// would break inference for every parameter not yet pinned.
+func (c *checker) resolveProjWithSub(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		base := c.resolveProjWithSub(x.Base, sub)
+		if p, ok := base.(ast.ParamType); ok {
+			if bound, isBound := sub[p.Name]; isBound {
+				base = bound
+			}
+		}
+		return c.resolveProj(ast.ProjType{Base: base, Name: x.Name})
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProjWithSub(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProjWithSub(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProjWithSub(x.Elems[i], sub)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWithSub(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWithSub(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn}
+		for _, pp := range x.Params {
+			out.Params = append(out.Params, c.resolveProjWithSub(pp, sub))
+		}
+		return out
+	}
+	return t
+}
+
 // resolveProjWith resolves associated-type projections using an explicit
 // per-impl bindings map (assoc name → type), resolving any ProjType whose
 // Name is bound regardless of base. Used in conformance comparison, where
@@ -16317,6 +16371,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
+				// An associated-type projection in a PARAMETER resolves
+				// once an earlier argument has pinned its base:
+				// `pick[H: Holder](h: H, d: H::Item)` called as
+				// `pick(b, 0)` knows H = IntBox by the time argument 2 is
+				// checked, so its `H::Item` is i32 — which is also what the
+				// literal has to settle against. The result type has its own
+				// resolve (resolveProj after substituteType); parameters had
+				// none, so every projection in one was compared unresolved.
+				if sub != nil {
+					expected = c.resolveProjWithSub(expected, sub)
+				}
 				// If the expected param is a bare type parameter that an
 				// earlier argument already bound to a concrete numeric /
 				// float type (e.g. `assert_eq[T](a + b, 8000000000)` where
