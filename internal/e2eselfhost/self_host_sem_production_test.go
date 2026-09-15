@@ -294,7 +294,7 @@ function main(): i32 {
 	// caller-side bracket is what makes the update owe a copy. Both halves
 	// have to answer the same as the AST lowering: 199 says `a` came through
 	// the borrow untouched.
-	{name: "borrowed-container-update", atLeast: 4, src: `
+	{name: "borrowed-param-append", atLeast: 4, src: `
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function build(n: i32): i32[] {
     var out: i32[] = [];
@@ -310,6 +310,69 @@ function main(): i32 {
     if (b[0] != 99) { return 2; }
     if (a.len() != 64 || b.len() != 64) { return 3; }
     return 199;
+}
+`},
+	// The same shape with COUNTED elements, which is what the grow path turns
+	// on. `__fern_arr_push` copies element pointers into the fresh box without
+	// retaining them and abandons the old buffer rather than freeing it, so
+	// the two share one count per element; this frame's caller DOES release
+	// that buffer, because the plan balances every unit, and the aliased
+	// elements are counted for by `__fern_arr_inc_elems` over the receiver.
+	// Without it the elements die under the new box and the freelist reissues
+	// them.
+	//
+	// Every element is distinct and checked back, so a freed-and-reissued
+	// element box shows as a wrong name rather than a crash.
+	{name: "borrowed-param-append-counted-elems", atLeast: 4, src: `
+struct Box { name: string }
+function add(acc: Box[], n: string): Box[] { return acc.append(Box { name: n }); }
+function tag(i: i32): string {
+    var tbl: string[] = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj"];
+    return "payload-" + tbl[i % 10] + "-longer-tail";
+}
+function build(n: i32): Box[] {
+    var out: Box[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = add(out, tag(i)); i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    var all: Box[] = build(9);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < all.len()) {
+        if (all[i].name != tag(i)) { return 1 + i; }
+        n = n + all[i].name.len();
+        i = i + 1;
+    }
+    return n % 97;
+}
+`},
+	// The paths a deferred receiver retain has to answer on: `maybe` does not
+	// append at all when the flag is false; `ignore` never returns what it
+	// appended to; `twice` appends through the same parameter at two sites, so
+	// the second one is handed what the first produced; and the last `twice`
+	// call has a caller that still reads `live` afterwards, where the bracket
+	// makes the receiver shared and the push copies. Balanced allocs and frees
+	// on both legs is what the leak-parity check makes of it.
+	{name: "borrowed-param-obligations", atLeast: 5, src: `
+struct B { n: string }
+function tagx(i: i32): string { var t: string[] = ["aa", "bb", "cc", "dd"]; return "long-payload-" + t[i % 4]; }
+function maybe(xs: B[], flag: boolean): B[] {
+    if (flag) { return xs.append(B { n: tagx(1) }); }
+    return [];
+}
+function ignore(xs: B[]): i32 { var ys: B[] = xs.append(B { n: tagx(2) }); return ys.len(); }
+function twice(xs: B[]): B[] { xs = xs.append(B { n: tagx(3) }); xs = xs.append(B { n: tagx(0) }); return xs; }
+function seed(n: i32): B[] { var o: B[] = []; var i: i32 = 0; while (i < n) { o = o.append(B { n: tagx(i) }); i = i + 1; } return o; }
+function main(): i32 {
+    var a: B[] = maybe(seed(3), true);
+    var b: B[] = maybe(seed(3), false);
+    var c: i32 = ignore(seed(3));
+    var d: B[] = twice(seed(3));
+    var live: B[] = seed(2);
+    var e: B[] = twice(live);
+    return a.len() * 1000 + b.len() * 100 + c * 10 + d.len() + e.len() + live.len();
 }
 `},
 	// A write back through a capture is refused (#9320), so this module is

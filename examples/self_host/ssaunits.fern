@@ -20,10 +20,10 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 // id only for edges and -1 otherwise. All acquisitions execute before moves,
 // the semantic operation then creates its result, and drops execute last.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[] }
-pub struct Plan { ok: boolean, why: string, steps: Step[], shared: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], shared: boolean[], owned: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], shared: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], shared: [], owned: [] }; }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [] }; }
 function bits(n: i32): boolean[] {
@@ -404,7 +404,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, shared: handed_on(f) };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, shared: handed_on(f), owned: owned };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;
