@@ -173,11 +173,11 @@ function hands_out(kind: i32): boolean {
         || kind == ssasem.map_insert() || kind == ssasem.map_get_or();
 }
 // The values whose box a call may have handed on. A callee lent a string VIEW
-// can hand that box straight back, and semsource records which argument the
-// result may be in the call's `imm` (#9328). Where a slice is an immortal box —
-// the register backends — the retain the callee owed for returning a borrowed
-// reference was a no-op, so the result IS that box: reclaiming it at the view's
-// own release would pull it out from under a live reference.
+// can hand that box out — as its result, or stored inside one — and semsource
+// records which arguments in the call's `imm`, a bitmask over positions
+// (#9328). Where a slice is an immortal box — the register backends — the
+// retain the callee owed for the reference it kept was a no-op, so reclaiming
+// the box at the view's own release pulls it out from under a live reference.
 //
 // So such a value takes the COUNTED release rather than the view reclaim. That
 // release stands down on an immortal box and decrements a counted one, which is
@@ -197,10 +197,16 @@ pub function handed_on(f: ssasem.Func): boolean[] {
     }
     for b in f.graph.blocks {
         for ins in b.insts {
-            if (ins.kind_tag == ssasem.call() && ins.imm > 0 && ins.imm <= ins.args.len()) {
-                var owner: i32 = ins.args[ins.imm - 1];
-                while (retag[owner] >= 0) { owner = retag[owner]; }
-                out = out.with(owner, true);
+            if (ins.kind_tag == ssasem.call() && ins.imm > 0) {
+                var at: i32 = 0;
+                while (at < ins.args.len() && at < 31) {
+                    if ((ins.imm >> at) % 2 == 1) {
+                        var owner: i32 = ins.args[at];
+                        while (retag[owner] >= 0) { owner = retag[owner]; }
+                        out = out.with(owner, true);
+                    }
+                    at = at + 1;
+                }
             }
         }
     }
