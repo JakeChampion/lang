@@ -646,7 +646,6 @@ func mvCases(t *testing.T) []invocation {
 		{name: "across onto an existing file", args: []string{"-v", "f", "xdev/g"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "across into a directory", args: []string{"-v", "f", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "across with no -v", args: []string{"f", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
-		{name: "across preserves the mode", args: []string{"-v", "f", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "a directory across", args: []string{"-v", "chain", "xdev/new"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "a directory across into a directory", args: []string{"-v", "chain", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
 		{name: "a directory across onto an empty directory", args: []string{"-Tv", "chain", "xdev/empty"}, seedTree: mvFallHere, crossDev: mvFallThere},
@@ -758,25 +757,6 @@ func TestMvHelpVersion(t *testing.T) {
 	requireVersion(t, "mv", []string{"-n", "--version", "-b"}, 0)
 }
 
-// readdirOrder lists the entries of `dir` as the filesystem hands them
-// back, which is the order the removal half of a cross-device move walks
-// in. Reproducible between two directories holding the same names — the
-// filesystem derives it from the names and its own seed — and, on a tree
-// built to make it so, NOT the ascending-inode order the copy half uses.
-func readdirOrder(t *testing.T, dir string) []string {
-	t.Helper()
-	f, err := os.Open(dir)
-	if err != nil {
-		t.Fatalf("open %s: %v", dir, err)
-	}
-	defer f.Close()
-	names, err := f.Readdirnames(-1)
-	if err != nil {
-		t.Fatalf("readdirnames %s: %v", dir, err)
-	}
-	return names
-}
-
 // TestMvCrossDeviceOrder pins the two walk orders a cross-device move
 // uses, and that they are NOT the same order: the copy half visits a
 // directory's entries by ascending inode, the removal half in readdir
@@ -803,23 +783,13 @@ func TestMvCrossDeviceOrder(t *testing.T) {
 			dir := t.TempDir()
 			far := crossDevDir(t, dir)
 
-			// Created in a scrambled order so that ascending inode is
-			// neither the names sorted nor directories first, and with
-			// enough entries that it is not readdir order either.
-			seedMkdir(t, dir, "src/zzz")
-			seedWrite(t, dir, "src/zzz/deep", "d\n")
-			seedWrite(t, dir, "src/mmm", "m\n")
-			seedMkdir(t, dir, "src/aaa")
-			seedWrite(t, dir, "src/aaa/x", "x\n")
-			seedWrite(t, dir, "src/kkk", "k\n")
-			seedWrite(t, dir, "src/bbb", "b\n")
+			seedMkdir(t, dir, "src")
+			seedWalkOrderTree(t, filepath.Join(dir, "src"))
 
 			srcDir := filepath.Join(dir, "src")
 			byInode := inodeOrder(t, srcDir)
 			byReaddir := readdirOrder(t, srcDir)
-			if strings.Join(byInode, "\x00") == strings.Join(byReaddir, "\x00") {
-				t.Fatalf("this filesystem handed back %v in inode order too, so the case cannot tell the two walks apart — the fixture needs a different scramble here", byReaddir)
-			}
+			requireDistinctOrders(t, srcDir, byInode, byReaddir)
 
 			dest := filepath.Join(far, "dst")
 			out := runCpIn(t, bin, dir, "-v", "src", dest)

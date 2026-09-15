@@ -841,6 +841,92 @@ func inodeOrder(t *testing.T, dir string) []string {
 	return names
 }
 
+// readdirOrder lists the entries of `dir` as the filesystem hands them
+// back, which is the order the removal half of a cross-device move walks
+// in. Reproducible between two directories holding the same names — the
+// filesystem derives it from the names and its own seed — and, on a tree
+// built to make it so, NOT the ascending-inode order the copy half uses.
+func readdirOrder(t *testing.T, dir string) []string {
+	t.Helper()
+	f, err := os.Open(dir)
+	if err != nil {
+		t.Fatalf("open %s: %v", dir, err)
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		t.Fatalf("readdirnames %s: %v", dir, err)
+	}
+	return names
+}
+
+// seedWalkOrderTree builds a directory whose ascending-INODE order is
+// none of the orders it could be confused with: not the names sorted, not
+// the filesystem's readdir order, and not the order the entries were
+// created in.
+//
+// That last one is why it recycles inodes rather than just scrambling
+// names. A filesystem that indexes directories hashes readdir order away
+// from creation order on its own, but one that does not — ext4 with
+// dir_index off, and whatever pullfrog's runner gave a five-entry
+// directory on #9319 — hands back creation order, and there inode order
+// and readdir order coincide however the names are chosen. Making a
+// batch, deleting half of it and then creating the replacements puts the
+// LATE entries on the freed low inodes, so inode order disagrees with
+// creation order by construction and the two walks stay distinguishable
+// either way.
+//
+// Returns the names it left behind, all of them directly under `dir`.
+func seedWalkOrderTree(t *testing.T, dir string) []string {
+	t.Helper()
+	var filler []string
+	for i := 0; i < 12; i++ {
+		filler = append(filler, fmt.Sprintf("f%02d", i))
+	}
+	for i, n := range filler {
+		// Two of them are directories, so "directories first" is ruled
+		// out as well — one early in the batch and one late.
+		if i == 2 || i == 9 {
+			seedMkdir(t, dir, n)
+			seedWrite(t, dir, n+"/inner", "i\n")
+			continue
+		}
+		seedWrite(t, dir, n, n+"\n")
+	}
+	kept := append([]string(nil), filler[6:]...)
+	for _, n := range filler[:6] {
+		if err := os.RemoveAll(filepath.Join(dir, n)); err != nil {
+			t.Fatalf("remove %s: %v", n, err)
+		}
+	}
+	for i := 0; i < 6; i++ {
+		n := fmt.Sprintf("z%02d", i)
+		if i == 3 {
+			seedMkdir(t, dir, n)
+			seedWrite(t, dir, n+"/inner", "i\n")
+		} else {
+			seedWrite(t, dir, n, n+"\n")
+		}
+		kept = append(kept, n)
+	}
+	return kept
+}
+
+// requireDistinctOrders fails when the tree cannot tell the two walks
+// apart. A filesystem that returned its entries in inode order would
+// leave an implementation that walked either way passing, so this is a
+// fault in the fixture's reach on that host rather than something to
+// skip past.
+func requireDistinctOrders(t *testing.T, dir string, byInode, byReaddir []string) {
+	t.Helper()
+	if strings.Join(byInode, "\x00") == strings.Join(byReaddir, "\x00") {
+		t.Fatalf("%s handed its entries back in inode order (%v), so the case cannot tell the two walks apart — the fixture needs a different construction on this filesystem", dir, byReaddir)
+	}
+	if sort.StringsAreSorted(byInode) {
+		t.Fatalf("%s numbered its entries in name order (%v), so the case cannot tell inode order from sorted names", dir, byInode)
+	}
+}
+
 // TestCpWalkOrder pins the order a recursive copy visits a directory's
 // entries in: ascending INODE, which is neither readdir order nor the
 // names sorted nor directories first.
@@ -857,28 +943,16 @@ func TestCpWalkOrder(t *testing.T) {
 	ours := fernBin(t, "cp")
 	dir := t.TempDir()
 
-	// Created in a SCRAMBLED order, and directories interleaved with
-	// files, so that ascending inode is none of the three orders it
-	// could be confused with: not the names sorted (`zzz` is made
-	// first), not directories first (`mmm` is made before `aaa`), and
-	// not the filesystem's readdir order (which is a hash of the names).
-	seedMkdir(t, dir, "src/zzz")
-	seedWrite(t, dir, "src/zzz/deep", "d\n")
-	seedWrite(t, dir, "src/mmm", "m\n")
-	seedMkdir(t, dir, "src/aaa")
-	seedWrite(t, dir, "src/aaa/x", "x\n")
-	seedWrite(t, dir, "src/kkk", "k\n")
-	seedWrite(t, dir, "src/bbb", "b\n")
+	seedMkdir(t, dir, "src")
+	seedWalkOrderTree(t, filepath.Join(dir, "src"))
 
-	want := inodeOrder(t, filepath.Join(dir, "src"))
-	// A tree that cannot tell the rules apart proves nothing, and a
-	// filesystem that numbered these in name order would leave the case
-	// passing on an implementation that sorted. That is a fault in the
-	// fixture's reach on this host, so it is reported rather than
-	// skipped past.
-	if sort.StringsAreSorted(want) {
-		t.Fatalf("this filesystem numbered %v in name order, so the case cannot tell inode order from sorted names — the fixture needs a different scramble here", want)
-	}
+	srcDir := filepath.Join(dir, "src")
+	want := inodeOrder(t, srcDir)
+	// Ruling out readdir order matters as much as ruling out sorted
+	// names: a readdir-order walk is the implementation this replaced,
+	// and on a filesystem handing entries back in creation order the two
+	// coincide and the case would pass on either.
+	requireDistinctOrders(t, srcDir, want, readdirOrder(t, srcDir))
 
 	var lines []string
 	for _, name := range want {
