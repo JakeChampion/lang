@@ -1094,22 +1094,19 @@ jobs:
           # budget so a genuine hang fails cleanly; a preemption reclaim is
           # distinct and out of our control (see RUNNER PREEMPTION above).
           #
-          # `--jsonfile-timing-events` keeps the same stream in machine-readable
-          # form for the weight audit in `verify` (#6823): the per-test
-          # wall-clock the shard already prints is the measurement nothing was
-          # reading. The timing-events variant records only pass/skip/fail (not
-          # every output line), so the file stays small enough to ride in the
-          # outcome artifact, and it is written incrementally — a shard that
-          # times out still leaves the durations of everything it did finish.
+          # Full JSON retains run/pause/cont timestamps: parent Elapsed omits
+          # parallel-child time, so terminal-only timing events cannot measure
+          # the parent's full execution. Only extracted durations are uploaded.
+          # A timeout still leaves completed observations in the local stream.
           if [ ${#SEL_SH[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
-            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-selfhost.json" --raw-command -- \
-                go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 28m )
+            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --jsonfile "$RUNNER_TEMP/shard-selfhost.json" --raw-command -- \
+                go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v=test2json -test.timeout 28m )
           fi
           if [ ${#SEL_RES[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
-            ( cd internal/e2e && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-residual.json" --raw-command -- \
-                go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 28m )
+            ( cd internal/e2e && gotestsum --format standard-verbose --jsonfile "$RUNNER_TEMP/shard-residual.json" --raw-command -- \
+                go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v=test2json -test.timeout 28m )
           fi
       # RECORD THE SHARD'S VERDICT for the off-machine `verify` job. These steps
       # run on FAILURE too, so a shard that ran its tests always leaves a
@@ -1126,10 +1123,10 @@ jobs:
       # runs and no spurious verdict is produced.
       #
       # The same artifact carries this shard's per-test durations
-      # (`<host>-<shard>.timings`), extracted from the timing-events files above,
+      # (`<host>-<shard>.timings`), extracted from the full JSON streams above,
       # for the weight audit in `verify` (#6823). Riding along in the outcome
       # artifact means no new upload, no new download and no new job. A missing
-      # timing-events file is normal — the residual-package run does not happen
+      # JSON file is normal — the residual-package run does not happen
       # when the selfhost-package run fails first — so the glob is filtered.
       - name: record shard outcome
         if: ${{ !cancelled() }}
