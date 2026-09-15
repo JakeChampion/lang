@@ -17,7 +17,9 @@
 #
 # `extract` runs on each shard (which already writes a gotestsum --jsonfile),
 # `check` runs off-shard in `verify`, which already aggregates the shard
-# artifacts. No extra build, no extra job.
+# artifacts. The extractor uses the existing Go toolchain and build cache;
+# it adds no test invocation or runner job. Its collection overhead must still
+# be measured on CI.
 #
 # WARN, DO NOT FAIL (for now). Every finding is a job-summary line plus a
 # GitHub warning annotation, and the exit status is 0. A wrong weight cannot
