@@ -386,6 +386,12 @@ func cpCases(t *testing.T) []invocation {
 		{"attributes-only-new", []string{"--attributes-only", "f1", "out"}},
 		{"attributes-only-existing", []string{"--attributes-only", "f1", "f2"}},
 		{"remove-destination", []string{"--remove-destination", "f1", "f2"}},
+		// `-v` is the point of these two: the removal ANNOUNCES itself,
+		// and `-f`'s does not. Without them the corpus sees the same
+		// tree either way and the line is invisible.
+		{"remove-destination-verbose", []string{"-v", "--remove-destination", "f1", "f2"}},
+		{"remove-destination-verbose-new", []string{"-v", "--remove-destination", "f1", "out"}},
+		{"force-verbose", []string{"-v", "-f", "f1", "f2"}},
 		{"one-file-system", []string{"-x", "-r", "d1", "out"}},
 		{"selinux-Z", []string{"-Z", "f1", "out"}},
 		{"selinux-context", []string{"--context", "f1", "out"}},

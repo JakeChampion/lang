@@ -377,7 +377,16 @@ function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace
   }
   if (cfg.remove_destination) {
     match (remove_file(dest)) {
-      Ok(_) => {},
+      Ok(_) => {
+        // Announced, and BEFORE the copy's own line: measured, `cp -v
+        // --remove-destination a b` prints `removed 'b'` and then
+        // `'a' -> 'b'`. Nothing else here says what it took away, and
+        // `-f`'s retry does not — it removes only a destination that
+        // would not open, and prints no line for it.
+        if (cfg.verbose) {
+          w = gnu.put(w, "removed " + gnu.quotea(dest) + "\n");
+        }
+      },
       Err(e) => {
         w = gnu.error_out(w, "cannot remove " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
         return Replace { verdict: stop(), backup: "", out: w, status: 1 };
