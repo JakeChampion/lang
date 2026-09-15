@@ -1,0 +1,464 @@
+// timeout.fern — GNU-compatible `timeout`.
+//
+//   timeout [OPTION] DURATION COMMAND [ARG]...   run COMMAND, kill it after DURATION
+//
+// -s/--signal picks what to send, -k/--kill-after adds a KILL if the first
+// signal was not enough, -v/--verbose names each signal on stderr,
+// --preserve-status passes the command's own status through where a timeout
+// would otherwise be 124, and --foreground narrows the blast radius to the
+// command alone. Usage errors exit 125, a command that cannot be invoked
+// 126, one that cannot be found 127; otherwise the command's own status.
+//
+// THE PROCESS GROUP is the difference between the two modes, and it is why
+// this utility waited on a primitive. Without --foreground, timeout puts
+// ITSELF in a fresh group before forking — measured: `timeout 5 ps` shows
+// the child's pgid equal to timeout's pid, and `--foreground` shows both in
+// the invoking shell's group — so the command and everything it starts share
+// one group and the timeout signal reaches the whole tree. That also means
+// the signal comes back to timeout, which is why it sets its OWN disposition
+// to ignore first, and why two signals behave as GNU's do rather than as the
+// documentation suggests: `-s KILL` kills timeout too (exit 137, and the
+// help text says so), and `-s STOP` stops it, so nothing is left running to
+// send the SIGCONT that would resume the command. `--foreground` sends only
+// to the command's pid and sends no SIGCONT, so `--foreground -s STOP` hangs
+// where the default mode recovers.
+//
+// THE DEADLINE is a forked child that sleeps and exits. GNU arms a SIGALRM
+// and lets the handler interrupt its wait; Fern cannot observe a delivered
+// signal (#9243), so the clock is a process instead and ONE blocking
+// `proc_waitpid(-1)` wakes on whichever finishes first — the command or the
+// timer. `proc_waitpid_nohang` then says which, since a child already reaped
+// answers ECHILD where a live one answers -1. The timer is reaped before
+// timeout exits and holds nothing the command can see; the only trace is one
+// extra process in the group while the command runs.
+//
+// Four measured behaviours worth knowing before reading the code.
+//
+//   - **A DURATION of 0 disables its timeout**, and `-k 0` disables the
+//     kill-after — `timeout 0 sleep 2` waits the two seconds and exits 0.
+//   - **Option parsing stops at the first operand.** `timeout 1 -v sleep`
+//     tries to exec `-v`; the `+` optstring prefix is what env and nice use
+//     too.
+//   - **`-s 0` is accepted** and names kill's deliver-nothing check, which
+//     `-v` spells `EXIT`. Measured, that is timeout's own rule rather than
+//     the family's: `env --block-signal=0` refuses the same spelling,
+//     because a signal that is never delivered cannot be blocked.
+//   - **The last `-s` and the last `-k` win**, and a bad `-k` is reported
+//     where it is parsed rather than after the DURATION operand:
+//     `timeout -k x y true` reports `x`.
+//
+// NOT IMPLEMENTED: forwarding a signal that arrives at timeout itself. GNU
+// handles SIGINT / SIGQUIT / SIGHUP / SIGTERM / SIGXCPU by passing them on to
+// the command and then dying of them, which needs a signal a program can
+// observe — #9243. Nothing else here depends on it, and no invocation in the
+// corpus reaches it.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+import "./lib/duration";
+import "./lib/ld";
+import "./lib/signals";
+
+function opt_preserve(): i32 {
+  return 1;
+}
+
+function opt_foreground(): i32 {
+  return 2;
+}
+
+function opt_kill_after(): i32 {
+  return 3;
+}
+
+function opt_signal(): i32 {
+  return 4;
+}
+
+function opt_verbose(): i32 {
+  return 5;
+}
+
+// A usage error, and the status a failed write takes with it.
+function status_canceled(): i32 {
+  return 125;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] DURATION COMMAND [ARG]...\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]\n";
+  out = out + "Start COMMAND, and kill it if still running after DURATION.\n";
+  out = out + "\n";
+  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
+  out = out + "      --preserve-status\n";
+  out = out + "                 exit with the same status as COMMAND, even when the\n";
+  out = out + "                   command times out\n";
+  out = out + "      --foreground\n";
+  out = out + "                 when not running timeout directly from a shell prompt,\n";
+  out = out + "                   allow COMMAND to read from the TTY and get TTY signals;\n";
+  out = out + "                   in this mode, children of COMMAND will not be timed out\n";
+  out = out + "  -k, --kill-after=DURATION\n";
+  out = out + "                 also send a KILL signal if COMMAND is still running\n";
+  out = out + "                   this long after the initial signal was sent\n";
+  out = out + "  -s, --signal=SIGNAL\n";
+  out = out + "                 specify the signal to be sent on timeout;\n";
+  out = out + "                   SIGNAL may be a name like 'HUP' or a number;\n";
+  out = out + "                   see 'kill -l' for a list of signals\n";
+  out = out + "  -v, --verbose  diagnose to stderr any signal sent upon timeout\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "DURATION is a floating point number with an optional suffix:\n";
+  out = out + "'s' for seconds (the default), 'm' for minutes, 'h' for hours or 'd' for days.\n";
+  out = out + "A duration of 0 disables the associated timeout.\n";
+  out = out + "\n";
+  out = out + "Upon timeout, send the TERM signal to COMMAND, if no other SIGNAL specified.\n";
+  out = out + "The TERM signal kills any process that does not block or catch that signal.\n";
+  out = out + "It may be necessary to use the KILL signal, since this signal can't be caught.\n";
+  out = out + "\n";
+  out = out + "Exit status:\n";
+  out = out + "  124  if COMMAND times out, and --preserve-status is not specified\n";
+  out = out + "  125  if the timeout command itself fails\n";
+  out = out + "  126  if COMMAND is found but cannot be invoked\n";
+  out = out + "  127  if COMMAND cannot be found\n";
+  out = out + "  137  if COMMAND (or timeout itself) is sent the KILL (9) signal (128+9)\n";
+  out = out + "  -    the exit status of COMMAND otherwise\n";
+  return out;
+}
+
+// `all_zero_digits(s)` — whether `s` is one or more `0` bytes and nothing
+// else, which is every decimal spelling of signal zero.
+function all_zero_digits(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] as i32 != 48) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `signal_number(v)` — the signal `-s` names, or -1 when it names none.
+//
+// `signals.number` already implements operand2sig's grammar: every byte a
+// decimal digit, or a name with an optional `SIG` prefix matched
+// case-insensitively, or a realtime spelling with an offset. Measured
+// against that boundary — `016` is 16 and not octal, while `0x0`, `+0` and
+// ` 0` are refused, because the whole string has to be digits for the
+// numeric arm to apply.
+//
+// Zero is the one spelling it cannot report: it answers "no signal" and
+// "invalid" with the same 0, and `kill -l` lists nothing for it either.
+function signal_number(v: string): i32 {
+  var n: i32 = signals.number(v);
+  if (n != 0) {
+    return n;
+  }
+  if (all_zero_digits(v)) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+// SIGKILL, which three rules read: it cannot be ignored, it needs no
+// SIGCONT after it, and a command it killed reports 137 rather than 124.
+function sig_kill(): i32 {
+  return signals.number("KILL");
+}
+
+// `signal_label(sig)` — the name `-v` prints. gnulib's sig2str spells 0
+// `EXIT`, the way a shell's `trap 0` does; `signals.name` has no entry for
+// it, because it is not a signal this kernel has.
+function signal_label(sig: i32): string {
+  if (sig == 0) {
+    return "EXIT";
+  }
+  return signals.name(sig);
+}
+
+// `interval(s)` — one DURATION operand or option value, or the diagnostic
+// and 125 that a bad one takes. The wording is gnulib's and the `Try …` line
+// comes with it.
+function interval(f: ld.Format, s: string): ld.LD {
+  match (duration.parse(f, s)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      gnu.error("invalid time interval " + gnu.quote(s));
+      gnu.try_help(status_canceled());
+      return f.from_i64(0 as i64);
+    }
+  }
+}
+
+// `fork_timer(f, seconds)` — a child that sleeps `seconds` and exits 0, or a
+// negative errno when the fork failed. GNU's alarm(2) with a process
+// standing in for the signal; see the header.
+function fork_timer(f: ld.Format, seconds: ld.LD): i32 {
+  var pid: i32 = proc_fork();
+  if (pid != 0) {
+    return pid;
+  }
+  duration.sleep_seconds(f, seconds);
+  exit(0);
+  return 0;
+}
+
+// `cancel_timer(pid)` — stop a timer that is no longer needed and reap it.
+// The KILL is unconditional: a timer that has already fired is gone and the
+// ESRCH is the answer, not a failure.
+function cancel_timer(pid: i32): void {
+  match (signal_send(pid, 9)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+  var reaped: i32 = proc_waitpid(pid);
+}
+
+// `fired(pid)` — whether `pid` is the child a blocking `proc_waitpid(-1)`
+// just reaped. A reaped child answers ECHILD where a live one answers -1, so
+// this is exact rather than a guess: a recycled pid is not this process's
+// child, and nothing was forked between the wait and the probe.
+function fired(pid: i32): boolean {
+  return proc_waitpid_nohang(pid) == 0 - 10;
+}
+
+// `deliver(sig, cmd, cpid, foreground, verbose)` — the timeout signal, sent
+// the way GNU sends it.
+//
+// The command's pid first, then the whole group — the group send is what
+// reaches a command that spawned children of its own, and the pid send is
+// what still reaches the command if it moved itself out of the group. Before
+// either, this process sets its own disposition to ignore, because it is in
+// that group as well; SIGKILL and SIGSTOP cannot be ignored, which is how
+// `-s KILL` takes timeout down with the command and `-s STOP` stops it.
+//
+// A SIGCONT follows anything but KILL and CONT, so a stop signal does not
+// leave the command suspended for ever. Both are group-mode only: measured,
+// `--foreground -s TSTP` hangs where the default mode reports 124.
+function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): void {
+  if (verbose) {
+    gnu.error("sending signal " + signal_label(sig) + " to command " + gnu.quote(cmd));
+  }
+  if (!foreground && sig != 0) {
+    signal_ignore(sig);
+  }
+  send(cpid, sig);
+  if (foreground) {
+    return;
+  }
+  send(0, sig);
+  var cont: i32 = signals.number("CONT");
+  if (sig != sig_kill() && sig != cont) {
+    send(cpid, cont);
+    send(0, cont);
+  }
+}
+
+// One signal, with the failure dropped: every errno kill(2) can answer here
+// says the target is already gone, which is the outcome asked for.
+function send(pid: i32, sig: i32): void {
+  match (signal_send(pid, sig)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+// `run_child(cmd, argv)` — the forked child's whole job: exec, and report the
+// failure GNU reports if it could not. ENOENT is 127 and anything else 126,
+// the same split env, nice and nohup use.
+function run_child(cmd: string, argv: string[]): void {
+  var errno: i32 = gnu.exec_command(cmd, argv, environ());
+  gnu.error("failed to run command " + gnu.quote(cmd) + ": " + gnu.exec_errno_text(errno));
+  if (errno == 2) {
+    exit(127);
+  }
+  exit(126);
+}
+
+// `Cfg` — what the options asked for, once they are all read.
+struct Cfg { sig: i32, kill_after: ld.LD, preserve: boolean, foreground: boolean, verbose: boolean }
+
+// `parse_options(f)` — the option scan, and the operands it left.
+//
+// Declared in GNU's own order, because that is the order the ambiguity list
+// is printed in: `--v` answers `possibilities: '--verbose' '--version'`, and
+// getopt appends the two standard options after these. `.in_order()` is the
+// `+` optstring prefix env and nice use — the scan stops at the first
+// operand, so `timeout 1 -v CMD` tries to exec `-v`.
+function parse_options(f: ld.Format): (Cfg, string[]) {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("", "preserve-status", opt_preserve()));
+  opts = opts.append(gnu.flag("", "foreground", opt_foreground()));
+  opts = opts.append(gnu.valued("k", "kill-after", opt_kill_after()));
+  opts = opts.append(gnu.valued("s", "signal", opt_signal()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+
+  var cfg: Cfg = Cfg { sig: signals.number("TERM"), kill_after: f.from_i64(0 as i64), preserve: false, foreground: false, verbose: false };
+  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "timeout", help_text(), status_canceled()).in_order();
+  while (true) {
+    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = res.1;
+    match (res.0) {
+      Some(m) => {
+        cfg = apply_option(f, cfg, m);
+      },
+      None => {
+        return (cfg, g.operands());
+      }
+    }
+  }
+  return (cfg, g.operands());
+}
+
+// One option occurrence folded into the config. The last `-s` and the last
+// `-k` win, and a bad value for either is reported HERE rather than after
+// the DURATION operand: `timeout -k x y CMD` reports `x`.
+function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
+  if (m.id == opt_preserve()) {
+    return Cfg { ...cfg, preserve: true };
+  }
+  if (m.id == opt_foreground()) {
+    return Cfg { ...cfg, foreground: true };
+  }
+  if (m.id == opt_verbose()) {
+    return Cfg { ...cfg, verbose: true };
+  }
+  if (m.id == opt_kill_after()) {
+    return Cfg { ...cfg, kill_after: interval(f, m.value) };
+  }
+  var sig: i32 = signal_number(m.value);
+  if (sig < 0) {
+    gnu.error(gnu.quote(m.value) + ": invalid signal");
+    gnu.try_help(status_canceled());
+  }
+  return Cfg { ...cfg, sig: sig };
+}
+
+function main(): i32 {
+  var f: ld.Format = ld.format();
+  var parsed: (Cfg, string[]) = parse_options(f);
+  var cfg: Cfg = parsed.0;
+  var rest: string[] = parsed.1;
+  // A DURATION with no COMMAND is a usage error, and gnulib's usage() prints
+  // only the `Try …` line for a nonzero status — no `missing operand` above
+  // it.
+  if (rest.len() < 2) {
+    gnu.try_help(status_canceled());
+  }
+  var wait_for: ld.LD = interval(f, rest[0]);
+  var cmd: string = rest[1];
+  var argv: string[] = [];
+  var a: i32 = 1;
+  while (a < rest.len()) {
+    argv = argv.append(rest[a]);
+    a = a + 1;
+  }
+
+  // The group comes before the fork so the command inherits it, and it is
+  // this process that moves: the group's leader is timeout itself.
+  if (!cfg.foreground) {
+    match (set_process_group(0, 0)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+  }
+
+  var cpid: i32 = proc_fork();
+  if (cpid < 0) {
+    gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - cpid));
+    return status_canceled();
+  }
+  if (cpid == 0) {
+    run_child(cmd, argv);
+    return 126;
+  }
+  return supervise(f, cfg, wait_for, cmd, cpid);
+}
+
+// `supervise(...)` — wait for the command, and send the timeout signal if the
+// deadline arrives first.
+//
+// A zero DURATION disables the timeout entirely: no timer, and `-k` never
+// comes into it.
+function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i32): i32 {
+  if (wait_for.is_zero()) {
+    return proc_waitpid(cpid);
+  }
+  var tpid: i32 = fork_timer(f, wait_for);
+  if (tpid < 0) {
+    gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - tpid));
+    return status_canceled();
+  }
+  var status: i32 = proc_waitpid(0 - 1);
+  if (!fired(tpid)) {
+    // The command finished inside its DURATION: its status passes through
+    // and the timer is cancelled unfired.
+    cancel_timer(tpid);
+    return status;
+  }
+
+  deliver(cfg.sig, cmd, cpid, cfg.foreground, cfg.verbose);
+  var killed: boolean = cfg.sig == sig_kill();
+  if (!cfg.kill_after.is_zero()) {
+    var esc: Escalation = await_kill_after(f, cfg.kill_after, cmd, cpid, cfg.foreground, cfg.verbose);
+    status = esc.status;
+    killed = killed || esc.sent_kill;
+  } else {
+    status = proc_waitpid(cpid);
+  }
+  if (cfg.preserve) {
+    return status;
+  }
+  // A timeout is 124, except where the command was KILLED: `-s KILL`, and a
+  // `-k` grace period that expired, both report 128+9 instead — the 137 the
+  // help text names. Measured: `--foreground -s HUP` is 124 where
+  // `--foreground -s KILL` is 137, and `-s 0 -k G` is 137 because the grace
+  // period expired even though the first signal delivered nothing.
+  //
+  // Both halves are needed. GNU asks WTERMSIG, which separates a command
+  // KILLED from one that exited 137 of its own accord; `proc_waitpid`
+  // collapses the two into the shell's one number, so the signal this
+  // process actually sent stands in for the half the status cannot carry.
+  // `-s 0` over a command that exits 137 is therefore 124, as GNU's is. The
+  // residue is a SIGKILL from somewhere else arriving during the timeout,
+  // which reads as 124 here and 137 there.
+  if (killed && status == 128 + sig_kill()) {
+    return status;
+  }
+  return 124;
+}
+
+// `Escalation` — what `-k` did: the command's status, and whether the grace
+// period expired and the KILL went out.
+struct Escalation { status: i32, sent_kill: boolean }
+
+// `await_kill_after(...)` — the second deadline `-k` adds: wait for the
+// command, and send SIGKILL if it outlives the grace period.
+//
+// The KILL is only sent if the command is STILL there: measured,
+// `timeout -v -k 0.2 0.1 sleep 5` prints one line and not two, because the
+// TERM was enough. In group mode the KILL takes timeout down with the
+// command, so this does not return — the shell sees timeout killed by signal
+// 9, which is the 137 the help text names.
+function await_kill_after(f: ld.Format, kill_after: ld.LD, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): Escalation {
+  var kpid: i32 = fork_timer(f, kill_after);
+  if (kpid < 0) {
+    // Nothing left to escalate with, so wait the command out as an
+    // unadorned timeout would.
+    return Escalation { status: proc_waitpid(cpid), sent_kill: false };
+  }
+  var status: i32 = proc_waitpid(0 - 1);
+  if (!fired(kpid)) {
+    cancel_timer(kpid);
+    return Escalation { status: status, sent_kill: false };
+  }
+  deliver(sig_kill(), cmd, cpid, foreground, verbose);
+  return Escalation { status: proc_waitpid(cpid), sent_kill: true };
+}
