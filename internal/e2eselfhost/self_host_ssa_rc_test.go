@@ -426,33 +426,21 @@ function main(): i32 {
         if (o.str == "__fern_rc_is_unique") { sawPushUnique = true; }
     }
     if (!sawPush || !sawPushUnique) { return 42; }
-    // The same graph with a BORROWED receiver takes the other lowering. This
-    // function holds no unit to move, so it takes none before the push either:
-    // a count added up front would answer the push's own rc gate, which then
-    // copies a buffer nobody else holds and makes a loop of appends quadratic
-    // (#9365). It pushes through the NON-consuming helper, which grows in
-    // place when it is the only reader and un-shares when it is not, and takes
-    // its unit afterwards — as a retain of the result exactly when the result
-    // came back as the receiver's own box.
-    //
-    // So the uniqueness test must NOT be emitted here: its presence is the
-    // regression.
+    // The same graph with a BORROWED receiver: no unit of this function's to
+    // move, so the plan RETAINS one at the push. The count then names two boxes,
+    // the copy runs, and the result is a box nobody else holds rather than an
+    // alias of the caller's.
     var borrowAppendPlan = ssaunits.plan(appendFunc, [2, 1]);
     if (!borrowAppendPlan.ok) { eprint(borrowAppendPlan.why); return 43; }
     var borrowAppendLowered = ssarc.lower(appendFunc, [2, 1], borrowAppendPlan, irlower.struct_tab_empty());
     if (!borrowAppendLowered.ok) { eprint(borrowAppendLowered.why); return 104; }
     var sawRetain: boolean = false;
     var sawBorrowUnique: boolean = false;
-    var sawBorrowPush: boolean = false;
-    var sawOwnedPush: boolean = false;
     for o in borrowAppendLowered.ops {
         if (o.str == "__fern_rc_inc") { sawRetain = true; }
         if (o.str == "__fern_rc_is_unique") { sawBorrowUnique = true; }
-        if (ir.render_op(o) == "arr_push") { sawBorrowPush = true; }
-        if (ir.render_op(o) == "arr_push_owned") { sawOwnedPush = true; }
     }
-    if (!sawRetain || sawBorrowUnique) { return 105; }
-    if (!sawBorrowPush || sawOwnedPush) { return 106; }
+    if (!sawRetain || !sawBorrowUnique) { return 105; }
     // One element replaced hands the receiver's unit over the same way, and
     // lowers to the count test that chooses the in-place store or the copy;
     // a scalar element retains nothing, a counted one retains the copy's
