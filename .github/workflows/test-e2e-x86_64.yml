@@ -18,9 +18,21 @@ name: Test e2e x86_64
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      buffer-benchmark:
+        description: Compare the instruction buffer on one native x86 runner
+        type: choice
+        options: ["off", pilot, full]
+        default: "off"
+      generation:
+        description: Compiler generation to measure
+        type: choice
+        options: [gen1, gen0]
+        default: gen1
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.buffer-benchmark == 'off' }}
     name: test-e2e-x86_64
     runs-on: ubuntu-latest
     steps:
@@ -66,6 +78,7 @@ jobs:
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
 
   seccomp-corpus-x86_64:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.buffer-benchmark == 'off' }}
     # #6071's over-tightness gate at corpus scale, and the precondition for
     # ever defaulting the sandbox on. Four hand-written programs cannot show
     # that a filter derived from one program's emitted syscalls is right for
@@ -81,3 +94,56 @@ jobs:
         env:
           RUN_SECCOMP_CORPUS: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
+
+  benchmark-instruction-buffer:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.buffer-benchmark != 'off' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASELINE_REV: 78a457c36beeb0b5d01d5a1ecd59b27e8d2c5217
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Prepare fixed baseline and compiler bootstrap
+        run: |
+          CI_BUFFER_PROFILE_ROOT="$RUNNER_TEMP/buffer-profile"
+          CI_BUFFER_BOOTSTRAP="$RUNNER_TEMP/buffer-bootstrap"
+          printf 'CI_BUFFER_PROFILE_ROOT=%s\nCI_BUFFER_BOOTSTRAP=%s\n' "$CI_BUFFER_PROFILE_ROOT" "$CI_BUFFER_BOOTSTRAP" >> "$GITHUB_ENV"
+          git fetch --no-tags origin "$BASELINE_REV"
+          git worktree add --detach "$RUNNER_TEMP/buffer-baseline" "$BASELINE_REV"
+          cp internal/e2eselfhost/ci_buffer_profile_test.go "$RUNNER_TEMP/buffer-baseline/internal/e2eselfhost/"
+          mkdir "$CI_BUFFER_PROFILE_ROOT"
+          go build -o "$CI_BUFFER_BOOTSTRAP" ./cmd/fern
+          {
+            uname -a
+            lscpu
+            free -b
+            go version
+            gcc --version
+          } > "$CI_BUFFER_PROFILE_ROOT/environment.txt"
+      - name: Build baseline generations
+        working-directory: ${{ runner.temp }}/buffer-baseline
+        env:
+          CI_BUFFER_BUILD_ROOT: ${{ runner.temp }}/buffer-profile/baseline
+        run: go test ./internal/e2eselfhost -run '^TestCIInstructionBufferBuild$' -count=1 -timeout 10m -v
+      - name: Build candidate generations
+        env:
+          CI_BUFFER_BUILD_ROOT: ${{ runner.temp }}/buffer-profile/candidate
+        run: go test ./internal/e2eselfhost -run '^TestCIInstructionBufferBuild$' -count=1 -timeout 10m -v
+      - name: Compare native compilation and verify assembly
+        env:
+          CI_BUFFER_SCALE: ${{ inputs.buffer-benchmark }}
+          CI_BUFFER_GENERATION: ${{ inputs.generation }}
+        run: go test ./internal/e2eselfhost -run '^TestCIInstructionBufferMeasure$' -count=1 -timeout 10m -v
+      - name: Retain measurements and identities
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-buffer-${{ inputs.buffer-benchmark }}-${{ inputs.generation }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/buffer-profile/environment.txt
+            ${{ runner.temp }}/buffer-profile/*/build.json
+            ${{ runner.temp }}/buffer-profile/*/unit-names.json
+            ${{ runner.temp }}/buffer-profile/results-*/*.json
+          retention-days: 7
+          if-no-files-found: error
