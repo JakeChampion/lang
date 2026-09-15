@@ -300,6 +300,28 @@ func sttyDeviceCases(t *testing.T) []invocation {
 		// With no -F at all, fd 0 is a pipe: the one message a non-terminal
 		// has, under the name the utility uses when it was given none.
 		nil, {"-a"}, {"-g"}, {"-echo"}, {"size"}, {"speed"},
+		// /dev/ptmx is a terminal a case can have WITHOUT the harness's
+		// pty: every open of it is a fresh pseudo-terminal MASTER, which
+		// answers TCGETS, TCSETS and TIOCGWINSZ and dies with the process.
+		// So these are the only cases that drive the whole of `-F` — the
+		// print forms and the SETS — against something that answers, where
+		// /dev/null answers ENOTTY to all of it. The master's own state is
+		// gone by the time the run ends, so what they compare is the output
+		// and the status; a fresh master's size is 0x0, which is what makes
+		// them deterministic.
+		{"-F", "/dev/ptmx", "-a"}, {"-F", "/dev/ptmx", "-g"},
+		{"-F", "/dev/ptmx"}, {"-F", "/dev/ptmx", "size"},
+		{"-F", "/dev/ptmx", "speed"}, {"-F", "/dev/ptmx", "-echo"},
+		{"-F", "/dev/ptmx", "sane"}, {"-F", "/dev/ptmx", "raw"},
+		{"-F", "/dev/ptmx", "cs7"}, {"-F", "/dev/ptmx", "cs5"},
+		{"-F", "/dev/ptmx", "parenb"}, {"-F", "/dev/ptmx", "-cread"},
+		{"-F", "/dev/ptmx", "oddp"}, {"-F", "/dev/ptmx", "0"},
+		{"-F", "/dev/ptmx", "ispeed", "0"}, {"-F", "/dev/ptmx", "ospeed", "0"},
+		{"-F", "/dev/ptmx", "rows", "40", "cols", "100"},
+		{"-F", "/dev/ptmx", "-echo", "cs7"},
+		{"-F", "/dev/ptmx", "erase", "X", "intr", "^A"},
+		{"-F", "/dev/ptmx", "line", "300"},
+		{"-F", "/dev/ptmx", "9600"}, {"-F", "/dev/ptmx", "bogus"},
 	}
 	var cases []invocation
 	for _, a := range args {

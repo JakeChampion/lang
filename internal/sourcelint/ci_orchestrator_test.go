@@ -10,22 +10,18 @@ import (
 	"testing"
 )
 
-// ci.yml is the workflow a pull request launches and ci-main.yml calls. Every
-// lane is a `workflow_call` it calls, which is what lets one concurrency group
-// hold the whole suite: at most one pull request runs its CI at a time, and
-// that PR's lanes run in parallel inside its run. The gates in this file pin
-// the shape that makes the invariant hold — a lane that triggered itself would
-// run outside the lock, a lane the orchestrator forgot would never run, and a
-// queue that keeps one pending run would lose the second PR to wait.
+// ci.yml starts lint independently and calls ci-suite.yml after lane selection.
+// Pin complete lane coverage, a single full-suite lock, unchanged
+// required lint checks, and lossless queuing of ready PR suites.
 
 const ciFile = "ci.yml"
+const ciSuiteFile = "ci-suite.yml"
 const ciMainFile = "ci-main.yml"
 
-// The reaper ci.yml calls once per lane; the one `uses:` target that is not a
-// lane.
+// The reusable failure reaper called once per lane.
 const reaperFile = "cancel-on-failure.yml"
 
-// ciJob is one entry of ci.yml's `jobs:` mapping, read textually like every
+// ciJob is one entry of a workflow's `jobs:` mapping, read textually like every
 // other gate here: the scalar keys, plus the `with:` and `permissions:`
 // sub-mappings.
 type ciJob struct {
@@ -35,10 +31,10 @@ type ciJob struct {
 	perms map[string]string
 }
 
-// ciJobs returns ci.yml's jobs in file order.
+// ciJobs returns both orchestration layers; lane and reaper IDs are disjoint.
 func ciJobs(t *testing.T) []ciJob {
 	t.Helper()
-	return workflowJobs(t, ciFile)
+	return append(workflowJobs(t, ciFile), workflowJobs(t, ciSuiteFile)...)
 }
 
 func workflowJobs(t *testing.T, file string) []ciJob {
@@ -99,13 +95,13 @@ func (j ciJob) usesFile() string {
 	return strings.TrimPrefix(u, prefix)
 }
 
-// ciLanes returns the lane jobs of ci.yml — every `uses:` job except the
-// reaper — keyed by job id.
+// ciLanes returns leaf lane callers across both orchestration layers,
+// excluding the suite wrapper and failure reapers, keyed by job id.
 func ciLanes(t *testing.T) map[string]ciJob {
 	t.Helper()
 	lanes := map[string]ciJob{}
 	for _, j := range ciJobs(t) {
-		if f := j.usesFile(); f != "" && f != reaperFile {
+		if f := j.usesFile(); f != "" && f != reaperFile && f != ciSuiteFile {
 			lanes[j.id] = j
 		}
 	}
@@ -192,14 +188,14 @@ func TestCIIsTheOnlyPullRequestLane(t *testing.T) {
 			t.Errorf("%s is a called lane that also triggers on push: main would run it "+
 				"twice, once on its own and once inside %s", wf, ciFile)
 		}
-		if _, ok := topLevelBlock(src, "concurrency"); ok && wf != ciFile {
+		if _, ok := topLevelBlock(src, "concurrency"); ok && wf != ciSuiteFile {
 			t.Errorf("%s is a called lane with a workflow-level concurrency group. The "+
-				"suite lock belongs to %s; a lane must not acquire another lock", wf, ciFile)
+				"suite lock belongs to %s; a lane must not acquire another lock", wf, ciSuiteFile)
 		}
 	}
 }
 
-// Every `workflow_call` lane is called by ci.yml, exactly once, under the
+// Every `workflow_call` lane is called by the orchestration layers once, under the
 // lane's own `name:` — the caller job's name is the prefix of every check the
 // lane reports (`Test units / test-units-x86_64`) and the lane main-red.yml
 // files issues under — and with the repository's secrets passed through.
@@ -211,7 +207,7 @@ func TestCICallsEveryLane(t *testing.T) {
 	for _, wf := range workflowFiles(t) {
 		src := workflowSource(t, wf)
 		on, ok := onBlock(src)
-		if !ok || !strings.Contains(on, "workflow_call:") || wf == reaperFile || wf == ciFile {
+		if !ok || !strings.Contains(on, "workflow_call:") || wf == reaperFile || wf == ciFile || wf == ciSuiteFile {
 			continue
 		}
 		ids := called[wf]
@@ -256,10 +252,10 @@ func TestCICallsEveryLane(t *testing.T) {
 // that one message for this one file; the ignore is pinned too, because
 // dropping it would fail the lint lane on every pull request.
 func TestCIQueuesPullRequests(t *testing.T) {
-	src := workflowSource(t, ciFile)
+	src := workflowSource(t, ciSuiteFile)
 	conc, ok := topLevelBlock(src, "concurrency")
 	if !ok {
-		t.Fatalf("%s has no workflow-level concurrency group — nothing serialises pull requests", ciFile)
+		t.Fatalf("%s has no workflow-level concurrency group — nothing serialises pull requests", ciSuiteFile)
 	}
 	setting := func(key string) string {
 		for _, l := range strings.Split(conc, "\n") {
@@ -272,19 +268,19 @@ func TestCIQueuesPullRequests(t *testing.T) {
 	if got := setting("queue"); got != "max" {
 		t.Errorf("%s: concurrency.queue is %q, not `max`: GitHub keeps ONE pending run per "+
 			"group by default and cancels it when the next arrives, so the second pull "+
-			"request to wait loses its CI", ciFile, got)
+			"request to wait loses its CI", ciSuiteFile, got)
 	}
 	if got := setting("cancel-in-progress"); got != "false" {
 		t.Errorf("%s: cancel-in-progress is %q; it must be `false` — `queue: max` forbids "+
-			"`true`, and a cancelled run here is another pull request's turn taken", ciFile, got)
+			"`true`, and a cancelled run here is another pull request's turn taken", ciSuiteFile, got)
 	}
 	if !strings.Contains(conc, "github.event_name == 'pull_request' && 'pr-ci'") {
 		t.Errorf("%s: pull requests do not share the one `pr-ci` group — the group name is "+
-			"what serialises them", ciFile)
+			"what serialises them", ciSuiteFile)
 	}
 	if !strings.Contains(conc, "github.run_id") {
 		t.Errorf("%s: a workflow_dispatch has no per-run group, so a manual run would wait "+
-			"in — or hold — a queue that is not its own", ciFile)
+			"in — or hold — a queue that is not its own", ciSuiteFile)
 	}
 
 	cfg, err := os.ReadFile(filepath.Join("..", "..", ".github", "actionlint.yaml"))
@@ -292,9 +288,9 @@ func TestCIQueuesPullRequests(t *testing.T) {
 		t.Fatalf("read .github/actionlint.yaml: %v", err)
 	}
 	if !strings.Contains(string(cfg), `unexpected key "queue" for "concurrency" section`) ||
-		!strings.Contains(string(cfg), ".github/workflows/"+ciFile+":") {
+		!strings.Contains(string(cfg), ".github/workflows/"+ciSuiteFile+":") {
 		t.Errorf(".github/actionlint.yaml no longer ignores the `queue` key for %s — the "+
-			"pinned actionlint rejects it, and `make actionlint` runs in the lint lane", ciFile)
+			"pinned actionlint rejects it, and `make actionlint` runs in the lint lane", ciSuiteFile)
 	}
 }
 
@@ -312,7 +308,7 @@ func TestMainCICoalescesPendingRuns(t *testing.T) {
 			t.Fatal("main must retain only one pending run, using the default or queue: single")
 		}
 	}
-	inner, _ := topLevelBlock(workflowSource(t, ciFile), "concurrency")
+	inner, _ := topLevelBlock(workflowSource(t, ciSuiteFile), "concurrency")
 	if strings.Contains(inner, "ci-main-latest") || !strings.Contains(inner, "format('ci-run-{0}', github.run_id)") {
 		t.Fatal("nested CI must use its own per-run group outside the PR queue and main lock")
 	}
@@ -356,11 +352,11 @@ func TestCILaneFiltersMatchTheirJobs(t *testing.T) {
 			t.Errorf("%s: lane %q has no row in the lane table, so nothing decides whether "+
 				"it runs", ciFile, id)
 		}
-		if j.keys["needs"] != "[changes]" {
-			t.Errorf("%s: lane %q needs %q, not `[changes]` — the filter is computed there",
-				ciFile, id, j.keys["needs"])
+		if j.keys["needs"] != "" {
+			t.Errorf("%s: lane %q must use its passed lane map without another dependency; needs=%q",
+				ciSuiteFile, id, j.keys["needs"])
 		}
-		want := "fromJSON(needs.changes.outputs.lanes)['" + id + "']"
+		want := "fromJSON(inputs.lanes)['" + id + "']"
 		if j.keys["if"] != want {
 			t.Errorf("%s: lane %q is gated on `%s`, not on its own row `%s`",
 				ciFile, id, j.keys["if"], want)

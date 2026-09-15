@@ -508,6 +508,56 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 	}
 }
 
+func TestClassifyVanishedShardsNestedNames(t *testing.T) {
+	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "ci-classify-vanished-shards"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		job    string
+		prefix string
+	}{
+		{"direct", "test-e2e-selfhost-x86_64-shard1", ""},
+		{"called", "Test e2e self-host / test-e2e-selfhost-x86_64-shard1", ""},
+		{"nested", "Full suite / Test e2e self-host / test-e2e-selfhost-x86_64-shard1", ""},
+		{"custom", "Full suite / Special / special-shard-1", "special-shard-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix := tc.prefix
+			if prefix == "" {
+				prefix = "test-e2e-selfhost-"
+			}
+			// A caller's name must not make an unrelated leaf look like a shard.
+			other := prefix + "caller / unrelated-job"
+			jobs := fmt.Sprintf(`{"jobs":[
+                {"name":%q,"conclusion":"failure","started_at":"2026-09-15T16:00:00Z","completed_at":"2026-09-15T16:03:00Z"},
+                {"name":%q,"conclusion":"failure","started_at":"2026-09-15T16:00:00Z","completed_at":"2026-09-15T16:03:00Z"}
+            ]}`, tc.job, other)
+			path := filepath.Join(t.TempDir(), "jobs.json")
+			if err := os.WriteFile(path, []byte(jobs), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{script, "12345", "20"}
+			if tc.prefix != "" {
+				args = append(args, tc.prefix)
+			}
+			cmd := exec.Command("bash", args...)
+			cmd.Env = ciEnv("FERN_CI_JOBS_JSON=" + path)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("classifier: %v: %s", err, out)
+			}
+			if !strings.Contains(string(out), tc.job+": failure after 3m0s") {
+				t.Errorf("missing failure verdict for the full job name: %s", out)
+			}
+			if strings.Contains(string(out), other) {
+				t.Errorf("classified an unrelated leaf based on its caller: %s", out)
+			}
+		})
+	}
+}
+
 // The classifier tells "a setup step failed" from "the tests failed" by
 // comparing the failing step's name against a prefix it hard-codes. That
 // prefix names a step in the workflow, so a rename there would silently

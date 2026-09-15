@@ -1028,10 +1028,11 @@ function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
         i = i + 1;
     }
     if (!semtypes.equal(c.result, result)) { return "call result type"; }
-    // The 1-based argument this result may BE, 0 for none (semsource's
-    // aliased_arg). Out of range would name a value that is not an operand of
-    // this call.
-    if (ins.imm < 0 || ins.imm > ins.args.len()) { return "call alias index"; }
+    // The arguments this call may hand out, a bitmask over positions and 0 for
+    // none (semsource's escaping_args). A bit past the operand count would name
+    // a value that is not an operand of this call.
+    if (ins.imm < 0) { return "call escape mask"; }
+    if (ins.args.len() < 31 && ins.imm >= (1 << ins.args.len())) { return "call escape mask"; }
     return "";
 }
 

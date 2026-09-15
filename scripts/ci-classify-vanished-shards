@@ -75,9 +75,11 @@ fi
 # and the name of the first step that did not succeed ("" when the payload
 # carries no step list). A failure recorded against a step other than the
 # test step ($TEST_STEP below) means the tests never started.
+# Reusable workflows prefix job names with caller names. Match the leaf
+# while retaining the complete name in the diagnosis.
 rows=$(printf '%s' "$jobs_json" | jq -r --arg p "$PREFIX" '
   [.jobs? // [] | .[]] | .[]
-  | select(.name | startswith($p))
+  | select(.name | split(" / ") | last | startswith($p))
   | select(.conclusion != "success" and .conclusion != null and .conclusion != "skipped")
   | [ .name,
       .conclusion,

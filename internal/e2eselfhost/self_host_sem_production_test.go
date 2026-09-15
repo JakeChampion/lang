@@ -250,6 +250,42 @@ function main(): i32 {
     return handed(v).len() + fresh_of(v).len() + laundered(s).len();
 }
 `},
+	// The other half of #9328: a callee lent a view need not RETURN the box to
+	// keep it — `tok_of` stores it in the token it builds and `add_word` puts
+	// it in the array it hands back, which is what every `*_tok` constructor in
+	// the self-host lexer does. Both reach the caller through the callee's
+	// result, so both have to stop the slicing frame reclaiming the box.
+	{name: "lent-view-stored", atLeast: 5, src: `
+struct Tok { text: string, line: i32 }
+function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }
+function add_word(acc: string[], w: string): string[] { return acc.append(w); }
+function words_of(src: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i + 2 <= src.len()) {
+        var v: str = slice_unchecked(src, i, i + 2);
+        out = add_word(out, v);
+        i = i + 2;
+    }
+    return out;
+}
+function toks_of(src: string): Tok[] {
+    var out: Tok[] = [];
+    var i: i32 = 0;
+    while (i + 2 <= src.len()) {
+        var v: str = slice_unchecked(src, i, i + 2);
+        out = out.append(tok_of(v, i));
+        i = i + 2;
+    }
+    return out;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    for w in words_of("abcdef") { n = n + w.len(); }
+    for t in toks_of("abcdef") { n = n + t.text.len() + t.line; }
+    return n;
+}
+`},
 	// A write back through a capture is refused (#9320), so this module is
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
 	// ssarc.caller_sigs holding the two sides' release of a shared result
