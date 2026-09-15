@@ -56,6 +56,16 @@ no OOM. The package took 898.295 seconds under QEMU; maximum child RSS was
 2.62 GiB for gen0 and 11.65 GiB for gen1. These are correctness results,
 not native timing measurements.
 
+After rebasing onto main `5a1247235`, both native drivers were rebuilt from
+the updated compiler sources, with the shape change applied to one. The
+plain-module and captured-lambda pilot and all parser cases passed with race
+detection. Full-source comparison then matched the ordered namespaces and
+function counts for all 30 modules, along with the independent 75-unit window
+plan. Full source lint, package vet, formatting and selectors also pass.
+This is integration evidence; the controlled timing and two-generation
+fixpoint results above retain their recorded revisions. Current-head CI
+must still validate the complete bootstrap after publication.
+
 On Linux with the x86 toolchain and runner available:
 
 ```sh
