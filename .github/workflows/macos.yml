@@ -65,7 +65,12 @@ jobs:
           go version
 
       - name: go vet
-        run: go vet ./internal/codegen/arm64/... ./internal/e2e/...
+        run: go vet ./internal/codegen/arm64/... ./internal/e2e/... ./internal/interp/...
+
+      - name: go test (Darwin interpreter timestamps)
+        if: steps.gate.outputs.signed != 'true'
+        run: |
+          gotestsum --format standard-verbose -- -run '^(TestSetFileTimesDarwin.*|TestInterpFsMetaPrimitives)$' ./internal/interp/ ./internal/e2e/
 
       - name: go test (arm64-darwin native execution)
         if: steps.gate.outputs.signed != 'true'
