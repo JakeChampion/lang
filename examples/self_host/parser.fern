@@ -6921,6 +6921,18 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
     }
     if (p.peek_punct() == "]") { p = p.advance(); }
     var nm: string = base + "[" + canonicalise_type_args(inner) + "]";
+    // An associated-type projection on a GENERIC base — `Box[i32]::Ok`. The
+    // bare-base form is taken by the path-sep loop above, which runs before
+    // the bracket group and so never sees this one. Only `::` qualifies: a
+    // `.` after a complete type is not a projection in this grammar.
+    while (p.peek_punct() == "::") {
+        var pp: Par = p.advance();
+        var pseg: string = pp.peek_ident();
+        if (pseg.len() == 0) { pseg = pp.peek_keyword(); }
+        if (pseg.len() == 0) { break; }
+        nm = nm + "::" + pseg;
+        p = pp.advance();
+    }
     // Trailing array suffixes for nested array types: `i32[][]`,
     // `T[][][]`, `Map[K, V][]`, etc. After a complete type a `[` is only
     // ever an (empty) array suffix in this grammar, so consume each
@@ -16797,7 +16809,11 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // bounds runs PARALLEL to type_params: both halves reach the synthesised
 // default through finalize_impl_method, so the bound cannot be left behind
 // as a local of the parse (#7224).
-pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, assoc_names: string[], assoc_values: string[] }
+// all_type_params is every parameter the impl declares; type_params is only
+// the BOUNDED ones. The two differ for `impl[T] Trait for Box[T]`, whose T
+// drives no monomorphisation but is what an associated-type binding
+// (`type Ok = T;`) is written in — see assoc_binding_for.
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], all_type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, assoc_names: string[], assoc_values: string[] }
 
 // MethodClaim is claim_method_name's answer: the (possibly renamed) function,
 // and the claim table extended with the key it took.
@@ -19451,7 +19467,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 funcs = funcs.append(im_cl.fn);
                 mi = mi + 1;
             }
-            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values });
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
@@ -20716,15 +20732,46 @@ function check_struct_patterns(): i32 {
     return 0;
 }
 
+// subst_impl_params rewrites a PARAMETRIC impl's associated-type binding into
+// the projection base's own type arguments: `type Ok = T;` on
+// `impl[T] Carrier for Box[T]` is `i32` for a `Box[i32]` base. The impl's
+// parameters are the bracket args of its `for` type, so unifying those against
+// the base's positionally recovers each one. Only args the impl actually
+// DECLARES as parameters are substituted — a concrete arg (`Pair[T, i32]`)
+// names a real type and must survive. A concrete impl declares none and its
+// binding is returned unchanged.
+function subst_impl_params(im: ImplInfo, base: string, bound: string): string {
+    if (im.all_type_params.len() == 0) { return bound; }
+    var pats: string[] = type_args_of(im.impl_type);
+    var args: string[] = type_args_of(base);
+    if (pats.len() == 0 || pats.len() != args.len()) { return bound; }
+    var ps: string[] = [];
+    var cs: string[] = [];
+    var k: i32 = 0;
+    while (k < pats.len()) {
+        if (tp_index(pats[k], im.all_type_params) >= 0) {
+            ps = ps.append(pats[k]);
+            cs = cs.append(args[k]);
+        }
+        k = k + 1;
+    }
+    if (ps.len() == 0) { return bound; }
+    return subst_ty(bound, ps, cs);
+}
+
 // assoc_binding_for returns the type an impl bound for `base::name`, or "" when
-// no impl on `base` binds that associated type.
+// no impl on `base` binds that associated type. `base` is the full spelling
+// (`Box[i32]`), matched on its base NAME so a parametric impl's `for` type
+// (`Box[T]`) is found, and the binding is then substituted through the base's
+// type arguments.
 function assoc_binding_for(impls: ImplInfo[], base: string, name: string): string {
+    var bare: string = util.base_type_name(base);
     for im in impls {
-        if (im.impl_type == base) {
+        if (util.base_type_name(im.impl_type) == bare) {
             var i: i32 = 0;
             while (i < im.assoc_names.len()) {
                 if (im.assoc_names[i] == name && i < im.assoc_values.len()) {
-                    return im.assoc_values[i];
+                    return subst_impl_params(im, base, im.assoc_values[i]);
                 }
                 i = i + 1;
             }
@@ -20747,8 +20794,22 @@ pub function resolve_proj_in_type(t: string, impls: ImplInfo[]): string {
     while (i < t.len()) {
         if (i + 1 < t.len() && t[i] == b':' && t[i + 1] == b':') {
             // The base is the identifier already emitted; the associated name
-            // is the identifier that follows the separator.
+            // is the identifier that follows the separator. A generic base
+            // carries its arguments (`Box[i32]::Ok`), so step back over the
+            // bracket group before the name in front of it.
             var bs: i32 = out.len();
+            if (bs > 0 && out[bs - 1] == b']') {
+                var depth: i32 = 0;
+                var j: i32 = bs;
+                while (j > 0) {
+                    j = j - 1;
+                    if (out[j] == b']') { depth = depth + 1; }
+                    if (out[j] == b'[') {
+                        depth = depth - 1;
+                        if (depth == 0) { bs = j; j = 0; }
+                    }
+                }
+            }
             while (bs > 0 && ident_byte((out[bs - 1] as i32))) { bs = bs - 1; }
             var base: string = slice_unchecked(out, bs, out.len()) + "";
             var ns: i32 = i + 2;

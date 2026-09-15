@@ -8542,7 +8542,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
   for fd in funcs {
     if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
       var noargs: string[] = [];
-      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", assoc_names: noargs, assoc_values: noargs });
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", assoc_names: noargs, assoc_values: noargs });
     }
   }
   return out;
@@ -13378,14 +13378,19 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         // Associated types: an impl must bind EXACTLY the trait's set — every
         // one the trait declares, and nothing it does not. Mirrors native's
         // conformance pass. See docs/ASSOCIATED-TYPES.md.
+        //
+        // Named by the BASE type, dropping any type arguments: a parametric
+        // impl's `for` spelling is `Box[T]`, and native reports the same
+        // conformance failure against `Box`.
+        var im_base: string = util.base_type_name(im.impl_type);
         for at_req in trait_req.assoc_types {
           if (!name_in(at_req, im.assoc_names)) {
-            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im.impl_type + " must bind associated type \"" + at_req + "\" (`type " + at_req + " = …;`)"));
+            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im_base + " must bind associated type \"" + at_req + "\" (`type " + at_req + " = …;`)"));
           }
         }
         for at_bound in im.assoc_names {
           if (!name_in(at_bound, trait_req.assoc_types)) {
-            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im.impl_type + " binds associated type \"" + at_bound + "\" which the trait does not declare"));
+            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im_base + " binds associated type \"" + at_bound + "\" which the trait does not declare"));
           }
         }
         var reqs: string[] = trait_req.methods;

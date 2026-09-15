@@ -1488,6 +1488,12 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 			return ast.EnumType{Name: mang}
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ProjType:
+		// The base is an ordinary type reference and flattens like any
+		// other, so a monomorphised `Box[i32]::Ok` becomes `Box__i32::Ok`
+		// — the name the synthesised concrete impl records its binding
+		// under, and the only spelling the re-check can resolve.
+		return ast.ProjType{Base: rewriteType(x.Base, info, into), Name: x.Name}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: rewriteType(x.Elem, info, into)}
 	case ast.SliceType:
