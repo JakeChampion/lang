@@ -293,9 +293,7 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
   }
   if (cfg.interactive) {
     w = gnu.flush(w);
-    var prompt: Writer = stderr();
-    prompt.write(gnu.prog() + ": replace " + gnu.quotea(dest) + "? ");
-    if (!gnu.yesno()) {
+    if (!gnu.prompt("replace " + gnu.quotea(dest) + "? ")) {
       return Replaced { ok: false, backup: "", out: w };
     }
   }

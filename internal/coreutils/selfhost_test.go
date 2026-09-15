@@ -1,7 +1,6 @@
 package coreutils
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,10 +192,10 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 					inv.prep(t)
 					got := inv.run(t, ours, util)
 					diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "native", "selfhost")
-					if !bytes.Equal(want.stdout, got.stdout) {
+					if !sameOutput(inv, want.stdout, got.stdout) {
 						t.Errorf("stdout differs for %s %s\n  native: %s\nselfhost: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
 					}
-					if !bytes.Equal(want.stderr, got.stderr) {
+					if !sameOutput(inv, want.stderr, got.stderr) {
 						t.Errorf("stderr differs for %s %s\n  native: %s\nselfhost: %s", util, quoteArgs(inv.args), quote(want.stderr), quote(got.stderr))
 					}
 					if want.how() != got.how() {

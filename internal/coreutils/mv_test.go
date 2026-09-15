@@ -35,39 +35,39 @@ import (
 // not primitives at all. `mv -v a xdev/c` is the smallest input that
 // diverges today.
 
-func mvWrite(t *testing.T, dir, name, content string) {
+func seedWrite(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
 }
 
-func mvMkdir(t *testing.T, dir, name string) {
+func seedMkdir(t *testing.T, dir, name string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", name, err)
 	}
 }
 
-func mvSymlink(t *testing.T, dir, target, name string) {
+func seedSymlink(t *testing.T, dir, target, name string) {
 	t.Helper()
 	if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
 		t.Fatalf("symlink %s: %v", name, err)
 	}
 }
 
-func mvHardlink(t *testing.T, dir, old, name string) {
+func seedHardlink(t *testing.T, dir, old, name string) {
 	t.Helper()
 	if err := os.Link(filepath.Join(dir, old), filepath.Join(dir, name)); err != nil {
 		t.Fatalf("link %s: %v", name, err)
 	}
 }
 
-// mvTouch pins a file's timestamps. Every --update case needs them: the
+// seedTouch pins a file's timestamps. Every --update case needs them: the
 // two sides run seconds apart, so a fixture that took the wall clock
 // would have the source newer than the destination on one run and not on
 // the other, and the case would be random rather than a comparison.
-func mvTouch(t *testing.T, dir, name string, sec int64, nsec int64) {
+func seedTouch(t *testing.T, dir, name string, sec int64, nsec int64) {
 	t.Helper()
 	when := time.Unix(sec, nsec)
 	if err := os.Chtimes(filepath.Join(dir, name), when, when); err != nil {
@@ -81,47 +81,47 @@ func mvTouch(t *testing.T, dir, name string, sec int64, nsec int64) {
 // occupied destination.
 func mvBasic(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "b", "B\n")
-	mvMkdir(t, dir, "d")
-	mvWrite(t, dir, "d/b", "D B\n")
-	mvSymlink(t, dir, "a", "sl")
-	mvSymlink(t, dir, "nowhere", "dangling")
-	mvSymlink(t, dir, "d", "dl")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/b", "D B\n")
+	seedSymlink(t, dir, "a", "sl")
+	seedSymlink(t, dir, "nowhere", "dangling")
+	seedSymlink(t, dir, "d", "dl")
 }
 
 // mvOne is one file and nothing else — the fixture for the
 // operand-count diagnostics, where anything more would be noise.
 func mvOne(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "a", "A\n")
 }
 
 // mvDirs is the directory-onto-directory fixture: an empty one, a
 // non-empty one, and a nest deep enough to move into itself.
 func mvDirs(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "b", "B\n")
-	mvMkdir(t, dir, "empty")
-	mvMkdir(t, dir, "full")
-	mvWrite(t, dir, "full/x", "X\n")
-	mvMkdir(t, dir, "nest/sub")
-	mvMkdir(t, dir, "deep/a")
-	mvWrite(t, dir, "deep/z", "Z\n")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedMkdir(t, dir, "empty")
+	seedMkdir(t, dir, "full")
+	seedWrite(t, dir, "full/x", "X\n")
+	seedMkdir(t, dir, "nest/sub")
+	seedMkdir(t, dir, "deep/a")
+	seedWrite(t, dir, "deep/z", "Z\n")
 }
 
 // mvTarget is the several-sources fixture: three files and a directory to
 // put them in, one of whose names is already taken.
 func mvTarget(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "b", "B\n")
-	mvWrite(t, dir, "c", "C\n")
-	mvMkdir(t, dir, "d")
-	mvWrite(t, dir, "d/b", "old b\n")
-	mvSymlink(t, dir, "d", "dl")
-	mvSymlink(t, dir, "b", "bl")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedWrite(t, dir, "c", "C\n")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/b", "old b\n")
+	seedSymlink(t, dir, "d", "dl")
+	seedSymlink(t, dir, "b", "bl")
 }
 
 // mvLinks is the same-file fixture: one inode under four names, reached
@@ -129,16 +129,16 @@ func mvTarget(t *testing.T, dir string) {
 // one that spells its target with `..`.
 func mvLinks(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvHardlink(t, dir, "a", "h")
-	mvSymlink(t, dir, "a", "sl")
-	mvSymlink(t, dir, "sl", "sl2")
-	mvSymlink(t, dir, "./a", "sl3")
-	mvSymlink(t, dir, "nowhere", "dang")
-	mvMkdir(t, dir, "d")
-	mvHardlink(t, dir, "a", "d/a")
-	mvSymlink(t, dir, "../a", "d/up")
-	mvSymlink(t, dir, "../h", "d/toh")
+	seedWrite(t, dir, "a", "A\n")
+	seedHardlink(t, dir, "a", "h")
+	seedSymlink(t, dir, "a", "sl")
+	seedSymlink(t, dir, "sl", "sl2")
+	seedSymlink(t, dir, "./a", "sl3")
+	seedSymlink(t, dir, "nowhere", "dang")
+	seedMkdir(t, dir, "d")
+	seedHardlink(t, dir, "a", "d/a")
+	seedSymlink(t, dir, "../a", "d/up")
+	seedSymlink(t, dir, "../h", "d/toh")
 }
 
 // mvSlash is the trailing-slash fixture: a directory and a file, so the
@@ -146,11 +146,11 @@ func mvLinks(t *testing.T, dir string) {
 // a symbolic-link loop for the one errno that is neither.
 func mvSlash(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "b", "B\n")
-	mvMkdir(t, dir, "d")
-	mvSymlink(t, dir, "l2", "l1")
-	mvSymlink(t, dir, "l1", "l2")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedMkdir(t, dir, "d")
+	seedSymlink(t, dir, "l2", "l1")
+	seedSymlink(t, dir, "l1", "l2")
 }
 
 // mvUpdate is the --update fixture: `a` is a day older than `b`, `n` a
@@ -159,35 +159,35 @@ func mvSlash(t *testing.T, dir string) {
 // comparison actually runs at.
 func mvUpdate(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "b", "B\n")
-	mvWrite(t, dir, "n", "N\n")
-	mvWrite(t, dir, "same", "S\n")
-	mvWrite(t, dir, "near", "R\n")
-	mvHardlink(t, dir, "a", "h")
-	mvMkdir(t, dir, "d")
-	mvWrite(t, dir, "d/a", "D A\n")
-	mvTouch(t, dir, "b", 1500000000, 200000000)
-	mvTouch(t, dir, "a", 1400000000, 0)
-	mvTouch(t, dir, "h", 1400000000, 0)
-	mvTouch(t, dir, "n", 1600000000, 0)
-	mvTouch(t, dir, "same", 1500000000, 200000000)
-	mvTouch(t, dir, "near", 1500000000, 500000000)
-	mvTouch(t, dir, "d/a", 1600000000, 0)
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
+	seedWrite(t, dir, "n", "N\n")
+	seedWrite(t, dir, "same", "S\n")
+	seedWrite(t, dir, "near", "R\n")
+	seedHardlink(t, dir, "a", "h")
+	seedMkdir(t, dir, "d")
+	seedWrite(t, dir, "d/a", "D A\n")
+	seedTouch(t, dir, "b", 1500000000, 200000000)
+	seedTouch(t, dir, "a", 1400000000, 0)
+	seedTouch(t, dir, "h", 1400000000, 0)
+	seedTouch(t, dir, "n", 1600000000, 0)
+	seedTouch(t, dir, "same", 1500000000, 200000000)
+	seedTouch(t, dir, "near", 1500000000, 500000000)
+	seedTouch(t, dir, "d/a", 1600000000, 0)
 }
 
 // The backup fixtures. `b~` and the numbered neighbours are what the
 // control picks between.
 func mvBackupSimple(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "b", "B\n")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "b", "B\n")
 }
 
 func mvBackupTaken(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvWrite(t, dir, "b~", "OLD\n")
+	seedWrite(t, dir, "b~", "OLD\n")
 }
 
 // mvBackupDir is the destination whose backup name is a DIRECTORY: the
@@ -195,51 +195,51 @@ func mvBackupTaken(t *testing.T, dir string) {
 func mvBackupDir(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvMkdir(t, dir, "b~")
+	seedMkdir(t, dir, "b~")
 }
 
 func mvNumbered(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvWrite(t, dir, "b.~1~", "one\n")
+	seedWrite(t, dir, "b.~1~", "one\n")
 }
 
 func mvNumberedNine(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvWrite(t, dir, "b.~9~", "nine\n")
+	seedWrite(t, dir, "b.~9~", "nine\n")
 }
 
 func mvNumberedGap(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvWrite(t, dir, "b.~3~", "three\n")
-	mvWrite(t, dir, "b.~10~", "ten\n")
+	seedWrite(t, dir, "b.~3~", "three\n")
+	seedWrite(t, dir, "b.~10~", "ten\n")
 }
 
 func mvNumberedJunk(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvWrite(t, dir, "b.~09~", "leading zero\n")
-	mvWrite(t, dir, "b.~x~", "not a number\n")
-	mvWrite(t, dir, "b.~-1~", "negative\n")
-	mvWrite(t, dir, "b.~0~", "zero\n")
+	seedWrite(t, dir, "b.~09~", "leading zero\n")
+	seedWrite(t, dir, "b.~x~", "not a number\n")
+	seedWrite(t, dir, "b.~-1~", "negative\n")
+	seedWrite(t, dir, "b.~0~", "zero\n")
 }
 
 func mvNumberedDir(t *testing.T, dir string) {
 	t.Helper()
 	mvBackupSimple(t, dir)
-	mvMkdir(t, dir, "b.~1~")
+	seedMkdir(t, dir, "b.~1~")
 }
 
 // mvBackupDirs is `-b` over a DIRECTORY destination, where the backup is
 // the whole directory moved aside rather than a file copied.
 func mvBackupDirs(t *testing.T, dir string) {
 	t.Helper()
-	mvMkdir(t, dir, "s")
-	mvWrite(t, dir, "s/f", "S F\n")
-	mvMkdir(t, dir, "t")
-	mvWrite(t, dir, "t/g", "T G\n")
+	seedMkdir(t, dir, "s")
+	seedWrite(t, dir, "s/f", "S F\n")
+	seedMkdir(t, dir, "t")
+	seedWrite(t, dir, "t/g", "T G\n")
 }
 
 // mvQuoting is the names whose diagnostics differ between quote, quotef
@@ -248,11 +248,11 @@ func mvBackupDirs(t *testing.T, dir string) {
 // UTF-8.
 func mvQuoting(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvWrite(t, dir, "sp ace", "S\n")
-	mvWrite(t, dir, "ap'os", "Q\n")
-	mvWrite(t, dir, "bad\xff", "N\n")
-	mvMkdir(t, dir, "d x")
+	seedWrite(t, dir, "a", "A\n")
+	seedWrite(t, dir, "sp ace", "S\n")
+	seedWrite(t, dir, "ap'os", "Q\n")
+	seedWrite(t, dir, "bad\xff", "N\n")
+	seedMkdir(t, dir, "d x")
 }
 
 // mvPrompt is the `-i` fixture with several occupied destinations, so one
@@ -260,27 +260,27 @@ func mvQuoting(t *testing.T, dir string) {
 // accepted ones move.
 func mvPrompt(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a1", "A1\n")
-	mvWrite(t, dir, "a2", "A2\n")
-	mvMkdir(t, dir, "dd")
-	mvWrite(t, dir, "dd/a1", "old 1\n")
-	mvWrite(t, dir, "dd/a2", "old 2\n")
+	seedWrite(t, dir, "a1", "A1\n")
+	seedWrite(t, dir, "a2", "A2\n")
+	seedMkdir(t, dir, "dd")
+	seedWrite(t, dir, "dd/a1", "old 1\n")
+	seedWrite(t, dir, "dd/a2", "old 2\n")
 }
 
 // mvHere is the working directory's own file, for the cross-device cases:
 // everything else they need is on the other filesystem.
 func mvHere(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "a", "A\n")
-	mvMkdir(t, dir, "dd")
-	mvWrite(t, dir, "dd/f", "F\n")
+	seedWrite(t, dir, "a", "A\n")
+	seedMkdir(t, dir, "dd")
+	seedWrite(t, dir, "dd/f", "F\n")
 }
 
 // mvThere seeds the OTHER filesystem, reached as `xdev/…`.
 func mvThere(t *testing.T, dir string) {
 	t.Helper()
-	mvWrite(t, dir, "b", "B\n")
-	mvMkdir(t, dir, "sub")
+	seedWrite(t, dir, "b", "B\n")
+	seedMkdir(t, dir, "sub")
 }
 
 func init() {

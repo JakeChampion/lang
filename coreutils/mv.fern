@@ -403,9 +403,7 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
   }
   if (cfg.ask == ask_prompt()) {
     w = gnu.flush(w);
-    var prompt: Writer = stderr();
-    prompt.write(gnu.prog() + ": overwrite " + gnu.quotea(m.dest) + "? ");
-    if (!gnu.yesno()) {
+    if (!gnu.prompt("overwrite " + gnu.quotea(m.dest) + "? ")) {
       return MoveOut { status: 1, out: w };
     }
   }

@@ -1,0 +1,666 @@
+// cp.fern — GNU-compatible `cp`.
+//
+//   cp [-T] SOURCE DEST          one copy, named
+//   cp SOURCE... DIRECTORY       one copy per SOURCE inside DIRECTORY
+//   cp -t DIRECTORY SOURCE...    the same with the directory named first
+//
+// The copying itself is `coreutils/lib/copy.fern`, which `mv`'s
+// cross-device fallback and `install` will share; this file is the operand
+// layer — which shape was typed, which name each source lands under, and
+// the option table that fills the engine's configuration in.
+//
+// Behaviours were measured from GNU coreutils 9.4; no GNU source was read.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+import "./lib/copy";
+
+// ---- options ---------------------------------------------------------------
+//
+// Declared in GNU's order, which is visible: the ambiguity list prints
+// candidates in it, so `cp --p` names '--parents' before '--preserve' and
+// `cp --r` names '--recursive', '--remove-destination', '--reflink' in
+// that order. Every constraint here was read off a `cp --PREFIX` probe.
+function opt_archive(): i32 {
+  return 1;
+}
+
+function opt_attributes_only(): i32 {
+  return 2;
+}
+
+function opt_backup(): i32 {
+  return 3;
+}
+
+function opt_copy_contents(): i32 {
+  return 4;
+}
+
+function opt_context(): i32 {
+  return 5;
+}
+
+function opt_debug(): i32 {
+  return 6;
+}
+
+function opt_dereference(): i32 {
+  return 7;
+}
+
+function opt_force(): i32 {
+  return 8;
+}
+
+function opt_interactive(): i32 {
+  return 9;
+}
+
+function opt_link(): i32 {
+  return 10;
+}
+
+function opt_no_clobber(): i32 {
+  return 11;
+}
+
+function opt_no_dereference(): i32 {
+  return 12;
+}
+
+function opt_no_preserve(): i32 {
+  return 13;
+}
+
+function opt_no_target_directory(): i32 {
+  return 14;
+}
+
+function opt_one_file_system(): i32 {
+  return 15;
+}
+
+function opt_parents(): i32 {
+  return 16;
+}
+
+function opt_preserve(): i32 {
+  return 17;
+}
+
+function opt_recursive(): i32 {
+  return 18;
+}
+
+function opt_remove_destination(): i32 {
+  return 19;
+}
+
+function opt_reflink(): i32 {
+  return 20;
+}
+
+function opt_sparse(): i32 {
+  return 21;
+}
+
+function opt_strip_trailing_slashes(): i32 {
+  return 22;
+}
+
+function opt_suffix(): i32 {
+  return 23;
+}
+
+function opt_symbolic_link(): i32 {
+  return 24;
+}
+
+function opt_target_directory(): i32 {
+  return 25;
+}
+
+function opt_update(): i32 {
+  return 26;
+}
+
+function opt_verbose(): i32 {
+  return 27;
+}
+
+// The short-only spellings. Each is its own entry because glibc keeps two
+// tables and these appear in only one of them: `-b` takes no argument
+// where `--backup` takes an optional one, `-p` is a fixed attribute list
+// where `--preserve` names its own, `-u` is `--update=older` spelled
+// without a value, and `-d`, `-H` and `-R` have no long form at all.
+function opt_backup_short(): i32 {
+  return 28;
+}
+
+function opt_preserve_short(): i32 {
+  return 29;
+}
+
+function opt_update_short(): i32 {
+  return 30;
+}
+
+function opt_no_deref_links(): i32 {
+  return 31;
+}
+
+function opt_deref_cmdline(): i32 {
+  return 32;
+}
+
+function opt_recursive_upper(): i32 {
+  return 33;
+}
+
+function help_text(): string {
+  var out: string = "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... SOURCE... DIRECTORY\n";
+  out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY SOURCE...\n";
+  out = out + "Copy SOURCE to DEST, or several SOURCEs into DIRECTORY.\n";
+  out = out + "\n";
+  out = out + "  -a, --archive               same as -dR --preserve=all\n";
+  out = out + "      --attributes-only       copy the attributes and none of the data\n";
+  out = out + "      --backup[=CONTROL]      back up each existing destination file\n";
+  out = out + "  -b                          like --backup, taking no argument\n";
+  out = out + "      --copy-contents         read special files when recursing\n";
+  out = out + "  -d                          same as --no-dereference --preserve=links\n";
+  out = out + "      --debug                 say how each file was copied; implies -v\n";
+  out = out + "  -f, --force                 remove an unopenable destination and retry\n";
+  out = out + "  -i, --interactive           ask before replacing an existing file\n";
+  out = out + "  -H                          follow a SOURCE symlink named on the command line\n";
+  out = out + "  -l, --link                  hard link the files instead of copying\n";
+  out = out + "  -L, --dereference           follow every SOURCE symlink\n";
+  out = out + "  -n, --no-clobber            keep an existing destination; equals --update=none\n";
+  out = out + "  -P, --no-dereference        never follow a SOURCE symlink\n";
+  out = out + "  -p                          same as --preserve=mode,ownership,timestamps\n";
+  out = out + "      --preserve[=ATTRS]      preserve the named attributes\n";
+  out = out + "      --no-preserve=ATTRS     do not preserve the named attributes\n";
+  out = out + "      --parents               put the whole SOURCE path under DIRECTORY\n";
+  out = out + "  -R, -r, --recursive         copy directories recursively\n";
+  out = out + "      --reflink[=WHEN]        clone the data when the filesystem can\n";
+  out = out + "      --remove-destination    unlink each existing destination first\n";
+  out = out + "      --sparse=WHEN           when to make the destination sparse\n";
+  out = out + "      --strip-trailing-slashes  drop any trailing slash from each SOURCE\n";
+  out = out + "  -s, --symbolic-link         make symbolic links instead of copying\n";
+  out = out + "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
+  out = out + "  -t, --target-directory=DIR  copy every SOURCE into DIR\n";
+  out = out + "  -T, --no-target-directory   treat DEST as a normal file\n";
+  out = out + "      --update[=WHEN]         which existing files to replace: all, none,\n";
+  out = out + "                                older (the default when WHEN is absent)\n";
+  out = out + "  -u                          same as --update=older\n";
+  out = out + "  -v, --verbose               name each file as it is copied\n";
+  out = out + "  -x, --one-file-system       stay on the filesystem the copy started on\n";
+  out = out + "  -Z                          no-op: there is no SELinux support here\n";
+  out = out + "      --context[=CTX]         no-op: there is no SELinux support here\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "ATTRS is a comma-separated list of 'mode', 'timestamps', 'ownership',\n";
+  out = out + "'links', 'context', 'xattr' and 'all'. 'context' and 'xattr' parse and\n";
+  out = out + "carry nothing: neither is available here.\n";
+  out = out + "\n";
+  out = out + "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
+  out = out + "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
+  out = out + "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
+  out = out + "simple), simple/never.\n";
+  return out;
+}
+
+function option_table(): gnu.Opt[] {
+  var opts: gnu.Opt[] = [];
+  opts = opts.append(gnu.flag("a", "archive", opt_archive()));
+  opts = opts.append(gnu.flag("", "attributes-only", opt_attributes_only()));
+  opts = opts.append(gnu.optional_long("", "backup", opt_backup()));
+  opts = opts.append(gnu.flag("", "copy-contents", opt_copy_contents()));
+  opts = opts.append(gnu.optional_long("Z", "context", opt_context()));
+  opts = opts.append(gnu.flag("", "debug", opt_debug()));
+  opts = opts.append(gnu.flag("L", "dereference", opt_dereference()));
+  opts = opts.append(gnu.flag("f", "force", opt_force()));
+  opts = opts.append(gnu.flag("i", "interactive", opt_interactive()));
+  opts = opts.append(gnu.flag("l", "link", opt_link()));
+  opts = opts.append(gnu.flag("n", "no-clobber", opt_no_clobber()));
+  opts = opts.append(gnu.flag("P", "no-dereference", opt_no_dereference()));
+  opts = opts.append(gnu.valued("", "no-preserve", opt_no_preserve()));
+  opts = opts.append(gnu.flag("T", "no-target-directory", opt_no_target_directory()));
+  opts = opts.append(gnu.flag("x", "one-file-system", opt_one_file_system()));
+  opts = opts.append(gnu.flag("", "parents", opt_parents()));
+  opts = opts.append(gnu.optional_long("", "preserve", opt_preserve()));
+  opts = opts.append(gnu.flag("r", "recursive", opt_recursive()));
+  opts = opts.append(gnu.flag("", "remove-destination", opt_remove_destination()));
+  opts = opts.append(gnu.optional_long("", "reflink", opt_reflink()));
+  opts = opts.append(gnu.valued("", "sparse", opt_sparse()));
+  opts = opts.append(gnu.flag("", "strip-trailing-slashes", opt_strip_trailing_slashes()));
+  opts = opts.append(gnu.valued("S", "suffix", opt_suffix()));
+  opts = opts.append(gnu.flag("s", "symbolic-link", opt_symbolic_link()));
+  opts = opts.append(gnu.valued("t", "target-directory", opt_target_directory()));
+  opts = opts.append(gnu.optional_long("", "update", opt_update()));
+  opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
+  // The short-only entries, after every long name so the ambiguity lists
+  // above keep the order the probes measured.
+  opts = opts.append(gnu.flag("b", "", opt_backup_short()));
+  opts = opts.append(gnu.flag("p", "", opt_preserve_short()));
+  opts = opts.append(gnu.flag("u", "", opt_update_short()));
+  opts = opts.append(gnu.flag("d", "", opt_no_deref_links()));
+  opts = opts.append(gnu.flag("H", "", opt_deref_cmdline()));
+  opts = opts.append(gnu.flag("R", "", opt_recursive_upper()));
+  return opts;
+}
+
+// `Scan` — what the option scan decided, before the environment fills in
+// what no option said.
+struct Scan { cfg: copy.Cfg, target_dir: string, have_target_dir: boolean, no_target_dir: boolean, parents: boolean, strip: boolean, deref_given: boolean, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_no_clobber: boolean, warn_context: boolean }
+
+function scan_new(): Scan {
+  return Scan { cfg: copy.cfg_new(), target_dir: "", have_target_dir: false, no_target_dir: false, parents: false, strip: false, deref_given: false, backup_given: false, control_given: false, control_text: "", suffix_given: false, warn_no_clobber: false, warn_context: false };
+}
+
+function scan_options(argv: string[]): (Scan, string[]) {
+  var s: Scan = scan_new();
+  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "cp", help_text(), 1);
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        s = apply_option(s, m);
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return (s, g.operands());
+}
+
+function apply_option(s: Scan, m: gnu.OptMatch): Scan {
+  var c: copy.Cfg = s.cfg;
+  if (m.id == opt_archive()) {
+    // `-a` is `-dR --preserve=all`, so it carries the link-preserving
+    // no-dereference of `-d` along with the recursion.
+    return Scan { ...s, cfg: copy.Cfg { ...c, recursive: true, deref: copy.deref_never(), attrs: copy.attrs_all() }, deref_given: true };
+  }
+  if (m.id == opt_attributes_only()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, attributes_only: true } };
+  }
+  if (m.id == opt_backup()) {
+    if (m.has_value) {
+      return Scan { ...s, cfg: copy.Cfg { ...c, backups: true }, backup_given: true, control_given: true, control_text: m.value };
+    }
+    return Scan { ...s, cfg: copy.Cfg { ...c, backups: true }, backup_given: true };
+  }
+  if (m.id == opt_backup_short()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, backups: true }, backup_given: true };
+  }
+  if (m.id == opt_copy_contents()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, copy_contents: true } };
+  }
+  if (m.id == opt_context()) {
+    // A NAMED context cannot be honoured without SELinux, and GNU says
+    // so rather than ignoring it silently. Bare `-Z` / `--context` asks
+    // only for the default and is measured silent, so the warning hangs
+    // off the VALUE and not the option. An empty value still counts.
+    if (m.has_value) {
+      return Scan { ...s, warn_context: true };
+    }
+    return s;
+  }
+  if (m.id == opt_debug()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, debug: true, verbose: true } };
+  }
+  if (m.id == opt_dereference()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_always() }, deref_given: true };
+  }
+  if (m.id == opt_force()) {
+    // `-f` is only "remove an unopenable destination and retry"; it does
+    // NOT cancel an earlier `-i`. Measured — `cp -i -f old dest` still
+    // asks, and declining it still exits 1.
+    return Scan { ...s, cfg: copy.Cfg { ...c, force: true } };
+  }
+  if (m.id == opt_interactive()) {
+    // `-i` overrides an earlier `-n`, which is the whole of why the three
+    // of `-i` / `-f` / `-n` are one field rather than three flags.
+    return Scan { ...s, cfg: copy.Cfg { ...c, ask: copy.ask_prompt(), update: copy.update_all() } };
+  }
+  if (m.id == opt_link()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, hard_link: true } };
+  }
+  if (m.id == opt_no_clobber()) {
+    // The short and long spellings of the same thing, and the warning is
+    // attached to the spelling rather than the behaviour.
+    return Scan { ...s, cfg: copy.Cfg { ...c, ask: copy.ask_never(), update: copy.update_none() }, warn_no_clobber: true };
+  }
+  if (m.id == opt_no_dereference()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_never() }, deref_given: true };
+  }
+  if (m.id == opt_no_deref_links()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_never(), attrs: copy.attrs_set(c.attrs, 3, true) }, deref_given: true };
+  }
+  if (m.id == opt_deref_cmdline()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_cmdline() }, deref_given: true };
+  }
+  if (m.id == opt_no_preserve()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, attrs: apply_attr_list(c.attrs, m.value, false, "--no-preserve") } };
+  }
+  if (m.id == opt_no_target_directory()) {
+    return Scan { ...s, no_target_dir: true };
+  }
+  if (m.id == opt_one_file_system()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, one_fs: true } };
+  }
+  if (m.id == opt_parents()) {
+    return Scan { ...s, parents: true };
+  }
+  if (m.id == opt_preserve()) {
+    if (m.has_value) {
+      return Scan { ...s, cfg: copy.Cfg { ...c, attrs: apply_attr_list(c.attrs, m.value, true, "--preserve") } };
+    }
+    return Scan { ...s, cfg: copy.Cfg { ...c, attrs: copy.attrs_p() } };
+  }
+  if (m.id == opt_preserve_short()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, attrs: copy.attrs_p() } };
+  }
+  if (m.id == opt_recursive() || m.id == opt_recursive_upper()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, recursive: true } };
+  }
+  if (m.id == opt_remove_destination()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, remove_destination: true } };
+  }
+  if (m.id == opt_reflink()) {
+    // `--reflink` with no WHEN is `--reflink=always`, measured: the bare
+    // form reports the clone failure rather than falling back.
+    if (m.has_value) {
+      return Scan { ...s, cfg: copy.Cfg { ...c, reflink: gnu.argmatch_valued(m.value, copy.reflink_names(), copy.reflink_values(), "--reflink") } };
+    }
+    return Scan { ...s, cfg: copy.Cfg { ...c, reflink: copy.reflink_always() } };
+  }
+  if (m.id == opt_sparse()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, sparse: gnu.argmatch_valued(m.value, copy.sparse_names(), copy.sparse_values(), "--sparse") } };
+  }
+  if (m.id == opt_strip_trailing_slashes()) {
+    return Scan { ...s, strip: true };
+  }
+  if (m.id == opt_suffix()) {
+    var suf: string = c.suffix;
+    if (gnu.usable_suffix(m.value)) {
+      suf = m.value;
+    }
+    return Scan { ...s, cfg: copy.Cfg { ...c, backups: true, suffix: suf }, backup_given: true, suffix_given: true };
+  }
+  if (m.id == opt_symbolic_link()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, sym_link: true } };
+  }
+  if (m.id == opt_target_directory()) {
+    if (s.have_target_dir) {
+      gnu.error("multiple target directories specified");
+      exit(1);
+    }
+    return Scan { ...s, target_dir: m.value, have_target_dir: true };
+  }
+  if (m.id == opt_update()) {
+    if (m.has_value) {
+      return Scan { ...s, cfg: copy.Cfg { ...c, update: gnu.argmatch_valued(m.value, copy.update_names(), copy.update_values(), "--update") } };
+    }
+    return Scan { ...s, cfg: copy.Cfg { ...c, update: copy.update_older() } };
+  }
+  if (m.id == opt_update_short()) {
+    return Scan { ...s, cfg: copy.Cfg { ...c, update: copy.update_older() } };
+  }
+  return Scan { ...s, cfg: copy.Cfg { ...c, verbose: true } };
+}
+
+// One `--preserve` / `--no-preserve` list: comma-separated, each element
+// prefix-matched against the attribute names, and an unmatched one fatal
+// with the whole list printed in declaration order.
+function apply_attr_list(a: copy.Attrs, list: string, on: boolean, option: string): copy.Attrs {
+  var out: copy.Attrs = a;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= list.len()) {
+    if (i == list.len() || list[i] as i32 == 44) {
+      var word: string = slice_unchecked(list, start, i) + "";
+      out = copy.attrs_set(out, gnu.argmatch(word, copy.attr_names(), option), on);
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The suffix and the control no option supplied. Both environment
+// variables are read only when backups are ON.
+function from_environment(s: Scan): copy.Cfg {
+  var c: copy.Cfg = s.cfg;
+  if (!c.backups) {
+    return c;
+  }
+  if (!s.suffix_given) {
+    match (env("SIMPLE_BACKUP_SUFFIX")) {
+      Some(v) => {
+        if (gnu.usable_suffix(v)) {
+          c = copy.Cfg { ...c, suffix: v };
+        }
+      },
+      None => {}
+    }
+  }
+  var control: i32 = gnu.backup_existing();
+  if (s.control_given) {
+    if (s.control_text.len() > 0) {
+      control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
+    }
+  } else {
+    match (env("VERSION_CONTROL")) {
+      Some(v) => {
+        if (v.len() > 0) {
+          control = gnu.argmatch_valued(v, gnu.backup_names(), gnu.backup_values(), "$VERSION_CONTROL");
+        }
+      },
+      None => {}
+    }
+  }
+  if (control == gnu.backup_none()) {
+    return copy.Cfg { ...c, backups: false, control: control };
+  }
+  return copy.Cfg { ...c, control: control };
+}
+
+// ---- the target directory ---------------------------------------------------
+//
+// The check a DIRECTORY operand meets before anything is copied into it:
+// the last of three or more operands, and `-t`'s argument. It follows
+// symbolic links, and a name that exists but is not a directory is ENOTDIR
+// worded as the errno. `what` is the noun the two callers differ by.
+function require_directory(what: string, dir: string): void {
+  match (stat(dir)) {
+    Err(e) => {
+      gnu.error(what + " " + gnu.quotea(dir) + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    Ok(st) => {
+      if (!st.is_dir) {
+        gnu.error(what + " " + gnu.quotea(dir) + ": Not a directory");
+        exit(1);
+      }
+    }
+  }
+}
+
+// A SOURCE operand as the into-a-directory forms see it: as typed, unless
+// `--strip-trailing-slashes` says otherwise. The direct two-operand form
+// never asks — measured, `cp --strip-trailing-slashes ff/ o` still reports
+// `cannot stat 'ff/'`, so the stripping reaches only the paths that derive
+// a destination name from the source's last component.
+function stripped(s: Scan, operand: string): string {
+  if (s.strip) {
+    return gnu.strip_slashes(operand);
+  }
+  return operand;
+}
+
+// ---- main -------------------------------------------------------------------
+function main(): i32 {
+  var scanned: (Scan, string[]) = scan_options(args());
+  var s: Scan = scanned.0;
+  var operands: string[] = scanned.1;
+
+  var least: i32 = 2;
+  if (s.have_target_dir) {
+    least = 1;
+  }
+  if (operands.len() < least) {
+    if (operands.len() == 0) {
+      gnu.die_usage("missing file operand", 1);
+    }
+    gnu.die_usage("missing destination file operand after " + gnu.quotea(operands[0]), 1);
+  }
+  if (s.have_target_dir && s.no_target_dir) {
+    // No `Try …` line on this one, unlike every other usage error here.
+    gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
+    return 1;
+  }
+  if (s.warn_context) {
+    gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
+  }
+  if (s.warn_no_clobber) {
+    gnu.error("warning: behavior of -n is non-portable and may change in future; use --update=none instead");
+  }
+  var cfg: copy.Cfg = from_environment(s);
+  // The dereference DEFAULT is decided by -r, not fixed: measured,
+  // `cp sl out` follows a command-line symlink and `cp -r sl out` does
+  // not. `-H` is how the command-line-only reading is asked for outright.
+  if (!s.deref_given) {
+    if (cfg.recursive) {
+      cfg = copy.Cfg { ...cfg, deref: copy.deref_never() };
+    } else {
+      cfg = copy.Cfg { ...cfg, deref: copy.deref_always() };
+    }
+  }
+
+  var st: copy.State = copy.state_new(gnu.out_new());
+  if (s.have_target_dir) {
+    require_directory("target directory", s.target_dir);
+    st = copy_into(cfg, s, st, operands, operands.len(), s.target_dir);
+    return finish(st);
+  }
+  if (s.no_target_dir) {
+    if (operands.len() > 2) {
+      gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
+    }
+    if (s.parents && !is_directory(operands[1])) {
+      // `--parents` with `-T` is not a conflict of its own: measured, it
+      // reaches this same refusal.
+      gnu.die_usage("with --parents, the destination must be a directory", 1);
+    }
+    st = copy.copy_one(cfg, st, operands[0], operands[1], true);
+    return finish(st);
+  }
+  if (operands.len() == 2) {
+    var dest: string = operands[1];
+    if (s.parents || is_directory(dest)) {
+      st = copy_into(cfg, s, st, operands, 1, dest);
+      return finish(st);
+    }
+    st = copy.copy_one(cfg, st, operands[0], dest, true);
+    return finish(st);
+  }
+  var dir: string = operands[operands.len() - 1];
+  require_directory("target", dir);
+  st = copy_into(cfg, s, st, operands, operands.len() - 1, dir);
+  return finish(st);
+}
+
+function is_directory(path: string): boolean {
+  match (stat(path)) {
+    Ok(st) => {
+      return st.is_dir;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// `operands[0 .. count)` copied inside `dir`, each under its own last
+// component — or, under `--parents`, under its whole path. A failed
+// operand costs the exit status and not the run.
+function copy_into(cfg: copy.Cfg, s: Scan, st0: copy.State, operands: string[], count: i32, dir: string): copy.State {
+  var st: copy.State = st0;
+  if (s.parents && !is_directory(dir)) {
+    // `--parents` has its own wording for this, with the `Try …` line
+    // every other usage error here carries and the ENOTDIR one does not.
+    gnu.die_usage("with --parents, the destination must be a directory", 1);
+  }
+  var i: i32 = 0;
+  while (i < count) {
+    var src: string = stripped(s, operands[i]);
+    if (s.parents) {
+      st = copy_with_parents(cfg, st, src, dir);
+    } else {
+      st = copy.copy_one(cfg, st, src, gnu.join_path(dir, gnu.base_name(src)), true);
+    }
+    i = i + 1;
+  }
+  return st;
+}
+
+// `--parents`: the destination is `dir` plus the WHOLE source path, and
+// each directory the path passes through is created under `dir` carrying
+// the mode of the source directory it mirrors.
+function copy_with_parents(cfg: copy.Cfg, st0: copy.State, src: string, dir: string): copy.State {
+  var st: copy.State = st0;
+  var i: i32 = 0;
+  while (i < src.len()) {
+    if (src[i] as i32 == 47) {
+      var prefix: string = slice_unchecked(src, 0, i) + "";
+      if (prefix.len() > 0) {
+        st = make_parent(cfg, st, prefix, gnu.join_path(dir, prefix));
+      }
+    }
+    i = i + 1;
+  }
+  return copy.copy_one(cfg, st, src, gnu.join_path(dir, src), true);
+}
+
+// One intermediate directory of a `--parents` destination. Already there
+// is not a failure — two operands under one path share every prefix.
+function make_parent(cfg: copy.Cfg, st0: copy.State, src: string, dest: string): copy.State {
+  var st: copy.State = st0;
+  if (is_directory(dest)) {
+    return st;
+  }
+  var perm: i32 = 493;
+  match (stat(src)) {
+    Ok(info) => {
+      perm = (info.mode % 4096) as i32;
+    },
+    Err(_) => {}
+  }
+  match (create_dir(dest, perm)) {
+    Ok(_) => {
+      // `-v` announces a created parent, and UNQUOTED — measured,
+      // `cp --parents -v d1/a dst` prints `d1 -> dst/d1` before the
+      // quoted `'d1/a' -> 'dst/d1/a'`. It is the one verbose line here
+      // that does not quote its names.
+      if (cfg.verbose) {
+        return copy.State { ...st, out: gnu.put(st.out, src + " -> " + dest + "\n") };
+      }
+      return st;
+    },
+    Err(e) => {
+      var o: io_buffered.BufWriter = gnu.error_out(st.out, "cannot make directory " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+      return copy.State { ...st, out: o, status: 1 };
+    }
+  }
+}
+
+function finish(st: copy.State): i32 {
+  gnu.finish(st.out);
+  return st.status;
+}

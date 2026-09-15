@@ -248,30 +248,6 @@ function cannot_remove(st: St, path: string, e: IoError): St {
   return fail(st, "cannot remove " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
 }
 
-// One prompt on stderr with no trailing newline, answered by glibc's
-// rpmatch under LC_ALL=C: the whole line is consumed however long it
-// is, and only a leading `y` or `Y` is yes. End of input is no.
-function ask(msg: string): boolean {
-  var w: Writer = stderr();
-  match (w.write(gnu.prog() + ": " + msg)) {
-    Some(_) => {},
-    None => {}
-  }
-  match (read_line()) {
-    Some(line) => {
-      if (line.len() == 0) {
-        return false;
-      }
-      var b: i32 = line[0] as i32;
-      return b == 121 || b == 89;
-    },
-    None => {
-      return false;
-    }
-  }
-  return false;
-}
-
 // Whether the process may write `path`. A symlink is never
 // write-protected — the permissions on the other end are not the ones
 // that decide whether the link can be unlinked — and only EACCES
@@ -321,7 +297,7 @@ function confirm(s: Settings, path: string, mode: u32, verb: string, what: strin
   if (wp) {
     prefix = "write-protected ";
   }
-  return ask(verb + " " + prefix + what + " " + gnu.quotea(path) + "? ");
+  return gnu.prompt(verb + " " + prefix + what + " " + gnu.quotea(path) + "? ");
 }
 
 function verbose(st: St, s: Settings, path: string, is_dir: boolean): St {
@@ -665,7 +641,7 @@ function prompt_once(s: Settings, n: i32): boolean {
   if (s.recursive) {
     how = " recursively";
   }
-  return ask("remove " + n.to_string() + noun + how + "? ");
+  return gnu.prompt("remove " + n.to_string() + noun + how + "? ");
 }
 
 function main(): i32 {

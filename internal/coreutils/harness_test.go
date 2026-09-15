@@ -172,6 +172,53 @@ type invocation struct {
 	// without this their whole corpus passes on a utility that parsed its
 	// operands, printed every line, and made no call. Needs seedTree.
 	ownership bool
+	// sparse puts each regular file's ALLOCATED BLOCK COUNT into the tree
+	// comparison. Off by default, and for the same reason ownership is: a
+	// block count depends on the filesystem under the test directory, so
+	// it is one more thing that can differ for reasons that are not the
+	// utility's.
+	//
+	// `cp` is what needs it. Whether a hole in the source stays a hole in
+	// the copy is invisible to every other field here — the names, modes
+	// and contents of a sparse copy and a fully-written one are identical
+	// — so without it `--sparse=never` and `--sparse=always` compare equal
+	// and the whole option proves nothing. Needs seedTree.
+	sparse bool
+	// merged sends the child's fd 1 and fd 2 to ONE buffer, so what the
+	// case compares is the two streams INTERLEAVED, and stderr on its own
+	// is empty. Off by default, because a merged stream is strictly less
+	// informative when the order is not the point: a diff in it cannot say
+	// which stream the wrong byte came from.
+	//
+	// `cp -v` is what needs it. gnulib's error() flushes stdout before it
+	// writes a diagnostic, so a verbose line describing the copy that then
+	// FAILED arrives ahead of the failure; a utility that buffered the line
+	// and flushed at exit prints the two the other way round. Both sides
+	// write identical bytes on each stream separately, so nothing else in
+	// this harness can see the difference. Not combinable with the
+	// stdout redirections or the bounded readers, which each take fd 1
+	// somewhere else.
+	merged bool
+	// unordered compares stdout as a SET of lines rather than a sequence,
+	// because the order is the filesystem's and not the utility's.
+	//
+	// A recursive copy visits a directory's entries in ascending INODE
+	// order — measured against GNU, and neither readdir order nor names
+	// sorted. Inode numbers are assigned when an entry is created and are
+	// reused after a delete, so two fresh working directories seeded by
+	// the same code do not reliably agree about which entry got the lower
+	// number. The two sides of a comparison each get their own directory,
+	// so a `cp -rv` naming more than one entry per directory is
+	// reproducible in its LINES and not in their order — for GNU against
+	// itself just as much as against this implementation.
+	//
+	// What this gives up is real: a case with it on would pass on an
+	// implementation that emitted the right lines in an arbitrary order.
+	// The order rule itself is pinned instead by TestCpWalkOrder, which
+	// runs both implementations against ONE source tree and derives the
+	// expected order from that tree's actual inodes — so the rule is
+	// gated somewhere deterministic and these cases gate the content.
+	unordered bool
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -216,6 +263,11 @@ type treeEntry struct {
 	// needs compared — the kind alone cannot tell `mknod n c 1 3` from
 	// `mknod n c 1 4`.
 	rdev uint64
+	// blocks is the 512-byte allocation count, for a case that asked
+	// (invocation.sparse). Regular files only, and -1 for every entry
+	// that did not ask, so a case without the flag compares as it always
+	// did.
+	blocks int64
 	// group numbers the (dev, ino) equivalence classes in walk order, so
 	// two names sharing an inode share a number on both sides while the
 	// inodes themselves — which differ between the runs — never reach the
@@ -792,7 +844,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		if inv.mask != nil {
 			seeded = map[string]bool{}
-			for _, e := range readTree(t, workDir, inv.ownership) {
+			for _, e := range readTree(t, workDir, treeOptsOf(inv)) {
 				seeded[e.name] = true
 			}
 		}
@@ -825,6 +877,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
+	if inv.merged && (inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 || inv.limit > 0) {
+		t.Fatalf("%s %s: merged needs fd 1 captured into the default buffer, which this case sends elsewhere", bin, quoteArgs(inv.args))
+	}
 
 	var out []byte
 	var overran bool
@@ -890,6 +945,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	} else {
 		var outBuf bytes.Buffer
 		cmd.Stdout = &outBuf
+		if inv.merged {
+			// One buffer for both descriptors: the ORDER the child wrote
+			// them in is what the case is about, and two buffers cannot
+			// record it. errBuf stays empty and is compared as such.
+			cmd.Stderr = &outBuf
+		}
 		overran = inv.runBounded(cmd)
 		out = outBuf.Bytes()
 	}
@@ -906,7 +967,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	if workDir != "" {
 		groups := map[[2]uint64]int{}
-		res.tree = readTreeInto(t, workDir, "", groups, inv.ownership)
+		res.tree = readTreeInto(t, workDir, "", groups, treeOptsOf(inv))
 		if crossRoot != "" {
 			// The link to the other filesystem is the harness's own
 			// scaffolding and its target is a fresh path per run, so it
@@ -917,7 +978,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 					kept = append(kept, e)
 				}
 			}
-			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, inv.ownership)...)
+			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, treeOptsOf(inv))...)
 			sort.Slice(res.tree, func(i, j int) bool { return res.tree[i].name < res.tree[j].name })
 		}
 	}
@@ -980,9 +1041,23 @@ func ownerOf(t *testing.T, path string, info os.FileInfo) string {
 	return fmt.Sprintf("%d:%d", st.Uid, st.Gid)
 }
 
-func readTree(t *testing.T, root string, ownership bool) []treeEntry {
+// treeOpts are the invocation flags the tree comparison reads — the
+// properties a case can ADD to it, each off unless it asks. A struct
+// rather than a parameter per flag: two adjacent bools at four call sites
+// is a transposition waiting to happen, and the next property is then a
+// field rather than another argument.
+type treeOpts struct {
+	ownership bool
+	sparse    bool
+}
+
+func treeOptsOf(inv invocation) treeOpts {
+	return treeOpts{ownership: inv.ownership, sparse: inv.sparse}
+}
+
+func readTree(t *testing.T, root string, opts treeOpts) []treeEntry {
 	t.Helper()
-	return readTreeInto(t, root, "", map[[2]uint64]int{}, ownership)
+	return readTreeInto(t, root, "", map[[2]uint64]int{}, opts)
 }
 
 // readTreeInto is readTree with each name prefixed and the hard-link
@@ -1077,7 +1152,7 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	return opened
 }
 
-func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, ownership bool) []treeEntry {
+func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, opts treeOpts) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
 	var out []treeEntry
@@ -1093,8 +1168,8 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 			return nil
 		}
 		mode := info.Mode()
-		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode)}
-		if ownership {
+		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
+		if opts.ownership {
 			e.owner = ownerOf(t, path, info)
 		}
 		if was, ok := opened[path]; ok {
@@ -1115,6 +1190,11 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 			}
 		case mode.IsRegular():
 			e.group = linkGroup(info, groups)
+			if opts.sparse {
+				if st, ok := info.Sys().(*syscall.Stat_t); ok {
+					e.blocks = st.Blocks
+				}
+			}
 			if info.Size() > 1<<22 {
 				e.content = fmt.Sprintf("<%d bytes>", info.Size())
 			} else {
@@ -1420,10 +1500,10 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			inv.prep(t)
 			got := inv.run(t, ours, util)
 			diffArtifacts(t, util, inv, wantFiles, inv.readArtifacts(t), "gnu", "fern")
-			if !bytes.Equal(want.stdout, got.stdout) {
+			if !sameOutput(inv, want.stdout, got.stdout) {
 				t.Errorf("stdout differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stdout), quote(got.stdout))
 			}
-			if !bytes.Equal(want.stderr, got.stderr) {
+			if !sameOutput(inv, want.stderr, got.stderr) {
 				t.Errorf("stderr differs for %s %s\n gnu: %s\nfern: %s", util, quoteArgs(inv.args), quote(want.stderr), quote(got.stderr))
 			}
 			if want.how() != got.how() {
@@ -1434,6 +1514,28 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			}
 		})
 	}
+}
+
+// sameOutput compares one captured stream. A case that set `unordered`
+// has its lines sorted first, which is the whole of what that field does;
+// every other case is compared byte for byte.
+func sameOutput(inv invocation, want, got []byte) bool {
+	if !inv.unordered {
+		return bytes.Equal(want, got)
+	}
+	return bytes.Equal(sortedLines(want), sortedLines(got))
+}
+
+// sortedLines rewrites a stream with its lines in sorted order. A trailing
+// newline is preserved by splitting on it: "a\nb\n" is two lines and an
+// empty tail, and the tail rejoins so a stream that did not end in a
+// newline still differs from one that did.
+func sortedLines(b []byte) []byte {
+	parts := strings.Split(string(b), "\n")
+	tail := parts[len(parts)-1]
+	lines := parts[:len(parts)-1]
+	sort.Strings(lines)
+	return []byte(strings.Join(append(lines, tail), "\n"))
 }
 
 // treeKind names the entry kind in one word.

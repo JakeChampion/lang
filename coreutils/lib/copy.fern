@@ -1,0 +1,1137 @@
+// copy.fern — the recursive copy engine.
+//
+// GNU keeps one `copy()` behind `cp`, `mv`'s cross-device fallback and
+// `install`, and the three share every question it answers: what the
+// destination already is, whether to ask before replacing it, which
+// attributes follow the bytes, how a hole in the source reaches the copy.
+// This is that engine. `cp` is its first caller; `mv`'s EXDEV path and
+// `install` are the next two, which is why nothing here knows a utility
+// name — diagnostics are prefixed by `gnu.error`, which reads argv[0].
+//
+// Behaviours were measured from GNU coreutils 9.4; no GNU source was read.
+//
+// WHAT IS NOT HERE, and why it is absent rather than approximated:
+//
+//   - reflink (FICLONE). There is no clone primitive, so `--reflink=always`
+//     can only report the failure GNU reports on a filesystem that cannot
+//     clone. On ext4 and overlayfs that IS GNU's answer; on btrfs or XFS it
+//     is not, and the primitive is what closes the gap.
+//   - copy_file_range offload and SEEK_HOLE probing. Both are what GNU's
+//     `--debug` line NAMES, so that line describes GNU's internals rather
+//     than the copy's result. `sparse_auto` here reads `blocks * 512 <
+//     size` — the same crude heuristic GNU's own `--help` documents for
+//     `--sparse=auto` — and writes a hole wherever a block reads as zero.
+//   - SELinux contexts and xattrs. `--preserve=context,xattr` parses and
+//     carries nothing, because there is no primitive for either.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./gnu";
+import "./mode";
+import "./listing";
+
+// ---- what to preserve ------------------------------------------------------
+//
+// One field per `--preserve` attribute. `context` and `xattr` are held so
+// the option parses and reports faithfully; nothing reads them yet.
+pub struct Attrs { mode: boolean, ownership: boolean, timestamps: boolean, links: boolean, context: boolean, xattr: boolean, mode_declined: boolean }
+
+pub function attrs_none(): Attrs {
+  return Attrs { mode: false, ownership: false, timestamps: false, links: false, context: false, xattr: false, mode_declined: false };
+}
+
+// `-p` is `--preserve=mode,ownership,timestamps`, and `-a` adds the rest.
+pub function attrs_p(): Attrs {
+  return Attrs { mode: true, ownership: true, timestamps: true, links: false, context: false, xattr: false, mode_declined: false };
+}
+
+pub function attrs_all(): Attrs {
+  return Attrs { mode: true, ownership: true, timestamps: true, links: true, context: true, xattr: true, mode_declined: false };
+}
+
+// The `--preserve` / `--no-preserve` argument list, in the order GNU prints
+// it when the value is rejected.
+pub function attr_names(): string[] {
+  return ["mode", "timestamps", "ownership", "links", "context", "xattr", "all"];
+}
+
+pub function attrs_set(a: Attrs, which: i32, on: boolean): Attrs {
+  if (which == 0) {
+    // Declining the mode is a state of its own: create_mode then reads
+    // the TYPE's default rather than the source's bits.
+    return Attrs { ...a, mode: on, mode_declined: !on };
+  } else if (which == 1) {
+    return Attrs { ...a, timestamps: on };
+  } else if (which == 2) {
+    return Attrs { ...a, ownership: on };
+  } else if (which == 3) {
+    return Attrs { ...a, links: on };
+  } else if (which == 4) {
+    return Attrs { ...a, context: on };
+  } else if (which == 5) {
+    return Attrs { ...a, xattr: on };
+  }
+  return Attrs { mode: on, timestamps: on, ownership: on, links: on, context: on, xattr: on, mode_declined: !on };
+}
+
+// ---- how a symbolic link is treated ----------------------------------------
+//
+// The default is NOT "follow everywhere": a symlink named ON THE COMMAND
+// LINE is followed, and one found while walking a tree is copied as a link.
+// `-L` follows both, `-P` neither, `-H` is the default stated outright.
+pub function deref_never(): i32 {
+  return 0;
+}
+
+pub function deref_cmdline(): i32 {
+  return 1;
+}
+
+pub function deref_always(): i32 {
+  return 2;
+}
+
+// ---- what to do about an existing destination -------------------------------
+pub function ask_yes(): i32 {
+  return 0;
+}
+
+pub function ask_prompt(): i32 {
+  return 1;
+}
+
+pub function ask_never(): i32 {
+  return 2;
+}
+
+pub function update_all(): i32 {
+  return 0;
+}
+
+pub function update_none(): i32 {
+  return 1;
+}
+
+pub function update_older(): i32 {
+  return 2;
+}
+
+pub function update_names(): string[] {
+  return ["all", "none", "older"];
+}
+
+pub function update_values(): i32[] {
+  return [update_all(), update_none(), update_older()];
+}
+
+// ---- sparse and reflink ------------------------------------------------------
+pub function sparse_never(): i32 {
+  return 0;
+}
+
+pub function sparse_auto(): i32 {
+  return 1;
+}
+
+pub function sparse_always(): i32 {
+  return 2;
+}
+
+pub function sparse_names(): string[] {
+  return ["never", "auto", "always"];
+}
+
+pub function sparse_values(): i32[] {
+  return [sparse_never(), sparse_auto(), sparse_always()];
+}
+
+pub function reflink_never(): i32 {
+  return 0;
+}
+
+pub function reflink_auto(): i32 {
+  return 1;
+}
+
+pub function reflink_always(): i32 {
+  return 2;
+}
+
+// `--reflink`'s list is NOT in the same order as `--sparse`'s: measured,
+// a rejected value prints 'auto', 'always', 'never'.
+pub function reflink_names(): string[] {
+  return ["auto", "always", "never"];
+}
+
+pub function reflink_values(): i32[] {
+  return [reflink_auto(), reflink_always(), reflink_never()];
+}
+
+// ---- the engine's configuration ---------------------------------------------
+//
+// One value per question the walk asks, filled in by the calling utility's
+// option scan. Nothing here is mutated during a copy.
+pub struct Cfg { attrs: Attrs, recursive: boolean, deref: i32, hard_link: boolean, sym_link: boolean, force: boolean, ask: i32, update: i32, backups: boolean, control: i32, suffix: string, verbose: boolean, debug: boolean, one_fs: boolean, attributes_only: boolean, copy_contents: boolean, remove_destination: boolean, sparse: i32, reflink: i32 }
+
+pub function cfg_new(): Cfg {
+  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_never() };
+}
+
+// ---- the walk's state --------------------------------------------------------
+//
+// Threaded rather than global: the output handle so a `-v` line is buffered
+// with everything else, the exit status so one failed operand costs the
+// status and not the run, the hard-link table `--preserve=links` fills in,
+// and the device `-x` holds the walk to.
+pub struct State { out: io_buffered.BufWriter, status: i32, link_dev: i64[], link_ino: i64[], link_dest: string[], root_dev: i64, made_dev: i64[], made_ino: i64[], top_src: string, top_dest: string, aborted: boolean }
+
+pub function state_new(o: io_buffered.BufWriter): State {
+  return State { out: o, status: 0, link_dev: [], link_ino: [], link_dest: [], root_dev: 0 - 1, made_dev: [], made_ino: [], top_src: "", top_dest: "", aborted: false };
+}
+
+function fail(s: State, msg: string): State {
+  // Through `error_out` rather than `error`: the buffered stdout is
+  // flushed ahead of the diagnostic, which is what gnulib's error()
+  // does. Without it a `-v` line describing the copy that then failed
+  // arrives AFTER the failure whenever both streams are one pipe.
+  return State { ...s, out: gnu.error_out(s.out, msg), status: 1 };
+}
+
+// ---- stat, in the two forms the engine needs ---------------------------------
+//
+// `Info` is the subset of FileStat the copy acts on, plus the answer to "is
+// this a symlink", which FileStat states only by both kind flags being
+// false under `lstat`.
+struct Info { ok: boolean, err: string, is_dir: boolean, is_file: boolean, is_link: boolean, size: i64, mode: u32, nlink: u32, uid: u32, gid: u32, dev: i64, rdev: i64, ino: i64, blksize: i64, blocks: i64, atime: i64, atime_nsec: i64, mtime: i64, mtime_nsec: i64 }
+
+function no_info(text: string): Info {
+  return Info { ok: false, err: text, is_dir: false, is_file: false, is_link: false, size: 0, mode: 0, nlink: 0, uid: 0, gid: 0, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0 };
+}
+
+// S_IFMT >> 12, so the type nibble is one comparison rather than a mask
+// per kind.
+function type_nibble(mode: u32): i32 {
+  return (mode / 4096 % 16) as i32;
+}
+
+function is_link_mode(mode: u32): boolean {
+  return type_nibble(mode) == 10;
+}
+
+pub function is_fifo_mode(mode: u32): boolean {
+  return type_nibble(mode) == 1;
+}
+
+pub function is_chr_mode(mode: u32): boolean {
+  return type_nibble(mode) == 2;
+}
+
+pub function is_blk_mode(mode: u32): boolean {
+  return type_nibble(mode) == 6;
+}
+
+pub function is_sock_mode(mode: u32): boolean {
+  return type_nibble(mode) == 12;
+}
+
+function info_of(st: FileStat, linkish: boolean): Info {
+  return Info { ok: true, err: "", is_dir: st.is_dir, is_file: st.is_file, is_link: linkish && is_link_mode(st.mode), size: st.size, mode: st.mode, nlink: st.nlink, uid: st.uid, gid: st.gid, dev: st.dev, rdev: st.rdev, ino: st.ino, blksize: st.blksize, blocks: st.blocks, atime: st.atime, atime_nsec: st.atime_nsec, mtime: st.mtime, mtime_nsec: st.mtime_nsec };
+}
+
+function stat_of(path: string): Info {
+  match (stat(path)) {
+    Ok(st) => {
+      return info_of(st, false);
+    },
+    Err(e) => {
+      return no_info(gnu.io_error_text(e));
+    }
+  }
+}
+
+function lstat_of(path: string): Info {
+  match (lstat(path)) {
+    Ok(st) => {
+      return info_of(st, true);
+    },
+    Err(e) => {
+      return no_info(gnu.io_error_text(e));
+    }
+  }
+}
+
+// The source's stat, under the dereference rule that applies at this depth.
+// `top` says the name came from the command line, which is the whole of
+// what `-H` distinguishes.
+function source_info(cfg: Cfg, path: string, top: boolean): Info {
+  if (cfg.deref == deref_always()) {
+    return stat_of(path);
+  }
+  if (cfg.deref == deref_cmdline() && top) {
+    return stat_of(path);
+  }
+  return lstat_of(path);
+}
+
+// ---- the permission bits ------------------------------------------------------
+//
+// The low twelve: setuid, setgid, sticky and the nine rwx bits.
+function perm_bits(mode: u32): i32 {
+  return (mode % 4096) as i32;
+}
+
+// What a FRESH destination is created with. Without `--preserve=mode` the
+// umask filters the source's bits, exactly as an `open` with that mode
+// would; with it the mode is applied verbatim afterwards, so the creation
+// mode only has to be permissive enough to write through.
+function create_mode(cfg: Cfg, src: Info): i32 {
+  if (cfg.attrs.mode) {
+    return perm_bits(src.mode);
+  }
+  if (cfg.attrs.mode_declined) {
+    // `--no-preserve=mode`: the source's bits are not consulted at all.
+    // Measured — a 0777 source lands 0644 under umask 022, which is the
+    // 0666 an `open` would have created, not 0777 filtered.
+    var deflt: i32 = 438;
+    if (src.is_dir) {
+      deflt = 511;
+    }
+    return deflt & mode.complement(current_umask());
+  }
+  return perm_bits(src.mode) & mode.complement(current_umask());
+}
+
+// POSIX has no read-only umask, so reading it is a set of zero and a set
+// back. Process-wide state for the two calls in between, which is why it
+// is restored immediately and never held across a copy.
+function current_umask(): i32 {
+  var m: i32 = umask(0);
+  umask(m);
+  return m;
+}
+
+// ---- the destination, and what may be done to it -----------------------------
+//
+// Every question about an existing destination is asked here, in GNU's
+// order, because the order is visible: `-n` skips before `-i` can prompt,
+// and a backup is taken only once something is going to replace the name.
+// `Verdict` — go ahead, skip quietly, or stop with the status already set.
+function go(): i32 {
+  return 0;
+}
+
+function skip(): i32 {
+  return 1;
+}
+
+function stop(): i32 {
+  return 2;
+}
+
+// Whether the source is strictly newer than the destination, to the
+// nanosecond — `-u` / `--update=older`'s whole question. Equal times are
+// not newer, so `cp -u` over a file it just wrote does nothing.
+function newer(src: Info, dst: Info): boolean {
+  if (src.mtime != dst.mtime) {
+    return src.mtime > dst.mtime;
+  }
+  return src.mtime_nsec > dst.mtime_nsec;
+}
+
+pub struct Replace { verdict: i32, backup: string, out: io_buffered.BufWriter, status: i32 }
+
+// The decision, for a destination that EXISTS. `--update=none` and `-n`
+// differ only in the warning `cp` prints for the short form, which is the
+// caller's to print: this one just skips.
+function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace {
+  var w: io_buffered.BufWriter = s.out;
+  if (cfg.update == update_none()) {
+    return Replace { verdict: skip(), backup: "", out: w, status: 0 };
+  }
+  if (cfg.update == update_older() && !newer(src, dst)) {
+    return Replace { verdict: skip(), backup: "", out: w, status: 0 };
+  }
+  if (cfg.ask == ask_never()) {
+    return Replace { verdict: skip(), backup: "", out: w, status: 0 };
+  }
+  if (cfg.ask == ask_prompt()) {
+    // The buffered `-v` lines go out first: the question must not appear
+    // before the lines that preceded it.
+    w = gnu.flush(w);
+    if (!gnu.prompt("overwrite " + gnu.quotea(dest) + "? ")) {
+      // A declined prompt is a FAILURE here, unlike `rm`'s: measured at
+      // exit 1 for `n`, for `q` and for end of input.
+      return Replace { verdict: stop(), backup: "", out: w, status: 1 };
+    }
+  }
+  if (cfg.backups) {
+    var name: string = gnu.backup_name(dest, cfg.control, cfg.suffix);
+    match (rename(dest, name)) {
+      Ok(_) => {},
+      Err(e) => {
+        w = gnu.error_out(w, "cannot backup " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+        return Replace { verdict: stop(), backup: "", out: w, status: 1 };
+      }
+    }
+    return Replace { verdict: go(), backup: name, out: w, status: 0 };
+  }
+  if (cfg.remove_destination) {
+    match (remove_file(dest)) {
+      Ok(_) => {},
+      Err(e) => {
+        w = gnu.error_out(w, "cannot remove " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+        return Replace { verdict: stop(), backup: "", out: w, status: 1 };
+      }
+    }
+  }
+  return Replace { verdict: go(), backup: "", out: w, status: 0 };
+}
+
+// ---- the `-v` line ------------------------------------------------------------
+//
+// `'src' -> 'dest'`, with the backup named when one was taken. Printed
+// BEFORE the copy, and for a directory before its contents, which is the
+// order GNU's own output shows.
+function verbose_line(cfg: Cfg, s: State, src: string, dest: string, backup: string): State {
+  if (!cfg.verbose) {
+    return s;
+  }
+  var line: string = gnu.quotea(src) + " -> " + gnu.quotea(dest);
+  if (backup.len() > 0) {
+    line = line + " (backup: " + gnu.quotea(backup) + ")";
+  }
+  return State { ...s, out: gnu.put(s.out, line + "\n") };
+}
+
+// `--debug`'s second line. GNU's names ITS OWN strategy — copy_file_range
+// offload and SEEK_HOLE probing — so reproducing the text would claim a
+// mechanism this copy does not use. Ours states what it actually did.
+function debug_line(cfg: Cfg, s: State, sparse: boolean): State {
+  if (!cfg.debug) {
+    return s;
+  }
+  var how: string = "no";
+  if (sparse) {
+    how = "zero blocks";
+  }
+  return State { ...s, out: gnu.put(s.out, "copy offload: no, reflink: unsupported, sparse detection: " + how + "\n") };
+}
+
+// ---- the bytes ----------------------------------------------------------------
+//
+// One buffer, reused: 128 KiB, which is where the read/write pair stops
+// getting cheaper per byte on every filesystem measured.
+function chunk_size(): i32 {
+  return 131072;
+}
+
+// Whether a hole in the source should stay a hole in the copy.
+//
+// `--sparse=auto` is the default, and GNU's own `--help` calls its test a
+// crude heuristic: a file whose allocated blocks do not cover its length
+// has a hole somewhere. 512 is the unit `st_blocks` is counted in, fixed
+// by POSIX rather than by the filesystem's own block size.
+function wants_holes(cfg: Cfg, src: Info): boolean {
+  if (cfg.sparse == sparse_never()) {
+    return false;
+  }
+  if (cfg.sparse == sparse_always()) {
+    return true;
+  }
+  return src.blocks * 512 < src.size;
+}
+
+function all_zero(data: string): boolean {
+  return __count_byte(data, 0) == data.len();
+}
+
+struct Bytes { ok: boolean, err: string, wrote_hole: boolean }
+
+// The granularity a hole is punched at. A hole is only a hole once it
+// covers a whole filesystem block, so scanning the read buffer in blocks
+// is what makes the copy as sparse as the source: at the 128 KiB read
+// size alone, the one chunk holding a 1 MiB file's three trailing bytes
+// is written in full and the copy costs 256 blocks where GNU's costs 8.
+// `blksize` is what `stat` reports; the fallback is the usual 4 KiB, and
+// an absurd value is ignored rather than trusted.
+function hole_block(src: Info): i32 {
+  var bs: i32 = src.blksize as i32;
+  if (bs < 512 || bs > 1048576) {
+    return 4096;
+  }
+  return bs;
+}
+
+// One run of the read buffer: `[from, to)`, all zero or not.
+struct Run { to: i32, zero: boolean }
+
+function next_run(data: string, from: i32, bs: i32): Run {
+  var zero: boolean = run_is_zero(data, from, bs);
+  var at: i32 = from + piece_len(data, from, bs);
+  while (at < data.len() && run_is_zero(data, at, bs) == zero) {
+    at = at + piece_len(data, at, bs);
+  }
+  return Run { to: at, zero: zero };
+}
+
+function piece_len(data: string, from: i32, bs: i32): i32 {
+  if (data.len() - from < bs) {
+    return data.len() - from;
+  }
+  return bs;
+}
+
+function run_is_zero(data: string, from: i32, bs: i32): boolean {
+  var end: i32 = from + piece_len(data, from, bs);
+  var piece: string = slice_unchecked(data, from, end) + "";
+  return __count_byte(piece, 0) == piece.len();
+}
+
+function write_all(w: Writer, data: string, from: i32, to: i32): string {
+  var off: i32 = from;
+  while (off < to) {
+    var piece: string = slice_unchecked(data, off, to) + "";
+    match (w.write_some(piece)) {
+      Err(e) => {
+        return gnu.io_error_text(e);
+      },
+      Ok(n) => {
+        if (n == 0 as i64) {
+          off = to;
+        } else {
+          off = off + n as i32;
+        }
+      }
+    }
+  }
+  return "";
+}
+
+// `src` -> `dest`, the data only. The destination handle is already open
+// and positioned at zero; `holes` says a run of zeros may be seeked over
+// instead of written.
+function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): Bytes {
+  var wrote_hole: boolean = false;
+  var ended_in_hole: boolean = false;
+  while (true) {
+    match (r.read_chunk(chunk_size())) {
+      Err(e) => {
+        return Bytes { ok: false, err: gnu.io_error_text(e), wrote_hole: wrote_hole };
+      },
+      Ok(data) => {
+        if (data.len() == 0) {
+          break;
+        }
+        if (!holes) {
+          var werr: string = write_all(w, data, 0, data.len());
+          if (werr.len() > 0) {
+            return Bytes { ok: false, err: werr, wrote_hole: wrote_hole };
+          }
+          ended_in_hole = false;
+        } else {
+          var at: i32 = 0;
+          while (at < data.len()) {
+            var run: Run = next_run(data, at, bs);
+            if (run.zero) {
+              match (w.seek((run.to - at) as i64, 1)) {
+                Err(e2) => {
+                  return Bytes { ok: false, err: gnu.io_error_text(e2), wrote_hole: wrote_hole };
+                },
+                Ok(_) => {
+                  wrote_hole = true;
+                  ended_in_hole = true;
+                }
+              }
+            } else {
+              var werr2: string = write_all(w, data, at, run.to);
+              if (werr2.len() > 0) {
+                return Bytes { ok: false, err: werr2, wrote_hole: wrote_hole };
+              }
+              ended_in_hole = false;
+            }
+            at = run.to;
+          }
+        }
+      }
+    }
+  }
+  // A seek past the end does not extend the file, so a source ending in a
+  // hole would leave the copy short. The length is what makes the last
+  // hole real.
+  if (ended_in_hole) {
+    match (w.truncate(total)) {
+      Some(e4) => {
+        return Bytes { ok: false, err: gnu.io_error_text(e4), wrote_hole: wrote_hole };
+      },
+      None => {}
+    }
+  }
+  return Bytes { ok: true, err: "", wrote_hole: wrote_hole };
+}
+
+// existing_mode: what to apply to an EXISTING destination — the source's
+// bits when `--preserve=mode` asked, and "leave it alone" otherwise.
+function existing_mode(cfg: Cfg, src: Info): i32 {
+  if (cfg.attrs.mode) {
+    return perm_bits(src.mode);
+  }
+  return 0 - 1;
+}
+
+// ---- the attributes -----------------------------------------------------------
+//
+// Applied AFTER the contents, and in this order, because each step can
+// undo the one before it: writing bytes moves mtime, and a chown clears
+// setuid and setgid on most kernels, so ownership goes before mode and
+// the timestamps go last.
+// `want_mode` below zero means LEAVE THE MODE ALONE — an existing
+// destination keeps its own permissions, which is what every caller that
+// decided not to preserve the mode wants. The sentinel is the callers'
+// already; the chmod used to ignore it and set the source's bits anyway,
+// so `cp --preserve=timestamps src taken` re-moded `taken`.
+function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32): State {
+  var st: State = s;
+  if (cfg.attrs.ownership) {
+    match (chown_at(dest, src.uid as i32, src.gid as i32, false)) {
+      Ok(_) => {},
+      Err(e) => {
+        st = fail(st, "failed to preserve ownership for " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  if (want_mode >= 0) {
+    match (chmod(dest, want_mode)) {
+      Ok(_) => {},
+      Err(e2) => {
+        st = fail(st, "cannot change permissions of " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2));
+      }
+    }
+  }
+  if (cfg.attrs.timestamps) {
+    match (set_file_times(dest, src.atime, src.atime_nsec, src.mtime, src.mtime_nsec, 0)) {
+      Ok(_) => {},
+      Err(e3) => {
+        st = fail(st, "preserving times for " + gnu.quotea(dest) + ": " + gnu.io_error_text(e3));
+      }
+    }
+  }
+  return st;
+}
+
+// ---- the hard-link table -------------------------------------------------------
+//
+// `--preserve=links` reproduces the link STRUCTURE inside one copy: the
+// second name reaching an inode already copied becomes a link to the first
+// copy rather than a second copy. Keyed on (dev, ino) because an inode
+// number alone is only unique per filesystem.
+function link_lookup(s: State, src: Info): string {
+  var i: i32 = 0;
+  while (i < s.link_ino.len()) {
+    if (s.link_ino[i] == src.ino && s.link_dev[i] == src.dev) {
+      return s.link_dest[i];
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+function link_record(s: State, src: Info, dest: string): State {
+  return State { ...s, link_dev: s.link_dev.append(src.dev), link_ino: s.link_ino.append(src.ino), link_dest: s.link_dest.append(dest) };
+}
+
+// ---- one regular file -----------------------------------------------------------
+function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
+  var st: State = s;
+  // `--reflink=always` asks for a clone and accepts nothing else. There is
+  // no clone primitive, so the answer is the one GNU gives on a filesystem
+  // that cannot clone — which is every filesystem this is tested on, and
+  // the wrong answer on btrfs or XFS until the primitive exists.
+  if (cfg.reflink == reflink_always()) {
+    return fail(st, "failed to clone " + gnu.quotea(dest) + " from " + gnu.quotea(src_path) + ": Operation not supported");
+  }
+  var want_mode: i32 = create_mode(cfg, src);
+  if (existed && !cfg.attrs.mode) {
+    // An existing destination keeps its own permissions: the file is
+    // truncated in place, never recreated, so nothing re-derives them.
+    want_mode = 0 - 1;
+  }
+  if (cfg.attributes_only) {
+    // The data is not copied. A destination that already exists keeps
+    // both its contents and its mode; a fresh one is created empty.
+    if (!existed) {
+      match (open_writer(dest)) {
+        Err(e) => {
+          return fail(st, "cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+        },
+        Ok(w) => {
+          match (w.close()) {
+            Some(_) => {},
+            None => {}
+          }
+        }
+      }
+      return apply_attrs(cfg, st, src, dest, create_mode(cfg, src));
+    }
+    if (cfg.attrs.mode || cfg.attrs.ownership || cfg.attrs.timestamps) {
+      return apply_attrs(cfg, st, src, dest, existing_mode(cfg, src));
+    }
+    return st;
+  }
+  // A destination that is a symlink to something that does not exist is
+  // refused OUTRIGHT, before the open: writing through it would create the
+  // target, which is not what the operand named. Measured — GNU says so in
+  // its own words, and `-f` does NOT override it.
+  if (dangling_symlink(dest)) {
+    return fail(st, "not writing through dangling symlink " + gnu.quotea(dest));
+  }
+  match (open_reader(src_path)) {
+    Err(e2) => {
+      return fail(st, "cannot open " + gnu.quotea(src_path) + " for reading: " + gnu.io_error_text(e2));
+    },
+    Ok(r) => {
+      var opened: DestOpen = open_dest(cfg, dest, existed);
+      match (opened.err) {
+        Some(e3) => {
+          match (r.close()) {
+            Some(_) => {},
+            None => {}
+          }
+          return fail(st, e3);
+        },
+        None => {}
+      }
+      match (opened.w) {
+        None => {
+          match (r.close()) {
+            Some(_) => {},
+            None => {}
+          }
+          return fail(st, "cannot create regular file " + gnu.quotea(dest));
+        },
+        Some(w) => {
+          var holes: boolean = wants_holes(cfg, src);
+          var b: Bytes = write_data(r, w, holes, src.size, hole_block(src));
+          match (r.close()) {
+            Some(_) => {},
+            None => {}
+          }
+          match (w.close()) {
+            Some(ce) => {
+              if (b.ok) {
+                b = Bytes { ok: false, err: gnu.io_error_text(ce), wrote_hole: b.wrote_hole };
+              }
+            },
+            None => {}
+          }
+          st = debug_line(cfg, st, holes);
+          if (!b.ok) {
+            return fail(st, "error writing " + gnu.quotea(dest) + ": " + b.err);
+          }
+          if (want_mode >= 0) {
+            return apply_attrs(cfg, st, src, dest, want_mode);
+          }
+          if (cfg.attrs.ownership || cfg.attrs.timestamps) {
+            // The mode was settled above as "leave it": only the other
+            // two attributes are wanted here.
+            return apply_attrs(cfg, st, src, dest, 0 - 1);
+          }
+          return st;
+        }
+      }
+    }
+  }
+}
+
+// `dangling_symlink(path)` — the entry IS a symlink and what it names does
+// not exist. `lstat` sees the link, `stat` follows it, so the pair is the
+// question; neither alone answers it.
+function dangling_symlink(path: string): boolean {
+  var l: Info = lstat_of(path);
+  if (!l.ok || !l.is_link) {
+    return false;
+  }
+  return !stat_of(path).ok;
+}
+
+// The destination handle, or the diagnostic that replaces it.
+//
+// `-f` lives here and nowhere else: its whole meaning is "if the existing
+// destination cannot be OPENED, unlink it and try again", so it is a retry
+// around this one open. Measured against GNU 9.4 on an immutable file,
+// which is the one unopenable-but-present destination a root-run suite can
+// build: without `-f` the answer is `cannot create regular file 'im':
+// Operation not permitted`, and with it the answer moves to the removal —
+// `cannot remove 'im': Operation not permitted`.
+struct DestOpen { w: Option[Writer], err: Option[string] }
+
+function open_dest(cfg: Cfg, dest: string, existed: boolean): DestOpen {
+  match (open_writer(dest)) {
+    Ok(w) => {
+      return DestOpen { w: Some(w), err: None };
+    },
+    Err(e) => {
+      if (!cfg.force || !existed) {
+        return DestOpen { w: None, err: Some("cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e)) };
+      }
+      match (remove_file(dest)) {
+        Err(re) => {
+          return DestOpen { w: None, err: Some("cannot remove " + gnu.quotea(dest) + ": " + gnu.io_error_text(re)) };
+        },
+        Ok(_) => {}
+      }
+      match (open_writer(dest)) {
+        Ok(w2) => {
+          return DestOpen { w: Some(w2), err: None };
+        },
+        Err(e2) => {
+          return DestOpen { w: None, err: Some("cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2)) };
+        }
+      }
+    }
+  }
+}
+
+// ---- one symbolic link ------------------------------------------------------------
+function copy_link(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
+  var st: State = s;
+  match (read_link(src_path)) {
+    Err(e) => {
+      return fail(st, "cannot read symbolic link " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e));
+    },
+    Ok(target) => {
+      if (existed) {
+        match (remove_file(dest)) {
+          Ok(_) => {},
+          Err(_) => {}
+        }
+      }
+      match (create_symlink(target, dest)) {
+        Ok(_) => {},
+        Err(e2) => {
+          return fail(st, "cannot create symbolic link " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2));
+        }
+      }
+      // A link's own mode is not settable and means nothing; only
+      // ownership and times can follow it, and only without dereferencing.
+      if (cfg.attrs.ownership) {
+        match (chown_at(dest, src.uid as i32, src.gid as i32, true)) {
+          Ok(_) => {},
+          Err(_) => {}
+        }
+      }
+      if (cfg.attrs.timestamps) {
+        match (set_file_times(dest, src.atime, src.atime_nsec, src.mtime, src.mtime_nsec, 1)) {
+          Ok(_) => {},
+          Err(_) => {}
+        }
+      }
+      return st;
+    }
+  }
+}
+
+// ---- one FIFO, socket or device node ------------------------------------------------
+//
+// Recreated rather than read: a FIFO's contents are whatever a writer
+// sends, and reading one with no writer blocks forever. `--copy-contents`
+// is what asks for the other reading, and the caller routes that to
+// copy_file instead.
+function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: boolean): State {
+  var st: State = s;
+  if (existed) {
+    match (remove_file(dest)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+  }
+  // glibc's split, not a byte per component: Linux packs a SECOND minor
+  // byte above the major, so `rdev % 256` truncates every node with a
+  // minor of 256 or more. `listing.fern` already had the encoding for
+  // `ls -l`'s device column, so this reuses it rather than restating it.
+  var major: i32 = listing.dev_major(src.rdev as u64) as i32;
+  var minor: i32 = listing.dev_minor(src.rdev as u64) as i32;
+  match (mknod(dest, src.mode as i32, major, minor)) {
+    Ok(_) => {},
+    Err(e) => {
+      return fail(st, "cannot create special file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+    }
+  }
+  return apply_attrs(cfg, st, src, dest, create_mode(cfg, src));
+}
+
+// ---- one directory ----------------------------------------------------------------
+//
+// Created first, then filled, then given its attributes — in that order
+// because writing the contents moves the directory's own mtime, and
+// because a source directory with no write bit would otherwise be
+// impossible to fill. The creation mode therefore always carries owner
+// write and search, and the final mode replaces it once the contents are in.
+// One entry of a directory being walked, carrying the inode the order
+// below sorts on. `ino` is 0 for an entry that vanished between the
+// readdir and the stat, which sorts it first — a race either way, and the
+// copy of it then reports its own `cannot stat`.
+struct DirEnt { name: string, dev: i64, ino: i64, is_dir: boolean }
+
+function dirent_cmp(a: DirEnt, b: DirEnt): i32 {
+  if (a.ino < b.ino) {
+    return 0 - 1;
+  }
+  if (a.ino > b.ino) {
+    return 1;
+  }
+  return 0;
+}
+
+// `walk_order(dir, names)` — the entries of `dir` in the order a copy
+// visits them, which is ASCENDING INODE and not readdir order. Measured:
+// a directory holding `aaa`, `bbb` and a later-created `zzz` is walked
+// `aaa bbb zzz` where readdir hands back `zzz bbb aaa`, and one holding a
+// directory made before two files is walked directory-first — so it is
+// neither the filesystem's order nor names sorted nor directories first.
+//
+// The stat per entry is what readdir's own `d_ino` would give for free;
+// #9317 is the primitive that would remove it.
+function walk_order(dir: string, names: string[]): DirEnt[] {
+  var es: DirEnt[] = [];
+  var i: i32 = 0;
+  while (i < names.len()) {
+    var info: Info = lstat_of(gnu.join_path(dir, names[i]));
+    var dev: i64 = 0;
+    var ino: i64 = 0;
+    if (info.ok) {
+      dev = info.dev;
+      ino = info.ino;
+    }
+    es = es.append(DirEnt { name: names[i], dev: dev, ino: ino, is_dir: info.is_dir });
+    i = i + 1;
+  }
+  return es.sort_by(dirent_cmp);
+}
+
+// `made(st, dev, ino)` — this operand has already CREATED a destination
+// directory with that identity, so a source entry matching it is the copy
+// walking into its own output.
+//
+// Only directories are ever recorded, so only a directory entry need ask:
+// the walk skips this for every file, which is what keeps the scan
+// proportional to the tree's directory count rather than to its size.
+function made(st: State, dev: i64, ino: i64): boolean {
+  var i: i32 = 0;
+  while (i < st.made_ino.len()) {
+    if (st.made_ino[i] == ino && st.made_dev[i] == dev) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean, top: boolean): State {
+  var st: State = s;
+  if (top) {
+    // Each command-line operand gets its own set: the abort below ends
+    // the operand, not the run, and the diagnostic names this operand's
+    // pair however deep in the walk the destination turns up.
+    st = State { ...st, made_dev: [], made_ino: [], top_src: src_path, top_dest: dest, aborted: false };
+  }
+  // The destination is created BEFORE the entry list is read, and that
+  // order is load-bearing rather than tidy. When the destination lies
+  // inside the source, the walk below MEETS IT as one of its own entries,
+  // and recognising it there is the only thing that stops `cp -r d d/sub`
+  // recursing without end. It is also where the into-itself diagnostic
+  // comes from, which is why that line arrives after the copy rather than
+  // before it.
+  if (!existed) {
+    match (create_dir(dest, (perm_bits(src.mode) | 448) & mode.complement(current_umask() & 511))) {
+      Ok(_) => {},
+      Err(e) => {
+        return fail(st, "cannot create directory " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
+      }
+    }
+    // A directory's `-v` line belongs to the CREATION, not to the copy:
+    // measured, `cp -rv s d` with `d` and `d/sub` already there prints
+    // neither `s -> d` nor `s/sub -> d/sub`, only the files under them.
+    st = verbose_line(cfg, st, src_path, dest, "");
+    var mi: Info = lstat_of(dest);
+    st = State { ...st, made_dev: st.made_dev.append(mi.dev), made_ino: st.made_ino.append(mi.ino) };
+  }
+  var entries: string[] = [];
+  var readable: boolean = true;
+  match (read_dir(src_path)) {
+    Err(e2) => {
+      st = fail(st, "cannot read directory " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e2));
+      readable = false;
+    },
+    Ok(names) => {
+      entries = names;
+    }
+  }
+  if (readable) {
+    var order: DirEnt[] = walk_order(src_path, entries);
+    var j: i32 = 0;
+    while (j < order.len()) {
+      if (st.aborted) {
+        break;
+      }
+      if (order[j].is_dir && made(st, order[j].dev, order[j].ino)) {
+        // This entry IS the destination. Reported against the operand's
+        // own names, and the rest of the operand is abandoned — measured,
+        // `cp -r src src/bdir` leaves a sibling of `bdir` uncopied while a
+        // later command-line operand still runs.
+        st = fail(st, "cannot copy a directory, " + gnu.quotea(st.top_src) + ", into itself, " + gnu.quotea(st.top_dest));
+        st = State { ...st, aborted: true };
+      } else {
+        st = copy_one(cfg, st, gnu.join_path(src_path, order[j].name), gnu.join_path(dest, order[j].name), false);
+      }
+      j = j + 1;
+    }
+  }
+  var want: i32 = create_mode(cfg, src);
+  if (existed && !cfg.attrs.mode) {
+    // An existing directory keeps its own permissions, as an existing
+    // file does.
+    if (cfg.attrs.ownership || cfg.attrs.timestamps) {
+      return apply_attrs(cfg, st, src, dest, 0 - 1);
+    }
+    return st;
+  }
+  return apply_attrs(cfg, st, src, dest, want);
+}
+
+// ---- the dispatch -------------------------------------------------------------------
+//
+// `top` says this name came from the command line: it is what `-H`
+// distinguishes, and what `-x` takes its device from.
+pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: boolean): State {
+  var st: State = s;
+  var src: Info = source_info(cfg, src_path, top);
+  if (!src.ok) {
+    return fail(st, "cannot stat " + gnu.quotea(src_path) + ": " + src.err);
+  }
+  if (top && cfg.one_fs) {
+    st = State { ...st, root_dev: src.dev };
+  } else if (cfg.one_fs && src.dev != st.root_dev) {
+    // `-x` stops at a mount point, silently: the entry is simply not part
+    // of the copy.
+    return st;
+  }
+  var dst: Info = lstat_of(dest);
+  var existed: boolean = dst.ok;
+  if (existed && dst.dev == src.dev && dst.ino == src.ino) {
+    return fail(st, gnu.quotea(src_path) + " and " + gnu.quotea(dest) + " are the same file");
+  }
+  if (src.is_dir) {
+    if (!cfg.recursive) {
+      return fail(st, "-r not specified; omitting directory " + gnu.quotea(src_path));
+    }
+    // The type refusal comes FIRST: measured, `cp -r full full/x` prints
+    // only this one, never the into-itself report as well.
+    if (existed && !dst.is_dir) {
+      return fail(st, "cannot overwrite non-directory " + gnu.quotea(dest) + " with directory " + gnu.quotea(src_path));
+    }
+    return copy_dir(cfg, st, src_path, dest, src, existed, top);
+  }
+  if (existed && dst.is_dir) {
+    return fail(st, "cannot overwrite directory " + gnu.quotea(dest) + " with non-directory");
+  }
+  var backup: string = "";
+  if (existed) {
+    var r: Replace = decide(cfg, st, src, dst, dest);
+    st = State { ...st, out: r.out };
+    if (r.verdict == skip()) {
+      return st;
+    }
+    if (r.verdict == stop()) {
+      return State { ...st, status: r.status };
+    }
+    backup = r.backup;
+    // A backup RENAMED the destination away, so nothing is there now.
+    if (backup.len() > 0 || cfg.remove_destination) {
+      existed = false;
+    }
+  }
+  st = verbose_line(cfg, st, src_path, dest, backup);
+  // `-l` and `-s` replace the copy entirely.
+  if (cfg.sym_link) {
+    return make_symlink(st, src_path, dest, existed);
+  }
+  if (cfg.hard_link && !src.is_link) {
+    return make_hardlink(st, src_path, dest, existed);
+  }
+  // `--preserve=links`: a second name for an inode already copied becomes
+  // a link to the first copy.
+  if (cfg.attrs.links && src.nlink > 1) {
+    var first: string = link_lookup(st, src);
+    if (first.len() > 0) {
+      return make_hardlink(st, first, dest, existed);
+    }
+    st = link_record(st, src, dest);
+  }
+  if (src.is_link) {
+    return copy_link(cfg, st, src_path, dest, src, existed);
+  }
+  if (!src.is_file) {
+    if (cfg.copy_contents) {
+      return copy_file(cfg, st, src_path, dest, src, existed);
+    }
+    return copy_special(cfg, st, dest, src, existed);
+  }
+  return copy_file(cfg, st, src_path, dest, src, existed);
+}
+
+// `-s` stores the SOURCE OPERAND TEXT as the link target, so a relative
+// operand only resolves correctly when the link sits in the directory the
+// operand was written against. GNU refuses the rest, naming the
+// destination BARE rather than quoted — the one diagnostic here that does.
+function relative_link_ok(target: string, dest: string): boolean {
+  if (target.len() > 0 && target[0] as i32 == 47) {
+    return true;
+  }
+  var i: i32 = 0;
+  while (i < dest.len()) {
+    if (dest[i] as i32 == 47) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function make_symlink(s: State, target: string, dest: string, existed: boolean): State {
+  var st: State = s;
+  if (!relative_link_ok(target, dest)) {
+    return fail(st, dest + ": can make relative symbolic links only in current directory");
+  }
+  if (existed) {
+    match (remove_file(dest)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+  }
+  match (create_symlink(target, dest)) {
+    Ok(_) => {
+      return st;
+    },
+    Err(e) => {
+      return fail(st, "cannot create symbolic link " + gnu.quotea(dest) + " to " + gnu.quotea(target) + ": " + gnu.io_error_text(e));
+    }
+  }
+}
+
+function make_hardlink(s: State, target: string, dest: string, existed: boolean): State {
+  var st: State = s;
+  if (existed) {
+    match (remove_file(dest)) {
+      Ok(_) => {},
+      Err(_) => {}
+    }
+  }
+  match (create_link(target, dest)) {
+    Ok(_) => {
+      return st;
+    },
+    Err(e) => {
+      return fail(st, "cannot create hard link " + gnu.quotea(dest) + " to " + gnu.quotea(target) + ": " + gnu.io_error_text(e));
+    }
+  }
+}
