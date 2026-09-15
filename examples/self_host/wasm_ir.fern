@@ -8665,7 +8665,7 @@ pub function map_helpers(): string {
     o = o + "    (drop (call $__fern_arr_dec (local.get $oo)))\n";
     o = o + "    (drop (call $__fern_arr_dec (local.get $ou))))\n";
     // $__fern_map_set(box, k, v) → box. Grows at load factor 3/4.
-    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (param $vconsume i32) (param $kconsume i32) (result i32)\n";
+    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (param $vconsume i32) (param $kconsume i32) (param $vdeep i32) (result i32)\n";
     o = o + "    (local $cap i32) (local $keys i32) (local $vals i32) (local $used i32) (local $idx i32) (local $kis i32) (local $ff i32) (local $u i32) (local $slot i32)\n";
     // Record value-is-string on the box (homogeneous value type, so always the
     // same flag) so $__fern_map_release knows to release the value column.
@@ -8723,7 +8723,14 @@ pub function map_helpers(): string {
     // before storing, then construction-inc the NEW one, so the net rc is
     // balanced (no leak of the replaced value, no over-release of the new).
     o = o + "          (if (local.get $vis) (then\n";
-    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    // $vdeep marks a string[] VALUE column (#9303): the shallow dec frees the
+    // superseded value's BUFFER and strands its element strings, because the
+    // elements are only ever dec'd on a deep release. $__fern_arr_dec_ptr is
+    // that deep release, and it is what $__fern_map_release_vsa already uses
+    // for the same column — an overwrite owes what the map's death owes.
+    o = o + "            (if (local.get $vdeep)\n";
+    o = o + "              (then (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4)))))))\n";
+    o = o + "              (else (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))))\n";
     // Same $vconsume exception as the insert path: a fresh replacement value is
     // TAKEN by the map (no inc) so release's dec balances it; the OLD value is
     // released above unconditionally when vis.
@@ -9507,7 +9514,7 @@ pub function map_w64_helpers(): string {
     o = o + "    (local $cell i32)\n";
     o = o + "    (local.set $cell (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i64.store (local.get $cell) (local.get $v))\n";
-    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (local.get $kcons))))\n";
+    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (local.get $kcons) (i32.const 0))))\n";
     // $__fern_map_get_or_w64(box, k, d) → the 8-byte value at k, or default d on a
     // miss. vals[idx] holds the cell pointer; deref it with i64.load.
     o = o + "  (func $__fern_map_get_or_w64 (param $box i32) (param $k i32) (param $d i64) (result i64)\n";
@@ -13501,7 +13508,13 @@ function emit_wasm_map_set(o: ir.Op, parts: string[]): string[] {
     if (o.width % 2 == 1) { vcons = "1"; }
     var kcons: string = "0";
     if ((o.width / 2) % 2 == 1) { kcons = "1"; }
-    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    call $__fern_map_set\n");
+    // vkind (width bits 4/5, #9303) names what the map owns in its value
+    // column. Only kind 2 — a column of string ARRAYS — needs more than the
+    // shallow dec on an overwrite, so that is the one this flag carries; the
+    // register backends read the same two bits for the same purpose.
+    var vdeep: string = "0";
+    if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
+    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    i32.const " + vdeep + "\n    call $__fern_map_set\n");
 
     return parts;
 }
