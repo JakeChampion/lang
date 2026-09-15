@@ -871,6 +871,74 @@ function main(): i32 {
 }`,
 	},
 	{
+		// A GENERIC enum built inline in ARGUMENT position. The construction
+		// expression typed as the bare `Holder` — the variant table knows the
+		// enum's name, not the instantiation — so its drop took dropFnNameFor's
+		// concrete path, where enumNeedsDrop declines the un-cloned decl's
+		// ParamType payload, and the flat dec that followed reclaimed neither
+		// the box nor its payload. 2 blocks stranded per call, scaling with the
+		// payload: 19200 B over 200 rounds at 8 elements, 316800 B at 256
+		// (#9313).
+		//
+		// The same value bound to an ANNOTATED LOCAL first was always clean —
+		// the local's declared type carries the Args — so it is the control
+		// here, in the same program, and both spellings must reclaim.
+		name: "generic_enum_ctor_as_argument",
+		src: `
+import "core/int";
+enum Holder[T] { Has(T), Empty }
+function mk(n: i32): i32[] {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(i); i = i + 1; }
+    return a;
+}
+function probe(h: Holder[i32[]]): i32 {
+    match (h) { Has(xs) => { return xs[1]; }, Empty => { return 0; } }
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var r: i32 = 0;
+    while (r < 60) {
+        got = got + probe(Has(mk(8)));
+        var bound: Holder[i32[]] = Has(mk(8));
+        got = got + probe(bound);
+        r = r + 1;
+    }
+    return (got - 120) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same shape on the BUILTIN generic enums, which reach the drop
+		// through the identical path — `Option[i32[]]` and `Result[i32[], i32]`
+		// are generic decls with ParamType payloads exactly as a user enum is.
+		name: "builtin_generic_enum_ctor_as_argument",
+		src: `
+import "core/int";
+function mk(n: i32): i32[] {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(i); i = i + 1; }
+    return a;
+}
+function opt(o: Option[i32[]]): i32 {
+    match (o) { Some(xs) => { return xs[1]; }, None => { return 0; } }
+}
+function res(r: Result[i32[], i32]): i32 {
+    match (r) { Ok(xs) => { return xs[1]; }, Err(e) => { return e; } }
+}
+function main(): i32 {
+    var got: i32 = 0;
+    var r: i32 = 0;
+    while (r < 60) {
+        got = got + opt(Some(mk(8)));
+        got = got + res(Ok(mk(8)));
+        r = r + 1;
+    }
+    return (got - 120) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Tuple of arrays, destructured.
 		name: "tuple_of_arrays",
 		src: `
