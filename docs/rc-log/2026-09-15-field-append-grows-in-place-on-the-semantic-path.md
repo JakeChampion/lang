@@ -130,8 +130,32 @@ same on both paths with allocs and frees balanced: 1,044 each on this branch,
 where main's semantic build made 3,049 allocations for the same program and
 the AST lowering leaks 928 bytes of its own.
 
-The compiler built through the path: see the table in
-`SELFHOST-SEMANTIC-SOURCE.md` → "The field append, admitted".
+The compiler built through the path, on the 200-declaration input and on
+`lexer.fern` (the full table is in `SELFHOST-SEMANTIC-SOURCE.md` → "The
+field append, admitted"): bytes copied through the cliff 5.43 GB → 1.50 GB
+and 9.10 GB → 2.93 GB, peak 3.7 GB → 5.6 GB and 5.8 GB → 6.9 GB.
+
+**The peak rising while the copies fall is churn, not a leak**, and it took
+an instrumented build to say so: `FERN_LEAKCHECK=1` on the produced compiler
+shows it leaving less live at exit than the AST-built one (22.5 MB against
+67.0 MB; 29.6 MB against 142.5 MB) and freeing four times as much. Peak RSS
+cannot distinguish the two; read it beside the leak line or not at all.
+
+## What the measurement found that it was not looking for (#9407)
+
+The produced compiler's output on `lexer.fern` differs from the AST-built
+compiler's, and did before this change: main's own semantic build emits the
+same 150 lines. Three `var b: i32 = 0 - 1;` in `match_multipunct` come out
+as `xorl %eax, %eax; movq $o, %rcx; subq %rcx, %rax` instead of
+`movq $-1, %rax`. The `$o` is the tell: a constant op's immediate is printed
+from its `str` field only when that field is non-empty, and
+`const_i32_readable` refuses to fold such an op — so the Op box for that
+`1` had its `str` word overwritten, which is a box freed and reissued while
+the array still named it. The 200-declaration input's output is
+byte-identical, so the shape needs something `lexer.fern` has. Every earlier
+measurement of this compiler read peak and exit code; none compared the
+output, and exit 0 with the wrong assembly is what that misses. Compare the
+emitted text against the AST build's on every measurement from here on.
 
 ## Traps
 

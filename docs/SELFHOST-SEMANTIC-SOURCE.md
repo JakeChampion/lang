@@ -1633,7 +1633,36 @@ The 40,000-push reproducer through a borrowed record: 11.1 s and 8.9 GB to
 60 ms, matching the AST lowering. The compiler built through the path,
 against the two compilers of the section above:
 
-FIELD_APPEND_TABLE
+| compiler | 200 declarations: peak | copies through the cliff | `lexer.fern`: peak | copies through the cliff |
+|---|---|---|---|---|
+| AST-built | 75 MB | 15,645, 8.9 MB | 137 MB | 16,396, 36 MB |
+| semantic, before (#9398 in) | 4,067 MB | 30,765, 5.45 GB | 10,726 MB | — |
+| semantic, the append admitted | 3,681 MB | 46,049, 5.43 GB | 5,819 MB | 58,214, 9.10 GB |
+| semantic, the handed field too | 5,580 MB | 25,453, 1.50 GB | 6,892 MB | 25,364, 2.93 GB |
+
+Every row exit 0. The copies are `FERN_CLIFF_REPORT=1`'s count and bytes;
+the peaks are sampled RSS. Two things the table says that a peak alone
+would not:
+
+- **The bytes copied fell 3.6x on both inputs, and the peak did not.** That
+  is not a leak: under `FERN_LEAKCHECK=1` the produced compiler leaves LESS
+  live at exit than the AST-built one — 22.5 MB against 67.0 MB on the 200
+  declarations, 29.6 MB against 142.5 MB on `lexer.fern` — and frees 1.66 M
+  of 1.90 M allocations where the AST build frees 0.38 M of 1.31 M. The
+  peak is churn the size-class freelist does not recycle, the shape the
+  §"What stops it being the FIXPOINT" note already named. The copies that
+  remain (25,000 on either input, 1.5–2.9 GB) are the next thing to
+  attribute, with the same instrument.
+- **The produced compiler's ANSWER on `lexer.fern` is wrong**, and was
+  before either change: the semantic build of main at `b15a016` emits the
+  same 150-line divergence from the AST build, at three sites in
+  `match_multipunct`, each a `var b: i32 = 0 - 1;` that the AST build folds
+  to `movq $-1` and the produced build emits as `xorl; movq $o, %rcx; subq`.
+  The constant op's `str` field — empty for a real constant, and what
+  `const_i32_readable` refuses on — read back as a one-byte string, so the
+  Op's box was reissued out from under it. The 200-declaration input's
+  output is byte-identical. #9407 tracks it; it is the next fixpoint blocker, ahead
+  of the memory.
 
 ### The leaves that are left, by measured size
 
