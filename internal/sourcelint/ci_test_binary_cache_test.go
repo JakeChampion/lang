@@ -51,7 +51,6 @@ func TestCITestBinaryCache(t *testing.T) {
 			t.Parallel()
 			root, cache := t.TempDir(), t.TempDir()
 			cacheTestWrite(t, filepath.Join(root, "source.go"), "package fixture\n")
-			cacheTestWrite(t, filepath.Join(root, ".gitignore"), "*.test\n")
 			cacheTestGit(t, root, "init", "-q")
 			cacheTestGit(t, root, "add", ".")
 			cacheTestGit(t, root, "commit", "-qm", "initial")

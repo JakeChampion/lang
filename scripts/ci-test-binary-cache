@@ -50,10 +50,10 @@ if [ "$mode" = save ]; then
   exit 0
 fi
 
-[ -f "$cache_dir/input-key" ] && [ "$(cat "$cache_dir/input-key")" = "$key" ] || {
+if [ ! -f "$cache_dir/input-key" ] || [ "$(cat "$cache_dir/input-key")" != "$key" ]; then
   echo "test-binary cache input mismatch or missing manifest" >&2
   exit 1
-}
+fi
 # Validate every file before replacing either output. Never execute cached
 # binaries or interpret filenames supplied by a checksum manifest.
 for file in "${files[@]}"; do
