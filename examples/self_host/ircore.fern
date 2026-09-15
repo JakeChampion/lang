@@ -914,6 +914,15 @@ pub function all_runtime_need_roots(): string[] {
         "arr_str_join", "arr_inc_elems", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+        // The map roots that "maps" does NOT reach. Each is marked directly by
+        // the arm64 emitter, and runtime_need_deps declares no root with any of
+        // them as a dependency — map_delete's own edge points AT maps, pulling
+        // the bundle in behind itself, so the direction is the trap: listing
+        // maps reaches none of these. Same story as isatty and the platform
+        // helpers below, and the same reason nothing noticed — only a
+        // library-only caller finds out, which is now a fixture
+        // (TestSelfHostPerModuleArm64MapDeleteLinks).
+        "map_delete", "map_free_va", "map_free_vsa", "map_hash_seed", "map_vfree",
         "chdir", "signal_mask", "signal_disposition",
         "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
         "read_file_bytes",
