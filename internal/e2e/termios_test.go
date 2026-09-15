@@ -46,10 +46,24 @@ const termiosSource = `function main(): i32 {
             if (t.len() != 24) { return 11; }
             if (t[5] != (3 as i64)) { return 12; }
             var off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
+            // Exercise every control byte, including the end of the ioctl
+            // buffer that a nested allocator's stack frame can overwrite.
+            var i: i32 = 5;
+            while (i < 24) {
+                off = off.with(i, (i + 40) as i64);
+                i = i + 1;
+            }
             match (termios_set(0, 1, off)) { Err(_) => { return 13; }, Ok(_) => {} }
             match (termios_get(0)) {
                 Err(_) => { return 14; },
-                Ok(u) => { if (u[3] != (t[3] - (8 as i64))) { return 15; } }
+                Ok(u) => {
+                    if (u[3] != (t[3] - (8 as i64))) { return 15; }
+                    var j: i32 = 5;
+                    while (j < 24) {
+                        if (u[j] != off[j]) { return 21; }
+                        j = j + 1;
+                    }
+                }
             }
             match (termios_set(0, 1, t)) { Err(_) => { return 16; }, Ok(_) => {} }
             match (termios_get(0)) {
@@ -131,11 +145,8 @@ func TestX86_64Termios(t *testing.T) {
 
 func TestArm64Termios(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
-	if qemu == "" {
-		t.Skip("qemu-aarch64 is not on PATH")
-	}
 	_, bin := termiosCompile(t, "arm64-linux")
-	if code := termiosOnPty(t, exec.Command(qemu, bin)); code != 0 {
+	if code := termiosOnPty(t, runArm64Bin(qemu, bin)); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see termiosSource)", code)
 	}
 }

@@ -16,8 +16,8 @@ name: Test e2e self-host
 # running each test against the binary/package it lives in — so the
 # residuals keep exactly their old coverage.
 #
-# COMPILE PER JOB, NOT ONCE. Every job that runs a prebuilt binary
-# compiles it itself, through .github/actions/build-e2e-binaries. A
+# NO EXTRA BUILD JOB. Independent jobs compile their prebuilt binaries
+# through .github/actions/build-e2e-binaries. A
 # `build` job used to compile once per arch and publish the binaries as
 # an artifact the rest of the lane downloaded — cheaper in CPU, and much
 # more expensive in the thing that actually costs: a `needs:` edge means
@@ -27,13 +27,15 @@ name: Test e2e self-host
 # a ~9-minute admission to a 32-minute one, with every shard behind it
 # inheriting the whole delay.
 #
-# The lane now pays ~40 s of `go test -c` about 27 times instead of once,
-# and every one of those jobs is created at run start. That trade holds
+# The independent jobs are created at run start. That trade holds
 # only while the queue is the binding constraint (it is — jobs are
 # admitted at roughly one every 20-40 seconds) and only while the Go
 # build cache is warm, which is what the restore/save split in
 # .github/actions/setup-fern is for. If either stops being true, a
 # `build` job is the right shape again.
+# The x86 shards already depend on warm, so they reuse verified test binaries
+# published by its load family. This adds no dependency edge. A missing or
+# incompatible bundle falls back to local compilation; ARM builds natively.
 #
 # DRIVER WARM ARTIFACTS (x86). The dominant per-shard cost is not the Go test
 # binary but the self-host DRIVERS: each `*_run.fern` driver statically imports
@@ -256,6 +258,23 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/build-e2e-binaries
+        with:
+          e2e: ${{ matrix.key == 'load' }}
+      # The shards already depend on warm. Publishing here adds no new
+      # scheduling barrier, and the other independent jobs still build locally.
+      - name: prepare shared test binaries
+        if: matrix.key == 'load'
+        id: test-binaries
+        continue-on-error: true
+        run: bash scripts/ci-test-binary-cache save "$RUNNER_TEMP/test-binary-cache"
+      - uses: actions/upload-artifact@v7
+        if: matrix.key == 'load' && steps.test-binaries.outcome == 'success'
+        continue-on-error: true
+        with:
+          name: warm-test-binaries-x86_64
+          path: ${{ runner.temp }}/test-binary-cache
+          retention-days: 1
+          if-no-files-found: error
       - name: warm ${{ matrix.key }} drivers (${{ matrix.drivers }})
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -975,9 +994,17 @@ jobs:
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
+      - name: download shared test binaries
+        if: matrix.host == 'x86_64'
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: warm-test-binaries-x86_64
+          path: ${{ runner.temp }}/test-binary-cache
       - uses: ./.github/actions/build-e2e-binaries
         with:
           e2e: "true"
+          cache-dir: ${{ matrix.host == 'x86_64' && format('{0}/test-binary-cache', runner.temp) || '' }}
       # DOWNLOAD every driver artifact the `warm` jobs published (x86 only) in a
       # single step: `pattern` places each artifact in its own subdirectory of
       # `path` (content-addressed, byte-identical to a fresh compile), so a
