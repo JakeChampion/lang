@@ -47,13 +47,20 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 			if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+			for _, target := range []string{"x86-64-linux", "x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
-					base, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false)
-					got, report := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true)
+					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false)
+					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true)
 					if got != base {
 						t.Fatalf("FERN_SEM_IR changed the answer:\n with = %q\nwithout = %q\nreport: %s",
 							got, base, report)
+					}
+					// The sanitizer leg also reports what the run never
+					// released. The AST lowering is the oracle for that too, so
+					// the produced bodies may free more than it does and never
+					// less.
+					if leak > baseLeak {
+						t.Fatalf("FERN_SEM_IR leaked %d bytes where the AST lowering leaks %d", leak, baseLeak)
 					}
 					// The tally is checked rather than assumed: a body that
 					// silently stops producing keeps the program correct (the
@@ -88,11 +95,19 @@ func semProducedCount(t *testing.T, report string) int {
 }
 
 // semCompileRun compiles src for target with the semantic path on or off, runs
-// the result, and returns "<exit>|<stdout>" plus the compiler's stderr.
-func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool) (string, string) {
+// the result, and returns "<exit>|<stdout>", the compiler's stderr, and the
+// bytes the sanitizer reports unreleased (0 on the legs that do not sanitize).
+func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoot, src, target string, sem bool) (string, string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "prog")
+	// The sanitizer leg is the one that sees a release the answer survives: a
+	// box released while the program still reads it keeps answering correctly
+	// on a quiet allocator, and turns into an abort under quarantine.
+	sanitize := target == "x86-64-sanitize"
+	if sanitize {
+		target = "x86-64-linux"
+	}
 	args := []string{"-target", target, src, stdlibRoot, "-o", out}
 	if target == "wasm32-wasi" {
 		out = filepath.Join(dir, "prog.wat")
@@ -100,6 +115,9 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	}
 	cmd := exec.Command(fernBin, args...)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
+	if sanitize {
+		cmd.Env = append(cmd.Env, "FERN_SANITIZE=1")
+	}
 	if sem {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
 	} else {
@@ -129,8 +147,27 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		}
 		run = exec.Command("wasmtime", "run", out)
 	}
+	var runErr strings.Builder
+	run.Stderr = &runErr
 	stdout, _ := run.Output()
-	return fmt.Sprintf("%d|%s", run.ProcessState.ExitCode(), stdout), stderr.String()
+	return fmt.Sprintf("%d|%s", run.ProcessState.ExitCode(), stdout), stderr.String(), sanitizerLeak(t, runErr.String())
+}
+
+// sanitizerLeak reads the byte count out of the sanitizer's leak line; a run
+// that reports none released everything it allocated.
+func sanitizerLeak(t *testing.T, out string) int {
+	t.Helper()
+	const marker = "fern-sanitizer: leak "
+	at := strings.Index(out, marker)
+	if at < 0 {
+		return 0
+	}
+	rest := out[at+len(marker):]
+	n, err := strconv.Atoi(rest[:strings.Index(rest, " ")])
+	if err != nil {
+		t.Fatalf("unreadable sanitizer leak line %q: %v", rest, err)
+	}
+	return n
 }
 
 // One program per kind of counted unit a produced body has to get right, and
@@ -193,6 +230,25 @@ function seen(words: string[], k: string): i32 {
     return 0;
 }
 function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
+`},
+	// A callee lent a string VIEW can hand that box straight back (#9328).
+	// Both halves are here: `handed(v)` releases in the frame that sliced the
+	// view, and `laundered` hands the box ON, so the frame that sliced it owns
+	// nothing by the time it returns. Only answers are compared, because the
+	// escaping box outlives every release either path emits — it leaks the
+	// same 24 bytes with the path off.
+	{name: "lent-view-handback", atLeast: 4, src: `
+function handed(text: string): string { return text; }
+function laundered(src: string): string {
+    var v: str = slice_unchecked(src, 0, 3);
+    return handed(v);
+}
+function fresh_of(text: string): string { return text + "!"; }
+function main(): i32 {
+    var s: string = "12345 abc";
+    var v: str = slice_unchecked(s, 0, 4);
+    return handed(v).len() + fresh_of(v).len() + laundered(s).len();
+}
 `},
 	// A write back through a capture is refused (#9320), so this module is
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
