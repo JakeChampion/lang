@@ -241,6 +241,14 @@ function main(): i32 {
             // as the production pipeline does before it lowers. The struct
             // pass runs for parity with production; the boundary keys no
             // `__smm_` prefix, so what it folds is refused at the call.
+            // The front end's own enums — JsonValue, IoError and the rest of
+            // builtins.fern — are injected as declarations before lowering, so
+            // a module that names one finds its variants. Without this the
+            // boundary sees an undeclared union, reads no variants for it, and
+            // refuses every declaration that touches one: IoError is the error
+            // arm of every filesystem Result, so the miss is wide and the
+            // refusal it produces is the instrument's, not the boundary's.
+            merged = parser.Module { ...merged, structs: parser.inject_builtin_enums(merged.structs) };
             merged = parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(merged)));
             merged = irlower.lift_lambdas(merged);
             var tab: irlower.StructTab = irlower.struct_tab(merged.structs);

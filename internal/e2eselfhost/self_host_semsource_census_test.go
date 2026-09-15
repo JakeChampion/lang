@@ -120,6 +120,47 @@ function main(): i32 { return used([1, 2]); }
 			"refusal, it is a declaration with nothing to measure.\n%s", shakenReport)
 	}
 
+	// The front end's own enums are injected as declarations before lowering,
+	// and the census has to do it too. Without the injection a module that
+	// names one finds no variants for it, union_layout answers 0, and every
+	// declaration touching it refuses under a name that describes the enum
+	// rather than the miss: IoError is the error arm of every filesystem
+	// Result, so that was 10,336 refusals across the corpus with no construct
+	// behind them. Same failure mode as the dropped-overlay case above, and
+	// the second time the instrument has understated coverage this way.
+	injected := filepath.Join(dir, "injected.fern")
+	writeEntry(t, injected, `function code(e: IoError): i32 {
+    match (e) {
+        NotFound(p) => { return 1; },
+        PermissionDenied(p) => { return 2; },
+        AlreadyExists(p) => { return 3; },
+        InvalidUtf8(p) => { return 4; },
+        Interrupted => { return 5; },
+        Unsupported => { return 6; },
+        Other(p, m) => { return 7; }
+    }
+    return 0;
+}
+function main(): i32 { return code(Interrupted); }
+`)
+	out, err = exec.Command(bin, injected).CombinedOutput()
+	if err != nil {
+		t.Fatalf("census failed on an entry using a builtin enum: %v\n%s", err, out)
+	}
+	injectedReport := string(out)
+	t.Logf("census of an entry matching on IoError:\n%s", injectedReport)
+	for _, refusal := range []string{"unsupported enum type", "unsupported match scrutinee"} {
+		if strings.Contains(injectedReport, refusal) {
+			t.Errorf("census reports %q for a match on IoError: the front end's enums are not "+
+				"injected, so the boundary sees an undeclared union and the refusal is the "+
+				"instrument's rather than the boundary's.\n%s", refusal, injectedReport)
+		}
+	}
+	if got, want := countIn(injectedReport, "lowered"), countIn(injectedReport, "measured"); got != want {
+		t.Errorf("lowered = %d of %d measured; a match over IoError is ordinary variant code and "+
+			"must lower whole.\n%s", got, want, injectedReport)
+	}
+
 	// An import that still does not resolve has to be named, not dropped.
 	orphan := filepath.Join(dir, "orphan.fern")
 	writeEntry(t, orphan, `import "std/definitely_not_a_module";
