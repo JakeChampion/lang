@@ -70,6 +70,15 @@ as the produced bodies freeing more.
 
 ## Measured
 
+The compiler built through the semantic path (7,568 of 8,294 declarations
+produced), on `lexer.fern` and the 200-declaration input: assembly
+byte-identical to the AST build's on both, where the build before this
+differed by 150 lines on `lexer.fern`; its sanitized build compiles
+`lexer.fern` without an abort. The copies cost nothing the instruments read:
+`lexer.fern` 9.4 s at a 6,865 MB peak against 9.2 s and 6,895 MB before, the
+200-declaration input 6.4 s at 5,566 MB against 6.9 s and 5,580 MB, and the
+sanitized build's live-at-exit 29.22 MB against 29.18 MB.
+
 The stored-view reproducer (`lit_int` over a churn of sixty-four strings),
 x86-64, through the rebuilt compiler:
 
