@@ -211,14 +211,11 @@ func TestArm64SSAFsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// The interpreter answers these from Go's syscall package, so it is a fourth
-// implementation and the one an in-language test suite runs under. Its
-// nofollow leg is Linux-only: `syscall.UtimesNano` is the only utimensat the
-// other platforms expose and it hard-codes a zero flags word, so the flag is
-// refused there rather than silently following the link.
+// The interpreter is another implementation and the one an in-language test
+// suite runs under. Its Linux and Darwin syscalls both support nofollow.
 func TestInterpFsMetaPrimitives(t *testing.T) {
 	dir := t.TempDir()
-	noFollow := runtime.GOOS == "linux"
+	noFollow := runtime.GOOS == "linux" || runtime.GOOS == "darwin"
 	if code := runInterpExit(t, fsMetaSource(dir, true, noFollow)); code != 0 {
 		t.Fatalf("exit = %d, want 0 — the code names the step (see fsMetaSource)", code)
 	}
