@@ -5,7 +5,20 @@ import "./astwalk";
 import "./util";
 import "./typeinfo";
 
+// cell_name is the storage a mutated capture is rewritten to. The `$` prefix
+// cannot collide with a user ident, which is what lets a consumer tell a
+// by-reference capture cell from a caller's plain array once the lift has
+// turned both into array parameters (#6185): the MODE is carried in the name,
+// because a ParamDecl carries no mode beyond `own` and a cell is neither owned
+// nor borrowed.
 pub function cell_name(name: string): string { return "$cell$" + name; }
+
+// is_cell_name reports whether `n` names one. The single rule every consumer
+// asks — irlower's `.with` gate and the semantic boundary's refusal — so the
+// producer of the spelling and its readers cannot drift.
+pub function is_cell_name(n: string): boolean {
+    return util.str_has_prefix(n, "$cell$");
+}
 
 pub function site_key(name: string, line: i32, col: i32): string {
     return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);

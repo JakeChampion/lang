@@ -1189,7 +1189,154 @@ flags that say so. The void-`Result` builtins and `target_os` closed, worth
 +10 against their 26, the cell vocabulary +6 against its 34, the 32-bit
 float +8 against its 47, the pointer width +64 against its 46 and the
 borrowed function capture +5 against its 5: each moved the interpreter's
-callers one leaf further in, and the pointer width was the last of them. Then a
+callers one leaf further in, and the pointer width was the last of them. The
 production consumer that lowers produced functions through this pipeline and
-feeds `caller_sigs` to the remaining AST callers — a union result being the
-position that fixture measured a leak at.
+feeds `caller_sigs` to the remaining AST callers is below.
+
+## The production consumer
+
+`examples/self_host/semlower.fern` is where a whole-program emit path asks for
+this pipeline instead of a test driver. `FERN_SEM_IR=1` selects it;
+`FERN_SEM_IR_REPORT=1` prints a line per refusal and a per-module tally.
+Unset, a backend receives what it received before, op for op — the substitution
+is the only thing the flag adds, and the AST lowering still runs and still
+gives the module its eligibility verdict.
+
+All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
+each gained a `_sub` sibling of their gated entry that threads an `ircore.Sub`
+through it, and the old name calls it with `ircore.no_sub()`. The registry set
+inside comes from that value rather than from the caller's own base, since
+`caller_sigs` rewrote rows in it and the emit has to read the same set the
+lowering did.
+
+**The substitution is passed as a VALUE, and that is a size decision rather
+than a taste one.** Calling the producer from inside the three backend modules
+made every driver that links a backend link the pipeline behind it —
+`semsource` + `ssarc` + `ssaunits` + `ssasem` + `semrecords` + `semtypes` +
+`ssalayout` — for a flag it never reads. The driver-size gate (#6826) measured
+eight drivers growing **6.7% to 10.2%**, among them `wasm_run`, `asm_run` and
+`wasm_runio_run`, none of which can select the path at all. With the seam
+inverted those three link **4,096 bytes** more than main, one page of
+alignment, and the CLI carries the 601 KB alone.
+
+Three rules hold a mixed module together, and the third is the one that was
+not obvious:
+
+- **An AST-lowered caller of a produced callee** reads registries derived from
+  that callee's syntax. `ssarc.caller_sigs` rewrites them from the verified
+  types, and the AST lowering runs with the rewritten set — the contract this
+  file's §"The caller contract at the AST boundary" describes.
+- **A produced caller of a produced callee** is the shape the executable
+  fixture already proved.
+- **A produced caller of an AST-lowered callee has no repair at all**, because
+  the callee's parameter modes are whatever the interprocedural fixpoints
+  concluded rather than what its declaration says. So such a body keeps the AST
+  lowering, and dropping it takes its own callers with it: `semlower.prune` is
+  that fixpoint, run over the produced bodies' `call_direct` and `const_func`
+  operands with the runtime helpers, the C calls and this boundary's own
+  `__sem_drop_*` set excluded.
+
+The whole-module refusal that preceded the fixpoint was worth measuring: over
+the conformance corpus it left 190 of 498 modules producing NOTHING, because
+one produced body reaching one refused stdlib leaf took every sibling with it.
+The per-body fixpoint takes the same corpus to 15,475 of 17,468 declarations
+emitted from produced bodies, in all 498 modules, and the wide tuple element
+below takes it to **16,743 of 17,468 (95.8%)**.
+
+### What the corpus measured, and the four defects it found
+
+Every conformance case with an `x86_64` backend, no stdin and no expected
+error — 498 of them — compiled twice by the same binary, once with the flag
+and once without, both run and compared: **496 answer identically, and the two
+that do not fail identically on BOTH paths** (`alloc_flat_bytes_roundtrip` and
+`contains_demo` are self-host divergences that predate this and are unrelated
+to the substitution).
+
+Getting there is the part worth recording, because the first differential was
+green and measured nothing. `FERN_SEM_IR=` — the empty value a harness writes
+for its control leg — read as "set, therefore on", so both columns were the
+semantic path. The flag treats an empty value as off now; the rule for any
+flag added beside it is the same.
+
+With a real control, four defects showed, and three of them were one cause:
+
+- **An unsuffixed integer literal past the i32 range, with no destination to
+  settle it, was read at the default width and truncated to nothing.**
+  `4611686018427387904 as i64` names its width through the CAST, whose operand
+  `semsource.cast` produces with no expectation at all. It is an i64 now, which
+  is what the checker's own settling would say. That one change fixed
+  `narrowing_cast_of_expression`, `int_byte_swap` and `u64_field_array_with` —
+  the last two through a `17179869191 as u64` and a `72623859790382856 as u64`
+  that had been silently zeroed.
+- **A write back through a mutable CAPTURE is not reproducible here**, and is
+  refused rather than produced wrong (#9320). `capturebox` rewrites a mutated
+  captured local into a one-element ARRAY and its write into
+  `$cell$x = $cell$x.with(0, v)`; the creator sees that write only because
+  nothing on either side takes a count, so `__fern_arr_cow_inplace`'s `rc == 1`
+  arm mutates the shared buffer. This boundary retains the receiver to supply
+  the update's unit, which makes that test fail and sends the write into a
+  copy nobody else reads. The fix is the box carrying a `Cell[T]`, whose write
+  is in place on both paths and whose whole vocabulary this boundary already
+  produces.
+
+  **What is refused is the WRITE, not the cell**, and getting that wrong cost a
+  suite. Refusing the cell — every frame that declares one and every lifted
+  body that takes one — is sound and took `cap_loop` and its five siblings out
+  of the executable fixture, which had been producing them correctly all along.
+  They write the cell in the frame that CREATED it, where the box is its own at
+  the write and either arm of the uniqueness test gives the right answer; only
+  a write from a body that did not create it depends on the aliasing. So
+  `State.foreign` records the values naming storage this frame did not create —
+  a mutated capture's cell arriving as a parameter, and a projection of a
+  lifted body's environment record, which is the same write reached through the
+  other closure shape — and `assign` refuses a replacement of a binding holding
+  one. `capturebox.is_cell_name` is the single rule both paths ask for the
+  spelling now; irlower's duplicate of it is gone.
+
+### The wide tuple element: the biggest leaf was a construction site
+
+The first census ranked `unsupported physical RC value type` at 1,032 refusals,
+four times the next leaf. A probe by name put all of it on 22 distinct
+functions: the 128-bit multiply helpers behind the float and string
+shortest-representation work (`float.__db_mul64`, `string.__el_mul64` and their
+callers) and `bigint.__bi_divmod_mag`. Each returns a TUPLE with a 64-bit
+element, which this boundary refused because "`op_tuple_make` spells no element
+kinds, so a wide tuple element has no store width to be written at".
+
+That was true of `op_tuple_make` and not of the IR: `op_tuple_make_k` carries
+the comma-joined element kinds, the AST lowering has emitted it for years, and
+the wasm backend picks `i64.store` / `f64.store` / `i32.store` out of it. The
+READ side of this boundary had named its width all along
+(`op_tuple_get_w`), so the construction was the only half missing. `ssarc`
+emits the kinds now (`tuple_kinds`) and the element admission drops the
+narrowness test; `narrow_slot` keeps its meaning for the one undeclared
+construction that still writes an i32-shaped word per operand, the closure box.
+
+Worth **+7.2 points of the corpus: 15,475 of 17,468 declarations to 16,743 of
+17,468 (88.6% -> 95.8%)**, with the conformance differential still at 496 of
+498. The cascade went with it — "calls a body the AST lowering defines" was the
+second leaf at 236 and is out of the top ten. `wide_pair` / `float_pair` in the
+executable fixture pin a 64-bit and an f64 element, each beside a narrow one
+and the f64 beside a string so the drop walk crosses the same box, balanced on
+every target.
+
+### The leaves that are left, by measured size
+
+| leaf | functions refused |
+|---|---|
+| `value-returning body falls through` | 44 |
+| `unsupported map shape` | 37 |
+| `call target was refused: uninstantiated generic` | 33 |
+| `unsupported value block` | 30 |
+| `unsupported destructuring declaration` | 25 |
+| `unbound name is not a semantic value` | 19 |
+| `operator contract` | 17 |
+| `unsupported call target` | 16 |
+| `unsupported match guard` | 13 |
+
+Read these the way this file reads every leaf: probe the refused functions by
+name before building, because the histogram has repeatedly ranked the work
+wrong. The tuple slice above is not the first time a leaf that read as a
+missing analysis turned out to be one construction site choosing the narrower
+of two ops that both already existed — the array element's own width and
+`op_call_indirect_sig` are the same shape.

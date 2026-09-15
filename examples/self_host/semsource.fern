@@ -3,6 +3,7 @@
 // that resolve to value identities; no ownership fact is read from syntax.
 import "./ast";
 import "./parser";
+import "./capturebox";
 import "./checker";
 import "./typeinfo";
 import "./semtypes";
@@ -61,6 +62,11 @@ struct State {
     template: boolean,
     binding: ssasem.Binding,
     requests: Request[],
+    // Values naming storage this frame did not create: a projection of a
+    // lifted body's environment record, and a mutated capture's cell arriving
+    // as a parameter. Replacing the binding that holds one is a write back
+    // through a capture — see `assign`.
+    foreign: i32[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
     // Each parameter's declared mode, in order. A parameter's value id is its
@@ -360,6 +366,11 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
     if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
     if (n.suffix == "" && ssasem.is_integer(expected)) { ty = expected; }
+    // An unsuffixed literal past the i32 range with no destination to settle
+    // it is an i64. `4611686018427387904 as i64` names the width through the
+    // CAST, whose operand is produced with no expectation at all, so the
+    // default width was taken and the value truncated to nothing.
+    else if (n.suffix == "" && parser.literal_is_i64(n.text)) { ty = t_i64(); }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported literal width"); }
     // An address rides the i32 immediate, which carries every value below
     // 2^31 exactly. Past that the register backends sign-extend the constant
@@ -580,7 +591,8 @@ function environment_read(ix: ast.ExprIndex, container: Value, s: State): Value 
     var slot: i32 = 0;
     if let ast.ExprNumber(n) = ix.index { if (decimal(n.text)) { slot = util.digits_to_i32(n.text); } }
     if (slot < 1 || slot > caps.len()) { return refused(s, "environment projection"); }
-    return define(s, ssasem.record_get(), [container.id], slot, "c" + util.i32_to_string(slot), caps[slot - 1]);
+    var v: Value = define(s, ssasem.record_get(), [container.id], slot, "c" + util.i32_to_string(slot), caps[slot - 1]);
+    return Value { s: State { ...v.s, foreign: v.s.foreign.append(v.id) }, id: v.id };
 }
 
 function index(ix: ast.ExprIndex, s: State): Value {
@@ -1604,9 +1616,22 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     return State { ...bind(s, v.name, init.id), scope: after };
 }
 
+// Replacing a binding that holds a value this frame did not create is a write
+// back through a CAPTURE, and the AST lowering means something by it that this
+// boundary cannot reproduce. `capturebox` rewrites a mutated captured local
+// into a one-element array and its write into `$cell$x = $cell$x.with(0, v)`;
+// the frame that CREATED the box sees that write only because nothing on
+// either side takes a count of it, so `__fern_arr_cow_inplace`'s `rc == 1` arm
+// mutates the shared buffer rather than copying. This boundary retains the
+// receiver to supply the update's unit, which makes that test fail and lands
+// the write in a copy nobody else reads. So the write is refused, while the
+// creating frame — whose box IS its own at the write — keeps producing.
+// The fix is the capture box carrying a `Cell[T]`, whose write is in place on
+// both paths (#9320).
 function assign(a: ast.StmtAssign, s: State): State {
     var old: i32 = lookup(s, a.target);
     if (old < 0) { return fail(s, "replacement of an unbound name"); }
+    if (util.index_of_i32(s.foreign, old) >= 0) { return fail(s, "replacement of a capture"); }
     var value: Value = expr(a.value, s, s.values[old]);
     s = value.s;
     if (!s.ok) { return s; }
@@ -2255,6 +2280,12 @@ function parameters(fd: parser.FuncDecl, s: State): State {
         var m: i32 = decl_param_mode(fd, at, ty);
         if (ssasem.is_func(ty) && m == ssaunits.counted_mode()) { return fail(s, "owning function parameter"); }
         var p: Value = define(s, 6, [], at, "", ty);
+        // A mutated capture's cell arrives as a parameter of the lifted body,
+        // and its box belongs to the frame that built it — reading it here is
+        // ordinary, writing back through it is what `assign` refuses.
+        if (capturebox.is_cell_name(names[at])) {
+            p = Value { s: State { ...p.s, foreign: p.s.foreign.append(p.id) }, id: p.id };
+        }
         s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
         at = at + 1;
     }
@@ -2270,7 +2301,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [], name: name, modes: [] };
+        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], name: name, modes: [] };
 }
 
 // ---- record schemas ---------------------------------------------------------

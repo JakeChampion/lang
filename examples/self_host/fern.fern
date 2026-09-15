@@ -179,6 +179,8 @@ import "./arm64_native";
 import "./x86_native";
 import "./elf";
 import "./ircore";
+import "./irlower";
+import "./semlower";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
@@ -2004,6 +2006,25 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
     return bad;
 }
 
+// cli_substitution produces the semantic lowering for whichever emit path the
+// target selects, against the SAME normalisation that path gates on — the
+// register backends' (semlower.gated_module) and wasm's own
+// (wasm_ir.route_normalized), each after the lambda lift the emit entry does
+// before it. Off (FERN_SEM_IR unset) it produces nothing and costs nothing.
+//
+// It is produced here rather than inside the emit path so that the pipeline
+// behind it is linked by the CLI alone: linking it from the three backend
+// modules cost the eight drivers that carry one 6.7-10.2% of their bytes for a
+// flag they never read.
+function cli_substitution(full: parser.Module, target: string): ircore.Sub {
+    if (!semlower.sem_ir_on()) { return ircore.no_sub(); }
+    var lm: parser.Module = ircore.lift_lambdas(full);
+    var im: parser.Module = semlower.gated_module(lm);
+    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized(lm); }
+    var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+    return semlower.substitution(im, stab, ircore.wp_fn_sigs(im.funcs, stab));
+}
+
 function run(): i32 {
     var av: string[] = args();
 
@@ -2487,6 +2508,12 @@ function run(): i32 {
     }
 
     var full: parser.Module = parser.module_with_builtins(merged);
+    // The typed semantic lowering, when FERN_SEM_IR selects it. It is produced
+    // HERE and threaded into whichever emit path runs, so the pipeline behind
+    // it is linked by the CLI and not by every driver that links a backend
+    // (docs/SELFHOST-SEMANTIC-SOURCE.md). Off, this is ircore.no_sub() and the
+    // emit paths behave exactly as they did.
+    var sub: ircore.Sub = cli_substitution(full, target);
     var out_asm: string = "";
     var emit_text: boolean = emit == "asm";
     if (target == "arm64-linux") {
@@ -2504,7 +2531,7 @@ function run(): i32 {
         // The default form is the in-process ELF (arm64_native + elf.fern) —
         // no `.s` + gcc/ld. Both run the IR path; -ssa opts into the SSA
         // pipeline above instead.
-        out_asm = asm_arm64_ir.emit_module_or_error(full, false);
+        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
             out_asm = arm64_elf_binary(out_asm, emit_syms);
@@ -2517,7 +2544,7 @@ function run(): i32 {
         // the one construct that cares — the startup self-relocation loop — is
         // emitted on both, where ET_EXEC simply computes a zero slide and skips
         // it (#7112).
-        out_asm = asm_arm64_ir.emit_module_or_error(full, false);
+        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
             out_asm = arm64_elf_binary_pie(out_asm);
@@ -2541,7 +2568,7 @@ function run(): i32 {
         // `-emit asm` stops at the darwinized text: it is the only way to hand
         // the emitter's output to clang, which decides whether a misbehaving
         // binary is the emitter's fault or arm64_gas_program's.
-        out_asm = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(full, true));
+        out_asm = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub));
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
             var prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
@@ -2576,14 +2603,14 @@ function run(): i32 {
     } else if (target == "wasm32-wasi" && emit_text) {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.
-        out_asm = wasm_ir.emit_module_mode_or_error(full, false, false);
+        out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
     } else if (target == "wasm32-wasi" && emit == "core-module") {
         // Same WASI core module, assembled to the wasm *binary* format:
         // emit WAT, then run it through the self-hosted
         // WAT->binary assembler (watbin). The binary bytes (an i32[] of
         // 0..255) are packed into a string whose bytes write_file / write
         // emit verbatim, so the output file is a runnable `.wasm`.
-        out_asm = string_from_bytes_unchecked(to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, false, false))));
+        out_asm = string_from_bytes_unchecked(to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
     } else if (target == "wasm32-wasi") {
         // A Component-Model `wasi:cli/run` component. Pick the framing from
         // the program's WASI usage: no-I/O (component_full), stdout/exit
@@ -2599,37 +2626,37 @@ function run(): i32 {
         }
         var comp: i32[] = [];
         if (shape == 1) {
-            comp = watbin.component_full_io(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 2) {
-            comp = watbin.component_full_io_fs(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 3) {
-            comp = watbin.component_full_io_fs_write(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs_write(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 4) {
-            comp = watbin.component_full_io_fs_rw(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs_rw(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 5) {
-            comp = watbin.component_full_io_random(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_random(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 6) {
-            comp = watbin.component_full_io_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 7) {
-            comp = watbin.component_full_io_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 8) {
-            comp = watbin.component_full_io_clock(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_clock(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 9) {
-            comp = watbin.component_full_io_clock_mono(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_clock_mono(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 13) {
-            comp = watbin.component_full_io_eprint(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_eprint(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 14) {
-            comp = watbin.component_full_io_exit(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_exit(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 10) {
-            comp = watbin.component_full_io_fs_read_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs_read_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 11) {
-            comp = watbin.component_full_io_fs_rw_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs_rw_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 12) {
-            comp = watbin.component_full_io_random_write(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_random_write(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 15) {
-            comp = watbin.component_full_io_fs_args_read(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs_args_read(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else if (shape == 16) {
-            comp = watbin.component_full_io_fs_rw_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
+            comp = watbin.component_full_io_fs_rw_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub)));
         } else {
             comp = watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, false)));
         }
@@ -2641,7 +2668,7 @@ function run(): i32 {
         // own toolchain wants; the default form assembles + links it in-process
         // (x86_native + elf.fern), so it produces a runnable binary like
         // arm64-linux does and needs nothing on $PATH.
-        out_asm = asm_ir.emit_module_or_error(full);
+        out_asm = asm_ir.emit_module_or_error_sub(full, sub);
         if (!emit_text) {
             out_asm = x86_elf_binary(out_asm, emit_syms);
             if (out_asm.len() == 0) { return 2; }

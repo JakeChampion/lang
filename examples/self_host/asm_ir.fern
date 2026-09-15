@@ -7713,6 +7713,11 @@ pub function emit_module_ir(mod: parser.Module): string {
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
 pub function emit_module_or_error(mod: parser.Module): string {
+    return emit_module_or_error_sub(mod, ircore.no_sub());
+}
+
+// The `_sub` sibling of the above: see emit_module_ir_gated_sub.
+pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): string {
     var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
     if (parse_errs.len() > 0) {
         eprint(util.format_diags(parse_errs));
@@ -7728,7 +7733,7 @@ pub function emit_module_or_error(mod: parser.Module): string {
         return "";
     }
     var lm: parser.Module = ircore.lift_lambdas(mod);
-    var g: string = emit_module_ir_gated(lm, []);
+    var g: string = emit_module_ir_gated_sub(lm, [], sub);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
     exit(1);
@@ -7738,6 +7743,14 @@ pub function emit_module_or_error(mod: parser.Module): string {
 // "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
+    return emit_module_ir_gated_sub(mod, known, ircore.no_sub());
+}
+
+// emit_module_ir_gated_sub is the same gate with a caller-supplied semantic
+// lowering substituted into it (ircore.Sub). The `fern` CLI is the one driver
+// that supplies one; every other passes ircore.no_sub(), which is this function
+// behaving exactly as it did before the seam existed.
+pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
     var sm: parser.Module = ircore.script_normalized(mod);
     // The merged-bundle SIZE budget that stood here is gone with its twin in
     // eligible_core_known_impl — see the note there for why (#3425's large-tier
@@ -7761,10 +7774,11 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // per-module tails onto it itself (#8199).
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
+    base = ircore.sub_sigs(sub, base);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false);
     if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, g.cache, base);
+    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, ircore.sub_cache(sub, g.cache), base);
 }
 
 // ---- The x86-64 peephole ---------------------------------------------------
