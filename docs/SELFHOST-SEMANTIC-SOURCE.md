@@ -1349,10 +1349,11 @@ from six minutes to ten seconds:
   clears it, and within the lexer the set is `scan_number` and the chain it
   calls. Its `slice_unchecked(l.src, begin, l.i)` is the view.
 
-The cause is `ssarc.release_name` choosing a string's release from its TYPE,
-where the AST lowering carries a per-slot "this slot may hold a box over
-another string's bytes" mark (`irlower.LowerState.str_view_local`) and chooses
-from THAT. Four lines reproduce it:
+The cause is that a callee lent a view may hand the BOX back. A view's box
+carries the immortal rc sentinel, so the retain the callee owes for returning a
+borrowed reference is a **no-op**, and the produced caller then accounts the
+result a counted unit of its own — the frame that sliced the view and the
+holder of the result release one box twice. Four lines reproduce it:
 
 ```fern
 function keep(text: string): string { return text; }
@@ -1363,22 +1364,32 @@ function scan(src: string): string {
 function main(): i32 { return scan("12345 abc").len(); }
 ```
 
-`semsource.lend` retags the borrowed view as a `string` so the exact-type rule
-admits the call; `release_name` then picks `__fern_str_free` for it, and a
-callee whose result is text may hand that box straight back to a caller that
-frees what it never owned.
+Three shapes separate it, and the separation is the finding: a callee returning
+a **scalar** is clean, a callee returning a **fresh** string is clean, and only
+the one that hands the box back faults. The box's IDENTITY is the whole of it —
+not the release helper, and not the signature.
 
-**Refusing the retag where the callee's result is text was tried and reverted.**
-It closes the reproducer and it is the wrong rule: the danger is a callee that
-returns the value derived from the lent view, which is a property of the body
-and not of the signature, and the executable fixture's own `lent_views` is a
-callee that returns text without handing the view back. It also does not close
-the class — the lexer probe still reports a use-after-free with the retag
-refused. The fix is the provenance flag the mark above already is, and
-`__fern_str_view_free` is already the safe superset (its own comment: "frees the
-box alone when the rc is the immortal view sentinel and takes the ordinary path
-otherwise"), so the question is which values carry the flag rather than whether
-a correct symbol exists.
+**Three fixes were tried and reverted**, each ruling something out:
+
+- *Refuse `lend`'s retag where the callee's result is text.* Closes the
+  reproducer, wrong rule: the danger is a callee that hands the value back,
+  which is a property of the body, and the executable fixture's own
+  `lent_views` returns text without doing so — the refusal took it out of
+  production. It does not close the class either; the lexer probe still faults.
+- *Use `__fern_str_view_free` for every string release.* Correct as a superset
+  and fixes nothing: the fault is a box freed TWICE, which the view-aware
+  helper does as readily as the plain one.
+- *Copy a text result of a call that lent a view* (`v + ""`). Verified to fire,
+  and it makes the fault worse — the un-copied call result is still a value of
+  its own, so the plan drops it, which is the second release. Adding an owner
+  cannot fix an over-count.
+
+What is left is the only thing that can work: the result of a call that was
+lent a view **is not a unit of this frame's own**, and that has to reach
+`ssaunits.plan`, where units are decided. The AST lowering's own answer is the
+one to port — `irlower.LowerState.str_view_local` plus `str_identity_src`,
+whose comment says such a result "is releasable only behind a guard that the
+two are different pointers" (#9328).
 
 ### The leaves that are left, by measured size
 
