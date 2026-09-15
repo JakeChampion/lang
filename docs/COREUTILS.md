@@ -321,6 +321,14 @@ relative URI would be wrong — and E066 refuses them post-tree-shake for the
 same reason it refuses `shred -f`. They join `pwd`, `readlink`, `realpath`
 and `stat`, each of which reaches `getcwd` the same way.
 
+Neither does any COMMAND RUNNER: `env`, `nice` and `timeout` all reach
+`gnu.exec_command`, which is `proc_exec_as` under `proc` and `access` under
+`fsmode`, and `timeout` reaches `proc_fork` and `proc_waitpid_nohang` on its
+own account as well. There is nothing to weaken here — a component has no
+process model at all — so the refusal is the whole answer rather than a
+missing feature, and the primitives are covered on the wasm side by their own
+refusal tests in `internal/e2e` instead.
+
 ## Layout
 
 ```
@@ -830,6 +838,37 @@ pre-pass and getopt_long's prefix match both cost nothing next to the exec.
 | `shred` | shred -u 200 small files | 492.70 ± 65.62 | 696.74 ± 39.89 | 846.74 ± 88.56 | 1.41× | 1.72× |
 | `shred` | shred -n 0 -u 200 small files | 349.06 ± 17.16 | 578.00 ± 74.66 | 567.56 ± 23.96 | 1.66× | 1.63× |
 | `shred` | shred -s 4096 of a 4MiB file | 7.70 ± 2.20 | 8.38 ± 1.67 | 9.07 ± 1.20 | 1.09× | 1.18× |
+
+**timeout, 2026-09-15**, the same host, its workloads file run alone (mean ±
+σ, ≥20 runs; ratios above 1 mean Fern is faster).
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `timeout` | timeout a command | 1.75 ± 1.45 | 2.24 ± 0.22 | 103.85 ± 1.01 | 1.28× | 59.39× |
+| `timeout` | timeout zero disables | 1.54 ± 0.21 | 2.38 ± 0.26 | 3.37 ± 0.54 | 1.55× | 2.19× |
+| `timeout` | timeout --foreground | 1.72 ± 0.28 | 2.33 ± 0.23 | 103.73 ± 0.34 | 1.36× | 60.41× |
+| `timeout` | timeout -s KILL | 1.74 ± 2.12 | 2.18 ± 0.25 | 103.71 ± 0.26 | 1.26× | 59.67× |
+| `timeout` | timeout -k with a grace period | 1.72 ± 0.28 | 2.43 ± 0.36 | 103.83 ± 0.32 | 1.41× | 60.39× |
+| `timeout` | timeout -v | 1.57 ± 0.26 | 2.22 ± 0.20 | 103.70 ± 0.29 | 1.42× | 66.16× |
+| `timeout` | timeout --preserve-status | 1.63 ± 0.48 | 2.59 ± 2.00 | 103.70 ± 0.38 | 1.59× | 63.51× |
+| `timeout` | timeout a fractional duration | 1.50 ± 0.29 | 2.26 ± 0.27 | 103.63 ± 0.37 | 1.51× | 69.09× |
+| `timeout` | timeout a suffixed duration | 1.61 ± 0.28 | 2.35 ± 0.25 | 103.89 ± 0.60 | 1.46× | 64.61× |
+| `timeout` | timeout a command with arguments | 1.61 ± 0.44 | 2.45 ± 1.16 | 104.31 ± 2.42 | 1.52× | 64.85× |
+| `timeout` | timeout a command not found | 0.70 ± 0.21 | 1.53 ± 0.23 | 2.47 ± 0.31 | 2.18× | 3.52× |
+| `timeout` | timeout an invalid duration | 0.34 ± 0.50 | 1.17 ± 0.23 | 2.14 ± 0.27 | 3.41× | 6.24× |
+
+Every row wins, and the two-row control says what the implementation costs.
+Fern forks a TIMER CHILD where GNU arms a SIGALRM, because nothing here can
+observe a delivered signal (#9243) — so `timeout 10 /bin/true` pays one extra
+fork and one extra reap, and `timeout 0 /bin/true`, which takes no timer on
+either side, is the same run without it: 1.75 ms against 1.54 ms. Two tenths
+of a millisecond, against a 0.5 ms startup lead that more than covers it.
+
+uutils is 100 ms on every row whose deadline is real, and 3.4 ms on the two
+that are not. That is not startup: its wait is a 100 ms polling loop, so a
+command finishing immediately is still noticed a tick later. Fern and GNU
+both block until the child is reaped and answer as soon as it is, which is
+why `timeout 0` is the only row where uutils is within a factor of thirty.
 
 Eleven of thirteen rows win and the other two are inside a σ on a workload
 whose reseeding forks 200 GNU `head`s per run; per file `shred.fern` makes 9
@@ -1695,6 +1734,32 @@ anyway: it catches a bias left in place, a correction applied twice and the
 swapped numbers, where an expected value computed in Go could only ever be
 right on one OS.
 
+`timeout` needed TWO, and only one of them was the one #8374 named:
+
+    set_process_group(pid, pgid)   setpgid(2), both zeroes as written
+    proc_waitpid_nohang(pid)       wait4 with WNOHANG, -1 for a live child
+
+`set_process_group` is what the DEFAULT mode is: timeout puts ITSELF in a
+fresh group before forking, so the command and everything it starts share one
+group and the signal reaches the whole tree. Both zeroes carry the syscall's
+own meanings — pid 0 is the caller, pgid 0 is the pid's own value — so
+`set_process_group(0, 0)` is the whole call, and `signal_send`'s existing
+pass-through of a non-positive pid is the group-directed send that goes with
+it. Its failure is ordinary rather than exceptional: a parent and a child
+race to make the same call and the loser gets EACCES once the other has
+exec'd, which is why both halves make it.
+
+`proc_waitpid_nohang` was not in the issue's list, and it is the one that
+decides the shape of the utility. `proc_waitpid(-1)` already reaps whichever
+child exits first — the pid reaches wait4 as written — but reports only the
+status, so with a command and a deadline timer running there is no way to
+tell which of the two woke it. One nohang probe per candidate recovers it,
+exactly and without a pid-reuse hazard: a recycled pid is not this process's
+child, so ECHILD means "the one I asked about" and nothing else. -1 rather
+than 0 for a live child because 0 is what wait4 itself answers there and what
+a clean exit decodes to; no errno wait4 returns is 1, so the sign separates
+the two.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast
@@ -2030,23 +2095,33 @@ block never read it, `%%N` does. The ten gnulib styles live in `lib/gnu.fern`
 as `quote_style`, with `quoting_style_from_env` doing the ARGMATCH lookup and
 the `ignoring invalid value` warning, so `ls` can pick them up as is.
 
-**`mv` does not copy across filesystems.** GNU falls back to a recursive
-copy-then-unlink when `rename(2)` answers EXDEV. Measured, it preserves mode
-including setuid, both timestamps on files AND directories, ownership, symlinks
-as symlinks, FIFOs as FIFOs, and hard-link structure within one invocation; it
-UNLINKS an existing destination rather than truncating it, and a partial failure
-leaves the source intact. `mv.fern` reports the errno instead, which is exactly
-what GNU's own `--no-copy` does with it — a loud failure rather than a wrong
-result. Smallest divergence: `mv -v a /dev/shm/c` from an ext4 directory, where
-GNU prints `copied` then `removed` and exits 0.
+**`timeout` cannot forward a signal that arrives at IT.** GNU handles SIGINT,
+SIGQUIT, SIGHUP, SIGTERM and SIGXCPU by passing them on to the command and
+then dying of them, so `kill -INT` on a `timeout` reaches the command it is
+supervising. That needs a signal a program can OBSERVE rather than only
+dispose of, which is #9243 — the same gap `dd`'s SIGUSR1 report waits on.
+Everything else about the utility is here, and nothing in the corpus reaches
+this: it needs a third party signalling the timeout process mid-run.
 
-Closing it needs more than #9085 delivered, which is worth stating because it
-looked otherwise: besides `chmod` and `set_file_times`, both lowered now, it
-needs `chown`/`lchown` and `mkfifo`/`mknod`, and neither exists as a builtin in
-either compiler. #9089 carries all four. The corpus reaches EXDEV for real
-through the harness's `crossDev` field — `/dev/shm` is tmpfs where `/tmp` is
-ext4 — but only under `--no-copy` / `-n` / `--update=none`, which prove the
-errno is reported identically.
+One smaller residue comes from `proc_waitpid` collapsing a signal death into
+the shell's one number. A command KILLED reports 137 after a timeout where a
+command that merely timed out reports 124, and GNU tells the two apart with
+WTERMSIG; here the SIGNAL THIS PROCESS SENT stands in for the half the status
+cannot carry, so every case timeout itself can produce is right — `-s 0` over
+a command that exits 137 is 124, as GNU's is — and a SIGKILL arriving from
+somewhere ELSE during the timeout reads as 124 here and 137 there.
+
+**`timeout`'s deadline is a forked child, and that is visible to nothing but
+`ps`.** GNU arms `alarm(2)` and lets the handler interrupt its `wait`; with no
+observable signal (above) the clock is a process instead, and ONE blocking
+`proc_waitpid(-1)` wakes on whichever finishes first — the command or the
+timer. `proc_waitpid_nohang` then says which, because a child already reaped
+answers ECHILD where a live one answers -1. The timer holds no descriptor the
+command can see and is reaped before timeout exits; while the command runs
+there is one extra process in the group, which no comparison of stdout,
+stderr, status or the tree can reach. It costs one fork and one reap per
+invocation — measured at two tenths of a millisecond in the table above,
+against a startup lead that more than covers it.
 
 **`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
 so a component 8 KiB down is `File name too long` where GNU's fts, which opens
@@ -2600,7 +2675,11 @@ groups are the order of work. Each sub-issue names its group.
   new `priority()` / `set_priority(n)` pair under the `sched` target
   capability — and on `gnu.exec_command`, which `env` moved its own
   execvp emulation into so the PATH search and the `/bin/sh` retry for a
-  shebang-less script are written once, #9262), `timeout`
+  shebang-less script are written once, #9262), `timeout` (done, on
+  `set_process_group` and `proc_waitpid_nohang` — see the primitives
+  section above and the two divergences; the default mode's process group
+  is the reason it waited, and the deadline being a forked child rather
+  than an alarm is the reason the second primitive exists)
   `nohup` `kill` `stdbuf` `chroot` (signals, exec), `dd`
   (done, on `w.seek(offset, whence)` — lseek on a Writer, which is what
   writing at an offset without rewriting the file needs; the operand
