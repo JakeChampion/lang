@@ -1320,18 +1320,25 @@ executable fixture pin a 64-bit and an f64 element, each beside a narrow one
 and the f64 beside a string so the drop walk crosses the same box, balanced on
 every target.
 
-### What stops the compiler compiling ITSELF through this path (#9328)
+### The compiler compiling ITSELF through this path (#9328)
 
 The corpus agreeing 496 times is not the same as a program agreeing. The
-self-hosted compiler compiles itself through the production consumer — exit 0,
-354 s against the AST path's 50 s, **7,490 of 8,206 declarations and 63 of 63
-instances produced**, a 12.76 MB binary against the AST path's 10.26 MB — and
-the binary it produces **segfaults on anything that reads a file**. Its no-file
-modes (usage, `-targets`) work.
+self-hosted compiler compiles itself through the production consumer — **7,525
+of 8,246 declarations and 64 of 64 instances produced**, 6m31s, a 12.82 MB
+binary — and the compiler that comes out reads a file, compiles it, and the
+program it emits runs. That took one defect, below.
 
-That is the shape `docs/TEST-GATES.md` warns about, arriving on schedule: a
-green corpus and a stable miscompile. What found it was not a suite; it was
-running the thing.
+It is not yet the fixpoint: handed the whole self-host tree, that compiler
+segfaults 23 s in, so something in the produced lowering is still wrong at a
+scale the small programs do not reach. Before the defect below was fixed it
+segfaulted on the FIRST file it read, so the remaining one is a different
+bug, not the same one half-fixed.
+
+Before it was fixed the same build succeeded and the binary **segfaulted on
+anything that reads a file**, with its no-file modes (usage, `-targets`)
+working. That is the shape `docs/TEST-GATES.md` warns about, arriving on
+schedule: a green corpus and a stable miscompile. What found it was not a suite;
+it was running the thing.
 
 `FERN_SEM_IR_ONLY` and `FERN_SEM_IR_SKIP` — prefix lists, the second an
 exclusion — are the bisect knob. Halving with ONLY isolates nothing here,
@@ -1345,15 +1352,16 @@ from six minutes to ten seconds:
   compile time gives a deterministic one: **use-after-free (touched a
   quarantined block)**, where the AST build of the same program reports only
   the known leak.
-- Under that oracle, skipping `lexer__` is the ONLY module-level exclusion that
-  clears it, and within the lexer the set is `scan_number` and the chain it
-  calls. Its `slice_unchecked(l.src, begin, l.i)` is the view.
+- Under that oracle the exclusions that clear it are all in the lexer, around
+  `scan_number` and the chain it calls. Its `slice_unchecked(l.src, begin, l.i)`
+  is the view. Read those exclusions as a CONE rather than a cause — see the
+  note on `prune` below.
 
-The cause is that a callee lent a view may hand the BOX back. A view's box
-carries the immortal rc sentinel, so the retain the callee owes for returning a
-borrowed reference is a **no-op**, and the produced caller then accounts the
-result a counted unit of its own — the frame that sliced the view and the
-holder of the result release one box twice. Four lines reproduce it:
+The cause is that a callee lent a view may keep the BOX. A view's box carries
+the immortal rc sentinel, so the retain the callee owes for a borrowed reference
+it keeps is a **no-op**, and the produced caller then reclaims the box out from
+under it — the frame that sliced the view and whatever holds the reference
+release one box twice. Four lines reproduce the smallest shape:
 
 ```fern
 function keep(text: string): string { return text; }
@@ -1370,8 +1378,8 @@ lowering alone, which is what makes it the check the eventual fix answers to.
 
 Three shapes separate it, and the separation is the finding: a callee returning
 a **scalar** is clean, a callee returning a **fresh** string is clean, and only
-the one that hands the box back faults. The box's IDENTITY is the whole of it —
-not the release helper, and not the signature.
+the one that hands the box back faults. What the callee does with the box is the
+whole of it, and the signature does not say.
 
 **Three fixes were tried and reverted**, each ruling something out:
 
@@ -1385,23 +1393,35 @@ not the release helper, and not the signature.
   still faults.
 - *Use `__fern_str_view_free` for every string release.* Correct as a superset
   and fixes nothing: the fault is a box freed TWICE, which the view-aware
-  helper does as readily as the plain one.
+  helper does as readily as the plain one. The fix below goes the other way at
+  the sites that need it — the PLAIN release, which stands down on an immortal
+  box where the view-aware one reclaims it.
 - *Copy a text result of a call that lent a view* (`v + ""`). Verified to fire,
   and it makes the fault worse — the un-copied call result is still a value of
   its own, so the plan drops it, which is the second release. Adding an owner
   cannot fix an over-count.
 
-The fix is that the result of such a call **is the argument's box**, so the
-frame that sliced the view must not reclaim it. Two facts make that precise.
+The fix is that such a callee KEEPS the box, so the frame that sliced the view
+must not reclaim it. Two facts make that precise.
 
-The first is which callees can do it. Neither the signature nor the graph shape
-separates "returns the argument" from "returns something new" — only the body
-does — so `semsource.handers` reads the bodies: a declaration whose `return`
-names one of its own parameters hands back, and so does one that returns a call
-to such a declaration, closed to a fixpoint over the module. `aliased_arg`
-consults it and records the argument's 1-based position in the call's `imm`,
-the one immediate nothing else reads on a call. A builtin is never in the set,
-which is what keeps `lent_views`' `copied()` calls reclaiming their views.
+The first is which callees keep it. Neither the signature nor the graph shape
+separates "keeps the argument" from "builds something new" — only the body does
+— so `semsource.handers` reads the bodies: a parameter escapes when it reaches a
+`return` as itself, inside an aggregate the return builds, or as an argument of
+a call to a declaration that already escapes its own, closed to a fixpoint over
+the module. `escapes_in` is that predicate and it is deliberately narrow: `s + ""`
+and `s.len()` read the value and build something of their own, which is what
+keeps `lent_views`' `copied()` calls reclaiming the views they are lent. The
+container builtins — `append`, `with`, `insert`, `cell_new` — and the union
+constructors count as keeping, because `return acc.append(w)` hands `w` out
+inside the array. `escaping_args` consults the set and records the escaping
+arguments as a BITMASK over positions in the call's `imm`, the one immediate
+nothing else reads on a call.
+
+Returning the box is only the smallest shape of this. The self-host lexer's
+`number_tok`/`quoted_tok`/`ident_tok` each store a lent view in the Token they
+build, which is why skipping any one of them left the probe faulting and only
+the whole group cleared it.
 
 The second is what the release then has to be. `ssaunits.handed_on` marks the
 value behind the retag, and `ssarc` releases it with `__fern_str_free` rather
@@ -1422,6 +1442,13 @@ A guarded release — a pointer compare emitted around the drop — was built fi
 and does not work: on wasm the two pointers are equal and the retain was real,
 so skipping the release leaks, and the guard has no way to ask which world it is
 in without reading the box it may already have freed.
+
+**A note on the bisect.** `semlower.prune` turns off every produced body that
+calls one this boundary is not emitting, to a fixpoint, so `FERN_SEM_IR_SKIP` of
+a LEAF removes its whole caller cone. That is why three unrelated-looking
+exclusions (`advance`, `advance_to`, `at_end`) each cleared the lexer probe: they
+are the cone, not the cause. Read a clearing exclusion as "the fault is inside
+this cone", and intersect cones rather than trusting the smallest one.
 
 ### The leaves that are left, by measured size
 
