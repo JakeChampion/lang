@@ -3575,6 +3575,25 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// tainted scalar-binary value (`b.with(0, i % 200)`), leaving
 				// the buffer permanently ineligible and unreclaimed at loop
 				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
+				//
+				// A BORROWED receiver is the exception, and the forced inc is
+				// why (#9299). The result aliases the receiver only on
+				// cow_inplace's rc == 1 arm; arraySetReceiverBorrowed is the
+				// set computeArraySetIncs incs precisely to make that arm
+				// UNREACHABLE, and the copy path allocates a fresh rc 1 buffer
+				// and decs the receiver back ("the balance is: receiver keeps
+				// rc 1, the fresh copy is rc 1" — emitArraySet). So the
+				// receiver's borrow taint says nothing about the result: the
+				// frame owns it outright. Without this, `var w = xs.with(0, 9)`
+				// in a callee taking a borrowed array param stranded the whole
+				// copy on every call — one buffer per call, unbounded.
+				//
+				// Only the BINDING is credited. An escaping result is still
+				// caught by the escape walk in computeFreeEligible, as for
+				// every other untainted-owned shape here.
+				if rid, rok := x.Args[0].(*ast.Ident); rok && b.arraySetReceiverBorrowed(rid.Name) {
+					return false
+				}
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "__method_Array_push":
 				// `arr.append(v)` is `.with`'s sibling: the result is the
@@ -4109,6 +4128,54 @@ func (b *builder) storedArrayElemOperand(call *ast.Call, callee string) (ast.Exp
 	return el, true
 }
 
+// arraySetReceiverBorrowed reports whether a bare-ident `.with` receiver names
+// a buffer this frame only BORROWS.
+//
+// A non-`own`, non-owned-by-default, non-consumed param is a BORROW — the
+// caller still owns its buffer (no caller-side inc on the borrow), so the
+// buffer's rc is 1 (the caller's). An in-place cow at rc==1 would mutate the
+// caller's array out from under it (`function f(xs: i32[]): i32[] { return
+// xs.with(0, 9); }` must not change the caller's array). This holds even at
+// the param's last use and for a reassign-to-self (`xs = xs.with(...)`): the
+// local rebind is fine, but the underlying buffer is the caller's.
+//
+// A consumed ARRAY param counts as borrowed too, even though it is promoted.
+// The other promoted shapes take an entry retain, which is what would let
+// "consumed" be read as "rc >= 2, cow will copy anyway". Arrays deliberately
+// do not (isConsumedArrayParam — the retain costs them the in-place append),
+// so a promoted array param sits at rc==1 holding the CALLER's buffer until
+// its first reassignment replaces it, and an in-place cow there mutates the
+// caller's array. `bump(xs) { xs = xs.with(0, 99) }` left the caller's `a[0]`
+// at 99 — the with_reassign_self_borrowed_param corpus case, whose comment
+// already says a reassign-to-self does not make the buffer ours. Forcing the
+// inc costs a copy on the paths where the slot HAS been replaced, which is the
+// pre-#6021 behaviour and rare: `.with` threading is not the append
+// accumulator that promotion exists for.
+//
+// A non-consuming match-arm binding (borrowedBindings) is the same borrow by
+// another spelling: it reads the box's payload in place.
+//
+// TWO callers, and they have to stay co-extensive (#9299). computeArraySetIncs
+// forces the receiver inc for exactly this set, so __fern_arr_cow_inplace
+// takes its COPY path; rhsTainted credits the RESULT of such a call as fresh,
+// and it may do so only because that inc fired. Splitting them would either
+// free a buffer the caller still owns or put the leak back. The inputs are the
+// ones computeFreeEligible reads at its own top, and both are populated before
+// either analysis runs.
+func (b *builder) arraySetReceiverBorrowed(name string) bool {
+	if b.rc.borrowedBindings[name] {
+		return true
+	}
+	for i, p := range b.fn.Params {
+		if p.Name != name {
+			continue
+		}
+		return !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
+			(!b.rc.consumedParams[p.Name] || b.isConsumedArrayParam(p.Name))
+	}
+	return false
+}
+
 // computeArraySetIncs decides, for each `.with` call, whether emitArraySet
 // must rc-inc the receiver before __fern_arr_cow_inplace (forcing a copy).
 // The inc is needed exactly when the receiver is a bare local that is read
@@ -4144,36 +4211,6 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		return true
 	})
-	// Borrowed parameters: a non-`own`, non-owned-by-default, non-consumed
-	// param is a BORROW — the caller still owns its buffer (no caller-side inc
-	// on the borrow), so the buffer's rc is 1 (the caller's). An in-place cow
-	// at rc==1 would mutate the caller's array out from under it
-	// (`function f(xs: i32[]): i32[] { return xs.with(0, 9); }` must not change
-	// the caller's array). This holds even at the param's last use and for a
-	// reassign-to-self (`xs = xs.with(...)`): the local rebind is fine, but the
-	// underlying buffer is the caller's. Same borrow predicate as
-	// computeFreeEligible (which runs before this — b.rc.consumedParams /
-	// b.rc.freeEligible are already populated). Force the inc so cow copies.
-	//
-	// A consumed ARRAY param counts as borrowed here even though it is
-	// promoted. The other promoted shapes take an entry retain, which is what
-	// let this predicate treat "consumed" as "rc >= 2, cow will copy anyway".
-	// Arrays deliberately do not (isConsumedArrayParam — the retain costs them
-	// the in-place append), so a promoted array param sits at rc==1 holding the
-	// CALLER's buffer until its first reassignment replaces it, and an in-place
-	// cow there mutates the caller's array. `bump(xs) { xs = xs.with(0, 99) }`
-	// left the caller's `a[0]` at 99 — the with_reassign_self_borrowed_param
-	// corpus case, whose comment already says a reassign-to-self does not make
-	// the buffer ours. Forcing the inc costs a copy on the paths where the slot
-	// HAS been replaced, which is the pre-#6021 behaviour and rare: `.with`
-	// threading is not the append accumulator this promotion exists for.
-	borrowedParam := map[string]bool{}
-	for i, p := range b.fn.Params {
-		if !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
-			(!b.rc.consumedParams[p.Name] || b.isConsumedArrayParam(p.Name)) {
-			borrowedParam[p.Name] = true
-		}
-	}
 	// `.with` calls whose receiver outlives an enclosing loop's back edge.
 	// The last-occurrence test below is TEXTUAL, and a name declared OUTSIDE
 	// the loop is read again by the next iteration, so its textually-last
@@ -4236,7 +4273,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		if !ok || !isArraySetCall(c) {
 			return true
 		}
-		if rid, rok := c.Args[0].(*ast.Ident); rok && (borrowedParam[rid.Name] || b.rc.borrowedBindings[rid.Name]) {
+		if rid, rok := c.Args[0].(*ast.Ident); rok && b.arraySetReceiverBorrowed(rid.Name) {
 			incs[c] = true
 			return true
 		}
