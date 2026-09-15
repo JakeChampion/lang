@@ -348,6 +348,9 @@ const (
 	// every permission and existence check kill(2) makes, with nothing
 	// delivered.
 	sysKill = 62
+	// setpgid(2): x86-64 syscall 109. Backs
+	// `__fern_set_process_group(pid, pgid)`.
+	sysSetpgid = 109
 	// getrlimit(2): x86-64 syscall 97. Backs `__fern_rlimit_nofile`.
 	// The 64-bit ABI's `struct rlimit` is two u64s, so the ancient
 	// 32-bit truncation the man page warns about does not apply and
@@ -904,6 +907,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesSignalSend {
 		g.emitSignalSendRuntime()
 	}
+	if g.usesSetProcessGroup {
+		g.emitSetProcessGroupRuntime()
+	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
 	}
@@ -1331,6 +1337,10 @@ type generator struct {
 	// non-positive spellings name process groups, which is what a sender
 	// means by them.
 	usesSignalSend bool
+	// usesSetProcessGroup pulls in `__fern_set_process_group(pid, pgid)` —
+	// setpgid(2), Result[void, IoError]. Both zeroes carry the syscall's
+	// own meanings: pid 0 is the caller, pgid 0 is the pid's own value.
+	usesSetProcessGroup bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one TCGETS ioctl,
 	// 1 when it succeeds.
 	usesIsatty bool
@@ -1981,6 +1991,10 @@ func (g *generator) recordUse(target string) {
 		g.usesProcessAlive = true
 	case "signal_send":
 		g.usesSignalSend = true
+		g.usesIoError = true
+		g.usesAlloc = true
+	case "set_process_group":
+		g.usesSetProcessGroup = true
 		g.usesIoError = true
 		g.usesAlloc = true
 	case "rlimit_nofile":
@@ -3731,6 +3745,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_process_alive"
 		case "signal_send":
 			target = "__fern_signal_send"
+		case "set_process_group":
+			target = "__fern_set_process_group"
 		case "rlimit_nofile":
 			target = "__fern_rlimit_nofile"
 		case "statfs":
@@ -13420,6 +13436,55 @@ func (g *generator) emitSignalSendRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_signal_send, .-__fern_signal_send")
+}
+
+// emitSetProcessGroupRuntime emits `__fern_set_process_group(pid, pgid)` →
+// Result[void, IoError] — setpgid(2) with both arguments passed through as
+// written, so the syscall's zero conventions reach the kernel: pid 0 names
+// the caller and pgid 0 names the pid's own value.
+//
+// setpgid(2)'s errnos — EACCES, EINVAL, EPERM, ESRCH — are none of the ones
+// `__fern_io_error` names, so each arrives as Other(path, strerror) with the
+// shared empty path: the primitive took two integers and never saw a file.
+//
+// System V: edi = pid, esi = pgid; the Result box in rax.
+func (g *generator) emitSetProcessGroupRuntime() {
+	g.line("")
+	g.line(".globl __fern_set_process_group")
+	g.line(".type __fern_set_process_group, @function")
+	g.label("__fern_set_process_group")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("sub rsp, 8") // 2 pushes + this ⇒ 16-byte aligned at the calls
+	g.emit("movsxd rdi, edi")
+	g.emit("movsxd rsi, esi")
+	g.emitSyscall(sysSetpgid)
+	g.emit("test rax, rax")
+	g.emit("js .Lsetpgid_err")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
+	g.emit("jmp .Lsetpgid_ret")
+
+	g.label(".Lsetpgid_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax") // the IoError box, across the Result alloc
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lsetpgid_ret")
+	g.emit("add rsp, 8")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_set_process_group, .-__fern_set_process_group")
 }
 
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a

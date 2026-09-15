@@ -1825,7 +1825,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 
 // needs_fs_runtime is the gate on the io_error call-graph bundle: every
 // need whose generated Fern body is emitted from that block. The filesystem
-// is all of it bar `signal_send`, which is there because it classifies an
+// is all of it bar the two process ops, which are there because they classify an
 // errno the same way and so shares the same call graph.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
@@ -1836,7 +1836,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
-        "reader", "signal_send", "set_priority"
+        "reader", "signal_send", "set_process_group", "set_priority"
     ]);
 }
 
@@ -1870,7 +1870,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "read_link", "chdir",
         "umask", "env", "environ", "getgroups", "stat", "lstat", "statfs",
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
-        "signal_send", "set_priority"
+        "signal_send", "set_process_group", "set_priority"
     ]);
 }
 
@@ -5415,6 +5415,13 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_signal_send\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("signal_send");
+        } else if (o.kind_tag == 284) {  // set_process_group
+            // [pid][pgid] (pgid on top) -> Result[void, IoError]. The same
+            // two-operand marshalling signal_send needs: pop both and
+            // re-push with param[0] (pid) on top.
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_set_process_group\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("set_process_group");
         } else if (o.kind_tag == 282) {  // priority
             // no args -> __fern_priority() -> this process's nice value in
             // %rax. Nothing is boxed, so no heap need.
@@ -9169,6 +9176,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("rename")) { fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64"); }
         if (s.has_need("chmod")) { fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64"); }
         if (s.has_need("signal_send")) { fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86_64"); }
+        if (s.has_need("set_process_group")) { fs_src = fs_src + " " + asmcore.rt_src_set_process_group("x86_64"); }
         if (s.has_need("set_priority")) { fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86_64"); }
         if (s.has_need("truncate")) { fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64"); }
         fs_src = fs_src + asmcore.rt_src_sync_family(s, "x86_64");

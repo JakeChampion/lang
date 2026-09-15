@@ -232,6 +232,9 @@ var linuxDarwinSysno = map[string][2]int{
 	// call with signal 0: every check kill(2) makes, with nothing
 	// delivered.
 	"kill": {129, 37},
+	// setpgid(2) — Linux asm-generic 154, Darwin BSD 82. Backs
+	// `__fern_set_process_group`. Identical shape on both: (pid, pgid).
+	"setpgid": {154, 82},
 	// getrlimit(2) — Linux asm-generic 163 (arm64 asks for the
 	// set/get-rlimit pair), Darwin BSD 194. Identical shape:
 	// (resource, &rlimit) over a two-u64 record. Only the RESOURCE
@@ -834,6 +837,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesSignalSend {
 		g.emitSignalSendRuntime()
+	}
+	if g.usesSetProcessGroup {
+		g.emitSetProcessGroupRuntime()
 	}
 	if g.usesIsatty {
 		g.emitIsattyRuntime()
@@ -9582,6 +9588,58 @@ func (g *generator) emitSignalSendRuntime() {
 	g.line(".ltorg")
 }
 
+// emitSetProcessGroupRuntime emits `__fern_set_process_group(pid, pgid)` -
+// Result[void, IoError] - setpgid(2) with both arguments passed through as
+// written, so the syscall's zero conventions reach the kernel: pid 0 names
+// the caller and pgid 0 names the pid's own value. `syscall` has already
+// normalised Darwin's carry-flag error into Linux's -errno shape.
+//
+// EACCES, EINVAL, EPERM and ESRCH are none of the errnos `__fern_io_error`
+// names, so each arrives as Other(path, strerror) against the shared empty
+// path: the primitive took two integers and never saw a file.
+func (g *generator) emitSetProcessGroupRuntime() {
+	g.line("")
+	g.line(".global __fern_set_process_group")
+	g.typeDirective("__fern_set_process_group")
+	g.label("__fern_set_process_group")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str x19, [sp, #16]")
+	g.emit("sxtw x0, w0")
+	g.emit("sxtw x1, w1")
+	g.syscall("setpgid")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lsetpgid_err")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lsetpgid_ret")
+
+	g.label(".Lsetpgid_err")
+	g.emit("neg x0, x0")
+	if ast.UseTwoWordStrings(8) {
+		g.emit("mov x1, xzr")
+		g.emit("movz x2, #0x8000, lsl #48")
+	} else {
+		g.adrpAdd("x1", ".LStr_ioerr_empty")
+	}
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // the IoError box, across the Result alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w1, #1") // tag = 1 (Err)
+	g.emit("str w1, [x0]")
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lsetpgid_ret")
+	g.emit("ldr x19, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_set_process_group")
+	g.line(".ltorg")
+}
+
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a
 // terminal, 0 otherwise.
 //
@@ -14341,6 +14399,10 @@ type generator struct {
 	// non-positive spellings name process groups, which is what a sender
 	// means by them.
 	usesSignalSend bool
+	// usesSetProcessGroup pulls in `__fern_set_process_group(pid, pgid)` —
+	// setpgid(2), Result[void, IoError]. Both zeroes carry the syscall's
+	// own meanings: pid 0 is the caller, pgid 0 is the pid's own value.
+	usesSetProcessGroup bool
 	// usesIsatty pulls in `__fern_isatty(fd)` — one terminal-attribute
 	// ioctl, 1 when it succeeds.
 	usesIsatty bool
@@ -18993,6 +19055,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// signal_send(pid, sig): kill(2) — Result[void, IoError].
 			target = "__fern_signal_send"
 			g.usesSignalSend = true
+			g.usesIoError = true
+			g.usesAlloc = true
+		case "set_process_group":
+			// set_process_group(pid, pgid): setpgid(2) —
+			// Result[void, IoError].
+			target = "__fern_set_process_group"
+			g.usesSetProcessGroup = true
 			g.usesIoError = true
 			g.usesAlloc = true
 		case "rlimit_nofile":

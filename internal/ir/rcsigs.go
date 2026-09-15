@@ -322,6 +322,10 @@ var rcInertBuiltins = map[string]bool{
 	// process table to name a target in — so it is classified here under
 	// the builtin name like `chmod`.
 	"signal_send": true,
+	// (pid, pgid) → Result. Two scalars in and nothing retained,
+	// exactly like `signal_send`, and native-only for the same reason:
+	// neither wasm world has process groups.
+	"set_process_group": true,
 	// (path, mode, major, minor) → Result. The path is read and
 	// NUL-copied and the three scalars are values. Native-only — no WASI
 	// preview can create a special file — so it is named here the way

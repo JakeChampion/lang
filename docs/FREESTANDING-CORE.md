@@ -60,7 +60,7 @@ costs a silent failure on the first target that lacks it.
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
-| `proc` | `proc_fork`, `proc_exec`, `proc_waitpid`, `process_alive` | processes |
+| `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `proc_waitpid`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | interp-only; no compiled target provides it |
