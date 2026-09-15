@@ -1401,8 +1401,8 @@ whole of it, and the signature does not say.
   its own, so the plan drops it, which is the second release. Adding an owner
   cannot fix an over-count.
 
-The fix is that such a callee KEEPS the box, so the frame that sliced the view
-must not reclaim it. Two facts make that precise.
+The fix is that such a callee KEEPS what it is lent, so it is handed something
+it may keep: a copy. Two facts make that precise.
 
 The first is which callees keep it. Neither the signature nor the graph shape
 separates "keeps the argument" from "builds something new" — only the body does
@@ -1414,29 +1414,32 @@ and `s.len()` read the value and build something of their own, which is what
 keeps `lent_views`' `copied()` calls reclaiming the views they are lent. The
 container builtins — `append`, `with`, `insert`, `cell_new` — and the union
 constructors count as keeping, because `return acc.append(w)` hands `w` out
-inside the array. `escaping_args` consults the set and records the escaping
-arguments as a BITMASK over positions in the call's `imm`, the one immediate
-nothing else reads on a call.
+inside the array. `semsource.lend` consults the set: where the callee is in
+it, a view is not retagged but COPIED (`v + ""`, an owned string), and that
+copy is what the call is handed.
 
 Returning the box is only the smallest shape of this. The self-host lexer's
 `number_tok`/`quoted_tok`/`ident_tok` each store a lent view in the Token they
 build, which is why skipping any one of them left the probe faulting and only
 the whole group cleared it.
 
-The second is what the release then has to be. `ssaunits.handed_on` marks the
-value behind the retag, and `ssarc` releases it with `__fern_str_free` rather
-than the view reclaim `__fern_str_view_free`. That is not a weaker release, it
-is the one that reads the box: it stands down on the immortal count a register
-backend gives a slice, and decrements a counted one — and wasm's `$__fern_substr`
-COPIES, so a wasm slice is an ordinary counted block whose callee retain really
-did retain. The same lowering is therefore right on both, with no target
-question in the IR and nothing run-time-conditional in the plan.
+The second is what the copy settles that a release could not. The box is one
+half: a counted box is what a keeping callee's retain really retains, on every
+backend, so the caller's release of its copy leaves the callee's reference
+standing. The BYTES are the other half, and the one a release cannot reach: a
+view's bytes belong to its source, and where that source is a string the
+slicing frame owns — `constfold.lit_int`'s `slice_unchecked(s, 1, s.len())`
+over the `s` it built — the frame releases the source on its way out and the
+stored view reads reissued memory. That was the wrong assembly of #9407
+(`rc-log/2026-09-15-a-lent-view-is-copied-for-a-callee-that-keeps-it.md`):
+the sanitizer is silent on it, because nothing touches a freed rc, only bytes.
+The first form of this fix released the handed box with the counted release
+and left it at that, which closed the box's double free and not the bytes.
 
-What the register backends then leave behind is the box itself, which no one can
-prove dead once a counted reference may hold it. The AST lowering leaks the same
-box for the same reason, so the two paths agree; `TestSelfHostSemanticProduction`
-asserts that directly, comparing the sanitizer's leak figure between the two
-columns and refusing a produced body that leaks MORE than the AST one.
+The AST lowering leaks the source instead, which is the other way to keep
+the bytes alive; `TestSelfHostSemanticProduction` compares the sanitizer's leak
+figure between the two columns and refuses a produced body that leaks MORE
+than the AST one, so the copy reads as the produced bodies freeing more.
 
 A guarded release — a pointer compare emitted around the drop — was built first
 and does not work: on wasm the two pointers are equal and the retain was real,
@@ -1633,7 +1636,45 @@ The 40,000-push reproducer through a borrowed record: 11.1 s and 8.9 GB to
 60 ms, matching the AST lowering. The compiler built through the path,
 against the two compilers of the section above:
 
-FIELD_APPEND_TABLE
+| compiler | 200 declarations: peak | copies through the cliff | `lexer.fern`: peak | copies through the cliff |
+|---|---|---|---|---|
+| AST-built | 75 MB | 15,645, 8.9 MB | 137 MB | 16,396, 36 MB |
+| semantic, before (#9398 in) | 4,067 MB | 30,765, 5.45 GB | 10,726 MB | — |
+| semantic, the append admitted | 3,681 MB | 46,049, 5.43 GB | 5,819 MB | 58,214, 9.10 GB |
+| semantic, the handed field too | 5,580 MB | 25,453, 1.50 GB | 6,892 MB | 25,364, 2.93 GB |
+
+Every row exit 0. The copies are `FERN_CLIFF_REPORT=1`'s count and bytes;
+the peaks are sampled RSS. Two things the table says that a peak alone
+would not:
+
+- **The bytes copied fell 3.6x on the 200 declarations and 3.1x on
+  `lexer.fern`, and the peak did not.** That
+  is not a leak: under `FERN_LEAKCHECK=1` the produced compiler leaves LESS
+  live at exit than the AST-built one — 22.5 MB against 67.0 MB on the 200
+  declarations, 29.6 MB against 142.5 MB on `lexer.fern` — and frees 1.66 M
+  of 1.90 M allocations where the AST build frees 0.38 M of 1.31 M. The
+  peak is churn the size-class freelist does not recycle, the shape the
+  §"What stops it being the FIXPOINT" note already named. The copies that
+  remain (25,000 on either input, 1.5–2.9 GB) are the next thing to
+  attribute, with the same instrument.
+- **The produced compiler's ANSWER on `lexer.fern` is wrong**, and was
+  before either change: the semantic build of main at `b15a016` emits the
+  same 150-line divergence from the AST build, at three sites: the two
+  `var b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
+  `test_mixed`, each lowered as zero minus one, which the AST build folds
+  to `movq $-1` and the produced build emits as `xorl; movq $o, %rcx; subq`.
+  The constant op's `str` field is the literal's text, a view the constant
+  folder sliced out of a string its frame then released, so the byte read
+  back was whatever the reissued block held. The 200-declaration input's
+  output is byte-identical. That was #9407, two defects: the sanitizer's abort
+  was an AST-lowered caller releasing, on its rebind, an `own` array it had
+  moved into a produced callee that consumed it — the boundary contract is
+  `irlower.own_consumed_positions`, seeded from the produced bodies and closed
+  over the AST-lowered forwarders
+  (`rc-log/2026-09-15-an-own-array-consumed-across-the-mixed-boundary.md`) —
+  and the wrong assembly was the view, which a produced caller now copies for
+  a callee that keeps it
+  (`rc-log/2026-09-15-a-lent-view-is-copied-for-a-callee-that-keeps-it.md`).
 
 ### The leaves that are left, by measured size
 

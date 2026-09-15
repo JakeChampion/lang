@@ -546,14 +546,8 @@ function drop_record_fields(r: irlower.LowerResult, slot: i32, fields: semrecord
     return r;
 }
 
-// A value ssaunits marks as handed on is released with the counted release
-// rather than its own: see ssaunits.handed_on for why the view reclaim would
-// pull the box out from under a live reference.
-function drops(r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, shared: boolean[]): irlower.LowerResult {
-    for value in step.drops {
-        if (shared[value]) { r = helper(r, value, "__fern_str_free"); }
-        else { r = drop_value(r, value, f.values[value], f.graph.nvals, f); }
-    }
+function drops(r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func): irlower.LowerResult {
+    for value in step.drops { r = drop_value(r, value, f.values[value], f.graph.nvals, f); }
     return r;
 }
 
@@ -592,7 +586,7 @@ function edge(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, from: i3
     for ins in dest.insts {
         if (ins.kind_tag == 8) { r = emit(r, ir.op_load_local(ins.args[pi])); }
     }
-    r = drops(r, step, f, p.shared);
+    r = drops(r, step, f);
     var i: i32 = dest.insts.len() - 1;
     while (i >= 0) {
         var ins: ssa.SInst = dest.insts[i];
@@ -1663,7 +1657,7 @@ function builtin_site(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
 }
 
 function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
-    r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f, p.shared);
+    r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
@@ -1677,7 +1671,7 @@ function block_body(r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b:
             r = bracket_take(r, f, held);
             r = instruction(r, f, p, ins, structs, defer0);
             r = bracket_give(r, f, held);
-            r = drops(r, step, f, p.shared);
+            r = drops(r, step, f);
         }
         pos = pos + 1;
     }
@@ -1731,7 +1725,7 @@ function terminator(e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], pos
     if (b.term.kind_tag == 1) {
         var ret: ssaunits.Step = at(p, b.id, ssaunits.return_point(), 0 - 1);
         var r: irlower.LowerResult = supplies(e.r, ret, false);
-        r = drops(r, ret, f, p.shared);
+        r = drops(r, ret, f);
         if (b.term.value >= 0) { r = emit(r, ir.op_load_local(b.term.value)); }
         else { r = emit(r, ir.op_const_i32(0)); }
         return Emit { ...e, r: emit(r, ir.op_return()) };
@@ -1817,6 +1811,24 @@ pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[],
         i = i + 1;
     }
     return mask;
+}
+
+// The `own` array positions of a produced free function, as irlower's
+// own_consumed_positions spells them: a counted array parameter is one the
+// body consumes — a push that supersedes the buffer reclaims it, and the
+// exit releases what is left — where the AST lowering's pointer-element
+// protocol leaves the superseded buffer for the caller's rebind to release.
+// Its AST callers transfer their reference instead (#9407).
+pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < f.params.len() && i < modes.len()) {
+        if (modes[i] == ssaunits.counted_mode()) {
+            if let typeinfo.TypeArray(_) = f.params[i] { out = out.append(key + "|" + util.i32_to_string(i)); }
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[]): irlower.FnSigs {
