@@ -186,10 +186,25 @@ func TestPeepholeUsesMemoryDestinationAlu(t *testing.T) {
 			t.Errorf("P10: expected %q in:\n%s", want, on)
 		}
 	}
-	// P11 removed the reload of the counter that the next increment
-	// overwrites; only the one a label follows survives.
-	if n := strings.Count(on, "mov rax, [rbp-24]"); n != 1 {
-		t.Errorf("P11: expected 1 surviving reload of [rbp-24], got %d:\n%s", n, on)
+	// P11 removed both of P10's reloads: the one the next increment overwrites
+	// directly, and the one separated from its overwriter by the block label.
+	// What survives of each slot is a real read — [rbp-16] for the loop
+	// compare, [rbp-24] for the return value, the latter kept because the
+	// epilogue does not write rax before `ret` reads it.
+	for _, slot := range []string{"[rbp-16]", "[rbp-24]"} {
+		if n := strings.Count(on, "mov rax, "+slot); n != 1 {
+			t.Errorf("P11: expected 1 surviving load of %s, got %d:\n%s", slot, n, on)
+		}
+	}
+	// No fused increment may be followed by a reload of the slot it just
+	// updated, whatever labels intervene.
+	for _, pair := range [][2]string{
+		{"add qword ptr [rbp-16], 1", "mov rax, [rbp-16]"},
+		{"add qword ptr [rbp-24], 2", "mov rax, [rbp-24]"},
+	} {
+		if n := countAdjacent(on, pair[0], pair[1]); n != 0 {
+			t.Errorf("P11: %d dead reload(s) still follow %q:\n%s", n, pair[0], on)
+		}
 	}
 	if instrCount(on) >= instrCount(off) {
 		t.Errorf("peephole did not reduce instruction count: off=%d on=%d", instrCount(off), instrCount(on))
@@ -212,5 +227,53 @@ func TestPeepholeDropsDeadReload(t *testing.T) {
 	on := compileOpts(t, counterProg, Options{})
 	if n := countAdjacent(on, "mov [rbp-16], rax", "mov rax, [rbp-16]"); n != 0 {
 		t.Errorf("P8: %d store/reload pairs survived the peephole:\n%s", n, on)
+	}
+}
+
+// scanLoopProg is #8425's shape: a per-byte loop whose body is a conditional
+// increment, so each fused increment ends a statement and the next statement
+// opens with the block labels the `if` left behind.
+const scanLoopProg = `@noinline function scan(bs: u8[]): i32 {
+  var i: i32 = 0;
+  var n: i32 = bs.len();
+  var lines: i32 = 0;
+  while (i < n) {
+    if (bs[i] as i32 == 10) { lines = lines + 1; }
+    i = i + 1;
+  }
+  return lines;
+}
+function main(): i32 { var a: u8[] = [10, 1, 10]; return scan(a); }`
+
+// A label must not protect a dead reload. Both of this loop's fused increments
+// are followed by one, and each reload's overwriter is separated from it only by
+// labels — `.LifElse_N` / `.LifEnd_N` from the conditional, `.LblkEnd_N` from
+// the loop body — so before the label walk P11 declined at both sites and left
+// two dead instructions in the hottest loop the coreutils port has.
+//
+// They were invisible from a disassembly: P2 had already deleted the only jumps
+// to those labels, so the binary showed a fused increment followed by an
+// unexplained load, and two identical consecutive loads with nothing between
+// them (#8425).
+func TestPeepholeLooksThroughLabelsForDeadReloads(t *testing.T) {
+	on := compileOpts(t, scanLoopProg, Options{})
+	body := fnBody(t, on, "scan")
+
+	// P10 has to have fired for this test to be covering anything: without the
+	// fused form there is no reload to be dead.
+	for _, slot := range []string{"[rbp-16]", "[rbp-32]"} {
+		if !strings.Contains(body, "add qword ptr "+slot+", 1") {
+			t.Fatalf("P10 no longer fuses the increment of %s, so this test no longer reaches the label case:\n%s", slot, body)
+		}
+		if n := countAdjacent(on, "add qword ptr "+slot+", 1", "mov rax, "+slot); n != 0 {
+			t.Errorf("%d dead reload(s) still follow the fused increment of %s:\n%s", n, slot, body)
+		}
+	}
+	// The induction variable's two REAL reads survive: one to index bs[i], one
+	// for the loop compare. Counted so that a P11 which grew too eager — the
+	// failure mode on the other side of this rule — shows up as a missing read
+	// rather than as a miscompile someone has to debug.
+	if n := strings.Count(body, "mov rax, [rbp-16]"); n != 2 {
+		t.Errorf("expected the induction variable's 2 real reads to survive, got %d:\n%s", n, body)
 	}
 }
