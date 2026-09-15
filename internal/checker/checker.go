@@ -3177,6 +3177,67 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// termios_get(fd): Result[i64[], IoError] — the terminal's line
+	// settings, as the KERNEL's own words, and termios_set puts them
+	// back. What `stty` is (#8382).
+	//
+	// A flat array rather than a record, and the kernel's numbering
+	// rather than Fern's, because `stty -g` PRINTS these words in hex
+	// and its restore form reads them back:
+	//
+	//	500:5:bf:8a3b:3:1c:7f:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:…
+	//
+	// so a normalised bit set — the shape `r.flags()` takes, where the
+	// caller only asks yes-or-no questions — could not reproduce the
+	// output. The flag CONSTANTS are therefore the target's, and a
+	// caller that names one branches on `target_os()`, exactly as GNU's
+	// stty gets them from the C headers.
+	//
+	// The layout, one Fern-visible shape whose LENGTH is the target's:
+	//
+	//	[0] c_iflag   [1] c_oflag   [2] c_cflag   [3] c_lflag
+	//	[4] c_line — the line discipline, 0 on a target with no such
+	//	    field (Darwin has none, and `stty -g` prints none either)
+	//	[5…] c_cc, the control characters — 19 on Linux, where the
+	//	    kernel's NCCS is 19 and glibc's wider struct is what makes
+	//	    GNU print 32 with the top 13 always zero
+	//
+	// i64 elements because Darwin's tcflag_t is an unsigned long where
+	// Linux's is 32 bits, so one element width carries both.
+	//
+	// `when` is Fern's own, and it is normalised because nothing prints
+	// it: 0 applies the change at once, 1 after the output drains, 2
+	// after draining and discarding pending input — tcsetattr's NOW /
+	// DRAIN / FLUSH, which reach the kernel as TCSETS / TCSETSW /
+	// TCSETSF. `stty` uses DRAIN.
+	//
+	// An array whose length is not the one `termios_get` answers on
+	// this target is EINVAL rather than a short read: the runtime has
+	// a fixed-size struct to fill and no way to guess the rest.
+	//
+	// A descriptor that is not a terminal answers ENOTTY, which is the
+	// whole of `stty: 'standard input': Inappropriate ioctl for
+	// device`. Gated on `tty` beside `window_size`, so E066 refuses it
+	// on both wasm worlds: there is no truthful answer to what the
+	// settings of a terminal that cannot exist are, which is the same
+	// reason a width has none there (docs/FREESTANDING-CORE.md).
+	c.info.FuncSigs["termios_get"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["termios_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{},
+			ast.NumberType{},
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{}, ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// target_os(): string — the compile target's environment ("linux",
 	// "darwin", "android", "wasi", "wasi-http", "freestanding"), never
 	// the compiler's host. A compile folds it to a string literal before

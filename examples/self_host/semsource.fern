@@ -2,6 +2,7 @@
 // Every value carries the checker's resolved type. Source names are places
 // that resolve to value identities; no ownership fact is read from syntax.
 import "./ast";
+import "./astwalk";
 import "./parser";
 import "./capturebox";
 import "./checker";
@@ -67,6 +68,12 @@ struct State {
     // as a parameter. Replacing the binding that holds one is a write back
     // through a capture — see `assign`.
     foreign: i32[],
+    // The view retags `lend` made. A callee handed one may return that very
+    // box, which is what `aliased_arg` records on the call — see it for why.
+    lent: i32[],
+    // The module declarations whose body may return one of their parameters,
+    // by contract name; `handers` computes it and `aliased_arg` consults it.
+    handers: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
     // Each parameter's declared mode, in order. A parameter's value id is its
@@ -1128,7 +1135,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         i = i + 1;
     }
     if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.call(), ids, 0, key, contract.result);
+    return define(s, ssasem.call(), ids, aliased_arg(s, ids, contract.result, key), key, contract.result);
 }
 
 // `cell_new(v)` builds the shared one-element box over v's unit. The checker
@@ -1186,7 +1193,36 @@ function lend(v: Value, param: typeinfo.Type, m: i32): Value {
     var s: State = v.s;
     if (!s.ok || m != ssaunits.borrow_mode()) { return v; }
     if (!ssasem.is_view(s.values[v.id]) || !ssasem.is_string(param)) { return v; }
-    return define(s, ssasem.str_as(), [v.id], 0, "", param);
+    var t: Value = define(s, ssasem.str_as(), [v.id], 0, "", param);
+    return Value { s: State { ...t.s, lent: t.s.lent.append(t.id) }, id: t.id };
+}
+
+// The 1-based position in `ids` of an argument this call's result may BE, or 0
+// for none — which is what a call's `imm` carries, the one immediate nothing
+// else reads on a call.
+//
+// A callee lent a string VIEW can hand that box straight back
+// (`function keep(t: string): string { return t; }`). A view's box carries the
+// immortal rc sentinel, so the retain the callee owes for returning a borrowed
+// reference is a NO-OP, and a caller that accounts the result a unit of its own
+// releases, with the frame that sliced the view, one box twice — a
+// use-after-free, and what stopped the compiler compiling itself through this
+// path (#9328).
+//
+// Whether the callee hands it back is a property of its BODY, which no contract
+// records: a callee returning a fresh string (the fixture's `copied()`) is
+// clean, and refusing on the signature took it out of production. `handers` is
+// that property, read off the bodies once per module, and `ssaunits.handed_on`
+// is what the position recorded here reaches.
+function aliased_arg(s: State, ids: i32[], result: typeinfo.Type, callee: string): i32 {
+    if (!ssasem.is_text(result)) { return 0; }
+    if (util.index_of_str(s.handers, callee) < 0) { return 0; }
+    var i: i32 = 0;
+    while (i < ids.len()) {
+        if (util.index_of_i32(s.lent, ids[i]) >= 0) { return i + 1; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 // A call of a bound name whose value is a function: the callee is the closure
@@ -1482,7 +1518,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
         s = request(s, contract.name, callee.name, bound);
     }
     if (ssasem.find_contract(s.calls, callee.name) < 0) { s = State { ...s, calls: s.calls.append(callee) }; }
-    return define(s, ssasem.call(), ids, 0, callee.name, callee.result);
+    return define(s, ssasem.call(), ids, aliased_arg(s, ids, contract.result, contract.name), callee.name, callee.result);
 }
 
 // An instance a call or a closure constructor names is asked for once.
@@ -2297,11 +2333,12 @@ function refuse(why: string): Produced {
     return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], name: name, modes: [] };
+        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], lent: [], handers: handers,
+        name: name, modes: [] };
 }
 
 // ---- record schemas ---------------------------------------------------------
@@ -2478,10 +2515,10 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
-pub function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string): Produced {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[]): Produced {
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
-    var s: State = initial(fd, scope, contracts, binding, name);
+    var s: State = initial(fd, scope, contracts, binding, name, handers);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     if (ssasem.is_func(s.result)) { return refuse("function value result"); }
@@ -2516,6 +2553,64 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope): ssasem.Contract {
         at = at + 1;
     }
     return ssasem.Contract { name: decl_key(fd), params: params, modes: modes, result: result };
+}
+
+// Whether a contract name is a method of this field name — `Type.field`.
+function method_is(key: string, field: string): boolean {
+    var at: i32 = key.len() - 1;
+    while (at >= 0 && key[at] != b'.') { at = at - 1; }
+    if (at < 0) { return false; }
+    return slice_unchecked(key, at + 1, key.len()) == field;
+}
+
+function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
+    if let ast.StmtReturn(r) = st { return acc.append(r.value); }
+    return acc;
+}
+
+// Whether a declaration's body may return one of its own parameters. Returning
+// a bare parameter is the direct shape; returning a call to a declaration that
+// already does carries it on, which is why the set closes to a fixpoint below.
+// A method call is matched on its field name alone, since the receiver's type
+// is not in hand here — the direction that over-reports rather than misses.
+function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
+    var names: string[] = decl_param_names(fd);
+    var outs: ast.Expr[] = [];
+    for st in fd.body { outs = astwalk.fold_stmt_spine(st, outs, return_exprs); }
+    for e in outs {
+        if let ast.ExprIdent(id) = e {
+            if (util.index_of_str(names, id.name) >= 0) { return true; }
+        }
+        if let ast.ExprCall(c) = e {
+            if let ast.ExprIdent(callee) = c.callee {
+                if (util.index_of_str(known, callee.name) >= 0) { return true; }
+            }
+            if let ast.ExprFieldAccess(fa) = c.callee {
+                for k in known { if (method_is(k, fa.field)) { return true; } }
+            }
+        }
+    }
+    return false;
+}
+
+// The declarations whose body may hand a caller back the very box it lent,
+// by contract name. `aliased_arg` reads it: a caller that lends a string VIEW
+// to one of these can get that box as the result, and a view's box carries no
+// count to make the two references safe.
+function handers(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for fd in mod.funcs {
+            var key: string = decl_key(fd);
+            if (util.index_of_str(out, key) < 0 && hands_back(fd, out)) {
+                out = out.append(key);
+                changed = true;
+            }
+        }
+    }
+    return out;
 }
 
 function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract[] {
@@ -2848,6 +2943,7 @@ function instance_limit(): i32 { return 16384; }
 pub function build_module(mod: parser.Module): Built {
     var scopes: checker.Scope[] = checker.module_scopes(mod);
     var table: ssasem.Contract[] = contracts(mod, scopes);
+    var handed_back: string[] = handers(mod);
     var decls: Produced[] = [];
     var names: string[] = [];
     var pending: Request[] = [];
@@ -2855,7 +2951,7 @@ pub function build_module(mod: parser.Module): Built {
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
-        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name); }
+        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back); }
         pending = queue(pending, p.requests);
         decls = decls.append(p);
         names = names.append(decl_key(fd));
@@ -2867,7 +2963,7 @@ pub function build_module(mod: parser.Module): Built {
         var r: Request = pending[at];
         var di: i32 = util.index_of_str(names, r.key);
         var p: Produced = refuse("unbounded instantiation");
-        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name); }
+        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back); }
         pending = queue(pending, p.requests);
         instances = instances.append(Produced { ...p, key: r.key });
         names = names.append(r.name);

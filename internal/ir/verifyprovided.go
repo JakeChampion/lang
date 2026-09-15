@@ -306,6 +306,8 @@ var providedSigs = map[string]providedSig{
 	"f64_from_bits":                 {-1, rFloat},
 	"isatty":                        {1, rWord},
 	"window_size":                   {1, rWord},
+	"termios_get":                   {1, rWord},
+	"termios_set":                   {3, rWord},
 	"process_alive":                 {1, rWord},
 	"signal_send":                   {2, rWord},
 	"set_process_group":             {2, rWord},

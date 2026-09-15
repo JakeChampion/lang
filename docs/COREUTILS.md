@@ -1844,6 +1844,29 @@ child, exec. `timeout` and `stdbuf` were listed as wanting it too and do not —
 `timeout` redirects nothing and `stdbuf` sets `LD_PRELOAD`, which is
 environment.
 
+`stty` (#8382) needed the one primitive here that does NOT normalise what the
+kernel gave it:
+
+    termios_get(fd)              TCGETS, as a 24-element i64[]
+    termios_set(fd, when, words) TCSETS / TCSETSW / TCSETSF
+
+`stty -g` prints the four flag words and the control characters in hex and its
+restore form reads them back, so the numbers have to be the kernel's — a Fern
+bit numbering, which is what `r.flags()` does with F_GETFL, could not
+reproduce the output. The flag CONSTANTS are therefore per-OS, and `stty.fern`
+branches on `target_os()` exactly as GNU's stty gets them from the C headers.
+Measured: the array is `[iflag, oflag, cflag, lflag, line, cc[0..18]]`, which
+is the asm-generic struct byte for byte, and GNU prints 32 control characters
+because glibc's userspace struct is wider than the kernel's 19 — the top 13
+are always zero, which is what the tail of a `-g` line is.
+
+Darwin is the one target it does not reach: its struct is a different shape
+and the TIOCGETA request number encodes that struct's size, neither of which
+can be written from memory or measured on a Linux build box, so both halves
+answer ENOSYS there rather than shipping a number that would answer ENOTTY and
+look like "this is not a terminal". `poll` is on the same line for the same
+target.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast

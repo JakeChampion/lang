@@ -337,6 +337,8 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"chown_at":                   true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
+	"termios_get":                true,
+	"termios_set":                true,
 	"read_dir_all":               true,
 	"stat":                       true,
 	"lstat":                      true,

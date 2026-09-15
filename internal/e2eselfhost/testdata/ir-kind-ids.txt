@@ -296,3 +296,5 @@ write_some=308
 crc32_cksum=309
 read_dir_all=310
 fd_dup_onto=311
+termios_get=312
+termios_set=313

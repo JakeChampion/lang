@@ -853,6 +853,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWindowSize {
 		g.emitWindowSizeRuntime()
 	}
+	if g.usesTermiosGet {
+		g.emitTermiosGetRuntime()
+	}
+	if g.usesTermiosSet {
+		g.emitTermiosSetRuntime()
+	}
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
 	}
@@ -9823,6 +9829,187 @@ func (g *generator) emitWindowSizeRuntime() {
 	g.line(".ltorg")
 }
 
+// The kernel's `struct termios` on the asm-generic ABI: four 32-bit flag
+// words, one line-discipline byte, NCCS = 19 control characters — 36 bytes,
+// and 24 elements in the word array the language sees.
+const (
+	termiosNCCS  = 19
+	termiosWords = 4 + 1 + termiosNCCS
+	linuxTcgets  = 0x5401
+	// TCSETS, TCSETSW and TCSETSF are consecutive, so the action adds.
+	linuxTcsets = 0x5402
+)
+
+// emitTermiosGetRuntime emits `__fern_termios_get(fd) -> Result[i64[],
+// IoError]` - one TCGETS into the kernel's struct, widened element by element
+// into a fresh `i64[]`.
+//
+// The words are the KERNEL's rather than normalised: `stty -g` prints them in
+// hex and reads them back. ENOTTY is the answer for a descriptor that is not
+// a terminal, classified against an empty path.
+//
+// DARWIN answers ENOSYS. Its `struct termios` is a different shape -
+// unsigned-long flag words, twenty control characters, no line byte, and a
+// speed pair appended - and the TIOCGETA request number encodes that struct's
+// size, so neither can be written from memory and neither is measurable on a
+// Linux build box. A wrong request number answers ENOTTY, which a caller
+// cannot tell from "this is not a terminal", so the honest answer is the one
+// that says nothing was done. This is the line `__fern_poll` is already on
+// for the same target.
+func (g *generator) emitTermiosGetRuntime() {
+	g.line("")
+	g.line(".global __fern_termios_get")
+	g.typeDirective("__fern_termios_get")
+	g.label("__fern_termios_get")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	if g.darwin {
+		g.emit("mov x0, #-38") // -ENOSYS
+		g.emit("b .Ltcg_err")
+	} else {
+		// The 36-byte struct lands in the 48-byte slot below the frame.
+		g.emit("sub sp, sp, #48")
+		g.emit("mov w0, w0")
+		g.emit("mov x1, #%d", linuxTcgets)
+		g.emit("mov x2, sp")
+		g.syscall("ioctl")
+		g.emit("mov x19, sp")
+		g.emit("add sp, sp, #48")
+		g.emit("tbnz x0, #63, .Ltcg_err")
+		g.emit("mov x0, #%d", termiosWords*8+16)
+		g.emit("bl __fern_alloc")
+		g.emit("add x20, x0, #16")
+		g.emit("mov w9, #%d", termiosWords)
+		g.emit("stur w9, [x20, #-12]") // cap
+		g.emit("mov w9, #1")
+		g.emit("stur w9, [x20, #-8]") // rc = 1, a fresh owned array
+		g.emit("mov w9, #%d", termiosWords)
+		g.emit("stur w9, [x20, #-4]") // len
+		for i := 0; i < 4; i++ {
+			g.emit("ldr w9, [x19, #%d]", i*4)
+			g.emit("str x9, [x20, #%d]", i*8)
+		}
+		g.emit("ldrb w9, [x19, #16]") // c_line
+		g.emit("str x9, [x20, #32]")
+		g.emit("mov x9, #0")
+		g.label(".Ltcg_cc")
+		g.emit("add x10, x19, x9")
+		g.emit("ldrb w10, [x10, #17]")
+		g.emit("add x11, x20, #40")
+		g.emit("str x10, [x11, x9, lsl #3]")
+		g.emit("add x9, x9, #1")
+		g.emit("cmp x9, #%d", termiosNCCS)
+		g.emit("blo .Ltcg_cc")
+		g.emit("mov x19, x20")
+		g.emit("mov x0, #16")
+		g.emit("bl __fern_alloc_rc1")
+		g.emit("str wzr, [x0]") // tag = 0 (Ok)
+		g.emit("str x19, [x0, #8]")
+		g.emit("b .Ltcg_return")
+	}
+
+	g.label(".Ltcg_err")
+	g.emit("neg x0, x0")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Ltcg_return")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_termios_get")
+	g.line(".ltorg")
+}
+
+// emitTermiosSetRuntime emits `__fern_termios_set(fd, when, words) ->
+// Result[void, IoError]` - the struct packed back out of the word array and
+// handed to TCSETS, TCSETSW or TCSETSF as `when` selects.
+//
+// A wrong-length array or an out-of-range action is EINVAL: there is a
+// fixed-size struct to fill, and the three ioctls are consecutive from TCSETS
+// so a fourth value would name something else. Darwin answers ENOSYS, for the
+// reason the read half does.
+func (g *generator) emitTermiosSetRuntime() {
+	g.line("")
+	g.line(".global __fern_termios_set")
+	g.typeDirective("__fern_termios_set")
+	g.label("__fern_termios_set")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	if g.darwin {
+		g.emit("mov x0, #-38") // -ENOSYS
+		g.emit("b .Ltcs_err")
+	} else {
+		g.emit("mov x19, x2") // the words
+		g.emit("mov x20, x1") // the action
+		g.emit("mov x21, x0") // the fd
+		g.emit("ldur w9, [x19, #-4]")
+		g.emit("cmp w9, #%d", termiosWords)
+		g.emit("bne .Ltcs_einval")
+		g.emit("cmp x20, #2")
+		g.emit("bhi .Ltcs_einval")
+		g.emit("sub sp, sp, #48")
+		for i := 0; i < 4; i++ {
+			g.emit("ldr x9, [x19, #%d]", i*8)
+			g.emit("str w9, [sp, #%d]", i*4)
+		}
+		g.emit("ldr x9, [x19, #32]")
+		g.emit("strb w9, [sp, #16]")
+		g.emit("mov x9, #0")
+		g.label(".Ltcs_cc")
+		g.emit("add x10, x19, #40")
+		g.emit("ldr x10, [x10, x9, lsl #3]")
+		g.emit("add x11, sp, x9")
+		g.emit("strb w10, [x11, #17]")
+		g.emit("add x9, x9, #1")
+		g.emit("cmp x9, #%d", termiosNCCS)
+		g.emit("blo .Ltcs_cc")
+		g.emit("mov w0, w21")
+		// TCSETS does not fit an add-immediate's 12 bits, so the base
+		// goes through a register.
+		g.emit("mov x9, #%d", linuxTcsets)
+		g.emit("add x1, x20, x9")
+		g.emit("mov x2, sp")
+		g.syscall("ioctl")
+		g.emit("add sp, sp, #48")
+		g.emit("tbnz x0, #63, .Ltcs_err")
+		g.emitPayloadlessResultBox(16, 0) // Ok(())
+		g.emit("b .Ltcs_return")
+		g.label(".Ltcs_einval")
+		// The shared arm below negates what the syscall would have left,
+		// so the refusal arrives the same way.
+		g.emit("mov x0, #-22") // -EINVAL
+	}
+
+	g.label(".Ltcs_err")
+	g.emit("neg x0, x0")
+	g.emitEmptyPathArgs()
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov w9, #1")
+	g.emit("str w9, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Ltcs_return")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_termios_set")
+	g.line(".ltorg")
+}
+
 // emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
 // `__fern_signal_default(sig)` — one sigaction each, setting `sa_handler`
 // to SIG_IGN or SIG_DFL and leaving every other field zero.
@@ -14472,6 +14659,11 @@ type generator struct {
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
+	// usesTermiosGet / usesTermiosSet pull in the two halves of the
+	// terminal's line settings: one TCGETS into a word array, and the
+	// TCSETS family back out of one.
+	usesTermiosGet bool
+	usesTermiosSet bool
 	// usesSignalSend pulls in `__fern_signal_send(pid, sig)` — kill(2),
 	// Result[void, IoError]. The pid reaches the kernel as written:
 	// non-positive spellings name process groups, which is what a sender
@@ -19164,6 +19356,18 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// window_size(fd): Result[WinSize, IoError].
 			target = "__fern_window_size"
 			g.usesWindowSize = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "termios_get":
+			// termios_get(fd): Result[i64[], IoError].
+			target = "__fern_termios_get"
+			g.usesTermiosGet = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "termios_set":
+			// termios_set(fd, when, words): Result[void, IoError].
+			target = "__fern_termios_set"
+			g.usesTermiosSet = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "signal_ignore":
