@@ -61,3 +61,7 @@ attribution evidence, not timing measurements.
 The full current-head CI suite is still required before merging. Local broad
 validation ran concurrently and supplies correctness evidence, not controlled
 whole-suite performance measurements.
+
+After rebasing onto main at `91fdda807`, the count oracle, feature census,
+source checks, module-wide Linux vet and build passed again. The broad parity
+and native structural comparisons above were run before that rebase.
