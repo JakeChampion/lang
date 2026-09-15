@@ -145,3 +145,69 @@ func TestWASMReadDirAll(t *testing.T) {
 		t.Errorf("main = %d, want 0 (see readDirAllSource)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
 	}
 }
+
+// readDirAllWithRemoveSource calls read_dir_all AND remove_dir_all in one
+// program, which is the pair that catches a LABEL COLLISION between their
+// two runtime helpers.
+//
+// Both bodies land in one object, and the in-process assemblers bound a
+// duplicate `.L` name to whichever body was emitted second — silently, so
+// every branch in the first one jumped into the second. read_dir_all
+// shipped with `.Lrda` / `.Lrda2w` / `.Lssa_rda`, the prefixes
+// remove_dir_all already owned, and this exact program segfaulted on all
+// three native backends while every single-builtin test stayed green.
+// Reported by pullfrog on #9290.
+//
+// The assemblers refuse a duplicate named .text label now
+// (internal/native/*/), so the collision is a build error rather than a
+// wrong image; this runs the pair anyway, because the refusal is a
+// backstop and the answer being right is the property.
+const readDirAllWithRemoveSource = `function main(): i32 {
+    match (create_dir_all("d/sub")) { Ok(_) => {}, Err(_) => { return 1; } }
+    match (write_file("d/a.txt", "x")) { Ok(_) => {}, Err(_) => { return 2; } }
+    var all: string[] = [];
+    match (read_dir_all("d")) { Ok(es) => { all = es; }, Err(_) => { return 3; } }
+    // a.txt, sub, "." and "..".
+    if (all.len() != 4) { return 4; }
+    match (remove_dir_all("d")) { Ok(_) => {}, Err(_) => { return 5; } }
+    match (read_dir_all("d")) { Ok(_) => { return 6; }, Err(_) => {} }
+    return 0;
+}
+`
+
+func TestX86_64ReadDirAllBesideRemoveDirAll(t *testing.T) {
+	bin, runner := compileX86_64Bin(t, readDirAllWithRemoveSource)
+	out, code := runWithPipes(t, inDir(t, runX86_64Bin(runner, bin)))
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 — the code names the case (see readDirAllWithRemoveSource)\n%s", code, out)
+	}
+}
+
+func TestArm64ReadDirAllBesideRemoveDirAll(t *testing.T) {
+	bin, qemu := compileArm64Bin(t, readDirAllWithRemoveSource)
+	out, code := runWithPipes(t, inDir(t, runArm64Bin(qemu, bin)))
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 — the code names the case (see readDirAllWithRemoveSource)\n%s", code, out)
+	}
+}
+
+func TestInterpReadDirAllBesideRemoveDirAll(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(p, []byte(readDirAllWithRemoveSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(buildLangBinForInterp(t), "-interp", p)
+	cmd.Dir = dir
+	out, code := runWithPipes(t, cmd)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 — the code names the case (see readDirAllWithRemoveSource)\n%s", code, out)
+	}
+}
+
+func TestWASMPreview1ReadDirAllBesideRemoveDirAll(t *testing.T) {
+	mod := buildPreview1Module(t, readDirAllWithRemoveSource)
+	if code := runPreview1Module(t, mod, t.TempDir()); code != 0 {
+		t.Errorf("preview-1 read_dir_all beside remove_dir_all: main = %d, want 0", code)
+	}
+}

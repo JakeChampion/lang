@@ -15935,7 +15935,7 @@ func (g *generator) emitReadDirRuntime() {
 // Result[string[], IoError]` — the same listing with "." and ".."
 // kept, in the order getdents64 reports them.
 func (g *generator) emitReadDirAllRuntime() {
-	g.emitReadDirLike("__fern_read_dir_all", ".Lrda", false)
+	g.emitReadDirLike("__fern_read_dir_all", ".Lrdall", false)
 }
 
 // emitReadDirLike is the body both share. Pipeline: openat(O_RDONLY|

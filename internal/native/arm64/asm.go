@@ -24,6 +24,17 @@ type Assembler struct {
 	labels map[string]int
 	fixups []fixup
 
+	// dupLabelErr records the FIRST duplicate .text label definition, and
+	// TextLen refuses the program on it. A second definition of the same
+	// name silently rebound every branch that names it to the later body,
+	// so two runtime helpers sharing a `.L` prefix produced a
+	// valid-looking image that jumped into the wrong one: #9290 gave
+	// read_dir_all the prefix remove_dir_all already owned, and a program
+	// calling both segfaulted with nothing reporting it. Numeric locals
+	// (`1:`) are a different thing and are scoped separately below, so
+	// they never reach this.
+	dupLabelErr error
+
 	// Data section + symbol addressing (used by AssembleProgram).
 	rodata []byte
 	// bss accumulates .bss (zero-initialised) contributions separately from
@@ -221,6 +232,12 @@ func (a *Assembler) TextLabel(name string) {
 		// as a global name.
 		a.labels[a.defineNumericLabel(n)] = len(a.insns)
 		return
+	}
+	if _, dup := a.labels[name]; dup && a.dupLabelErr == nil {
+		a.dupLabelErr = fmt.Errorf("duplicate .text label %q: the later "+
+			"definition would rebind every branch that names it, so two "+
+			"bodies sharing a label prefix run into each other. Give the "+
+			"second one a prefix of its own", name)
 	}
 	a.labels[name] = len(a.insns)
 	a.syms[name] = symbol{inText: true, val: len(a.insns)}
@@ -500,8 +517,12 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 func (a *Assembler) TextLen() (int, error) {
 	if !a.settled {
 		a.settled = true
-		a.FlushLiterals()
-		a.settleErr = a.fitBranches()
+		if a.dupLabelErr != nil {
+			a.settleErr = a.dupLabelErr
+		} else {
+			a.FlushLiterals()
+			a.settleErr = a.fitBranches()
+		}
 	}
 	if a.settleErr != nil {
 		return 0, a.settleErr

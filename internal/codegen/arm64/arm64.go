@@ -11949,7 +11949,7 @@ func (g *generator) emitReadDirRuntime() {
 // path_len)` — the same listing with "." and ".." kept, in the order
 // the directory reader reports them.
 func (g *generator) emitReadDirAllRuntime() {
-	g.emitReadDirLike("__fern_read_dir_all", ".Lrda2w", false)
+	g.emitReadDirLike("__fern_read_dir_all", ".Lrdall2w", false)
 }
 
 // emitReadDirLike is the body both share. Pipeline:

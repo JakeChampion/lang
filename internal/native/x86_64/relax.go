@@ -34,6 +34,12 @@ type relaxEvent struct {
 // defineTextLabel records a .text label at the current offset, binding it
 // to the alignment pad it directly follows (see relaxEvent.syms).
 func (a *Assembler) defineTextLabel(label string) {
+	if _, dup := a.textLabels[label]; dup && a.dupLabelErr == nil {
+		a.dupLabelErr = fmt.Errorf("duplicate .text label %q: the later "+
+			"definition would rebind every branch that names it, so two "+
+			"bodies sharing a label prefix run into each other. Give the "+
+			"second one a prefix of its own", label)
+	}
 	a.textLabels[label] = len(a.text)
 	if e := a.trailingPad(); e != nil {
 		e.syms = append(e.syms, label)
@@ -70,6 +76,10 @@ func (a *Assembler) relax() error {
 		return a.relaxErr
 	}
 	a.relaxDone = true
+	if a.dupLabelErr != nil {
+		a.relaxErr = a.dupLabelErr
+		return a.relaxErr
+	}
 	a.relaxErr = a.relaxOnce()
 	return a.relaxErr
 }

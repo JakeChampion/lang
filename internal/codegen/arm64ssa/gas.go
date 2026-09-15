@@ -7085,7 +7085,7 @@ func emitReadDirHelper(w func(string, ...any)) {
 // emitReadDirAllHelper writes read_dir_all(path) -> Result[string[], IoError]:
 // the same listing with "." and ".." kept, in getdents64 order.
 func emitReadDirAllHelper(w func(string, ...any)) {
-	emitReadDirLike(w, "read_dir_all", ".Lssa_rda", false)
+	emitReadDirLike(w, "read_dir_all", ".Lssa_rdall", false)
 }
 
 // emitReadDirLike is the body both share. It NUL-terminates the path, opens it

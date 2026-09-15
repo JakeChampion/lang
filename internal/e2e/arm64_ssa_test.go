@@ -1349,6 +1349,26 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			want: 4,
 		},
 		{
+			// read_dir_all BESIDE remove_dir_all: the pair whose two helper
+			// bodies land in one object, so a shared `.L` prefix binds each
+			// other's branches. read_dir_all shipped with `.Lssa_rda`, which
+			// remove_dir_all already owned, and this segfaulted while every
+			// single-builtin case stayed green (#9290).
+			name: "read_dir_all_beside_remove_dir_all",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_rda_pair")) {
+    Ok(d) => {
+      var a = write_file(d + "/a.txt", "x");
+      var n = match (read_dir_all(d)) { Ok(es) => es.len(), Err(e) => 100 };
+      var r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
+      n + r
+    },
+    Err(e) => 60
+  };
+}`,
+			want: 3,
+		},
+		{
 			// read_dir_all failure: the same ENOENT → Err(NotFound) arm read_dir has.
 			name: "read_dir_all_err",
 			src: `function main(): i32 {
