@@ -870,7 +870,7 @@ function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: bool
 // below sorts on. `ino` is 0 for an entry that vanished between the
 // readdir and the stat, which sorts it first — a race either way, and the
 // copy of it then reports its own `cannot stat`.
-struct DirEnt { name: string, dev: i64, ino: i64 }
+struct DirEnt { name: string, dev: i64, ino: i64, is_dir: boolean }
 
 function dirent_cmp(a: DirEnt, b: DirEnt): i32 {
   if (a.ino < b.ino) {
@@ -902,7 +902,7 @@ function walk_order(dir: string, names: string[]): DirEnt[] {
       dev = info.dev;
       ino = info.ino;
     }
-    es = es.append(DirEnt { name: names[i], dev: dev, ino: ino });
+    es = es.append(DirEnt { name: names[i], dev: dev, ino: ino, is_dir: info.is_dir });
     i = i + 1;
   }
   return es.sort_by(dirent_cmp);
@@ -911,6 +911,10 @@ function walk_order(dir: string, names: string[]): DirEnt[] {
 // `made(st, dev, ino)` — this operand has already CREATED a destination
 // directory with that identity, so a source entry matching it is the copy
 // walking into its own output.
+//
+// Only directories are ever recorded, so only a directory entry need ask:
+// the walk skips this for every file, which is what keeps the scan
+// proportional to the tree's directory count rather than to its size.
 function made(st: State, dev: i64, ino: i64): boolean {
   var i: i32 = 0;
   while (i < st.made_ino.len()) {
@@ -969,7 +973,7 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
       if (st.aborted) {
         break;
       }
-      if (made(st, order[j].dev, order[j].ino)) {
+      if (order[j].is_dir && made(st, order[j].dev, order[j].ino)) {
         // This entry IS the destination. Reported against the operand's
         // own names, and the rest of the operand is abandoned — measured,
         // `cp -r src src/bdir` leaves a sibling of `bdir` uncopied while a
