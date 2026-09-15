@@ -1335,6 +1335,11 @@ scanned 200 times (236 MB of bytes, best of nine):
 | x86_64ssa before | 849 ms | 899 ms |
 | x86_64ssa after | **489 ms** | 627 ms |
 
+Gated by the 60 SSA-named tests in `internal/e2e` (829 s, no skips) — the two run
+differentials, `TestSSASlowdownGate`, and 44 `TestArm64SSA*` cases that run real
+binaries under qemu — plus every `internal/codegen` package and
+`internal/{ssa,ir,semir}`.
+
 **1.74x on this backend, and still 1.6x behind the flat one.** That second
 number is the finding. The SSA loop is now 23 instructions a byte against
 flat's 20, counting every instruction retired on the common (non-matching)
