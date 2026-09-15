@@ -319,7 +319,11 @@
 # already linked 4.4–4.96% above the rows before it, and the `.with`
 # copy-on-write adds 4,176–8,272 B to each driver carrying a self-reassign
 # site (same-toolchain A/B in docs/rc-log/2026-09-13-with-cow-runtime-count.md).
-fern.fern 12048860
+# The CLI now links the typed semantic production pipeline. The measured
+# linkage cost, prior removal of unnecessary linkage from partial drivers,
+# and remaining source growth are recorded in
+# docs/SELFHOST-SEMANTIC-PRODUCTION-SIZE.md. Only the CLI row is refreshed.
+fern.fern 12881996
 asm_load_run.fern 8747276
 asm_modload_run.fern 8357356
 asm_ir_run.fern 8122140
