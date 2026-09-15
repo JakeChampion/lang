@@ -2155,7 +2155,35 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// (shell convention). Negative errno on failure (interp: -10 /
 	// ECHILD — no forked children can exist there). Same `proc`
 	// capability gate as proc_fork.
+	//
+	// The pid reaches wait4 as written, so its conventions hold: -1
+	// reaps whichever child exits first, which is how a supervisor
+	// waits on several with one call. That call reports the status and
+	// not the pid; proc_waitpid_nohang below is how the identity comes
+	// back.
 	c.info.FuncSigs["proc_waitpid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// proc_waitpid_nohang(pid): i32 — the same reap, WITHOUT blocking:
+	// wait4's WNOHANG. Same status encoding when the child has exited,
+	// and -1 when it has not.
+	//
+	// -1 rather than 0 because 0 is a clean exit, which is what wait4
+	// itself answers "nothing to report" with. No errno wait4 can return
+	// is 1 — its set is ECHILD, EINTR, EINVAL, EFAULT — so a negative
+	// result is unambiguous: -1 is "still running" and anything lower is
+	// an error.
+	//
+	// It answers the question a blocking `proc_waitpid(-1)` loses: that
+	// call reaps whichever child exits first (wait4's own convention for
+	// a negative pid) but reports only the status, so a supervisor with
+	// several children cannot tell WHICH one it just reaped. One nohang
+	// probe per candidate recovers it — a child already reaped answers
+	// -ECHILD where a live one answers -1 — and no pid can be confused
+	// with another's, since a recycled pid is not this process's child.
+	// Same `proc` capability gate as proc_fork.
+	c.info.FuncSigs["proc_waitpid_nohang"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}

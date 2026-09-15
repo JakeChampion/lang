@@ -120,11 +120,12 @@ var BuiltinCaps = map[string]string{
 	"uname_field": "env",
 	"cpu_count":   "env",
 
-	"subprocess":   "subprocess",
-	"proc_fork":    "subprocess",
-	"proc_waitpid": "subprocess",
-	"proc_exec":    "subprocess",
-	"proc_exec_as": "subprocess",
+	"subprocess":          "subprocess",
+	"proc_fork":           "subprocess",
+	"proc_waitpid":        "subprocess",
+	"proc_waitpid_nohang": "subprocess",
+	"proc_exec":           "subprocess",
+	"proc_exec_as":        "subprocess",
 	// Not spawning, but reaching outside this process all the same: the
 	// pid asked about is someone else's.
 	"process_alive": "subprocess",

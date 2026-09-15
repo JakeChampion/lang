@@ -120,6 +120,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "subprocess", capability: "subprocess" },
         BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
         BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
+        BuiltinCap { builtin: "proc_waitpid_nohang", capability: "subprocess" },
         BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
         BuiltinCap { builtin: "proc_exec_as", capability: "subprocess" },
         BuiltinCap { builtin: "chdir", capability: "fs" },

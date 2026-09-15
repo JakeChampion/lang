@@ -1185,6 +1185,11 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // [pid] IS param[0] already; the stack ABI needs no marshalling.
             s = s.need("proc_waitpid");
             s = s.write("    bl __fn___fern_proc_waitpid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 286) {  // proc_waitpid_nohang
+            // [pid] -> __fern_proc_waitpid_nohang(x0 = pid) -> the decoded
+            // status, -1 when the child is still running, or -errno.
+            s = s.need("proc_waitpid_nohang");
+            s = s.write("    bl __fn___fern_proc_waitpid_nohang\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 213) {  // proc_exec
             // [pathbox, argsbox] -> __fern_proc_exec(path, args). Only returns
             // on failure (-errno), so the push is that value.
@@ -3723,6 +3728,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
         "read_file", "read_file_bytes", "random_i32", "sleep_ms",
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
+        "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
         "eprint", "read_int", "udp_send", "isatty", "window_size",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
@@ -7302,6 +7308,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // on every target — only the number moves — so no `darwin` fork here.
     if (s.has_need("proc_waitpid")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("proc_waitpid_nohang")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang(tgt), s.struct_decls, s);
     }
     // timer_fd: timerfd_create + timerfd_settime over an itimerspec in
     // __fern_scratch. Darwin has no timerfd and answers -1, as its hand-asm did.

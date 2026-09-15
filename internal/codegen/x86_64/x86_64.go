@@ -862,6 +862,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesProcWaitpid {
 		g.emitProcWaitpidRuntime()
 	}
+	if g.usesProcWaitpidNohang {
+		g.emitProcWaitpidNohangRuntime()
+	}
 	if g.usesProcExec {
 		g.emitProcExecRuntime()
 	}
@@ -1303,8 +1306,12 @@ type generator struct {
 	// decode: exit code 0..255 for a normal exit, 128+signal for a
 	// signal death, -errno passthrough. The crash-only supervision
 	// primitives (docs/CRASH-ONLY-SERVE.md D2').
-	usesProcFork          bool
-	usesProcWaitpid       bool
+	usesProcFork    bool
+	usesProcWaitpid bool
+	// usesProcWaitpidNohang pulls in `__fern_proc_waitpid_nohang(pid)` —
+	// the same wait4 with WNOHANG, and -1 for a child that has not
+	// exited yet.
+	usesProcWaitpidNohang bool
 	usesTcp               bool
 	usesEnv               bool
 	usesArgs              bool
@@ -1947,6 +1954,8 @@ func (g *generator) recordUse(target string) {
 		g.usesProcFork = true
 	case "proc_waitpid":
 		g.usesProcWaitpid = true
+	case "proc_waitpid_nohang":
+		g.usesProcWaitpidNohang = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
@@ -3731,6 +3740,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_proc_fork"
 		case "proc_waitpid":
 			target = "__fern_proc_waitpid"
+		case "proc_waitpid_nohang":
+			target = "__fern_proc_waitpid_nohang"
 		case "tcp_listen":
 			target = "__fern_tcp_listen"
 		case "tcp_accept":
@@ -12334,6 +12345,51 @@ func (g *generator) emitProcWaitpidRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_proc_waitpid, .-__fern_proc_waitpid")
+}
+
+// emitProcWaitpidNohangRuntime emits `__fern_proc_waitpid_nohang(pid)` —
+// `__fern_proc_waitpid` with WNOHANG, so it answers immediately.
+//
+// wait4 reports "no child has anything to report" as a return of 0, which
+// collides with a clean exit once the status word is decoded — so that case
+// becomes -1 here. No errno wait4 returns is 1, which is what makes the sign
+// alone enough to tell "still running" from a failure.
+func (g *generator) emitProcWaitpidNohangRuntime() {
+	g.line("")
+	g.line(".globl __fern_proc_waitpid_nohang")
+	g.line(".type __fern_proc_waitpid_nohang, @function")
+	g.label("__fern_proc_waitpid_nohang")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")     // status slot (16 keeps rsp 16-aligned)
+	g.emit("movsxd rdi, edi") // pid
+	g.emit("mov rsi, rsp")    // &status
+	g.emit("mov edx, 1")      // options = WNOHANG
+	g.emit("xor r10d, r10d")  // rusage = NULL
+	g.emitSyscall(sysWait4)
+	g.emit("test rax, rax")
+	g.emit("js .Lproc_wnh_done") // -errno → return as-is
+	g.emit("jnz .Lproc_wnh_decode")
+	g.emit("mov eax, -1") // 0: nothing to report, the child is still running
+	g.emit("jmp .Lproc_wnh_done")
+	g.label(".Lproc_wnh_decode")
+	g.emit("mov ecx, dword ptr [rsp]") // status word
+	g.emit("mov eax, ecx")
+	g.emit("and eax, 0x7f")
+	g.emit("jnz .Lproc_wnh_sig")
+	// Normal exit: (status >> 8) & 0xff.
+	g.emit("mov eax, ecx")
+	g.emit("shr eax, 8")
+	g.emit("and eax, 0xff")
+	g.emit("jmp .Lproc_wnh_done")
+	g.label(".Lproc_wnh_sig")
+	// Signal death: 128 + signal (eax already holds status & 0x7f).
+	g.emit("add eax, 128")
+	g.label(".Lproc_wnh_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_proc_waitpid_nohang, .-__fern_proc_waitpid_nohang")
 }
 
 // emitPutcharRuntime emits `__fern_putchar(c)` — write a
