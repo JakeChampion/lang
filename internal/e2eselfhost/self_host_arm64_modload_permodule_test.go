@@ -45,7 +45,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// (module_ir_eligible takes no target) and is checked on every push by
 	// TestSelfHostAssumeEligibleByteIdenticalX86_64, so nothing here needs to pay
 	// for the pre-check a second time.
-	units := emitAllWholeCompiler(t, x86runner, driverBin, entry, dir, "wc_arm", "arm64-linux", pmEmitAllBatch)
+	units := emitAllWholeCompiler(t, x86runner, driverBin, entry, dir, "wc_arm", "arm64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc_arm", units)
 
 	// 2. Link all arm64 units into one compiler binary.
