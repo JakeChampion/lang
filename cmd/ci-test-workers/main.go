@@ -192,15 +192,8 @@ func run(ctx context.Context, c config, output io.Writer) error {
 			}
 			r := result{Worker: i, Tests: names, CPUs: cpus}
 			path := filepath.Join(c.output, fmt.Sprintf("worker-%d.jsonl", i))
-			cmd := exec.CommandContext(ctx, "gotestsum", "--format", "pkgname-and-test-fails", "--jsonfile", path, "--raw-command", "--",
-				"go", "tool", "test2json", "-t", "-p", fmt.Sprintf("worker-%d", i), c.binary,
-				"-test.run="+exactPattern(names), "-test.v=test2json", "-test.count=1",
-				"-test.timeout="+c.timeout.String(), "-test.parallel="+strconv.Itoa(cpus))
-			cmd.Env = append(os.Environ(), "GOMAXPROCS="+strconv.Itoa(cpus))
-			cmd.Stdout, cmd.Stderr = console, console
-			isolate(cmd)
 			start := time.Now()
-			runErr := cmd.Run()
+			runErr := runTestStream(ctx, c, names, cpus, i, path, console)
 			r.Seconds = time.Since(start).Seconds()
 			f, readErr := os.Open(path)
 			if readErr == nil {
@@ -226,4 +219,42 @@ func run(ctx context.Context, c config, output io.Writer) error {
 		err = os.WriteFile(filepath.Join(c.output, "summary.json"), append(data, '\n'), 0o644)
 	}
 	return errors.Join(append(failures, err)...)
+}
+
+// test2json ignores INT and QUIT. Pipe test output into it instead of having
+// it launch the binary, so tests inherit the caller's signal environment.
+// Keep the actual test exit status: a converter reading stdin cannot see it.
+func runTestStream(ctx context.Context, c config, names []string, cpus, worker int, path string, console io.Writer) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	defer writer.Close()
+	test := exec.CommandContext(ctx, c.binary,
+		"-test.run="+exactPattern(names), "-test.v=test2json", "-test.count=1",
+		"-test.timeout="+c.timeout.String(), "-test.parallel="+strconv.Itoa(cpus))
+	test.Env = append(os.Environ(), "GOMAXPROCS="+strconv.Itoa(cpus))
+	test.Stdout, test.Stderr = writer, writer
+	isolate(test)
+	formatter := exec.CommandContext(ctx, "gotestsum", "--format", "pkgname-and-test-fails", "--jsonfile", path, "--raw-command", "--",
+		"go", "tool", "test2json", "-t", "-p", fmt.Sprintf("worker-%d", worker))
+	formatter.Env = test.Env
+	formatter.Stdin = reader
+	formatter.Stdout, formatter.Stderr = console, console
+	isolate(formatter)
+	if err := formatter.Start(); err != nil {
+		return fmt.Errorf("start test formatter: %w", err)
+	}
+	if err := test.Start(); err != nil {
+		cancel()
+		return errors.Join(fmt.Errorf("start test binary: %w", err), formatter.Wait())
+	}
+	// Only the child processes retain pipe ends now. The formatter sees EOF as
+	// soon as the test exits, without waiting for the parent to return.
+	reader.Close()
+	writer.Close()
+	return errors.Join(test.Wait(), formatter.Wait())
 }
