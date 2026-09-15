@@ -6,9 +6,11 @@ every selected top-level test once, divides the available CPU budget between
 workers, and checks complete terminal outcomes. Each process retains its own
 test-package state, including tests that change environment or working directory.
 
-The selector remains `^TestX86_64`, and the timeout remains 25 minutes. Native
-assembler fixtures and the seccomp corpus keep their existing execution paths.
-Worker outcomes are retained for seven days on both success and failure.
+The selector remains `^TestX86_64`. Each worker receives a 25-minute test
+timeout; both run concurrently under one shared 25-minute-30-second deadline
+that also bounds inventory collection. Native assembler fixtures and the
+seccomp corpus keep their existing execution paths. Worker outcomes are
+retained for seven days on both success and failure.
 
 ## Controlled native measurement
 
