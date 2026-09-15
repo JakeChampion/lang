@@ -205,9 +205,9 @@ function helper(r: irlower.LowerResult, slot: i32, name: string): irlower.LowerR
     return emit(r, ir.op_drop());
 }
 
-// `defer0` holds the receiver's retain back for an in-place update, which
-// `sole_owned_base` then emits inside the uniqueness test — see
-// `deferred_retain` for why the order is the whole of it.
+// `defer0` holds an append receiver's retain back, so the push's own rc gate
+// reads the box rather than this supply — see `deferred_retain` for why the
+// order is the whole of it.
 function supplies(r: irlower.LowerResult, step: ssaunits.Step, defer0: boolean): irlower.LowerResult {
     for supply in step.supplies {
         if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0)) {
@@ -1165,7 +1165,7 @@ function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
 
 function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean): irlower.LowerResult {
     r = negation_zero(r, f, ins);
-    if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins, defer0), ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.with()) { return emit(with_update(r, f, ins), ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { return emit(function_site(r, ins), ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { return emit(append_push(r, f, ins, defer0), ir.op_store_local(ins.result)); }
@@ -1183,26 +1183,23 @@ function instruction(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
 }
 
 // The received unit's box when it is the only one and a fresh sole-owned copy
-// otherwise, left in `scratch`. The copy duplicated every element pointer, so
-// a counted element type retains them all. Either way exactly one unit goes in
-// and `scratch` holds one nobody else shares.
+// otherwise, left in `scratch`. The unit is one the frame has already taken —
+// moved in, or retained up front — so the unique arm keeps it and the shared
+// arm releases it, the copy having replaced it. The copy duplicated every
+// element pointer, so a counted element type retains them all. Either way
+// exactly one unit goes in and `scratch` holds one nobody else shares.
 //
-// Where that unit comes from is what `defer0` selects. A unit already taken —
-// MOVED in, or retained up front because the frame owns the binding — is the
-// frame's: the unique arm keeps it, and the shared arm releases it because the
-// copy replaces it. A unit `deferred_retain` held back arrives un-taken, so
-// the unique arm takes it, the result being the receiver's own box, and the
-// shared arm takes nothing, the copy being a box of its own.
-function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32, defer0: boolean): irlower.LowerResult {
+// A receiver whose retain was DEFERRED never arrives here: `append_push` sends
+// it to `append_borrowed` instead, and `with` never defers.
+function sole_owned_base(r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
     var elem: typeinfo.Type = elem_type(f.values[base]);
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
-    if (defer0) { r = helper(r, base, "__fern_rc_inc"); }
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_store_local(scratch));
     r = emit(r, ir.op_else());
-    if (!defer0) { r = helper(r, base, release_name(f.values[base])); }
+    r = helper(r, base, release_name(f.values[base]));
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_load_local(base));
@@ -1223,7 +1220,7 @@ function append_push(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, def
     if (defer0) { return append_borrowed(r, f, ins); }
     var scratch: i32 = f.graph.nvals;
     r = reserve(r, scratch + 1);
-    r = sole_owned_base(r, f, ins.args[0], scratch, false);
+    r = sole_owned_base(r, f, ins.args[0], scratch);
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
     return emit(r, arr_push_op(elem_type(f.values[ins.args[0]])));
@@ -1231,8 +1228,8 @@ function append_push(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, def
 
 // The push onto a receiver the frame holds no unit of. The non-consuming push
 // decides for itself: it grows the buffer in place when it is the box's only
-// reader — which `call_bracket` is what makes true only when the caller keeps
-// no binding — and un-shares otherwise, never freeing what it was handed. So
+// reader — which `bracketed` makes true only when the caller keeps no
+// binding — and un-shares otherwise, never freeing what it was handed. So
 // the unit this operation owes is a retain of the result exactly when the
 // result IS the receiver's box.
 //
@@ -1284,11 +1281,11 @@ function drop_replaced(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
 // unit was the box's only one and in a fresh copy otherwise, the AST lowering's
 // two forms chosen here by the count at run time rather than by the receiver's
 // syntax.
-function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
+function with_update(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
     var scratch: i32 = f.graph.nvals;
     r = reserve(r, scratch + 1);
-    r = sole_owned_base(r, f, ins.args[0], scratch, defer0);
+    r = sole_owned_base(r, f, ins.args[0], scratch);
     if (reference(elem)) { r = drop_replaced(r, f, ins, scratch, elem); }
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[1]));
