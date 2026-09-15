@@ -12,27 +12,22 @@ import (
 
 // TestSelfHostSemanticProduction drives the PRODUCTION consumer of the typed
 // semantic pipeline: `fern -target … ` with FERN_SEM_IR=1, where
-// semlower.lower_gated_sem produces every function semsource admits, lowers it
+// semlower.substitution produces every function semsource admits, lowers it
 // through ssaunits + ssarc, and substitutes the result into the cache the
 // backend emits from (docs/SELFHOST-SEMANTIC-SOURCE.md).
 //
 // The assertions are the two things the substitution has to keep true:
 //
-//   - the program answers the same as it does with the path off, on every
-//     target — the AST lowering is the oracle here, and it is the same binary
-//     producing both, so a divergence is the substitution's;
-//   - every declaration produces. The report line is checked rather than
-//     assumed, because a body that silently stops producing keeps the program
-//     correct (the AST body stands) and would make the rest of this test pass
-//     while testing nothing.
+//   - both paths answer the independently specified result on every target,
+//     so two paths that fail identically cannot make the comparison pass;
+//   - the production tally stays above its specified floor. The report is
+//     checked rather than assumed, because an AST fallback can preserve the
+//     answer while silently bypassing the semantic pipeline.
 //
 // TestSelfHostSemanticSourceRC covers the same pipeline under a bespoke driver
 // with a leak check; this one covers the path the CLI actually takes.
 func TestSelfHostSemanticProduction(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("the CLI driver takes host filesystem paths as argv")
-	}
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +45,9 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
 					base, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false)
+					if base != prog.want {
+						t.Fatalf("AST path answered %q, want %q", base, prog.want)
+					}
 					got, report := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true)
 					if got != base {
 						t.Fatalf("FERN_SEM_IR changed the answer:\n with = %q\nwithout = %q\nreport: %s",
@@ -98,7 +96,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		out = filepath.Join(dir, "prog.wat")
 		args = []string{"-target", target, "-emit", "asm", src, stdlibRoot, "-o", out}
 	}
-	cmd := exec.Command(fernBin, args...)
+	cmd := runX86_64Bin(runner, fernBin, args...)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
 	if sem {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
@@ -116,7 +114,7 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		if err := os.Chmod(out, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		run = exec.Command(out)
+		run = runX86_64Bin(runner, out)
 	case "arm64-linux":
 		if err := os.Chmod(out, 0o755); err != nil {
 			t.Fatal(err)
@@ -129,7 +127,13 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 		}
 		run = exec.Command("wasmtime", "run", out)
 	}
-	stdout, _ := run.Output()
+	stdout, runErr := run.Output()
+	if runErr != nil {
+		exitErr, ok := runErr.(*exec.ExitError)
+		if !ok || exitErr.ExitCode() < 0 {
+			t.Fatalf("run (sem=%v, %s): %v", sem, target, runErr)
+		}
+	}
 	return fmt.Sprintf("%d|%s", run.ProcessState.ExitCode(), stdout), stderr.String()
 }
 
@@ -140,9 +144,10 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 var semProductionPrograms = []struct {
 	name    string
 	atLeast int
+	want    string
 	src     string
 }{
-	{name: "scalar-calls", atLeast: 3, src: `
+	{name: "scalar-calls", atLeast: 3, want: "15|", src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {
     var t: i32 = 0;
@@ -151,7 +156,7 @@ function total(xs: i32[]): i32 {
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }
 `},
-	{name: "owned-array-handback", atLeast: 3, src: `
+	{name: "owned-array-handback", atLeast: 3, want: "4|", src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
@@ -159,7 +164,7 @@ function main(): i32 {
     return span(ys);
 }
 `},
-	{name: "strings-and-records", atLeast: 3, src: `
+	{name: "strings-and-records", atLeast: 3, want: "7|hi row\n\n", src: `
 struct Row { name: string, n: i32 }
 function greet(r: Row): string { return "hi " + r.name; }
 function mk(n: i32): Row { return Row { name: "row", n: n }; }
@@ -169,7 +174,7 @@ function main(): i32 {
     return r.n;
 }
 `},
-	{name: "enum-match-in-a-loop", atLeast: 3, src: `
+	{name: "enum-match-in-a-loop", atLeast: 3, want: "23|", src: `
 enum Shape { Dot, Line(i32), Box(i32, i32) }
 function area(s: Shape): i32 {
     match (s) { Dot => { return 0; }, Line(n) => { return n; }, Box(w, h) => { return w * h; } }
@@ -181,7 +186,7 @@ function total(ss: Shape[]): i32 {
 }
 function main(): i32 { return total([Dot, Line(3), Box(4, 5)]); }
 `},
-	{name: "map-and-string-keys", atLeast: 3, src: `
+	{name: "map-and-string-keys", atLeast: 3, want: "1|", src: `
 function tally(words: string[]): Map[string, i32] {
     var m: Map[string, i32] = map_new(8);
     for w in words { m = m.insert(w, 1); }
@@ -198,7 +203,7 @@ function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
 	// ssarc.caller_sigs holding the two sides' release of a shared result
 	// together. It answers the same either way, which is the whole point.
-	{name: "capture-write", atLeast: 1, src: `
+	{name: "capture-write", atLeast: 1, want: "7|", src: `
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
     var total: i32 = 0;
