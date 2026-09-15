@@ -37,7 +37,7 @@ func TestUnitLaneRequestsWasmtime(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^\s+wasmtime:\s*true\s*$`).MatchString(src) {
 		t.Error("test-units.yml does not pass `wasmtime: true` to setup-fern, so every wasm unit test t.Skip()s " +
-			"and the lane reports ok while executing no module (#8472). It owns internal/codegen/{wasmbin,wasmssa} " +
+			"and the lane reports ok while executing no module (#8472). It owns internal/codegen/wasmbin " +
 			"and internal/wasm/**; no other lane runs them.")
 	}
 }

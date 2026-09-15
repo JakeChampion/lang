@@ -134,13 +134,12 @@ The caller-saved / stack-arg machinery from the direct-call path
 the env-as-last-arg, and the register-indirect `call r11` instead of
 `call label`.
 
-### wasm (`wasmssa`)
+### wasm — not applicable
 
-`fn` is a **wasm function-table index** and dispatch is `call_indirect`
-against a recorded signature (the wasm-native form). `OpConstFunc` /
-`OpMakeClosure` write the index into the cell; `OpCallIndirect` loads it
-and `call_indirect`s with `(args…, env)`. (wasm already has the closure
-machinery in `wasmbin`; this aligns `wasmssa` with it.)
+`wasmssa` was retired (#9397), so
+there is no SSA-side wasm dispatch to design. `wasmbin` carries the wasm
+closure machinery — a function-table index dispatched by `call_indirect`
+against a recorded signature — and is the only wasm emitter.
 
 ## Signature / env convention
 

@@ -3,7 +3,6 @@ package e2e
 import (
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -67,19 +66,5 @@ func TestX86_64SSABooleanBranches(t *testing.T) {
 	testNativeSSABooleanBranches(t, "x86-64-linux", x86QemuOrEmpty(t), runX86Bin)
 }
 
-func TestWasmSSABooleanBranches(t *testing.T) {
-	wasmtime, err := exec.LookPath("wasmtime")
-	if err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	fern := buildFernCLI(t)
-	dir := t.TempDir()
-	src := mustWrite(t, dir, "boolean_branches.fern", ssaBooleanBranchesSource)
-	bin := filepath.Join(dir, "branches.wasm")
-	if out, err := exec.Command(fern, "-O", "-target", "wasm32-wasi", "-backend", "ssa", "-o", bin, src).CombinedOutput(); err != nil {
-		t.Fatalf("compile: %v\n%s", err, out)
-	}
-	if out, err := exec.Command(wasmtime, "run", "--invoke", "main", bin).Output(); err != nil || strings.TrimSpace(string(out)) != "42" {
-		t.Fatalf("wasmtime: %v, output=%q; want 42", err, out)
-	}
-}
+// The wasm arm of this trio went with the wasmssa backend (#9397). The default
+// wasm emitter covers the same source through the ordinary wasm e2e suite.
