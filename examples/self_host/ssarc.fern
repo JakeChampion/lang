@@ -161,13 +161,32 @@ function walked(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_f
 // copy, so the result is an ordinary counted box).
 // A map is freed whole by one helper rather than released by a count: its box
 // is a raw {keys, vals} pair on the register backends, with no count to read.
-// __fern_map_free_ks releases every key in the string column and frees the
-// scalar value column and the box.
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
-    if (ssasem.is_map(t)) { return "__fern_map_free_ks"; }
+    if (ssasem.is_map(t)) { return map_release_name(t); }
     return "__fern_rc_dec";
+}
+
+// Every key in the column is a string, so every helper here is a `_ks` one;
+// which of them depends on the value column, whose entries the map owns when
+// they are counted. The names are the AST path's, so the deep frees they reach
+// are the ones the runtime already provides.
+function map_release_name(t: typeinfo.Type): string {
+    var v: typeinfo.Type = ssasem.map_value(t);
+    if (ssasem.is_string(v)) { return "__fern_map_free_kvs"; }
+    if (ssasem.counted_map_value(v)) { return "__fern_map_free_ksvsa"; }
+    return "__fern_map_free_ks";
+}
+
+// The runtime's value-column kind: 0 the map owns nothing in it, 1 a string
+// column, 2 a column of string arrays. It is what tells map_set which release
+// the value it supersedes on an overwrite is owed (#9300).
+function map_value_kind(t: typeinfo.Type): i32 {
+    var v: typeinfo.Type = ssasem.map_value(t);
+    if (ssasem.is_string(v)) { return 1; }
+    if (ssasem.counted_map_value(v)) { return 2; }
+    return 0;
 }
 
 function emit(r: irlower.LowerResult, op: ir.Op): irlower.LowerResult {
@@ -881,24 +900,34 @@ function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, struc
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
-    if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins); }
+    if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins, f); }
     if (ins.kind_tag == ssasem.array_get()) { return emit(r, arr_get_op(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.tuple_get()) { return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_wide(f.values[ins.result]))); }
     return field_get(r, f, ins);
 }
 
-// The map ops at the one shape this boundary admits: a string key column
-// (keykind 0, no derived equality symbol) over a narrow scalar value column
-// (widekind 0, no value pointerness, so no value retain or consume). An insert
-// is handed the key's unit, which `kconsume` tells the runtime to hold rather
-// than retain and to release when an overwrite supersedes it; `owncols` makes
+// The map ops at the shapes this boundary admits: a string key column (keykind
+// 0, no derived equality symbol) over a narrow scalar or a counted value
+// column, both narrow in the runtime's width sense (widekind 0). An insert is
+// handed the key's unit, which `kconsume` tells the runtime to hold rather than
+// retain and to release when an overwrite supersedes it, and the value's unit
+// too when the column is counted — `valptr` + `vconsume` for the store, and
+// `vkind` for the release an overwrite owes what it supersedes. `owncols` makes
 // the map the sole owner of both column buffers, so a grow frees the buffer it
 // replaced instead of leaking it.
-function map_op(r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+//
+// A read of a counted column RETAINS what it answers. The plan gives the
+// result a unit of its own because the value may be the column's or the
+// caller's default, and only a retain gives one owner to both.
+function map_op(r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irlower.LowerResult {
     if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(0, "")); }
-    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(0, false, false, true, true, false, "", 0)); }
+    var t: typeinfo.Type = f.values[ins.args[0]];
+    var vkind: i32 = map_value_kind(t);
+    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(0, vkind != 0, vkind != 0, true, true, false, "", 0, vkind)); }
     if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(0, "")); }
-    return emit(r, ir.op_map_get_or(0, "", 0));
+    r = emit(r, ir.op_map_get_or(0, "", 0));
+    if (vkind == 0) { return r; }
+    return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
 }
 
 // A field read at the width its type names. Every slot is 8 bytes on every

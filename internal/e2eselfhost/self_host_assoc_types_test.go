@@ -136,6 +136,60 @@ impl Holder for IntBox {
 function take(h: dyn Holder[Item = i32]): i32 { return 0; }
 function main(): i32 { return 0; }`,
 	},
+	{
+		// A PARAMETRIC impl binding the associated type to its OWN type
+		// parameter. Every case above binds a concrete type on a non-generic
+		// impl, which is how this shape shipped broken in both compilers.
+		name: "parametric impl binds its own type parameter",
+		src: `trait Carrier {
+    type Ok;
+    function get(self: Self): Self::Ok;
+}
+struct Box[T] { v: T }
+impl[T] Carrier for Box[T] {
+    type Ok = T;
+    function get(self: Self): Self::Ok { return self.v; }
+}
+function main(): i32 {
+    var b: Box[i32] = Box { v: 7 };
+    return b.get();
+}`,
+	},
+	{
+		// And it resolves to the BASE's type argument, not to a free `T`:
+		// `Box[i32]::Ok` is i32, so a string destination is a type error in
+		// both checkers. A compiler that left the projection unresolved is
+		// silent here, which is what the self-host was.
+		name: "parametric binding is observable at a use site",
+		src: `trait Carrier {
+    type Ok;
+    function get(self: Self): Self::Ok;
+}
+struct Box[T] { v: T }
+impl[T] Carrier for Box[T] {
+    type Ok = T;
+    function get(self: Self): Self::Ok { return self.v; }
+}
+function main(): i32 {
+    var b: Box[i32] = Box { v: 7 };
+    var s: string = b.get();
+    return 0;
+}`,
+	},
+	{
+		// The conformance rule still applies, and names the impl by its BASE
+		// type — `Box`, not the `Box[T]` spelling the self-host carries.
+		name: "parametric impl must bind the trait's associated type",
+		src: `trait Carrier {
+    type Ok;
+    function get(self: Self): Self::Ok;
+}
+struct Box[T] { v: T }
+impl[T] Carrier for Box[T] {
+    function get(self: Self): Self::Ok { return self.v; }
+}
+function main(): i32 { return 0; }`,
+	},
 }
 
 func TestSelfHostAssocTypesDifferential(t *testing.T) {

@@ -1020,18 +1020,28 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // the map's value column still names, and the next same-size-class allocation
 // recycles it under the map. wasm ignores bit 3: $__fern_map_set already
 // retains every `vis` value it is not told to consume.
+// Bits 4/5 = `vkind` (#9300): the value column OWNS one unit per live entry and
+// the superseded value on an overwrite must be released, since the reclaim
+// helper only ever reaches entries still in the column. 0 = the column owns
+// nothing (today's register behaviour, and what the AST path passes); 1 = a
+// string column, released through __fern_str_free; 2 = a string[] column,
+// through __fern_str_arr_free. wasm ignores it: $__fern_map_set already
+// releases the old value under `vis`, which is where the register halves are
+// being brought into line.
 // `widekind` (carried in i64_imm) marks an 8-byte VALUE column: 0 = narrow
 // (i32/string pointer), 1 = i64/u64, 2 = f64. The x86-64 and arm64 runtimes store
 // the value 8-byte unconditionally (movq / str x), so they ignore it. On wasm the
 // i32-celled $__fern_map_set can't hold an 8-byte value directly: widekind 1
 // (i64/u64) routes to $__fern_map_set_w64 (an 8-byte cell boxed into the i32
 // column); widekind 2 (f64) is still refused via wasm_ir_deferrals_ok. #5253.
-pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32): Op {
+pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32, vkind: i32): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }
     if (kconsume) { w = w + 2; }
     if (owncols) { w = w + 4; }
     if (vretain) { w = w + 8; }
+    if (vkind == 1) { w = w + 16; }
+    if (vkind == 2) { w = w + 32; }
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }

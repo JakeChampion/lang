@@ -167,12 +167,23 @@ function main(): i32 { return code(Interrupted); }
 	// correctly, and that refusal was the largest class in the corpus. The
 	// producers now materialise each piece the way their runtime twins in
 	// asmcore.fern already do, so nothing in this family escapes.
+	// std/http is named alongside std/string: http_path_segments carries one of
+	// the family's sites and lives outside std/string's module tree, so an
+	// entry over the six methods alone would leave it unpinned.
+	//
+	// std/regex's three sites CANNOT be pinned here and are deliberately not
+	// claimed. regex_split refuses before the boundary ever reaches its
+	// appends — __rx_compile and __rx_search_from have no semantic contract —
+	// so reverting its materialisation leaves the census reporting nothing,
+	// which a gate naming it would read as green. It becomes pinnable when
+	// those intrinsics get contracts, and not before.
 	segments := filepath.Join(dir, "segments.fern")
-	writeEntry(t, segments, "import \"std/string\";\n"+
+	writeEntry(t, segments, "import \"std/string\";\nimport \"std/http\";\n"+
 		"function main(): i32 {\n"+
 		"    var s: string = \"a b\" + \" c\";\n"+
 		"    return s.fields().len() + s.to_array().len() + s.chunks(2).len()\n"+
-		"        + s.splitn(\" \", 2).len() + s.lines().len() + s.split(\" \").len();\n"+
+		"        + s.splitn(\" \", 2).len() + s.lines().len() + s.split(\" \").len()\n"+
+		"        + http.http_path_segments(\"/a/b\").len();\n"+
 		"}\n")
 	out, err = exec.Command(bin, segments).CombinedOutput()
 	if err != nil {
@@ -181,8 +192,8 @@ function main(): i32 { return code(Interrupted); }
 	segmentsReport := string(out)
 	t.Logf("census of an entry over std/string's segment producers:\n%s", segmentsReport)
 	if strings.Contains(segmentsReport, "view element escapes its source") {
-		t.Errorf("a std/string segment producer still hands a view to an owning array; every piece "+
-			"has to be materialised, as the runtime twins in asmcore.fern do.\n%s", segmentsReport)
+		t.Errorf("a segment producer still hands a view to an owning array; every piece has to "+
+			"be materialised, as the runtime twins in asmcore.fern do.\n%s", segmentsReport)
 	}
 
 	// An import that still does not resolve has to be named, not dropped.

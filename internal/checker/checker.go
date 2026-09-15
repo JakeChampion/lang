@@ -197,6 +197,16 @@ type Info struct {
 	// conformance pass. resolveProj uses it to resolve a concrete-base
 	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
 	AssocBindings map[string]map[string]ast.Type
+	// AssocBindingPattern records, for a binding made by a PARAMETRIC impl,
+	// that impl's `for` type pattern (`impl[T] Carrier for Box[T]` with
+	// `type Ok = T;` → AssocBindingPattern["Box"]["Ok"] = Box[T], T a
+	// ParamType). The binding is then written in the impl's own type
+	// parameters, so resolveProj unifies the pattern against the concrete
+	// base (`Box[i32]`) to recover T=i32 before substituting. Keyed exactly
+	// like AssocBindings because two impls on the same type may spell their
+	// parameters differently. Absent for concrete impls, whose bindings need
+	// no substitution. See docs/ASSOCIATED-TYPES.md.
+	AssocBindingPattern map[string]map[string]ast.Type
 	// DynCoercions records every concrete→`dyn Trait` boxing site,
 	// keyed by the holder expression the checker saw flow into a `dyn`
 	// slot (var init, assignment, argument, return, array element,
@@ -908,27 +918,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	c := &checker{
 		info: &Info{
-			VarTypes:        map[*ast.Var]ast.Type{},
-			Locals:          map[*ast.FuncDecl][]*ast.Var{},
-			FuncSigs:        map[string]*ast.FuncType{},
-			Structs:         map[string]*ast.StructDecl{},
-			Enums:           map[string]*ast.EnumDecl{},
-			Resources:       map[string]*ast.ResourceDecl{},
-			Methods:         map[string]string{},
-			TraitMethods:    map[string]string{},
-			MethodOwners:    map[string][]string{},
-			MethodDeclSites: map[string]ast.Position{},
-			MethodSources:   map[string]string{},
-			ModuleImports:   prog.ModuleImports,
-			DirectImports:   prog.DirectImports,
-			GenericFuncs:    map[string]*ast.FuncDecl{},
-			GenericStructs:  map[string]*ast.StructDecl{},
-			Generics:        map[string]ast.GenericDecl{},
-			Traits:          map[string]*ast.TraitDecl{},
-			Impls:           map[string]map[string]bool{},
-			ImplTraitArgs:   map[string]map[string][]ast.Type{},
-			ImplForPattern:  map[string]map[string]ast.Type{},
-			AssocBindings:   map[string]map[string]ast.Type{},
+			VarTypes:            map[*ast.Var]ast.Type{},
+			Locals:              map[*ast.FuncDecl][]*ast.Var{},
+			FuncSigs:            map[string]*ast.FuncType{},
+			Structs:             map[string]*ast.StructDecl{},
+			Enums:               map[string]*ast.EnumDecl{},
+			Resources:           map[string]*ast.ResourceDecl{},
+			Methods:             map[string]string{},
+			TraitMethods:        map[string]string{},
+			MethodOwners:        map[string][]string{},
+			MethodDeclSites:     map[string]ast.Position{},
+			MethodSources:       map[string]string{},
+			ModuleImports:       prog.ModuleImports,
+			DirectImports:       prog.DirectImports,
+			GenericFuncs:        map[string]*ast.FuncDecl{},
+			GenericStructs:      map[string]*ast.StructDecl{},
+			Generics:            map[string]ast.GenericDecl{},
+			Traits:              map[string]*ast.TraitDecl{},
+			Impls:               map[string]map[string]bool{},
+			ImplTraitArgs:       map[string]map[string][]ast.Type{},
+			ImplForPattern:      map[string]map[string]ast.Type{},
+			AssocBindings:       map[string]map[string]ast.Type{},
+			AssocBindingPattern: map[string]map[string]ast.Type{},
 		},
 		variantOf:            map[string][]variantRef{},
 		shadowedGenericCalls: map[*ast.Call]bool{},
@@ -4141,6 +4152,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 				for name, bt := range impl.AssocTypeBindings {
 					c.info.AssocBindings[typeName][name] = bt
+					if len(impl.TypeParams) > 0 {
+						if c.info.AssocBindingPattern[typeName] == nil {
+							c.info.AssocBindingPattern[typeName] = map[string]ast.Type{}
+						}
+						c.info.AssocBindingPattern[typeName][name] = impl.Type
+					}
 				}
 			}
 		}
@@ -7114,6 +7131,13 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			params[n] = true
 		}
 		c.resolveType(&impl.Type, params, impl.P)
+		// The associated-type bindings too (`type Ok = T;`): they are the
+		// impl's own type parameters, so leaving them as StructType makes
+		// the resolved projection un-substitutable at an instantiation.
+		for name, bt := range impl.AssocTypeBindings {
+			c.resolveType(&bt, params, impl.P)
+			impl.AssocTypeBindings[name] = bt
+		}
 	}
 }
 
@@ -8120,7 +8144,7 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		if tn, ok := methodTypeName(base); ok {
 			if m, ok := c.info.AssocBindings[tn]; ok {
 				if bound, ok := m[x.Name]; ok {
-					return c.resolveProj(bound)
+					return c.resolveProj(c.substAssocBinding(tn, x.Name, bound, base))
 				}
 			}
 		}
@@ -8157,6 +8181,77 @@ func (c *checker) resolveProj(t ast.Type) ast.Type {
 		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn}
 		for _, p := range x.Params {
 			out.Params = append(out.Params, c.resolveProj(p))
+		}
+		return out
+	}
+	return t
+}
+
+// substAssocBinding rewrites a binding made by a parametric impl into the
+// base's own type arguments: `type Ok = T;` on `impl[T] Carrier for Box[T]`
+// is `i32` for a `Box[i32]` base. Unifying the recorded `for` pattern against
+// the base recovers T. A concrete impl records no pattern and is returned
+// unchanged. See docs/ASSOCIATED-TYPES.md.
+func (c *checker) substAssocBinding(typeName, assoc string, bound, base ast.Type) ast.Type {
+	pat, ok := c.info.AssocBindingPattern[typeName][assoc]
+	if !ok {
+		return bound
+	}
+	psub := map[string]ast.Type{}
+	if !c.unifyType(pat, base, psub) || len(psub) == 0 {
+		return bound
+	}
+	return substByName(bound, psub)
+}
+
+// resolveProjWithSub resolves every associated-type projection in `t` whose
+// BASE the inference map has already pinned, and leaves everything else alone.
+//
+// Only projections are rewritten. A bare `T` must stay a ParamType for
+// unifyType to bind it from this argument, so substituting the whole type
+// would break inference for every parameter not yet pinned.
+func (c *checker) resolveProjWithSub(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		base := c.resolveProjWithSub(x.Base, sub)
+		if p, ok := base.(ast.ParamType); ok {
+			if bound, isBound := sub[p.Name]; isBound {
+				base = bound
+			}
+		}
+		return c.resolveProj(ast.ProjType{Base: base, Name: x.Name})
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProjWithSub(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProjWithSub(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProjWithSub(x.Elems[i], sub)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWithSub(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWithSub(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn}
+		for _, pp := range x.Params {
+			out.Params = append(out.Params, c.resolveProjWithSub(pp, sub))
 		}
 		return out
 	}
@@ -16276,6 +16371,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
+				// An associated-type projection in a PARAMETER resolves
+				// once an earlier argument has pinned its base:
+				// `pick[H: Holder](h: H, d: H::Item)` called as
+				// `pick(b, 0)` knows H = IntBox by the time argument 2 is
+				// checked, so its `H::Item` is i32 — which is also what the
+				// literal has to settle against. The result type has its own
+				// resolve (resolveProj after substituteType); parameters had
+				// none, so every projection in one was compared unresolved.
+				if sub != nil {
+					expected = c.resolveProjWithSub(expected, sub)
+				}
 				// If the expected param is a bare type parameter that an
 				// earlier argument already bound to a concrete numeric /
 				// float type (e.g. `assert_eq[T](a + b, 8000000000)` where

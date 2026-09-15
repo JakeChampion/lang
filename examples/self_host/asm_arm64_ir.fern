@@ -2251,9 +2251,15 @@ function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
     //     the grow path may free the superseded buffer (arr_push_owned).
     // i32/interned keys are never fresh and string/pointer columns never
     // set owncols → x4=0 → old behaviour for the compiler's own maps.
+    //   bits 2/3 = vkind (o.width bits 4/5, #9300): the value column owns one
+    //     unit per live entry, so the superseded value on an overwrite is
+    //     released — 1 through __fern_str_free, 2 through __fern_str_arr_free.
     var x4bits: i32 = 0;
     if ((o.width / 2) % 2 == 1) { x4bits = x4bits + 1; }
     if ((o.width / 4) % 2 == 1) { x4bits = x4bits + 2; }
+    if ((o.width / 16) % 2 == 1) { x4bits = x4bits + 4; }
+    if ((o.width / 32) % 2 == 1) { x4bits = x4bits + 8; }
+    if (x4bits >= 4) { s = s.need("map_vfree"); }
     s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
     s = map_eqfn_x5(s, o.str);   // x5 = derived K.eq for a struct/enum key, else 0
     s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
@@ -6690,6 +6696,33 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    cmp x23, #0\n");
         s = s.write("    b.lt .Lms_append\n");
         s = s.write(".Lms_found:\n");
+        // An overwrite REPLACES the value pointer, and the reclaim helper only
+        // ever reaches entries still in the column, so a superseded value is
+        // freed here or never (#9300). x24 bits 2/3 name the column's release:
+        // the map owns one unit per live entry, so releasing what it drops is
+        // exactly balanced. Both helpers are rc-aware and null-safe, and the
+        // slot address is recomputed after the call rather than held across it
+        // — x19 / x23 / x21 are callee-saved, so its three inputs survive.
+        // vkind 0, which is what the AST path passes, skips the block.
+        // Gated on the need for the reason the x86-IR twin gives: the
+        // `bl __fn___fern_str_arr_free` text trips the negative asm-grep
+        // contracts in every unrelated program.
+        if (s.has_need("map_vfree")) {
+        s = s.write("    tst x24, #12\n");           // bits 2|3 = vkind
+        s = s.write("    b.eq .Lms_found_novf\n");
+        s = s.write("    ldr x9, [x19, #8]\n");      // values arr
+        s = s.write("    add x10, x23, #1\n");
+        s = s.write("    ldr x9, [x9, x10, lsl #3]\n");  // superseded value
+        s = s.write("    str x9, [sp, #-16]!\n");
+        s = s.write("    tbz x24, #2, .Lms_found_vsa\n");
+        s = s.write("    bl __fn___fern_str_free\n");
+        s = s.write("    b .Lms_found_vfdone\n");
+        s = s.write(".Lms_found_vsa:\n");
+        s = s.write("    bl __fn___fern_str_arr_free\n");
+        s = s.write(".Lms_found_vfdone:\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write(".Lms_found_novf:\n");
+        }
         s = s.write("    ldr x9, [x19, #8]\n");      // values arr
         s = s.write("    add x10, x23, #1\n");
         s = s.write("    str x21, [x9, x10, lsl #3]\n");  // values[i+1] = val

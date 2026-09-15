@@ -2435,7 +2435,17 @@ func flagged {
     ret v17
 }
 
-refused unsupported map shape
+modes 2 2 result i32
+v0:Map[string, string] v1:string v2:string v3:i32
+func map_value {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = map_get_or v0 v1 v1
+    v3 = length v2
+    ret v3
+}
+
 modes 1 1 result i32
 v0:f64 v1:u32 v2:f64 v3:f64 v4:f64 v5:f64 v6:i32 v7:i32 v8:i32 v9:u64 v10:i32 v11:i32
 func measured {
