@@ -2823,6 +2823,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"stat":           "__fern_stat",
 	"lstat":          "__fern_lstat",
 	"read_dir":       "__fern_read_dir",
+	"read_dir_all":   "__fern_read_dir_all",
 	"temp_dir":       "__fern_temp_dir",
 	"remove_dir_all": "__fern_remove_dir_all",
 

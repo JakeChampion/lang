@@ -1834,7 +1834,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
-        "umask", "write_file", "write_file_exec", "temp_dir", "read_dir",
+        "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
         "reader", "signal_send", "set_priority"
     ]);
@@ -1847,7 +1847,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 function needs_io_error_shapes(s: asmcore.EmitState): boolean {
     return s.any_need([
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
-        "remove_file", "stat", "lstat", "statfs", "access", "read_dir",
+        "remove_file", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "temp_dir", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
@@ -1864,7 +1864,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "heap", "i32_to_string", "u32_to_string", "str_to_i32", "chr",
         "read_int", "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
-        "read_dir", "remove_file", "create_dir_all", "create_dir",
+        "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod",
         "truncate", "mknod", "chown_at", "window_size", "set_file_times",
         "read_link", "chdir",
@@ -5815,6 +5815,10 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
             // local) arr_push_owned, so both are marked.
             s = s.write("    call __fn___fern_read_dir\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("read_dir"); s = s.need("arr_push"); s = s.need("arr_push_owned");
+        } else if (o.kind_tag == 310) {  // read_dir_all
+            // The same call shape against the helper that keeps "." and "..".
+            s = s.write("    call __fn___fern_read_dir_all\n    addq $8, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("read_dir_all"); s = s.need("arr_push"); s = s.need("arr_push_owned");
         } else if (o.kind_tag == 176) {  // env
             // [namebox] IS param[0] (+16); call the Fern-compiled __fn___fern_env
             // (#2649) via the stack ABI — pushes a fresh Option[string].
@@ -9125,6 +9129,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86_64"); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64"); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86_64"); }
+        if (s.has_need("read_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir_all("x86_64"); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64"); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
         if (s.has_need("open_with")) { fs_src = fs_src + " " + asmcore.rt_src_open_with("x86_64"); }

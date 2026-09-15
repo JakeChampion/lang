@@ -1682,6 +1682,10 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // bundle's own lowering.
             s = s.need("heap"); s = s.need("read_dir");
             s = s.write("    bl __fn___fern_read_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 310) {  // read_dir_all
+            // The same call shape against the helper that keeps "." and "..".
+            s = s.need("heap"); s = s.need("read_dir_all");
+            s = s.write("    bl __fn___fern_read_dir_all\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 176) {  // env
             // [namebox] IS param[0]; call the Fern-compiled __fn___fern_env
             // (asmcore.rt_src_env, #2649) via the stack ABI. It walks __fern_envp
@@ -7188,6 +7192,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("priority")) { fs_src = fs_src + " " + asmcore.rt_src_priority(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
+        if (s.has_need("read_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir_all(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
         if (s.has_need("open_with")) { fs_src = fs_src + " " + asmcore.rt_src_open_with(tgt); }
@@ -8281,7 +8286,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "create_link", "create_symlink", "rename", "chmod", "truncate",
         "mknod", "chown_at", "window_size", "set_file_times", "read_link",
         "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
-        "temp_dir", "stat", "lstat", "statfs", "access", "read_dir",
+        "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
         "reader", "signal_send", "set_priority"
     ]);

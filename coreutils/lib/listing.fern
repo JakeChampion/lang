@@ -2357,9 +2357,10 @@ function emit_total(c: Cfg, o: Out, es: Ent[]): Out {
 }
 
 // ---- which entries a directory contributes ----------------------------------
-// `-a` shows everything including `.` and `..`, which readdir does not
-// hand back, so they are synthesized; `-A` shows the dotfiles without
-// them. `-B` drops names ending in `~`, `-I` drops what its pattern
+// `-a` shows everything including `.` and `..`, which is why it reads
+// read_dir_all: the two arrive in the directory's own order, which `-f`
+// prints and a synthesized pair at the front could not reproduce. `-A`
+// shows the dotfiles without them. `-B` drops names ending in `~`, `-I` drops what its pattern
 // matches and `--hide` does the same except that `-a` or `-A` cancels
 // it.
 function hidden(c: Cfg, name: string): boolean {
@@ -2411,19 +2412,33 @@ function attach(dir: string, name: string): string {
 function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, IdNames) {
   var out: Out = o;
   var names: string[] = [];
-  match (read_dir(path)) {
-    Ok(es) => {
-      names = es;
-    },
-    Err(e) => {
-      return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e), status_minor()), seed);
+  var failed: boolean = false;
+  var why: string = "";
+  if (c.ignore_mode == ignore_minimal()) {
+    match (read_dir_all(path)) {
+      Ok(es) => {
+        names = es;
+      },
+      Err(e) => {
+        failed = true;
+        why = gnu.io_error_text(e);
+      }
+    }
+  } else {
+    match (read_dir(path)) {
+      Ok(es) => {
+        names = es;
+      },
+      Err(e) => {
+        failed = true;
+        why = gnu.io_error_text(e);
+      }
     }
   }
-  var list: Ent[] = [];
-  if (c.ignore_mode == ignore_minimal()) {
-    list = list.append(ent_new(".", attach(path, ".")));
-    list = list.append(ent_new("..", attach(path, "..")));
+  if (failed) {
+    return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + why, status_minor()), seed);
   }
+  var list: Ent[] = [];
   var i: i32 = 0;
   while (i < names.len()) {
     var name: string = names[i];

@@ -68,6 +68,7 @@ var BuiltinCaps = map[string]string{
 	"lstat":            "fs",
 	"access":           "fs",
 	"read_dir":         "fs",
+	"read_dir_all":     "fs",
 	"remove_file":      "fs",
 	"remove_dir_all":   "fs",
 	"create_dir_all":   "fs",

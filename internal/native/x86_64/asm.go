@@ -113,6 +113,15 @@ type Assembler struct {
 	// remap already-remapped offsets. TextLen and layout both need it done.
 	relaxDone bool
 	relaxErr  error
+	// dupLabelErr records the FIRST duplicate .text label definition, and
+	// relax refuses the program on it. A second definition of the same
+	// name silently rebound every branch to the later body, so two runtime
+	// helpers sharing a `.L` prefix produced a valid-looking image that
+	// jumped into the wrong one: #9290 gave read_dir_all the prefix
+	// remove_dir_all already owned, and a program calling both segfaulted.
+	// Nothing reported it, which is what makes it worth refusing here
+	// rather than in each emitter's naming convention.
+	dupLabelErr error
 	// sec is the section the next label or instruction lands in.
 	sec string
 }

@@ -1331,6 +1331,55 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			want: 9,
 		},
 		{
+			// read_dir_all: the same listing with "." and ".." kept (#9279), so
+			// the two files plus the two dot entries make 4. The helper is
+			// read_dir's body with the dot test dropped from both passes, and
+			// the count is what would catch it being dropped from only one.
+			name: "read_dir_all_count",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_rda_all")) {
+    Ok(d) => {
+      var a = write_file(d + "/a.txt", "x");
+      var b = write_file(d + "/b.txt", "y");
+      match (read_dir_all(d)) { Ok(es) => es.len(), Err(e) => 100 }
+    },
+    Err(e) => 200
+  };
+}`,
+			want: 4,
+		},
+		{
+			// read_dir_all BESIDE remove_dir_all: the pair whose two helper
+			// bodies land in one object, so a shared `.L` prefix binds each
+			// other's branches. read_dir_all shipped with `.Lssa_rda`, which
+			// remove_dir_all already owned, and this segfaulted while every
+			// single-builtin case stayed green (#9290).
+			name: "read_dir_all_beside_remove_dir_all",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_rda_pair")) {
+    Ok(d) => {
+      var a = write_file(d + "/a.txt", "x");
+      var n = match (read_dir_all(d)) { Ok(es) => es.len(), Err(e) => 100 };
+      var r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
+      n + r
+    },
+    Err(e) => 60
+  };
+}`,
+			want: 3,
+		},
+		{
+			// read_dir_all failure: the same ENOENT → Err(NotFound) arm read_dir has.
+			name: "read_dir_all_err",
+			src: `function main(): i32 {
+  return match (read_dir_all("/no_such_dir_ssa_rda_9279")) {
+    Ok(es) => 0,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
+		{
 			// read_dir failure: a nonexistent directory yields ENOENT → Err(NotFound).
 			name: "read_dir_err",
 			src: `function main(): i32 {

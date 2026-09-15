@@ -229,6 +229,12 @@ function main(): i32 {
 }
 ```
 
+`read_dir` leaves out `.` and `..`, and the names arrive in whatever order
+the directory holds them — sort the result if that matters. `read_dir_all`
+is the same call with the two dot entries kept, for a program that has to
+show them where the directory put them rather than somewhere of its own
+choosing.
+
 ## Run another program
 
 Native targets only — the wasm target rejects `subprocess` at build time

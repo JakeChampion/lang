@@ -465,6 +465,7 @@ var rcInert = map[string]bool{
 	"__fern_putchar": true, "__fern_random_bytes": true,
 	"__fern_random_i32": true, "__fern_rc_underflow_count": true,
 	"__fern_read_byte": true, "__fern_read_dir": true,
+	"__fern_read_dir_all": true,
 	"__fern_read_dir_raw": true, "__fern_read_file": true,
 	"__fern_read_file_bytes": true, "__fern_read_line": true,
 	"__fern_reader_close": true, "__fern_reader_close_fd": true,

@@ -1158,6 +1158,7 @@ func New() *Interp {
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
+	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
 	i.Builtins["access"] = &Builtin{Fn: builtinAccess}
@@ -2521,25 +2522,50 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	return resultOk(String(dir)), nil
 }
 
-// builtinReadDir lists the immediate children of `path` —
-// base names only, no recursion, unsorted. Wraps Go's
-// `os.ReadDir` which is the same shape; the only translation
-// is wrapping the result in `Result[string[], IoError]`.
+// builtinReadDir lists the immediate children of `path` — base names
+// only, no recursion, unsorted, without `.` and `..`. It is
+// read_dir_all with those two dropped rather than a separate walk, so
+// the interpreter reports the order a kernel does, the same as every
+// compiled backend. (`os.ReadDir` would be the obvious wrap and was
+// the first one, but it sorts, which is an order no backend produces.)
 func builtinReadDir(_ *Interp, args []Value) (Value, error) {
+	return readDirLike("read_dir", true, args)
+}
+
+// builtinReadDirAll is read_dir without the `.` / `..` filter: every
+// name the directory holds, in the order the kernel reports them. A
+// listing tool needs that order — `ls -f` prints entries in it, and
+// synthesizing the two dot entries at the front puts them somewhere
+// the real directory did not.
+func builtinReadDirAll(_ *Interp, args []Value) (Value, error) {
+	return readDirLike("read_dir_all", false, args)
+}
+
+// readDirLike is the body both share.
+func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("read_dir: expected 1 arg, got %d", len(args))
+		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
 	path, ok := args[0].(String)
 	if !ok {
-		return nil, fmt.Errorf("read_dir: expected string path, got %T", args[0])
+		return nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
 	}
-	entries, err := os.ReadDir(string(path))
+	names, err := readDirAll(string(path))
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	out := newArray(len(entries))
-	for i, e := range entries {
-		out.E[i] = String(e.Name())
+	kept := names
+	if skipDots {
+		kept = kept[:0:0]
+		for _, n := range names {
+			if n != "." && n != ".." {
+				kept = append(kept, n)
+			}
+		}
+	}
+	out := newArray(len(kept))
+	for i, n := range kept {
+		out.E[i] = String(n)
 	}
 	return resultOk(out), nil
 }

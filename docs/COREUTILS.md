@@ -1689,6 +1689,22 @@ deliberately absent: that backend stores a string as one byte per EIGHT-byte
 word, so the single store would be eight and the op would lose its reason to
 exist — a module using it takes the IR path, which is the production default.
 
+`read_dir_all(path)` (#9279) is `read_dir` without the `.` / `..` filter —
+every name the directory holds, in the order its reader reports them. It is a
+SECOND builtin rather than a change to `read_dir` because dropping those two
+is what nearly every caller wants and four walking utilities here rely on;
+what wanted the raw order is `ls -f`, which prints the dot entries where the
+directory keeps them. Synthesising a pair at the front is right for a sorted
+listing and wrong for an unsorted one — `.` is the 18th entry of one tree here
+and `..` the 46th — and it also cannot be filtered, where GNU's `-a -I '.*'`
+takes both out. On every backend it is the existing emitter with the dot test
+suppressed in both getdents passes, which is what makes it cheap; the
+interpreter's `read_dir` became the same walk with the filter applied, since
+`os.ReadDir` sorts and no backend reproduces that order. The one target that
+cannot answer it is wasm32-wasi preview 2, whose `read-directory` omits the
+dot entries at the host, so `read_dir_all` there is `read_dir`'s list —
+asserted rather than skipped, so a host that started reporting them shows up.
+
 What is deliberately NOT here: `create_dir_all` and `remove_dir_all`, which
 already existed. Neither is the primitive `mkdir(1)` or `rmdir(1)` needs —
 the first folds every EEXIST into `Ok(())` and cannot say whether it created
@@ -2229,20 +2245,6 @@ what the self-host finishes (6000 entries — past a read block on the way in an
 past a pipe buffer on the way out) rather than to what native would take. Found
 when the self-host build of dircolors was SIGKILLed on a case native finishes
 in 0.19 s.
-
-**`read_dir` drops `.` and `..`, so `ls -f` cannot reproduce readdir's
-order (#9279).** The builtin filters the two dot entries out of the getdents
-stream before a program sees them, which is what the four walking utilities
-want and what `ls -a` cannot have: it has to PRINT them. Synthesising them is
-right for a sorted listing, because the sort puts them where they belong; for
-an unsorted one it can only put them at the front, and GNU puts them wherever
-the filesystem did — `.` is the 18th entry of one tree here and `..` the 46th.
-So `ls -f`, `ls -aU` and `ls -a --sort=none` diverge in exactly one way, where
-those two names land, and the corpus has no case for the three. What it has
-instead is `TestLsUnsortedAllShowsTheDotEntries`, which compares the SET of
-names against GNU's and asserts the two entries and the dotfiles are in it —
-everything about `-f` except the position. `read_dir_all` is the fix and is a
-primitive, so it is its own change.
 
 **A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
 takes a path, so a recursive walk concatenates one per entry and the kernel

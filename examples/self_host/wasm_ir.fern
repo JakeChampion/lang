@@ -296,6 +296,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "fd_flags")) { out = out.append("fd_flags"); }
     if (module_emits_op_cached(cache, "writer_truncate")) { out = out.append("writer_truncate"); }
     if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
+    if (module_emits_op_cached(cache, "read_dir_all")) { out = out.append("read_dir_all"); }
     if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
     if (module_emits_op_cached(cache, "read_file_bytes")) { out = out.append("read_file_bytes"); }
     if (module_emits_op_cached(cache, "read_int")) { out = out.append("read_int"); }
@@ -3639,7 +3640,7 @@ function is_host_op_kind(tag: i32): boolean {
     return tag == 161 || tag == 162 || tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
         tag == 183 || tag == 209 || tag == 168 || tag == 167 || tag == 169 || tag == 233 || tag == 170 ||
         tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
-        tag == 171 || tag == 172 || tag == 180 || tag == 210 || tag == 166 ||
+        tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 210 || tag == 166 ||
         tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 ||
         tag == 267 || tag == 269 || tag == 273;
 }
@@ -3848,6 +3849,10 @@ function emit_host_op_wat(o: ir.Op): string {
         // emitted caller-side in wasm_ir_run (with the path_open/fd_readdir/
         // fd_close imports + heap + arr_push) when the module reads a directory.
         return "    call $__fern_read_dir\n";
+    }
+    if (o.kind_tag == 310) {  // read_dir_all
+        // The same helper shape without the "." / ".." skip.
+        return "    call $__fern_read_dir_all\n";
     }
     if (o.kind_tag == 172) {  // remove_dir_all
         // stack: path strblock ptr -> recursively rm -rf the path, push a
@@ -4966,7 +4971,7 @@ function needs_fd_sync(needs: string[]): boolean {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -6038,7 +6043,8 @@ pub function create_dir_all_func(): string {
     o = o + "    (local.get $res))\n";
     return o;
 }
-// read_dir_func emits $__fern_read_dir(path) -> Result[string[], IoError] box.
+// read_dir_func emits $__fern_read_dir(path) -> Result[string[], IoError] box;
+// read_dir_all_func emits the sibling that keeps the dot entries.
 // path_open(preopen fd 3, FD_READDIR right) the directory, then loop fd_readdir
 // over the WASI dirent stream (dirent header is 24 bytes: d_next u64 @0, d_ino
 // u64 @8, d_namlen u32 @16, d_type u8 @20; the name's d_namlen bytes follow),
@@ -6050,8 +6056,20 @@ pub function create_dir_all_func(): string {
 // the loop, so the name/array allocations that follow it never overlap the bytes
 // a later fd_readdir page overwrites. Needs the heap runtime + $__fern_arr_push.
 pub function read_dir_func(): string {
+    return read_dir_func_like("__fern_read_dir", true);
+}
+
+// read_dir_all_func emits $__fern_read_dir_all: the same body with the
+// "." / ".." entries kept, in the order fd_readdir reports them.
+pub function read_dir_all_func(): string {
+    return read_dir_func_like("__fern_read_dir_all", false);
+}
+
+// read_dir_func_like is the body both emit. `skip_dots` applies the
+// "." / ".." test.
+function read_dir_func_like(fname: string, skip_dots: boolean): string {
     var o: string = "";
-    o = o + "  (func $__fern_read_dir (param $path i32) (result i32)\n";
+    o = o + "  (func $" + fname + " (param $path i32) (result i32)\n";
     o = o + "    (local $err i32) (local $fd i32) (local $arr i32) (local $buf i32)\n";
     o = o + "    (local $cookie i64) (local $lastnext i64) (local $used i32) (local $pos i32)\n";
     o = o + "    (local $namlen i32) (local $nameptr i32) (local $blk i32) (local $i i32) (local $skip i32) (local $res i32)\n";
@@ -6084,10 +6102,12 @@ pub function read_dir_func(): string {
     // Name must be fully present, else fd_readdir truncated it — stop and resume.
     o = o + "        (br_if $pdone (i32.gt_u (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)) (local.get $used)))\n";
     o = o + "        (local.set $nameptr (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 24))))\n";
-    // Skip "." and "..".
+    // Skip "." and "..", unless this is the read_dir_all body.
     o = o + "        (local.set $skip (i32.const 0))\n";
-    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 1)) (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46))) (then (local.set $skip (i32.const 1))))\n";
-    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 2)) (i32.and (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46)) (i32.eq (i32.load8_u (i32.add (local.get $nameptr) (i32.const 1))) (i32.const 46)))) (then (local.set $skip (i32.const 1))))\n";
+    if (skip_dots) {
+        o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 1)) (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46))) (then (local.set $skip (i32.const 1))))\n";
+        o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 2)) (i32.and (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46)) (i32.eq (i32.load8_u (i32.add (local.get $nameptr) (i32.const 1))) (i32.const 46)))) (then (local.set $skip (i32.const 1))))\n";
+    }
     o = o + "        (if (i32.eqz (local.get $skip)) (then\n";
     o = o + "          (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $namlen))))\n";
     o = o + "          (i32.store (local.get $blk) (local.get $namlen))\n";
@@ -9792,23 +9812,23 @@ function preview1_imports(needs: string[]): string {
     // These imports must precede the function section.
     // remove_dir_all ALSO needs path_open + fd_close (+ fd_readdir below), so
     // it joins this union too.
-    if (need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate")) { parts = parts.append(file_imports()); }
+    if (need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate")) { parts = parts.append(file_imports()); }
     // read_dir / remove_dir_all list a directory via fd_readdir (path_open /
     // fd_close come from file_imports above) — emit the standalone fd_readdir
     // import once across both.
-    if (need(needs, "read_dir") || need(needs, "remove_dir_all")) { parts = parts.append(readdir_fd_import()); }
+    if (need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all")) { parts = parts.append(readdir_fd_import()); }
     // read_line / read_int / read_chunk read stdin (fd 0) via fd_read.
     // file_imports above already imports fd_read for path-based file I/O, so
     // emit the standalone fd_read import ONLY when the module reads stdin but
     // does NOT do file I/O — otherwise fd_read would be imported twice (an
     // invalid module).
-    if ((need(needs, "read_line") || need(needs, "read_int") || need(needs, "read_chunk") || need(needs, "read_all_stdin")) && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
+    if ((need(needs, "read_line") || need(needs, "read_int") || need(needs, "read_chunk") || need(needs, "read_all_stdin")) && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
         parts = parts.append(stdin_fd_read_import());
     }
     // reader_close calls preview1 fd_close. file_imports supplies fd_close for
     // path I/O, so emit the standalone fd_close import ONLY for a reader that
     // does no file I/O — otherwise fd_close would be imported twice.
-    if (need(needs, "reader_close") && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
+    if (need(needs, "reader_close") && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
         parts = parts.append(reader_fd_close_import());
     }
     // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
@@ -10121,7 +10141,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -10246,6 +10266,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // $__fern_arr_push (emitted by the arr_push gate below, which folds
     // read_dir in).
     if (need(needs, "read_dir")) { parts = parts.append(read_dir_func()); }
+    if (need(needs, "read_dir_all")) { parts = parts.append(read_dir_all_func()); }
     // $__fern_remove_dir_all(path): recursive rm -rf -> Result[(), IoError] box.
     // Heap-backed + uses $__fern_arr_push (both folded into the gates above).
     if (need(needs, "remove_dir_all")) { parts = parts.append(remove_dir_all_func()); }
@@ -10393,7 +10414,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // begins with arr_push_helper(), so it defines $__fern_arr_push itself —
     // gating that out here keeps the single definition (else a module using
     // BOTH .split()/lines AND .append double-defines it → "duplicate func").
-    var needs_arr_push: boolean = need(needs, "arr_push") || need(needs, "arr_push_owned") || need(needs, "read_dir") || need(needs, "remove_dir_all");
+    var needs_arr_push: boolean = need(needs, "arr_push") || need(needs, "arr_push_owned") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all");
     var split_emits_push: boolean = need(needs, "str_split") || need(needs, "@uses_str_lines");
     if (needs_arr_push && !split_emits_push) { parts = parts.append(arr_push_helper()); }
     // $__fern_str_split appends through $__fern_arr_push_owned so its own

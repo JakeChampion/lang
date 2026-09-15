@@ -12367,6 +12367,13 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!rds.ok) { return rds; }
         return rds.emit(ir.op_read_dir());
     }
+    // Built-in `read_dir_all(path)` — the same listing with `.` and
+    // `..` kept, in the order the directory reader reports them.
+    if (cid.name == "read_dir_all" && c.args.len() == 1) {
+        var rdas: LowerState = lower_expr(c.args[0], s);
+        if (!rdas.ok) { return rdas; }
+        return rdas.emit(ir.op_read_dir_all());
+    }
     // Built-in `env(name)` — look up an environment variable, push
     // a fresh Option[string] box (Some(value) / None). The Option
     // type is resolved by opt_ret_type's env case so
@@ -72065,6 +72072,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "read_link") { return "Result[string, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
+    if (name == "read_dir_all") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
     if (name == "stat") { return "Result[FileStat, IoError]"; }
     if (name == "lstat") { return "Result[FileStat, IoError]"; }
