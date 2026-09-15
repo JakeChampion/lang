@@ -1644,7 +1644,8 @@ Every row exit 0. The copies are `FERN_CLIFF_REPORT=1`'s count and bytes;
 the peaks are sampled RSS. Two things the table says that a peak alone
 would not:
 
-- **The bytes copied fell 3.6x on both inputs, and the peak did not.** That
+- **The bytes copied fell 3.6x on the 200 declarations and 3.1x on
+  `lexer.fern`, and the peak did not.** That
   is not a leak: under `FERN_LEAKCHECK=1` the produced compiler leaves LESS
   live at exit than the AST-built one — 22.5 MB against 67.0 MB on the 200
   declarations, 29.6 MB against 142.5 MB on `lexer.fern` — and frees 1.66 M
@@ -1655,8 +1656,9 @@ would not:
   attribute, with the same instrument.
 - **The produced compiler's ANSWER on `lexer.fern` is wrong**, and was
   before either change: the semantic build of main at `b15a016` emits the
-  same 150-line divergence from the AST build, at three sites in
-  `match_multipunct`, each a `var b: i32 = 0 - 1;` that the AST build folds
+  same 150-line divergence from the AST build, at three sites: the two
+  `var b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
+  `test_mixed`, each lowered as zero minus one, which the AST build folds
   to `movq $-1` and the produced build emits as `xorl; movq $o, %rcx; subq`.
   The constant op's `str` field — empty for a real constant, and what
   `const_i32_readable` refuses on — read back as a one-byte string, so the
