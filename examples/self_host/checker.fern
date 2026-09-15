@@ -9379,16 +9379,16 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     }
   }
   // E042: the `?` try operator (parsed as the unary op `try_`)
-  // requires an Option or Result operand. The self-host models a
+  // requires an Option, Result, or @try enum operand. The self-host models a
   // sound, zero-false-positive subset: when the operand is a known
   // scalar primitive (i32 / bool / string / f64) it can never be an
-  // Option/Result, so flag it. Option/Result-typed operands type to
+  // supported enum, so flag it. Enum-typed operands type to
   // struct / union / unknown here (never a primitive), so legal `?`
   // uses are left untouched — mirroring the E033/E034 conservatism.
   if (u.op == "try_") {
     var trt: typeinfo.Type = check_expr(u.operand, s);
     if (is_primitive_type(trt)) {
-      out = out.append(dg_at("E042", "`?` operator requires an Option or Result value, got " + type_label(trt), u.line, u.col));
+      out = out.append(dg_at("E042", "`?` operator requires an Option, a Result, or an `@try` enum, got " + type_label(trt), u.line, u.col));
     } else {
       // E042 return-shape (#4363 item 1): `?` on a KNOWN
       // Option/Result operand additionally requires the
