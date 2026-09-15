@@ -235,8 +235,6 @@ var rcResultOwned = map[string]bool{
 	"termios_set":       true,
 	"signal_send":       true,
 	"set_process_group": true,
-	"termios_get":       true,
-	"termios_set":       true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
