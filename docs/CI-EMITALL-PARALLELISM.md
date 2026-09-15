@@ -78,6 +78,15 @@ between generations, with no OOM. Maximum child RSS was 2.62 GiB for gen0
 and 11.65 GiB for gen1. The 767.670-second package time is correctness
 evidence, not a native performance measurement.
 
+After rebasing onto main `5a1247235`, a native ARM64 Darwin verifier rebuilt
+from those compiler sources passed a 16-unit serial/parallel pilot and then
+the full 75-unit comparison with race detection. Filenames, sizes and SHA-256
+hashes match exactly between one and two workers. The full runs observed one
+and two active children respectively. Source lint, package vet, formatting
+and test selectors also pass on the updated tree. These are integration
+checks; the controlled timing results above retain their recorded revision,
+and the updated tree still requires the complete CI bootstrap gates.
+
 On a native Linux x86-64 host, run:
 
 ```sh
