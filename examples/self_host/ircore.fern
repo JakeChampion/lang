@@ -933,7 +933,8 @@ pub function all_runtime_need_roots(): string[] {
         "chmod", "set_file_times", "truncate", "mknod", "chown_at",
         "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
         "termios_get", "termios_set",
-        "temp_dir", "open_file", "reader", "fd_stat", "reader_seek", "writer_write", "writer_truncate", "subprocess",
+        "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "fd_flags",
+        "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum",
         // stdin / argv / the host's name / the process's own identity:
         "read_all_stdin", "hostname", "environ",
         "geteuid", "getegid", "getuid", "getgid", "getgroups",
@@ -945,7 +946,7 @@ pub function all_runtime_need_roots(): string[] {
         // caller. The two signal roots are marked through a VARIABLE rather
         // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
         // find them either.
-        "isatty", "window_size", "signal_ignore", "signal_default",
+        "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
         // The liveness of one pid, delivering a signal to one, and this
         // process's descriptor ceiling.
         "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
