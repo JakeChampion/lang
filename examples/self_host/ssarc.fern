@@ -819,6 +819,11 @@ function from_f64(to: typeinfo.Type): ir.Op {
 function cast(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var from: typeinfo.Type = f.values[ins.args[0]];
     var to: typeinfo.Type = f.values[ins.result];
+    // An address and a reference share a slot, so a cast between them moves
+    // nothing. It has to answer before the width arms below, which would read
+    // the reference as a narrow integer and emit a wrap for it.
+    if (ssasem.is_usize(from) && ssasem.reference(to)) { return r; }
+    if (ssasem.is_usize(to) && ssasem.reference(from)) { return r; }
     if (ssasem.is_float(to)) { return into_float(r, from, to); }
     if (ssasem.is_float(from)) { return emit(r, from_f64(to)); }
     if (ssasem.is_usize(from)) { return from_address(r, to); }

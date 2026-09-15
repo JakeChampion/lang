@@ -45,17 +45,6 @@ function successors(b: ssa.SBlock): i32[] {
     }
     return [];
 }
-// Admit only representations whose counted layout is defined by this pass.
-function reference(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeString(_) = t { return true; }
-    if let typeinfo.TypeArray(_) = t { return true; }
-    if let typeinfo.TypeTuple(_) = t { return true; }
-    if let typeinfo.TypeStruct(_) = t { return true; }
-    if let typeinfo.TypeUnion(_) = t { return true; }
-    if let typeinfo.TypeFunc(_) = t { return true; }
-    if let typeinfo.TypeMap(_) = t { return true; }
-    return false;
-}
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
@@ -86,7 +75,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
     var i: i32 = 0;
     while (i < modes.len()) {
-        if (reference(params[i])) {
+        if (ssasem.reference(params[i])) {
             if (modes[i] != borrow_mode() && modes[i] != counted_mode()) { return "reference parameter mode"; }
         } else if (modes[i] != value_mode()) { return "scalar parameter mode"; }
         i = i + 1;
@@ -168,7 +157,7 @@ function construction(kind: i32): boolean {
 }
 // The operand types a construction takes a unit of: every reference but a
 // function value, which it borrows.
-function taken(t: typeinfo.Type): boolean { return reference(t) && !ssasem.is_func(t); }
+function taken(t: typeinfo.Type): boolean { return ssasem.reference(t) && !ssasem.is_func(t); }
 
 function fresh_unit(kind: i32): boolean {
     return kind == 8 || kind == 5 || kind == 9 || construction(kind) || hands_out(kind);
@@ -186,7 +175,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
         for ins in b.insts {
             var owns: boolean = false;
             if (ins.kind_tag == 6) { owns = modes[ins.imm] == counted_mode(); }
-            if (fresh_unit(ins.kind_tag)) { owns = reference(f.values[ins.result]); }
+            if (fresh_unit(ins.kind_tag)) { owns = ssasem.reference(f.values[ins.result]); }
             out = out.with(ins.result, owns);
         }
     }
@@ -221,13 +210,13 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     } else if (ins.kind_tag == ssasem.call_value()) {
         counted = call_value_supplied(f, ins);
     } else if (ins.kind_tag == ssasem.cell_set()) {
-        counted = [false, reference(f.values[ins.args[1]])];
+        counted = [false, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.map_insert()) {
         counted = [true, true, false];
     } else if (ins.kind_tag == ssasem.append()) {
-        counted = [true, reference(f.values[ins.args[1]])];
+        counted = [true, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.with()) {
-        counted = [true, false, reference(f.values[ins.args[2]])];
+        counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
     } else if (construction(ins.kind_tag)) {
         for arg in ins.args { counted = counted.append(taken(f.values[arg])); }
     }
@@ -247,7 +236,7 @@ function call_value_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
     var params: typeinfo.Type[] = ssasem.func_params(callee);
     var i: i32 = 0;
     while (i < params.len()) {
-        out = out.append(ssasem.func_param_own(callee, i) && reference(f.values[ins.args[i + 1]]));
+        out = out.append(ssasem.func_param_own(callee, i) && ssasem.reference(f.values[ins.args[i + 1]]));
         i = i + 1;
     }
     return out;
@@ -258,13 +247,13 @@ function call_supplied(f: ssasem.Func, ins: ssa.SInst): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        out = out.append(c.modes[i] == counted_mode() && reference(f.values[ins.args[i]]));
+        out = out.append(c.modes[i] == counted_mode() && ssasem.reference(f.values[ins.args[i]]));
         i = i + 1;
     }
     return out;
 }
 function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
-    if (b.term.value >= 0 && reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
+    if (b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
     return [];
 }
 function edge_supplies(f: ssasem.Func, b: ssa.SBlock, target: i32, owned: boolean[]): Supply[] {

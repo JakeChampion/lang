@@ -2240,6 +2240,25 @@ func built {
     ret v6
 }
 
+modes 1 result string
+v0:usize v1:string
+func addr_as_text {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+modes 1 result u8[]
+v0:usize v1:u8[]
+func addr_as_bytes {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+refused cast contract
 modes 1 1 result usize
 v0:usize v1:usize v2:usize
 func handle_sum {
