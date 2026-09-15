@@ -113,7 +113,7 @@ func TestSelfHostAssumeEligibleByteIdenticalX86_64(t *testing.T) {
 	}
 	t.Logf("per-process (checked): %d units in %.1fs on %d workers", len(checked), time.Since(ppStart).Seconds(), workers)
 
-	assumed := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "ae", "x86-64-linux", pmEmitAllBatch)
+	assumed := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "ae", "x86-64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
 
 	if len(assumed) != len(checked) {
 		t.Fatalf("unit count differs: per-process %d, emit-all %d", len(checked), len(assumed))

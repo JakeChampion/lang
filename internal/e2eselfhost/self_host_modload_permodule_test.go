@@ -62,7 +62,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// 1. Emit every unit of the whole compiler. The entry unit folds in the full
 	// runtime-need root set the driver derives itself, so the link below still
 	// checks the need aggregation end to end.
-	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch)
+	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc", units)
 
 	// 2. Link all units — no undefined symbols proves the runtime-need union is
