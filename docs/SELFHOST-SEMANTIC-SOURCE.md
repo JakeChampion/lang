@@ -1228,8 +1228,9 @@ not obvious:
 The whole-module refusal that preceded the fixpoint was worth measuring: over
 the conformance corpus it left 190 of 498 modules producing NOTHING, because
 one produced body reaching one refused stdlib leaf took every sibling with it.
-The per-body fixpoint takes the same corpus to **15,475 of 17,468 declarations
-(88.6%) emitted from produced bodies, in all 498 modules**.
+The per-body fixpoint takes the same corpus to 15,475 of 17,468 declarations
+emitted from produced bodies, in all 498 modules, and the wide tuple element
+below takes it to **16,743 of 17,468 (95.8%)**.
 
 ### What the corpus measured, and the four defects it found
 
@@ -1281,26 +1282,50 @@ With a real control, four defects showed, and three of them were one cause:
   one. `capturebox.is_cell_name` is the single rule both paths ask for the
   spelling now; irlower's duplicate of it is gone.
 
-### The leaves, by measured size
+### The wide tuple element: the biggest leaf was a construction site
 
-Over the same corpus, with the per-body fixpoint in place, the refusals rank:
+The first census ranked `unsupported physical RC value type` at 1,032 refusals,
+four times the next leaf. A probe by name put all of it on 22 distinct
+functions: the 128-bit multiply helpers behind the float and string
+shortest-representation work (`float.__db_mul64`, `string.__el_mul64` and their
+callers) and `bigint.__bi_divmod_mag`. Each returns a TUPLE with a 64-bit
+element, which this boundary refused because "`op_tuple_make` spells no element
+kinds, so a wide tuple element has no store width to be written at".
+
+That was true of `op_tuple_make` and not of the IR: `op_tuple_make_k` carries
+the comma-joined element kinds, the AST lowering has emitted it for years, and
+the wasm backend picks `i64.store` / `f64.store` / `i32.store` out of it. The
+READ side of this boundary had named its width all along
+(`op_tuple_get_w`), so the construction was the only half missing. `ssarc`
+emits the kinds now (`tuple_kinds`) and the element admission drops the
+narrowness test; `narrow_slot` keeps its meaning for the one undeclared
+construction that still writes an i32-shaped word per operand, the closure box.
+
+Worth **+7.2 points of the corpus: 15,475 of 17,468 declarations to 16,743 of
+17,468 (88.6% -> 95.8%)**, with the conformance differential still at 496 of
+498. The cascade went with it — "calls a body the AST lowering defines" was the
+second leaf at 236 and is out of the top ten. `wide_pair` / `float_pair` in the
+executable fixture pin a 64-bit and an f64 element, each beside a narrow one
+and the f64 beside a string so the drop walk crosses the same box, balanced on
+every target.
+
+### The leaves that are left, by measured size
 
 | leaf | functions refused |
 |---|---|
-| `unsupported physical RC value type` | 1032 |
-| (cascade) calls a body the AST lowering defines | 236 |
 | `value-returning body falls through` | 44 |
 | `unsupported map shape` | 37 |
 | `call target was refused: uninstantiated generic` | 33 |
 | `unsupported value block` | 30 |
 | `unsupported destructuring declaration` | 25 |
+| `unbound name is not a semantic value` | 19 |
+| `operator contract` | 17 |
+| `unsupported call target` | 16 |
+| `unsupported match guard` | 13 |
 
-The head is 22 distinct functions, and a probe by name says what they are: the
-128-bit multiply helpers behind the float and string shortest-representation
-work (`float.__db_mul64`, `string.__el_mul64` and their callers) and
-`bigint.__bi_divmod_mag`. Each returns a TUPLE with a 64-bit element, which
-this boundary refuses because `ir.op_tuple_make` spells no element kinds — and
-`ir.op_tuple_make_k` does, carrying the comma-joined kinds the AST lowering
-already gives it. So the biggest leaf here is not a missing analysis: it is a
-construction site emitting the narrower of two ops that already exist. That is
-the next slice.
+Read these the way this file reads every leaf: probe the refused functions by
+name before building, because the histogram has repeatedly ranked the work
+wrong. The tuple slice above is not the first time a leaf that read as a
+missing analysis turned out to be one construction site choosing the narrower
+of two ops that both already existed — the array element's own width and
+`op_call_indirect_sig` are the same shape.

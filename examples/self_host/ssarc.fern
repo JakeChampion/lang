@@ -29,23 +29,19 @@ function empty(why: string): irlower.LowerResult {
 // container's drop frees its elements with the owned string's helper, which is
 // not a view's.
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-    for elem in tup.elements { if (!tuple_element_supported(elem, f)) { return false; } }
+    for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
     return i.width == 32 || (i.width == 8 && i.unsigned) || i.width == 64 || (i.width == typeinfo.width_ptr() && i.unsigned);
 }
 
-// A value that fits the ONE i32-shaped word a tuple stores per element:
-// `op_tuple_make` spells no element kinds here, so a 64-bit tuple element has
-// no store width to be written at. An array's element ops each carry their
-// own width, and a record or variant field stores at the width its
-// declaration names, so neither has to narrow.
+// A value that fits the ONE i32-shaped word an undeclared construction writes
+// per operand. An array's element ops each carry their own width, a record or
+// variant field stores at the width its declaration names, and a tuple
+// construction names its element kinds (`op_tuple_make_k`), so none of the
+// three has to narrow — a closure box still does.
 function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_float(t); }
-
-function tuple_element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return narrow_slot(t) && element_supported(t, f);
-}
 
 function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     return !ssasem.is_view(t) && supported(t, f);
@@ -461,10 +457,12 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.Str
     return "";
 }
 
-// The undeclared constructions whose wide operand is an ARRAY element, written
-// at the width its op carries; a cell's slot is one.
+// The undeclared constructions that carry their own element width: the array
+// ops, of which a cell's slot is one, and the tuple construction through the
+// kinds `tuple_kinds` names.
 function wide_element_site(k: i32): boolean {
-    return kind_in([ssasem.array_new(), ssasem.append(), ssasem.with(), ssasem.cell_new(), ssasem.cell_set()], k);
+    return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.append(), ssasem.with(),
+        ssasem.cell_new(), ssasem.cell_set()], k);
 }
 
 // The declaration a record or variant construction stores its fields
@@ -885,6 +883,30 @@ function into_address(r: irlower.LowerResult, from: typeinfo.Type): irlower.Lowe
     return emit(r, ir.op_int_wrap_ptr());
 }
 
+// A tuple's slots are a uniform eight bytes on every backend; only wasm picks
+// the store instruction per element, and it reads the choice out of the kinds
+// string `op_tuple_make_k` carries. The READ side has named its width all
+// along (`op_tuple_get_w`), which is why this was the only half missing. An
+// f32 occupies the f64's slot, as it does in an array.
+function tuple_kind(t: typeinfo.Type): string {
+    if (ssasem.is_float(t)) { return "f64"; }
+    if (ssasem.is_wide(t)) { return "i64"; }
+    return "i32";
+}
+
+function tuple_kinds(t: typeinfo.Type): string {
+    var out: string = "";
+    if let typeinfo.TypeTuple(tup) = t {
+        var i: i32 = 0;
+        while (i < tup.elements.len()) {
+            if (i > 0) { out = out + ","; }
+            out = out + tuple_kind(tup.elements[i]);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
 // A record box is named by its declaration, a variant box by its variant. The
 // declaration index is where wasm reads each field's store width; the register
 // backends store every field as 8 bytes, and every read takes its offset from
@@ -892,7 +914,7 @@ function into_address(r: irlower.LowerResult, from: typeinfo.Type): irlower.Lowe
 function container(r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
-    if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make(ins.args.len())); }
+    if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make_k(ins.args.len(), tuple_kinds(f.values[ins.result]))); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), decl_of(f, ins, structs))); }
     if (ins.kind_tag == ssasem.length()) {
         if (ssasem.is_text(f.values[ins.args[0]])) { return emit(r, ir.op_str_len()); }
