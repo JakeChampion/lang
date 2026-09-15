@@ -208,21 +208,29 @@ if (checked.dependencies[6].len() != 0) { return 11; }
 
 func TestSelfHostSSASemantic(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	for i, tc := range semanticCases() {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			copySelfHostDriver(t, dir, "ssasem.fern")
-			source, want := semanticSource([]int{i})
-			if err := os.WriteFile(filepath.Join(dir, "semantic.fern"), []byte(source), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			bin := buildSelfHostBin(t, gcc, dir, "semantic.fern", "semantic")
-			got, err := runX86_64Bin(runner, bin).CombinedOutput()
-			if err != nil || string(got) != want {
-				t.Fatalf("semantic verification: %v\ngot %q\nwant %q", err, got, want)
-			}
-		})
-	}
+	// The group waits for all parallel children before returning, so this
+	// top-level test's elapsed time still includes the work for CI shard weights.
+	t.Run("cases", func(t *testing.T) {
+		for i, tc := range semanticCases() {
+			t.Run(tc.name, func(t *testing.T) {
+				// Each case owns its source tree and output binary. The harness
+				// shares immutable cache entries and bounds concurrent driver builds
+				// by memory, so independent semantic checks can use multiple cores.
+				t.Parallel()
+				dir := t.TempDir()
+				copySelfHostDriver(t, dir, "ssasem.fern")
+				source, want := semanticSource([]int{i})
+				if err := os.WriteFile(filepath.Join(dir, "semantic.fern"), []byte(source), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				bin := buildSelfHostBin(t, gcc, dir, "semantic.fern", "semantic")
+				got, err := runX86_64Bin(runner, bin).CombinedOutput()
+				if err != nil || string(got) != want {
+					t.Fatalf("semantic verification: %v\ngot %q\nwant %q", err, got, want)
+				}
+			})
+		}
+	})
 }
 
 func TestSelfHostSSASemanticIRArm64(t *testing.T)  { testSemanticIR(t, "arm64-linux") }

@@ -64,6 +64,12 @@ jobs:
 
       # No dependencies: node:test is built in, and the fixtures are compiled
       # by the fern the test builds from this checkout.
+      - name: Test browser interpreter platform refusals
+        run: |
+          GOOS=js GOARCH=wasm go test \
+            -exec "$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
+            ./internal/interp -run '^TestSetProcessGroupUnavailable$' -count=1
+
       - name: Run the shim suite
         run: node --test web/test/shim/*.test.mjs
 

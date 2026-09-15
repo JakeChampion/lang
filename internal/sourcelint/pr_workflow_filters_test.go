@@ -89,9 +89,8 @@ func onBlock(src string) (string, bool) {
 // something about PR heads and nothing at all about the branch people ship
 // from. A red main was discoverable only by dispatching the lanes by hand.
 //
-// Both halves now come from one workflow: ci.yml triggers on both events and
-// its lane table is the one filter either event reads, so the filters cannot
-// drift apart — provided neither trigger grows a filter of its own on top.
+// Main calls the same orchestration through ci-main.yml. Main's selected tip
+// runs full coverage because pending commits coalesce; PRs retain path filters.
 func TestGateLanesRunOnMain(t *testing.T) {
 	src := workflowSource(t, ciFile)
 	on, ok := onBlock(src)
@@ -102,27 +101,32 @@ func TestGateLanesRunOnMain(t *testing.T) {
 	if !ok {
 		t.Fatalf("%s does not trigger on pull_request — nothing gates a pull request", ciFile)
 	}
-	push, ok := triggerBlock(on, "push")
+	if _, ok := triggerBlock(on, "push"); ok {
+		t.Fatal("ci.yml must not also trigger on push: ci-main.yml already calls it")
+	}
+	if _, ok := triggerBlock(on, "workflow_call"); !ok {
+		t.Fatal("ci.yml must be callable from main's entry workflow")
+	}
+	main := workflowSource(t, ciMainFile)
+	mainOn, _ := onBlock(main)
+	push, ok := triggerBlock(mainOn, "push")
 	if !ok {
-		t.Fatalf("%s gates pull requests but not main: add a `push: branches: [main]` "+
-			"trigger — every lane must run against the merge too", ciFile)
+		t.Fatalf("%s must trigger on push to validate main", ciMainFile)
 	}
 	if !strings.Contains(push, "branches: [main]") {
 		t.Errorf("%s: push trigger is not scoped to main — every branch would fire it "+
-			"twice, once for the push and once for the PR", ciFile)
+			"twice, once for the push and once for the PR", ciMainFile)
 	}
 	for name, block := range map[string]string{"pull_request": pr, "push": push} {
 		if strings.Contains(block, "paths") {
-			t.Errorf("%s: the %s trigger carries a path filter of its own. The lane table "+
-				"is the one filter both events read; a filter here applies to one event "+
-				"only, and main and PRs run different sets of changes", ciFile, name)
+			t.Errorf("the %s trigger must not skip an entire CI run with a path filter", name)
 		}
 	}
 
 	// Whether main cancels its own runs is settled in main_concurrency_test.go.
 	// What stays here is the grouping KEY, which is what makes a burst of
 	// merges queue instead of each holding a run.
-	if conc, ok := concurrencyBlock(src); ok && strings.Contains(conc, "github.sha") {
+	if conc, ok := concurrencyBlock(main); ok && strings.Contains(conc, "github.sha") {
 		t.Errorf("%s: main is keyed on the SHA, so every merge gets its own concurrency "+
 			"group and waits on nothing. A burst of rebase-merges then holds an "+
 			"uncancellable run each, ahead of every open PR (#8124). Key main on the "+

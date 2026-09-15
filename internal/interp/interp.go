@@ -3201,7 +3201,7 @@ func builtinSetProcessGroup(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("set_process_group: expected number pgid, got %T", args[1])
 	}
-	return ioResult("", syscall.Setpgid(int(pid), int(pgid))), nil
+	return ioResult("", hostSetProcessGroup(int(pid), int(pgid))), nil
 }
 
 // builtinSignalIgnore sets one signal's disposition to SIG_IGN.
