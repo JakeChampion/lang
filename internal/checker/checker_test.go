@@ -4818,6 +4818,17 @@ func TestArrayLiteralSettlingStillWorks(t *testing.T) {
 		`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.len(); }`,
 		`function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1, 2, 3]); }`,
+		// A NESTED literal settles element-wise. The first cut of
+		// elemSettleable compared the outer literal's already-inferred
+		// `i32[]` element against `f64[]` as a concrete mismatch and
+		// rejected this, which broke `settle-nested-array-ok` on main.
+		`function main(): i32 { var xs: f64[][] = [[1], [2]]; return 0; }`,
+		`function main(): i32 { var xs: f64[][][] = [[[1]], [[2]]]; return 0; }`,
+		// A destination element that is still a type PARAMETER names no
+		// concrete type for the literal to contradict — monomorph decides
+		// what it settles to. The first cut rejected this too.
+		`function build[T](): i32 { var local: T[] = [1, 2, 3]; return local.len(); }
+function main(): i32 { return 0; }`,
 	}
 	for _, src := range srcs {
 		if err := checkSource(t, src); err != nil {

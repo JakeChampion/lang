@@ -197,6 +197,17 @@ type Info struct {
 	// conformance pass. resolveProj uses it to resolve a concrete-base
 	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
 	AssocBindings map[string]map[string]ast.Type
+	// TryShapes records every enum the `?` operator accepts, keyed by enum
+	// name: the two builtins plus every `@try` declaration that passed the
+	// shape check. THE single place anything asks "is this `?`-able, and
+	// what does it unwrap to" — the checker's TryOp arm, the IR's errdefer
+	// gate, and the interpreter all read it and none learns whether the
+	// answer came from a marker or from a builtin.
+	//
+	// Keeping that question behind one lookup is deliberate: if `@try` is
+	// ever replaced by a `Try` trait, only this map's population changes.
+	// See docs/TRY.md.
+	TryShapes map[string]TryShape
 	// AssocBindingPattern records, for a binding made by a PARAMETRIC impl,
 	// that impl's `for` type pattern (`impl[T] Carrier for Box[T]` with
 	// `type Ok = T;` → AssocBindingPattern["Box"]["Ok"] = Box[T], T a
@@ -222,6 +233,143 @@ type Info struct {
 	// generic body is cloned to a fresh pointer by monomorph and so is
 	// not found — out of scope for the first compiled `dyn` slice.)
 	DynCoercions map[ast.Expr]DynCoercion
+}
+
+// tryEnumWithOk rebuilds a `?` source enum with its success payload replaced
+// by `ok`, leaving every other type argument alone: `Result[i32, string]`
+// with an f32 hint becomes `Result[f32, string]`.
+//
+// Only a shape whose Ok is a bare type PARAMETER can be rewritten this way —
+// that is the position the hint names. A concrete or composite Ok has no
+// argument slot to substitute into, so the caller settles nothing.
+func (c *checker) tryEnumWithOk(t ast.EnumType, ok ast.Type) (ast.EnumType, bool) {
+	shape, isTry := c.info.TryShapes[t.Name]
+	if !isTry {
+		return t, false
+	}
+	ed, haveDecl := c.info.Enums[t.Name]
+	if !haveDecl || len(ed.TypeParams) != len(t.Args) {
+		return t, false
+	}
+	var okParam string
+	switch p := shape.Ok.(type) {
+	case ast.ParamType:
+		okParam = p.Name
+	case ast.StructType:
+		if len(p.Args) == 0 {
+			okParam = p.Name
+		}
+	}
+	if okParam == "" {
+		return t, false
+	}
+	for i, tp := range ed.TypeParams {
+		if tp != okParam {
+			continue
+		}
+		args := append([]ast.Type{}, t.Args...)
+		args[i] = ok
+		return ast.EnumType{Name: t.Name, Args: args}, true
+	}
+	return t, false
+}
+
+// tryPayloadType substitutes a TryShape's payload type — written in the
+// enum decl's own type parameters — through a concrete instantiation's type
+// arguments, so `Result[i32, string]`'s residual `E` reads as `string`.
+//
+// Reports false when the instantiation's arity does not match the decl's,
+// which is the malformed-type case rather than a payload that happens not to
+// mention a parameter.
+func (c *checker) tryPayloadType(t ast.EnumType, payload ast.Type) (ast.Type, bool) {
+	ed, ok := c.info.Enums[t.Name]
+	if !ok {
+		return nil, false
+	}
+	if len(ed.TypeParams) != len(t.Args) {
+		return nil, false
+	}
+	if len(ed.TypeParams) == 0 {
+		return payload, true
+	}
+	sub := make(map[string]ast.Type, len(ed.TypeParams))
+	for i, tp := range ed.TypeParams {
+		sub[tp] = t.Args[i]
+	}
+	return substByName(payload, sub), true
+}
+
+// notATryTypeMsg is the E042 text for a `?` on something the operator does
+// not accept. It names the marker, because that is the reader's next action:
+// the type is theirs to mark, unless it is not an enum at all.
+func (c *checker) notATryTypeMsg(t ast.Type) string {
+	if et, ok := t.(ast.EnumType); ok {
+		return fmt.Sprintf("`?` operator requires an Option, a Result, or an `@try` enum, got %s — mark it `@try` to make it one", demangle(et.Name))
+	}
+	return fmt.Sprintf("`?` operator requires an Option, a Result, or an `@try` enum, got %s", t)
+}
+
+// registerTryShape records an enum in Info.TryShapes when `?` accepts it,
+// enforcing the shape the operator's lowering requires.
+//
+// Two enums qualify: the builtins (Option / Result, which carry no marker
+// because they predate it and cannot be spelled with one), and any enum
+// declared `@try`. A marked enum that does not fit the shape is E078 at the
+// declaration — the one place an author can act on it — and is NOT recorded,
+// so `?` on it reports the ordinary "not a `?` type" rather than cascading
+// off a half-valid shape.
+func (c *checker) registerTryShape(ed *ast.EnumDecl) {
+	// Option and Result are `?`-able without a marker — but only the
+	// INJECTED decls are. A user's `enum Option { A, B }` is already E010
+	// for redeclaring a reserved name; treating it as implicitly `?`-able
+	// would pile an E078 about its shape on top of that, describing a
+	// declaration the program is not allowed to make in the first place.
+	// The injected decls are the ones with no source position.
+	builtin := (ed.Name == "Option" || ed.Name == "Result") && ed.P == (ast.Position{})
+	if !ed.Try && !builtin {
+		return
+	}
+	if len(ed.Variants) != 2 {
+		c.errfCode(ed.P, "E078",
+			"@try enum %s must have exactly two variants — a success variant then a failure variant — but has %d",
+			ed.Name, len(ed.Variants))
+		return
+	}
+	success, failure := ed.Variants[0], ed.Variants[1]
+	if len(success.Payloads) != 1 {
+		c.errfCode(ed.P, "E078",
+			"@try enum %s: the success variant %q must carry exactly one payload, but carries %d",
+			ed.Name, success.Name, len(success.Payloads))
+		return
+	}
+	if len(failure.Payloads) > 1 {
+		c.errfCode(ed.P, "E078",
+			"@try enum %s: the failure variant %q must carry at most one payload, but carries %d",
+			ed.Name, failure.Name, len(failure.Payloads))
+		return
+	}
+	shape := TryShape{Ok: success.Payloads[0]}
+	if len(failure.Payloads) == 1 {
+		shape.Residual = failure.Payloads[0]
+	}
+	c.info.TryShapes[ed.Name] = shape
+}
+
+// TryShape is what `?` needs to know about one enum: which payload it
+// unwraps to, and whether its failure variant carries one.
+//
+// Both types are written in the ENUM'S OWN type parameters, exactly as the
+// decl spells them — a caller holding a concrete `Result[i32, string]`
+// substitutes its Args before use. The variant INDICES are not recorded
+// because the shape rule fixes them: success is variant 0, failure is
+// variant 1, which is what every backend's lowering already assumes.
+type TryShape struct {
+	// Ok is variant 0's single payload — the type `expr?` evaluates to.
+	Ok ast.Type
+	// Residual is variant 1's payload, or nil when that variant is
+	// payloadless (the Option shape). nil is the signal to BUILD a fresh
+	// failure value rather than forward the source's.
+	Residual ast.Type
 }
 
 // DynCoercion identifies one concrete→`dyn …` boxing site: the trait(s)
@@ -939,6 +1087,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ImplTraitArgs:       map[string]map[string][]ast.Type{},
 			ImplForPattern:      map[string]map[string]ast.Type{},
 			AssocBindings:       map[string]map[string]ast.Type{},
+			TryShapes:           map[string]TryShape{},
 			AssocBindingPattern: map[string]map[string]ast.Type{},
 		},
 		variantOf:            map[string][]variantRef{},
@@ -1106,6 +1255,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				srcModule: ed.SourceModule,
 			})
 		}
+		c.registerTryShape(ed)
 	}
 
 	// Register every `resource Name;` declaration (P5 WIT resource-handle
@@ -17205,14 +17355,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.settleNumeric(n, result)
 		return result
 	case *ast.TryOp:
-		// Postfix `?` covers two source enums:
-		//   - Option[T]?    yields T; on None,   returns None
-		//                                         (encl. fn returns Option[_])
-		//   - Result[T,E]?  yields T; on Err(e), returns Err(e) unchanged
-		//                                         (encl. fn returns Result[_, E])
+		// Postfix `?` on any enum Info.TryShapes accepts — the builtins
+		// and every `@try` declaration. `expr?` yields the success
+		// payload, or early-returns the failure variant.
 		//
-		// E must match exactly between source and enclosing
-		// return — the Err is forwarded as-is, no From-conversion.
+		// Which enum it is does not appear here. What matters is the
+		// SHAPE: a payloadless failure variant (Option's None) has
+		// nothing to carry out, so the lowering builds a fresh one; a
+		// failure variant with a payload (Result's Err(e)) is already the
+		// value to return, so it is forwarded. See docs/TRY.md.
 		inner := c.checkExpr(n.Inner, s)
 		if inner == nil {
 			return nil
@@ -17221,68 +17372,71 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E042", "`?` operator can only be used inside a function")
 			return nil
 		}
-		ret := c.current.ReturnType
-		retEnum, retOK := ret.(ast.EnumType)
 		srcEnum, srcOK := inner.(ast.EnumType)
 		if !srcOK {
-			c.errfCode(n.P, "E042", "`?` operator requires an Option or Result value, got %s", inner)
+			c.errfCode(n.P, "E042", "%s", c.notATryTypeMsg(inner))
 			return nil
 		}
-		switch srcEnum.Name {
-		case "Option":
-			if len(srcEnum.Args) != 1 {
-				c.errfCode(n.P, "E042", "malformed Option type %s", inner)
-				return nil
-			}
-			if !retOK || retEnum.Name != "Option" || len(retEnum.Args) != 1 {
-				c.errfCode(n.P, "E042", "`?` on Option requires the surrounding function to return Option[_], got %s", ret)
-				return nil
-			}
-			n.Kind = ast.TryKindOption
-			n.Type = srcEnum.Args[0]
-			return n.Type
-		case "Result":
-			if len(srcEnum.Args) != 2 {
-				c.errfCode(n.P, "E042", "malformed Result type %s", inner)
-				return nil
-			}
-			if !retOK || retEnum.Name != "Result" || len(retEnum.Args) != 2 {
-				c.errfCode(n.P, "E042", "`?` on Result requires the surrounding function to return Result[_, E], got %s", ret)
-				return nil
-			}
-			if !ast.Equal(srcEnum.Args[1], retEnum.Args[1]) {
-				// Error-converting `?`: a `Result[_, E]` propagated through a
-				// function returning `Result[_, dyn Trait]` boxes the concrete
-				// error `E` into `dyn Trait`, provided E implements Trait
-				// (the `Box<dyn Error>` + `?` idiom). Desugar to a block-expr
-				// that maps the error then applies an ordinary `?`. See #3234.
-				if lowered, ok := c.tryConvertErrToDyn(n, srcEnum, retEnum, s); ok {
-					n.Kind = ast.TryKindResult
-					n.Type = srcEnum.Args[0]
-					n.Lowered = lowered
-					return n.Type
-				}
-				// Or convert via a `from` constructor: if the function's
-				// error type `E2` has an associated `from(E1): E2` (e.g.
-				// `impl From[E1] for E2`), `?` maps `Err(e)` to
-				// `Err(E2.from(e))` — the `From`-based `?` idiom. See #2674.
-				if lowered, ok := c.tryConvertErrViaFrom(n, srcEnum, retEnum, s); ok {
-					n.Kind = ast.TryKindResult
-					n.Type = srcEnum.Args[0]
-					n.Lowered = lowered
-					return n.Type
-				}
-				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match (implement %s for a `dyn`-error, or a `from(%s)` constructor on %s for the conversion)",
-					srcEnum.Args[1], retEnum.Args[1], srcEnum.Args[1], srcEnum.Args[1], retEnum.Args[1])
-				return nil
-			}
-			n.Kind = ast.TryKindResult
-			n.Type = srcEnum.Args[0]
-			return n.Type
-		default:
-			c.errfCode(n.P, "E042", "`?` operator requires an Option or Result value, got %s", inner)
+		srcShape, srcTry := c.info.TryShapes[srcEnum.Name]
+		if !srcTry {
+			c.errfCode(n.P, "E042", "%s", c.notATryTypeMsg(inner))
 			return nil
 		}
+		ret := c.current.ReturnType
+		retEnum, retOK := ret.(ast.EnumType)
+		if !retOK || retEnum.Name != srcEnum.Name {
+			// The failure value propagates OUT of this function, so the
+			// return type has to be the same enum. Cross-enum propagation
+			// is what Rust needs FromResidual for; `@try` deliberately
+			// does not have it, and adding it later is additive.
+			c.errfCode(n.P, "E042",
+				"`?` on %s requires the surrounding function to return %s, got %s",
+				demangle(srcEnum.Name), demangle(srcEnum.Name), ret)
+			return nil
+		}
+		srcOkT, okResolved := c.tryPayloadType(srcEnum, srcShape.Ok)
+		if !okResolved {
+			c.errfCode(n.P, "E042", "malformed %s type %s", demangle(srcEnum.Name), inner)
+			return nil
+		}
+		n.SrcEnum = srcEnum
+		n.Type = srcOkT
+		if srcShape.Residual == nil {
+			// Payloadless failure variant: nothing to match between source
+			// and return, and nothing to convert.
+			n.Kind = ast.TryKindBuild
+			return n.Type
+		}
+		n.Kind = ast.TryKindForward
+		srcRes, srcResOK := c.tryPayloadType(srcEnum, srcShape.Residual)
+		retRes, retResOK := c.tryPayloadType(retEnum, srcShape.Residual)
+		if !srcResOK || !retResOK {
+			c.errfCode(n.P, "E042", "malformed %s type %s", demangle(srcEnum.Name), inner)
+			return nil
+		}
+		if !ast.Equal(srcRes, retRes) {
+			// Error-converting `?`: a residual propagated through a
+			// function whose own residual is `dyn Trait` boxes the
+			// concrete error, provided it implements Trait (the
+			// `Box<dyn Error>` + `?` idiom). Desugar to a block-expr that
+			// maps the error then applies an ordinary `?`. See #3234.
+			if lowered, ok := c.tryConvertErrToDyn(n, srcEnum, retEnum, s); ok {
+				n.Lowered = lowered
+				return n.Type
+			}
+			// Or convert via a `from` constructor: if the function's
+			// residual `E2` has an associated `from(E1): E2` (e.g.
+			// `impl From[E1] for E2`), `?` maps the failure payload
+			// through it — the `From`-based `?` idiom. See #2674.
+			if lowered, ok := c.tryConvertErrViaFrom(n, srcEnum, retEnum, s); ok {
+				n.Lowered = lowered
+				return n.Type
+			}
+			c.errfCode(n.P, "E042", "`?` on %s carrying %s but the surrounding function carries %s; the error types must match (implement %s for a `dyn`-error, or a `from(%s)` constructor on %s for the conversion)",
+				demangle(srcEnum.Name), srcRes, retRes, srcRes, srcRes, retRes)
+			return nil
+		}
+		return n.Type
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {
@@ -18002,21 +18156,15 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 	// Some(3.14)?;` left 3.14 unsettled (defaulting to f64)
 	// and wasm rejected the f32 destination load.
 	if to, ok := e.(*ast.TryOp); ok {
-		switch to.Kind {
-		case ast.TryKindOption:
-			c.settleNumeric(to.Inner, ast.EnumType{Name: "Option", Args: []ast.Type{hint}})
-		case ast.TryKindResult:
-			// Reconstruct Result[T, E] using the encl. fn's
-			// error type when known — settling Inner with
-			// just the T half is the part that matters for
-			// the polymorphic payload.
-			args := []ast.Type{hint}
-			if c.current != nil {
-				if re, ok := c.current.ReturnType.(ast.EnumType); ok && re.Name == "Result" && len(re.Args) == 2 {
-					args = append(args, re.Args[1])
-				}
+		// Re-wrap the payload hint in the SOURCE enum so the inner
+		// variant-call settles its polymorphic payload — `var v: f32 =
+		// Some(3.14)?` has to reach the 3.14. The enum comes off the node
+		// rather than being named here, so an `@try` enum settles the same
+		// way the two builtins do.
+		if src, ok := to.SrcEnum.(ast.EnumType); ok {
+			if wrapped, ok := c.tryEnumWithOk(src, hint); ok {
+				c.settleNumeric(to.Inner, wrapped)
 			}
-			c.settleNumeric(to.Inner, ast.EnumType{Name: "Result", Args: args})
 		}
 		// Stamp `to.Type` so postSettleType / IR sees the
 		// resolved payload width — `to.Type` was set by the
@@ -18434,6 +18582,26 @@ func unsettledNumericShape(e ast.Expr) bool {
 func (c *checker) elemSettleable(have, want ast.Type) bool {
 	if have == nil || want == nil {
 		return true
+	}
+	// A destination element that is still a type PARAMETER (`var local: T[] =
+	// [1, 2, 3]` inside a generic) names no concrete type for the literal to
+	// contradict — what it settles to is decided at monomorph, not here.
+	if containsParamType(want) {
+		return true
+	}
+	// A NESTED literal settles element-wise: `[[1], [2]]` against `f64[][]`
+	// asks whether `[1]` may settle to `f64[]`, which asks whether 1 may
+	// settle to f64. Without this the outer literal's already-inferred
+	// `i32[]` element read as a concrete mismatch against `f64[]`.
+	if h, ok := have.(ast.ArrayType); ok {
+		if w, ok := want.(ast.ArrayType); ok {
+			return c.elemSettleable(h.Elem, w.Elem)
+		}
+	}
+	if h, ok := have.(ast.SliceType); ok {
+		if w, ok := want.(ast.SliceType); ok {
+			return c.elemSettleable(h.Elem, w.Elem)
+		}
 	}
 	// Which destinations a polymorphic element settles to depends on WHICH
 	// polymorphic it is, so split on `have` before looking at `want`.

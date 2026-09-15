@@ -2376,16 +2376,27 @@ type Assign struct {
 	Value  Expr
 }
 
-// TryKind selects which failure-variant the postfix `?` operator
-// short-circuits on. Option's None and Result's Err have
-// different shapes (no payload vs E payload) and different
-// lowerings, so the checker stamps the kind once it knows the
-// source type.
+// TryKind selects how the postfix `?` operator produces the value it
+// early-returns, which follows from the SHAPE of the source enum's
+// failure variant rather than from which enum it is.
+//
+// The two names used to be TryKindOption / TryKindResult. They were
+// renamed when `?` stopped being hardwired to those two enums: an
+// `@try` enum whose failure variant is payloadless lowers exactly as
+// Option did, and one whose failure variant carries a payload exactly
+// as Result did. Naming the SHAPE is what lets the lowering serve any
+// marked enum without asking which it is. See docs/TRY.md.
 type TryKind int
 
 const (
-	TryKindOption TryKind = iota // source is Option[T], failure variant None
-	TryKindResult                // source is Result[T, E], failure variant Err(e)
+	// TryKindBuild: the failure variant is payloadless, so there is
+	// nothing to carry out — build a fresh tag-1 value of the enclosing
+	// function's return enum. (Option's None.)
+	TryKindBuild TryKind = iota
+	// TryKindForward: the failure variant carries a payload, so the
+	// source value is already the right answer — forward it unchanged.
+	// (Result's Err(e).)
+	TryKindForward
 )
 
 // TryOp is the postfix `?` operator: `expr?` evaluates to the
@@ -2412,6 +2423,11 @@ type TryOp struct {
 	// Ok(T) → T). Lets the IR pick `OpLoad` vs `OpFLoad` for
 	// the success-path payload load.
 	Type Type
+	// SrcEnum is the source's enum type as the checker saw it
+	// (`Option[i32]`, `Result[i32, string]`, `MyOpt[i32]`). Recorded so
+	// nothing downstream has to reconstruct it from Kind by naming a
+	// builtin — settleNumeric re-wraps a polymorphic payload hint in it.
+	SrcEnum Type
 	// Lowered, when non-nil, is a desugared replacement for this `?`
 	// built + checked by the checker and swapped in by the post-check
 	// rewrite. Used for the error-converting `?` on a `Result[_, E]`
@@ -3946,6 +3962,21 @@ type EnumDecl struct {
 	// enums (E067; docs/MUST-CONSUME.md). A `match` on the value is
 	// its canonical consuming use.
 	MustConsume bool
+	// Try marks an `@try` enum: one usable with the `?` operator.
+	//
+	// The marker is an opt-in, not an inference — a two-variant enum is
+	// not silently short-circuitable. It carries a SHAPE obligation the
+	// checker enforces at the declaration (E078): exactly two variants,
+	// variant 0 carrying exactly one payload (the success value) and
+	// variant 1 carrying zero or one (the residual). That is the shape
+	// every backend's `?` lowering already assumes — success at tag 0,
+	// failure at tag 1 — so the marker makes an existing structural
+	// requirement checkable rather than inventing one.
+	//
+	// Option and Result are `?`-able without the marker: they are
+	// builtins, and Info.TryShapes records them alongside every marked
+	// enum so nothing downstream asks which it was. See docs/TRY.md.
+	Try bool
 	// Public marks the enum as exported across modules. Same
 	// semantics as FuncDecl.Public — `pub enum Foo { … }` lets
 	// other modules name `Foo`, including its variants in match

@@ -701,23 +701,30 @@ function main(): i32 {
     var wideElemLowered = ssarc.lower(wideElem, [1], ssaunits.plan(wideElem, [1]), irlower.struct_tab_empty());
     if (!wideElemLowered.ok) { eprint(wideElemLowered.why); return 135; }
     if (!made_wide(wideElemLowered, true)) { return 136; }
-    // A TUPLE element of that width still has none: op_tuple_make spells no
-    // element kinds here, so there is no store width to write it at.
+    // Tuple construction carries its element kinds, including wide stores.
+    // Admission alone is insufficient: the wasm emitter reads these kinds
+    // to choose the store width, so losing them would truncate the elements.
     var buildGraph = ssa.SFunc { name: "build", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.tuple_new(), 1, [0, 0], 0)], term: ret(1) }] };
     var wideTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i64ty, i64ty] };
     var buildFunc = ssasem.Func { graph: buildGraph, values: [i64ty, wideTup], params: [i64ty], result: wideTup,
         records: [], enums: [], calls: [] };
-    if (!refused(ssarc.lower(buildFunc, [1], ssaunits.plan(buildFunc, [1]), irlower.struct_tab_empty()), "unsupported physical RC value type")) { return 96; }
-    // The same rule where the container's own type says nothing about it. A
-    // record is named by its declaration, so a wide FIELD is invisible to the
-    // type check above and to the drop walk, which never reads a scalar field
-    // at all — the construction is the one place it shows.
+    var wideTupLowered = ssarc.lower(buildFunc, [1], ssaunits.plan(buildFunc, [1]), irlower.struct_tab_empty());
+    if (!wideTupLowered.ok) { eprint(wideTupLowered.why); return 96; }
+    var sawWideTuple: boolean = false;
+    for o in wideTupLowered.ops {
+        if (o.kind_tag == ir.kind_id("tuple_make") && o.i32_imm == 2 && o.str == "i64,i64") { sawWideTuple = true; }
+    }
+    if (!sawWideTuple) { eprint("wide tuple construction lost its element kinds"); return 96; }
+    // Supporting wide tuples does not admit a value whose type disagrees
+    // with the declared element type.
     var narrowTup: typeinfo.Type = typeinfo.TypeTuple { elements: [i32ty, i32ty] };
     var sneakFunc = ssasem.Func { graph: buildGraph, values: [i64ty, narrowTup], params: [i64ty], result: narrowTup,
         records: [], enums: [], calls: [] };
     if (ssaunits.plan(sneakFunc, [1]).ok) { return 97; }
+    // A record's field width comes from its declaration, which construction
+    // must resolve even though the drop walk never reads scalar fields.
     var wide64Ty: typeinfo.Type = typeinfo.TypeStruct { name: "Wide64", args: [] };
     var wide64Schema = semrecords.Record { ty: wide64Ty, fields: [semrecords.Field { name: "n", ty: i64ty }] };
     var wide64Graph = ssa.SFunc { name: "mkwide", nparams: 1, nvals: 2, entry: 7, takes_env: false,

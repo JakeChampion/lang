@@ -33,3 +33,53 @@ pub function child_path(dir: string, name: string): string {
   }
   return dir + "/" + name;
 }
+
+// ---- components ------------------------------------------------------------
+//
+// The three rules for walking a path one component at a time, shared
+// because `mkdir -p` and `install -d` / `-D` create the same components
+// and have to agree about which of them are names. They are pure path
+// arithmetic: no stat, no policy.
+// Whether the byte at `i` of `s` is a slash.
+pub function is_slash(s: string, i: i32): boolean {
+  return s[i] as i32 == 47;
+}
+
+// The index one past the last component of `dir` that is not empty, or
+// -1 when every component is. That component is the LAST thing `-p`
+// creates, and everything before it is an ancestor: `a//b//c` has three
+// components and two ancestors, `a//` has one component and none, and
+// `/` has none at all — which is why `mkdir -p /` succeeds silently.
+pub function last_component_end(dir: string): i32 {
+  var end: i32 = 0 - 1;
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= dir.len()) {
+    if (i == dir.len() || is_slash(dir, i)) {
+      if (i > start) {
+        end = i;
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return end;
+}
+
+// Whether the component of `dir` spanning [start, stop) is one the walk
+// steps through rather than creates. GNU chdir's into `.` and `..`
+// instead of trying to make them, and an empty component (a doubled
+// slash) is not a name at all.
+pub function is_traversed(dir: string, start: i32, stop: i32): boolean {
+  var n: i32 = stop - start;
+  if (n == 0) {
+    return true;
+  }
+  if (n == 1) {
+    return dir[start] as i32 == 46;
+  }
+  if (n == 2) {
+    return dir[start] as i32 == 46 && dir[start + 1] as i32 == 46;
+  }
+  return false;
+}

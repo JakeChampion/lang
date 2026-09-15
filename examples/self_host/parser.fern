@@ -269,7 +269,11 @@ pub struct ExportBinding { func_name: string, iface: string, wit: string }
 // distinguish from ordinary structs. Codegen ignores it.
 // must_consume mirrors StructDecl.must_consume for `@must_consume enum`
 // declarations (docs/MUST-CONSUME.md, E067).
-pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, is_pub: boolean, is_package: boolean }
+// try_marker records an `@try` attribute on the enum decl: the opt-in that
+// makes the type usable with `?`. Native enforces the two-variant shape the
+// operator lowers against (E078); this side carries the mark so the parse
+// round-trips and lowering can key on it. See docs/TRY.md.
+pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean }
 
 // enum_variant_names extracts the variant names from an enum's desugared
 // variant structs.
@@ -13067,7 +13071,7 @@ pub function monomorphize_enums(mod: Module): Module {
                 }
                 vi2 = vi2 + 1;
             }
-            cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume , is_pub: true , is_package: false });
+            cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker , is_pub: true , is_package: false });
             if (!str_in(dropped, base)) { dropped = dropped.append(base); }
         }
         wi = wi + 1;
@@ -19239,6 +19243,32 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 p = probe.advance();
                 continue;
             }
+            if (probe.peek_ident() == "try") {
+                // `@try` marker (docs/TRY.md): stamp the following enum decl
+                // so lowering can tell a `?`-able enum from any other
+                // two-variant one. Enum-only; `@try` before anything else
+                // stays parse-tolerated (dropped), as `@must_consume` does —
+                // native rejects that shape and the self-host only compiles
+                // native-valid programs.
+                p = probe.advance();  // consume `try`
+                var tmk: string = p.peek_keyword();
+                if (tmk == "pub") { p = p.advance(); var (tm_pk, tm_pk_p) = consume_pub_package(p); p = tm_pk_p; tmk = p.peek_keyword(); decl_pub = !tm_pk; decl_package = tm_pk; }
+                if (tmk == "enum") {
+                    var tmeline: i32 = p.peek_line();
+                    var tmecol: i32 = p.peek_col();
+                    var (tme_name, tme_variants, tme_type_params, tme_vlines, tme_p) = parse_enum_decl(p);
+                    p = tme_p;
+                    flines = record_field_lines(flines, verbatim, tme_name, tmeline, tme_vlines);
+                    enums = enums.append(EnumDecl { name: tme_name, variant_names: enum_variant_names(tme_variants), type_params: tme_type_params, line: tmeline, col: tmecol, must_consume: false, try_marker: true , is_pub: decl_pub, is_package: decl_package });
+                    var tmei: i32 = 0;
+                    while (tmei < tme_variants.len()) {
+                        structs = structs.append(tme_variants[tmei]);
+                        tmei = tmei + 1;
+                    }
+                    continue;
+                }
+                continue;
+            }
             if (probe.peek_ident() == "must_consume") {
                 // `@must_consume` marker (docs/MUST-CONSUME.md): stamp
                 // the following struct/enum decl so the checker's E067
@@ -19265,7 +19295,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                     var (mce_name, mce_variants, mce_type_params, mce_vlines, mce_p) = parse_enum_decl(p);
                     p = mce_p;
                     flines = record_field_lines(flines, verbatim, mce_name, mceline, mce_vlines);
-                    enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true , is_pub: decl_pub, is_package: decl_package });
+                    enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true, try_marker: false , is_pub: decl_pub, is_package: decl_package });
                     var mcei: i32 = 0;
                     while (mcei < mce_variants.len()) {
                         structs = structs.append(mce_variants[mcei]);
@@ -19295,7 +19325,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 var (denr_name, denr_variants, denr_type_params, denr_vlines, denr_p) = parse_enum_decl(p);
                 p = denr_p;
                 flines = record_field_lines(flines, verbatim, denr_name, deline, denr_vlines);
-                enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, is_pub: decl_pub, is_package: decl_package });
+                enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package });
                 var dei: i32 = 0;
                 while (dei < denr_variants.len()) {
                     structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });
@@ -19404,7 +19434,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             var (enr_name, enr_variants, enr_type_params, enr_vlines, enr_p) = parse_enum_decl(p);
             p = enr_p;
             flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
-            enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, is_pub: decl_pub, is_package: decl_package });
+            enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package });
             var ei: i32 = 0;
             while (ei < enr_variants.len()) {
                 structs = structs.append(enr_variants[ei]);

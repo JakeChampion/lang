@@ -849,6 +849,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
             line: e.line,
             col: e.col,
             must_consume: e.must_consume,
+            try_marker: e.try_marker,
             is_pub: true
         , is_package: false });
         i = i + 1;

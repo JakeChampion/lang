@@ -10641,9 +10641,48 @@ function handler_state_diags(mod: parser.Module): util.Diag[] {
   return [];
 }
 
+// e078_payload_count returns how many payloads the variant `vname` of enum
+// `ename` carries. A variant is a StructDecl whose enum_owner names the enum;
+// its fields ARE the payloads, so the count is the field count.
+function e078_payload_count(structs: parser.StructDecl[], ename: string, vname: string): i32 {
+  for sd in structs {
+    if (sd.enum_owner == ename && sd.name == vname) { return sd.fields.len(); }
+  }
+  return 0 - 1;
+}
+
+// e078_diags reports an `@try` enum whose shape `?` cannot lower against.
+//
+// Mirrors native's registerTryShape exactly — exactly two variants, the first
+// carrying exactly one payload and the second at most one — so the marker's
+// RULE is enforced by both compilers even while only native can lower `?` on a
+// marked enum. See docs/TRY.md.
+function e078_diags(mod: parser.Module): util.Diag[] {
+  var out: util.Diag[] = [];
+  for ed in mod.enums {
+    if (ed.try_marker) {
+      if (ed.variant_names.len() != 2) {
+        out = out.append(dg_at("E078", "@try enum " + ed.name + " must have exactly two variants — a success variant then a failure variant — but has " + util.i32_to_string(ed.variant_names.len()), ed.line, ed.col));
+      } else {
+        var ok_n: i32 = e078_payload_count(mod.structs, ed.name, ed.variant_names[0]);
+        var fail_n: i32 = e078_payload_count(mod.structs, ed.name, ed.variant_names[1]);
+        if (ok_n >= 0 && ok_n != 1) {
+          out = out.append(dg_at("E078", "@try enum " + ed.name + ": the success variant \"" + ed.variant_names[0] + "\" must carry exactly one payload, but carries " + util.i32_to_string(ok_n), ed.line, ed.col));
+        } else {
+          if (fail_n > 1) {
+            out = out.append(dg_at("E078", "@try enum " + ed.name + ": the failure variant \"" + ed.variant_names[1] + "\" must carry at most one payload, but carries " + util.i32_to_string(fail_n), ed.line, ed.col));
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
   out = util.append_diags(out, handler_state_diags(mod));
+  out = util.append_diags(out, e078_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
   // most one `__ev` field, so they never trip this).
   for sd in mod.structs {

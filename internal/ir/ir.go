@@ -5777,12 +5777,23 @@ func (b *builder) hasErrDefers() bool {
 	return false
 }
 
-// isOptionOrResultType reports whether t is `Option[...]` or
-// `Result[...]` — the return types whose failure variant
-// (None / Err, tag 1) triggers an errdefer on `return`.
-func isOptionOrResultType(t ast.Type) bool {
+// isTryReturnType reports whether t is a type whose failure variant (tag 1)
+// triggers an errdefer on `return` — the builtins and every `@try` enum.
+//
+// Asks Info.TryShapes rather than comparing against two names, so an
+// `@try` enum's failure return replays errdefers exactly as Option's and
+// Result's do. Without info (a builder constructed for a narrow unit test)
+// it falls back to the two builtins, which is what those tests exercise.
+func (b *builder) isTryReturnType(t ast.Type) bool {
 	et, ok := t.(ast.EnumType)
-	return ok && (et.Name == "Option" || et.Name == "Result")
+	if !ok {
+		return false
+	}
+	if b.info == nil {
+		return et.Name == "Option" || et.Name == "Result"
+	}
+	_, isTry := b.info.TryShapes[et.Name]
+	return isTry
 }
 
 // computeMovedLocals finds Phase 4 move-on-alias sites: a top-level
@@ -8879,7 +8890,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// always a heap box with its tag at offset 0 — read it
 			// and replay the errdefers under that branch. Gated on
 			// hasErrDefers so non-errdefer functions are unchanged.
-			if b.hasErrDefers() && isOptionOrResultType(b.fn.ReturnType) {
+			if b.hasErrDefers() && b.isTryReturnType(b.fn.ReturnType) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpLoad})             // tag @ box+0
 				b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx
@@ -10606,7 +10617,7 @@ func (b *builder) expr(e ast.Expr) error {
 		sweepExclude := ""
 		forwardInc := false
 		sweepFailurePath := true
-		if n.Kind == ast.TryKindResult {
+		if n.Kind == ast.TryKindForward {
 			if id, ok := n.Inner.(*ast.Ident); ok && b.isOwnedRcLocal(id.Name) {
 				sweepExclude = id.Name
 			} else if needsRcIncOnAlias(n.Inner, b) {
@@ -10622,7 +10633,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// via OpReturnPair, heap-form fns return a single
 		// heap-box pointer via OpReturn.
 		switch n.Kind {
-		case ast.TryKindOption:
+		case ast.TryKindBuild:
 			// The failure box is dead here (a fresh None replaces it). A
 			// heap-form fresh inner's None is a static sentinel (no box, no
 			// leak); a PAIR-FORM inner's rebox is a real rc=1 heap box that
@@ -10635,13 +10646,25 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturnPair})
 			} else {
-				if err := b.emitEnumNew(nil, "Option", 1, 0, nil); err != nil {
+				// The fresh failure value belongs to the ENCLOSING
+				// function's return enum, not to Option — the checker has
+				// already required the two to be the same enum, so the
+				// return type names it. (For a payloadless variant
+				// emitEnumNew degrades to a shared tag-only sentinel, so
+				// the name is not in the emitted bytes; passing the real
+				// one keeps the IR honest and survives a payload-carrying
+				// variant arriving later.)
+				failEnum := "Option"
+				if et, ok := b.fn.ReturnType.(ast.EnumType); ok {
+					failEnum = et.Name
+				}
+				if err := b.emitEnumNew(nil, failEnum, 1, 0, nil); err != nil {
 					return err
 				}
 				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturn})
 			}
-		case ast.TryKindResult:
+		case ast.TryKindForward:
 			if b.thisIsPair {
 				// Forward the source heap-box's (tag,
 				// payload) onto the operand stack so
