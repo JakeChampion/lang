@@ -1391,34 +1391,37 @@ not the release helper, and not the signature.
   its own, so the plan drops it, which is the second release. Adding an owner
   cannot fix an over-count.
 
-What is left is the only thing that can work: the result of a call that was
-lent a view **is not a unit of this frame's own**, and that has to reach
-`ssaunits.plan`, where units are decided.
+The fix is that the result of such a call **is the argument's box**, so the
+frame that sliced the view must not reclaim it. Two facts make that precise.
 
-Most of the vocabulary for it is already here, which narrows the work to one
-decision. `ssasem.projects()` **already lists `str_as()`**, so `borrow_parents`
-records the retagged view as borrowing its source — the retag itself is
-correctly a borrow and not a unit. `ssaunits.hands_out()` lists `call()`, so a
-call's result is unconditionally a fresh unit, and that is the whole fault in
-one line: the callee handed back the box it was lent, and `owned_values` marks
-it owned anyway.
+The first is which callees can do it. Neither the signature nor the graph shape
+separates "returns the argument" from "returns something new" — only the body
+does — so `semsource.handers` reads the bodies: a declaration whose `return`
+names one of its own parameters hands back, and so does one that returns a call
+to such a declaration, closed to a fixpoint over the module. `aliased_arg`
+consults it and records the argument's 1-based position in the call's `imm`,
+the one immediate nothing else reads on a call. A builtin is never in the set,
+which is what keeps `lent_views`' `copied()` calls reclaiming their views.
 
-The cheap rule is computable from the graph — *a text-returning call one of
-whose arguments is a `str_as` result borrows it rather than owning it* — and it
-is wrong in the other direction. `copied()` returns a genuinely fresh box and
-would then never be released, trading the fault for a leak the executable
-fixture's balance assertions catch. Neither the signature nor the graph shape
-separates "returns the argument" from "returns something new"; only the body
-does, and the contract does not record it.
+The second is what the release then has to be. `ssaunits.handed_on` marks the
+value behind the retag, and `ssarc` releases it with `__fern_str_free` rather
+than the view reclaim `__fern_str_view_free`. That is not a weaker release, it
+is the one that reads the box: it stands down on the immortal count a register
+backend gives a slice, and decrements a counted one — and wasm's `$__fern_substr`
+COPIES, so a wasm slice is an ordinary counted block whose callee retain really
+did retain. The same lowering is therefore right on both, with no target
+question in the IR and nothing run-time-conditional in the plan.
 
-So the port is the AST lowering's own answer, which does not decide it
-statically either: `irlower.LowerState.str_view_local` plus `str_identity_src`,
-whose comment says such a result "is releasable only behind a guard that the
-two are different pointers". A **guarded release** — `ssaunits.Step` carrying a
-guard operand beside its drops, `ssarc` emitting the compare-and-branch around
-`drop_value`, and `verify` learning that a guarded drop satisfies the unit
-obligation on both edges. It would be the first run-time-conditional thing in
-the plan representation, which is the honest sizing note (#9328).
+What the register backends then leave behind is the box itself, which no one can
+prove dead once a counted reference may hold it. The AST lowering leaks the same
+box for the same reason, so the two paths agree; `TestSelfHostSemanticProduction`
+asserts that directly, comparing the sanitizer's leak figure between the two
+columns and refusing a produced body that leaks MORE than the AST one.
+
+A guarded release — a pointer compare emitted around the drop — was built first
+and does not work: on wasm the two pointers are equal and the retain was real,
+so skipping the release leaks, and the guard has no way to ask which world it is
+in without reading the box it may already have freed.
 
 ### The leaves that are left, by measured size
 
