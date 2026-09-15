@@ -341,6 +341,20 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
+### `termios_get` / `termios_set` are not on arm64-ssa
+
+The SSA-direct backend does not emit the two terminal-settings helpers, so a
+program reaching them fails to LINK there with `a runtime helper this backend
+does not emit: fn_termios_get, fn_termios_set` — non-silent, which is the
+contract `-backend ssa` states for an op outside its coverage. The default
+emitter carries them on both natives, and `stty` (#8382) is built with it.
+
+Not an oversight to fill in for its own sake: the pair is one TCGETS and one
+TCSETS into a 24-element word array, so it is the array construction that has
+to be written a third time, and no caller needs that backend today. x86-64-ssa
+is further out still — it has no handle family at all, so `open_writer` is
+already outside it.
+
 ### Line coverage (`-cover`) is native-only
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line

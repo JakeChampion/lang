@@ -161,7 +161,7 @@ pub function builtin_caps(): BuiltinCap[] {
 // Mirrors native's Ungated exactly.
 pub function ungated(): string[] {
     return ["putchar", "print", "write", "eprint", "read_line",
-            "stdin", "stdout", "stderr", "isatty", "window_size", "target_os", "target_arch", "args", "exit",
+            "stdin", "stdout", "stderr", "isatty", "window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "exit",
             "signal_ignore", "signal_default",
             // Reading a disposition or the blocked mask reaches even less far
             // than setting one does; signal_mask writes to the same

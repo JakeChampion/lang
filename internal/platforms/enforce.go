@@ -252,6 +252,12 @@ var gatedBuiltins = map[string]string{
 	// because "no" IS the truthful answer to its question
 	// (docs/FREESTANDING-CORE.md).
 	"window_size": "tty",
+	// The terminal's LINE SETTINGS, read and written. Same capability and
+	// same reason: there is no truthful answer to what the settings of a
+	// terminal that cannot exist are, and a set that "succeeded" would
+	// claim a change nothing made. `stty` is the caller (#8382).
+	"termios_get": "tty",
+	"termios_set": "tty",
 
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and

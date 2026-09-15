@@ -329,6 +329,8 @@ pub function gated_builtins(): Gate[] {
         // columns cannot tell those apart. `isatty` stays core beside it
         // because "no" IS the truthful answer to its question.
         Gate { builtin: "window_size", capability: "tty" },
+        Gate { builtin: "termios_get", capability: "tty" },
+        Gate { builtin: "termios_set", capability: "tty" },
 
         // Who an entry BELONGS to. A host can have files, directories and
         // permission bits and still have no users to attach them to, which
