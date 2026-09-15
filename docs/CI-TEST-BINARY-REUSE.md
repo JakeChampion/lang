@@ -77,6 +77,22 @@ are integration observations, not controlled speedup or GitHub transfer claims.
 
 ## Rollout
 
+[Run 35007405837](https://github.com/JakeChampion/lang/actions/runs/35007405837)
+completed with all non-Netlify checks successful at `f312fdaaf`. The load
+producer built both binaries in 35 seconds, saved the bundle in one second
+and uploaded it in four seconds. The compressed artifact was 38,890,856 bytes.
+All six dependent x86 shard logs confirm verified restores. Combined download
+and restore steps took 4, 2, 5, 4, 1 and 3 seconds for shards 0 through 5,
+respectively, using GitHub's whole-second step timestamps. These observations
+establish actual cache hits and transfer costs; they are not a matched
+before/after whole-suite comparison or a claim about queue-time improvement.
+
+The subsequent merge with main `905c0cd47` passes source and compiler package
+tests, build, vet, formatting, selectors, shellcheck and actionlint. Linux
+terminal and GNU stty regressions pass. The Linux terminal probes do not run
+successfully on the macOS host, so their execution validation uses the Linux
+toolchain environment. Fresh full CI is required for the merged head.
+
 Measure load-warmup build/upload cost, per-shard download/restore duration,
 cache hit rate, final suite completion and summed runner execution time.
 Record image changes and fallback reasons. Compare with equivalent local
