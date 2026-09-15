@@ -35,6 +35,19 @@ The unit lane installs wasmtime and qemu-aarch64: the wasm and arm64 EXECUTION
 tests in the unit packages `t.Skip` on a missing runtime, so without them that
 whole family reported `ok` having run nothing.
 
+## Generated digest sources
+
+The lint lane runs `make digest-check` on every PR and main push. It compares
+the generated region of `internal/stdlib/std/crypto.fern` with
+`tools/gen_digests.py` without writing the file. A stale region or missing,
+duplicated, or reversed markers fails the gate. Tests also prove a deliberate
+generated edit is rejected while handwritten content outside the markers is
+preserved. Missing `uv` or a failed generator is a failure, not a skip.
+
+Regenerate with `uv run --no-project tools/gen_digests.py`. Digest test vectors
+remain the separate check of algorithm correctness; this gate checks that a
+future regeneration cannot silently overwrite a hand-applied fix (#9057).
+
 ## The lane that runs when Actions does not
 
 All of the below live in GitHub Actions, so a GitHub incident takes the whole
