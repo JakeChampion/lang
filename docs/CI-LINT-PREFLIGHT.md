@@ -23,6 +23,10 @@ The PR's required `Lint / lint` check keeps its name and runs unconditionally.
 Heavy checks acquire a `Full suite /` prefix. The main failure reporter
 removes that prefix so existing lane issue identities and Bootstrap hints
 remain stable, including when older workflow runs finish during rollout.
+The missing-shard classifier matches the leaf job name beneath reusable
+workflow prefixes and retains the full name in its diagnosis. Regression
+cases cover direct, called, nested and custom-prefix jobs, and reject an
+unrelated leaf whose caller happens to have a shard-like name.
 
 The suite receives inherited secrets and explicit permissions sufficient for
 its existing write-capable lanes. Ordinary jobs retain read-only defaults.
