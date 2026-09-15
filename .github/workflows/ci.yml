@@ -1,47 +1,9 @@
 name: CI
 
-# The one workflow a pull request launches, also called by ci-main.yml for
-# main validation and available for manual dispatch (check-sources.yml and pages.yml
-# keep push triggers of their own, outside the lock; auto-rebase-prs.yml is
-# dispatched by hand).
-# Every lane under .github/workflows is a `workflow_call` this file calls, and
-# that is what lets ONE concurrency group serialise pull requests as
-# whole suites: at most one pull request has its CI running at a time, and the
-# lanes of that pull request run in parallel inside its run. Seventeen lanes
-# each holding their own per-ref group could only serialise lane-by-lane, with
-# one PR's units interleaving another PR's shards for the same pool.
-#
-# `queue: max` is what makes the group a queue rather than a slot. With the
-# default `queue: single` GitHub keeps ONE pending run per group and cancels
-# the previous pending one when another arrives, so the second PR to wait
-# behind a running suite would silently lose its CI to the third. `max` holds
-# up to 100 pending runs and starts them first-in-first-out
-# (github.blog/changelog/2026-05-07-github-actions-concurrency-groups-now-allow-larger-queues).
-# It cannot be combined with `cancel-in-progress: true`, so a newer push to a
-# pull request does not supersede its older run here; reap-stale-runs.yml
-# does that on the `synchronize` event instead, and cancel-on-merge.yml
-# drains a closed PR's queued run. actionlint predates the key:
-# .github/actionlint.yaml ignores that one message for this file.
-#
-# Pull requests share `pr-ci`. Other invocations have a per-run group so
-# neither main nor manual runs wait behind PRs. ci-main.yml owns main's
-# separate lock and pending slot; using that group here too would deadlock
-# the nested call. Main validates every lane because pending pushes coalesce.
-#
-# The `changes` job stands in for the `paths:` / `paths-ignore:` filters the
-# lanes used to carry, because a called workflow has none: it lists the
-# changed files once and evaluates each lane's filter from the table below
-# with GitHub's own glob rules, so a lane runs for exactly the changes it ran
-# for before. A lane the filter turns off is a SKIPPED check rather than an
-# absent one. `lint` is the deliberate exception with no filter: a doc-only
-# PR still reports one real gate.
-#
-# The `reap-*` jobs are cancel-on-failure.yml, once per lane: when a lane
-# concludes failure on a pull request, the rest of this run is cancelled so
-# the lock passes to the next PR instead of finishing a suite that is already
-# not merging. Label the PR `ci-full` to keep the other lanes running. A
-# failed lane never blocks the queue: the run completes — red — and the next
-# pending run starts.
+# Lint and lane selection run outside the full-suite queue, so a queued PR
+# gets useful feedback without waiting for earlier compiler suites. The
+# existing Lint / lint check remains unconditional and keeps its name.
+# ci-suite.yml owns the PR FIFO; ci-main.yml still coalesces pending main tips.
 
 on:
   pull_request:
@@ -55,13 +17,6 @@ permissions:
   contents: read
   actions: read
   pull-requests: read
-
-concurrency:
-  group: >-
-    ${{ (github.event_name == 'pull_request' && 'pr-ci')
-     || format('ci-run-{0}', github.run_id) }}
-  cancel-in-progress: false
-  queue: max
 
 jobs:
   # Which lanes this change reaches. One API listing, no checkout; ~10 s.
@@ -115,6 +70,7 @@ jobs:
                 "internal/stdlib/**",
                 "Makefile",
                 ".github/workflows/bootstrap.yml",
+                ".github/workflows/ci-suite.yml",
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] },
@@ -123,6 +79,7 @@ jobs:
                 "cmd/fern/**",
                 "examples/**",
                 ".github/workflows/macos.yml",
+                ".github/workflows/ci-suite.yml",
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml",
                 ".github/actions/**",
@@ -141,6 +98,7 @@ jobs:
                 "mise.lock",
                 "go.mod",
                 ".github/workflows/docs-build.yml",
+                ".github/workflows/ci-suite.yml",
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] },
@@ -152,12 +110,14 @@ jobs:
                 "mise.lock",
                 "go.mod",
                 ".github/workflows/playground-e2e.yml",
+                ".github/workflows/ci-suite.yml",
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] },
               "vscode-extension": { "paths": [
                 "editors/vscode/**",
                 ".github/workflows/vscode-extension.yml",
+                ".github/workflows/ci-suite.yml",
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] }
@@ -273,143 +233,24 @@ jobs:
               core.warning(`every lane runs: the filter failed (${e.message})`);
             }
 
-  # The lanes. Each caller job carries the lane's workflow `name:` so a check
-  # reads `Test units / test-units-x86_64` and main-red.yml can name the lane
-  # from the job — and each carries the lane's `permissions:` where it had any,
-  # because a called workflow can only narrow what it is handed.
-
   lint:
     name: Lint
     uses: ./.github/workflows/lint.yml
     secrets: inherit
 
-  test-units:
-    name: Test units
+  suite:
+    name: Full suite
+    # Preserve independent lanes on main and live ci-full opt-outs. The lint
+    # reaper reads current labels and cancels this run when appropriate.
     needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-units']
-    uses: ./.github/workflows/test-units.yml
+    uses: ./.github/workflows/ci-suite.yml
+    with:
+      lanes: ${{ needs.changes.outputs.lanes }}
     secrets: inherit
-
-  test-e2e-x86_64:
-    name: Test e2e x86_64
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-x86_64']
-    uses: ./.github/workflows/test-e2e-x86_64.yml
-    secrets: inherit
-
-  test-e2e-arm64:
-    name: Test e2e arm64
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-arm64']
-    uses: ./.github/workflows/test-e2e-arm64.yml
-    secrets: inherit
-
-  test-e2e-wasm:
-    name: Test e2e wasm
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-wasm']
-    uses: ./.github/workflows/test-e2e-wasm.yml
-    secrets: inherit
-
-  test-e2e-other:
-    name: Test e2e other
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-other']
-    uses: ./.github/workflows/test-e2e-other.yml
-    secrets: inherit
-
-  test-e2e-differential:
-    name: Test e2e differential
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-differential']
-    uses: ./.github/workflows/test-e2e-differential.yml
-    secrets: inherit
-
-  test-e2e-selfhost:
-    name: Test e2e self-host
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-e2e-selfhost']
-    uses: ./.github/workflows/test-e2e-selfhost.yml
-    secrets: inherit
-
-  test-fernsmith:
-    name: Test fernsmith
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['test-fernsmith']
-    uses: ./.github/workflows/test-fernsmith.yml
-    secrets: inherit
-
-  fuzz-diff:
-    name: Fuzz
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['fuzz-diff']
-    uses: ./.github/workflows/fuzz-diff.yml
-    secrets: inherit
-
-  examples:
-    name: Examples
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['examples']
-    uses: ./.github/workflows/examples.yml
-    secrets: inherit
-
-  perf:
-    name: Perf
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['perf']
-    uses: ./.github/workflows/perf.yml
-    secrets: inherit
-    # Its jobs push refs/notes/perf on main.
     permissions:
       contents: write
-
-  bootstrap:
-    name: Bootstrap
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['bootstrap']
-    uses: ./.github/workflows/bootstrap.yml
-    secrets: inherit
-    # Its `release` job requests `contents: write` for the publish path, and
-    # GitHub validates a nested job's permissions against the caller's grant
-    # even for a job the event skips; the lane's own `contents: read` still
-    # narrows its verify jobs.
-    permissions:
-      contents: write
-
-  macos:
-    name: macOS arm64
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['macos']
-    uses: ./.github/workflows/macos.yml
-    secrets: inherit
-
-  docs-build:
-    name: Docs build
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['docs-build']
-    uses: ./.github/workflows/docs-build.yml
-    secrets: inherit
-
-  playground-e2e:
-    name: Playground E2E
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['playground-e2e']
-    uses: ./.github/workflows/playground-e2e.yml
-    secrets: inherit
-
-  vscode-extension:
-    name: VS Code Extension
-    needs: [changes]
-    if: fromJSON(needs.changes.outputs.lanes)['vscode-extension']
-    uses: ./.github/workflows/vscode-extension.yml
-    secrets: inherit
-
-  # One reaper per lane, so the run is cancelled the moment ANY lane concludes
-  # failure rather than when all of them have. `!cancelled()` is load-bearing:
-  # without a status function in the condition, `success()` is implied and a
-  # job that waits on a failed one never runs. Pull requests only — a red main
-  # runs to completion so the failing-job list is the whole set.
-  # TestCancelOnFailureWatchesEveryPRLane pins one of these per lane.
+      actions: write
+      pull-requests: read
 
   reap-lint:
     needs: [lint]
@@ -417,182 +258,6 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: Lint
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-units:
-    needs: [test-units]
-    if: ${{ !cancelled() && needs.test-units.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test units
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-e2e-x86_64:
-    needs: [test-e2e-x86_64]
-    if: ${{ !cancelled() && needs.test-e2e-x86_64.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test e2e x86_64
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-e2e-arm64:
-    needs: [test-e2e-arm64]
-    if: ${{ !cancelled() && needs.test-e2e-arm64.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test e2e arm64
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-e2e-wasm:
-    needs: [test-e2e-wasm]
-    if: ${{ !cancelled() && needs.test-e2e-wasm.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test e2e wasm
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-e2e-other:
-    needs: [test-e2e-other]
-    if: ${{ !cancelled() && needs.test-e2e-other.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test e2e other
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-e2e-differential:
-    needs: [test-e2e-differential]
-    if: ${{ !cancelled() && needs.test-e2e-differential.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test e2e differential
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-e2e-selfhost:
-    needs: [test-e2e-selfhost]
-    if: ${{ !cancelled() && needs.test-e2e-selfhost.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test e2e self-host
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-test-fernsmith:
-    needs: [test-fernsmith]
-    if: ${{ !cancelled() && needs.test-fernsmith.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Test fernsmith
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-fuzz-diff:
-    needs: [fuzz-diff]
-    if: ${{ !cancelled() && needs.fuzz-diff.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Fuzz
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-examples:
-    needs: [examples]
-    if: ${{ !cancelled() && needs.examples.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Examples
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-perf:
-    needs: [perf]
-    if: ${{ !cancelled() && needs.perf.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Perf
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-bootstrap:
-    needs: [bootstrap]
-    if: ${{ !cancelled() && needs.bootstrap.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Bootstrap
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-macos:
-    needs: [macos]
-    if: ${{ !cancelled() && needs.macos.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: macOS arm64
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-docs-build:
-    needs: [docs-build]
-    if: ${{ !cancelled() && needs.docs-build.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Docs build
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-playground-e2e:
-    needs: [playground-e2e]
-    if: ${{ !cancelled() && needs.playground-e2e.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Playground E2E
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-vscode-extension:
-    needs: [vscode-extension]
-    if: ${{ !cancelled() && needs.vscode-extension.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: VS Code Extension
     permissions:
       actions: write
       contents: read
