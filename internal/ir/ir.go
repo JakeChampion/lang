@@ -12205,7 +12205,25 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 			// the payloadSlotSize(nil) 4-byte default. Without this
 			// `(1, Some(42))` packs the variant pointer at offset 4
 			// on arm64 but the load reads offset 8 → segfault.
+			//
+			// Prefer the checker's recorded construction, which carries
+			// the INSTANTIATION (`Option[i32[]]`, settled against the
+			// destination) where the variant table only knows the enum's
+			// name. A consumer that just needs the slot width cannot tell
+			// the two apart, but a consumer that needs a per-instantiation
+			// DROP can: dropFnNameFor routes a type with Args to the
+			// mangled `__drop_enum_Option_LB_..._RB_`, while a bare
+			// generic enum falls to the concrete path, where enumNeedsDrop
+			// declines the un-cloned decl's ParamType payload and the box
+			// AND its payload are stranded. That is what leaked a generic
+			// enum built in ARGUMENT position — `probe(Some(mk(8)))` —
+			// where the same value bound to an annotated local first was
+			// reclaimed, because the local's declared type had the Args
+			// this expression's did not (#9313).
 			if ename, _, _, ok := b.lookupVariantOn(id.Name, id.EnumName); ok {
+				if con, ok := b.info.EnumConstructions[x]; ok && con.Type.Name == ename && len(con.Type.Args) > 0 {
+					return con.Type
+				}
 				return ast.EnumType{Name: ename}
 			}
 			// Closure-typed local / param: `len(f())` where f is
