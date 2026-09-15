@@ -38,8 +38,7 @@ async function run({ name = "CI main", jobs, issues = [] }) {
 
 const issue = { number: 7, title: "main is red: Test units" };
 let cases = 0;
-for (const name of ["CI", "CI main"]) {
-  const prefix = name === "CI main" ? "Validate / " : "";
+for (const [name, prefix] of [["CI", ""], ["CI main", "Validate / "], ["CI main", "Validate / Full suite / "]]) {
   const job = (lane, conclusion) => ({ name: prefix + lane, conclusion });
   let calls = await run({ name, jobs: [job("Test units / x86", "failure")] });
   assert.equal(calls.find(([kind]) => kind === "create")[1].title, issue.title);

@@ -179,6 +179,10 @@ var Ungated = map[string]bool{
 	// reach by writing escape sequences to it.
 	"termios_get": true,
 	"termios_set": true,
+	// Its geometry, written. Same reason again, and a resize is the
+	// tamest of the three: a dependency that sets the row count changes
+	// what a full-screen program lays out against and nothing else.
+	"set_window_size": true,
 	// The process's own ids — effective, real, and the supplementary
 	// group set. Reading them reaches nothing:
 	// the identity was chosen by whoever exec'd the program, and a

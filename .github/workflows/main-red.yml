@@ -91,10 +91,11 @@ jobs:
             // `changes` job) is a lane of its own.
             const lanes = new Map();
             for (const j of jobs) {
-              // Main's wrapper adds one prefix. Preserve existing issue titles
-              // and Bootstrap hints, including while old CI runs still finish.
-              const name = run.name === "CI main" && j.name.startsWith("Validate / ")
+              // Strip orchestration prefixes while preserving lane issue
+              // titles and Bootstrap hints for both old and new CI runs.
+              let name = run.name === "CI main" && j.name.startsWith("Validate / ")
                 ? j.name.slice("Validate / ".length) : j.name;
+              if (name.startsWith("Full suite / ")) name = name.slice("Full suite / ".length);
               const i = name.lastIndexOf(" / ");
               const lane = i < 0 ? name : name.slice(0, i);
               if (!lanes.has(lane)) lanes.set(lane, []);

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -683,100 +684,125 @@ func TestSelfHostIRVerifyProvidedCorpusClean(t *testing.T) {
 	}
 	dir := writeSelfHostModloadProject(t)
 	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_corpus")
+	testProvidedCorpus(t, bin)
+}
 
+func testProvidedCorpus(t *testing.T, bin string) {
+	t.Helper()
 	stdRoot := langSrcAbs(t, filepath.Join("internal", "stdlib"))
-	caseDirs, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*"))
+	mains, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("globbing conformance cases: %v", err)
 	}
-	if len(caseDirs) < 400 {
-		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(caseDirs))
+	if len(mains) < 400 {
+		t.Fatalf("found %d conformance cases, expected the full corpus: a silently shrunken sweep proves nothing", len(mains))
 	}
 
-	work := t.TempDir()
+	// Each child owns one result slot. The synchronous group waits for all
+	// parallel children before aggregation and keeps the top-level elapsed
+	// time useful to scripts/ci-test-weights.
+	type result struct {
+		ran   bool
+		calls int
+	}
+	results := make([]result, len(mains))
+	t.Run("cases", func(t *testing.T) {
+		for i, main := range mains {
+			name := filepath.Base(filepath.Dir(main))
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				results[i].ran = true
+				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
+				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
+				var out []byte
+				// The verifier lowers a whole imported program. Share the
+				// existing process-wide memory budget with driver builds.
+				err := withBuildMemoryMB(5*1024, func() error {
+					var err error
+					out, err = cmd.Output()
+					return err
+				})
+				if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+					t.Fatalf("resolution driver did not exit normally: %v\n%s", err, out)
+				}
+				results[i].calls, err = validateProvidedCorpusVerdict(providedCorpusExpectedDirty[name], cmd.ProcessState.ExitCode(), string(out))
+				if err != nil {
+					t.Errorf("invalid resolution verdict: %v\n%s", err, out)
+				}
+			})
+		}
+	})
+	swept, calls := 0, 0
+	for _, result := range results {
+		if result.ran {
+			swept++
+			calls += result.calls
+		}
+	}
+	// A focused -run selection still checks every selected verdict. The full
+	// corpus retains its aggregate coverage floor; applying that floor to a
+	// deliberately filtered subset would prevent focused regression runs.
+	if swept == len(mains) && calls < 2000 {
+		t.Errorf("pass resolved %d direct calls across the corpus, expected far more: a sweep that resolved nothing proves nothing", calls)
+	}
+	t.Logf("swept %d/%d fixtures, resolved %d direct calls", swept, len(mains), calls)
+}
+
+var providedCorpusVerdict = regexp.MustCompile(`^irverifyprovided: (clean|[1-9][0-9]* problem\(s\)) \(checked ([0-9]+) functions, ([0-9]+) direct calls\)$`)
+
+func validateProvidedCorpusVerdict(expectedDirty bool, exitCode int, out string) (int, error) {
+	// An arena trap or another driver error must never satisfy an expected
+	// invalid fixture. Only the verifier's own exit 1 plus diagnostic counts.
+	if exitCode != 0 && exitCode != 1 {
+		return 0, fmt.Errorf("driver exited %d, want verifier status 0 or 1", exitCode)
+	}
+	header, _, _ := strings.Cut(out, "\n")
+	match := providedCorpusVerdict.FindStringSubmatch(header)
+	if match == nil {
+		return 0, fmt.Errorf("missing or malformed verifier tally")
+	}
+	checked, checkedErr := strconv.Atoi(match[2])
+	calls, callsErr := strconv.Atoi(match[3])
+	if checkedErr != nil || callsErr != nil || checked < 0 || calls < 0 {
+		return 0, fmt.Errorf("invalid verifier counts")
+	}
+	dirty := match[1] != "clean"
+	if dirty != (exitCode == 1) {
+		return 0, fmt.Errorf("verifier header disagrees with exit %d", exitCode)
+	}
+	if dirty != expectedDirty {
+		return 0, fmt.Errorf("dirty=%t, expected dirty=%t", dirty, expectedDirty)
+	}
+	return calls, nil
+}
+
+func stageProvidedFixture(t *testing.T, stdRoot, caseDir string) string {
+	t.Helper()
+	stage := t.TempDir()
 	// The fixture's own modules have to travel with it — several cases are
 	// multi-file (cross_module_bounded_method, multi_file, pub_use_reexport),
 	// and sweeping only main.fern would report their siblings' functions as
 	// undeclared, which is the same false positive the single-module driver
 	// produces at stdlib scale.
-	for _, name := range []string{"std", "core"} {
-		if err := os.Symlink(filepath.Join(stdRoot, name), filepath.Join(work, name)); err != nil {
-			t.Fatalf("linking stdlib %s: %v", name, err)
+	for _, lib := range []string{"std", "core"} {
+		if err := os.Symlink(filepath.Join(stdRoot, lib), filepath.Join(stage, lib)); err != nil {
+			t.Fatalf("linking stdlib %s: %v", lib, err)
 		}
 	}
-
-	var dirty, unexpectedlyClean []string
-	swept, calls := 0, 0
-	for _, cd := range caseDirs {
-		name := filepath.Base(cd)
-		mains, _ := filepath.Glob(filepath.Join(cd, "*.fern"))
-		if len(mains) == 0 {
-			continue
+	files, err := filepath.Glob(filepath.Join(caseDir, "*.fern"))
+	if err != nil {
+		t.Fatalf("globbing fixture modules: %v", err)
+	}
+	for _, file := range files {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("reading %s: %v", file, err)
 		}
-		stage := filepath.Join(work, "case")
-		if err := os.RemoveAll(stage); err != nil {
-			t.Fatalf("clearing stage: %v", err)
-		}
-		if err := os.MkdirAll(stage, 0o755); err != nil {
-			t.Fatalf("staging %s: %v", name, err)
-		}
-		// The stage sits INSIDE work so `std/` and `core/` resolve from the
-		// parent — modloader looks for `<dir>/std/x.fern`, so link them here
-		// too rather than relying on a walk upward.
-		for _, lib := range []string{"std", "core"} {
-			if err := os.Symlink(filepath.Join(stdRoot, lib), filepath.Join(stage, lib)); err != nil {
-				t.Fatalf("linking stdlib %s: %v", lib, err)
-			}
-		}
-		var hasMain bool
-		for _, f := range mains {
-			src, err := os.ReadFile(f)
-			if err != nil {
-				t.Fatalf("reading %s: %v", f, err)
-			}
-			if filepath.Base(f) == "main.fern" {
-				hasMain = true
-			}
-			if err := os.WriteFile(filepath.Join(stage, filepath.Base(f)), src, 0o644); err != nil {
-				t.Fatalf("staging %s: %v", f, err)
-			}
-		}
-		if !hasMain {
-			continue
-		}
-		swept++
-		cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
-		out, _ := cmd.Output()
-		clean := cmd.ProcessState != nil && cmd.ProcessState.Exited() && cmd.ProcessState.ExitCode() == 0
-		_, c := parseProvidedTally(string(out))
-		calls += c
-		switch {
-		case !clean && !providedCorpusExpectedDirty[name]:
-			dirty = append(dirty, name+": "+strings.TrimSpace(string(out)))
-		case clean && providedCorpusExpectedDirty[name]:
-			// A named exclusion that stopped being one is a stale list, which
-			// is how a tolerance quietly becomes permanent.
-			unexpectedlyClean = append(unexpectedlyClean, name)
+		if err := os.WriteFile(filepath.Join(stage, filepath.Base(file)), src, 0o644); err != nil {
+			t.Fatalf("staging %s: %v", file, err)
 		}
 	}
-	if len(dirty) > 0 {
-		max := 15
-		if len(dirty) < max {
-			max = len(dirty)
-		}
-		t.Errorf("resolution pass reported problems on %d of %d conformance fixtures:\n  %s",
-			len(dirty), swept, strings.Join(dirty[:max], "\n  "))
-	}
-	if len(unexpectedlyClean) > 0 {
-		t.Errorf("these fixtures are listed as expected-dirty but resolved clean — drop them from providedCorpusExpectedDirty: %s",
-			strings.Join(unexpectedlyClean, ", "))
-	}
-	if swept < 400 {
-		t.Errorf("swept %d fixtures, expected the full corpus — a shrunken sweep proves nothing", swept)
-	}
-	if calls < 2000 {
-		t.Errorf("pass resolved %d direct calls across the corpus, expected far more — a sweep that resolved nothing proves nothing", calls)
-	}
+	return stage
 }
 
 // TestSelfHostIRVerifyRc exercises the self-host IR ownership verifier

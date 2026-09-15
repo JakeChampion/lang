@@ -111,6 +111,8 @@ r = await decide({ files: ["docs/x.md", "CLAUDE.md"] });
 check("real: doc-only PR runs no filtered lane", Object.values(r.lanes).some(Boolean), false);
 r = await decide({ files: [".github/workflows/ci.yml"] });
 check("real: ci.yml edit runs every lane", all(r), true);
+r = await decide({ files: [".github/workflows/ci-suite.yml"] });
+check("real: ci-suite.yml edit runs every lane", all(r), true);
 r = await decide({ files: [".github/workflows/ci-main.yml"] });
 check("real: ci-main.yml edit runs every lane", all(r), true);
 // A skipped code push followed by a docs-only push must still validate code.

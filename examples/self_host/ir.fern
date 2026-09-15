@@ -636,6 +636,11 @@ pub function op_window_size(): Op { return op0("window_size"); }
 // they are not normalised (#9356).
 pub function op_termios_get(): Op { return op0("termios_get"); }
 pub function op_termios_set(): Op { return op0("termios_set"); }
+// `set_window_size` pops [fd, rows, cols] and pushes Result[void, IoError]:
+// one TIOCGWINSZ to keep the pixel pair the kernel stores beside the two cell
+// counts, then TIOCSWINSZ with those two replaced. `stty rows N` is the
+// caller (#9360). Refused on wasm beside `window_size` and the termios pair.
+pub function op_set_window_size(): Op { return op0("set_window_size"); }
 
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
@@ -2372,6 +2377,7 @@ function kind_id_len15(name: string): i32 {
     if (c == b'h' && name == "heap_release_to") { return 230; }
     if (c == b'm' && name == "mapiter_advance") { return 137; }
     if (c == b'r' && name == "read_file_bytes") { return 233; }
+    if (c == b's' && name == "set_window_size") { return 314; }
     if (c == b's' && name == "str_starts_with") { return 114; }
     if (c == b'w' && name == "write_file_exec") { return 226; }
     if (c == b'w' && name == "writer_truncate") { return 281; }
@@ -2722,6 +2728,7 @@ function kind_name_4(id: i32): string {
     if (id == 311) { return "fd_dup_onto"; }
     if (id == 312) { return "termios_get"; }
     if (id == 313) { return "termios_set"; }
+    if (id == 314) { return "set_window_size"; }
     if (id == 302) { return "arr_push_owned_i64"; }
     if (id == 303) { return "arr_push_owned_f64"; }
     return "invalid";
@@ -2903,7 +2910,8 @@ function pops3(t: i32): boolean {
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
         || t == 242                                                      // reader_seek (fd, offset, whence)
         || t == 280                                                      // proc_exec_as (path, argv, envp)
-        || t == 313;                                                     // termios_set (fd, when, words)
+        || t == 313                                                      // termios_set (fd, when, words)
+        || t == 314;                                                     // set_window_size (fd, rows, cols)
 }
 
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not

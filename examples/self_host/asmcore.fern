@@ -1366,6 +1366,25 @@ pub function rt_src_termios_set(t: string): string {
     return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { if (words.len() != 24 || act < 0 || act > 2) { return Err(__fern_io_error(22, \"\")); } var buf: i32 = __raw_alloc(36); var i: i32 = 0; while (i < 4) { var v: i64 = words[i]; __raw_store8(buf, i * 4, (v % 256) as i32); __raw_store8(buf, i * 4 + 1, ((v / 256) % 256) as i32); __raw_store8(buf, i * 4 + 2, ((v / 65536) % 256) as i32); __raw_store8(buf, i * 4 + 3, ((v / 16777216) % 256) as i32); i = i + 1; } __raw_store8(buf, 16, (words[4] % 256) as i32); var j: i32 = 0; while (j < 19) { __raw_store8(buf, 17 + j, (words[5 + j] % 256) as i32); j = j + 1; } var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, 21506 + act, buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
+// rt_src_set_window_size backs `set_window_size(fd, rows, cols)` ->
+// Result[void, IoError]: TIOCGWINSZ first, so the pixel pair the kernel keeps
+// beside the two cell counts survives, then the two counts replaced and
+// TIOCSWINSZ back. Both are masked to the kernel's u16 first, so 65536 rows
+// lands as 0 rather than a refusal — which is what GNU is silent about too —
+// and a negative one truncates the way the native backends' `and #0xffff`
+// does, rather than leaving a negative byte behind (#9360).
+//
+// Darwin answers ENOSYS beside the termios pair. Its `struct winsize` is the
+// same four u16s, but the request numbers are ioctl-encoded from that size and
+// a wrong one answers ENOTTY, which a caller cannot tell from "this is not a
+// terminal"; the macos runner is where they can be pinned.
+pub function rt_src_set_window_size(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { return Err(__fern_io_error(38, \"\")); }";
+    }
+    return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { var buf: i32 = __raw_scratch(16); var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, 21523, buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } var r: i32 = rows & 65535; var c: i32 = cols & 65535; __raw_store8(buf, 0, r % 256); __raw_store8(buf, 1, r / 256); __raw_store8(buf, 2, c % 256); __raw_store8(buf, 3, c / 256); rc = __syscall3(" + sysno(t, "ioctl") + ", fd, 21524, buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
 // rt_src_process_alive backs `process_alive(pid)` (syscall-leaf) -> 1 when a
 // process with that pid exists, 0 when it does not.
 //

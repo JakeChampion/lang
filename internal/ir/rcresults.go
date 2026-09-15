@@ -230,8 +230,13 @@ var rcResultOwned = map[string]bool{
 	"statfs":            true,
 	"chdir":             true,
 	"window_size":       true,
+	"set_window_size":   true,
+	"termios_get":       true,
+	"termios_set":       true,
 	"signal_send":       true,
 	"set_process_group": true,
+	"termios_get":       true,
+	"termios_set":       true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -256,8 +261,8 @@ var rcResultImmortal = map[string]bool{
 // rcOwnedPayloadBuiltins names the builtins — by the callee spelling the IR
 // sees, which every backend maps to the runtime helper in the comment —
 // whose per-call Option / Result box carries a SUCCESS payload the
-// caller owns: a fresh rc=1 string (`__fern_alloc_rc1`) or u8[]
-// (`__alloc_u8`) built for this call, on every backend. The BOX is the
+// caller owns: a fresh rc=1 string (`__fern_alloc_rc1`) or array
+// built for this call, on every supported backend. The BOX is the
 // caller's too since #8405 (rcResultOwned), and the arm frees it shallow;
 // this list answers the separate question of what is inside it. The
 // payload's unit is the caller's, and a match that binds it takes ownership
@@ -270,6 +275,7 @@ var rcOwnedPayloadBuiltins = map[string]bool{
 	"env":                        true, // __fern_env
 	"read_file":                  true, // __fern_read_file
 	"read_file_bytes":            true, // __fern_read_file_bytes
+	"termios_get":                true, // native fresh i64[] terminal words
 }
 
 // rcOwnedResultBuiltins names the builtins — by the callee spelling the IR
@@ -337,6 +343,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"chown_at":                   true,
 	"temp_dir":                   true,
 	"read_dir":                   true,
+	"set_window_size":            true,
 	"termios_get":                true,
 	"termios_set":                true,
 	"read_dir_all":               true,

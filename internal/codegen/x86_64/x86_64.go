@@ -928,6 +928,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesWindowSize {
 		g.emitWindowSizeRuntime()
 	}
+	if g.usesSetWindowSize {
+		g.emitSetWindowSizeRuntime()
+	}
 	if g.usesTermiosGet {
 		g.emitTermiosGetRuntime()
 	}
@@ -1376,6 +1379,9 @@ type generator struct {
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
+	// usesSetWindowSize pulls in `__fern_set_window_size(fd, rows, cols)`
+	// — the TIOCGWINSZ/TIOCSWINSZ pair that keeps the pixel fields.
+	usesSetWindowSize bool
 	// usesTermiosGet / usesTermiosSet pull in the two halves of the
 	// terminal's line settings — one TCGETS into a word array, and the
 	// TCSETS family back out of one.
@@ -2047,6 +2053,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "window_size":
 		g.usesWindowSize = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "set_window_size":
+		g.usesSetWindowSize = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "termios_get":
@@ -3806,6 +3816,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_signal_disposition"
 		case "window_size":
 			target = "__fern_window_size"
+		case "set_window_size":
+			target = "__fern_set_window_size"
 		case "termios_get":
 			target = "__fern_termios_get"
 		case "termios_set":
@@ -13843,6 +13855,76 @@ func (g *generator) emitWindowSizeRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_window_size, .-__fern_window_size")
+}
+
+// emitSetWindowSizeRuntime emits `__fern_set_window_size(fd, rows, cols)
+// → Result[void, IoError]` — a TIOCGWINSZ, the two cell counts replaced,
+// and a TIOCSWINSZ back.
+//
+// The read is what keeps the pixel pair the kernel stores beside them:
+// nothing surrenders it to a caller, so nothing but this helper can put
+// it back. Both counts are stored as the kernel's u16, so 65536 rows
+// lands as 0 rather than a refusal.
+//
+// System V: edi = fd, esi = rows, edx = cols.
+func (g *generator) emitSetWindowSizeRuntime() {
+	const (
+		tiocgwinsz = 0x5413
+		tiocswinsz = 0x5414
+	)
+	g.line("")
+	g.line(".globl __fern_set_window_size")
+	g.line(".type __fern_set_window_size, @function")
+	g.label("__fern_set_window_size")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	// 3 pushes ⇒ rsp ≡ 8 mod 16; sub 24 realigns and leaves the
+	// 8-byte winsize buffer at [rsp].
+	g.emit("sub rsp, 24")
+	// ws_row and ws_col are adjacent u16s, so the pair travels in one
+	// register and lands in one store — which is also what keeps rbx
+	// and r12 enough to survive two syscalls.
+	g.emit("movzx ebx, si")
+	g.emit("movzx eax, dx")
+	g.emit("shl eax, 16")
+	g.emit("or ebx, eax")
+	g.emit("mov r12d, edi") // the fd outlives both syscalls
+	g.emit("mov edi, edi")
+	g.emit(fmt.Sprintf("mov esi, %d", tiocgwinsz))
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysIoctl)
+	g.emit("test rax, rax")
+	g.emit("js .Lswsz_err")
+	g.emit("mov [rsp], ebx") // ws_row, ws_col; the pixel pair stays put
+	g.emit("mov edi, r12d")
+	g.emit(fmt.Sprintf("mov esi, %d", tiocswinsz))
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysIoctl)
+	g.emit("test rax, rax")
+	g.emit("js .Lswsz_err")
+	g.emitPayloadlessResultBox(0) // Ok(())
+	g.emit("jmp .Lswsz_ret")
+
+	g.label(".Lswsz_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+
+	g.label(".Lswsz_ret")
+	g.emit("add rsp, 24")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_set_window_size, .-__fern_set_window_size")
 }
 
 // emitSignalDispositionRuntime emits `__fern_signal_ignore(sig)` and
