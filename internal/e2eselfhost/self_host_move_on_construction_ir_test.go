@@ -149,6 +149,41 @@ function main(): i32 { return f(); }`,
 			moved: "t", incs: 1,
 		},
 
+		// Loop moves belong to the analysis view; the emitter's top-level
+		// view must stay independent when both reuse the same calculation.
+		{
+			name: "loop-local-construction",
+			src: `struct Wrap { inner: i32[] }
+function f(): i32 {
+    var i: i32 = 0; var total: i32 = 0;
+    while (i < 3) {
+        var x: i32[] = [i];
+        var box: Wrap = Wrap { inner: x };
+        total = total + box.inner[0]; i = i + 1;
+    }
+    return total;
+}
+function main(): i32 { return f(); }`,
+			moved: "x", incs: 1,
+		},
+		{
+			name: "top-and-loop-shadow",
+			src: `struct Wrap { inner: i32[] }
+function f(): i32 {
+    var x: i32[] = [7];
+    var box: Wrap = Wrap { inner: x };
+    var i: i32 = 0; var total: i32 = box.inner[0];
+    while (i < 3) {
+        var x: i32[] = [i];
+        var box: Wrap = Wrap { inner: x };
+        total = total + box.inner[0]; i = i + 1;
+    }
+    return total;
+}
+function main(): i32 { return f(); }`,
+			moved: "", incs: 2,
+		},
+
 		// --- the analysis declines these, native keeps the inc ------------
 		{
 			// Read again after the construction, so not at its last use.
