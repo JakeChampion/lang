@@ -219,17 +219,48 @@ function main(): i32 { return f(); }`,
 			anchor: map[string]map[string]string{"f": {"aliasBindIncs": "3:2=b"}},
 		},
 		{
-			// ALIAS of a borrowed PARAM: the callee's new binding takes a
-			// counted retain (its exit dec balances) on both sides — the
-			// binding-origin the leak matrix's alias_param rows probe, at the
-			// retain level. Agreement anchor.
+			// ALIAS of a borrowed PARAM: both sides CANCEL the retain
+			// (#9244's third dead-alias leg, ported to the self-host by
+			// #9291). The caller owns xs across the whole call and neither
+			// frame releases it, so v reads through a reference already held —
+			// and every mention of v is a read through the value, an index
+			// base under a scalar return. The empty row is the assertion: a
+			// retain reappearing here is the leak the leg exists to remove.
 			name: "alias-bind-param-source",
 			src: `function g(xs: i32[]): i32 {
 	var v: i32[] = xs;
 	return v[0] + xs[0];
 }
 function main(): i32 { var a: i32[] = [4, 5]; return g(a); }`,
+			anchor: map[string]map[string]string{"g": {"aliasBindIncs": ""}},
+		},
+		{
+			// The same alias RETURNED WHOLE — the refusal half of the leg
+			// above. A returned borrow outlives this frame, and the caller's
+			// reference is the only one there is, so both sides keep the
+			// retain. Anchored on the retain itself: a cancellation appearing
+			// here hands the caller an uncounted array.
+			name: "alias-bind-param-source-returned",
+			src: `function g(xs: i32[]): i32[] {
+	var v: i32[] = xs;
+	return v;
+}
+function main(): i32 { var a: i32[] = [4, 5]; return g(a)[0]; }`,
 			anchor: map[string]map[string]string{"g": {"aliasBindIncs": "2:2=v"}},
+		},
+		{
+			// The alias handed to a USER callee. Both sides refuse: a callee's
+			// own borrow verdict says nothing about the value the CALL hands
+			// back, which is the argument-death shape, so the mention is not a
+			// read through the value and the retain stays.
+			name: "alias-bind-param-source-call-arg",
+			src: `function h(ys: i32[]): i32 { return ys[0]; }
+function g(xs: i32[]): i32 {
+	var v: i32[] = xs;
+	return h(v);
+}
+function main(): i32 { var a: i32[] = [4, 5]; return g(a); }`,
+			anchor: map[string]map[string]string{"g": {"aliasBindIncs": "3:2=v"}},
 		},
 		{
 			// MOVE-ON-ALIAS, string limb: at the source's last top-level
@@ -1397,6 +1428,11 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 			// tainted would propagate through this alias and take #7553's
 			// reclaim back out. What was wrong was only the REASON the seed
 			// gave for it, corrected there.
+			//
+			// aliasBindIncs is NOT among the divergences: this is #9244's
+			// reproducer, and both sides now cancel the alias retain (the
+			// self-host since #9291 ported the borrowed-parameter leg). Only
+			// what the taint propagates to still differs.
 			name: "fe-string-param-alias",
 			src: `function f(s: string): i32 {
 	var L: string = s;
@@ -1405,9 +1441,8 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 function main(): i32 { var k: string = "abcdefghij"; return f(k); }`,
 			diverge: map[string]map[string]divergence{
 				"f": {
-					"aliasBindIncs": {native: "2:2=L", selfhost: ""},
-					"freeEligible":  {native: "", selfhost: "L"},
-					"lastUses":      {native: "", selfhost: "L=1"},
+					"freeEligible": {native: "", selfhost: "L"},
+					"lastUses":     {native: "", selfhost: "L=1"},
 				},
 				"main": {
 					"freeEligible": {native: "", selfhost: "k"},
