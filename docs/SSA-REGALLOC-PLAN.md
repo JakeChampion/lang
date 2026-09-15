@@ -1343,7 +1343,11 @@ binaries under qemu — plus every `internal/codegen` package and
 **1.74x on this backend, and still 1.6x behind the flat one.** That second
 number is the finding. The SSA loop is now 23 instructions a byte against
 flat's 20, counting every instruction retired on the common (non-matching)
-path, the not-taken conditional branch included:
+path, the not-taken conditional branch included.
+
+Listed below as `objdump -d` prints it, so the operands read
+destination-last (AT&T). The emitter's own text is Intel-order — `mov r10d,
+[rbx + 8]` for the first line — which is what the backend's tests match on:
 
 ```
 loop:   mov  0x8(%rbx),%r10d     ; len, reloaded per iteration
