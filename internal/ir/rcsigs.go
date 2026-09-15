@@ -305,7 +305,8 @@ var rcInertBuiltins = map[string]bool{
 	// than as a wasm runtime helper.
 	"process_alive": true,
 	// (fd) → Result[i64[], IoError] and (fd, when, words) → Result[void,
-	// IoError]. The words array is READ and not retained.
+	// IoError]. The words array `termios_set` takes is READ and not
+	// retained; `set_window_size` is three scalars and has nothing to move.
 	"set_window_size": true,
 	"termios_get":     true, "termios_set": true,
 	// No arguments at all, and an i64 out. Native-only for the same
