@@ -233,6 +233,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e038-array-lit-float-into-int-arg", "function total(xs: i64[]): i32 { return xs.len(); }\nfunction main(): i32 { return total([1.5, 2.5]); }\n", []string{"E038"}},
 		// int-to-float promotion stays legal, and is the control for the row above.
 		{"array-lit-int-into-float-clean", "function main(): i32 { var xs: f64[] = [1, 2]; return xs.len(); }\n", nil},
+		// `@try` (docs/TRY.md): the marker's SHAPE obligation is enforced by
+		// both compilers, so the rule is agreed even while only native can
+		// lower `?` on a marked enum. A valid marked enum is clean on both;
+		// each way of breaking the shape is E078 on both.
+		{"try-marker-clean", "@try\nenum MyOpt[T] { Here(T), Gone }\nfunction pick(m: MyOpt[i32]): MyOpt[i32] { var v: i32 = m?; return Here(v + 1); }\nfunction main(): i32 { match (pick(Here(7))) { Here(v) => { return v; }, Gone => { return 0; } } }\n", nil},
+		{"try-marker-payload-failure-clean", "@try\nenum Outcome[T, E] { Good(T), Bad(E) }\nfunction step(o: Outcome[i32, string]): Outcome[i32, string] { var v: i32 = o?; return Good(v * 2); }\nfunction main(): i32 { match (step(Good(21))) { Good(v) => { return v; }, Bad(e) => { return e.len(); } } }\n", nil},
+		{"e078-three-variants", "@try\nenum Three[T] { A(T), B, C }\nfunction main(): i32 { return 0; }\n", []string{"E078"}},
+		{"e078-success-variant-payloadless", "@try\nenum NoPay { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E078"}},
+		{"e078-failure-variant-two-payloads", "@try\nenum TwoPay[T, E] { A(T), B(E, E) }\nfunction main(): i32 { return 0; }\n", []string{"E078"}},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a

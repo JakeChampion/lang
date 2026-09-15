@@ -458,6 +458,7 @@ func (p *parser) parseProgram() *ast.Program {
 		var importIface, importWIT string
 		var exportIface, exportWIT string
 		mustConsume := false
+		tryMarker := false
 		inlineHint := ast.InlineHintNone
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
@@ -475,6 +476,7 @@ func (p *parser) parseProgram() *ast.Program {
 			exportIface = attr.exportIface
 			exportWIT = attr.exportWIT
 			mustConsume = attr.mustConsume
+			tryMarker = attr.tryMarker
 			inlineHint = attr.inlineHint
 		}
 		// `pub` is an optional prefix on function, struct, enum, or
@@ -691,6 +693,14 @@ func (p *parser) parseProgram() *ast.Program {
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
 			}
+			// `@try` needs the two-variant shape `?` lowers against, which
+			// a struct cannot have. Reported here rather than dropped: the
+			// marker is the whole opt-in, so silently ignoring it would
+			// leave the author thinking the type was `?`-able.
+			if tryMarker {
+				p.errors = append(p.errors, p.errorf(p.peek().Pos,
+					"@try only applies to an `enum` declaration"))
+			}
 			continue
 		}
 		if isOpaque {
@@ -733,6 +743,7 @@ func (p *parser) parseProgram() *ast.Program {
 				ed.PackageScoped = isPackage
 				ed.Derives = derives
 				ed.MustConsume = mustConsume
+				ed.Try = tryMarker
 				prog.Enums = append(prog.Enums, ed)
 			}
 			continue
@@ -740,6 +751,15 @@ func (p *parser) parseProgram() *ast.Program {
 		if len(derives) > 0 {
 			p.errors = append(p.errors, p.errorf(p.peek().Pos,
 				"@derive only applies to a `struct` or `enum` declaration"))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
+			}
+			continue
+		}
+		if tryMarker {
+			p.errors = append(p.errors, p.errorf(p.peek().Pos,
+				"@try only applies to an `enum` declaration"))
 			p.syncToTopLevel()
 			if p.i == before {
 				p.advance()
@@ -1307,6 +1327,9 @@ type declAttr struct {
 	exportIface string
 	exportWIT   string
 	mustConsume bool
+	// tryMarker records `@try` on an enum decl — the opt-in that makes it
+	// usable with `?`. See ast.EnumDecl.Try.
+	tryMarker bool
 	// inlineHint records `@inline` / `@noinline` on a function decl
 	// (#4412 Rec §14).
 	inlineHint ast.InlineHint
@@ -1362,6 +1385,11 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		// enforces that values of the type are consumed on every
 		// path. See docs/MUST-CONSUME.md.
 		return declAttr{mustConsume: true}, nil
+	case "try":
+		// `@try` — bare marker on an ENUM declaration: this type may be
+		// used with `?`. The checker enforces the two-variant shape the
+		// operator's lowering requires (E078). See docs/TRY.md.
+		return declAttr{tryMarker: true}, nil
 	case "inline":
 		// `@inline` — bare marker on a function: lift the IR
 		// inliner's size cap for this callee (shape-safety
@@ -1383,7 +1411,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		}
 		return declAttr{exportIface: iface, exportWIT: name}, nil
 	default:
-		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, @export, @must_consume, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
