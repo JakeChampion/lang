@@ -274,6 +274,7 @@ priority=282
 set_priority=283
 set_process_group=284
 signal_send=285
+proc_waitpid_nohang=286
 buf_new=291
 buf_push=292
 buf_push_range=293

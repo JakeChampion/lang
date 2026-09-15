@@ -196,6 +196,7 @@ pub function gated_builtins(): Gate[] {
         // no processes.
         Gate { builtin: "proc_fork", capability: "proc" },
         Gate { builtin: "proc_waitpid", capability: "proc" },
+        Gate { builtin: "proc_waitpid_nohang", capability: "proc" },
         Gate { builtin: "proc_exec", capability: "proc" },
         Gate { builtin: "proc_exec_as", capability: "proc" },
         Gate { builtin: "chdir", capability: "cwd" },

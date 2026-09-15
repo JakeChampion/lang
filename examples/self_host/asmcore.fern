@@ -1143,6 +1143,21 @@ pub function rt_src_proc_waitpid(t: string): string {
     return "function __fern_proc_waitpid(pid: i32): i32 { var st: i32 = __raw_scratch(16); var rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid, st, 0, 0); if (rc < 0) { return rc; } var w: i32 = __load_i32(st); var sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
 }
 
+// rt_src_proc_waitpid_nohang backs `proc_waitpid_nohang(pid)` (syscall-leaf) —
+// rt_src_proc_waitpid's wait4 with WNOHANG (1 on both kernels), so it answers
+// immediately.
+//
+// wait4 reports "no child has anything to report" by returning 0, which the
+// status decode cannot tell from a clean exit, so that case becomes -1. No
+// errno wait4 returns is 1, which is what makes the sign alone enough to
+// separate "still running" from a failure.
+//
+// The status lands in __fern_scratch, so this joins the scratch gate with its
+// blocking sibling.
+pub function rt_src_proc_waitpid_nohang(t: string): string {
+    return "function __fern_proc_waitpid_nohang(pid: i32): i32 { var st: i32 = __raw_scratch(16); var rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid, st, 1, 0); if (rc < 0) { return rc; } if (rc == 0) { return 0 - 1; } var w: i32 = __load_i32(st); var sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
+}
+
 // rt_src_proc_exec backs `proc_exec(path, args)` (#2649) — execve(2). It only
 // RETURNS on failure, with -errno; on success the process image is gone, and
 // that is the builtin's contract.
@@ -4341,6 +4356,9 @@ function builtin_i32_names(): string[] {
         // Both plain i32, matching native's FuncSigs (#5686).
         "proc_fork",
         "proc_waitpid",
+        // The same reap with WNOHANG: the status, -1 for a child still
+        // running, or -errno. Also a plain i32.
+        "proc_waitpid_nohang",
         // proc_exec(path, args) → i32, but only on FAILURE (-errno):
         // on success execve has replaced the process image, so there
         // is nothing left to return to. Matches native's FuncSigs.
@@ -6493,7 +6511,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_len", "__fern_buf_take",
         "__fern_buf_free",
         // crash-only supervision (#5686): the entry owns fork / wait4.
-        "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
+        "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
+        "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",
         "__fn___fern_proc_exec_as",
         // one pid's liveness, delivering a signal to one, and this
         // process's descriptor ceiling.

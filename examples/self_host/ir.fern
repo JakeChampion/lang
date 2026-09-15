@@ -1345,6 +1345,15 @@ pub function op_sleep_ns(): Op { return op0("sleep_ns"); }
 // (docs/CRASH-ONLY-SERVE.md D2'), mirroring the native builtins (#5686).
 pub function op_proc_fork(): Op { return op0("proc_fork"); }
 pub function op_proc_waitpid(): Op { return op0("proc_waitpid"); }
+// `proc_waitpid_nohang` takes one operand [pid] and pushes an i32: the same
+// reap with wait4's WNOHANG, so it answers immediately. The decoded status when
+// the child has exited, -1 when it has not, -errno on failure. -1 rather than
+// 0 because 0 is a clean exit, and no errno wait4 returns is 1 — so the sign
+// alone separates "still running" from a failure. It recovers what a blocking
+// `proc_waitpid(-1)` loses: that call reaps whichever child exits first and
+// reports only the status, so one nohang probe per candidate says which pid it
+// was (a child already reaped answers -ECHILD).
+pub function op_proc_waitpid_nohang(): Op { return op0("proc_waitpid_nohang"); }
 // `proc_exec` pops [path, args] and replaces the process image via execve. It
 // only ever pushes a FAILURE (-errno): on success there is no process left to
 // push into. Completes the crash-only trio, mirroring the native builtin, and
@@ -1806,7 +1815,7 @@ pub function kind_count(): i32 { return 196; }
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
 // which is why the directory and link family starts at 260, and 270 sits
 // between two pairs that landed alongside it.
-// NEXT FREE EXTENSION ID: 286..290, then 311 — 281
+// NEXT FREE EXTENSION ID: 287..290, then 311 — 281
 // (writer_truncate) and 285 (signal_send) were each taken out of order by a
 // branch in flight, as 275..280 and 291..297 were, and the sync family took
 // the 298..301 block reserved for it (re-grep rather than trusting this line
@@ -2378,6 +2387,7 @@ function kind_id_len18(name: string): i32 {
 
 function kind_id_len19(name: string): i32 {
     var c: u8 = name[0];
+    if (c == b'p' && name == "proc_waitpid_nohang") { return 286; }
     if (c == b'c' && name == "call_closure_direct") { return 151; }
     if (c == b'w' && name == "wasm_timer_pollable") { return 189; }
     return 0;
@@ -2685,6 +2695,7 @@ function kind_name_4(id: i32): string {
     if (id == 282) { return "priority"; }
     if (id == 283) { return "set_priority"; }
     if (id == 284) { return "set_process_group"; }
+    if (id == 286) { return "proc_waitpid_nohang"; }
     if (id == 285) { return "signal_send"; }
     if (id >= 291 && id <= 297) { return buf_kind_name(id); }
     if (id == 298) { return "sync"; }
@@ -2822,6 +2833,7 @@ function pops1_io(t: i32): boolean {
         || t == 270 || t == 271                                          // statfs, process_alive
         || t == 276                                                      // window_size
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
+        || t == 286                                                      // proc_waitpid_nohang
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 112 || t == 200 || t == 201 || t == 203;     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
 }

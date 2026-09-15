@@ -38,10 +38,11 @@ var gatedBuiltins = map[string]string{
 	// D2'). Native targets only; wasm worlds have no processes. The
 	// interp is deliberately ungated: its proc_fork answers -38
 	// (ENOSYS) so callers can degrade at runtime instead.
-	"proc_fork":    "proc",
-	"proc_waitpid": "proc",
-	"proc_exec":    "proc",
-	"proc_exec_as": "proc",
+	"proc_fork":           "proc",
+	"proc_waitpid":        "proc",
+	"proc_waitpid_nohang": "proc",
+	"proc_exec":           "proc",
+	"proc_exec_as":        "proc",
 	// A process table with pids in it to ask about, which is the same
 	// host property fork / exec / waitpid need.
 	"process_alive": "proc",

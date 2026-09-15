@@ -920,6 +920,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesProcWaitpid {
 		g.emitProcWaitpidRuntime()
 	}
+	if g.usesProcWaitpidNohang {
+		g.emitProcWaitpidNohangRuntime()
+	}
 	if g.usesProcExec {
 		g.emitProcExecRuntime()
 	}
@@ -7900,6 +7903,60 @@ func (g *generator) emitProcWaitpidRuntime() {
 	g.sizeDirective("__fern_proc_waitpid")
 }
 
+// emitProcWaitpidNohangRuntime emits `__fern_proc_waitpid_nohang(pid)` —
+// `__fern_proc_waitpid` with WNOHANG, so it answers immediately.
+//
+// wait4 reports "no child has anything to report" as a return of 0, which
+// collides with a clean exit once the status word is decoded — so that case
+// becomes -1 here. No errno wait4 returns is 1, which is what makes the sign
+// alone enough to tell "still running" from a failure. WNOHANG is 1 on both
+// kernels.
+func (g *generator) emitProcWaitpidNohangRuntime() {
+	g.line("")
+	g.line(".global __fern_proc_waitpid_nohang")
+	g.typeDirective("__fern_proc_waitpid_nohang")
+	g.label("__fern_proc_waitpid_nohang")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("sub sp, sp, #16") // status slot
+	g.emit("sxtw x0, w0")     // pid
+	g.emit("mov x1, sp")      // &status
+	g.emit("mov x2, #1")      // options = WNOHANG
+	g.emit("mov x3, #0")      // rusage = NULL
+	if g.darwin {
+		g.emit("mov x16, #%d", darWait4)
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lproc_wnh_ready")
+		g.emit("neg x0, x0") // carry set: +errno → -errno
+		g.emit("b .Lproc_wnh_done")
+		g.label(".Lproc_wnh_ready")
+	} else {
+		g.emit("mov x8, #%d", sysWait4)
+		g.emit("svc #0")
+		g.emit("cmp x0, #0")
+		g.emit("b.lt .Lproc_wnh_done") // -errno → return as-is
+	}
+	g.emit("cbnz x0, .Lproc_wnh_decode")
+	g.emit("mov x0, #-1") // 0: nothing to report, the child is still running
+	g.emit("b .Lproc_wnh_done")
+	g.label(".Lproc_wnh_decode")
+	g.emit("ldr w9, [sp]")       // status word
+	g.emit("and w10, w9, #0x7f") // termination signal (0 = exited)
+	g.emit("cbnz w10, .Lproc_wnh_sig")
+	// Normal exit: (status >> 8) & 0xff.
+	g.emit("lsr w0, w9, #8")
+	g.emit("and w0, w0, #0xff")
+	g.emit("b .Lproc_wnh_done")
+	g.label(".Lproc_wnh_sig")
+	// Signal death: 128 + signal.
+	g.emit("add w0, w10, #128")
+	g.label(".Lproc_wnh_done")
+	g.emit("mov sp, x29")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_proc_waitpid_nohang")
+}
+
 // emitStrVecRuntime emits a helper that materialises a `string[]` from a
 // (count, char**) pair and caches the result: `__fern_args` over the argc /
 // argv captured by emitStartRuntime, `__fern_environ` over the envp vector.
@@ -14683,6 +14740,10 @@ type generator struct {
 	// crash-only supervision primitives (docs/CRASH-ONLY-SERVE.md D2').
 	usesProcFork    bool
 	usesProcWaitpid bool
+	// usesProcWaitpidNohang pulls in `__fern_proc_waitpid_nohang(pid)` —
+	// the same wait4 with WNOHANG, and -1 for a child that has not
+	// exited yet.
+	usesProcWaitpidNohang bool
 	// usesProcExec pulls in `__fern_proc_exec(path, args)` — execve, the leg
 	// that lets a forked child become another program. Shares the `proc`
 	// capability with fork / waitpid.
@@ -19273,6 +19334,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// or -errno.
 			target = "__fern_proc_waitpid"
 			g.usesProcWaitpid = true
+		case "proc_waitpid_nohang":
+			// proc_waitpid_nohang(pid): the same reap with WNOHANG —
+			// the decoded status, -1 when the child is still
+			// running, or -errno.
+			target = "__fern_proc_waitpid_nohang"
+			g.usesProcWaitpidNohang = true
 		case "args":
 			// args(): returns a length-prefixed string[] of
 			// argv. Caches the result so repeat calls are O(1).

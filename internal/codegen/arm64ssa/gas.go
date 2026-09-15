@@ -1206,6 +1206,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_underflow_count": emitRcUnderflowCountHelper,
 	"proc_fork":                 emitProcForkHelper,
 	"proc_waitpid":              emitProcWaitpidHelper,
+	"proc_waitpid_nohang":       emitProcWaitpidNohangHelper,
 	"proc_exec":                 emitProcExecHelper,
 	"proc_exec_as":              emitProcExecAsHelper,
 	"__fern_box_free":           emitBoxFreeHelper,
@@ -4247,6 +4248,43 @@ func emitProcWaitpidHelper(w func(string, ...any)) {
 	w(".Lssa_wait_sig:")
 	w("\tadd w0, w10, #128")
 	w(".Lssa_wait_done:")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitProcWaitpidNohangHelper writes `proc_waitpid_nohang(pid) -> i32`:
+// emitProcWaitpidHelper's wait4 with WNOHANG, so it answers immediately.
+//
+// wait4 reports "no child has anything to report" as a return of 0, which
+// collides with a clean exit once the status word is decoded — so that case
+// becomes -1 here. No errno wait4 returns is 1, which is what makes the sign
+// alone enough to tell "still running" from a failure.
+func emitProcWaitpidNohangHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("proc_waitpid_nohang"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tsxtw x0, w0")      // pid
+	w("\tadd x1, x29, #16") // &status
+	w("\tmov x2, #1")       // options = WNOHANG
+	w("\tmov x3, #0")       // rusage = NULL
+	w("\tmov x8, #260")
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.lt .Lssa_wnh_done") // -errno: return as-is
+	w("\tcbnz x0, .Lssa_wnh_decode")
+	w("\tmov x0, #-1") // 0: nothing to report, the child is still running
+	w("\tb .Lssa_wnh_done")
+	w(".Lssa_wnh_decode:")
+	w("\tldr w9, [x29, #16]")
+	w("\tand w10, w9, #0x7f") // termination signal (0 = exited)
+	w("\tcbnz w10, .Lssa_wnh_sig")
+	w("\tlsr w0, w9, #8")
+	w("\tand w0, w0, #0xff")
+	w("\tb .Lssa_wnh_done")
+	w(".Lssa_wnh_sig:")
+	w("\tadd w0, w10, #128")
+	w(".Lssa_wnh_done:")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
