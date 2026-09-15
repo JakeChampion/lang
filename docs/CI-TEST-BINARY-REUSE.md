@@ -33,7 +33,10 @@ general-purpose cache key for arbitrary external build dependencies.
 A table-driven regression suite covers matching inputs, a different commit,
 tracked and untracked source edits, missing manifests, truncated binaries,
 malformed digests, changed build flags, changed architecture and a changed
-runner image. Misses leave both existing output files untouched.
+runner image. Misses leave both existing output files untouched. An
+unavailable Go toolchain must fail before publishing an input key; a
+regression reproduces Bash continuing a failed command inside a hashing
+pipeline, and the helper now collects fallible key inputs before hashing.
 
 An end-to-end pilot executes the actual composite action shell body against
 a small Git repository, then against Fern at 82a544bf3. It builds both real

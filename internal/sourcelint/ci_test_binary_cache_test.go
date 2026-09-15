@@ -14,10 +14,12 @@ func TestCITestBinaryCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name   string
-		mutate func(t *testing.T, root, cache string)
-		env    []string
-		miss   bool
+		name     string
+		mutate   func(t *testing.T, root, cache string)
+		env      []string
+		miss     bool
+		saveEnv  []string
+		saveMiss bool
 	}{
 		{name: "matching inputs"},
 		{name: "new commit", miss: true, mutate: func(t *testing.T, root, _ string) {
@@ -43,6 +45,7 @@ func TestCITestBinaryCache(t *testing.T) {
 		{name: "changed build flags", miss: true, env: []string{"GOFLAGS=-tags=cache_changed"}},
 		{name: "changed target", miss: true, env: []string{"GOOS=linux", "GOARCH=386"}},
 		{name: "changed runner image", miss: true, env: []string{"ImageVersion=changed"}},
+		{name: "unavailable toolchain", saveMiss: true, saveEnv: []string{"GOTOOLCHAIN=invalid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -62,8 +65,15 @@ func TestCITestBinaryCache(t *testing.T) {
 				cmd.Env = append(ciEnv("GOTOOLCHAIN=local", "ImageVersion=original", "GOFLAGS="), extra...)
 				return cmd.CombinedOutput()
 			}
-			if out, err := run("save", nil); err != nil {
-				t.Fatalf("save: %v: %s", err, out)
+			out, err := run("save", tc.saveEnv)
+			if (err != nil) != tc.saveMiss {
+				t.Fatalf("save miss=%v, want %v: %v: %s", err != nil, tc.saveMiss, err, out)
+			}
+			if tc.saveMiss {
+				if _, err := os.Stat(filepath.Join(cache, "input-key")); !os.IsNotExist(err) {
+					t.Fatalf("failed save published an input key: %v", err)
+				}
+				return
 			}
 			if tc.mutate != nil {
 				tc.mutate(t, root, cache)
@@ -71,7 +81,7 @@ func TestCITestBinaryCache(t *testing.T) {
 			for _, file := range files {
 				cacheTestWrite(t, filepath.Join(root, file), "existing "+file)
 			}
-			out, err := run("restore", tc.env)
+			out, err = run("restore", tc.env)
 			if (err != nil) != tc.miss {
 				t.Fatalf("restore miss=%v, want %v: %v: %s", err != nil, tc.miss, err, out)
 			}

@@ -17,15 +17,20 @@ while IFS= read -r -d '' path; do
   case "$path" in e2eselfhost.test|e2e.test) ;; *) echo "untracked input: $path" >&2; exit 1 ;; esac
 done < <(git ls-files --others --exclude-standard -z)
 
+# Collect fallible inputs outside the hashing pipeline. Bash can otherwise
+# continue a command substitution after a failed command inside its group,
+# publishing a key without the toolchain identity.
+revision=$(git rev-parse HEAD)
+checkout=$(pwd -P)
+go_inputs=$(go env -json GOVERSION GOOS GOARCH GOAMD64 GOARM64 GOARM GOEXPERIMENT GOFLAGS \
+  GOTOOLCHAIN CGO_ENABLED CC CXX CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS)
+libc=$(getconf GNU_LIBC_VERSION 2>/dev/null || uname -s)
 key=$({
   printf 'fern-e2e-test-binaries-v1\n'
-  git rev-parse HEAD
   # Go records source paths in test binaries; keep the checkout path equal.
-  pwd -P
-  go env -json GOVERSION GOOS GOARCH GOAMD64 GOARM64 GOARM GOEXPERIMENT GOFLAGS \
-    GOTOOLCHAIN CGO_ENABLED CC CXX CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS
+  printf '%s\n' "$revision" "$checkout" "$go_inputs"
   printf 'ImageOS=%s\nImageVersion=%s\n' "${ImageOS:-}" "${ImageVersion:-}"
-  getconf GNU_LIBC_VERSION 2>/dev/null || uname -s
+  printf '%s\n' "$libc"
 } | sha256sum)
 key=${key%% *}
 
