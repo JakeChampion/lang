@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -274,7 +275,8 @@ func init() {
 //
 // The order rule itself, and the abort shapes that need a populated tree,
 // are pinned by TestCpWalkOrder and TestCpIntoItself, which run both
-// implementations against ONE tree so the inodes are the same for both.
+// implementations against one source tree and account for the destination
+// inode allocated by each run.
 func cpWalk(t *testing.T, dir string) {
 	t.Helper()
 	// A chain: one entry per level, so the walk order is forced.
@@ -993,9 +995,11 @@ func TestCpWalkOrder(t *testing.T) {
 // TestCpIntoItself pins the destination-inside-the-source shapes on a
 // POPULATED tree, which the corpus cannot: where the walk meets the
 // destination decides which entries were copied before it stopped, and
-// that depends on inode numbers the two sides of a corpus case do not
-// share. Both binaries run here against one tree, restored between by
-// removing exactly what the first one created.
+// that depends on inode numbers. The source tree is shared, but deleting
+// the first run's destination does not guarantee the next mkdir reuses its
+// inode. Each run is checked against the prefix implied by its own newly
+// allocated destination inode. The same expectation is checked against GNU,
+// so the fixture's model must agree with the reference as well as Fern.
 func TestCpIntoItself(t *testing.T) {
 	gnu := referenceBin(t, "cp")
 	ours := fernBin(t, "cp")
@@ -1022,6 +1026,23 @@ func TestCpIntoItself(t *testing.T) {
 			seedWrite(t, dir, "src/zfile", "z\n")
 			seedMkdir(t, dir, "other")
 			seedWrite(t, dir, "other/o", "o\n")
+			original := treePaths(t, dir)
+			entries := make(map[string]cpOracleEntry)
+			contents := make(map[string]string)
+			for _, p := range original {
+				info, err := os.Stat(filepath.Join(dir, p))
+				if err != nil {
+					t.Fatal(err)
+				}
+				entries[p] = cpOracleEntry{ino: info.Sys().(*syscall.Stat_t).Ino, dir: info.IsDir()}
+				if !info.IsDir() {
+					data, err := os.ReadFile(filepath.Join(dir, p))
+					if err != nil {
+						t.Fatal(err)
+					}
+					contents[p] = string(data)
+				}
+			}
 
 			restore := func() {
 				for _, p := range c.made {
@@ -1030,17 +1051,117 @@ func TestCpIntoItself(t *testing.T) {
 					}
 				}
 			}
-			restore()
-			want := runCpIn(t, gnu, dir, c.args...)
-			wantTree := treePaths(t, dir)
-			restore()
-			got := runCpIn(t, ours, dir, c.args...)
-			gotTree := treePaths(t, dir)
-			if want != got {
-				t.Errorf("output differs for cp %v\n gnu: %q\nfern: %q", c.args, want, got)
+			for _, side := range []struct{ name, bin string }{{"gnu", gnu}, {"fern", ours}} {
+				restore()
+				got := runCpIn(t, side.bin, dir, c.args...)
+				target := c.made[0]
+				info, err := os.Stat(filepath.Join(dir, target))
+				if err != nil {
+					t.Fatalf("%s did not create %s: %v", side.name, target, err)
+				}
+				entries[target] = cpOracleEntry{ino: info.Sys().(*syscall.Stat_t).Ino, dir: true}
+				prefix, stopped := cpOraclePrefix(entries, "src", target)
+				delete(entries, target)
+				if !stopped {
+					t.Fatal("fixture did not encounter its destination")
+				}
+				verbose := false
+				for _, arg := range c.args {
+					verbose = verbose || arg == "-v"
+				}
+				want := "exit 1\n"
+				paths := append([]string(nil), original...)
+				checkCopies := func(copies []cpOracleCopy) {
+					for _, copy := range copies {
+						if verbose {
+							want += fmt.Sprintf("'%s' -> '%s'\n", copy.src, copy.dest)
+						}
+						paths = append(paths, copy.dest)
+						if content, file := contents[copy.src]; file {
+							data, err := os.ReadFile(filepath.Join(dir, copy.dest))
+							if err != nil || string(data) != content {
+								t.Errorf("%s copied %s incorrectly: %q, %v", side.name, copy.dest, data, err)
+							}
+						}
+					}
+				}
+				checkCopies(prefix)
+				want += fmt.Sprintf("cp: cannot copy a directory, 'src', into itself, '%s'\n", target)
+				if len(c.made) == 2 {
+					checkCopies([]cpOracleCopy{{"other", c.made[1]}, {"other/o", c.made[1] + "/o"}})
+				}
+				for path, content := range contents {
+					data, err := os.ReadFile(filepath.Join(dir, path))
+					if err != nil || string(data) != content {
+						t.Errorf("%s changed source %s: %q, %v", side.name, path, data, err)
+					}
+				}
+				sort.Strings(paths)
+				if got != want {
+					t.Errorf("%s output for cp %v\nwant: %q\n got: %q", side.name, c.args, want, got)
+				}
+				if gotTree := treePaths(t, dir); strings.Join(paths, "\n") != strings.Join(gotTree, "\n") {
+					t.Errorf("%s copied the wrong inode-ordered prefix\nwant: %v\n got: %v", side.name, paths, gotTree)
+				}
 			}
-			if strings.Join(wantTree, "\n") != strings.Join(gotTree, "\n") {
-				t.Errorf("the files left behind differ for cp %v\n gnu: %v\nfern: %v", c.args, wantTree, gotTree)
+		})
+	}
+}
+
+type cpOracleEntry struct {
+	ino uint64
+	dir bool
+}
+
+type cpOracleCopy struct{ src, dest string }
+
+// The expected observable prefix is an inode-ordered preorder, ending before
+// the newly created destination. Only the original tree and that one inode
+// participate: generated descendants are never visited after the stop.
+func cpOraclePrefix(entries map[string]cpOracleEntry, source, destination string) ([]cpOracleCopy, bool) {
+	var out []cpOracleCopy
+	var visit func(string, string) bool
+	visit = func(src, dest string) bool {
+		if src == destination {
+			return true
+		}
+		out = append(out, cpOracleCopy{src, dest})
+		if !entries[src].dir {
+			return false
+		}
+		var children []string
+		for p := range entries {
+			if filepath.Dir(p) == src {
+				children = append(children, p)
+			}
+		}
+		sort.Slice(children, func(i, j int) bool { return entries[children[i]].ino < entries[children[j]].ino })
+		for _, p := range children {
+			if visit(p, filepath.Join(dest, filepath.Base(p))) {
+				return true
+			}
+		}
+		return false
+	}
+	stopped := visit(source, destination)
+	return out, stopped
+}
+
+func TestCpOraclePrefixUsesAllocatedDestinationInode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ino  uint64
+		want []cpOracleCopy
+	}{
+		{"before children", 5, []cpOracleCopy{{"src", "src/src"}}},
+		{"between children", 15, []cpOracleCopy{{"src", "src/src"}, {"src/a", "src/src/a"}}},
+		{"after children", 25, []cpOracleCopy{{"src", "src/src"}, {"src/a", "src/src/a"}, {"src/b", "src/src/b"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := map[string]cpOracleEntry{"src": {dir: true}, "src/a": {ino: 10}, "src/b": {ino: 20}, "src/src": {ino: tc.ino, dir: true}}
+			got, stopped := cpOraclePrefix(entries, "src", "src/src")
+			if !stopped || !slices.Equal(got, tc.want) {
+				t.Fatalf("prefix = %v, stopped=%v; want %v", got, stopped, tc.want)
 			}
 		})
 	}

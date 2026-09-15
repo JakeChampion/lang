@@ -87,16 +87,15 @@ func weightsFile(t *testing.T, body string) string {
 	return p
 }
 
-// The measurement source is the shards' gotestsum jsonfile. Only top-level
-// pass/fail actions carry a usable duration: a subtest's time is already inside
-// its parent's, a package-level result has no test name, and an `output` action
-// can echo text that LOOKS like a result line (its quotes are escaped, so it
-// must not match).
+// Measure completed top-level lifetimes from full gotestsum JSON. The span
+// includes parallel children; parent Elapsed does not. Output that resembles
+// a JSON result must remain ordinary output.
 func TestCITestWeightsExtractPicksTopLevelDurations(t *testing.T) {
 	dir := seed(t, map[string]string{"run.json": strings.Join([]string{
 		`{"Time":"2026-08-14T10:00:00Z","Action":"run","Package":"e2eselfhost","Test":"TestSelfHostHeavy"}`,
 		`{"Time":"2026-08-14T10:01:00Z","Action":"pass","Package":"e2eselfhost","Test":"TestSelfHostHeavy/sub","Elapsed":60.01}`,
 		`{"Time":"2026-08-14T10:08:03Z","Action":"pass","Package":"e2eselfhost","Test":"TestSelfHostHeavy","Elapsed":482.11}`,
+		`{"Time":"2026-08-14T10:08:04.6Z","Action":"run","Package":"e2eselfhost","Test":"TestSelfHostNoisy"}`,
 		`{"Time":"2026-08-14T10:08:04Z","Action":"output","Package":"e2eselfhost","Test":"TestSelfHostNoisy",` +
 			`"Output":"printed {\"Action\":\"pass\",\"Test\":\"TestSelfHostFake\",\"Elapsed\":9999}\n"}`,
 		`{"Time":"2026-08-14T10:08:05Z","Action":"fail","Package":"e2eselfhost","Test":"TestSelfHostNoisy","Elapsed":0.4}`,
@@ -108,7 +107,7 @@ func TestCITestWeightsExtractPicksTopLevelDurations(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("want exit 0, got %d: %s", code, out)
 	}
-	want := "TestSelfHostHeavy\t482.11\nTestSelfHostNoisy\t0.40\n"
+	want := "TestSelfHostHeavy\t483.00\nTestSelfHostNoisy\t0.40\n"
 	if out != want {
 		t.Errorf("extract output:\n%q\nwant:\n%q", out, want)
 	}

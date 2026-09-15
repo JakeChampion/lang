@@ -4,6 +4,7 @@
 # Usage:
 #   ci-test-weights extract JSONFILE...        # test2json JSON -> `name<TAB>seconds`
 #   ci-test-weights check TIMINGS_DIR WEIGHTS  # compare, report, annotate
+#   ci-test-weights refresh WEIGHTS RUN_DIR RUN_DIR... # measured replacement
 #
 # WHY THIS EXISTS (#6823, second occurrence of #5914). The self-host shards are
 # partitioned by scripts/selfhost-shard-tests using the declared weights in
@@ -16,7 +17,9 @@
 #
 # `extract` runs on each shard (which already writes a gotestsum --jsonfile),
 # `check` runs off-shard in `verify`, which already aggregates the shard
-# artifacts. No extra build, no extra job.
+# artifacts. The extractor uses the existing Go toolchain and build cache;
+# it adds no test invocation or runner job. Its collection overhead must still
+# be measured on CI.
 #
 # WARN, DO NOT FAIL (for now). Every finding is a job-summary line plus a
 # GitHub warning annotation, and the exit status is 0. A wrong weight cannot
@@ -25,11 +28,13 @@
 # FERN_CI_WEIGHT_GATE_STRICT=1 to make findings fatal; that escalation is
 # deliberately a one-variable change.
 #
-# SUGGESTIONS ONLY EVER RAISE A WEIGHT. The same test measured 482 s and 738 s
+# CHECK SUGGESTIONS ONLY EVER RAISE A WEIGHT. The same test measured 482 s and 738 s
 # on consecutive runs, a ~50% swing, so a suggestion keyed to one measurement
 # would ratchet weights down into the next timeout. Suggested weight is
 # ceil(measured * FERN_WEIGHT_SAFETY) and is emitted only when it exceeds the
 # declared entry.
+# The explicit `refresh` command instead uses multiple completed runs to
+# account for improvements without ratcheting weights upward forever.
 
 set -euo pipefail
 
@@ -56,28 +61,104 @@ OWN_JOB_FRACTION="${FERN_WEIGHT_OWN_JOB_FRACTION:-0.5}"
 SHARD_LOAD_FRACTION="${FERN_WEIGHT_SHARD_LOAD_FRACTION:-0.85}"
 
 usage() {
-  echo "usage: ci-test-weights extract JSONFILE... | ci-test-weights check TIMINGS_DIR WEIGHTS" >&2
+  echo "usage: ci-test-weights extract JSONFILE... | ci-test-weights check TIMINGS_DIR WEIGHTS | ci-test-weights refresh WEIGHTS RUN_DIR RUN_DIR..." >&2
   exit 2
+}
+
+# Explicit maintenance, separate from the single-run advisory check. Each
+# directory contains one completed run's *.timings artifacts. Use comparable,
+# successful runs: the timing rows themselves cannot establish run success.
+# Lower a weight only after observations in at least two distinct runs; use
+# the slower observation. Keep unobserved weights and allow a single new slow
+# observation to raise one. Output is a replacement file, never an in-place edit.
+refresh() {
+  [ "$#" -ge 3 ] || usage
+  local weights="$1"
+  shift
+  [ -f "$weights" ] || { echo "ci-test-weights: missing weights: $weights" >&2; return 1; }
+  local -a dirs=() files=()
+  local dir canonical previous file found
+  for dir in "$@"; do
+    canonical="$(cd "$dir" && pwd -P)" || return 1
+    for previous in "${dirs[@]-}"; do
+      if [ "$previous" = "$canonical" ]; then
+        echo "ci-test-weights: repeated run directory: $dir" >&2
+        return 1
+      fi
+    done
+    dirs+=("$canonical")
+    found=0
+    for file in "$canonical"/*.timings; do
+      [ -f "$file" ] || continue
+      files+=("$file")
+      found=1
+    done
+    if [ "$found" = 0 ]; then
+      echo "ci-test-weights: no timing files in $dir" >&2
+      return 1
+    fi
+  done
+  awk -v W="$weights" -v expected_runs="${#dirs[@]}" '
+    function bad(message) {
+      print "ci-test-weights: " message > "/dev/stderr"
+      failed = 1
+      exit 1
+    }
+    function valid_name(name) { return name ~ /^Test[A-Za-z0-9_]+$/ }
+    function valid_number(value) { return value ~ /^[0-9]+([.][0-9]+)?$/ }
+    BEGIN {
+      while ((getline line < W) > 0) {
+        if (line ~ /^[ \t]*(#|$)/) continue
+        sub(/^[ \t]+/, "", line)
+        sub(/[ \t]+$/, "", line)
+        n = split(line, fields, /[ \t]+/)
+        if (n != 2 || !valid_name(fields[1]) || !valid_number(fields[2]) || fields[2] + 0 <= 0)
+          bad("invalid weight row: " line)
+        if (fields[1] in declared) bad("duplicate weight: " fields[1])
+        declared[fields[1]] = fields[2]
+      }
+      close(W)
+    }
+    FNR == 1 {
+      count = split(FILENAME, path_parts, "/")
+      run = substr(FILENAME, 1, length(FILENAME) - length(path_parts[count]) - 1)
+      runs[run] = 1
+    }
+    NF {
+      if (NF != 2 || !valid_name($1) || !valid_number($2))
+        bad("invalid timing row in " FILENAME ": " $0)
+      if (!(($1, run) in observed)) samples[$1]++
+      observed[$1, run] = 1
+      rows[run]++
+      if ($2 + 0 > slowest[$1]) slowest[$1] = $2 + 0
+    }
+    END {
+      if (failed) exit 1
+      for (run in runs) {
+        run_count++
+        if (!rows[run]) bad("empty timing run: " run)
+      }
+      if (run_count != expected_runs) bad("empty timing run")
+      for (name in samples) {
+        seconds = slowest[name]
+        weight = int(seconds) + (seconds > int(seconds))
+        if (weight < 1) weight = 1
+        old = name in declared ? declared[name] + 0 : 1
+        if (samples[name] >= 2 || weight > old) declared[name] = sprintf("%.0f", weight)
+      }
+      for (name in declared) if (declared[name] + 0 != 1) printf "%s %s\n", name, declared[name]
+    }
+  ' "${files[@]}" | LC_ALL=C sort
 }
 
 # extract — pull top-level test durations out of `go tool test2json` output.
 #
-# Only `pass`/`fail` actions carry Elapsed; subtests (a `/` in the name) are
-# rolled up by their parent and dropped. An `output` action can echo arbitrary
-# test stdout, but its embedded quotes are backslash-escaped, so the literal
-# `"Action":"pass"` cannot appear inside one.
+# Parent Elapsed excludes parallel children. Use the full event stream's
+# run-to-terminal span, excluding an explicit top-level pause, and omit cached
+# packages. Child rows are not added again. Terminal-only files cannot supply
+# this measurement and are rejected rather than silently under-weighting tests.
 extract() {
-  awk '
-    /"Action":"(pass|fail)"/ && /"Elapsed":/ {
-      if (!match($0, /"Test":"[^"]+"/)) next
-      name = substr($0, RSTART + 8, RLENGTH - 9)
-      if (index(name, "/")) next
-      if (!match($0, /"Elapsed":[0-9.eE+-]+/)) next
-      secs = substr($0, RSTART + 10, RLENGTH - 10) + 0
-      if (secs > max[name]) max[name] = secs
-    }
-    END { for (n in max) printf "%s\t%.2f\n", n, max[n] }
-  ' "$@" | sort
+  go run "$(dirname "${BASH_SOURCE[0]}")/../cmd/ci-test-durations/main.go" "$@"
 }
 
 # check — compare every measured duration against its declared weight.
@@ -234,5 +315,6 @@ shift || usage
 case "$cmd" in
   extract) extract "$@" ;;
   check) check "$@" ;;
+  refresh) refresh "$@" ;;
   *) usage ;;
 esac
