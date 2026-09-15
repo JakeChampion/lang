@@ -1,6 +1,7 @@
 # Experimental duration weights from native run 35022735930, first two-worker trial.
 # Frozen before evaluating the second trial. No production workflow uses this file.
 # Unlisted selected tests receive weight 1; every inventoried test still runs.
+# Rounded zero observations use a 0.01-second scheduling floor, not measured time.
 TestX86_64AbortBacktrace	0.87
 TestX86_64AbortBacktraceOff	1.76
 TestX86_64AbortMessages	0.90
@@ -62,7 +63,7 @@ TestX86_64BindingSlotCrossShape	0.07
 TestX86_64BitwiseOverload	0.02
 TestX86_64BorrowInferMatchesOwned	80.31
 TestX86_64BoundsElisionCorrect	0.02
-TestX86_64BoundsElisionEmitted	0.00
+TestX86_64BoundsElisionEmitted	0.01
 TestX86_64BoxPreciseDrop	0.03
 TestX86_64BoxedDynCaptureRebind	0.02
 TestX86_64BoxedScrutineePtrPayloadReclaim	0.23
@@ -214,7 +215,7 @@ TestX86_64IndirectCall	0.01
 TestX86_64InherentImpl	0.05
 TestX86_64InstantNow	0.16
 TestX86_64IntermediateLocalReclaim	0.04
-TestX86_64IoErrorBoxesAreHeadered	0.00
+TestX86_64IoErrorBoxesAreHeadered	0.01
 TestX86_64IterBuildConsume	0.01
 TestX86_64LambdaCallsMethodOnCapturedString	0.14
 TestX86_64LambdaWithBodyLocals	0.01
@@ -274,14 +275,14 @@ TestX86_64NativeArithmetic	0.01
 TestX86_64NativeClosures	0.01
 TestX86_64NativeDynEnumDispatch	0.03
 TestX86_64NativeExitCode	0.01
-TestX86_64NativeFactorial	0.00
+TestX86_64NativeFactorial	0.01
 TestX86_64NativeFloat	0.01
 TestX86_64NativeIsCLIDefault	0.79
 TestX86_64NativeMap	0.06
 TestX86_64NativeMapFieldStructRebind	0.06
 TestX86_64NativeMapFieldStructRebindIndirect	0.05
 TestX86_64NativePIESelfReloc	0.01
-TestX86_64NativePutchar	0.00
+TestX86_64NativePutchar	0.01
 TestX86_64NativeStrings	0.16
 TestX86_64NativeTranscendentals	0.02
 TestX86_64NativeWX	0.21
@@ -301,7 +302,7 @@ TestX86_64OpenWith	0.02
 TestX86_64OperatorOverload	0.02
 TestX86_64OptFieldStructChainLeakFree	0.06
 TestX86_64OptimizeCleanupCorrect	0.01
-TestX86_64OptimizeCleanupFolds	0.00
+TestX86_64OptimizeCleanupFolds	0.01
 TestX86_64OwnAccumulatorRecursionReclaim	0.10
 TestX86_64OwnConsumingMatch	0.01
 TestX86_64OwnInplaceSort	0.17

@@ -22,6 +22,12 @@ against the second trial changes the longer recorded active-time sum from
 heap benchmark, which remains assigned with default weight one. Its duration
 is not invented or included in the measured sum.
 
+The first native pilot rejected five timing rows rounded to zero. The
+experimental table now floors those scheduling weights at 0.01 seconds;
+that floor is not a measured duration. A regression check parses the actual
+table before publication. The replay above predates this correction and is
+only exploratory evidence; live measurements must use the corrected table.
+
 Both trials share a runner and binary. Reassignment can change fixture reuse
 and CPU or memory contention. This replay supports a controlled experiment,
 not a live speedup claim or production adoption. The weight table is frozen

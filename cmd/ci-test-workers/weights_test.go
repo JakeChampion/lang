@@ -42,6 +42,17 @@ func TestReadWeights(t *testing.T) {
 	}
 }
 
+func TestNativeWeightTable(t *testing.T) {
+	data, err := os.ReadFile("../../.github/native-x86-test-weights.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	weights, err := readWeights(bytes.NewReader(data))
+	if err != nil || len(weights) == 0 {
+		t.Fatalf("native weight table is empty or invalid: %v", err)
+	}
+}
+
 func TestWeightedInventory(t *testing.T) {
 	for _, tc := range []struct {
 		name, input string
