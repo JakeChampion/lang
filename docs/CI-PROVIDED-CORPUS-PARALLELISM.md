@@ -32,7 +32,7 @@ check every selected verdict; the aggregate call floor applies to full runs.
 
 Host: Mac15,6, Apple M3 Pro, 12 CPUs, 36 GiB RAM, Go 1.26.0 darwin/arm64.
 Both variants used the same native ARM64 Darwin verifier built from
-`asm_modload_run.fern` at `394d0edd6`, whose compiler sources match the current
+`asm_modload_run.fern` at `394d0edd6`, whose compiler sources match the
 source-staging merge `056b68bc8`. Driver construction was excluded.
 The old serial test body and the new helper were invoked by temporary Go
 tests using that prebuilt executable. No QEMU or generated program ran.
@@ -54,8 +54,8 @@ verifier sweep, with 4.5% more CPU time. Every trial passed all 581 fixtures
 and counted 325,900 resolved calls. This is not a whole-CI speedup. The RSS
 statistic does not replace measuring total concurrent memory on CI runners.
 
-These measurements include the final per-fixture verdict checks and current
-compiler/library sources. Every selected fixture and resolved-call count was
+These measurements include the final per-fixture verdict checks and the
+compiler/library sources at `056b68bc8`. Every fixture and resolved-call count was
 verified from each trial log.
 
 The initial native race pilot covered `multi_file`, `pub_use_reexport` and
@@ -73,11 +73,21 @@ compiler/library sources, the same focused Linux pilot passed with the
 stricter verdict validation. Regression cases cover expected and unexpected
 diagnostics, clean results, exit 125, exit 137, signals, missing or truncated
 tallies, overflowing counts, and disagreement between header and status.
-The complete current-source Linux x86-under-QEMU run passed all 581 fixtures
+The complete Linux x86-under-QEMU run at that source revision passed all 581 fixtures
 and all verdict regressions with race detection, resolving 325,900 direct
 calls. Package time was 453.837 seconds while another QEMU bootstrap test
 overlapped part of the run. This establishes correctness only. All other
 heavy local work finished before the native timing trials above.
+
+Main later advanced to `5a1247235`, with additional compiler changes. The
+measurements and full-run evidence above describe their recorded revisions;
+integration validation against that newer compiler is tracked separately.
+The Go CLI and native ARM64 Darwin verifier were rebuilt from the integrated
+sources. A three-fixture race pilot passed, followed by the complete corpus:
+581 fixtures and 325,900 direct calls passed with race detection (31.158s
+package time). Verdict regression tests, full source lint, package vet,
+formatting and test selectors also pass. This integration run is not a new
+controlled speed comparison; full current-head CI remains required.
 
 ## Reproduction on native Linux x86-64
 
