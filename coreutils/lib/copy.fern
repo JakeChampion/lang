@@ -33,19 +33,19 @@ import "./mode";
 //
 // One field per `--preserve` attribute. `context` and `xattr` are held so
 // the option parses and reports faithfully; nothing reads them yet.
-pub struct Attrs { mode: boolean, ownership: boolean, timestamps: boolean, links: boolean, context: boolean, xattr: boolean }
+pub struct Attrs { mode: boolean, ownership: boolean, timestamps: boolean, links: boolean, context: boolean, xattr: boolean, mode_declined: boolean }
 
 pub function attrs_none(): Attrs {
-  return Attrs { mode: false, ownership: false, timestamps: false, links: false, context: false, xattr: false };
+  return Attrs { mode: false, ownership: false, timestamps: false, links: false, context: false, xattr: false, mode_declined: false };
 }
 
 // `-p` is `--preserve=mode,ownership,timestamps`, and `-a` adds the rest.
 pub function attrs_p(): Attrs {
-  return Attrs { mode: true, ownership: true, timestamps: true, links: false, context: false, xattr: false };
+  return Attrs { mode: true, ownership: true, timestamps: true, links: false, context: false, xattr: false, mode_declined: false };
 }
 
 pub function attrs_all(): Attrs {
-  return Attrs { mode: true, ownership: true, timestamps: true, links: true, context: true, xattr: true };
+  return Attrs { mode: true, ownership: true, timestamps: true, links: true, context: true, xattr: true, mode_declined: false };
 }
 
 // The `--preserve` / `--no-preserve` argument list, in the order GNU prints
@@ -56,7 +56,9 @@ pub function attr_names(): string[] {
 
 pub function attrs_set(a: Attrs, which: i32, on: boolean): Attrs {
   if (which == 0) {
-    return Attrs { ...a, mode: on };
+    // Declining the mode is a state of its own: create_mode then reads
+    // the TYPE's default rather than the source's bits.
+    return Attrs { ...a, mode: on, mode_declined: !on };
   } else if (which == 1) {
     return Attrs { ...a, timestamps: on };
   } else if (which == 2) {
@@ -68,7 +70,7 @@ pub function attrs_set(a: Attrs, which: i32, on: boolean): Attrs {
   } else if (which == 5) {
     return Attrs { ...a, xattr: on };
   }
-  return Attrs { mode: on, timestamps: on, ownership: on, links: on, context: on, xattr: on };
+  return Attrs { mode: on, timestamps: on, ownership: on, links: on, context: on, xattr: on, mode_declined: !on };
 }
 
 // ---- how a symbolic link is treated ----------------------------------------
@@ -281,6 +283,16 @@ function perm_bits(mode: u32): i32 {
 function create_mode(cfg: Cfg, src: Info): i32 {
   if (cfg.attrs.mode) {
     return perm_bits(src.mode);
+  }
+  if (cfg.attrs.mode_declined) {
+    // `--no-preserve=mode`: the source's bits are not consulted at all.
+    // Measured — a 0777 source lands 0644 under umask 022, which is the
+    // 0666 an `open` would have created, not 0777 filtered.
+    var deflt: i32 = 438;
+    if (src.is_dir) {
+      deflt = 511;
+    }
+    return deflt & mode.complement(current_umask());
   }
   return perm_bits(src.mode) & mode.complement(current_umask());
 }
@@ -836,15 +848,17 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     if (!cfg.recursive) {
       return fail(st, "-r not specified; omitting directory " + gnu.quotea(src_path));
     }
+    // The type refusal comes FIRST: measured, `cp -r full full/x` prints
+    // only this one, never the into-itself report as well.
+    if (existed && !dst.is_dir) {
+      return fail(st, "cannot overwrite non-directory " + gnu.quotea(dest) + " with directory " + gnu.quotea(src_path));
+    }
     if (top && under(src_path, dest)) {
       // Reported, and the copy still happens: measured at exit 1 with
       // `d1/d1` created and filled from the snapshot above. The check is
       // the TOP-LEVEL operand's alone — the entries below it reach their
       // own destinations without repeating it.
       st = fail(st, "cannot copy a directory, " + gnu.quotea(src_path) + ", into itself, " + gnu.quotea(dest));
-    }
-    if (existed && !dst.is_dir) {
-      return fail(st, "cannot overwrite non-directory " + gnu.quotea(dest) + " with directory " + gnu.quotea(src_path));
     }
     st = verbose_line(cfg, st, src_path, dest, "");
     return copy_dir(cfg, st, src_path, dest, src, existed);

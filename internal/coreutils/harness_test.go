@@ -172,6 +172,18 @@ type invocation struct {
 	// without this their whole corpus passes on a utility that parsed its
 	// operands, printed every line, and made no call. Needs seedTree.
 	ownership bool
+	// sparse puts each regular file's ALLOCATED BLOCK COUNT into the tree
+	// comparison. Off by default, and for the same reason ownership is: a
+	// block count depends on the filesystem under the test directory, so
+	// it is one more thing that can differ for reasons that are not the
+	// utility's.
+	//
+	// `cp` is what needs it. Whether a hole in the source stays a hole in
+	// the copy is invisible to every other field here — the names, modes
+	// and contents of a sparse copy and a fully-written one are identical
+	// — so without it `--sparse=never` and `--sparse=always` compare equal
+	// and the whole option proves nothing. Needs seedTree.
+	sparse bool
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -216,6 +228,11 @@ type treeEntry struct {
 	// needs compared — the kind alone cannot tell `mknod n c 1 3` from
 	// `mknod n c 1 4`.
 	rdev uint64
+	// blocks is the 512-byte allocation count, for a case that asked
+	// (invocation.sparse). Regular files only, and -1 for every entry
+	// that did not ask, so a case without the flag compares as it always
+	// did.
+	blocks int64
 	// group numbers the (dev, ino) equivalence classes in walk order, so
 	// two names sharing an inode share a number on both sides while the
 	// inodes themselves — which differ between the runs — never reach the
@@ -792,7 +809,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 		if inv.mask != nil {
 			seeded = map[string]bool{}
-			for _, e := range readTree(t, workDir, inv.ownership) {
+			for _, e := range readTree(t, workDir, treeOptsOf(inv)) {
 				seeded[e.name] = true
 			}
 		}
@@ -906,7 +923,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	}
 	if workDir != "" {
 		groups := map[[2]uint64]int{}
-		res.tree = readTreeInto(t, workDir, "", groups, inv.ownership)
+		res.tree = readTreeInto(t, workDir, "", groups, treeOptsOf(inv))
 		if crossRoot != "" {
 			// The link to the other filesystem is the harness's own
 			// scaffolding and its target is a fresh path per run, so it
@@ -917,7 +934,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 					kept = append(kept, e)
 				}
 			}
-			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, inv.ownership)...)
+			res.tree = append(kept, readTreeInto(t, crossRoot, crossDevName+"/", groups, treeOptsOf(inv))...)
 			sort.Slice(res.tree, func(i, j int) bool { return res.tree[i].name < res.tree[j].name })
 		}
 	}
@@ -980,9 +997,23 @@ func ownerOf(t *testing.T, path string, info os.FileInfo) string {
 	return fmt.Sprintf("%d:%d", st.Uid, st.Gid)
 }
 
-func readTree(t *testing.T, root string, ownership bool) []treeEntry {
+// treeOpts are the invocation flags the tree comparison reads — the
+// properties a case can ADD to it, each off unless it asks. A struct
+// rather than a parameter per flag: two adjacent bools at four call sites
+// is a transposition waiting to happen, and the next property is then a
+// field rather than another argument.
+type treeOpts struct {
+	ownership bool
+	sparse    bool
+}
+
+func treeOptsOf(inv invocation) treeOpts {
+	return treeOpts{ownership: inv.ownership, sparse: inv.sparse}
+}
+
+func readTree(t *testing.T, root string, opts treeOpts) []treeEntry {
 	t.Helper()
-	return readTreeInto(t, root, "", map[[2]uint64]int{}, ownership)
+	return readTreeInto(t, root, "", map[[2]uint64]int{}, opts)
 }
 
 // readTreeInto is readTree with each name prefixed and the hard-link
@@ -1077,7 +1108,7 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	return opened
 }
 
-func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, ownership bool) []treeEntry {
+func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, opts treeOpts) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
 	var out []treeEntry
@@ -1093,8 +1124,8 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 			return nil
 		}
 		mode := info.Mode()
-		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode)}
-		if ownership {
+		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
+		if opts.ownership {
 			e.owner = ownerOf(t, path, info)
 		}
 		if was, ok := opened[path]; ok {
@@ -1115,6 +1146,11 @@ func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, o
 			}
 		case mode.IsRegular():
 			e.group = linkGroup(info, groups)
+			if opts.sparse {
+				if st, ok := info.Sys().(*syscall.Stat_t); ok {
+					e.blocks = st.Blocks
+				}
+			}
 			if info.Size() > 1<<22 {
 				e.content = fmt.Sprintf("<%d bytes>", info.Size())
 			} else {

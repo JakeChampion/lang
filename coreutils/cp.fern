@@ -255,10 +255,10 @@ function option_table(): gnu.Opt[] {
 
 // `Scan` — what the option scan decided, before the environment fills in
 // what no option said.
-struct Scan { cfg: copy.Cfg, target_dir: string, have_target_dir: boolean, no_target_dir: boolean, parents: boolean, strip: boolean, deref_given: boolean, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_no_clobber: boolean }
+struct Scan { cfg: copy.Cfg, target_dir: string, have_target_dir: boolean, no_target_dir: boolean, parents: boolean, strip: boolean, deref_given: boolean, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, warn_no_clobber: boolean, warn_context: boolean }
 
 function scan_new(): Scan {
-  return Scan { cfg: copy.cfg_new(), target_dir: "", have_target_dir: false, no_target_dir: false, parents: false, strip: false, deref_given: false, backup_given: false, control_given: false, control_text: "", suffix_given: false, warn_no_clobber: false };
+  return Scan { cfg: copy.cfg_new(), target_dir: "", have_target_dir: false, no_target_dir: false, parents: false, strip: false, deref_given: false, backup_given: false, control_given: false, control_text: "", suffix_given: false, warn_no_clobber: false, warn_context: false };
 }
 
 function scan_options(argv: string[]): (Scan, string[]) {
@@ -302,8 +302,13 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: copy.Cfg { ...c, copy_contents: true } };
   }
   if (m.id == opt_context()) {
-    // Nothing to set: there is no SELinux support here, and a context
-    // this build cannot read is a context it cannot carry.
+    // A NAMED context cannot be honoured without SELinux, and GNU says
+    // so rather than ignoring it silently. Bare `-Z` / `--context` asks
+    // only for the default and is measured silent, so the warning hangs
+    // off the VALUE and not the option. An empty value still counts.
+    if (m.has_value) {
+      return Scan { ...s, warn_context: true };
+    }
     return s;
   }
   if (m.id == opt_debug()) {
@@ -313,7 +318,10 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: copy.Cfg { ...c, deref: copy.deref_always() }, deref_given: true };
   }
   if (m.id == opt_force()) {
-    return Scan { ...s, cfg: copy.Cfg { ...c, force: true, ask: copy.ask_yes() } };
+    // `-f` is only "remove an unopenable destination and retry"; it does
+    // NOT cancel an earlier `-i`. Measured — `cp -i -f old dest` still
+    // asks, and declining it still exits 1.
+    return Scan { ...s, cfg: copy.Cfg { ...c, force: true } };
   }
   if (m.id == opt_interactive()) {
     // `-i` overrides an earlier `-n`, which is the whole of why the three
@@ -517,6 +525,9 @@ function main(): i32 {
     gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
     return 1;
   }
+  if (s.warn_context) {
+    gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
+  }
   if (s.warn_no_clobber) {
     gnu.error("warning: behavior of -n is non-portable and may change in future; use --update=none instead");
   }
@@ -542,8 +553,10 @@ function main(): i32 {
     if (operands.len() > 2) {
       gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
     }
-    if (s.parents) {
-      gnu.die_usage("cannot combine --parents with --no-target-directory (-T)", 1);
+    if (s.parents && !is_directory(operands[1])) {
+      // `--parents` with `-T` is not a conflict of its own: measured, it
+      // reaches this same refusal.
+      gnu.die_usage("with --parents, the destination must be a directory", 1);
     }
     st = copy.copy_one(cfg, st, operands[0], operands[1], true);
     return finish(st);
@@ -607,7 +620,7 @@ function copy_with_parents(cfg: copy.Cfg, st0: copy.State, src: string, dir: str
     if (src[i] as i32 == 47) {
       var prefix: string = slice_unchecked(src, 0, i) + "";
       if (prefix.len() > 0) {
-        st = make_parent(st, prefix, gnu.join_path(dir, prefix));
+        st = make_parent(cfg, st, prefix, gnu.join_path(dir, prefix));
       }
     }
     i = i + 1;
@@ -617,7 +630,7 @@ function copy_with_parents(cfg: copy.Cfg, st0: copy.State, src: string, dir: str
 
 // One intermediate directory of a `--parents` destination. Already there
 // is not a failure — two operands under one path share every prefix.
-function make_parent(st0: copy.State, src: string, dest: string): copy.State {
+function make_parent(cfg: copy.Cfg, st0: copy.State, src: string, dest: string): copy.State {
   var st: copy.State = st0;
   if (is_directory(dest)) {
     return st;
@@ -631,6 +644,13 @@ function make_parent(st0: copy.State, src: string, dest: string): copy.State {
   }
   match (create_dir(dest, perm)) {
     Ok(_) => {
+      // `-v` announces a created parent, and UNQUOTED — measured,
+      // `cp --parents -v d1/a dst` prints `d1 -> dst/d1` before the
+      // quoted `'d1/a' -> 'dst/d1/a'`. It is the one verbose line here
+      // that does not quote its names.
+      if (cfg.verbose) {
+        return copy.State { ...st, out: gnu.put(st.out, src + " -> " + dest + "\n") };
+      }
       return st;
     },
     Err(e) => {

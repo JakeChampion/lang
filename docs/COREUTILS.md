@@ -100,9 +100,9 @@ unless the harness equalises this. It does, and `coreutils/lib/gnu.fern`
 reproduces the verbatim rule, so `/usr/local/bin/yes -x` says
 `/usr/local/bin/yes: invalid option -- 'x'` exactly as GNU would.
 
-### The three exemptions
+### The four exemptions
 
-Three outputs are ours by design, because their content names the
+Four outputs are ours by design, because their content names the
 implementation:
 
 - `--version` prints `<util> (Fern coreutils) <version>` and nothing else.
@@ -121,6 +121,24 @@ implementation:
   algorithms, and neither do we, so those ARE in the byte-exact corpus, as
   is everything else about the option: that it is accepted, that it refuses
   a value, and that it stands in the ambiguity list.
+- `cp --debug`'s second line is ours, for the same reason as `cksum
+  --debug`'s and no other. GNU's names ITS OWN syscall strategy —
+  measured, `copy offload: yes, reflink: unsupported, sparse detection:
+  no` for a dense file and `copy offload: unknown, …, sparse detection:
+  SEEK_HOLE` for a sparse one — which is `copy_file_range` offload and
+  `SEEK_HOLE` probing, neither of which has a Fern primitive. Claiming
+  either would say something untrue about our own code. Ours states what
+  the copy actually did, and the corpus holds `--debug` to its exit
+  status and stream rather than its bytes. Everything else about the
+  option IS byte-exact: that it implies `-v`, that the `'src' -> 'dest'`
+  lines it implies are identical, that a directory and a FIFO draw no
+  such line while a regular file does, and that it stands in the
+  ambiguity list between `--copy-contents` and `--dereference`.
+
+  This one has a way out that `cksum --debug` does not: a
+  `copy_file_range` / `SEEK_HOLE` primitive would let the line be true
+  rather than ours. Until then it is an exemption, not a divergence to
+  fix in cp.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -2491,7 +2509,20 @@ groups are the order of work. Each sub-issue names its group.
   environ, exec), `ln`
   (link, symlink, readlink; `link`, `unlink`, `readlink` and `realpath`
   are done on `read_link()` from #8883, leaving `ln`),
-  `mkdir` `rmdir` `rm` (done) `mv` `cp`
+  `mkdir` `rmdir` `rm` (done) `mv` `cp` (cp done — the recursive copy
+  engine is `lib/copy.fern`, shared by design: GNU keeps one `copy()`
+  behind cp, mv's cross-device fallback and install, and so do we. It
+  needed NO new primitive — chmod, chown_at, set_file_times,
+  create_symlink, create_link, read_link, mknod, `Writer.seek` and
+  stat/lstat's full field set were all already here, so #8352's
+  "blocked on openat/fchmod/fchown/utimensat/copy_file_range/lseek
+  SEEK_HOLE, symlink" was stale but for the clone. `--reflink=always`
+  reports the failure GNU reports where the filesystem cannot clone,
+  which is what ext4 and overlayfs answer and not what btrfs does:
+  FICLONE is the one primitive still missing. Holes are punched at
+  st_blksize granularity, which reproduces GNU's SEEK_HOLE result
+  without it. mv's EXDEV fallback is the same engine and is now
+  unblocked for the same reason)
   `install` `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle
   methods from #9181 and the non-blocking `open_reader_with` /
