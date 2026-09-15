@@ -1079,6 +1079,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesHandleIsatty {
 		g.emitHandleIsattyRuntime()
 	}
+	if g.usesHandleTty {
+		g.emitHandleTtyRuntime()
+	}
 	if g.usesWriterTruncate {
 		g.emitWriterTruncateRuntime()
 	}
@@ -12818,6 +12821,30 @@ func (g *generator) emitHandleIsattyRuntime() {
 	g.sizeDirective("__fern_handle_isatty")
 }
 
+// emitHandleTtyRuntime emits the handle forms of the four terminal
+// questions: the fd out of the box and a branch into the helper the free
+// builtin already emits, which leaves every argument after the receiver
+// exactly where that helper wants it (#9363).
+//
+// The receiver's fd is at offset 0 of the handle box, which is where
+// `__fern_handle_isatty` and `__fern_writer_truncate` read it too.
+func (g *generator) emitHandleTtyRuntime() {
+	for _, m := range []struct{ sym, target string }{
+		{"__fern_handle_window_size", "__fern_window_size"},
+		{"__fern_handle_set_window_size", "__fern_set_window_size"},
+		{"__fern_handle_termios_get", "__fern_termios_get"},
+		{"__fern_handle_termios_set", "__fern_termios_set"},
+	} {
+		g.line("")
+		g.line(".global " + m.sym)
+		g.typeDirective(m.sym)
+		g.label(m.sym)
+		g.emit("ldr w0, [x0]") // fd
+		g.emit("b %s", m.target)
+		g.sizeDirective(m.sym)
+	}
+}
+
 // emitWriterTruncateRuntime emits `__fern_writer_truncate(handle_ptr,
 // length)` in (x0, x1) → Option[IoError]: ftruncate(2) on the handle's
 // fd. None = the payloadless box; Some = {tag=0, IoError @8}. The length
@@ -15103,16 +15130,20 @@ type generator struct {
 	// unlinkat / mkdirat / getdents64 / fstatat runtimes with the
 	// same Option[IoError] / Result[_, IoError] box shapes as the
 	// file-I/O helpers.
-	usesRemoveFile     bool
-	usesTempDir        bool
-	usesReadDir        bool
-	usesReadDirAll     bool
-	usesStat           bool
-	usesLstat          bool
-	usesFdStat         bool
-	usesReaderSeek     bool
-	usesFdFlags        bool
-	usesHandleIsatty   bool
+	usesRemoveFile   bool
+	usesTempDir      bool
+	usesReadDir      bool
+	usesReadDirAll   bool
+	usesStat         bool
+	usesLstat        bool
+	usesFdStat       bool
+	usesReaderSeek   bool
+	usesFdFlags      bool
+	usesHandleIsatty bool
+	// usesHandleTty pulls in the four terminal questions' handle forms —
+	// each two instructions, the fd out of the box and a branch into the
+	// helper the free builtin already emits (#9363).
+	usesHandleTty      bool
 	usesWriterTruncate bool
 	usesFdSync         bool
 	usesFdDatasync     bool
@@ -19726,6 +19757,32 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_handle_isatty"
 			g.usesHandleIsatty = true
 			g.usesIsatty = true
+		case "__method_Reader_window_size":
+			// The four terminal questions asked of a handle: the fd out
+			// of the box, then the helper the free builtin emits (#9363).
+			target = "__fern_handle_window_size"
+			g.usesHandleTty = true
+			g.usesWindowSize = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_set_window_size":
+			target = "__fern_handle_set_window_size"
+			g.usesHandleTty = true
+			g.usesSetWindowSize = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_termios_get":
+			target = "__fern_handle_termios_get"
+			g.usesHandleTty = true
+			g.usesTermiosGet = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "__method_Reader_termios_set":
+			target = "__fern_handle_termios_set"
+			g.usesHandleTty = true
+			g.usesTermiosSet = true
+			g.usesAlloc = true
+			g.usesIoError = true
 		case "__method_Writer_write_some":
 			target = "__fern_writer_write_some"
 			g.usesAlloc = true

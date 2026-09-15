@@ -360,6 +360,11 @@ capability: three scalar operands and no array, so arm64-ssa emits it like
 every other syscall-shaped builtin (#9360). The array construction is the
 whole of what the termios pair is missing.
 
+The same split applies to the HANDLE forms (#9363): arm64-ssa emits
+`__method_Reader_window_size` and `__method_Reader_set_window_size`, and the
+termios two inherit the gap their free forms have — each is a two-instruction
+stub onto the helper, so there is nothing for a stub to jump to.
+
 ### Line coverage (`-cover`) is native-only
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line

@@ -1882,6 +1882,22 @@ rows 65536` reports 0 rows with no diagnostic where `stty rows
 99999999999999` is GNU's own `strtoul` range error — two different limits, and
 the utility keeps them apart.
 
+`stty -F DEVICE` needed all four of those asked of a HANDLE rather than a
+descriptor number (#9363), because the utility opens a path and a Reader
+surrenders no number:
+
+    r.window_size()               r.termios_get()
+    r.set_window_size(rows, cols) r.termios_set(when, words)
+
+`r.isatty()` is the precedent and the rule: a descriptor question asked of a
+handle becomes a method on the handle. Each is a two-instruction stub on the
+natives — the fd out of the box, a jump into the helper the free form already
+emits — and in the self-host compiler it costs nothing at all, because a
+handle IS its fd there and the method lowers to the same op with the receiver
+as its first operand. Measured: the open is `O_RDONLY | O_NONBLOCK`, since
+`stty -F` on a FIFO with no writer answers `Inappropriate ioctl for device` at
+once rather than waiting for a peer.
+
 `buf_push_u64(h, v)` (#9221) is not a syscall wrapper at all — it is eight
 bytes into the capacity-carrying builder in one store, little-endian, which is
 how every target holds a u64. It exists because a byte at a time is not fast

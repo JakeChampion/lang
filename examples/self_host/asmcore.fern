@@ -4235,6 +4235,11 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     // Reader.dup_onto / Writer.dup_onto -> Option[IoError]: the descriptor
     // either took the handle or reports why not.
     if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "dup_onto") { return ty_option(ty_unknown()); }
+    // The four terminal questions asked of a handle, Reader-only (#9363).
+    // termios_get's payload is an i64[]; the two writes answer Ok(()).
+    if (ty_struct_name(rt) == "Reader" && fa.field == "window_size") { return ty_result(ty_unknown()); }
+    if (ty_struct_name(rt) == "Reader" && fa.field == "termios_get") { return ty_result(ty_array_i64()); }
+    if (ty_struct_name(rt) == "Reader" && (fa.field == "set_window_size" || fa.field == "termios_set")) { return ty_result(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {
         return ty_option(map_val(rt));
