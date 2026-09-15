@@ -51,9 +51,12 @@ struct Rows {
 // sem_ir_on reports whether FERN_SEM_IR selects the semantic lowering. Off is
 // the AST lowering unchanged.
 //
-// An EMPTY value is off. `FERN_SEM_IR=` is how a differential harness spells
-// the control leg, and reading it as "set, therefore on" made one compare the
-// semantic path against itself — green, and measuring nothing.
+// An EMPTY value is off, which is DELIBERATELY not what the flags beside it do
+// — `ircore.strict_ir_on` and its neighbours read presence alone — so do not
+// "fix" it back. `FERN_SEM_IR=` is how a differential harness spells the
+// control leg, and reading it as "set, therefore on" made one compare the
+// semantic path against itself: green, and measuring nothing. A flag whose
+// whole job is to have an off column has to have one.
 pub function sem_ir_on(): boolean {
     match (env("FERN_SEM_IR")) {
         Some(v) => { return v.len() > 0; },
