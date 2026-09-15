@@ -1202,11 +1202,22 @@ Unset, a backend receives what it received before, op for op — the substitutio
 is the only thing the flag adds, and the AST lowering still runs and still
 gives the module its eligibility verdict.
 
-All three whole-program paths route through it: `asm_ir.emit_module_ir_gated`,
-`asm_arm64_ir.emit_module_ir_gated` and `wasm_ir.emit_module_mode_or_error`.
-The registry set now comes BACK from the gate rather than only going in, since
+All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
+each gained a `_sub` sibling of their gated entry that threads an `ircore.Sub`
+through it, and the old name calls it with `ircore.no_sub()`. The registry set
+inside comes from that value rather than from the caller's own base, since
 `caller_sigs` rewrote rows in it and the emit has to read the same set the
 lowering did.
+
+**The substitution is passed as a VALUE, and that is a size decision rather
+than a taste one.** Calling the producer from inside the three backend modules
+made every driver that links a backend link the pipeline behind it —
+`semsource` + `ssarc` + `ssaunits` + `ssasem` + `semrecords` + `semtypes` +
+`ssalayout` — for a flag it never reads. The driver-size gate (#6826) measured
+eight drivers growing **6.7% to 10.2%**, among them `wasm_run`, `asm_run` and
+`wasm_runio_run`, none of which can select the path at all. With the seam
+inverted those three link **4,096 bytes** more than main, one page of
+alignment, and the CLI carries the 601 KB alone.
 
 Three rules hold a mixed module together, and the third is the one that was
 not obvious:
