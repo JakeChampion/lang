@@ -28,11 +28,12 @@ missing or malformed output fail even for an expected-dirty fixture. Focused
 subtest filters
 check every selected verdict; the aggregate call floor applies to full runs.
 
-## Initial native scheduling measurement
+## Final native measurement
 
 Host: Mac15,6, Apple M3 Pro, 12 CPUs, 36 GiB RAM, Go 1.26.0 darwin/arm64.
 Both variants used the same native ARM64 Darwin verifier built from
-`asm_modload_run.fern` at main `2d6ffc1a6`. Driver construction was excluded.
+`asm_modload_run.fern` at `394d0edd6`, whose compiler sources match the current
+source-staging merge `056b68bc8`. Driver construction was excluded.
 The old serial test body and the new helper were invoked by temporary Go
 tests using that prebuilt executable. No QEMU or generated program ran.
 
@@ -43,18 +44,19 @@ of 12,000 MiB admitted at most two simultaneous 5 GiB reservations.
 
 | Trial | Wall seconds | CPU seconds | Reported maximum RSS bytes |
 | --- | ---: | ---: | ---: |
-| Before 1 | 55.558 | 53.42 | 2859450368 |
-| After 1 | 28.889 | 55.67 | 3163406336 |
-| After 2 | 28.668 | 55.94 | 3527245824 |
-| Before 2 | 54.960 | 53.47 | 3523969024 |
+| Before 1 | 55.664 | 53.06 | 1894989824 |
+| After 1 | 28.330 | 55.47 | 2146877440 |
+| After 2 | 28.380 | 55.57 | 2134343680 |
+| Before 2 | 54.568 | 53.22 | 3122724864 |
 
-Mean wall time falls from 55.259 to 28.778 seconds, a 1.92x speedup for this
-verifier sweep, with 4.4% more CPU time. Every trial passed all 581 fixtures
+Mean wall time falls from 55.116 to 28.355 seconds, a 1.94x speedup for this
+verifier sweep, with 4.5% more CPU time. Every trial passed all 581 fixtures
 and counted 325,900 resolved calls. This is not a whole-CI speedup. The RSS
 statistic does not replace measuring total concurrent memory on CI runners.
 
-These measurements preceded the stricter per-fixture verdict checks added
-during integration review; they measure the scheduling change itself.
+These measurements include the final per-fixture verdict checks and current
+compiler/library sources. Every selected fixture and resolved-call count was
+verified from each trial log.
 
 The initial native race pilot covered `multi_file`, `pub_use_reexport` and
 the deliberately invalid `diag_e065`. The complete 581-fixture run then
@@ -71,8 +73,11 @@ compiler/library sources, the same focused Linux pilot passed with the
 stricter verdict validation. Regression cases cover expected and unexpected
 diagnostics, clean results, exit 125, exit 137, signals, missing or truncated
 tallies, overflowing counts, and disagreement between header and status.
-Full current-source validation is running alongside PR validation; its result
-will be recorded before merging.
+The complete current-source Linux x86-under-QEMU run passed all 581 fixtures
+and all verdict regressions with race detection, resolving 325,900 direct
+calls. Package time was 453.837 seconds while another QEMU bootstrap test
+overlapped part of the run. This establishes correctness only. All other
+heavy local work finished before the native timing trials above.
 
 ## Reproduction on native Linux x86-64
 
