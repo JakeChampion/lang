@@ -7137,11 +7137,19 @@ func (b *builder) computeBorrowedAliases() {
 		// only from names already in arraySetConsumed, so the loop-body shape
 		// is covered by the line below rather than by a second clause.
 		//
-		// The self-host compiler does NOT have this bug today, because its rc
-		// port has not taken the dead-alias cancellation yet — measured: it
-		// answers 19 and 30 where both natives answered 99 and 54. Whoever
-		// ports #4402 across (roadmap goal 2) has to port this guard with it,
-		// or the collision arrives with it.
+		// The instruction that stood here — port this guard along with the
+		// cancellation — is spent: the self-host has all four dead-alias
+		// limbs and, since #9291, the borrowed-parameter leg too. It has no
+		// analogue of this guard and needs none yet, because it has no
+		// value-position in-place `.with` to collide with:
+		// lower_arr_with_value clones unconditionally (`base[0 :
+		// base.len()]`, its own comment "a fresh, sole-owned full copy"),
+		// and lower_plain_arr_with_store's in-place arr_set is reached only
+		// from `a = a.with(i, v)`, whose reassignment da_scan already
+		// refuses for both names. Measured on `var b = a; var c = b.with(0,
+		// 99)` with a read back: same exit as native and `-interp`, balanced
+		// census. This guard is what the self-host would need if a
+		// value-position in-place path ever lands there.
 		if b.rc.arraySetConsumed[x] || b.rc.arraySetConsumed[y] {
 			return true
 		}
