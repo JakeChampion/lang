@@ -2532,8 +2532,28 @@ groups are the order of work. Each sub-issue names its group.
   from, which is why that line arrives after the operand's copy rather
   than before it. A directory's `-v` line belongs to its CREATION, so
   an existing destination directory gets none.
-  mv's EXDEV fallback is the same engine and is now
-  unblocked for the same reason)
+  mv's EXDEV fallback is DONE and is this engine: a `rename` that comes
+  back EXDEV copies with `-a`'s attributes and then removes the source,
+  which is what `--no-copy` asks it not to do. Three things separate it
+  from a plain `cp -a`, each measured. The destination is REMOVED before
+  the copy, because a move replaces where a copy merges — a destination
+  directory that will not go reports `inter-device move failed: 'src' to
+  'dest'; unable to remove target: Directory not empty` and copies
+  nothing, and that removal is also why `created directory` always
+  prints: the destination is always freshly made. The source is removed
+  only if the WHOLE operand copied, so a copy that failed part way leaves
+  even the files that did copy in place, while a later command-line
+  operand still runs. And the two halves walk in DIFFERENT orders — the
+  copy by inode, the removal in readdir order, which is `rm -rv`'s walk
+  and byte-identical to it.
+  The wording is a verbose STYLE on the engine rather than two engines:
+  `cp` prints `'src' -> 'dest'` for everything, `mv` prints `copied 'src'
+  -> 'dest'` and `created directory 'dest'`, and only `mv` suppresses the
+  line for a `--preserve=links` follower, whose name is linked rather than
+  copied. The removal half is mv's own rather than `rm`'s walk with the
+  policy stripped out: `rm`'s is inseparable from its prompting, its
+  --preserve-root and -I refusals and its tri-state result, none of which
+  a move consults)
   `install` `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle
   methods from #9181 and the non-blocking `open_reader_with` /
