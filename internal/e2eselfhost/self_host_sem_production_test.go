@@ -348,6 +348,42 @@ function main(): i32 {
     return n % 97;
 }
 `},
+	// The NESTED borrow, which is what first caught #9388's corruption: the
+	// inner appender's result lands in the outer one's argument position, so
+	// the second push is handed a box the first grew. Elements are counted and
+	// every one is distinct, so a box freed under the array that now points at
+	// it reads back as the wrong name.
+	{name: "borrowed-param-append-nested", atLeast: 4, src: `
+struct D { name: string, fields: string[] }
+function declared(ds: D[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        if (ds[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function add_one(acc: D[], name: string): D[] {
+    if (declared(acc, name)) { return acc; }
+    return acc.append(D { name: name, fields: [] });
+}
+function add_two(acc: D[], a: string, b: string): D[] { return add_one(add_one(acc, a), b); }
+function main(): i32 {
+    var all: D[] = [];
+    all = add_one(all, "seed-value-one");
+    all = add_two(all, "seed-value-two", "seed-value-three");
+    all = add_two(all, "seed-value-four", "seed-value-five");
+    all = add_one(all, "seed-value-one");
+    var want: string[] = ["seed-value-one", "seed-value-two", "seed-value-three", "seed-value-four", "seed-value-five"];
+    if (all.len() != want.len()) { return 1; }
+    var i: i32 = 0;
+    while (i < all.len()) {
+        if (all[i].name != want[i]) { return 2 + i; }
+        i = i + 1;
+    }
+    return 199;
+}
+`},
 	// The paths a deferred receiver retain has to answer on: `maybe` does not
 	// append at all when the flag is false; `ignore` never returns what it
 	// appended to; `twice` appends through the same parameter at two sites, so
