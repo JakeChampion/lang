@@ -48,33 +48,24 @@ Regenerate with `uv run --no-project tools/gen_digests.py`. Digest test vectors
 remain the separate check of algorithm correctness; this gate checks that a
 future regeneration cannot silently overwrite a hand-applied fix (#9057).
 
-## The lane that runs when Actions does not
+## Netlify deploys and the standalone smoke script
 
-All of the below live in GitHub Actions, so a GitHub incident takes the whole
-set out at once, and pushes keep landing while nothing reports. The Netlify
-deploy is the one lane on a different host: it already builds the docs site on
-every push, so `netlify.toml` runs `scripts/netlify-smoke-test` after the site
-and a failing stage turns the deploy red.
+Netlify runs `scripts/netlify-build`, which builds the playground Wasm bundle,
+generates the stdlib reference, and builds the docs site. It does not invoke
+`scripts/netlify-smoke-test`. A green deploy therefore proves the site build
+succeeded; it provides no unit, conformance, or self-host test result (#9071).
 
-It is a *smoke* lane and it is sized like one — one small container, single
-digit minutes shared with the docs build, against the sharded tens of minutes
-the real workflows get. It runs four stages, cheapest-and-broadest first:
-`go build` + `go vet`; every unit-test package (`scripts/unit-test-packages`,
-which `test-units` also runs, so the two cannot cover different sets); the
-whole conformance corpus on interp / x86-64 / wasm; and the self-host x86-64 IR
-path via one `asm_ir_run` driver build. What it cannot reach: arm64 anything
-(no qemu, no cross-gcc, and an unprivileged build cannot apt-get them), the
-fixpoints, the differentials, and every suite in the table below that it does
-not name.
+The smoke script is available for an explicit run from the repository root:
+`scripts/netlify-smoke-test`. Its stages cover `go build` and `go vet`, the
+unit-test packages, the conformance corpus on interp / x86-64 / Wasm, and one
+self-host x86-64 IR driver. ARM64, fixpoints, and differentials are outside
+that script's coverage.
 
-Two things about reading it. Its summary block is the whole report — it prints
-per-stage PASS / FAIL / SKIP with reasons, and per-backend fixture counts for
-the conformance stage, precisely so a container that quietly lost a toolchain
-cannot look like a full pass. And it will SKIP late stages when the deploy
-budget runs out; a skip is reported, never silently dropped, but it does mean
-**a green Netlify deploy is not a claim that every stage ran** — read the
-summary, not the colour. `FERN_SMOKE=off` turns the lane off once Actions is
-healthy; `FERN_SMOKE=advisory` keeps it reporting without blocking a deploy.
+When invoked, the script reports PASS / FAIL / SKIP per stage, with reasons
+and fixture counts. Stages skipped for the time budget provide no test
+evidence. `FERN_SMOKE=advisory` reports failures without a failing exit status;
+`FERN_SMOKE=off` disables an explicit run. These variables do not cause the
+Netlify build to invoke the script. Read its summary to establish what ran.
 
 ## The one that surprises people: the fixpoint is self-referential
 
@@ -167,7 +158,8 @@ rather than the IR path.
 | `internal/sourcelint` ambient-env gate (`TestSourcelintChildEnvIsFiltered`) | That no test in that package splices the inherited environment straight into a child process. Its tests drive CI scripts whose behaviour the environment decides, so an ambient `FERN_CI_*` value would otherwise choose what the test asserts — and a vacuous test and a passing test are byte-identical in the log. The sibling of `TestNoSilentlyCIDarkEnvGates`: that one catches a test that never RUNS, this one a test that runs and cannot FAIL | Every other tree. The e2e packages inherit at ~23 sites; most set the one variable they depend on and are fine, and sorting the rest needs reading rather than a rule — #6833 |
 | Fern complexity ratchet (`internal/lint/repo_gate_test.go`) | That the self-host compiler's and the stdlib's cyclomatic complexity has not got WORSE: per tree, the highest score any function reaches and the TOTAL DISTANCE over the limit summed across the functions above it. Both are held to a ratchet rather than a hard limit — 1128 of 7724 functions are over it today — with a 5% tolerance: growth past it fails, a shrink past it logs and asks to be banked. The tolerance is not slack for its own sake; an exact version of this gate could not land, because main moved the ceiling 1.9% and the excess twice inside one two-hour window while a full CI run takes three and a half hours, so it would have gone stale before merging and then red-lit main on the next rc commit. Summed distance rather than a COUNT of functions over the limit, deliberately: splitting one 472-fork function into ten 40-fork helpers takes the count 1 → 10, so a count-based gate would report the most valuable refactor available as a regression. A per-function exception is an `allow` comment on the function, never a row in the table. See `docs/LINT.md` | Whether any of it is actually readable — complexity is a count of forks, and a 40-branch flat dispatch table scores worse than a 12-branch tangle. Every tree but those two: `examples/`, `conformance/` and the fixture corpora are unlinted, and nothing gates the Go side (`gocyclo` is not wired up). Any function the linter cannot see, which today means every `.fern.md` |
 | AST traversal exhaustiveness (`internal/ast/walk_exhaustive_test.go`, `internal/shadowrename/exhaustive_test.go`) | That no pass with a hand-written switch over `ast.Expr` / `ast.Stmt` has fallen behind the unions. `ast.NodeKinds` is the one list of node kinds, checked against the set derived from the ast package's own source (every Node has a `Pos` method), and every kind is driven through `Walk`, the `RewriteProgramExprs` traversal, both cloners and shadowrename's two walks — each of which panics on a kind it does not name. It also pins the FIELDS: every Expr-, Stmt- and *Block-typed field must be reached by `Walk` or listed in `walkSkips` with a reason, exact in both directions, and a clone must freshly allocate everything `Walk` reaches. A new node kind fails here rather than being silently ignored by one pass — the shape of #7042, #7149 and the lambda-shadow miscompile | Passes that keep their own switch and do not test against `ast.NodeKinds`: the parser's and the checker's for-in desugars each carry one. Whether a case is CORRECT — it proves the arm exists and descends, never that it does the right thing there |
-| Netlify smoke lane (`scripts/netlify-smoke-test`) | The tree compiles, the unit packages pass, the corpus runs on interp/x86-64/wasm and one self-host driver builds and compiles a program — on a host that is up when GitHub Actions is not | Everything arm64, every fixpoint and differential, and any stage it SKIPPED for budget. Its summary block says which; the deploy's colour does not |
+| Netlify deploy (`scripts/netlify-build`) | The playground Wasm bundle, stdlib reference, and docs site build | Unit tests, conformance, self-host compilation, fixpoints, and differentials. The separate smoke script is not invoked by the deploy |
+| Standalone smoke script (`scripts/netlify-smoke-test`, explicit invocation only) | Only stages marked PASS in its summary: build/vet, unit packages, conformance on interp/x86-64/Wasm, and one self-host driver | ARM64, fixpoints, differentials, and any skipped stage. This is not an automated Netlify gate |
 
 **Reach for `scripts/selfhost-emit-hashes` on any mechanical refactor of the
 self-host compiler.** It is the gate that fits the failure mode: whole families
