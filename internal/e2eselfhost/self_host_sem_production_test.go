@@ -286,6 +286,32 @@ function main(): i32 {
     return n;
 }
 `},
+	// Appending through a BORROWED parameter, which is what the self-host x86
+	// assembler does per instruction byte (`x86_emit_mem`). The callee pushes
+	// through the non-consuming helper and takes its unit afterwards, so the
+	// buffer grows in place instead of being copied per element (#9365); the
+	// second half is `set0`, where the caller KEEPS its binding and the
+	// caller-side bracket is what makes the update owe a copy. Both halves
+	// have to answer the same as the AST lowering: 199 says `a` came through
+	// the borrow untouched.
+	{name: "borrowed-container-update", atLeast: 4, src: `
+function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
+function build(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = push(out, i); i = i + 1; }
+    return out;
+}
+function set0(buf: i32[], v: i32): i32[] { return buf.with(0, v); }
+function main(): i32 {
+    var a: i32[] = build(64);
+    var b: i32[] = set0(a, 99);
+    if (a[0] != 0) { return 1; }
+    if (b[0] != 99) { return 2; }
+    if (a.len() != 64 || b.len() != 64) { return 3; }
+    return 199;
+}
+`},
 	// A write back through a capture is refused (#9320), so this module is
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
 	// ssarc.caller_sigs holding the two sides' release of a shared result
