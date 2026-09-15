@@ -652,8 +652,9 @@ func listingCases(t *testing.T, util string) []invocation {
 	tty("tty-width-beats-the-terminal", "-w", "40")
 	ttyEnv("tty-columns-env-against-the-terminal", []string{"COLUMNS=40"})
 	ttyEnv("tty-columns-env-zero", []string{"COLUMNS=0"})
-	// COLUMNS is read before the terminal is asked, so an unparsable one
-	// is REPORTED even though the terminal's width is what gets used.
+	// A terminal that answers ENDS the width question, so this unparsable
+	// COLUMNS is never looked at and nothing reaches stderr. The warning
+	// the same value draws down a pipe is cols-env-columns-bogus above.
 	ttyEnv("tty-columns-env-bogus", []string{"COLUMNS=abc"})
 	ttyEnv("tty-columns-env-empty", []string{"COLUMNS="})
 	tty("tty-color-auto", "--color=auto")
