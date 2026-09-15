@@ -180,6 +180,9 @@ function print_params_with(params: ast.ParamDecl[], pats: string[]): string {
         if (params[pi].type_name.len() > 0) {
             out = out + ": " + params[pi].type_name;
         }
+        if (params[pi].has_default) {
+            out = out + " = " + print_expr(params[pi].default_value, 0);
+        }
         pi = pi + 1;
     }
     return out + ")";
@@ -511,6 +514,15 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
             return "false";
         },
         ast.ExprBinary(b) => {
+            // A named argument `name = value` is not an operator: the parser
+            // records it as the synthetic marker `ExprBinary("__named_arg",
+            // <name ident>, value)` (parser's fda_* helpers). Printing it as
+            // one wrote `b __named_arg 1`, which parses as nothing. The marker
+            // only ever sits directly in a call's argument list, so the value
+            // needs no parentheses of its own.
+            if (b.op == "__named_arg") {
+                return print_expr(b.left, depth) + " = " + print_expr(b.right, depth);
+            }
             var p: i32 = binary_prec(b.op);
             var inner: string = print_expr_prec(b.left, p, depth) + " " + b.op + " " + print_expr_prec(b.right, p + 1, depth);
             if (p < parent_prec) { return "(" + inner + ")"; }
@@ -2136,6 +2148,12 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
         if (fd.params[i].type_name.len() > 0) {
             out = out + ": " + fd.params[i].type_name;
         }
+        // An optional parameter's default is part of the signature: without it
+        // the formatted function requires an argument every existing caller
+        // omits, so `-fmt` turns a compiling program into one that does not.
+        if (fd.params[i].has_default) {
+            out = out + " = " + print_expr(fd.params[i].default_value, 0);
+        }
         i = i + 1;
     }
     out = out + ")";
@@ -2435,6 +2453,7 @@ function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (str
         if (m.params[i].own) { out = out + "own "; }
         out = out + written_name(m.params[i].name);
         if (m.params[i].type_name.len() > 0) { out = out + ": " + m.params[i].type_name; }
+        if (m.params[i].has_default) { out = out + " = " + print_expr(m.params[i].default_value, 0); }
         first = false;
         i = i + 1;
     }
