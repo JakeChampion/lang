@@ -190,6 +190,8 @@ pub function http_response_plain(body: string): HttpResponse {
 // double slashes; query string (`?...`) is also stripped.
 // Useful for simple routing — `/api/users/42` → `["api",
 // "users", "42"]`.
+// Each segment is materialised with `+ ""`: a bare slice views `path`, which
+// the returned array outlives.
 pub function http_path_segments(path: string): string[] {
     var n: i32 = path.len();
     // Strip query string.
@@ -202,7 +204,7 @@ pub function http_path_segments(path: string): string[] {
         if (i >= n) { return out; }
         var start: i32 = i;
         while (i < n && path[i] != 47) { i = i + 1; }
-        out = out.append(slice_unchecked(path, start, i));
+        out = out.append(slice_unchecked(path, start, i) + "");
     }
     return out;
 }

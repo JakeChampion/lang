@@ -1820,6 +1820,10 @@ pub function (s: string) swap_case(): string {
 // `chars()` yields, so no piece is ever half a multibyte
 // sequence. (`to_array()` is the per-byte split.) Result
 // is built incrementally via `__array_append_string`.
+//
+// Every piece in this family — split, splitn, chunks, lines, fields,
+// to_array — is materialised with `+ ""`: a bare slice is a view of `s`,
+// and the array holding it outlives `s`.
 pub function (s: string) split(sep: string): string[] {
     var n: i32 = s.len();
     var sepLen: i32 = sep.len();
@@ -1832,7 +1836,7 @@ pub function (s: string) split(sep: string): string[] {
     if (sepLen == 0) {
         while (i < n) {
             var step: i32 = __utf8_step(s, i, n);
-            out = out.append(slice_unchecked(s, i, i + step));
+            out = out.append(slice_unchecked(s, i, i + step) + "");
             i = i + step;
         }
         return out;
@@ -1840,11 +1844,11 @@ pub function (s: string) split(sep: string): string[] {
     var start: i32 = 0;
     var hit: i32 = __str_find_from(s, n, sep, sepLen, start);
     while (hit >= 0) {
-        out = out.append(slice_unchecked(s, start, hit));
+        out = out.append(slice_unchecked(s, start, hit) + "");
         start = hit + sepLen;
         hit = __str_find_from(s, n, sep, sepLen, start);
     }
-    return out.append(slice_unchecked(s, start, n));
+    return out.append(slice_unchecked(s, start, n) + "");
 }
 
 // `s.rsplit(sep)` — like `split`, but the pieces come out in reverse
@@ -1883,18 +1887,18 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
         // Match split's empty-sep behaviour: one piece per codepoint.
         while (i < sLen && out.len() < n - 1) {
             var step: i32 = __utf8_step(s, i, sLen);
-            out = out.append(slice_unchecked(s, i, i + step));
+            out = out.append(slice_unchecked(s, i, i + step) + "");
             i = i + step;
         }
-        return out.append(slice_unchecked(s, i, sLen));
+        return out.append(slice_unchecked(s, i, sLen) + "");
     }
     var hit: i32 = __str_find_from(s, sLen, sep, sepLen, start);
     while (hit >= 0 && out.len() < n - 1) {
-        out = out.append(slice_unchecked(s, start, hit));
+        out = out.append(slice_unchecked(s, start, hit) + "");
         start = hit + sepLen;
         hit = __str_find_from(s, sLen, sep, sepLen, start);
     }
-    return out.append(slice_unchecked(s, start, sLen));
+    return out.append(slice_unchecked(s, start, sLen) + "");
 }
 
 // `s.rsplitn(sep, n)` — `splitn` scanning from the END: at most `n` pieces,
@@ -2025,7 +2029,7 @@ pub function (s: string) chunks(size: i32): string[] {
             end = __floor_boundary(s, end);
             if (end <= i) { end = __ceil_boundary(s, i + size); }
         }
-        out = out.append(slice_unchecked(s, i, end));
+        out = out.append(slice_unchecked(s, i, end) + "");
         i = end;
     }
     return out;
@@ -2058,7 +2062,7 @@ pub function (s: string) lines(): string[] {
             if (end > start) {
                 if (s[end - 1] == 13) { end = end - 1; }
             }
-            out = out.append(slice_unchecked(s, start, end));
+            out = out.append(slice_unchecked(s, start, end) + "");
             i = i + 1;
             start = i;
         } else {
@@ -2073,7 +2077,7 @@ pub function (s: string) lines(): string[] {
         if (endTail > start) {
             if (s[endTail - 1] == 13) { endTail = endTail - 1; }
         }
-        out = out.append(slice_unchecked(s, start, endTail));
+        out = out.append(slice_unchecked(s, start, endTail) + "");
     }
     return out;
 }
@@ -2097,7 +2101,7 @@ pub function (s: string) fields(): string[] {
         if (i >= n) { break; }
         var start: i32 = i;
         while (i < n && !__is_ascii_ws((s[i] as i32))) { i = i + 1; }
-        out = out.append(slice_unchecked(s, start, i));
+        out = out.append(slice_unchecked(s, start, i) + "");
     }
     return out;
 }
@@ -2552,7 +2556,7 @@ pub function (s: string) to_array(): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        out = out.append(slice_unchecked(s, i, i + 1));
+        out = out.append(slice_unchecked(s, i, i + 1) + "");
         i = i + 1;
     }
     return out;

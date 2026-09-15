@@ -665,6 +665,8 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
 // dropped). Zero-width matches are skipped as separators (so splitting on a
 // nullable pattern doesn't shatter the string); a non-matching pattern
 // yields the whole text as a single element.
+// Each piece is materialised with `+ ""`: a bare slice views `text`, which
+// the returned array outlives.
 pub function regex_split(text: string, pattern: string): string[] {
     var prog: RProg = __rx_compile(pattern);
     var out: string[] = [];
@@ -673,18 +675,18 @@ pub function regex_split(text: string, pattern: string): string[] {
     while (pos <= text.len()) {
         var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
         if (!m.found) {
-            out = out.append(slice_unchecked(text, last, text.len()));
+            out = out.append(slice_unchecked(text, last, text.len()) + "");
             return out;
         }
         if (m.end > m.start) {           // non-empty separator
-            out = out.append(slice_unchecked(text, last, m.start));
+            out = out.append(slice_unchecked(text, last, m.start) + "");
             last = m.end;
             pos = m.end;
         } else {
             pos = m.start + 1;           // skip a zero-width match
         }
     }
-    out = out.append(slice_unchecked(text, last, text.len()));
+    out = out.append(slice_unchecked(text, last, text.len()) + "");
     return out;
 }
 
