@@ -353,7 +353,7 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
 		insts, cmpLine, jcc := fuseBranchCmp(blk)
-		for _, in := range insts {
+		for ii, in := range insts {
 			if in.Op == Select {
 				for _, l := range selectLines(in) {
 					w("\t%s", l)
@@ -363,6 +363,18 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			if lines, ok := inlinePokeLines(in, numAlloc); ok {
 				for _, l := range lines {
 					w("\t%s", l)
+				}
+				continue
+			}
+			// An index is address arithmetic, not a call: inline it rather than
+			// making the allocator spill around it.
+			if lines, ok := inlineArrIdxLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
 				}
 				continue
 			}
@@ -1811,6 +1823,120 @@ func inlinePokeLines(in Inst, numAlloc int) ([]string, bool) {
 		}
 		addr := materialise(in.ArgLocs[0], s0)
 		out = append(out, fmt.Sprintf("mov %s, %s", operand(in.Dst), memRef(reg(addr), form.off)))
+	}
+	if fix := maskFix(in.Dst, in.W); fix != "" {
+		out = append(out, strings.TrimPrefix(fix, "\n\t"))
+	}
+	return out, true
+}
+
+// arrIdxInline maps an index helper onto its element-stride shift, whether it
+// bounds-checks, and whether the operand is a view rather than a buffer. These
+// are the calls the IR emits for `a[i]` (internal/ir), and each is a compare and
+// an lea — so the call machinery around them costs more than the work.
+//
+// Both stack-machine backends have inlined all of these all along
+// (emitInlineIdxHelper in internal/codegen/x86_64 and internal/codegen/arm64);
+// this backend had no inline form at all, so indexing — which sits in the
+// innermost loop of anything that walks an array — was a call per element, and
+// the allocator spilled every caller-saved register live across it.
+//
+// slice marks the view spellings, one indirection further out: the length is a
+// field at [base+8] rather than a header at [base-4], and the data pointer has
+// to be loaded from [base+0] before the scaled address. They have no _nc form —
+// the IR emits no bounds-check-elided slice index — and __slice_idx_1 is the one
+// an indexed walk of `chunk.as_bytes()` reaches, which is how every byte scan in
+// coreutils/ is written.
+//
+// Strings here are single-word data pointers with a byte length at -4, so
+// __str_idx shares __arr_idx_1's form; the default backend's two-word string ABI
+// does not apply.
+var arrIdxInline = map[string]struct {
+	shift   int
+	checked bool
+	slice   bool
+}{
+	"__str_idx":       {0, true, false}, // single-word string, byte stride
+	"__arr_idx":       {2, true, false}, // stride 4 (i32)
+	"__arr_idx_1":     {0, true, false}, // stride 1 (byte array)
+	"__arr_idx_8":     {3, true, false}, // stride 8 (i64 / pointer)
+	"__arr_idx_16":    {4, true, false}, // stride 16 (two-word string[])
+	"__arr_idx_nc":    {2, false, false},
+	"__arr_idx_1_nc":  {0, false, false},
+	"__arr_idx_8_nc":  {3, false, false},
+	"__arr_idx_16_nc": {4, false, false},
+	"__slice_idx":     {2, true, true},
+	"__slice_idx_1":   {0, true, true},
+	"__slice_idx_8":   {3, true, true},
+}
+
+// inlineArrIdxLines renders an index call as the address compute it is, or
+// reports false when the callee is something else. The seed keeps each site's
+// bounds-check label unique.
+//
+// Each form reproduces its helper exactly, including two details that are not
+// free choices. The bounds check is a SINGLE unsigned compare because a negative
+// index arrives as a huge unsigned and fails the same test. And the slice form
+// re-narrows the checked index through a 32-bit move before the 64-bit address
+// calculation (`mov edx, esi` in emitSliceIdxHelper): the compare only proved
+// the low half in range, so an operand reaching here with dirty upper bits would
+// otherwise escape it.
+func inlineArrIdxLines(in Inst, numAlloc int, seed string) ([]string, bool) {
+	form, ok := arrIdxInline[in.Callee]
+	if !ok || in.Op != Call || len(in.ArgLocs) != 2 {
+		return nil, false
+	}
+	// s0/s1 home a slot-resident operand; s2 is the third register the length
+	// read needs, which is neither operand nor the destination.
+	s0, s1, s2 := numAlloc, numAlloc+1, numAlloc+2
+	var out []string
+	materialise := func(l Loc, tmp int) int {
+		if l.IsReg {
+			return l.Reg
+		}
+		out = append(out, fmt.Sprintf("mov %s, %s", reg(tmp), slotMem(l.Slot)))
+		return tmp
+	}
+	base := materialise(in.ArgLocs[0], s0)
+	idx := materialise(in.ArgLocs[1], s1)
+	if form.checked {
+		okLbl := fmt.Sprintf(".Lssa_idx_%s_ok", seed)
+		lenRef := memRef(reg(base), -4)
+		if form.slice {
+			lenRef = memRef(reg(base), 8)
+		}
+		out = append(out,
+			fmt.Sprintf("mov %s, %s", reg32n(s2), lenRef),
+			fmt.Sprintf("cmp %s, %s", reg32n(idx), reg32n(s2)),
+			fmt.Sprintf("jb %s", okLbl),
+			"mov edi, 134",
+			"mov eax, 231", // exit_group
+			"syscall",
+			okLbl+":",
+		)
+	}
+	if form.slice {
+		// s2 held the length, which the compare has consumed. The destination
+		// takes the data pointer: it is written last in the call this replaces,
+		// and neither operand is read after this point, so a destination that
+		// aliases one of them loses nothing.
+		out = append(out,
+			fmt.Sprintf("mov %s, %s", reg32n(s2), reg32n(idx)),
+			fmt.Sprintf("mov %s, %s", reg(in.Dst), memRef(reg(base), 0)),
+		)
+		base, idx = in.Dst, s2
+	}
+	// lea scales by 1, 2, 4 or 8 only, so stride 16 needs the shift spelled out
+	// — through s2 rather than in place, because unlike the helper's dead
+	// argument register the index here may still be live.
+	if form.shift <= 3 {
+		out = append(out, fmt.Sprintf("lea %s, [%s + %s*%d]", reg(in.Dst), reg(base), reg(idx), 1<<form.shift))
+	} else {
+		out = append(out,
+			fmt.Sprintf("mov %s, %s", reg(s2), reg(idx)),
+			fmt.Sprintf("shl %s, %d", reg(s2), form.shift),
+			fmt.Sprintf("lea %s, [%s + %s]", reg(in.Dst), reg(base), reg(s2)),
+		)
 	}
 	if fix := maskFix(in.Dst, in.W); fix != "" {
 		out = append(out, strings.TrimPrefix(fix, "\n\t"))
