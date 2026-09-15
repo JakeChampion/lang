@@ -14451,6 +14451,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     if ((fa.field == "read_chunk" || fa.field == "close" || fa.field == "write" || fa.field == "read_line"
             || fa.field == "stat" || fa.field == "seek" || fa.field == "truncate"
             || fa.field == "flags" || fa.field == "isatty" || fa.field == "write_some"
+            || fa.field == "dup_onto"
             || is_fd_sync_method(fa.field))
         && !decl_is_struct(s.frame.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
@@ -14505,6 +14506,16 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             var fsy: LowerState = lower_expr(fa.obj, s);
             if (!fsy.ok) { return fsy; }
             return fsy.emit(fd_sync_op(fa.field));
+        }
+        // r.dup_onto(fd) / w.dup_onto(fd) -> Option[IoError]: dup3 of the
+        // handle's fd onto the argument. Both operands are i32, so neither
+        // needs seek's widening.
+        if (fa.field == "dup_onto" && c.args.len() == 1) {
+            var dpo: LowerState = lower_expr(fa.obj, s);
+            if (!dpo.ok) { return dpo; }
+            dpo = lower_expr(c.args[0], dpo);
+            if (!dpo.ok) { return dpo; }
+            return dpo.emit(ir.op_fd_dup_onto());
         }
         if (fa.field == "seek" && c.args.len() == 2) {
             var sks: LowerState = lower_expr(fa.obj, s);
@@ -17887,7 +17898,7 @@ function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerStat
     if (decl_is_struct(s.frame.structs, expr_struct_type(obj, s)) || expr_enum_type(obj, s) != ""
         || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
     if (field == "read_line" || field == "read_chunk" || field == "close" || field == "stat" || field == "seek"
-        || field == "flags" || field == "isatty"
+        || field == "flags" || field == "isatty" || field == "dup_onto"
         || is_fd_sync_method(field)) {
         return s.opt_ret_type("Reader." + field);
     }
@@ -72489,6 +72500,7 @@ function builtin_opt_ret_type(name: string): string {
     if (name == "Writer.write_some") { return "Result[i64, IoError]"; }
     if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write"
         || name == "Writer.truncate") { return "Option[IoError]"; }
+    if (name == "Reader.dup_onto" || name == "Writer.dup_onto") { return "Option[IoError]"; }
     if (is_fd_sync_ret(name)) { return "Option[IoError]"; }
     return "";
 }

@@ -1339,12 +1339,14 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
 	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
 	"__method_Writer_write_some":    emitWriterWriteSomeHelper,
-	"__method_Reader_fsync":         emitFdSyncHelper("__method_Reader_fsync", "rfsy", 82),
-	"__method_Writer_fsync":         emitFdSyncHelper("__method_Writer_fsync", "wfsy", 82),
-	"__method_Reader_fdatasync":     emitFdSyncHelper("__method_Reader_fdatasync", "rfds", 83),
-	"__method_Writer_fdatasync":     emitFdSyncHelper("__method_Writer_fdatasync", "wfds", 83),
-	"__method_Reader_syncfs":        emitFdSyncHelper("__method_Reader_syncfs", "rsfs", 267),
-	"__method_Writer_syncfs":        emitFdSyncHelper("__method_Writer_syncfs", "wsfs", 267),
+	"__method_Reader_fsync":         emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
+	"__method_Writer_fsync":         emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
+	"__method_Reader_fdatasync":     emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
+	"__method_Writer_fdatasync":     emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
+	"__method_Reader_syncfs":        emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
+	"__method_Writer_syncfs":        emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
+	"__method_Reader_dup_onto":      emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
+	"__method_Writer_dup_onto":      emitFdCallHelper("__method_Writer_dup_onto", "wdpo", 24, prepDupOnto),
 	"sync":                          emitSyncHelper,
 	"open_appender":                 emitOpenAppenderHelper,
 	"open_exclusive":                emitOpenExclusiveHelper,
@@ -3345,18 +3347,23 @@ func emitWriterCloseHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitFdSyncHelper writes one of the write-back methods —
-// `fsync` / `fdatasync` / `syncfs` on either handle type — as
-// `(handle) -> Option[IoError]`: the syscall against the fd at
-// [handle+8], None on success and Some(IoError) on failure. Same shape
-// as Writer.close, which is the same contract with a different number.
+// emitFdCallHelper writes one of the methods that make a single
+// syscall on a handle's descriptor — `fsync` / `fdatasync` / `syncfs` /
+// `dup_onto` on either handle type — as `(handle, ...) ->
+// Option[IoError]`: the syscall against the fd at [handle+8], None on
+// success and Some(IoError) on failure. Same shape as Writer.close,
+// which is the same contract with a different number. `prep` sets up
+// any argument beyond the descriptor, before the fd load clobbers x0.
 // Non-leaf. x0 = handle.
-func emitFdSyncHelper(name, lp string, sysno int) func(w func(string, ...any)) {
+func emitFdCallHelper(name, lp string, sysno int, prep func(w func(string, ...any))) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
 		w("%s:", fnLabel(name))
 		w("\tstp x29, x30, [sp, #-16]!")
 		w("\tmov x29, sp")
+		if prep != nil {
+			prep(w)
+		}
 		w("\tldr w0, [x0, #8]") // fd @ ptr+8
 		w("\tmov x8, #%d", sysno)
 		w("\tsvc #0")
@@ -3374,6 +3381,14 @@ func emitFdSyncHelper(name, lp string, sysno int) func(w func(string, ...any)) {
 		w("\tldp x29, x30, [sp], #16")
 		w("\tret")
 	}
+}
+
+// prepDupOnto sets up dup3(own_fd, fd, 0) for emitFdCallHelper: the
+// destination arrives in w1 and is sign-extended rather than
+// zero-extended, so a negative one stays negative and answers EBADF.
+func prepDupOnto(w func(string, ...any)) {
+	w("\tsxtw x1, w1")
+	w("\tmov x2, #0")
 }
 
 // emitSyncHelper writes `sync()` — sync(2) over every mounted
@@ -3739,6 +3754,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_fdatasync":     {"__fern_io_error"},
 	"__method_Reader_syncfs":        {"__fern_io_error"},
 	"__method_Writer_syncfs":        {"__fern_io_error"},
+	"__method_Reader_dup_onto":      {"__fern_io_error"},
+	"__method_Writer_dup_onto":      {"__fern_io_error"},
 	"open_reader":                   {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
 	"__method_Reader_read_chunk":    {"__fern_io_error"},
@@ -3835,6 +3852,8 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_fdatasync":     true,
 	"__method_Reader_syncfs":        true,
 	"__method_Writer_syncfs":        true,
+	"__method_Reader_dup_onto":      true,
+	"__method_Writer_dup_onto":      true,
 	"sync":                          true,
 	"open_reader":                   true,
 	"__method_Reader_read_chunk":    true,

@@ -1236,6 +1236,12 @@ pub function op_fd_stat(): Op { return op0("fd_stat"); }
 pub function op_fd_fsync(): Op { return op0("fd_fsync"); }
 pub function op_fd_fdatasync(): Op { return op0("fd_fdatasync"); }
 pub function op_fd_syncfs(): Op { return op0("fd_syncfs"); }
+// `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
+// handle's descriptor onto `newfd`, so the handle is reachable as that number
+// too and whatever it named is closed. Backs `r.dup_onto(fd)` /
+// `w.dup_onto(fd)`. Neither WASI preview can install a descriptor at a chosen
+// number, so the wasm backends answer Unsupported.
+pub function op_fd_dup_onto(): Op { return op0("fd_dup_onto"); }
 // `sync` pops nothing and pushes nothing: sync(2), write-back of every dirty
 // buffer on the machine. It cannot fail, which is why it answers no Result.
 pub function op_sync(): Op { return op0("sync"); }
@@ -2247,6 +2253,7 @@ function kind_id_len10_t(name: string): i32 {
 function kind_id_len11(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'c' && name == "call_direct") { return 149; }
+    if (c == b'f' && name == "fd_dup_onto") { return 311; }
     if (c == b'c' && name == "crc32_cksum") { return 309; }
     if (c == b'c' && name == "create_link") { return 262; }
     if (c == b'm' && name == "mapiter_key") { return 135; }
@@ -2702,6 +2709,7 @@ function kind_name_4(id: i32): string {
     if (id == 299) { return "fd_fsync"; }
     if (id == 300) { return "fd_fdatasync"; }
     if (id == 301) { return "fd_syncfs"; }
+    if (id == 311) { return "fd_dup_onto"; }
     if (id == 302) { return "arr_push_owned_i64"; }
     if (id == 303) { return "arr_push_owned_f64"; }
     return "invalid";
@@ -2868,6 +2876,7 @@ function pops2_io(t: i32): boolean {
         || t == 281                                                      // writer_truncate (fd, length)
         || t == 285                                                      // signal_send (pid, sig)
         || t == 284                                                      // set_process_group (pid, pgid)
+        || t == 311                                                      // fd_dup_onto (fd, newfd)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some

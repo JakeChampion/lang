@@ -680,6 +680,8 @@ func New() *Interp {
 	i.Builtins["__method_Reader_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
+	i.Builtins["__method_Reader_dup_onto"] = &Builtin{Fn: builtinDupOnto}
+	i.Builtins["__method_Writer_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
 	i.Builtins["__method_Array_set"] = &Builtin{Fn: builtinArraySet}
 	// Map builtins. `map_new(cap)` returns an empty Map; the
@@ -4165,6 +4167,42 @@ func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 	}
 	if terr := f.Truncate(int64(length)); terr != nil {
 		return optionSome(classifyIoError("", terr)), nil
+	}
+	return optionNone(), nil
+}
+
+// builtinDupOnto answers `r.dup_onto(fd)` / `w.dup_onto(fd)`: dup3(2)
+// of the handle's descriptor onto `fd`, closing whatever was there.
+//
+// The interpreter's own descriptors are the program's, so duplicating
+// onto 1 really does redirect what `print` writes — and onto a number
+// the Go runtime is using would take that away from it. The program
+// asked for a specific descriptor, so there is nothing to second-guess;
+// it is the same authority `stdout().close()` already has.
+//
+// A stream the interpreter is driving through an io.Writer has no
+// descriptor to duplicate and answers Unsupported, as `stat` does for
+// one.
+func builtinDupOnto(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("dup_onto: expected 2 args")
+	}
+	f, err := streamFile(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	target, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("dup_onto: descriptor must be a number")
+	}
+	if f == nil {
+		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	}
+	if derr := hostDupOnto(int(f.Fd()), int(target)); derr != nil {
+		return optionSome(classifyIoError("", derr)), nil
 	}
 	return optionNone(), nil
 }

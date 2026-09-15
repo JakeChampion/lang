@@ -3296,6 +3296,31 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// opened rather than on a name it could stat (#9229).
 	registerStructMethod("Reader", "isatty", nil, ast.BoolType{})
 	registerStructMethod("Writer", "isatty", nil, ast.BoolType{})
+	// dup_onto(fd) installs this handle at descriptor `fd` as well —
+	// dup3(own_fd, fd, 0). The destination is a number for the reason
+	// `isatty`'s argument is: 0, 1 and 2 are the only ones worth naming.
+	//
+	// The handle KEEPS its own descriptor, so a caller replacing one of
+	// the standard three closes the handle afterwards, which is the pair
+	// GNU `nohup` makes. The one trap: when the handle's own descriptor
+	// already IS `fd`, dup3 is a no-op and that close would close the
+	// destination. A caller replacing an inherited descriptor is safe by
+	// construction — an open cannot return a number that is still in use
+	// — but one that closed fd 1 first is not.
+	//
+	// The handle's direction and the destination's number are
+	// independent, which is the point: `nohup` puts /dev/null opened
+	// WRITE-ONLY on fd 0, so the command can neither read the terminal
+	// nor read the replacement.
+	//
+	// Neither WASI preview can do it, so it answers `Unsupported` there,
+	// the shape `syncfs` uses. Preview 1's `fd_renumber` looks like the
+	// lowering and is not: it closes the source, which leaves the handle
+	// dangling — a move rather than a duplicate.
+	registerStructMethod("Reader", "dup_onto",
+		[]ast.Type{ast.NumberType{}}, optionIoErr)
+	registerStructMethod("Writer", "dup_onto",
+		[]ast.Type{ast.NumberType{}}, optionIoErr)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	// write_some(s) is ONE write(2) and the count it returned: the write
 	// may land in full, in part, or not at all, and the caller loops.
