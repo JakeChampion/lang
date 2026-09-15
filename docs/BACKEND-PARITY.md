@@ -2,9 +2,10 @@
 
 Three code-generation backends ship today — `internal/codegen/{arm64,x86_64,wasmbin}`,
 each lowering the flat `ir.Program`. Two more, `arm64ssa` and `x86_64ssa`, are
-reachable only through `-backend ssa` / `-backend typed-ssa` and are **not
-production paths**; `docs/SSA-DECISION.md` records why they will not become
-ones. A sixth, `wasmssa`, was retired with that decision (#9397).
+reachable only through `-backend ssa` / `-backend typed-ssa`: **not production
+paths, but not shelved either** — they are under active measurement for the
+coreutils perf epic, and whether either is ever defaulted is open
+(`docs/SSA-DECISION.md`, #8822). A sixth, `wasmssa`, was retired (#9397).
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no

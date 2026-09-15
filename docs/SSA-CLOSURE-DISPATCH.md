@@ -136,7 +136,7 @@ the env-as-last-arg, and the register-indirect `call r11` instead of
 
 ### wasm — not applicable
 
-`wasmssa` was retired with `docs/SSA-DECISION.md`'s resolution (#9397), so
+`wasmssa` was retired (#9397), so
 there is no SSA-side wasm dispatch to design. `wasmbin` carries the wasm
 closure machinery — a function-table index dispatched by `call_indirect`
 against a recorded signature — and is the only wasm emitter.

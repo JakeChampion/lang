@@ -20,16 +20,17 @@ written it fed only `wasmssa`, a stack machine that needs no registers. So this
 track adds (1) the allocation analysis/passes to `internal/ssa`, and (2) a new
 SSA→native emit path that consumes the allocation.
 
-**The "ultimately replacing the stack-machine backends" endpoint is no longer
-the plan** — `docs/SSA-DECISION.md` resolved against an SSA codegen cutover on
-2026-09-15, citing this document's own finding that speed is the open blocker.
-The allocator work below stands on its own terms; what it no longer leads to is
-a production cutover.
+**The "ultimately replacing the stack-machine backends" endpoint is
+UNSCHEDULED, not cancelled.** `docs/SSA-DECISION.md` leaves the cutover open:
+this document's own finding that speed is the open blocker argues against
+defaulting today, while #8822 — `coreutils/sort.fern` at 4–5x GNU, with
+`-backend ssa` named as the direct answer to its dominant cost — argues for
+funding the coverage work that would let it be measured. The allocator work
+below stands on its own terms either way.
 
 ## End state
 
-This end state was **not reached and is no longer sought** — see the note above.
-It read:
+Not reached, and unscheduled — see the note above.
 
 `ir.LowerWith → ssa.LiftFromIR → ssa.Optimize → ssa.Allocate → {x86_64,arm64}ssa.Emit`,
 with the legacy `internal/codegen/x86_64` / `internal/codegen/arm64` stack-machine

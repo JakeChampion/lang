@@ -1,21 +1,22 @@
 # SSA cutover: the shared lowering, and why Perceus needs it
 
-> **⚠️ DECLINED (2026-09-15).** The re-evaluation this document was written for
-> resolved against it: SSA is an analysis representation, not a codegen path.
-> See **`docs/SSA-DECISION.md`** → "Resolution (2026-09-15)".
+> **Status (2026-09-15): still PROPOSED, and the case for it has grown.** The
+> re-evaluation date passed without a call; see `docs/SSA-DECISION.md` →
+> "Where this stands (2026-09-15)".
 >
-> **The diagnosis below still stands and is still being acted on** — this was
-> never rejected as wrong. Tripwire 4 fired exactly as described, the ad-hoc
-> control-flow inventory is real, and the measurement that 32% of the IR's
-> reference-count operations act on unnamed operand-stack values is the reason
-> the ownership work moved onto the lifted form. What was declined is the
-> *remedy* this plan proposed: routing codegen through SSA. The same CFG is
-> reached through `ssa_lift` + `internal/ssa/{ownership,units,certify}`
-> WITHOUT a codegen cutover, which is why the cutover's cost stopped being
-> worth paying.
+> Two things have changed since this was written, pulling in opposite
+> directions. **For:** #8822 is a profiled real program (`coreutils/sort.fern`,
+> 4–5x GNU) whose diagnosis names `-backend ssa` as the direct answer to its
+> dominant cost — evidence of the kind tripwire 1 was waiting for, which this
+> plan did not have and explicitly did not claim. **Against:** the ownership
+> work this plan motivates reached the lifted form WITHOUT a codegen cutover
+> (`internal/ssa/{ownership,units,certify}`), so tripwire 4 — the one this plan
+> does rest on — no longer needs the cutover to be answered.
 >
-> Read §"Which tripwire fired" and §"The measurement that makes this
-> actionable" as live; read the staging plan as the road not taken.
+> So the strongest version of this plan today is narrower than what is written
+> below: not "IR → SSA → all native backends", but closing `x86_64ssa`'s
+> helper-coverage gap far enough to MEASURE #8822's claim. The shared-lowering
+> endpoint stays unscheduled.
 
 **Owner:** compiler / IR.
 
