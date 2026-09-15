@@ -71,3 +71,33 @@ func TestTwoIndexesInOneFunctionGetDistinctLabels(t *testing.T) {
 		t.Errorf("expected two inlined index sites, saw %d: %v", len(seen), seen)
 	}
 }
+
+// __slice_idx_1 is the spelling that matters most, and it was the one this
+// table skipped: a byte scan written the way every utility in coreutils/ writes
+// it (chunk.as_bytes(), then an indexed walk) reaches the slice helper, never
+// the array one. Both stack-machine backends inline it; this one called it.
+//
+// A view is one indirection further out than a buffer, so the inline form reads
+// two fields the array form does not: the length at [base+8] and the data
+// pointer at [base+0]. TestArmRunSliceIdxWalksTheView and its bounds-check and
+// stride siblings in slice_test.go are what pin the behaviour; this pins that
+// the behaviour is reached without a call.
+func TestSliceIndexIsInlinedNotCalled(t *testing.T) {
+	f := ssa.NewFunc("main")
+	b := f.NewBlock()
+	hdr := sliceHeaderOf(f, b, "abc")
+	f.SetRet(b, load8u(f, b, addrCallOp(f, b, "__slice_idx_1", hdr, constOp(f, b, 1)), 0))
+
+	asm := emitIdxAsm(t, map[string]*ssa.Func{"main": f}, "main")
+	if strings.Contains(asm, "bl "+"fn___slice_idx") {
+		t.Error("slice index still emitted as a call")
+	}
+	if !strings.Contains(asm, ", #8]") {
+		t.Error("inlined slice index never reads the length field at +8")
+	}
+	for _, want := range []string{"cmp", "b.lo", "#134"} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("inlined slice index is missing %q — the bounds check must survive", want)
+		}
+	}
+}

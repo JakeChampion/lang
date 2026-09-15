@@ -9677,19 +9677,30 @@ func usesCallIndirect(progs map[string]*x86.Program) bool {
 // Strings on this SSA backend are single-word data pointers, with the same
 // length header and checked byte-address calculation as __arr_idx_1. The
 // default backend's two-word string ABI does not apply here.
+//
+// slice marks the view spellings, which are one indirection further out: the
+// length is a field at [base+8] rather than a header at [base-4], and the data
+// pointer has to be loaded from [base+0] before the stride-shifted add. They
+// have no _nc form — the IR emits no bounds-check-elided slice index — and
+// __slice_idx_1 is the one an indexed walk of `chunk.as_bytes()` reaches, which
+// is how every byte scan in coreutils/ is written.
 var arrIdxInline = map[string]struct {
 	shift   int
 	checked bool
+	slice   bool
 }{
-	"__str_idx":       {0, true}, // single-word string, byte stride
-	"__arr_idx":       {2, true}, // stride 4 (i32)
-	"__arr_idx_1":     {0, true}, // stride 1 (byte array)
-	"__arr_idx_8":     {3, true}, // stride 8 (i64 / pointer)
-	"__arr_idx_16":    {4, true}, // stride 16 (two-word string[])
-	"__arr_idx_nc":    {2, false},
-	"__arr_idx_1_nc":  {0, false},
-	"__arr_idx_8_nc":  {3, false},
-	"__arr_idx_16_nc": {4, false},
+	"__str_idx":       {0, true, false}, // single-word string, byte stride
+	"__arr_idx":       {2, true, false}, // stride 4 (i32)
+	"__arr_idx_1":     {0, true, false}, // stride 1 (byte array)
+	"__arr_idx_8":     {3, true, false}, // stride 8 (i64 / pointer)
+	"__arr_idx_16":    {4, true, false}, // stride 16 (two-word string[])
+	"__arr_idx_nc":    {2, false, false},
+	"__arr_idx_1_nc":  {0, false, false},
+	"__arr_idx_8_nc":  {3, false, false},
+	"__arr_idx_16_nc": {4, false, false},
+	"__slice_idx":     {2, true, true},
+	"__slice_idx_1":   {0, true, true},
+	"__slice_idx_8":   {3, true, true},
 }
 
 // pokeInline maps each raw-memory intrinsic core/map.fern is written against
@@ -9808,8 +9819,12 @@ func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) (
 	idx := materialise(in.ArgLocs[1], s1)
 	if form.checked {
 		ok := fmt.Sprintf(".Lssa_idx_%s_ok", seed)
+		lenLoad := fmt.Sprintf("ldur %s, [%s, #-4]", wreg(s2), xreg(base))
+		if form.slice {
+			lenLoad = fmt.Sprintf("ldr %s, [%s, #8]", wreg(s2), xreg(base))
+		}
 		out = append(out,
-			fmt.Sprintf("ldur %s, [%s, #-4]", wreg(s2), xreg(base)),
+			lenLoad,
 			fmt.Sprintf("cmp %s, %s", wreg(idx), wreg(s2)),
 			fmt.Sprintf("b.lo %s", ok),
 			"mov x0, #134",
@@ -9817,6 +9832,13 @@ func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) (
 			"svc #0",
 			ok+":",
 		)
+	}
+	// A view's bytes live behind its header, so the add is off the data pointer
+	// rather than the operand. s2 held the length, which the check has already
+	// consumed.
+	if form.slice {
+		out = append(out, fmt.Sprintf("ldr %s, [%s]", xreg(s2), xreg(base)))
+		base = s2
 	}
 	// The add reads both operands and writes the destination, so a destination
 	// that already IS one of them is fine: nothing is clobbered before its use.

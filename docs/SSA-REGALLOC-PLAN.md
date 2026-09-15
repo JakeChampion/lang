@@ -1302,3 +1302,77 @@ built by the SSA backend against its flat twin. `docs/TEST-GATES.md` already
 warns that the fixpoint is self-referential and blind to a stable miscompile;
 this is that blindness with a name. A compile sweep answers "does it link". Only
 a run differential answers "does it compute the same thing".
+
+### The index was a call, and registers were never the whole story
+
+#8425 measured a per-byte scan loop on the flat x86-64 backend at ~7 cycles a
+byte and blamed the induction variable's stack slot: `add qword ptr [rbp-32], 1`
+forwards through the store buffer into the next iteration's load. Its
+hand-edited variants put the fix at keeping loop-carried scalars in registers,
+worth 0.67 s to 0.37 s, and named this backend as the one already built for
+that.
+
+It is, and it does. Compiled as a standalone function, the scan loop holds `i`,
+`n`, `lines` and the slice base in `%rbx`, `%r13`, `%r14`, `%r12`, and touches
+memory only for the byte it reads. But it reached the element through
+`call fn___slice_idx_1` — five instructions of address arithmetic behind call
+machinery that also forces a spill of anything caller-saved and live across it.
+
+Both stack-machine backends have inlined the index all along
+(`emitInlineIdxHelper` covers `__str_idx`, `__arr_idx*` and `__slice_idx_*`).
+On the SSA side the coverage was partial: `arm64ssa` inlined the array and
+string spellings and called the slice ones, and `x86_64ssa` had no inline form
+at all. `__slice_idx_1` is the spelling that matters most — a byte scan written
+the way every utility in `coreutils/` writes it (`chunk.as_bytes()`, then an
+indexed walk) reaches the slice helper and never the array one.
+
+Closing both gaps, measured on the 4-core dev container over a 1.18 MB view
+scanned 200 times (236 MB of bytes, best of nine):
+
+| build | best | median |
+|---|---|---|
+| flat x86-64 | 305 ms | 331 ms |
+| x86_64ssa before | 849 ms | 899 ms |
+| x86_64ssa after | **489 ms** | 627 ms |
+
+**1.74x on this backend, and still 1.6x behind the flat one.** That second
+number is the finding. The SSA loop is now 22 instructions a byte against
+flat's 19:
+
+```
+loop:   mov  0x8(%rbx),%r10d     ; len, reloaded per iteration
+        cmp  %r10d,%r13d
+        jb   ok
+        ...trap...
+ok:     mov  %r13d,%r10d         ; re-narrow the checked index
+        mov  (%rbx),%rax         ; data pointer, reloaded per iteration
+        lea  (%rax,%r10,1),%rax
+        movzbl (%rax),%ecx       ; the load
+        movslq %ecx,%rcx
+        mov  $0xa,%rax           ; constant materialised per iteration
+        cmp  %rax,%rcx
+        je   .. / jmp ..
+        mov  %r14,%rax           ; phi move
+        jmp  ..
+        mov  $0x1,%rcx           ; constant materialised per iteration
+        mov  %r13,%rdx
+        add  %rcx,%rdx
+        movslq %edx,%rdx
+        cmp  %r12,%rdx
+        jl   .. / jmp ..
+        mov  %rdx,%r13           ; phi move
+        mov  %rax,%r14           ; phi move
+        jmp  loop
+```
+
+Five of the twenty-two are unconditional jumps or phi moves between blocks
+holding one expression each, two are constants rematerialised every iteration,
+and two are width fixes. Register allocation removed flat's two memory
+read-modify-writes and its three dead reloads, and the block layout gave back
+more than that.
+
+So the ordering #8425 proposed is wrong in its second step. There is no case for
+covering this backend's remaining handle helpers so a utility can select it:
+the utility would get slower. What stands between the two backends on the shape
+the epic cares about is block layout, phi-move coalescing and constant
+rematerialisation — not registers, and not the index any more.
