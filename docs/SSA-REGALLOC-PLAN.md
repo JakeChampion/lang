@@ -1336,8 +1336,9 @@ scanned 200 times (236 MB of bytes, best of nine):
 | x86_64ssa after | **489 ms** | 627 ms |
 
 **1.74x on this backend, and still 1.6x behind the flat one.** That second
-number is the finding. The SSA loop is now 22 instructions a byte against
-flat's 19:
+number is the finding. The SSA loop is now 23 instructions a byte against
+flat's 20, counting every instruction retired on the common (non-matching)
+path, the not-taken conditional branch included:
 
 ```
 loop:   mov  0x8(%rbx),%r10d     ; len, reloaded per iteration
@@ -1365,11 +1366,12 @@ ok:     mov  %r13d,%r10d         ; re-narrow the checked index
         jmp  loop
 ```
 
-Five of the twenty-two are unconditional jumps or phi moves between blocks
-holding one expression each, two are constants rematerialised every iteration,
-and two are width fixes. Register allocation removed flat's two memory
-read-modify-writes and its three dead reloads, and the block layout gave back
-more than that.
+Six of the twenty-three are pure shuffling — three unconditional jumps between
+blocks holding one expression each, and three register-to-register moves that
+only carry loop values across those edges. Two more are constants rematerialised
+every iteration and two are width fixes. Register allocation removed flat's two
+memory read-modify-writes and its two dead reloads, and the block layout gave
+back more than that.
 
 So the ordering #8425 proposed is wrong in its second step. There is no case for
 covering this backend's remaining handle helpers so a utility can select it:
