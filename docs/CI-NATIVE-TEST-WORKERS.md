@@ -46,6 +46,31 @@ ARM64 because they mistook an empty emulator command for unavailable tooling.
 Those gaps are tracked separately; matching outcomes does not establish
 coverage of the skipped tests.
 
+### Four-worker comparison
+
+A separate one/four/four/one experiment kept the same inputs, four-CPU budget
+and memory limit. All 4,931 outcomes again matched. Small Git operations,
+source edits and read-only analysis occurred on the host, with no concurrent
+local builds or tests.
+
+| Workers | Wall seconds | Child CPU seconds | Container peak bytes |
+| ---: | ---: | ---: | ---: |
+| 1 | 342.065829 | 594.233300 | 478941184 |
+| 4 | 343.656845 | 511.655674 | 778858496 |
+| 4 | 343.532475 | 512.001347 | 778215424 |
+| 1 | 340.600658 | 573.568945 | 477360128 |
+
+Mean wall time was 341.333s serial versus 343.595s with four workers. Four
+workers did not improve completion time. Each gets only one CPU; the large
+SSA differential parent then occupied 275.642s and 274.876s, while other
+workers had already finished. With two workers that parent occupied about
+100-105s. Keep two workers for this rollout.
+
+These parent lifetimes come from run-to-terminal event timestamps. Go's
+parent `Elapsed` field excludes parallel-child execution: the first serial
+control reported 0.42s for a parent whose full lifetime was 71.112420s.
+Using only terminal `Elapsed` fields would conceal this bottleneck.
+
 ## Failure and coverage handling
 
 The runner rejects empty, malformed or duplicate inventories. It preserves
