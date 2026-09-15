@@ -904,6 +904,20 @@ function main(): i32 { return g(); }`,
 			// the buffer, so the CoW must inc even at the last use.
 			// (main carries the same known self-host-only precise drop of its
 			// argument array at last use; native sweeps.)
+			//
+			// h's freeEligible / lastUses rows are a RENDERING divergence, and
+			// the runtime evidence says which side is right: both compilers
+			// reclaim the copy. 200 rounds of a 64-element array under
+			// FERN_LEAKCHECK read allocs=1400 frees=1400 live_bytes=0 on the
+			// self-host AND on native — after #9299 taught native's
+			// computeFreeEligible that a `.with` on a borrowed receiver hands
+			// back a fresh buffer (before it, native alone read 1400/1200,
+			// 80000 live). So the self-host was never leaking this; it
+			// reclaims `b` without listing it in freeEligible, which its
+			// free_eligible_of port does not model for a `.with` result. The
+			// pin records a table the two render differently, not a gap in
+			// either — re-pinning it the other way would be the drift this
+			// harness exists to catch.
 			name: "arrayset-inc-borrowed-param",
 			src: `function h(xs: i32[]): i32 {
 	var b: i32[] = xs.with(0, 9);
@@ -912,6 +926,10 @@ function main(): i32 { return g(); }`,
 function main(): i32 { var a: i32[] = [1, 2]; return h(a); }`,
 			anchor: map[string]map[string]string{"h": {"arraySetInc": "2:24=true"}},
 			diverge: map[string]map[string]divergence{
+				"h": {
+					"freeEligible": {native: "b", selfhost: ""},
+					"lastUses":     {native: "b=1", selfhost: ""},
+				},
 				"main": {"preciseDrops": {native: "", selfhost: "1=a"}},
 			},
 		},

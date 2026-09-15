@@ -8863,6 +8863,70 @@ function main(): i32 {
     return (through_field_read() + through_fresh_call() - 47) + __rc_underflow_count();
 }`,
 	},
+	{
+		// The RESULT of a `.with` on a BORROWED receiver is a fresh buffer
+		// the frame owns, and nothing released it: one whole buffer stranded
+		// per call, unbounded (#9299). computeFreeEligible read the result as
+		// an alias of the receiver, which holds only on cow_inplace's rc == 1
+		// arm — the arm computeArraySetIncs incs a borrowed receiver
+		// precisely to make unreachable.
+		//
+		// Both borrow spellings, since one predicate decides them: an array
+		// PARAMETER and a non-consuming match BINDING. Each round asserts the
+		// value semantics the forced inc is there for — the copy carries the
+		// new element and the source still reads its original — so a credit
+		// granted where the inc did NOT fire shows up as a wrong answer here
+		// rather than only as a census move. Churned 200x so a leak grows the
+		// heap. 200 * 2 = 400.
+		//
+		// The Option is bound to a LOCAL rather than written
+		// `via_binding(Some(mk(8)))`, which would carry an unrelated leak
+		// into this case and put it in the leak gate's baseline table for
+		// someone else's bug: an enum construction built inline in ARGUMENT
+		// position strands its box, 48 bytes a call, with or without the
+		// `.with` under test (#9313). The callee is identical either way —
+		// the scrutinee is its parameter — so nothing about the shape under
+		// test is lost.
+		name: "array_with_borrowed_receiver_result_reclaims",
+		src: `
+function mk(n: i32): i32[] {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(i); i = i + 1; }
+    return a;
+}
+function via_param(xs: i32[]): i32 {
+    var w: i32[] = xs.with(0, 99);
+    if (w[0] != 99) { return 1000; }
+    if (xs[0] != 0) { return 2000; }
+    if (w[3] != 3) { return 3000; }
+    return 1;
+}
+function via_binding(o: Option[i32[]]): i32 {
+    match (o) {
+        Some(xs) => {
+            var w: i32[] = xs.with(1, 99);
+            if (w[1] != 99) { return 1000; }
+            if (xs[1] != 1) { return 2000; }
+            return 1;
+        },
+        None => { return 4000; }
+    }
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 200) {
+        var buf: i32[] = mk(8);
+        t = t + via_param(buf);
+        if (buf[0] != 0) { return 5000; }
+        var opt: Option[i32[]] = Some(mk(8));
+        t = t + via_binding(opt);
+        r = r + 1;
+    }
+    return (t - 400) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
