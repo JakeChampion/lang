@@ -65,48 +65,54 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 
 	cases := selfHostStdTestCases(t, failing)
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Oracle: the reference interpreter.
-			ic := exec.Command(interpBin, "-interp", tc.src)
-			wantOut, _ := ic.Output()
-			wantExit := ic.ProcessState.ExitCode()
+	// The group includes parallel children in the top-level duration used
+	// by scripts/ci-test-weights. Each case owns its output directory.
+	t.Run("cases", func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				caseDir := t.TempDir()
+				// Oracle: the reference interpreter.
+				ic := exec.Command(interpBin, "-interp", tc.src)
+				wantOut, _ := stdTestOutput(ic)
+				wantExit := ic.ProcessState.ExitCode()
 
-			// Self-host: compile → assemble → link → run.
-			asm, err := runX86_64Bin(runner, mmc, tc.src, stdlibRoot).Output()
-			if err != nil {
-				// The driver reports the reason (a checker diagnostic, an
-				// unsupported construct) on stderr; without it the failure is
-				// a bare "exit status 1" and the next reader has to rebuild
-				// the driver by hand to learn anything.
-				var ee *exec.ExitError
-				if errors.As(err, &ee) {
-					t.Fatalf("self-host compile failed: %v\n%s", err, ee.Stderr)
+				// Self-host: compile → assemble → link → run.
+				asm, err := stdTestOutput(runX86_64Bin(runner, mmc, tc.src, stdlibRoot))
+				if err != nil {
+					// The driver reports the reason (a checker diagnostic, an
+					// unsupported construct) on stderr; without it the failure is
+					// a bare "exit status 1" and the next reader has to rebuild
+					// the driver by hand to learn anything.
+					var ee *exec.ExitError
+					if errors.As(err, &ee) {
+						t.Fatalf("self-host compile failed: %v\n%s", err, ee.Stderr)
+					}
+					t.Fatalf("self-host compile failed: %v", err)
 				}
-				t.Fatalf("self-host compile failed: %v", err)
-			}
-			if len(asm) == 0 {
-				t.Fatal("self-host emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			rc := runX86_64Bin(runner, bin)
-			gotOut, _ := rc.Output()
-			gotExit := rc.ProcessState.ExitCode()
+				if len(asm) == 0 {
+					t.Fatal("self-host emitted 0 bytes")
+				}
+				bin := buildBin(t, gcc, caseDir, tc.name, string(asm))
+				rc := runX86_64Bin(runner, bin)
+				gotOut, _ := stdTestOutput(rc)
+				gotExit := rc.ProcessState.ExitCode()
 
-			if gotExit != wantExit {
-				t.Errorf("exit code: self-host %d, interp %d", gotExit, wantExit)
-			}
-			gotStr := string(gotOut)
-			wantStr := string(wantOut)
-			if tc.stripPrefix != "" {
-				gotStr = stripLinesWithPrefix(gotStr, tc.stripPrefix)
-				wantStr = stripLinesWithPrefix(wantStr, tc.stripPrefix)
-			}
-			if gotStr != wantStr {
-				t.Errorf("TAP output mismatch:\n--- self-host ---\n%s\n--- interp ---\n%s", gotStr, wantStr)
-			}
-		})
-	}
+				if gotExit != wantExit {
+					t.Errorf("exit code: self-host %d, interp %d", gotExit, wantExit)
+				}
+				gotStr := string(gotOut)
+				wantStr := string(wantOut)
+				if tc.stripPrefix != "" {
+					gotStr = stripLinesWithPrefix(gotStr, tc.stripPrefix)
+					wantStr = stripLinesWithPrefix(wantStr, tc.stripPrefix)
+				}
+				if gotStr != wantStr {
+					t.Errorf("TAP output mismatch:\n--- self-host ---\n%s\n--- interp ---\n%s", gotStr, wantStr)
+				}
+			})
+		}
+	})
 }
 
 // TestSelfHostStdTestE2EArm64 is the arm64 mirror of the gate above.
@@ -151,49 +157,69 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	}
 
 	cases := selfHostStdTestCases(t, failing)
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Oracle: the reference interpreter built for this host.
-			ic := exec.Command(interpBin, "-interp", tc.src)
-			wantOut, _ := ic.Output()
-			wantExit := ic.ProcessState.ExitCode()
+	// The group includes parallel children in the top-level duration used
+	// by scripts/ci-test-weights. Each case owns its output directory.
+	t.Run("cases", func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				caseDir := t.TempDir()
+				// Oracle: the reference interpreter built for this host.
+				ic := exec.Command(interpBin, "-interp", tc.src)
+				wantOut, _ := stdTestOutput(ic)
+				wantExit := ic.ProcessState.ExitCode()
 
-			// Self-host: x86 mmc emits aarch64 asm; gcc-
-			// aarch64 assembles + links; qemu-aarch64 runs (or
-			// native, when qemu == "").
-			asm, err := runX86_64Bin(x86runner, mmc, tc.src, stdlibRoot, "-target", "arm64-linux").Output()
-			if err != nil {
-				// Same reason the x86-64 sibling above prints stderr: without
-				// it the failure is a bare "exit status 1" and the next reader
-				// has to rebuild the driver by hand to learn anything.
-				var ee *exec.ExitError
-				if errors.As(err, &ee) {
-					t.Fatalf("self-host compile failed: %v\n%s", err, ee.Stderr)
+				// Self-host: x86 mmc emits aarch64 asm; gcc-
+				// aarch64 assembles + links; qemu-aarch64 runs (or
+				// native, when qemu == "").
+				asm, err := stdTestOutput(runX86_64Bin(x86runner, mmc, tc.src, stdlibRoot, "-target", "arm64-linux"))
+				if err != nil {
+					// Same reason the x86-64 sibling above prints stderr: without
+					// it the failure is a bare "exit status 1" and the next reader
+					// has to rebuild the driver by hand to learn anything.
+					var ee *exec.ExitError
+					if errors.As(err, &ee) {
+						t.Fatalf("self-host compile failed: %v\n%s", err, ee.Stderr)
+					}
+					t.Fatalf("self-host compile failed: %v", err)
 				}
-				t.Fatalf("self-host compile failed: %v", err)
-			}
-			if len(asm) == 0 {
-				t.Fatal("self-host emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			rc := runArm64Bin(qemu, bin)
-			gotOut, _ := rc.Output()
-			gotExit := rc.ProcessState.ExitCode()
+				if len(asm) == 0 {
+					t.Fatal("self-host emitted 0 bytes")
+				}
+				bin := buildBinArm64(t, arm64gcc, caseDir, tc.name, string(asm))
+				rc := runArm64Bin(qemu, bin)
+				gotOut, _ := stdTestOutput(rc)
+				gotExit := rc.ProcessState.ExitCode()
 
-			if gotExit != wantExit {
-				t.Errorf("exit code: self-host %d, interp %d", gotExit, wantExit)
-			}
-			gotStr := string(gotOut)
-			wantStr := string(wantOut)
-			if tc.stripPrefix != "" {
-				gotStr = stripLinesWithPrefix(gotStr, tc.stripPrefix)
-				wantStr = stripLinesWithPrefix(wantStr, tc.stripPrefix)
-			}
-			if gotStr != wantStr {
-				t.Errorf("TAP output mismatch:\n--- self-host ---\n%s\n--- interp ---\n%s", gotStr, wantStr)
-			}
-		})
-	}
+				if gotExit != wantExit {
+					t.Errorf("exit code: self-host %d, interp %d", gotExit, wantExit)
+				}
+				gotStr := string(gotOut)
+				wantStr := string(wantOut)
+				if tc.stripPrefix != "" {
+					gotStr = stripLinesWithPrefix(gotStr, tc.stripPrefix)
+					wantStr = stripLinesWithPrefix(wantStr, tc.stripPrefix)
+				}
+				if gotStr != wantStr {
+					t.Errorf("TAP output mismatch:\n--- self-host ---\n%s\n--- interp ---\n%s", gotStr, wantStr)
+				}
+			})
+		}
+	})
+}
+
+// stdTestOutput budgets each subprocess separately. Linking has its own
+// reservation, so holding this across buildBin would nest reservations and
+// could deadlock. The full native corpus peaked at 4.25 GB for a single
+// child; reserve 5 GiB to leave room above that measurement.
+func stdTestOutput(cmd *exec.Cmd) ([]byte, error) {
+	var out []byte
+	err := e2eharness.WithBuildMemoryMB(5*1024, func() error {
+		var err error
+		out, err = cmd.Output()
+		return err
+	})
+	return out, err
 }
 
 type selfHostStdTestCase struct {
