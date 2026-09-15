@@ -209,13 +209,15 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 	return units
 }
 
-// The Go-built driver peaked at 2.43 GiB in CI run 34979953900. Its
-// self-built successor peaked at 10.63 GiB for the SAME 8-unit batches.
-// Reserve separately: Go-built batches can share a normal CI runner, while
-// self-built batches reserve the full 16 GiB arena before running together.
+// The Go-built driver peaked at 2.43 GiB in CI run 34979953900. Persistent
+// instruction accumulation reduces the self-built driver's eight-unit peak
+// to 2.76 GiB across all 75 compiler units in native run 35033101363. Both
+// now reserve 5 GiB per batch against the shared process-wide budget. Two
+// self-built batches together peaked below 4.8 GB with byte-identical output;
+// retain separate constants so future measurements can adjust either shape.
 const (
 	pmGoBuiltEmitMemoryMB   = 5 * 1024
-	pmSelfBuiltEmitMemoryMB = 16 * 1024
+	pmSelfBuiltEmitMemoryMB = 5 * 1024
 )
 
 type pmEmitBatchResult struct {

@@ -65,9 +65,7 @@ and 10.625 seconds. Means are 12.199 -> 10.613 seconds. Peak RSS was nearly
 unchanged, 1.927 -> 1.920 GB. All eight measured outputs matched, and the
 candidate's complete 75-unit reproduction check passed again.
 
-## Correctness and size
-
-### Ordinary utility compilation
+## Ordinary utility compilation
 
 A separate native ARM64 comparison built the ordinary `fern.fern` CLI with
 the same Go bootstrap, then compiled all 104 coreutils sources with each
@@ -88,7 +86,29 @@ The isolated test does not include corpus execution. Local records and driver:
 `/tmp/lang-ci-buffer-coreutils/results-full` and
 `/tmp/lang-ci-buffer-coreutils/compare.py`.
 
-### Semantic and binary checks
+## Parallel self-built batches
+
+The lower allocation peak allows the whole-compiler fixpoint test's self-built
+batches to reserve 5 GiB each instead of the full 16 GiB arena. The existing
+process-wide memory limiter and CPU budget still govern execution. Eight-unit
+batches, selected units and byte-identity assertions are unchanged.
+
+[Native x86 run 35033101363](https://github.com/JakeChampion/lang/actions/runs/35033101363)
+compared serial and parallel emission of all 75 units after a passing pilot
+on the same experiment revision. Fresh containers enforce four CPUs, 16 GiB
+and a 13,926 MiB build-memory budget. ABBA times were 78.611, 40.109, 40.284
+and 78.426 seconds: means 78.518 seconds serial and 40.196 seconds parallel.
+Every emitted unit matches the fixed Go-built output in every trial.
+Maximum individual child RSS was 2,958,565,376 bytes; concurrent container
+memory peaked at 4,765,581,312 bytes. Observed active batches were one and two.
+
+The equivalent ARM64 comparison gave 42.920 -> 23.173 seconds, with identical
+output across all 75 units and peak parallel container memory 4,560,670,720
+bytes. These timings cover emission only. They do not establish whole-test or
+whole-CI savings, nor safe memory accounting across separate test processes.
+The lower reservation depends on this instruction-buffer implementation.
+
+## Correctness and size
 
 - All 75 units of the changed compiler reproduce exactly between the Go-built
   and self-built generations, using the normal eight-unit emission route.
@@ -100,7 +120,7 @@ The isolated test does not include corpus execution. Local records and driver:
   The self-built binary grows from 10,637,176 to 10,702,064 bytes. ELF section
   comparison attributes 6,569 bytes to added loadable contents; its data segment
   crosses a 64 KiB alignment boundary, explaining most of the file-size growth.
-  BSS is unchanged. No size baseline or memory reservation is changed.
+  BSS is unchanged. No size baseline is changed.
 
-Full repository checks, a controlled parallel-batch comparison, and live CI
-validation remain required before adopting new scheduling or memory budgets.
+Full repository checks and live CI validation remain required before adopting
+the buffer and its lower batch reservation.
