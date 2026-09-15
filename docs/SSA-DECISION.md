@@ -1,17 +1,17 @@
 # SSA: ship-or-shelve decision
 
 **Status:** OPEN for codegen; SHIPPED for analysis. The layer is **not**
-shelved — it carries the ownership/Perceus analysis today, and its emitters are
-under active measurement for #8822. The cutover has not been scheduled and has
-not been declined.
-**Next decision point:** not a date — whether to fund closing `x86_64ssa`'s
-helper-coverage gap so `coreutils/sort.fern` builds under `-backend ssa` and
-can be measured (#8822, #8047).
+shelved. On the codegen side, size and correctness are SETTLED in the SSA
+backend's favour — 45.3% of flat's `.text` over the corpus, 286/0 on the run
+differential — and speed is the single remaining blocker on an arm64 default
+flip (#4112 phase 4). The x86-64 side is blocked on coverage instead (#8822).
+**Next decision point:** not a date — which of those two tracks to fund.
 **Owner:** compiler / IR.
 
-Read "Where this stands (2026-09-15)" below FIRST: it corrects a stale claim in
-the 2026-09-02 section above, which says tripwires 1–3 are unfired. One of them
-has fired.
+Read "Where this stands (2026-09-15)" below FIRST. It corrects two things in
+the 2026-09-02 section above: that section says tripwires 1–3 are unfired (one
+has), and it quotes the benchmark geomean as evidence against the backend when
+the ratio runs the other way — 0.92x means SSA is ~8% FASTER on average.
 
 ## The question
 
@@ -166,7 +166,15 @@ epic #8278, and the index-helper inlining landed on both native SSA backends on
 default-backend switch** — so the active work is not itself a cutover, but it
 is the opposite of a shelved layer.
 
-So what the 2026-09-02 numbers support is narrower than a resolution:
+**Read the benchmark ratios carefully — the 2026-09-02 note above does not.**
+In `SSA-REGALLOC-PLAN.md`'s tables a ratio is SSA's time as a fraction of the
+flat backend's, so below 1.0 is FASTER (`int_loop 0.44x` is listed as a win).
+The geometric mean of ~0.92x therefore says SSA is about **8% faster on
+average and much smaller** — it is not evidence against the backend, and
+quoting it beside "seven benchmarks are slower" as though it were is a
+misreading.
+
+What the current evidence supports:
 
 - **The analysis route is real, funded and already built** — `Op.SrcOp`
   provenance with a totality gate, plus
@@ -175,19 +183,41 @@ So what the 2026-09-02 numbers support is narrower than a resolution:
   32% of reference-count operations that act on unnamed operand-stack values.
   It answers tripwire 4 and feeds roadmap goal 2 directly. Nothing here is in
   tension with the codegen question; both roles use the same lift.
-- **The codegen route is not ready to be defaulted** — seven of seventeen arm64
-  benchmarks run 1.11x–1.49x slower under SSA, geomean ~0.92x, call-clobber
-  awareness unwritten, and on x86-64 the flat backend is ahead on the scan loop
-  (18 instructions a byte against 23). `SSA-REGALLOC-PLAN.md` records speed as
-  the open blocker.
-- **Neither of those decides the question.** "Not ready to default" is not
-  "will never be a codegen path", and #8822 is a standing argument that it
-  should become one for x86-64 specifically.
+- **Size is settled, and it is not marginal.** Over the corpus the SSA backend
+  emits **45.3% of flat's `.text`**, with 280 of 281 programs individually
+  smaller and the ratio improving with program size — the ten largest land at
+  10–31% (`miniparse` 863,904 → 86,636 bytes). All 17 benchmarks are smaller.
+  Since binary size is epic #4109's whole objective, this is the goal being met.
+- **Correctness is settled** — 286/0 on the `asm_run` corpus differential,
+  285/0/1 on `interp_run`.
+- **Speed is the single open blocker, and it is converging.** Two rounds of
+  fixes have landed since the 09-02 note: static `.rodata` closure cells plus
+  inlined raw pokes (`map_int` 3.25x → 1.61x, `map_string` 2.25x → 1.30x,
+  `tokenize` 1.13x → 0.97x, peak RSS halved onto the flat backend's), and
+  `helperClobbers` call-clobber-aware caller-save (`map_probe_chain` 1.91x →
+  1.56x, `pvec_with` 2.09x → 1.87x, `.text` to 95.79% of what it was,
+  `ordmap_insert`'s stack traffic down 25%). Call-clobber awareness is written,
+  not outstanding.
 
-**The next decision point is concrete**, which is better than another date:
-whether to fund closing `x86_64ssa`'s helper-coverage gap so `sort.fern` builds
-under it, and then measure. That is the 84-symbol gap (#8047) with its
-step-function unlock curve, and #8822 is the reason to pay it.
+**Why this still is not a default flip**, in the plan's own words: *"an average
+is the wrong test for a default. Flipping it ships a 20–49% slowdown to anyone
+whose workload looks like `cmp.sort` or `core/map`."* That lands squarely on
+this project — CLAUDE.md records the self-hosted compiler as the biggest
+workload and `core/map` as its most demanding consumer, so defaulting today
+would slow the compiler. The worst remaining rows are `ordmap_insert` 2.28x,
+`pmap_insert` 2.02x, `pvec_with` 1.87x, `map_int` 1.65x, `map_probe_chain`
+1.56x.
+
+**Two tracks, two different blockers — do not conflate them:**
+
+| track | blocker | state |
+| ----- | ------- | ----- |
+| **arm64 default flip** (#4112 phase 4) | codegen quality in loop bodies, with seven named reproducers | size and correctness settled; speed converging, worst rows are persistent collections paying per-call RC helpers |
+| **x86-64** (#8822) | **coverage, not speed** — `sort.fern` does not build under `-backend ssa` (17 undefined call targets), so the claim that it fixes sort's dominant cost is UNMEASURED | the 84-symbol helper gap (#8047), with its step-function unlock curve |
+
+The next decision point is which of those to fund first. They are independent,
+and the x86-64 one is cheaper to make answerable: coverage work is mechanical,
+where loop-body codegen quality is open-ended.
 
 ### Per-backend disposition
 

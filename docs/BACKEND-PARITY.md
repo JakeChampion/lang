@@ -3,9 +3,10 @@
 Three code-generation backends ship today — `internal/codegen/{arm64,x86_64,wasmbin}`,
 each lowering the flat `ir.Program`. Two more, `arm64ssa` and `x86_64ssa`, are
 reachable only through `-backend ssa` / `-backend typed-ssa`: **not production
-paths, but not shelved either** — they are under active measurement for the
-coreutils perf epic, and whether either is ever defaulted is open
-(`docs/SSA-DECISION.md`, #8822). A sixth, `wasmssa`, was retired (#9397).
+paths, but candidates to become ones** — they emit 45.3% of flat's `.text` over
+the corpus at 286/0 run-differential parity, and an arm64 default flip is
+blocked on loop-body speed alone (`docs/SSA-DECISION.md`, #4112, #8822). A
+sixth, `wasmssa`, was retired (#9397).
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no
