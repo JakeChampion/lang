@@ -299,6 +299,9 @@ var rcInertBuiltins = map[string]bool{
 	// like `access` it is classified here under the builtin name rather
 	// than as a wasm runtime helper.
 	"process_alive": true,
+	// (fd) → Result[i64[], IoError] and (fd, when, words) → Result[void,
+	// IoError]. The words array is READ and not retained.
+	"termios_get": true, "termios_set": true,
 	// No arguments at all, and an i64 out. Native-only for the same
 	// reason: no wasm world has resource limits.
 	"rlimit_nofile": true,

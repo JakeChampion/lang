@@ -171,6 +171,14 @@ var Ungated = map[string]bool{
 	// its geometry is one more fact about it, so a dependency that asks
 	// reaches nothing `isatty` did not already let it reach.
 	"window_size": true,
+	// The line settings of the same descriptor, read and written. Ungated
+	// for the reason `window_size` is — the descriptor was handed to the
+	// process and its configuration is one more fact about it — and the
+	// WRITE is no different: a dependency that turns off echo on a
+	// terminal the invoker attached reaches nothing it could not already
+	// reach by writing escape sequences to it.
+	"termios_get": true,
+	"termios_set": true,
 	// The process's own ids — effective, real, and the supplementary
 	// group set. Reading them reaches nothing:
 	// the identity was chosen by whoever exec'd the program, and a

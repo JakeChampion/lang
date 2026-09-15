@@ -54,7 +54,7 @@ costs a silent failure on the first target that lacks it.
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
-| `tty` | `window_size` | a terminal with a size to report, where `isatty` only asks whether there is one |
+| `tty` | `window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
@@ -493,6 +493,22 @@ nowhere to put a refusal and needs the compile-time gate instead. Preview 1's
 MOVES a descriptor where this duplicates one, and the handle the caller still
 holds would be left dangling with a drop that closes a number it no longer
 owns. Preview 2 has no numbered table to renumber at all.
+
+**`termios_get` / `termios_set` surrender the KERNEL's words**, which is the
+one place here that does not invent Fern's own numbering, and `stty -g` is
+why: it prints the four flag words and the control characters in hex and its
+restore form reads them back, so a normalised bit set could not reproduce the
+output (#9356). The flag constants are therefore the target's, and a caller
+that names one branches on `target_os()` the way GNU's stty gets them from the
+C headers.
+
+Gated on `tty` beside `window_size`, and refused on both wasm worlds for the
+same reason: there is no truthful answer to what the settings of a terminal
+that cannot exist are. Preview 1's `fd_fdstat_get` reports a filetype and
+nothing about line discipline, and the component model has no terminal
+interface at all. That makes it E066 rather than an `Unsupported` at the call
+— `syncfs`'s shape is for a target that HAS the thing and cannot do the
+operation, where this is a target with no terminal at all.
 
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the

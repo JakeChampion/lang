@@ -619,6 +619,8 @@ func New() *Interp {
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
 	i.Builtins["window_size"] = &Builtin{Fn: builtinWindowSize}
+	i.Builtins["termios_get"] = &Builtin{Fn: builtinTermiosGet}
+	i.Builtins["termios_set"] = &Builtin{Fn: builtinTermiosSet}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
@@ -4374,6 +4376,64 @@ func builtinWindowSize(_ *Interp, args []Value) (Value, error) {
 			"cols": Number(int64(cols)),
 		},
 	}), nil
+}
+
+// builtinTermiosGet answers `termios_get(fd)` against the real fd the
+// interpreter process holds, so `fern -interp` reads the same terminal the
+// compiled binary would. The words are the kernel's own, in the order
+// internal/tty documents — a caller prints them and reads them back, so
+// nothing here normalises them.
+func builtinTermiosGet(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("termios_get: expected 1 arg, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("termios_get: expected number arg, got %T", args[0])
+	}
+	words, err := tty.Termios(int(fd))
+	if err != nil {
+		// Path-less, as every descriptor-shaped failure is: the fd is
+		// the subject and it has no name.
+		return resultErr(classifyIoError("", err)), nil
+	}
+	out := newArray(len(words))
+	for i, w := range words {
+		out.E[i] = Number(w)
+	}
+	return resultOk(out), nil
+}
+
+// builtinTermiosSet answers `termios_set(fd, when, words)`. A wrong-length
+// array is EINVAL from internal/tty rather than a partial write.
+func builtinTermiosSet(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("termios_set: expected 3 args, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("termios_set: expected number fd, got %T", args[0])
+	}
+	when, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("termios_set: expected number action, got %T", args[1])
+	}
+	arr, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("termios_set: expected number[] words, got %T", args[2])
+	}
+	words := make([]int64, len(arr.E))
+	for i, e := range arr.E {
+		n, ok := e.(Number)
+		if !ok {
+			return nil, fmt.Errorf("termios_set: word %d is %T, not a number", i, e)
+		}
+		words[i] = int64(n)
+	}
+	if err := tty.SetTermios(int(fd), int(when), words); err != nil {
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(unitValue()), nil
 }
 
 // builtinTargetOS answers `target_os()` with the interpreter's host: under

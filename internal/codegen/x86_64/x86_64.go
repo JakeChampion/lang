@@ -928,6 +928,12 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesWindowSize {
 		g.emitWindowSizeRuntime()
 	}
+	if g.usesTermiosGet {
+		g.emitTermiosGetRuntime()
+	}
+	if g.usesTermiosSet {
+		g.emitTermiosSetRuntime()
+	}
 	if g.usesSignalDisposition {
 		g.emitSignalDispositionRuntime()
 	}
@@ -1370,6 +1376,11 @@ type generator struct {
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
+	// usesTermiosGet / usesTermiosSet pull in the two halves of the
+	// terminal's line settings — one TCGETS into a word array, and the
+	// TCSETS family back out of one.
+	usesTermiosGet bool
+	usesTermiosSet bool
 	// usesSignalDisposition pulls in both `__fern_signal_ignore` and
 	// `__fern_signal_default`; they differ by one immediate, so they
 	// share a body and one flag rather than splitting into two.
@@ -2036,6 +2047,14 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "window_size":
 		g.usesWindowSize = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "termios_get":
+		g.usesTermiosGet = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "termios_set":
+		g.usesTermiosSet = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "signal_ignore", "signal_default":
@@ -3787,6 +3806,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_signal_disposition"
 		case "window_size":
 			target = "__fern_window_size"
+		case "termios_get":
+			target = "__fern_termios_get"
+		case "termios_set":
+			target = "__fern_termios_set"
 		case "signal_ignore":
 			target = "__fern_signal_ignore"
 		case "signal_default":
@@ -13560,6 +13583,165 @@ func (g *generator) emitSetProcessGroupRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_set_process_group, .-__fern_set_process_group")
+}
+
+// The kernel's `struct termios` on this ABI: four 32-bit flag words, one
+// line-discipline byte, and NCCS = 19 control characters — 36 bytes. The word
+// array the language sees is one element per field in that order, so 24
+// elements, and `internal/tty` carries the same layout for the interpreter.
+const (
+	termiosBytes = 36
+	termiosNCCS  = 19
+	termiosWords = 4 + 1 + termiosNCCS
+	tcgets       = 0x5401
+	// TCSETS, TCSETSW and TCSETSF are consecutive, so the action adds.
+	tcsets = 0x5402
+)
+
+// emitTermiosGetRuntime emits `__fern_termios_get(fd) → Result[i64[],
+// IoError]` — one TCGETS into the kernel's struct, widened element by element
+// into a fresh `i64[]`.
+//
+// The words are the KERNEL's, not normalised: `stty -g` prints them in hex
+// and its restore form reads them back, so a Fern numbering could not
+// reproduce the output. A descriptor that is not a terminal answers ENOTTY,
+// classified against an empty path as every descriptor-shaped failure is.
+//
+// System V: edi = fd.
+func (g *generator) emitTermiosGetRuntime() {
+	g.line("")
+	g.line(".globl __fern_termios_get")
+	g.line(".type __fern_termios_get, @function")
+	g.label("__fern_termios_get")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	// 3 pushes ⇒ rsp ≡ 8 mod 16; 40 realigns and leaves the 36-byte
+	// struct at [rsp].
+	g.emit("sub rsp, 40")
+	g.emit("mov edi, edi") // the fd is an i32; ioctl reads the whole register
+	g.emit(fmt.Sprintf("mov esi, %d", tcgets))
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysIoctl)
+	g.emit("test rax, rax")
+	g.emit("js .Ltcg_err")
+	// i64[] in the array box shape: cap and rc below the data pointer,
+	// length at -4. rc = 1, because the array is fresh and owned.
+	g.emit(fmt.Sprintf("mov edi, %d", termiosWords*8+16))
+	g.emit("call __fern_alloc")
+	g.emit("lea r12, [rax + 16]")
+	g.emit(fmt.Sprintf("mov dword ptr [r12 - 12], %d", termiosWords))
+	g.emit("mov dword ptr [r12 - 8], 1")
+	g.emit(fmt.Sprintf("mov ebx, %d", termiosWords))
+	g.emitArrayLenStore("ebx", "r12")
+	// The four flag words zero-extend: a 32-bit load clears the high half.
+	for i := 0; i < 4; i++ {
+		g.emit(fmt.Sprintf("mov eax, [rsp + %d]", i*4))
+		g.emit(fmt.Sprintf("mov [r12 + %d], rax", i*8))
+	}
+	g.emit("movzx eax, byte ptr [rsp + 16]") // c_line
+	g.emit("mov [r12 + 32], rax")
+	g.emit("xor ecx, ecx")
+	g.label(".Ltcg_cc")
+	g.emit("movzx eax, byte ptr [rsp + rcx + 17]")
+	g.emit("mov [r12 + rcx*8 + 40], rax")
+	g.emit("inc rcx")
+	g.emit(fmt.Sprintf("cmp rcx, %d", termiosNCCS))
+	g.emit("jb .Ltcg_cc")
+	g.emit("mov rbx, r12")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 0") // Ok
+	g.emit("mov [rax + 8], rbx")
+	g.emit("jmp .Ltcg_ret")
+	g.label(".Ltcg_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Ltcg_ret")
+	g.emit("add rsp, 40")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_termios_get, .-__fern_termios_get")
+}
+
+// emitTermiosSetRuntime emits `__fern_termios_set(fd, when, words) →
+// Result[void, IoError]` — the same struct packed back out of the word array
+// and handed to TCSETS, TCSETSW or TCSETSF as `when` selects.
+//
+// A wrong-length array is EINVAL rather than a short read: there is a
+// fixed-size struct to fill and no way to guess the rest. An out-of-range
+// action is EINVAL for the same reason — the three ioctls are consecutive
+// from TCSETS, so a fourth value would name something else entirely.
+//
+// System V: edi = fd, esi = when, rdx = the array's data pointer.
+func (g *generator) emitTermiosSetRuntime() {
+	g.line("")
+	g.line(".globl __fern_termios_set")
+	g.line(".type __fern_termios_set, @function")
+	g.label("__fern_termios_set")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("sub rsp, 40")
+	g.emit("mov rbx, rdx")  // the words
+	g.emit("mov r12d, esi") // the action
+	g.emit(fmt.Sprintf("cmp dword ptr [rbx - 4], %d", termiosWords))
+	g.emit("jne .Ltcs_einval")
+	g.emit("cmp r12d, 2")
+	g.emit("ja .Ltcs_einval")
+	for i := 0; i < 4; i++ {
+		g.emit(fmt.Sprintf("mov rax, [rbx + %d]", i*8))
+		g.emit(fmt.Sprintf("mov [rsp + %d], eax", i*4))
+	}
+	g.emit("mov rax, [rbx + 32]")
+	g.emit("mov [rsp + 16], al")
+	g.emit("xor ecx, ecx")
+	g.label(".Ltcs_cc")
+	g.emit("mov rax, [rbx + rcx*8 + 40]")
+	g.emit("mov [rsp + rcx + 17], al")
+	g.emit("inc rcx")
+	g.emit(fmt.Sprintf("cmp rcx, %d", termiosNCCS))
+	g.emit("jb .Ltcs_cc")
+	g.emit("mov edi, edi")
+	g.emit(fmt.Sprintf("lea esi, [r12 + %d]", tcsets))
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysIoctl)
+	g.emit("test rax, rax")
+	g.emit("js .Ltcs_err")
+	g.emitPayloadlessResultBox(0) // Ok(())
+	g.emit("jmp .Ltcs_ret")
+	g.label(".Ltcs_einval")
+	// The shared arm below negates what the syscall would have left, so
+	// the refusal arrives the same way: -EINVAL.
+	g.emit("mov rax, -22")
+	g.label(".Ltcs_err")
+	g.emit("neg rax")
+	g.emit("mov edi, eax")
+	g.emit("lea rsi, [rip + .LStr_ioerr_empty]")
+	g.emit("call __fern_io_error")
+	g.emit("mov rbx, rax")
+	g.emit("mov edi, 16")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov dword ptr [rax], 1") // Err
+	g.emit("mov [rax + 8], rbx")
+	g.label(".Ltcs_ret")
+	g.emit("add rsp, 40")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_termios_set, .-__fern_termios_set")
 }
 
 // emitIsattyRuntime emits `__fern_isatty(fd)` — 1 when fd refers to a

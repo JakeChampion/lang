@@ -20,10 +20,10 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 // id only for edges and -1 otherwise. All acquisitions execute before moves,
 // the semantic operation then creates its result, and drops execute last.
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[] }
-pub struct Plan { ok: boolean, why: string, steps: Step[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], shared: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], shared: [] }; }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [] }; }
 function bits(n: i32): boolean[] {
@@ -172,6 +172,41 @@ function hands_out(kind: i32): boolean {
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
         || kind == ssasem.map_insert() || kind == ssasem.map_get_or();
 }
+// The values whose box a call may have handed on. A callee lent a string VIEW
+// can hand that box straight back, and semsource records which argument the
+// result may be in the call's `imm` (#9328). Where a slice is an immortal box —
+// the register backends — the retain the callee owed for returning a borrowed
+// reference was a no-op, so the result IS that box: reclaiming it at the view's
+// own release would pull it out from under a live reference.
+//
+// So such a value takes the COUNTED release rather than the view reclaim. That
+// release stands down on an immortal box and decrements a counted one, which is
+// exactly the two shapes a slice has across the backends — wasm's substr copies,
+// so its slice is an ordinary counted block the callee's retain really did
+// retain. The box the register backends then leave behind is the AST lowering's
+// own answer: it leaks the same box for the same reason.
+pub function handed_on(f: ssasem.Func): boolean[] {
+    var out: boolean[] = bits(f.graph.nvals);
+    var retag: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.graph.nvals) { retag = retag.append(0 - 1); i = i + 1; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.str_as() && ins.args.len() == 1) { retag = retag.with(ins.result, ins.args[0]); }
+        }
+    }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.kind_tag == ssasem.call() && ins.imm > 0 && ins.imm <= ins.args.len()) {
+                var owner: i32 = ins.args[ins.imm - 1];
+                while (retag[owner] >= 0) { owner = retag[owner]; }
+                out = out.with(owner, true);
+            }
+        }
+    }
+    return out;
+}
+
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
     for b in f.graph.blocks {
@@ -354,7 +389,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
-    var out: Plan = Plan { ok: true, why: "", steps: steps };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, shared: handed_on(f) };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;
