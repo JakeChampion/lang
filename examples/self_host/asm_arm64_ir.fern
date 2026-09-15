@@ -1303,6 +1303,21 @@ pub function emit_function_via_ir_named(r: irlower.LowerResult, label_name: stri
             // [ms] -> __fern_timer_fd(x0=ms) -> CLOCK_MONOTONIC timerfd fd in x0.
             s = s.write("    bl __fn___fern_timer_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
             s = s.need("timer_fd");
+        } else if (o.kind_tag == 312) {  // termios_get
+            // [fd] -> __fern_termios_get(x0=fd) -> Result[i64[], IoError].
+            // The runtime body appends to an i64[], so the array push it
+            // lowers to has to be emitted too.
+            s = s.need("heap"); s = s.need("termios_get"); s = s.need("arr_push_owned");
+            s = s.write("    bl __fn___fern_termios_get\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 313) {  // termios_set
+            // [fd][when][words] with the words on top; param[0] (fd) has to be
+            // LOWEST, so the three are popped and re-pushed reversed, as
+            // proc_exec_as is. Without it the fd arrives where the array
+            // belongs and reading its length faults.
+            s = s.need("heap"); s = s.need("termios_set");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_termios_set\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 276) {  // window_size
             // [fd] -> __fern_window_size(x0=fd) -> Result[WinSize, IoError].
             s = s.need("heap"); s = s.need("window_size");
@@ -3736,7 +3751,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_connect", "print_int", "putchar",
-        "eprint", "read_int", "udp_send", "isatty", "window_size",
+        "eprint", "read_int", "udp_send", "isatty", "window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
@@ -7341,6 +7356,15 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("getgroups")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s.struct_decls, s);
     }
+    // Through this path rather than the batched fs_src string, for the reason
+    // getgroups is: the read half appends to an i64[], so its body reaches
+    // __fern_arr_push_owned and only this one marks what a body needs.
+    if (s.has_need("termios_get")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_termios_get(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("termios_set")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_termios_set(tgt), s.struct_decls, s);
+    }
     if (s.has_need("hostname")) {
         if (darwin) {
             s = emit_rt_hostname_darwin(s);
@@ -8340,7 +8364,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
         "read_file", "read_file_bytes", "write_file", "write_file_exec",
         "remove_file", "create_dir_all", "create_dir", "remove_dir",
         "create_link", "create_symlink", "rename", "chmod", "truncate",
-        "mknod", "chown_at", "window_size", "set_file_times", "read_link",
+        "mknod", "chown_at", "window_size", "termios_get", "termios_set", "set_file_times", "read_link",
         "chdir", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
         "temp_dir", "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all",
         "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",

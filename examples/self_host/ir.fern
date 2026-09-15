@@ -628,6 +628,14 @@ pub function op_isatty(): Op { return op0("isatty"); }
 // where no world has a terminal to measure (capability `tty`) — unlike
 // `isatty`, whose question a target with no terminal can still answer.
 pub function op_window_size(): Op { return op0("window_size"); }
+// `termios_get` pops [fd] and pushes Result[i64[], IoError]: the terminal's
+// line settings as the KERNEL's own words — four flag words, the line
+// discipline, then each control character. `termios_set` pops [fd, when,
+// words] and pushes Result[void, IoError], packing the same array back into
+// the struct. `stty -g` prints these words and reads them back, which is why
+// they are not normalised (#9356).
+pub function op_termios_get(): Op { return op0("termios_get"); }
+pub function op_termios_set(): Op { return op0("termios_set"); }
 
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
@@ -2262,6 +2270,8 @@ function kind_id_len11(name: string): i32 {
     if (c == b'r') { return kind_id_len11_r(name); }
     if (c == b's') { return kind_id_len11_s(name); }
     if (c == b't' && name == "tcp_connect") { return 193; }
+    if (c == b't' && name == "termios_get") { return 312; }
+    if (c == b't' && name == "termios_set") { return 313; }
     if (c == b'u' && name == "uname_field") { return 250; }
     if (c == b'w' && name == "window_size") { return 276; }
     return 0;
@@ -2710,6 +2720,8 @@ function kind_name_4(id: i32): string {
     if (id == 300) { return "fd_fdatasync"; }
     if (id == 301) { return "fd_syncfs"; }
     if (id == 311) { return "fd_dup_onto"; }
+    if (id == 312) { return "termios_get"; }
+    if (id == 313) { return "termios_set"; }
     if (id == 302) { return "arr_push_owned_i64"; }
     if (id == 303) { return "arr_push_owned_f64"; }
     return "invalid";
@@ -2839,7 +2851,7 @@ function pops1_io(t: i32): boolean {
         || t == 261 || t == 264 || t == 265                              // remove_dir, read_link, umask
         || t == 283                                                      // set_priority (nice)
         || t == 270 || t == 271                                          // statfs, process_alive
-        || t == 276                                                      // window_size
+        || t == 276 || t == 312                                          // window_size, termios_get
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 286                                                      // proc_waitpid_nohang
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
@@ -2890,7 +2902,8 @@ function pops3(t: i32): boolean {
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
         || t == 242                                                      // reader_seek (fd, offset, whence)
-        || t == 280;                                                     // proc_exec_as (path, argv, envp)
+        || t == 280                                                      // proc_exec_as (path, argv, envp)
+        || t == 313;                                                     // termios_set (fd, when, words)
 }
 
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not

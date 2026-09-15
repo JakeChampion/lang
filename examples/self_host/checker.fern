@@ -11694,8 +11694,10 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[]): string[] {
     "hostname", "map_new", "random_bytes", "read_line", "set_priority",
     "signal_send", "set_process_group",
     "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",
-    "tcp_recv", "uname_field", "window_size"
+    "tcp_recv", "termios_get", "uname_field", "window_size"
   ];
+  // `termios_set` is deliberately absent beside its read half: it TAKES the
+  // word array, and a pointer parameter is what the rule excludes.
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
     if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }

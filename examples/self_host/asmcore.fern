@@ -1322,6 +1322,50 @@ pub function rt_src_window_size(t: string): string {
     return "function __fern_window_size(fd: i32): Result[WinSize, IoError] { var buf: i32 = __raw_scratch(16); var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, " + req + ", buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } var r: i32 = __raw_load8(buf, 0) + __raw_load8(buf, 1) * 256; var c: i32 = __raw_load8(buf, 2) + __raw_load8(buf, 3) * 256; return Ok(WinSize { rows: (r as i64), cols: (c as i64) }); }";
 }
 
+// rt_src_termios_get backs `termios_get(fd)` -> Result[i64[], IoError]: the
+// terminal's line settings as the KERNEL's own words. The struct on the
+// asm-generic ABI is four 32-bit flag words, one line-discipline byte and
+// NCCS = 19 control characters, so the array is 24 elements in that order.
+//
+// The words come out a byte at a time rather than through __load_i32, for the
+// reason rt_src_getgroups gives: tcflag_t is UNSIGNED 32-bit and __load_i32 is
+// signed, so a word with its top bit set would sign-extend into a negative i64
+// on the way into the array.
+//
+// Darwin answers ENOSYS. Its struct is a different shape — unsigned-long
+// flags, twenty control characters, no line byte, a speed pair appended — and
+// the TIOCGETA request number encodes that struct's size, so neither can be
+// written from memory and neither is measurable on a Linux build box. A wrong
+// request answers ENOTTY, which a caller cannot tell from "this is not a
+// terminal". Same line `poll` is on for that target.
+pub function rt_src_termios_get(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { return Err(__fern_io_error(38, \"\")); }";
+    }
+    return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { var buf: i32 = __raw_alloc(36); var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, 21505, buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } var out: i64[] = []; var i: i32 = 0; while (i < 4) { var b0: i64 = (__raw_load8(buf, i * 4) as i64); var b1: i64 = (__raw_load8(buf, i * 4 + 1) as i64); var b2: i64 = (__raw_load8(buf, i * 4 + 2) as i64); var b3: i64 = (__raw_load8(buf, i * 4 + 3) as i64); out = out.append(b0 + b1 * 256 + b2 * 65536 + b3 * 16777216); i = i + 1; } out = out.append(__raw_load8(buf, 16) as i64); var j: i32 = 0; while (j < 19) { out = out.append(__raw_load8(buf, 17 + j) as i64); j = j + 1; } return Ok(out); }";
+}
+
+// rt_src_termios_set backs `termios_set(fd, when, words)` -> Result[void,
+// IoError]: the same struct packed back out of the array and handed to TCSETS,
+// TCSETSW or TCSETSF as the action selects — the three are consecutive from
+// TCSETS, so it adds.
+//
+// A wrong-length array or an out-of-range action is EINVAL: there is a
+// fixed-size struct to fill and no way to guess the rest. Darwin answers
+// ENOSYS, for the reason the read half does.
+//
+// The action parameter is spelled `act` and not `when`, which is what the
+// builtin's own documentation calls it: `when` is a KEYWORD (a match guard),
+// so a generated body naming a parameter that reaches the parser as one fails
+// to lower — with "missing { in block", since the guard grammar is what the
+// parser thinks it is looking at.
+pub function rt_src_termios_set(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { return Err(__fern_io_error(38, \"\")); }";
+    }
+    return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { if (words.len() != 24 || act < 0 || act > 2) { return Err(__fern_io_error(22, \"\")); } var buf: i32 = __raw_alloc(36); var i: i32 = 0; while (i < 4) { var v: i64 = words[i]; __raw_store8(buf, i * 4, (v % 256) as i32); __raw_store8(buf, i * 4 + 1, ((v / 256) % 256) as i32); __raw_store8(buf, i * 4 + 2, ((v / 65536) % 256) as i32); __raw_store8(buf, i * 4 + 3, ((v / 16777216) % 256) as i32); i = i + 1; } __raw_store8(buf, 16, (words[4] % 256) as i32); var j: i32 = 0; while (j < 19) { __raw_store8(buf, 17 + j, (words[5 + j] % 256) as i32); j = j + 1; } var rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd, 21506 + act, buf); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
 // rt_src_process_alive backs `process_alive(pid)` (syscall-leaf) -> 1 when a
 // process with that pid exists, 0 when it does not.
 //

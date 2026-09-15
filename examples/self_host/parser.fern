@@ -8154,8 +8154,10 @@ pub function builtin_function_names(): string[] {
         // the entries that are neither a file nor a directory: a FIFO, and a
         // character or block device node
         "mknod",
-        // how wide the terminal on the other end of a descriptor is
-        "window_size",
+        // how wide the terminal on the other end of a descriptor is, and its
+        // LINE SETTINGS, read and written — the kernel's own words, because
+        // `stty -g` prints them and reads them back (#9356)
+        "window_size", "termios_get", "termios_set",
         // who an entry BELONGS to — fchownat(2), with -1 for either id
         // leaving that half alone, which is how `chgrp` is this with the
         // uid omitted
