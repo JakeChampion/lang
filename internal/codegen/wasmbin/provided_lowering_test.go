@@ -1,6 +1,7 @@
 package wasmbin
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,114 +42,10 @@ import (
 // gate. They are listed apart, under the issue that owns them, so the
 // count can only go down.
 
-// providedRefusedByPlatform are callees `internal/platforms` does not offer
-// on wasm32-wasi. Each is checked against platforms itself below rather
-// than trusted, so an entry that stops being refused fails the test.
-var providedRefusedByPlatform = map[string]bool{
-	"subprocess":   true,
-	"proc_fork":    true,
-	"proc_waitpid": true,
-	"proc_exec":    true,
-	"proc_exec_as": true,
-	// `cwd` — a process working directory to move. WASI resolves every
-	// path against a preopened descriptor, so there is none, which is the
-	// same reason getcwd is withheld.
-	"chdir": true,
-	// Liveness of an arbitrary pid, which needs the same process table.
-	"process_alive": true,
-	// Delivering a signal to one, which needs it as well and has no
-	// valid no-op: wasi-cli grants `signal` for the DISPOSITION calls,
-	// where ignoring something nothing can deliver really is a no-op.
-	"signal_send": true,
-	// Putting a pid in a process GROUP, which needs the same table and
-	// has no honest no-op either: succeeding would claim a group that
-	// does not exist.
-	"set_process_group": true,
-	// The non-blocking half of the reap, refused for the reason
-	// `proc_waitpid` is: there is no process model to have children in.
-	"proc_waitpid_nohang": true,
-	// `fsinfo` — the size and the length limits of a filesystem, where
-	// `fs` is the files on it. Neither preview has a volume interface,
-	// and a preopen is a capability handle rather than a mount.
-	"statfs": true,
-	// `fssync` — write-back of every dirty buffer on the MACHINE. A
-	// preopen is a capability handle rather than a mount, so there is no
-	// set of filesystems to flush; preview 1's fd_sync is one
-	// descriptor's, which is what `fsync` already is. A no-op would be a
-	// flush the caller asked for and never got.
-	"sync": true,
-	// `rlimit` — a kernel-enforced ceiling on a process resource.
-	// Neither WASI preview has one, and every constant that could stand
-	// in would be a measurement a component never took.
-	"rlimit_nofile": true,
-	// The arena mark/release pair: a bump-arena discipline the wasm
-	// allocator does not implement.
-	"__heap_mark":       true,
-	"__heap_release_to": true,
-	// `pollfd` — a timer expressed as a file descriptor to poll. Wasm's
-	// readiness surface is wasi:io/poll pollables, which wasm_timer_pollable
-	// already serves.
-	"timer_fd": true,
-	// `fsmode` — permission bits on a filesystem entry, which neither
-	// preview1 nor the component-model filesystem has (#6133). `access`
-	// is the READ of the same property: "do the mode bits permit this
-	// for my effective ids" is unanswerable where there are no mode bits.
-	"write_file_exec": true,
-	"access":          true,
-	// `chmod` is the WRITE of it on an entry that already exists, where
-	// write_file_exec only sets a bit on one it is creating.
-	"chmod": true,
-	// `tty` — the geometry of the terminal a descriptor is connected
-	// to. Neither preview has an ioctl, wasi:cli's terminal-output
-	// resource reports no size, and both constants that could stand in
-	// — 80x24, or 0x0 — are answers no component measured.
-	"window_size": true,
-	// `fsnode` — an entry that is neither a file nor a directory.
-	// Neither preview has a call that creates a FIFO or a device node,
-	// and a regular file standing in for one would read back as the
-	// wrong kind rather than as a missing one.
-	"mknod": true,
-	// `fsowner` — the user and the group an entry belongs to. Neither
-	// preview records one: preview 1's `filestat` has no uid or gid
-	// field and the component model's `descriptor-stat` none either, so
-	// there is nothing to set and no owner a success would describe.
-	"chown_at": true,
-	// `umask` is the process's own half of the same property: the mode
-	// bits a creation is allowed to keep. WASI has no creation mask, and
-	// answering 0 would claim every bit survives.
-	"umask": true,
-	// `sched` — how this process competes for the CPU. Neither
-	// preview has a scheduler knob, and neither stand-in is honest:
-	// answering 0 from `priority` claims the default nice value was
-	// measured, and letting `set_priority` succeed claims a change
-	// that did not happen.
-	"priority":     true,
-	"set_priority": true,
-	// `userid` — a user / group id, effective or real, and the
-	// supplementary group set. Neither WASI preview has a notion of a
-	// user at all, and FileStat's uid / gid are zero there for the same
-	// reason.
-	"geteuid":   true,
-	"getegid":   true,
-	"getuid":    true,
-	"getgid":    true,
-	"getgroups": true,
-	// The machine the process runs on — the kernel's utsname record and
-	// the number of processing units it may use. WASI has neither a
-	// utsname to read nor a processor count to report, and a component
-	// that guessed would name a kernel it is not running on.
-	"uname_field": true,
-	"cpu_count":   true,
-	// The process's working directory. WASI resolves every path against
-	// a preopened descriptor and has no current directory at all.
-	"getcwd": true,
-	// `cabi` — a C calling convention to hand a function pointer to.
-	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
-	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
-	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
-	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
-	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
-}
+// Platform refusals come from platformProvidesOnWasm below, which reads the
+// compiler's target capabilities. A second list here drifted whenever a new
+// native-only builtin landed. TestPlatformExemptionsAreReallyRefused exercises
+// the actual enforcement walk for every provided name excluded this way.
 
 // providedNeverReachesCodegen are callees IR lowering consumes before the
 // backend sees them: the name appears in a call expression, and what comes
@@ -213,7 +110,7 @@ func TestEveryProvidedCalleeHasAWasmLowering(t *testing.T) {
 	var missing []string
 	for _, name := range ir.ProvidedCalleeNames() {
 		switch {
-		case providedRefusedByPlatform[name],
+		case !platformProvidesOnWasm(name),
 			providedNeverReachesCodegen[name],
 			providedMissingLowering[name]:
 			continue
@@ -226,9 +123,9 @@ func TestEveryProvidedCalleeHasAWasmLowering(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf("%d provided callee(s) have no wasm lowering: %v\n"+
 			"Each needs a runtimeHelperSpecs entry (plus a scanRuntimeHelpers case so it "+
-			"lands in helpers.order) or a CallDirectAliases target. Adding a name to one "+
-			"of the exemption maps in this file is only correct if E066 refuses it on "+
-			"wasm32-wasi or IR lowering rewrites it before emitOp.", len(missing), missing)
+			"lands in helpers.order) or a CallDirectAliases target. Platform refusals "+
+			"are derived from internal/platforms; other exemptions are only correct "+
+			"when IR lowering rewrites the call before emitOp.", len(missing), missing)
 	}
 
 	// Exact in the other direction too, so a fix cannot leave the table
@@ -264,7 +161,7 @@ func TestEveryProvidedCalleeHasAWasmLowering(t *testing.T) {
 func TestProvidedCalleeHelpersAreScanned(t *testing.T) {
 	for _, name := range ir.ProvidedCalleeNames() {
 		switch {
-		case providedRefusedByPlatform[name],
+		case !platformProvidesOnWasm(name),
 			providedNeverReachesCodegen[name],
 			providedMissingLowering[name]:
 			continue
@@ -311,15 +208,26 @@ func userCallableOnWasm(name string) bool {
 	return gated && platformProvidesOnWasm(name)
 }
 
-// The platform exemptions are a claim about another package, so they are
-// checked rather than believed: a name platforms starts offering on
-// wasm32-wasi has to leave the list and grow a real lowering.
+// Every platform-based exclusion must really be caught by the enforcement
+// walk that reports E066 before codegen. Argument types are irrelevant to this
+// walk: the synthetic call probes platform refusal, not builtin signatures.
+// If wasm starts offering the capability, the lowering gates above require
+// an implementation automatically, without a second list to update.
 func TestPlatformExemptionsAreReallyRefused(t *testing.T) {
-	for name := range providedRefusedByPlatform {
+	for _, name := range ir.ProvidedCalleeNames() {
 		if platformProvidesOnWasm(name) {
-			t.Errorf("%q is listed as refused on wasm32-wasi but internal/platforms offers it — "+
-				"it needs a real lowering, not an exemption", name)
+			continue
 		}
+		t.Run(name, func(t *testing.T) {
+			prog, err := parser.Parse(fmt.Sprintf("function main(): i32 { %s(); return 0; }", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			violations := platforms.Enforce(prog, "wasm32-wasi")
+			if len(violations) != 1 || violations[0].Builtin != name {
+				t.Fatalf("%s is excluded from Wasm lowering but enforcement reports %v", name, violations)
+			}
+		})
 	}
 }
 
