@@ -1,8 +1,10 @@
 package coreutils
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"sync"
 	"syscall"
@@ -32,6 +34,8 @@ const (
 	tioctlSPTLCK = 0x40045431
 	tioctlGPTN   = 0x80045430
 	tioctlSWINSZ = 0x5414
+	tioctlGWINSZ = 0x5413
+	tioctlGETS   = 0x5401
 )
 
 // ptyRows and ptyCols are the window size every tty case runs at. A fresh
@@ -86,6 +90,57 @@ func openPty(t *testing.T) (*os.File, *os.File) {
 		t.Fatalf("set the pty window size: %v", err)
 	}
 	return master, slave
+}
+
+// ptySettings renders everything a run can have LEFT on a terminal: the four
+// flag words, the line discipline, the control characters, and the window
+// size. It is the `artifacts` of a utility whose output is a terminal —
+// without it a `stty -echo` case compares two empty streams and proves
+// nothing about the echo.
+//
+// The master answers for the same terminal as the slave, so it can be read
+// after the child and its own slave are gone. The kernel's struct is 4 u32
+// flag words, c_line, and NCCS = 19 control characters.
+func ptySettings(t *testing.T, master *os.File) string {
+	t.Helper()
+	var buf [36]byte
+	if err := ioctl(master.Fd(), tioctlGETS, uintptr(unsafe.Pointer(&buf[0]))); err != nil {
+		t.Fatalf("read the terminal settings back: %v", err)
+	}
+	var ws winsize
+	if err := ioctl(master.Fd(), tioctlGWINSZ, uintptr(unsafe.Pointer(&ws))); err != nil {
+		t.Fatalf("read the terminal size back: %v", err)
+	}
+	out := ""
+	for i := 0; i < 4; i++ {
+		w := uint32(buf[i*4]) | uint32(buf[i*4+1])<<8 | uint32(buf[i*4+2])<<16 | uint32(buf[i*4+3])<<24
+		out += fmt.Sprintf("%x:", w)
+	}
+	out += fmt.Sprintf("line=%d:", buf[16])
+	for i := 0; i < 19; i++ {
+		out += fmt.Sprintf("%x,", buf[17+i])
+	}
+	return out + fmt.Sprintf(" %dx%d", ws.rows, ws.cols)
+}
+
+// ptyPrepare runs `bin` on the terminal `slave` is open on, to put it in the
+// state a case starts from. The REFERENCE binary is what runs: the starting
+// state is a premise of the case rather than part of what it proves, and both
+// sides have to begin from the same one.
+func ptyPrepare(t *testing.T, bin, argv0 string, slave *os.File, args []string) {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Args = append([]string{argv0}, args...)
+	cmd.Env = baseEnv()
+	cmd.Stdin = slave
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("prepare the terminal with %s %s: %v\n%s", argv0, quoteArgs(args), err, out)
+	}
+	if len(out) != 0 {
+		t.Fatalf("prepare the terminal with %s %s: wrote %q, which means the case's premise is not one",
+			argv0, quoteArgs(args), out)
+	}
 }
 
 func ioctl(fd, req, arg uintptr) error {

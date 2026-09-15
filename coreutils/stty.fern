@@ -1,0 +1,1847 @@
+// stty.fern — GNU-compatible `stty`.
+//
+//   stty [-F DEVICE] [SETTING]...    change the terminal's line settings
+//   stty [-F DEVICE] -a              print all of them, human-readable
+//   stty [-F DEVICE] -g              print all of them, stty-readable
+//
+// The settings live in the kernel's `struct termios`, which `termios_get`
+// and `termios_set` carry as the kernel's OWN words rather than a numbering
+// of Fern's (#9356): `-g` prints them in hex and its restore form reads them
+// back, so the flag constants below are the target's. `rows` and `cols` are a
+// second record — `window_size` / `set_window_size` (#9360) — and `-F` needs
+// all four asked of a handle rather than a descriptor number (#9363), because
+// a Reader surrenders no number.
+//
+// Three things about the output, all measured against 9.4 rather than
+// reasoned about:
+//
+//   - the DEFAULT form prints only what differs from `sane`, and only for
+//     the flags `sane` names. `ixon` is on in a fresh pty and never appears,
+//     because `sane` has no opinion about it; `-brkint -imaxbel` is the whole
+//     of a fresh pty's diff.
+//   - `-a` wraps at a FIXED 80 columns, not at the terminal's width, which
+//     is the opposite of what `ls` does. `window_size` is consulted only for
+//     the two numbers it PRINTS.
+//   - each group of flags starts a new line, and `min`/`time` join the
+//     control characters' group.
+//
+// The mode names are checked in a PRE-PASS: `stty rows 40 bogus` leaves the
+// terminal alone, while `stty rows 40 rows -1` applies the first and then
+// fails, because an out-of-range integer is found where the value is read and
+// an unknown name where the name is read. One `termios_set` carries every
+// flag at the end, which is why a rejected bit reports
+// `unable to perform all requested operations` for the whole invocation.
+import "std/string";
+import "./lib/gnu";
+
+// ---- the words -------------------------------------------------------------
+//
+// termios_get answers [iflag, oflag, cflag, lflag, line, cc[0..18]] — the
+// asm-generic struct, so both Linux targets share it. NCCS is the KERNEL's
+// 19; `-g` prints glibc's 32 because its userspace struct is the wider one
+// and the top 13 are always zero.
+function w_iflag(): i32 {
+  return 0;
+}
+
+function w_oflag(): i32 {
+  return 1;
+}
+
+function w_cflag(): i32 {
+  return 2;
+}
+
+function w_lflag(): i32 {
+  return 3;
+}
+
+function w_line(): i32 {
+  return 4;
+}
+
+function cc_base(): i32 {
+  return 5;
+}
+
+function n_words(): i32 {
+  return 24;
+}
+
+function n_cc_kernel(): i32 {
+  return 19;
+}
+
+function n_cc_printed(): i32 {
+  return 32;
+}
+
+// The tcsetattr action `termios_set` takes: 1 drains the output first, which
+// is what `[-]drain` selects between and what GNU uses by default.
+function when_now(): i32 {
+  return 0;
+}
+
+function when_drain(): i32 {
+  return 1;
+}
+
+// ---- the mode table --------------------------------------------------------
+//
+// One row per name, in the order `-a` prints them, grouped by word: cflag,
+// iflag, oflag, lflag. `mask` is what the name clears before setting `bits`:
+// the same bits for a boolean, the whole group's for `csN` and the delay
+// sets, so exactly one member of a group is ever set.
+//
+// `sane` is the row's part in the reference set, which is both what `sane`
+// applies and what the default print form compares against:
+//
+//   0  sane has no opinion, so the default form never prints it
+//   1  sane sets it — for a group, the member sane selects
+//   2  sane clears it
+//   3  a group member sane does not select, printed when it is the current
+//      one (nl1 against nl0); the group has a reference, unlike csN's
+//
+// `show` is false for an alias, which is a second spelling and not a second
+// flag: `hup` sets hupcl's bit and `-a` prints only `hupcl`.
+struct Mode {
+  name: string,
+  word: i32,
+  bits: i64,
+  mask: i64,
+  // `grp` marks a member of a multi-VALUED set — csN and the six delay
+  // styles — which prints as the one name the word currently matches and
+  // takes no `-` spelling. It is a field of its own rather than inferred
+  // from `mask != bits`, because the last member of every set has the two
+  // equal: `tab3` is the whole TABDLY mask.
+  grp: boolean,
+  rev: boolean,
+  sane: i32,
+  show: boolean,
+}
+
+function bool_mode(name: string, word: i32, bits: i64, sane: i32): Mode {
+  return Mode { name: name, word: word, bits: bits, mask: bits, grp: false, rev: true, sane: sane, show: true };
+}
+
+function alias_mode(name: string, word: i32, bits: i64): Mode {
+  return Mode { name: name, word: word, bits: bits, mask: bits, grp: false, rev: true, sane: 0, show: false };
+}
+
+function group_mode(name: string, word: i32, bits: i64, mask: i64, sane: i32): Mode {
+  return Mode { name: name, word: word, bits: bits, mask: mask, grp: true, rev: false, sane: sane, show: true };
+}
+
+// The cflag half. `parenb` and `-cread` are the two rows a pseudo-terminal
+// cannot confirm — it has no parity and no receiver to disable, so both exit
+// 1 there whatever the bit is — and their values are the asm-generic
+// numbering every other row in this word did confirm.
+function cflag_modes(): Mode[] {
+  var m: Mode[] = [];
+  m = m.append(bool_mode("parenb", w_cflag(), 256 as i64, 0));
+  m = m.append(bool_mode("parodd", w_cflag(), 512 as i64, 0));
+  m = m.append(bool_mode("cmspar", w_cflag(), 1073741824 as i64, 0));
+  m = m.append(group_mode("cs5", w_cflag(), 0 as i64, 48 as i64, 0));
+  m = m.append(group_mode("cs6", w_cflag(), 16 as i64, 48 as i64, 0));
+  m = m.append(group_mode("cs7", w_cflag(), 32 as i64, 48 as i64, 0));
+  m = m.append(group_mode("cs8", w_cflag(), 48 as i64, 48 as i64, 0));
+  m = m.append(bool_mode("hupcl", w_cflag(), 1024 as i64, 0));
+  m = m.append(bool_mode("cstopb", w_cflag(), 64 as i64, 0));
+  m = m.append(bool_mode("cread", w_cflag(), 128 as i64, 1));
+  m = m.append(bool_mode("clocal", w_cflag(), 2048 as i64, 0));
+  m = m.append(bool_mode("crtscts", w_cflag(), 2147483648 as i64, 0));
+  return m;
+}
+
+function iflag_modes(): Mode[] {
+  var m: Mode[] = [];
+  m = m.append(bool_mode("ignbrk", w_iflag(), 1 as i64, 2));
+  m = m.append(bool_mode("brkint", w_iflag(), 2 as i64, 1));
+  m = m.append(bool_mode("ignpar", w_iflag(), 4 as i64, 0));
+  m = m.append(bool_mode("parmrk", w_iflag(), 8 as i64, 0));
+  m = m.append(bool_mode("inpck", w_iflag(), 16 as i64, 0));
+  m = m.append(bool_mode("istrip", w_iflag(), 32 as i64, 0));
+  m = m.append(bool_mode("inlcr", w_iflag(), 64 as i64, 2));
+  m = m.append(bool_mode("igncr", w_iflag(), 128 as i64, 2));
+  m = m.append(bool_mode("icrnl", w_iflag(), 256 as i64, 1));
+  m = m.append(bool_mode("ixon", w_iflag(), 1024 as i64, 0));
+  m = m.append(bool_mode("ixoff", w_iflag(), 4096 as i64, 2));
+  m = m.append(bool_mode("iuclc", w_iflag(), 512 as i64, 2));
+  m = m.append(bool_mode("ixany", w_iflag(), 2048 as i64, 2));
+  m = m.append(bool_mode("imaxbel", w_iflag(), 8192 as i64, 1));
+  m = m.append(bool_mode("iutf8", w_iflag(), 16384 as i64, 2));
+  return m;
+}
+
+function oflag_modes(): Mode[] {
+  var m: Mode[] = [];
+  m = m.append(bool_mode("opost", w_oflag(), 1 as i64, 1));
+  m = m.append(bool_mode("olcuc", w_oflag(), 2 as i64, 2));
+  m = m.append(bool_mode("ocrnl", w_oflag(), 8 as i64, 2));
+  m = m.append(bool_mode("onlcr", w_oflag(), 4 as i64, 1));
+  m = m.append(bool_mode("onocr", w_oflag(), 16 as i64, 2));
+  m = m.append(bool_mode("onlret", w_oflag(), 32 as i64, 2));
+  m = m.append(bool_mode("ofill", w_oflag(), 64 as i64, 2));
+  m = m.append(bool_mode("ofdel", w_oflag(), 128 as i64, 2));
+  m = m.append(group_mode("nl0", w_oflag(), 0 as i64, 256 as i64, 1));
+  m = m.append(group_mode("nl1", w_oflag(), 256 as i64, 256 as i64, 3));
+  m = m.append(group_mode("cr0", w_oflag(), 0 as i64, 1536 as i64, 1));
+  m = m.append(group_mode("cr1", w_oflag(), 512 as i64, 1536 as i64, 3));
+  m = m.append(group_mode("cr2", w_oflag(), 1024 as i64, 1536 as i64, 3));
+  m = m.append(group_mode("cr3", w_oflag(), 1536 as i64, 1536 as i64, 3));
+  m = m.append(group_mode("tab0", w_oflag(), 0 as i64, 6144 as i64, 1));
+  m = m.append(group_mode("tab1", w_oflag(), 2048 as i64, 6144 as i64, 3));
+  m = m.append(group_mode("tab2", w_oflag(), 4096 as i64, 6144 as i64, 3));
+  m = m.append(group_mode("tab3", w_oflag(), 6144 as i64, 6144 as i64, 3));
+  m = m.append(group_mode("bs0", w_oflag(), 0 as i64, 8192 as i64, 1));
+  m = m.append(group_mode("bs1", w_oflag(), 8192 as i64, 8192 as i64, 3));
+  m = m.append(group_mode("vt0", w_oflag(), 0 as i64, 16384 as i64, 1));
+  m = m.append(group_mode("vt1", w_oflag(), 16384 as i64, 16384 as i64, 3));
+  m = m.append(group_mode("ff0", w_oflag(), 0 as i64, 32768 as i64, 1));
+  m = m.append(group_mode("ff1", w_oflag(), 32768 as i64, 32768 as i64, 3));
+  return m;
+}
+
+function lflag_modes(): Mode[] {
+  var m: Mode[] = [];
+  m = m.append(bool_mode("isig", w_lflag(), 1 as i64, 1));
+  m = m.append(bool_mode("icanon", w_lflag(), 2 as i64, 1));
+  m = m.append(bool_mode("iexten", w_lflag(), 32768 as i64, 1));
+  m = m.append(bool_mode("echo", w_lflag(), 8 as i64, 1));
+  m = m.append(bool_mode("echoe", w_lflag(), 16 as i64, 1));
+  m = m.append(bool_mode("echok", w_lflag(), 32 as i64, 1));
+  m = m.append(bool_mode("echonl", w_lflag(), 64 as i64, 2));
+  m = m.append(bool_mode("noflsh", w_lflag(), 128 as i64, 2));
+  m = m.append(bool_mode("xcase", w_lflag(), 4 as i64, 2));
+  m = m.append(bool_mode("tostop", w_lflag(), 256 as i64, 2));
+  m = m.append(bool_mode("echoprt", w_lflag(), 1024 as i64, 2));
+  m = m.append(bool_mode("echoctl", w_lflag(), 512 as i64, 1));
+  m = m.append(bool_mode("echoke", w_lflag(), 2048 as i64, 1));
+  m = m.append(bool_mode("flusho", w_lflag(), 4096 as i64, 2));
+  m = m.append(bool_mode("extproc", w_lflag(), 65536 as i64, 2));
+  return m;
+}
+
+// The second spellings, which print nothing of their own.
+function alias_modes(): Mode[] {
+  var m: Mode[] = [];
+  m = m.append(alias_mode("hup", w_cflag(), 1024 as i64));
+  m = m.append(alias_mode("tandem", w_iflag(), 4096 as i64));
+  m = m.append(alias_mode("ctlecho", w_lflag(), 512 as i64));
+  m = m.append(alias_mode("crterase", w_lflag(), 16 as i64));
+  m = m.append(alias_mode("crtkill", w_lflag(), 2048 as i64));
+  m = m.append(alias_mode("prterase", w_lflag(), 1024 as i64));
+  return m;
+}
+
+// Everything, in print order, aliases last so the print walk never reaches
+// one. `find_mode` searches this and takes the first match, so an alias can
+// never shadow the row it is an alias of.
+function modes(): Mode[] {
+  var m: Mode[] = cflag_modes();
+  var g: Mode[] = iflag_modes();
+  var i: i32 = 0;
+  while (i < g.len()) {
+    m = m.append(g[i]);
+    i = i + 1;
+  }
+  g = oflag_modes();
+  i = 0;
+  while (i < g.len()) {
+    m = m.append(g[i]);
+    i = i + 1;
+  }
+  g = lflag_modes();
+  i = 0;
+  while (i < g.len()) {
+    m = m.append(g[i]);
+    i = i + 1;
+  }
+  g = alias_modes();
+  i = 0;
+  while (i < g.len()) {
+    m = m.append(g[i]);
+    i = i + 1;
+  }
+  return m;
+}
+
+// ---- the control characters -------------------------------------------------
+//
+// Print order, with each one's slot in the kernel's c_cc and the value `sane`
+// restores. `min` and `time` share the array and are NOT characters — they
+// print as numbers and only when `icanon` is off — so they are handled
+// beside this table rather than in it.
+struct Cchar { name: string, idx: i32, dflt: i32, show: boolean }
+
+function cchars(): Cchar[] {
+  var c: Cchar[] = [];
+  c = c.append(Cchar { name: "intr", idx: 0, dflt: 3, show: true });
+  c = c.append(Cchar { name: "quit", idx: 1, dflt: 28, show: true });
+  c = c.append(Cchar { name: "erase", idx: 2, dflt: 127, show: true });
+  c = c.append(Cchar { name: "kill", idx: 3, dflt: 21, show: true });
+  c = c.append(Cchar { name: "eof", idx: 4, dflt: 4, show: true });
+  c = c.append(Cchar { name: "eol", idx: 11, dflt: 0, show: true });
+  c = c.append(Cchar { name: "eol2", idx: 16, dflt: 0, show: true });
+  c = c.append(Cchar { name: "swtch", idx: 7, dflt: 0, show: true });
+  c = c.append(Cchar { name: "start", idx: 8, dflt: 17, show: true });
+  c = c.append(Cchar { name: "stop", idx: 9, dflt: 19, show: true });
+  c = c.append(Cchar { name: "susp", idx: 10, dflt: 26, show: true });
+  c = c.append(Cchar { name: "rprnt", idx: 12, dflt: 18, show: true });
+  c = c.append(Cchar { name: "werase", idx: 14, dflt: 23, show: true });
+  c = c.append(Cchar { name: "lnext", idx: 15, dflt: 22, show: true });
+  c = c.append(Cchar { name: "discard", idx: 13, dflt: 15, show: true });
+  c = c.append(Cchar { name: "flush", idx: 13, dflt: 15, show: false });
+  return c;
+}
+
+function idx_min(): i32 {
+  return 6;
+}
+
+function idx_time(): i32 {
+  return 5;
+}
+
+// ---- the speeds ------------------------------------------------------------
+//
+// CBAUD is the low four bits plus CBAUDEX (0x1000), so the table is the
+// kernel's B-constants and not a computation. `exta` and `extb` are the two
+// names that are not numbers, and `134.5` is the one number with a fraction.
+struct Speed { name: string, bits: i64 }
+
+function speeds(): Speed[] {
+  var s: Speed[] = [];
+  s = s.append(Speed { name: "0", bits: 0 as i64 });
+  s = s.append(Speed { name: "50", bits: 1 as i64 });
+  s = s.append(Speed { name: "75", bits: 2 as i64 });
+  s = s.append(Speed { name: "110", bits: 3 as i64 });
+  s = s.append(Speed { name: "134", bits: 4 as i64 });
+  s = s.append(Speed { name: "134.5", bits: 4 as i64 });
+  s = s.append(Speed { name: "150", bits: 5 as i64 });
+  s = s.append(Speed { name: "200", bits: 6 as i64 });
+  s = s.append(Speed { name: "300", bits: 7 as i64 });
+  s = s.append(Speed { name: "600", bits: 8 as i64 });
+  s = s.append(Speed { name: "1200", bits: 9 as i64 });
+  s = s.append(Speed { name: "1800", bits: 10 as i64 });
+  s = s.append(Speed { name: "2400", bits: 11 as i64 });
+  s = s.append(Speed { name: "4800", bits: 12 as i64 });
+  s = s.append(Speed { name: "9600", bits: 13 as i64 });
+  s = s.append(Speed { name: "19200", bits: 14 as i64 });
+  s = s.append(Speed { name: "exta", bits: 14 as i64 });
+  s = s.append(Speed { name: "38400", bits: 15 as i64 });
+  s = s.append(Speed { name: "extb", bits: 15 as i64 });
+  s = s.append(Speed { name: "57600", bits: 4097 as i64 });
+  s = s.append(Speed { name: "115200", bits: 4098 as i64 });
+  s = s.append(Speed { name: "230400", bits: 4099 as i64 });
+  s = s.append(Speed { name: "460800", bits: 4100 as i64 });
+  s = s.append(Speed { name: "500000", bits: 4101 as i64 });
+  s = s.append(Speed { name: "576000", bits: 4102 as i64 });
+  s = s.append(Speed { name: "921600", bits: 4103 as i64 });
+  s = s.append(Speed { name: "1000000", bits: 4104 as i64 });
+  s = s.append(Speed { name: "1152000", bits: 4105 as i64 });
+  s = s.append(Speed { name: "1500000", bits: 4106 as i64 });
+  s = s.append(Speed { name: "2000000", bits: 4107 as i64 });
+  s = s.append(Speed { name: "2500000", bits: 4108 as i64 });
+  s = s.append(Speed { name: "3000000", bits: 4109 as i64 });
+  s = s.append(Speed { name: "3500000", bits: 4110 as i64 });
+  s = s.append(Speed { name: "4000000", bits: 4111 as i64 });
+  return s;
+}
+
+function cbaud_mask(): i64 {
+  return 4111 as i64;
+}
+
+// ---- formatting ------------------------------------------------------------
+// A single byte as a string. `chr` is not a builtin here, and the byte array
+// round trip is what the digest and base-N codecs use for the same thing.
+function one_char(c: i32): string {
+  var b: u8[] = [];
+  b = b.append(c as u8);
+  return string_from_bytes_unchecked(b);
+}
+
+function hex_lower(v: i64): string {
+  if (v == 0 as i64) {
+    return "0";
+  }
+  var out: string = "";
+  var n: i64 = v;
+  while (n > 0 as i64) {
+    var d: i32 = (n % (16 as i64)) as i32;
+    if (d < 10) {
+      out = one_char(48 + d) + out;
+    } else {
+      out = one_char(87 + d) + out;
+    }
+    n = n / (16 as i64);
+  }
+  return out;
+}
+
+// One control character the way `-a` prints it: `^C` under 32, `^?` for 127,
+// `M-` and then the same rules for the high half, the byte itself in between,
+// and `<undef>` for the zero that means "no character is bound".
+//
+// The zero check is at the top only, so 128 is `M-^@` rather than `M-<undef>`
+// — measured, and the reason the `M-` prefix is peeled before it.
+function fmt_cc(v: i32): string {
+  if (v == 0) {
+    return "<undef>";
+  }
+  var pre: string = "";
+  var c: i32 = v;
+  if (c >= 128) {
+    pre = "M-";
+    c = c - 128;
+  }
+  if (c == 127) {
+    return pre + "^?";
+  }
+  if (c < 32) {
+    return pre + "^" + one_char(c + 64);
+  }
+  return pre + one_char(c);
+}
+
+// The speed name for a cflag's CBAUD bits. Every reachable value has a name,
+// since the field is only ever set from the table.
+function speed_name(cflag: i64): string {
+  var bits: i64 = cflag & cbaud_mask();
+  var s: Speed[] = speeds();
+  var i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i].bits == bits) {
+      return s[i].name;
+    }
+    i = i + 1;
+  }
+  return "0";
+}
+
+// `-a` and the default form wrap at a FIXED 80 columns — measured across
+// pty widths of 40, 80 and 200, which are byte-identical apart from the
+// `columns N` they report. So this is stty's own constant and the terminal's
+// width is never consulted for layout, which is the opposite of `ls`.
+struct Wrap { out: string, line: string }
+
+function wrap_new(): Wrap {
+  return Wrap { out: "", line: "" };
+}
+
+function wrap_put(w: Wrap, tok: string): Wrap {
+  if (w.line.len() == 0) {
+    return Wrap { out: w.out, line: tok };
+  }
+  if (w.line.len() + 1 + tok.len() <= 80) {
+    return Wrap { out: w.out, line: w.line + " " + tok };
+  }
+  return Wrap { out: w.out + w.line + "\n", line: tok };
+}
+
+// End the current group. Each group of flags starts a line of its own, and a
+// group with nothing to print contributes no line at all.
+function wrap_break(w: Wrap): Wrap {
+  if (w.line.len() == 0) {
+    return w;
+  }
+  return Wrap { out: w.out + w.line + "\n", line: "" };
+}
+
+function wrap_done(w: Wrap): string {
+  return wrap_break(w).out;
+}
+
+// `name = value;`, the shape every control character prints under.
+function cc_token(name: string, v: i32): string {
+  return name + " = " + fmt_cc(v) + ";";
+}
+
+// The current member of a group, or "" when the word holds a combination no
+// member names.
+function group_token(t: i64[], m: Mode): string {
+  if ((t[m.word] & m.mask) == m.bits) {
+    return m.name;
+  }
+  return "";
+}
+
+// ---- the three output forms -------------------------------------------------
+// `-g`: the four flag words and then THIRTY-TWO control characters, all in
+// hex. Thirty-two rather than the kernel's nineteen because glibc's struct is
+// the wider one and that is what GNU prints; the extra thirteen are always
+// zero, which is what the tail of a `-g` line is.
+function print_g(t: i64[]): string {
+  var out: string = hex_lower(t[w_iflag()]) + ":" + hex_lower(t[w_oflag()]) + ":" + hex_lower(t[w_cflag()]) + ":" + hex_lower(t[w_lflag()]);
+  var i: i32 = 0;
+  while (i < n_cc_printed()) {
+    if (i < n_cc_kernel()) {
+      out = out + ":" + hex_lower(t[cc_base() + i]);
+    } else {
+      out = out + ":0";
+    }
+    i = i + 1;
+  }
+  return out + "\n";
+}
+
+// `-a`: every name, whatever its value. The header carries the size, which is
+// the only place `window_size` is consulted.
+function print_all(t: i64[], rows: i64, cols: i64): string {
+  var w: Wrap = wrap_new();
+  w = wrap_put(w, "speed " + speed_name(t[w_cflag()]) + " baud;");
+  w = wrap_put(w, "rows " + rows.to_string() + ";");
+  w = wrap_put(w, "columns " + cols.to_string() + ";");
+  w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
+  w = wrap_break(w);
+
+  var cs: Cchar[] = cchars();
+  var i: i32 = 0;
+  while (i < cs.len()) {
+    if (cs[i].show) {
+      w = wrap_put(w, cc_token(cs[i].name, t[cc_base() + cs[i].idx] as i32));
+    }
+    i = i + 1;
+  }
+  w = wrap_put(w, "min = " + t[cc_base() + idx_min()].to_string() + ";");
+  w = wrap_put(w, "time = " + t[cc_base() + idx_time()].to_string() + ";");
+  w = wrap_break(w);
+
+  var ms: Mode[] = modes();
+  var word: i32 = 0 - 1;
+  i = 0;
+  while (i < ms.len()) {
+    var m: Mode = ms[i];
+    if (m.show) {
+      if (m.word != word) {
+        w = wrap_break(w);
+        word = m.word;
+      }
+      if (m.grp) {
+        var tok: string = group_token(t, m);
+        if (tok.len() > 0) {
+          w = wrap_put(w, tok);
+        }
+      } else if ((t[m.word] & m.bits) != 0 as i64) {
+        w = wrap_put(w, m.name);
+      } else {
+        w = wrap_put(w, "-" + m.name);
+      }
+    }
+    i = i + 1;
+  }
+  return wrap_done(w);
+}
+
+// The default form: the speed, the line discipline, and the DEVIATIONS from
+// `sane`. A flag `sane` has no opinion about is never printed, which is why a
+// fresh pseudo-terminal — `ixon` on, `istrip` off, `cs8` — reports only
+// `-brkint -imaxbel`.
+//
+// `min` and `time` print when `icanon` is OFF, whatever their values: they are
+// unused in canonical mode, so GNU reports them exactly where they matter
+// rather than where they differ.
+function print_diff(t: i64[]): string {
+  var w: Wrap = wrap_new();
+  w = wrap_put(w, "speed " + speed_name(t[w_cflag()]) + " baud;");
+  w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
+  w = wrap_break(w);
+
+  var cs: Cchar[] = cchars();
+  var i: i32 = 0;
+  while (i < cs.len()) {
+    if (cs[i].show) {
+      var v: i32 = t[cc_base() + cs[i].idx] as i32;
+      if (v != cs[i].dflt) {
+        w = wrap_put(w, cc_token(cs[i].name, v));
+      }
+    }
+    i = i + 1;
+  }
+  if ((t[w_lflag()] & 2 as i64) == 0 as i64) {
+    w = wrap_put(w, "min = " + t[cc_base() + idx_min()].to_string() + ";");
+    w = wrap_put(w, "time = " + t[cc_base() + idx_time()].to_string() + ";");
+  }
+  w = wrap_break(w);
+
+  var ms: Mode[] = modes();
+  var word: i32 = 0 - 1;
+  i = 0;
+  while (i < ms.len()) {
+    var m: Mode = ms[i];
+    if (m.show && m.sane != 0) {
+      if (m.word != word) {
+        w = wrap_break(w);
+        word = m.word;
+      }
+      if (m.sane == 3) {
+        var tok: string = group_token(t, m);
+        if (tok.len() > 0) {
+          w = wrap_put(w, tok);
+        }
+      } else if (!m.grp) {
+        var on: boolean = (t[m.word] & m.bits) != 0 as i64;
+        if (on && m.sane == 2) {
+          w = wrap_put(w, m.name);
+        }
+        if (!on && m.sane == 1) {
+          w = wrap_put(w, "-" + m.name);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return wrap_done(w);
+}
+
+// ---- the tables, looked up -------------------------------------------------
+function find_mode(name: string): (Mode, boolean) {
+  var ms: Mode[] = modes();
+  var i: i32 = 0;
+  while (i < ms.len()) {
+    if (ms[i].name == name) {
+      return (ms[i], true);
+    }
+    i = i + 1;
+  }
+  return (Mode { name: "", word: 0, bits: 0 as i64, mask: 0 as i64, grp: false, rev: false, sane: 0, show: false }, false);
+}
+
+function find_cchar(name: string): (Cchar, boolean) {
+  var cs: Cchar[] = cchars();
+  var i: i32 = 0;
+  while (i < cs.len()) {
+    if (cs[i].name == name) {
+      return (cs[i], true);
+    }
+    i = i + 1;
+  }
+  return (Cchar { name: "", idx: 0, dflt: 0, show: false }, false);
+}
+
+function find_speed(name: string): (i64, boolean) {
+  var ss: Speed[] = speeds();
+  var i: i32 = 0;
+  while (i < ss.len()) {
+    if (ss[i].name == name) {
+      return (ss[i].bits, true);
+    }
+    i = i + 1;
+  }
+  return (0 as i64, false);
+}
+
+// The settings that take a VALUE in the next operand.
+function takes_value(name: string): boolean {
+  if (name == "rows" || name == "cols" || name == "columns" || name == "line") {
+    return true;
+  }
+  if (name == "min" || name == "time" || name == "ispeed" || name == "ospeed") {
+    return true;
+  }
+  var r: (Cchar, boolean) = find_cchar(name);
+  return r.1;
+}
+
+// The combination settings, each as the token list `--help` gives for it,
+// which is also how they are applied: the tokens go back through the same
+// setter, so `dec`'s control characters and `raw`'s `min 1 time 0` need no
+// second path. `sane` and `ek` are the two that reach for the tables' own
+// defaults instead and are handled where they are applied.
+//
+// `cooked` does NOT reset `eof` and `eol`, though `--help` says it does:
+// measured, `stty eof Z; stty cooked` leaves eof at Z. The behaviour is what
+// this follows.
+function combo_tokens(name: string): (string, boolean) {
+  // `-iutf8` is in the list though `--help` omits it: measured, `stty
+  // iutf8; stty raw` leaves iutf8 CLEAR. The behaviour is what this follows,
+  // the way `cooked` not resetting eof and eol does.
+  var raw: string = "-ignbrk -brkint -ignpar -parmrk -inpck -istrip -inlcr -igncr -icrnl -ixon -ixoff -iutf8 -icanon -opost -isig -iuclc -ixany -imaxbel -xcase min 1 time 0";
+  var cooked: string = "brkint ignpar istrip icrnl ixon opost isig icanon";
+  if (name == "raw" || name == "-cooked") {
+    return (raw, true);
+  }
+  if (name == "cooked" || name == "-raw") {
+    return (cooked, true);
+  }
+  if (name == "cbreak") {
+    return ("-icanon", true);
+  }
+  if (name == "-cbreak") {
+    return ("icanon", true);
+  }
+  if (name == "crt") {
+    return ("echoe echoctl echoke", true);
+  }
+  if (name == "dec") {
+    return ("echoe echoctl echoke -ixany intr ^c erase 0177 kill ^u", true);
+  }
+  if (name == "decctlq") {
+    return ("-ixany", true);
+  }
+  if (name == "-decctlq") {
+    return ("ixany", true);
+  }
+  if (name == "evenp" || name == "parity") {
+    return ("parenb -parodd cs7", true);
+  }
+  if (name == "-evenp" || name == "-parity") {
+    return ("-parenb cs8", true);
+  }
+  if (name == "oddp") {
+    return ("parenb parodd cs7", true);
+  }
+  if (name == "-oddp") {
+    return ("-parenb cs8", true);
+  }
+  if (name == "lcase" || name == "LCASE") {
+    return ("xcase iuclc olcuc", true);
+  }
+  if (name == "-lcase" || name == "-LCASE") {
+    return ("-xcase -iuclc -olcuc", true);
+  }
+  if (name == "litout") {
+    return ("-parenb -istrip -opost cs8", true);
+  }
+  if (name == "-litout") {
+    return ("parenb istrip opost cs7", true);
+  }
+  if (name == "nl") {
+    return ("-icrnl -onlcr", true);
+  }
+  if (name == "-nl") {
+    return ("icrnl -inlcr -igncr onlcr -ocrnl -onlret", true);
+  }
+  if (name == "pass8") {
+    return ("-parenb -istrip cs8", true);
+  }
+  if (name == "-pass8") {
+    return ("parenb istrip cs7", true);
+  }
+  if (name == "tabs") {
+    return ("tab0", true);
+  }
+  if (name == "-tabs") {
+    return ("tab3", true);
+  }
+  return ("", false);
+}
+
+// A `-g` operand: the thirty-six colon-separated hex fields `-g` prints.
+// Anything with a colon in it is meant to be one, so a malformed one is
+// `invalid argument` rather than an unknown mode.
+function looks_like_saved(tok: string): boolean {
+  return tok.index_of(":") >= 0;
+}
+
+function parse_hex(s: string): (i64, boolean) {
+  if (s.len() == 0) {
+    return (0 as i64, false);
+  }
+  var body: string = s;
+  if (s.len() > 2 && s[0] as i32 == 48 && (s[1] as i32 == 120 || s[1] as i32 == 88)) {
+    body = slice_unchecked(s, 2, s.len()) + "";
+  }
+  if (body.len() == 0) {
+    return (0 as i64, false);
+  }
+  var v: i64 = 0 as i64;
+  var i: i32 = 0;
+  while (i < body.len()) {
+    var c: i32 = body[i] as i32;
+    var d: i32 = 0 - 1;
+    if (c >= 48 && c <= 57) {
+      d = c - 48;
+    }
+    if (c >= 97 && c <= 102) {
+      d = c - 87;
+    }
+    if (c >= 65 && c <= 70) {
+      d = c - 55;
+    }
+    if (d < 0) {
+      return (0 as i64, false);
+    }
+    v = v * (16 as i64) + d as i64;
+    i = i + 1;
+  }
+  return (v, true);
+}
+
+// The fields of a `-g` string, or None when it is not one: the count has to
+// be exactly the thirty-six GNU prints, which is what rules out `1:2:3`.
+function parse_saved(tok: string): (i64[], boolean) {
+  var parts: string[] = tok.split(":");
+  if (parts.len() != 4 + n_cc_printed()) {
+    return ([], false);
+  }
+  var out: i64[] = [];
+  var i: i32 = 0;
+  while (i < parts.len()) {
+    var r: (i64, boolean) = parse_hex(parts[i]);
+    if (!r.1) {
+      return ([], false);
+    }
+    out = out.append(r.0);
+    i = i + 1;
+  }
+  return (out, true);
+}
+
+// ---- the option scan -------------------------------------------------------
+//
+// Derived from the binary, because stty's argument handling is not a getopt
+// call: an element that LOOKS like an option and is not becomes a MODE,
+// whole. `-echo` is the mode `-echo` and not `-e -c -h -o`, and `-igna` is
+// the invalid mode `-igna` rather than `-g` and `-a` with unknown letters
+// between them — which is how it can be told apart, since that spelling
+// reports `invalid argument '-igna'` and never the mutually-exclusive error
+// `-g` and `-a` together would give.
+//
+// Recognition stops at the first letter of a cluster that is not one of
+// `agF`, and the whole element becomes a mode: `-aecho` sets `-a` and then
+// hands `-aecho` over as one, which is why it reports the output-style
+// conflict.
+//
+// `--` is the one asymmetry. Reached before any mode it ends the scan and
+// everything after it is dropped, so `stty -- -echo` PRINTS; reached after
+// one it is itself a mode, so `stty -echo --` reports `invalid argument
+// '--'`.
+struct Scan { verbose: boolean, save: boolean, device: string, has_device: boolean, modes: string[] }
+
+function long_names(): string[] {
+  return ["all", "save", "file", "help", "version"];
+}
+
+// The unique long option `p` is a prefix of, or "" — no two of the five share
+// a first letter, so an ambiguous prefix cannot arise and stty needs none of
+// glibc's ambiguity reporting.
+function long_match(p: string): string {
+  var ns: string[] = long_names();
+  var hit: string = "";
+  var n: i32 = 0;
+  var i: i32 = 0;
+  while (i < ns.len()) {
+    if (ns[i].starts_with(p)) {
+      hit = ns[i];
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  if (n == 1) {
+    return hit;
+  }
+  return "";
+}
+
+function scan_device(s: Scan, path: string): Scan {
+  if (s.has_device) {
+    gnu.error("only one device may be specified");
+    exit(1);
+  }
+  return Scan { ...s, device: path, has_device: true };
+}
+
+// One `--name[=value]` element. Returns the scan and whether the element was
+// consumed as an option at all: a name that matches nothing, or an `=value`
+// on an option that takes none, leaves it to become a mode.
+function scan_long(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
+  var body: string = slice_unchecked(a, 2, a.len()) + "";
+  var eq: i32 = body.index_of("=");
+  var name: string = body;
+  var value: string = "";
+  var has_value: boolean = false;
+  if (eq >= 0) {
+    name = slice_unchecked(body, 0, eq) + "";
+    value = slice_unchecked(body, eq + 1, body.len()) + "";
+    has_value = true;
+  }
+  var full: string = long_match(name);
+  if (full.len() == 0) {
+    return (s, i, false);
+  }
+  if (full == "file") {
+    if (has_value) {
+      return (scan_device(s, value), i + 1, true);
+    }
+    if (i + 1 >= argv.len()) {
+      return (s, i, false);
+    }
+    return (scan_device(s, argv[i + 1]), i + 2, true);
+  }
+  if (has_value) {
+    return (s, i, false);
+  }
+  if (full == "all") {
+    return (Scan { ...s, verbose: true }, i + 1, true);
+  }
+  if (full == "save") {
+    return (Scan { ...s, save: true }, i + 1, true);
+  }
+  if (full == "help") {
+    gnu.write_out(help_text());
+    exit(0);
+  }
+  gnu.write_out(gnu.prog() + " (Fern coreutils) " + gnu.version() + "\n");
+  exit(0);
+  return (s, i, false);
+}
+
+// One `-agF` cluster. The scan of the element stops at the first letter that
+// is none of the three, and the caller then takes the whole element as a
+// mode.
+function scan_short(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
+  var st: Scan = s;
+  var j: i32 = 1;
+  while (j < a.len()) {
+    var c: i32 = a[j] as i32;
+    if (c == 97) {
+      st = Scan { ...st, verbose: true };
+    } else if (c == 103) {
+      st = Scan { ...st, save: true };
+    } else if (c == 70) {
+      if (j + 1 < a.len()) {
+        return (scan_device(st, slice_unchecked(a, j + 1, a.len()) + ""), i + 1, true);
+      }
+      if (i + 1 >= argv.len()) {
+        return (st, i, false);
+      }
+      return (scan_device(st, argv[i + 1]), i + 2, true);
+    } else {
+      // The element is a mode from here on, and the options already taken
+      // out of it STAY taken: `-aecho` sets `-a` and hands `-aecho` over as
+      // a mode, which is why it reports the output-style conflict rather
+      // than an invalid name.
+      return (st, i, false);
+    }
+    j = j + 1;
+  }
+  return (st, i + 1, true);
+}
+
+function scan(argv: string[]): Scan {
+  var s: Scan = Scan { verbose: false, save: false, device: "", has_device: false, modes: [] };
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "--") {
+      if (s.modes.len() == 0) {
+        return s;
+      }
+      s = Scan { ...s, modes: s.modes.append(a) };
+      i = i + 1;
+      continue;
+    }
+    if (a.len() > 2 && a.starts_with("--")) {
+      var rl: (Scan, i32, boolean) = scan_long(s, a, argv, i);
+      s = rl.0;
+      if (rl.2) {
+        i = rl.1;
+        continue;
+      }
+    } else if (a.len() > 1 && a[0] as i32 == 45) {
+      var rs: (Scan, i32, boolean) = scan_short(s, a, argv, i);
+      // Whatever the cluster gave up before it stopped being options STAYS
+      // given up, which is why `-aecho` is `-a` plus the mode `-aecho`.
+      s = rs.0;
+      if (rs.2) {
+        i = rs.1;
+        continue;
+      }
+    }
+    s = Scan { ...s, modes: s.modes.append(a) };
+    i = i + 1;
+  }
+  return s;
+}
+
+// ---- --help ----------------------------------------------------------------
+function help_special_chars(): string {
+  var o: string = "";
+  o = o + "Special characters:\n";
+  o = o + " * discard CHAR  CHAR will toggle discarding of output\n";
+  o = o + "   eof CHAR      CHAR will send an end of file (terminate the input)\n";
+  o = o + "   eol CHAR      CHAR will end the line\n";
+  o = o + " * eol2 CHAR     alternate CHAR for ending the line\n";
+  o = o + "   erase CHAR    CHAR will erase the last character typed\n";
+  o = o + "   intr CHAR     CHAR will send an interrupt signal\n";
+  o = o + "   kill CHAR     CHAR will erase the current line\n";
+  o = o + " * lnext CHAR    CHAR will enter the next character quoted\n";
+  o = o + "   quit CHAR     CHAR will send a quit signal\n";
+  o = o + " * rprnt CHAR    CHAR will redraw the current line\n";
+  o = o + "   start CHAR    CHAR will restart the output after stopping it\n";
+  o = o + "   stop CHAR     CHAR will stop the output\n";
+  o = o + "   susp CHAR     CHAR will send a terminal stop signal\n";
+  o = o + " * swtch CHAR    CHAR will switch to a different shell layer\n";
+  o = o + " * werase CHAR   CHAR will erase the last word typed\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_special_settings(): string {
+  var o: string = "";
+  o = o + "Special settings:\n";
+  o = o + "   N             set the input and output speeds to N bauds\n";
+  o = o + " * cols N        tell the kernel that the terminal has N columns\n";
+  o = o + " * columns N     same as cols N\n";
+  o = o + " * [-]drain      wait for transmission before applying settings (on by default)\n";
+  o = o + "   ispeed N      set the input speed to N\n";
+  o = o + " * line N        use line discipline N\n";
+  o = o + "   min N         with -icanon, set N characters minimum for a completed read\n";
+  o = o + "   ospeed N      set the output speed to N\n";
+  o = o + " * rows N        tell the kernel that the terminal has N rows\n";
+  o = o + " * size          print the number of rows and columns according to the kernel\n";
+  o = o + "   speed         print the terminal speed\n";
+  o = o + "   time N        with -icanon, set read timeout of N tenths of a second\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_control_settings(): string {
+  var o: string = "";
+  o = o + "Control settings:\n";
+  o = o + "   [-]clocal     disable modem control signals\n";
+  o = o + "   [-]cread      allow input to be received\n";
+  o = o + " * [-]crtscts    enable RTS/CTS handshaking\n";
+  o = o + "   csN           set character size to N bits, N in [5..8]\n";
+  o = o + "   [-]cstopb     use two stop bits per character (one with '-')\n";
+  o = o + "   [-]hup        send a hangup signal when the last process closes the tty\n";
+  o = o + "   [-]hupcl      same as [-]hup\n";
+  o = o + "   [-]parenb     generate parity bit in output and expect parity bit in input\n";
+  o = o + "   [-]parodd     set odd parity (or even parity with '-')\n";
+  o = o + " * [-]cmspar     use \"stick\" (mark/space) parity\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_input_settings(): string {
+  var o: string = "";
+  o = o + "Input settings:\n";
+  o = o + "   [-]brkint     breaks cause an interrupt signal\n";
+  o = o + "   [-]icrnl      translate carriage return to newline\n";
+  o = o + "   [-]ignbrk     ignore break characters\n";
+  o = o + "   [-]igncr      ignore carriage return\n";
+  o = o + "   [-]ignpar     ignore characters with parity errors\n";
+  o = o + " * [-]imaxbel    beep and do not flush a full input buffer on a character\n";
+  o = o + "   [-]inlcr      translate newline to carriage return\n";
+  o = o + "   [-]inpck      enable input parity checking\n";
+  o = o + "   [-]istrip     clear high (8th) bit of input characters\n";
+  o = o + " * [-]iutf8      assume input characters are UTF-8 encoded\n";
+  o = o + " * [-]iuclc      translate uppercase characters to lowercase\n";
+  o = o + " * [-]ixany      let any character restart output, not only start character\n";
+  o = o + "   [-]ixoff      enable sending of start/stop characters\n";
+  o = o + "   [-]ixon       enable XON/XOFF flow control\n";
+  o = o + "   [-]parmrk     mark parity errors (with a 255-0-character sequence)\n";
+  o = o + "   [-]tandem     same as [-]ixoff\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_output_settings(): string {
+  var o: string = "";
+  o = o + "Output settings:\n";
+  o = o + " * bsN           backspace delay style, N in [0..1]\n";
+  o = o + " * crN           carriage return delay style, N in [0..3]\n";
+  o = o + " * ffN           form feed delay style, N in [0..1]\n";
+  o = o + " * nlN           newline delay style, N in [0..1]\n";
+  o = o + " * [-]ocrnl      translate carriage return to newline\n";
+  o = o + " * [-]ofdel      use delete characters for fill instead of NUL characters\n";
+  o = o + " * [-]ofill      use fill (padding) characters instead of timing for delays\n";
+  o = o + " * [-]olcuc      translate lowercase characters to uppercase\n";
+  o = o + " * [-]onlcr      translate newline to carriage return-newline\n";
+  o = o + " * [-]onlret     newline performs a carriage return\n";
+  o = o + " * [-]onocr      do not print carriage returns in the first column\n";
+  o = o + "   [-]opost      postprocess output\n";
+  o = o + " * tabN          horizontal tab delay style, N in [0..3]\n";
+  o = o + " * tabs          same as tab0\n";
+  o = o + " * -tabs         same as tab3\n";
+  o = o + " * vtN           vertical tab delay style, N in [0..1]\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_local_settings(): string {
+  var o: string = "";
+  o = o + "Local settings:\n";
+  o = o + "   [-]crterase   echo erase characters as backspace-space-backspace\n";
+  o = o + " * crtkill       kill all line by obeying the echoprt and echoe settings\n";
+  o = o + " * -crtkill      kill all line by obeying the echoctl and echok settings\n";
+  o = o + " * [-]ctlecho    echo control characters in hat notation ('^c')\n";
+  o = o + "   [-]echo       echo input characters\n";
+  o = o + " * [-]echoctl    same as [-]ctlecho\n";
+  o = o + "   [-]echoe      same as [-]crterase\n";
+  o = o + "   [-]echok      echo a newline after a kill character\n";
+  o = o + " * [-]echoke     same as [-]crtkill\n";
+  o = o + "   [-]echonl     echo newline even if not echoing other characters\n";
+  o = o + " * [-]echoprt    echo erased characters backward, between '\\' and '/'\n";
+  o = o + " * [-]extproc    enable \"LINEMODE\"; useful with high latency links\n";
+  o = o + " * [-]flusho     discard output\n";
+  o = o + "   [-]icanon     enable special characters: erase, kill, werase, rprnt\n";
+  o = o + "   [-]iexten     enable non-POSIX special characters\n";
+  o = o + "   [-]isig       enable interrupt, quit, and suspend special characters\n";
+  o = o + "   [-]noflsh     disable flushing after interrupt and quit special characters\n";
+  o = o + " * [-]prterase   same as [-]echoprt\n";
+  o = o + " * [-]tostop     stop background jobs that try to write to the terminal\n";
+  o = o + " * [-]xcase      with icanon, escape with '\\' for uppercase characters\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_combination_settings(): string {
+  var o: string = "";
+  o = o + "Combination settings:\n";
+  o = o + " * [-]LCASE      same as [-]lcase\n";
+  o = o + "   cbreak        same as -icanon\n";
+  o = o + "   -cbreak       same as icanon\n";
+  o = o + "   cooked        same as brkint ignpar istrip icrnl ixon opost isig\n";
+  o = o + "                 icanon, eof and eol characters to their default values\n";
+  o = o + "   -cooked       same as raw\n";
+  o = o + "   crt           same as echoe echoctl echoke\n";
+  o = o + "   dec           same as echoe echoctl echoke -ixany intr ^c erase 0177\n";
+  o = o + "                 kill ^u\n";
+  o = o + " * [-]decctlq    same as [-]ixany\n";
+  o = o + "   ek            erase and kill characters to their default values\n";
+  o = o + "   evenp         same as parenb -parodd cs7\n";
+  o = o + "   -evenp        same as -parenb cs8\n";
+  o = o + " * [-]lcase      same as xcase iuclc olcuc\n";
+  o = o + "   litout        same as -parenb -istrip -opost cs8\n";
+  o = o + "   -litout       same as parenb istrip opost cs7\n";
+  o = o + "   nl            same as -icrnl -onlcr\n";
+  o = o + "   -nl           same as icrnl -inlcr -igncr onlcr -ocrnl -onlret\n";
+  o = o + "   oddp          same as parenb parodd cs7\n";
+  o = o + "   -oddp         same as -parenb cs8\n";
+  o = o + "   [-]parity     same as [-]evenp\n";
+  o = o + "   pass8         same as -parenb -istrip cs8\n";
+  o = o + "   -pass8        same as parenb istrip cs7\n";
+  o = o + "   raw           same as -ignbrk -brkint -ignpar -parmrk -inpck -istrip\n";
+  o = o + "                 -inlcr -igncr -icrnl -ixon -ixoff -icanon -opost\n";
+  o = o + "                 -isig -iuclc -ixany -imaxbel -xcase min 1 time 0\n";
+  o = o + "   -raw          same as cooked\n";
+  o = o + "   sane          same as cread -ignbrk brkint -inlcr -igncr icrnl\n";
+  o = o + "                 icanon iexten echo echoe echok -echonl -noflsh\n";
+  o = o + "                 -ixoff -iutf8 -iuclc -ixany imaxbel -xcase -olcuc -ocrnl\n";
+  o = o + "                 opost -ofill onlcr -onocr -onlret nl0 cr0 tab0 bs0 vt0 ff0\n";
+  o = o + "                 isig -tostop -ofdel -echoprt echoctl echoke -extproc -flusho,\n";
+  o = o + "                 all special characters to their default values\n";
+  o = o + "\n";
+  return o;
+}
+
+function help_text(): string {
+  var o: string = "";
+  o = o + "Usage: " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [SETTING]...\n";
+  o = o + "  or:  " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [-a|--all]\n";
+  o = o + "  or:  " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [-g|--save]\n";
+  o = o + "Print or change terminal characteristics.\n";
+  o = o + "\n";
+  o = o + "Mandatory arguments to long options are mandatory for short options too.\n";
+  o = o + "  -a, --all          print all current settings in human-readable form\n";
+  o = o + "  -g, --save         print all current settings in a stty-readable form\n";
+  o = o + "  -F, --file=DEVICE  open and use the specified DEVICE instead of stdin\n";
+  o = o + "      --help        display this help and exit\n";
+  o = o + "      --version     output version information and exit\n";
+  o = o + "\n";
+  o = o + "Optional - before SETTING indicates negation.  An * marks non-POSIX\n";
+  o = o + "settings.  The underlying system defines which settings are available.\n";
+  o = o + "\n";
+  o = o + help_special_chars();
+  o = o + help_special_settings();
+  o = o + help_control_settings();
+  o = o + help_input_settings();
+  o = o + help_output_settings();
+  o = o + help_local_settings();
+  o = o + help_combination_settings();
+  o = o + "Handle the tty line connected to standard input.  Without arguments,\n";
+  o = o + "prints baud rate, line discipline, and deviations from stty sane.  In\n";
+  o = o + "settings, CHAR is taken literally, or coded as in ^c, 0x37, 0177 or\n";
+  o = o + "127; special values ^- or undef used to disable special characters.\n";
+  return o;
+}
+
+// ---- values ----------------------------------------------------------------
+function inv(v: i64): i64 {
+  return 0 as i64 - 1 as i64 - v;
+}
+
+// The three limits a valued setting's parse reports overflow at, all measured
+// by bisection and all inside GNU's own number parser rather than in the
+// utility:
+//
+//   rows / cols   INT_MAX — `rows 2147483647` is accepted (the kernel then
+//                 truncates it to its u16) and `rows 2147483648` is not
+//   min / time    2^30, exactly — and the 255 a cc_t holds is a SECOND
+//                 check, with the other message
+//   line          nothing below 2^64 — `line 18446744073709551615` warns
+//                 and exits 0
+function int_max(): u64 {
+  return 2147483647 as u64;
+}
+
+function byte_parse_max(): u64 {
+  return 1073741823 as u64;
+}
+
+function u64_max(): u64 {
+  return 18446744073709551615 as u64;
+}
+
+// A non-negative integer in C's three bases, the way every valued setting
+// here reads one. Returns the value, whether it parsed at all, and whether it
+// ran past 2^64 on the way.
+function parse_u64(s: string): (u64, boolean, boolean) {
+  if (s.len() == 0) {
+    return (0 as u64, false, false);
+  }
+  var base: u64 = 10 as u64;
+  var i: i32 = 0;
+  if (s.len() > 2 && s[0] as i32 == 48 && (s[1] as i32 == 120 || s[1] as i32 == 88)) {
+    base = 16 as u64;
+    i = 2;
+  } else if (s.len() > 1 && s[0] as i32 == 48) {
+    base = 8 as u64;
+    i = 1;
+  }
+  if (i >= s.len()) {
+    return (0 as u64, false, false);
+  }
+  var v: u64 = 0 as u64;
+  var over: boolean = false;
+  while (i < s.len()) {
+    var c: i32 = s[i] as i32;
+    var d: i32 = 0 - 1;
+    if (c >= 48 && c <= 57) {
+      d = c - 48;
+    }
+    if (c >= 97 && c <= 102) {
+      d = c - 87;
+    }
+    if (c >= 65 && c <= 70) {
+      d = c - 55;
+    }
+    if (d < 0 || d as u64 >= base) {
+      return (0 as u64, false, false);
+    }
+    var du: u64 = d as u64;
+    if (v > u64_max() / base) {
+      over = true;
+    }
+    v = v * base;
+    if (v > u64_max() - du) {
+      over = true;
+    }
+    v = v + du;
+    i = i + 1;
+  }
+  return (v, true, over);
+}
+
+// `parse_u64` with the two diagnostics attached, since every caller reports
+// them the same way. Never returns on a failure. A string that is not a
+// number at all — including anything with a sign — is `invalid integer
+// argument: '-1'`, and one past the setting's own limit adds `: Value too
+// large for defined data type`.
+function need_limited(s: string, limit: u64): u64 {
+  var r: (u64, boolean, boolean) = parse_u64(s);
+  if (!r.1) {
+    gnu.error("invalid integer argument: " + gnu.quote(s));
+    exit(1);
+  }
+  if (r.2 || r.0 > limit) {
+    gnu.error("invalid integer argument: " + gnu.quote(s) + ": Value too large for defined data type");
+    exit(1);
+  }
+  return r.0;
+}
+
+function need_int(s: string): i64 {
+  return need_limited(s, int_max()) as i64;
+}
+
+// The same, bounded to what a `cc_t` holds: `min 256` and `erase 0x101` are
+// out of range where `rows 65536` is merely truncated by the kernel. The
+// parse limit is the lower one too, so 2^30 reports overflow here where the
+// window size accepts it.
+function need_byte(s: string): i64 {
+  var v: i64 = need_limited(s, byte_parse_max()) as i64;
+  if (v > 255 as i64) {
+    gnu.error("invalid integer argument: " + gnu.quote(s) + ": Numerical result out of range");
+    exit(1);
+  }
+  return v;
+}
+
+// A control character's value. A single character is that character, whatever
+// it looks like — `erase 9` binds the digit and not the tab — `^X` is the
+// control character, `^?` is 127, and `^-`, `undef` and the empty string all
+// unbind. Anything else is an integer in C's bases.
+function parse_cchar(s: string): i64 {
+  if (s.len() == 0 || s == "undef" || s == "^-") {
+    return 0 as i64;
+  }
+  if (s.len() == 1) {
+    return s[0] as i64;
+  }
+  if (s.len() == 2 && s[0] as i32 == 94) {
+    var c: i32 = s[1] as i32;
+    if (c == 63) {
+      return 127 as i64;
+    }
+    return (c & 31) as i64;
+  }
+  return need_byte(s);
+}
+
+// ---- the apply pass ---------------------------------------------------------
+//
+// One `termios_set` carries every flag, at the end, which is why a bit the
+// kernel refuses reports `unable to perform all requested operations` for the
+// whole invocation rather than for the operand that asked. `rows` and `cols`
+// are a different record and go in as they are read — measured: `stty cs7
+// rows 40` leaves the size changed and reports the refused cs7.
+struct Set {
+  t: i64[],
+  set_attr: boolean,
+  // The tcsetattr action `[-]drain` selects. Spelled `act` and not `when`,
+  // which is what the primitive's own documentation calls it: `when` is a
+  // KEYWORD here (a match guard), so a field named for it fails to parse.
+  act: i32,
+  isp: string,
+  osp: string,
+  has_isp: boolean,
+  has_osp: boolean,
+}
+
+function set_new(t: i64[]): Set {
+  return Set { t: t, set_attr: false, act: when_drain(), isp: "", osp: "", has_isp: false, has_osp: false };
+}
+
+function set_word(st: Set, word: i32, v: i64): Set {
+  return Set { ...st, t: st.t.with(word, v), set_attr: true };
+}
+
+function apply_mode(st: Set, m: Mode, neg: boolean): Set {
+  var cur: i64 = st.t[m.word];
+  if (neg) {
+    return set_word(st, m.word, cur & inv(m.bits));
+  }
+  return set_word(st, m.word, cur & inv(m.mask) | m.bits);
+}
+
+function apply_cc(st: Set, idx: i32, v: i64): Set {
+  return Set { ...st, t: st.t.with(cc_base() + idx, v), set_attr: true };
+}
+
+function apply_speed(st: Set, bits: i64): Set {
+  return set_word(st, w_cflag(), st.t[w_cflag()] & inv(cbaud_mask()) | bits);
+}
+
+// `sane`: the reference set, which is both what this applies and what the
+// default print form reports deviations from. Every control character goes
+// back to its default too.
+function apply_sane(st: Set): Set {
+  var s: Set = st;
+  var ms: Mode[] = modes();
+  var i: i32 = 0;
+  while (i < ms.len()) {
+    var m: Mode = ms[i];
+    if (m.sane == 1) {
+      s = set_word(s, m.word, s.t[m.word] & inv(m.mask) | m.bits);
+    } else if (m.sane == 2) {
+      s = set_word(s, m.word, s.t[m.word] & inv(m.bits));
+    }
+    i = i + 1;
+  }
+  var cs: Cchar[] = cchars();
+  i = 0;
+  while (i < cs.len()) {
+    if (cs[i].show) {
+      s = apply_cc(s, cs[i].idx, cs[i].dflt as i64);
+    }
+    i = i + 1;
+  }
+  s = apply_cc(s, idx_min(), 1 as i64);
+  s = apply_cc(s, idx_time(), 0 as i64);
+  return s;
+}
+
+// `ek`: erase and kill back to their defaults, and nothing else.
+function apply_ek(st: Set): Set {
+  var s: Set = st;
+  var cs: Cchar[] = cchars();
+  var i: i32 = 0;
+  while (i < cs.len()) {
+    if (cs[i].name == "erase" || cs[i].name == "kill") {
+      s = apply_cc(s, cs[i].idx, cs[i].dflt as i64);
+    }
+    i = i + 1;
+  }
+  return s;
+}
+
+// A `-g` string puts all four words and every control character back. The
+// thirteen slots past the kernel's NCCS are read and dropped: they are what
+// glibc's wider struct contributes to the line and are always zero.
+function apply_saved(st: Set, f: i64[]): Set {
+  var s: Set = st;
+  s = set_word(s, w_iflag(), f[0]);
+  s = set_word(s, w_oflag(), f[1]);
+  s = set_word(s, w_cflag(), f[2]);
+  s = set_word(s, w_lflag(), f[3]);
+  var i: i32 = 0;
+  while (i < n_cc_kernel()) {
+    s = apply_cc(s, i, f[4 + i]);
+    i = i + 1;
+  }
+  return s;
+}
+
+function words_equal(a: i64[], b: i64[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// ---- pass 1: the names, and every value but the window size's ---------------
+function speed_value(tok: string, value: string): i64 {
+  var r: (i64, boolean) = find_speed(value);
+  if (!r.1) {
+    gnu.die_usage("invalid " + tok + " " + gnu.quote(value), 1);
+  }
+  return r.0;
+}
+
+// `line N` takes the low byte and WARNS when the number did not fit, without
+// failing: `stty line 300` sets 44 and exits 0. The warning lands twice
+// because both passes read the value, which is what GNU does — measured, and
+// the clearest sign that there are two passes at all.
+function line_value(value: string): i64 {
+  var n: u64 = need_limited(value, u64_max());
+  if (n > 255 as u64) {
+    gnu.error("invalid line discipline " + gnu.quote(value));
+  }
+  return (n % (256 as u64)) as i64;
+}
+
+// Pass 1 reads every value except the window size's. That is why `stty rows
+// 40 line abc` changes nothing while `stty rows 40 cols -1` leaves 40 rows
+// behind: the first dies before the apply pass starts, and the second dies
+// inside it with the rows write already made. Measured.
+function check_value(tok: string, value: string): void {
+  if (tok == "rows" || tok == "cols" || tok == "columns") {
+    return;
+  }
+  if (tok == "line") {
+    line_value(value);
+    return;
+  }
+  if (tok == "min" || tok == "time") {
+    need_byte(value);
+    return;
+  }
+  if (tok == "ispeed" || tok == "ospeed") {
+    speed_value(tok, value);
+    return;
+  }
+  parse_cchar(value);
+}
+
+// Is this a name stty knows? `-NAME` is only accepted for a reversible flag,
+// so `-cs8`, `-nl0`, `-erase` and `-sane` are all `invalid argument`.
+function known_mode(tok: string): boolean {
+  if (looks_like_saved(tok)) {
+    var sv: (i64[], boolean) = parse_saved(tok);
+    return sv.1;
+  }
+  if (tok == "size" || tok == "speed" || tok == "drain" || tok == "-drain") {
+    return true;
+  }
+  if (tok == "sane" || tok == "ek") {
+    return true;
+  }
+  var cb: (string, boolean) = combo_tokens(tok);
+  if (cb.1) {
+    return true;
+  }
+  var neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
+  if (!neg) {
+    var sp: (i64, boolean) = find_speed(tok);
+    if (sp.1) {
+      return true;
+    }
+    if (takes_value(tok)) {
+      return true;
+    }
+  }
+  var base: string = tok;
+  if (neg) {
+    base = slice_unchecked(tok, 1, tok.len()) + "";
+  }
+  var m: (Mode, boolean) = find_mode(base);
+  if (!m.1) {
+    return false;
+  }
+  if (neg) {
+    return m.0.rev;
+  }
+  return true;
+}
+
+function validate(toks: string[]): void {
+  var i: i32 = 0;
+  while (i < toks.len()) {
+    var tok: string = toks[i];
+    if (!known_mode(tok)) {
+      gnu.die_usage("invalid argument " + gnu.quote(tok), 1);
+    }
+    if (!looks_like_saved(tok) && takes_value(tok)) {
+      if (i + 1 >= toks.len()) {
+        gnu.die_usage("missing argument to " + gnu.quote(tok), 1);
+      }
+      check_value(tok, toks[i + 1]);
+      i = i + 2;
+    } else {
+      i = i + 1;
+    }
+  }
+}
+
+// `[-]drain` selects the tcsetattr action and changes nothing else, so an
+// invocation whose only operands are those prints the summary the way one
+// with no operands at all does — measured, `stty drain` prints and `stty
+// drain -echo` does not.
+function any_setting(toks: string[]): boolean {
+  var i: i32 = 0;
+  while (i < toks.len()) {
+    if (toks[i] != "drain" && toks[i] != "-drain") {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- pass 2: applying -------------------------------------------------------
+function device_error(dev: string, e: IoError): void {
+  gnu.error(gnu.quotef(dev) + ": " + gnu.io_error_text(e));
+  exit(1);
+}
+
+function apply_list(st: Set, r: Reader, dev: string, toks: string[]): Set {
+  var s: Set = st;
+  var i: i32 = 0;
+  while (i < toks.len()) {
+    var tok: string = toks[i];
+    var value: string = "";
+    if (!looks_like_saved(tok) && takes_value(tok)) {
+      value = toks[i + 1];
+      i = i + 2;
+    } else {
+      i = i + 1;
+    }
+    s = apply_token(s, r, dev, tok, value);
+  }
+  return s;
+}
+
+// The window size is a second record and goes in as it is read, which is what
+// leaves `stty cs7 rows 40` with 40 rows and a refused cs7.
+function apply_size(r: Reader, dev: string, tok: string, value: string): void {
+  var n: i64 = need_int(value);
+  var rows: i64 = 0;
+  var cols: i64 = 0;
+  match (r.window_size()) {
+    Ok(ws) => {
+      rows = ws.rows;
+      cols = ws.cols;
+    },
+    Err(e) => {
+      device_error(dev, e);
+    }
+  }
+  if (tok == "rows") {
+    rows = n;
+  } else {
+    cols = n;
+  }
+  match (r.set_window_size(rows as i32, cols as i32)) {
+    Err(e) => {
+      device_error(dev, e);
+    },
+    Ok(_) => {}
+  }
+}
+
+function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string): Set {
+  if (looks_like_saved(tok)) {
+    var sv: (i64[], boolean) = parse_saved(tok);
+    return apply_saved(st, sv.0);
+  }
+  if (tok == "drain") {
+    return Set { ...st, act: when_drain() };
+  }
+  if (tok == "-drain") {
+    return Set { ...st, act: when_now() };
+  }
+  if (tok == "size") {
+    match (r.window_size()) {
+      Ok(ws) => {
+        gnu.write_out(ws.rows.to_string() + " " + ws.cols.to_string() + "\n");
+      },
+      Err(e) => {
+        device_error(dev, e);
+      }
+    }
+    return st;
+  }
+  if (tok == "speed") {
+    gnu.write_out(speed_name(st.t[w_cflag()]) + "\n");
+    return st;
+  }
+  if (tok == "sane") {
+    return apply_sane(st);
+  }
+  if (tok == "ek") {
+    return apply_ek(st);
+  }
+  var cb: (string, boolean) = combo_tokens(tok);
+  if (cb.1) {
+    return apply_list(st, r, dev, cb.0.split(" "));
+  }
+  if (tok == "rows" || tok == "cols" || tok == "columns") {
+    apply_size(r, dev, tok, value);
+    return st;
+  }
+  if (tok == "line") {
+    return set_word(st, w_line(), line_value(value));
+  }
+  if (tok == "min") {
+    return apply_cc(st, idx_min(), need_byte(value));
+  }
+  if (tok == "time") {
+    return apply_cc(st, idx_time(), need_byte(value));
+  }
+  if (tok == "ispeed") {
+    var ib: i64 = speed_value(tok, value);
+    // An input speed of ZERO means "follow the output" and reaches no
+    // kernel field at all — glibc records it in a private flag — so the
+    // words are left alone and only the marker below is set.
+    if (ib == 0 as i64) {
+      return Set { ...st, set_attr: true, isp: value, has_isp: true };
+    }
+    return Set { ...apply_speed(st, ib), isp: value, has_isp: true };
+  }
+  if (tok == "ospeed") {
+    var ob: i64 = speed_value(tok, value);
+    return Set { ...apply_speed(st, ob), osp: value, has_osp: true };
+  }
+  var cc: (Cchar, boolean) = find_cchar(tok);
+  if (cc.1) {
+    return apply_cc(st, cc.0.idx, parse_cchar(value));
+  }
+  var sp: (i64, boolean) = find_speed(tok);
+  if (sp.1) {
+    return Set { ...apply_speed(st, sp.0), isp: tok, osp: tok, has_isp: true, has_osp: true };
+  }
+  var neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
+  var base: string = tok;
+  if (neg) {
+    base = slice_unchecked(tok, 1, tok.len()) + "";
+  }
+  var m: (Mode, boolean) = find_mode(base);
+  return apply_mode(st, m.0, neg);
+}
+
+// An INPUT speed of zero can never satisfy the read-back comparison, whatever
+// the kernel does: glibc records "input speed follows the output" as a
+// private flag in the TOP BIT of c_iflag, the kernel never stores it, and the
+// struct GNU compares therefore differs in a byte no ioctl ever carries.
+// Measured — `stty 0` and `stty ispeed 0` both report the incomplete set
+// with the speed applied, while `stty ospeed 0` succeeds, because only the
+// input half sets that flag.
+function input_speed_zero(st: Set): boolean {
+  if (!st.has_isp) {
+    return false;
+  }
+  var b: (i64, boolean) = find_speed(st.isp);
+  return b.0 == 0 as i64;
+}
+
+// Whether glibc's tcsetattr would have answered EINVAL rather than 0, which
+// is what decides between the two failure messages. The rule, from a truth
+// table measured over the whole cflag on a pseudo-terminal:
+//
+//   none of the four flag words or the line discipline moved   AND
+//   the request wanted one of them to                          AND
+//   the mismatch is not only a CSIZE the request asked to be CS5
+//
+// The control characters are NOT in it, which is the half the rule is easy to
+// get wrong: `stty cs7 eol ^M` binds a character and still reports the
+// refusal, where `stty cs7 -echo` does not.
+//
+// The CS5 clause is the other surprise, and `stty cs5` is what shows it: CS5
+// is the zero bit pattern, glibc cannot tell it from "unchanged", and so it
+// is satisfied where CS6 and CS7 are refused — leaving `stty`'s own
+// comparison to report the incomplete set instead. An input speed of zero is
+// excluded too: that failure is the private flag, and glibc returned 0.
+function glibc_refused(st: Set, before: i64[], now: i64[]): boolean {
+  if (input_speed_zero(st)) {
+    return false;
+  }
+  var csize: i64 = 48 as i64;
+  var i: i32 = 0;
+  var moved: boolean = false;
+  var missed: boolean = false;
+  while (i < cc_base()) {
+    if (now[i] != before[i]) {
+      moved = true;
+    }
+    var d: i64 = now[i] ^ st.t[i];
+    if (i == w_cflag() && (st.t[i] & csize) == 0 as i64) {
+      d = d & inv(csize);
+    }
+    if (d != 0 as i64) {
+      missed = true;
+    }
+    i = i + 1;
+  }
+  return missed && !moved;
+}
+
+// Linux's kernel `struct termios` has ONE speed field, so a request for two
+// different ones cannot be expressed and GNU refuses it rather than silently
+// taking the last. The numbers in the message are canonical rather than as
+// typed: `ispeed exta` reports 19200.
+function check_speeds(st: Set): void {
+  if (!st.has_isp || !st.has_osp) {
+    return;
+  }
+  var ib: (i64, boolean) = find_speed(st.isp);
+  var ob: (i64, boolean) = find_speed(st.osp);
+  if (ib.0 == ob.0) {
+    return;
+  }
+  gnu.error("asymmetric input (" + speed_name(ib.0) + "), output (" + speed_name(ob.0) + ") speeds not supported");
+  exit(1);
+}
+
+// ---- main -------------------------------------------------------------------
+function main(): i32 {
+  var sc: Scan = scan(args());
+  // The two output styles first, in this order: `-ag` reports the conflict
+  // where `-aecho` reports the modes, and `-igna` — whose scan abandons the
+  // element at the first unknown letter, so neither `-g` nor `-a` is ever
+  // seen — reports the invalid name.
+  if (sc.verbose && sc.save) {
+    gnu.error("the options for verbose and stty-readable output styles are\nmutually exclusive");
+    exit(1);
+  }
+  if ((sc.verbose || sc.save) && any_setting(sc.modes)) {
+    gnu.error("when specifying an output style, modes may not be set");
+    exit(1);
+  }
+  // Before the device is opened: `stty bogus -F /dev/null` reports the name
+  // and never touches the path.
+  validate(sc.modes);
+
+  var dev: string = "standard input";
+  var r: Reader = stdin();
+  if (sc.has_device) {
+    dev = sc.device;
+    // O_RDONLY | O_NONBLOCK, which is what makes `-F` on a FIFO with no
+    // writer answer at once rather than waiting for a peer.
+    match (open_reader_with(sc.device, 2)) {
+      Ok(h) => {
+        r = h;
+      },
+      Err(e) => {
+        device_error(sc.device, e);
+      }
+    }
+  }
+
+  var t: i64[] = [];
+  match (r.termios_get()) {
+    Ok(w) => {
+      t = w;
+    },
+    Err(e) => {
+      device_error(dev, e);
+    }
+  }
+
+  if (sc.save) {
+    gnu.write_out(print_g(t));
+    return 0;
+  }
+  if (sc.verbose) {
+    var rows: i64 = 0;
+    var cols: i64 = 0;
+    match (r.window_size()) {
+      Ok(ws) => {
+        rows = ws.rows;
+        cols = ws.cols;
+      },
+      Err(e) => {
+        device_error(dev, e);
+      }
+    }
+    gnu.write_out(print_all(t, rows, cols));
+    return 0;
+  }
+  if (!any_setting(sc.modes)) {
+    gnu.write_out(print_diff(t));
+    return 0;
+  }
+
+  var st: Set = apply_list(set_new(t), r, dev, sc.modes);
+  check_speeds(st);
+  if (st.set_attr) {
+    match (r.termios_set(st.act, st.t)) {
+      Err(e) => {
+        device_error(dev, e);
+      },
+      Ok(_) => {}
+    }
+    // The settings are read back and compared, because a kernel may accept
+    // the call and ignore a bit it cannot honour — a pseudo-terminal does
+    // exactly that for `cs7`, `parenb` and `-cread`. The verdict has THREE
+    // outcomes, and the middle one is glibc's rather than the utility's:
+    //
+    //   what came back IS what was asked            -> done
+    //   nothing moved at all                        -> `Invalid argument`
+    //   something moved, but not all of it          -> `unable to perform
+    //                                                  all requested
+    //                                                  operations`
+    //
+    // The middle case is EINVAL from tcsetattr, which glibc synthesises
+    // after its own read-back when the kernel ignored the request whole;
+    // straced, the raw TCSETSW returns 0 in every one of these. So `stty
+    // cs7` reports `Invalid argument` while `stty -echo cs7` reports the
+    // other — the echo landed, and glibc was satisfied by that.
+    match (r.termios_get()) {
+      Ok(now) => {
+        if (!words_equal(now, st.t) || input_speed_zero(st)) {
+          if (glibc_refused(st, t, now)) {
+            gnu.error(gnu.quotef(dev) + ": Invalid argument");
+            exit(1);
+          }
+          gnu.error(gnu.quotef(dev) + ": unable to perform all requested operations");
+          exit(1);
+        }
+      },
+      Err(e) => {
+        device_error(dev, e);
+      }
+    }
+  }
+  return 0;
+}

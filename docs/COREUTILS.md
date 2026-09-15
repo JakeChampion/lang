@@ -883,8 +883,32 @@ pre-pass and getopt_long's prefix match both cost nothing next to the exec.
 | `nohup` | nohup no operand | 0.38 ± 0.16 | 1.28 ± 0.31 | 2.22 ± 0.28 | 3.42× | 5.90× |
 | `nohup` | nohup a status passed through | 1.28 ± 0.25 | 2.03 ± 0.32 | 2.94 ± 0.39 | 1.58× | 2.29× |
 
-None of the redirections fire in any of those rows, and no benchmark can make
-them: every one needs a TERMINAL on the descriptor, and hyperfine hands the
+**stty, 2026-09-15**, the same host, its workloads file run alone (mean ± σ,
+≥20 runs; ratios above 1 mean Fern is faster). No uutils column: it has no
+`stty`.
+
+| utility | workload | fern (ms) | gnu (ms) | gnu / fern |
+|---|---|---|---|---|
+| `stty` | stty print all | 0.32 ± 0.17 | 1.21 ± 0.29 | 3.74× |
+| `stty` | stty print stty-readable | 0.33 ± 0.26 | 1.17 ± 0.46 | 3.56× |
+| `stty` | stty print the deviations | 0.41 ± 0.15 | 1.22 ± 0.18 | 2.95× |
+| `stty` | stty print the size | 0.36 ± 0.57 | 1.17 ± 0.22 | 3.29× |
+| `stty` | stty set one flag | 0.41 ± 0.17 | 1.19 ± 0.34 | 2.90× |
+| `stty` | stty set six settings | 0.48 ± 0.17 | 1.28 ± 0.47 | 2.69× |
+| `stty` | stty set the reference set | 0.40 ± 0.31 | 1.21 ± 0.32 | 3.03× |
+| `stty` | stty set a combination | 0.47 ± 0.39 | 1.12 ± 0.23 | 2.38× |
+| `stty` | stty restore a saved line | 0.50 ± 0.46 | 1.38 ± 0.55 | 2.77× |
+| `stty` | stty reject a bad name | 0.30 ± 0.36 | 1.14 ± 0.42 | 3.79× |
+
+Every row does the utility's real work, which took finding a terminal a
+benchmark harness can hand out: `-F /dev/ptmx` opens a fresh pseudo-terminal
+MASTER, and a master answers TCGETS, TCSETS and TIOCGWINSZ like any other
+terminal. The whole of `stty` is one ioctl, a table walk and one ioctl back,
+so the lead is startup — which is also why the spread is wide at these
+magnitudes and why the three print forms cost almost the same.
+
+None of the redirections fire in any of nohup's rows, and no benchmark can
+make them: every one needs a TERMINAL on the descriptor, and hyperfine hands the
 child pipes. What the rows measure is the part a shell script actually pays —
 startup, three isatty questions, a signal disposition and the exec — and the
 two that never exec (a name off PATH, no operand) are where the startup lead
@@ -1951,6 +1975,43 @@ GNU's wording the line is plainly ours, on a path no corpus case reaches. The
 statuses around it are measured: 125 is what nohup's own `--help` documents
 for a failure of nohup itself.
 
+**`stty`'s `--help` disagrees with `stty` in two places, and the BEHAVIOUR is
+what the port follows.** `cooked` is documented as putting "eof and eol
+characters to their default values" and does not: `stty eof Z; stty cooked`
+leaves eof at Z, measured. `raw` is documented without `-iutf8` and clears
+it: `stty iutf8; stty raw` leaves iutf8 off. Both are reproduced as measured,
+and the help text is reproduced as GNU prints it, so the port carries the
+same disagreement rather than a third answer.
+
+**`stty`'s two failure messages come from two different layers, and the
+second one is glibc's.** A pseudo-terminal silently ignores CSIZE, PARENB and
+a cleared CREAD: the raw TCSETSW returns 0 with nothing changed, straced.
+glibc's `tcsetattr` notices and synthesises EINVAL, which is
+`stty: 'standard input': Invalid argument`; when it is satisfied, `stty`'s own
+read-back comparison reports `unable to perform all requested operations`
+instead. Which one appears is decided by a rule measured over the whole
+cflag, and reproduced in `stty.fern` because there is no other way to match
+the output:
+
+- none of the four flag words or the line discipline moved, and the request
+  wanted one of them to → `Invalid argument`
+- something moved, but not all of it → `unable to perform`
+
+The control characters are NOT in glibc's comparison (`stty cs7 eol ^M` still
+reports the refusal), a requested CSIZE of CS5 is excluded because its bit
+pattern is zero and cannot be told from "unchanged" (`stty cs5` reports the
+other message), and an input speed of zero can never satisfy it at all —
+glibc records "input follows output" in a private flag in the top bit of
+c_iflag that the kernel never stores, so `stty 0` and `stty ispeed 0` always
+report the incomplete set while `stty ospeed 0` succeeds.
+
+**`stty`'s two passes are visible, and one warning proves it.** The names of
+every operand and the VALUES of all but `rows` and `cols` are read before
+anything is applied, so `stty rows 40 line abc` changes nothing while
+`stty rows 40 cols -1` leaves 40 rows behind. `line N` warns for an N past
+255 without failing — and the warning is printed TWICE, once per pass, which
+is the clearest evidence of the arrangement and is reproduced.
+
 **What a `shred` corpus can compare, and what nothing can.** GNU's pass
 SCHEDULE is drawn at random: two runs of `-n 10` over identical files disagree
 on both the order of the patterns and the SET of them, so `-v` output past the
@@ -2844,7 +2905,11 @@ groups are the order of work. Each sub-issue names its group.
   families it does NOT have are in the divergences above, each with its
   own issue, and the biggest of them wants a signal a program can
   OBSERVE rather than only dispose of, #9243)
-  `shred` (done, on that same seek — see the divergences above) `stty`, `uptime` (done — no new primitive: the boot time and the
+  `shred` (done, on that same seek — see the divergences above) `stty` (done, on
+  the kernel's own termios words plus `set_window_size` and the four handle
+  forms — #9356, #9360, #9363; the two places its `--help` text disagrees with
+  its own behaviour, and the glibc verdict layer its two failure messages come
+  from, are in the divergences below), `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
   clock is `lib/tz.fern` plus `lib/timefmt.fern`, and the load averages are
   `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:

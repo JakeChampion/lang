@@ -129,6 +129,17 @@ type invocation struct {
 	ttyIn  bool
 	ttyOut bool
 	ttyErr bool
+	// ttyPre puts fd 0's terminal into a starting state, by running the
+	// REFERENCE binary on it with these arguments before the child. The
+	// state a case begins from is its premise rather than part of what it
+	// proves, and both sides have to begin from the same one. Needs ttyIn.
+	ttyPre []string
+	// ttyState puts what the run LEFT on fd 0's terminal into the
+	// comparison: the four flag words, the line discipline, the control
+	// characters and the size. It is `artifacts` for a utility whose
+	// output is a terminal — `stty -echo` writes nothing at all, so
+	// without this its case compares two empty streams. Needs ttyIn.
+	ttyState bool
 	// sigint sends SIGINT to the child once `limit` bytes of stdout
 	// have been read, before the read end closes. It needs `limit` and
 	// a stdin long enough to outlast it, which together make the case
@@ -375,6 +386,9 @@ type outcome struct {
 	// tree is the working directory the run left behind, for a case
 	// that asked for one.
 	tree []treeEntry
+	// ttyState is what the run left on fd 0's terminal, for a case that
+	// asked for it.
+	ttyState string
 }
 
 func (o outcome) how() string {
@@ -892,6 +906,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if inv.ttyIn && inv.stdinPath != "" {
 		t.Fatalf("%s %s: ttyIn and stdinPath both claim fd 0", bin, quoteArgs(inv.args))
 	}
+	if (inv.ttyState || len(inv.ttyPre) > 0) && !inv.ttyIn {
+		t.Fatalf("%s %s: ttyState and ttyPre are about fd 0's terminal, which needs ttyIn", bin, quoteArgs(inv.args))
+	}
 	if inv.ttyOut && (inv.stdout != stdoutCaptured || inv.stdoutPath != "" || inv.stdoutFile != "" || len(inv.follow) > 0 || inv.limit > 0 || inv.merged) {
 		t.Fatalf("%s %s: ttyOut and another fd 1 mode both claim it", bin, quoteArgs(inv.args))
 	}
@@ -923,11 +940,16 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		ptySlaves = nil
 	}
 	defer closeSlaves()
+	var ptyIn *os.File
 	if inv.ttyIn {
 		master, slave := openPty(t)
 		defer master.Close()
 		ptySlaves = append(ptySlaves, slave)
 		cmd.Stdin = slave
+		if len(inv.ttyPre) > 0 {
+			ptyPrepare(t, referenceBin(t, argv0), argv0, slave, inv.ttyPre)
+		}
+		ptyIn = master
 		feedPty(master, inv.stdin)
 	}
 	if inv.ttyOut {
@@ -1061,6 +1083,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		stderr = ptyErr.wait()
 	}
 	res := outcome{stdout: out, stderr: stderr, exit: cmd.ProcessState.ExitCode(), overran: overran}
+	if inv.ttyState {
+		res.ttyState = ptySettings(t, ptyIn)
+	}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()
 	}
@@ -1618,6 +1643,10 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 			}
 			if diff := treeDiff(want.tree, got.tree, "gnu", "fern"); diff != "" {
 				t.Errorf("the files left behind differ for %s %s\n%s", util, quoteArgs(inv.args), diff)
+			}
+			if want.ttyState != got.ttyState {
+				t.Errorf("the terminal settings left behind differ for %s %s\n gnu: %s\nfern: %s",
+					util, quoteArgs(inv.args), want.ttyState, got.ttyState)
 			}
 		})
 	}
