@@ -47,6 +47,26 @@ example all along.
 Affected: ten declarations, the `core/iter` combinators taking a lambda plus
 `sort_key`. Nothing in the compiler's own sources matches the clause.
 
+## The binding a promoted var then REQUIRES
+
+Promotion makes a call site that could not bind the var fail outright: the key
+comes out empty and the template is dropped. That turned a working program into
+a compile error for a predicate held in a LOCAL —
+
+```fern
+var keep = (x: f64): boolean => { return x > 3.0; };
+var big = iter.filter(iter.of(xs), keep);
+```
+
+— because the env bound `keep` to the coarse `fn` tag (or, unannotated, to
+nothing at all), and `lambda_param_types_of` had nothing to read. `mono_stmt`
+now binds a fn-typed local through `fn_tag_spelling`, the same canonical
+callable spelling `FuncSig.param_type_names` carries, and `mono_infer` gives a
+lambda its own shape rather than "". The shape is now correct on wasm too,
+where the stranded `T` had it invalid before.
+
+`generic_fnarg_typevar` gains an `env_lambda` position for it.
+
 ## What this unblocks
 
 `conformance/cases/generic_fnarg_typevar` gains the `floats` position the

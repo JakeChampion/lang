@@ -7519,11 +7519,13 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     //       paren-depth 0 in some param type (`xs: T[]`, `b: Box[T]`), the
     //       positions `bind_unify` actually unifies. A `T` reachable only via
     //       the RETURN (`find[T, I](…): Option[T]`) or inside a function-type /
-    //       tuple param (`(T) => boolean`) is NOT bindable from the call args,
-    //       so promoting it would mint an incomplete instantiation key and the
-    //       call site would fail to resolve. `of[T](xs: T[]): ArrayIter[T]`
-    //       satisfies both; `find` / `nth` / `count` satisfy neither and stay
-    //       erased (as before).
+    //       tuple param (`(T) => boolean`) is not bindable by THIS test, so
+    //       promoting it here would mint an incomplete instantiation key and
+    //       the call site would fail to resolve. `of[T](xs: T[]): ArrayIter[T]`
+    //       satisfies both; `nth` / `count` satisfy neither and stay erased.
+    //       Clause (c-fn) below reaches the function-type param case, reading
+    //       the sidecars this test cannot see and binding through infer_inst's
+    //       own fn-param clauses — so `find` promotes there, not here.
     // The DECLARED bounds, before this loop appends promoted vars to the same
     // list: a declaration carrying one is cloned whatever happens here, which
     // is what clause (c-fn) below keys on.
@@ -9389,7 +9391,18 @@ function lambda_param_types_of(e: ast.Expr, env: MEnv, funcs: MFns): string[] {
             return out;
         },
         ast.ExprIdent(fid) => {
-            if (env.elook(fid.name).len() > 0) { return none; }
+            var bt: string = env.elook(fid.name);
+            if (bt.len() > 0) {
+                // A callable spelling records its parameters; the coarse
+                // "fn => <ret>" a fn PARAM carries records only its result.
+                var br: TypeRef = parse_type_ref(bt);
+                if (!ref_is_fn_value(br)) { return none; }
+                var bf: TypeRef = ref_ungroup(br);
+                var bout: string[] = [];
+                var bi: i32 = 0;
+                while (bi + 1 < bf.args.len()) { bout = bout.append(render_type_ref(bf.args[bi])); bi = bi + 1; }
+                return bout;
+            }
             return func_param_types_of(funcs.decls, fid.name);
         },
         _ => { return none; }
@@ -9697,6 +9710,24 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
             return et + "[]";
         },
         ast.ExprIdent(id) => { return env.elook(id.name); },
+        // A local bound to a lambda carries the lambda's declared shape, so a
+        // generic taking it as a fn argument can still read its parameters —
+        // `var keep = (x: f64): boolean => …; filter(it, keep)`. Without it the
+        // local types to nothing and a promoted var reachable only through that
+        // parameter never binds.
+        ast.ExprLambda(lm) => {
+            var lps: string = "";
+            var li: i32 = 0;
+            while (li < lm.params.len()) {
+                if (lm.params[li].type_name.len() == 0) { return ""; }
+                if (li > 0) { lps = lps + ", "; }
+                lps = lps + lm.params[li].type_name;
+                li = li + 1;
+            }
+            var lret: string = lambda_ret_of(e, env, funcs);
+            if (lret.len() == 0) { return ""; }
+            return "(" + lps + ") => " + lret;
+        },
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||") {
                 return "boolean";
@@ -10345,7 +10376,9 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
     match (st) {
         ast.StmtVar(v) => {
             var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
-            var ty: string = v.type_name;
+            // A fn-typed local carries its shape, not the coarse tag: a generic
+            // taking it as a fn argument reads its parameters from the env.
+            var ty: string = fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types);
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
             // A tuple destructure (`var (ns, na, nh) = f(…)`) carries its
             // binders comma-joined in the name; type each from the matching
