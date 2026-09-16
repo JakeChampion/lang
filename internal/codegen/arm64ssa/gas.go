@@ -463,6 +463,15 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", mapSeedSym)
 		w("\t.quad 0")
 	}
+	if usesArrPushCliff(helpers) {
+		// The rc==1 cliff tally: crossings, and the bytes they copied.
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", arrPushSharedSym)
+		w("\t.quad 0")
+		w("%s:", arrPushCopiedSym)
+		w("\t.quad 0")
+	}
 	if withReadLine {
 		// The Reader.read_line scratch buffer (reused across calls; NOBITS).
 		w(".section .bss")
@@ -530,6 +539,15 @@ const (
 	// reads it back. A test that asserts the count is zero is only meaningful if
 	// the detector actually runs, so the two ship together.
 	rcUnderflowSym = "__fern_rc_underflow"
+
+	// The rc==1 cliff: __fern_arr_push_grow copies a buffer that had SPARE
+	// capacity, so the copy was bought by an extra reference alone. The count
+	// answers "did anything cross"; the byte weight answers "does it matter".
+	// Read back by __fern_arr_push_shared_count / _bytes. Names shared with
+	// the flat backends, since a program's diagnostic must not depend on which
+	// emitter built it.
+	arrPushSharedSym = "__fern_arr_push_shared"
+	arrPushCopiedSym = "__fern_arr_push_copied"
 
 	// The global string builder behind strbuf_reset / strbuf_append /
 	// strbuf_take, which the self-hosted compiler emits its output through:
@@ -1126,9 +1144,22 @@ func emitLcReport(w func(string, ...any), heap bool) {
 
 // usesReadLine reports whether the module references Reader.read_line, so the
 // .bss line buffer is emitted only when needed.
+// usesArrPushCliff reports whether the module needs the cliff cells: the
+// grower writes them, and either accessor reads them.
+func usesArrPushCliff(helpers []string) bool {
+	for _, h := range helpers {
+		switch h {
+		case "__fern_arr_push_grow", "__fern_arr_push_shared_count", "__fern_arr_push_shared_bytes":
+			return true
+		}
+	}
+	return false
+}
+
 func usesReadLine(helpers []string) bool {
 	for _, h := range helpers {
-		if h == "__method_Reader_read_line" {
+		// Both readers share the one scratch buffer, so either one arms it.
+		if h == "__method_Reader_read_line" || h == "read_line" {
 			return true
 		}
 	}
@@ -1339,7 +1370,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_slice":                   emitStrSliceHelper,
 	"args":                          emitArgsHelper,
 	"env":                           emitEnvHelper,
-	"write_file":                    emitWriteFileHelper,
+	"write_file":                    emitWriteFileHelperMode("write_file", "", 0o644, 0),
+	"write_file_exec":               emitWriteFileHelperMode("write_file_exec", "_x", 0o755, 0o755),
 	"read_file":                     emitReadFileHelper,
 	"read_file_bytes":               emitReadFileBytesHelper,
 	"remove_file":                   emitRemoveFileHelper,
@@ -1394,24 +1426,32 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_close":         emitWriterCloseHelper,
 	"open_reader":                   emitOpenReaderHelper,
 	"__method_Reader_read_chunk":    emitReaderReadChunkHelper,
-	"__method_Reader_read_line":     emitReaderReadLineHelper,
-	"__method_Reader_close":         emitReaderCloseHelper,
-	"__method_Reader_stat":          emitFdStatHelper("__method_Reader_stat", "rst"),
-	"__method_Writer_stat":          emitFdStatHelper("__method_Writer_stat", "wst"),
-	"__method_Reader_seek":          emitSeekHelper("__method_Reader_seek", "rsk"),
-	"__method_Writer_seek":          emitSeekHelper("__method_Writer_seek", "wsk"),
-	"__method_Reader_flags":         emitFdFlagsHelper("__method_Reader_flags", "rfl"),
-	"__method_Writer_flags":         emitFdFlagsHelper("__method_Writer_flags", "wfl"),
-	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
-	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
-	"__method_Writer_write_some":    emitWriterWriteSomeHelper,
-	"__method_Reader_fsync":         emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
-	"__method_Writer_fsync":         emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
-	"__method_Reader_fdatasync":     emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
-	"__method_Writer_fdatasync":     emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
-	"__method_Reader_syncfs":        emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
-	"__method_Writer_syncfs":        emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
-	"__method_Reader_dup_onto":      emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
+	"__method_Reader_read_line":     emitReadLineHelper("__method_Reader_read_line", "", -1),
+	// read_line(): the same reader on stdin, which is what a program that has
+	// not opened anything reads from.
+	"read_line": emitReadLineHelper("read_line", "_0", 0),
+	// The rc==1 cliff readers. They are diagnostics, so they must answer the
+	// same on both arm64 emitters — which is why __fern_arr_push_grow keeps
+	// the tally rather than these returning a constant zero.
+	"__fern_arr_push_shared_count": emitArrPushCliffReader("__fern_arr_push_shared_count", arrPushSharedSym, false),
+	"__fern_arr_push_shared_bytes": emitArrPushCliffReader("__fern_arr_push_shared_bytes", arrPushCopiedSym, true),
+	"__method_Reader_close":        emitReaderCloseHelper,
+	"__method_Reader_stat":         emitFdStatHelper("__method_Reader_stat", "rst"),
+	"__method_Writer_stat":         emitFdStatHelper("__method_Writer_stat", "wst"),
+	"__method_Reader_seek":         emitSeekHelper("__method_Reader_seek", "rsk"),
+	"__method_Writer_seek":         emitSeekHelper("__method_Writer_seek", "wsk"),
+	"__method_Reader_flags":        emitFdFlagsHelper("__method_Reader_flags", "rfl"),
+	"__method_Writer_flags":        emitFdFlagsHelper("__method_Writer_flags", "wfl"),
+	"__method_Reader_isatty":       emitHandleIsattyHelper("__method_Reader_isatty"),
+	"__method_Writer_isatty":       emitHandleIsattyHelper("__method_Writer_isatty"),
+	"__method_Writer_write_some":   emitWriterWriteSomeHelper,
+	"__method_Reader_fsync":        emitFdCallHelper("__method_Reader_fsync", "rfsy", 82, nil),
+	"__method_Writer_fsync":        emitFdCallHelper("__method_Writer_fsync", "wfsy", 82, nil),
+	"__method_Reader_fdatasync":    emitFdCallHelper("__method_Reader_fdatasync", "rfds", 83, nil),
+	"__method_Writer_fdatasync":    emitFdCallHelper("__method_Writer_fdatasync", "wfds", 83, nil),
+	"__method_Reader_syncfs":       emitFdCallHelper("__method_Reader_syncfs", "rsfs", 267, nil),
+	"__method_Writer_syncfs":       emitFdCallHelper("__method_Writer_syncfs", "wsfs", 267, nil),
+	"__method_Reader_dup_onto":     emitFdCallHelper("__method_Reader_dup_onto", "rdpo", 24, prepDupOnto),
 	// Only the window-size pair: `termios_get` / `termios_set` are not
 	// emitted by this backend at all, so their handle forms inherit that
 	// gap and say so at link time (docs/BACKEND-PARITY.md).
@@ -3661,20 +3701,52 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 // Returns None when the first read returns 0 (EOF before any byte), else
 // Some(line). The read svc preserves every register but x0. x19=buffer /
 // x20=bytes read / x21=scratch-then-data / x22=fd. x0=reader handle.
-func emitReaderReadLineHelper(w func(string, ...any)) {
+// emitReadLineHelper writes the line reader for `name`, reading from `fd` when
+// it is non-negative and from the receiver's fd field otherwise. `sfx` keeps
+// the two instantiations' local labels apart — a program using both would
+// otherwise define each twice, and the assembler keeps the last definition
+// silently.
+// emitArrPushCliffReader writes one of the two cliff accessors: `wide` reads
+// the byte weight as an i64, otherwise the crossing count as an i32.
+func emitArrPushCliffReader(name, sym string, wide bool) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tadrp x0, %s", sym)
+		w("\tadd x0, x0, #:lo12:%s", sym)
+		if wide {
+			w("\tldr x0, [x0]")
+		} else {
+			w("\tldr w0, [x0]")
+		}
+		w("\tret")
+	}
+}
+
+func emitReadLineHelper(name, sfx string, fd int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitReadLineBody(w, name, sfx, fd)
+	}
+}
+
+func emitReadLineBody(w func(string, ...any), name, sfx string, fd int) {
 	w("")
-	w("%s:", fnLabel("__method_Reader_read_line"))
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-48]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
-	w("\tldr w22, [x0, #8]") // fd @ ptr+8
+	if fd < 0 {
+		w("\tldr w22, [x0, #8]") // fd @ ptr+8
+	} else {
+		w("\tmov w22, #%d", fd)
+	}
 	w("\tadrp x19, %s", readlineBufSym)
 	w("\tadd x19, x19, #:lo12:%s", readlineBufSym)
 	w("\tmov x20, #0") // bytes read
-	w(".Lssa_rrl_loop:")
+	w(".Lssa_rrl_loop%s:", sfx)
 	w("\tcmp x20, #%d", readlineBytes)
-	w("\tb.ge .Lssa_rrl_done")
+	w("\tb.ge .Lssa_rrl_done%s", sfx)
 	// read(fd, buf + bytes, 1)
 	w("\tmov w0, w22")
 	w("\tadd x1, x19, x20")
@@ -3682,15 +3754,15 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tmov x8, #63") // read
 	w("\tsvc #0")
 	w("\tcmp x0, #1")
-	w("\tb.lt .Lssa_rrl_done") // EOF (0) or error (<0) → finish
+	w("\tb.lt .Lssa_rrl_done%s", sfx) // EOF (0) or error (<0) → finish
 	w("\tadd x21, x19, x20")
 	w("\tldrb w21, [x21]") // the byte just read
 	w("\tadd x20, x20, #1")
 	w("\tcmp w21, #10") // '\n' — kept in the line
-	w("\tb.eq .Lssa_rrl_done")
-	w("\tb .Lssa_rrl_loop")
-	w(".Lssa_rrl_done:")
-	w("\tcbz x20, .Lssa_rrl_none") // no bytes → None (EOF)
+	w("\tb.eq .Lssa_rrl_done%s", sfx)
+	w("\tb .Lssa_rrl_loop%s", sfx)
+	w(".Lssa_rrl_done%s:", sfx)
+	w("\tcbz x20, .Lssa_rrl_none%s", sfx) // no bytes → None (EOF)
 	// A single-word rc string of x20 bytes (+ NUL), the line copied in.
 	emitAllocBlock(w, "x4", "x20", 9)
 	w("\tmov w7, #1")
@@ -3698,21 +3770,21 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tstr w20, [x4, #4]") // len = bytes read
 	w("\tadd x21, x4, #8")   // data ptr
 	w("\tmov x9, #0")
-	w(".Lssa_rrl_cp:")
+	w(".Lssa_rrl_cp%s:", sfx)
 	w("\tcmp x9, x20")
-	w("\tb.hs .Lssa_rrl_cpd")
+	w("\tb.hs .Lssa_rrl_cpd%s", sfx)
 	w("\tldrb w10, [x19, x9]")
 	w("\tstrb w10, [x21, x9]")
 	w("\tadd x9, x9, #1")
-	w("\tb .Lssa_rrl_cp")
-	w(".Lssa_rrl_cpd:")
+	w("\tb .Lssa_rrl_cp%s", sfx)
+	w(".Lssa_rrl_cpd%s:", sfx)
 	w("\tstrb wzr, [x21, x20]") // trailing NUL
 	// Some(string): box {rc=1, tag=0, string@8}.
 	emitOptionBox(w, 0, "x21")
-	w("\tb .Lssa_rrl_ret")
-	w(".Lssa_rrl_none:")
+	w("\tb .Lssa_rrl_ret%s", sfx)
+	w(".Lssa_rrl_none%s:", sfx)
 	emitOptionBox(w, 1, "")
-	w(".Lssa_rrl_ret:")
+	w(".Lssa_rrl_ret%s:", sfx)
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
@@ -3870,6 +3942,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_ptr":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"write_file":                      {"__fern_io_error"},
+	"write_file_exec":                 {"__fern_io_error"},
 	"read_file":                       {"__fern_io_error", "__fern_utf8_valid", "__free"},
 	"stat":                            {"__fern_io_error"},
 	"lstat":                           {"__fern_io_error"},
@@ -3973,6 +4046,7 @@ var heapUsingHelpers = map[string]bool{
 	"strbuf_take":                     true,
 	"env":                             true,
 	"write_file":                      true,
+	"write_file_exec":                 true,
 	"read_file":                       true,
 	"read_file_bytes":                 true,
 	"remove_file":                     true,
@@ -5916,9 +5990,24 @@ func byteList(s string) string {
 // openat result the errno (-fd) is mapped by __fern_io_error. Non-leaf (calls
 // __fern_io_error), so it keeps a frame with callee-saved x19=path / x20=content
 // / x21=path_nul / x22=fd across the syscalls and the call. x0=path, x1=content.
-func emitWriteFileHelper(w func(string, ...any)) {
+// emitWriteFileHelperMode writes `name`, which creates its file with `mode`
+// and, when `fixup` is non-zero, chmods an EXISTING file to it as well: openat
+// applies its mode only on create, so writing over a stale output would
+// otherwise keep the old one — for write_file_exec that is an unrunnable
+// binary, the failure it exists to remove. The chmod's result is ignored, since
+// the bytes are already written and a mode failure must not turn a successful
+// write into an Err.
+//
+// `sfx` keeps the two instantiations' local labels apart.
+func emitWriteFileHelperMode(name, sfx string, mode, fixup int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitWriteFileBody(w, name, sfx, mode, fixup)
+	}
+}
+
+func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int) {
 	w("")
-	w("%s:", fnLabel("write_file"))
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-48]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
@@ -5937,14 +6026,14 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tstr x6, [x3]") // bump
 	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
-	w(".Lssa_wf_cp:")
+	w(".Lssa_wf_cp%s:", sfx)
 	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_wf_cpd")
+	w("\tb.hs .Lssa_wf_cpd%s", sfx)
 	w("\tldrb w8, [x19, x7]")
 	w("\tstrb w8, [x4, x7]")
 	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_wf_cp")
-	w(".Lssa_wf_cpd:")
+	w("\tb .Lssa_wf_cp%s", sfx)
+	w(".Lssa_wf_cpd%s:", sfx)
 	w("\tstrb wzr, [x4, x2]") // NUL
 	w("\tmov x21, x4")        // path_nul
 	// openat(AT_FDCWD, path_nul, O_WRONLY|O_CREAT|O_TRUNC, 0644).
@@ -5952,17 +6041,23 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tneg x0, x0") // AT_FDCWD = -100
 	w("\tmov x1, x21")
 	w("\tmov x2, #577") // 0x241
-	w("\tmov x3, #420") // 0644
-	w("\tmov x8, #56")  // openat
+	w("\tmov x3, #%d", mode)
+	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_wf_err") // fd < 0 → error
-	w("\tmov x22, x0")                // fd
+	w("\ttbnz x0, #63, .Lssa_wf_err%s", sfx) // fd < 0 → error
+	w("\tmov x22, x0")                       // fd
 	// write(fd, content_data, content_len).
 	w("\tmov x0, x22")
 	w("\tmov x1, x20")
 	w("\tldur w2, [x20, #-4]")
 	w("\tmov x8, #64") // write
 	w("\tsvc #0")
+	if fixup != 0 {
+		w("\tmov x0, x22")
+		w("\tmov x1, #%d", fixup)
+		w("\tmov x8, #52") // fchmod
+		w("\tsvc #0")
+	}
 	// close(fd).
 	w("\tmov x0, x22")
 	w("\tmov x8, #57") // close
@@ -5981,8 +6076,8 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8")    // box data
 	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
 	w("\tstr xzr, [x0, #8]") // unit payload
-	w("\tb .Lssa_wf_ret")
-	w(".Lssa_wf_err:")
+	w("\tb .Lssa_wf_ret%s", sfx)
+	w(".Lssa_wf_err%s:", sfx)
 	w("\tneg x0, x0") // errno = -fd
 	w("\tmov x1, x19")
 	w("\tbl %s", fnLabel("__fern_io_error"))
@@ -6001,7 +6096,7 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8") // box data
 	w("\tstr w6, [x0]")   // tag = 1 (Err) — w6 still holds 1 from rc
 	w("\tstr x22, [x0, #8]")
-	w(".Lssa_wf_ret:")
+	w(".Lssa_wf_ret%s:", sfx)
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
@@ -7897,7 +7992,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	// Fast path: rc == 1 and oldLen < cap → grow in place.
 	w("\tldur w3, [x0, #-8]") // rc
 	w("\tcmp w3, #1")
-	w("\tb.ne .Lssa_apg_copy")
+	w("\tb.ne .Lssa_apg_shared")
 	w("\tldur w4, [x0, #-12]") // cap
 	w("\tcmp w1, w4")
 	w("\tb.ge .Lssa_apg_copy")
@@ -7906,6 +8001,25 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tadd w4, w1, #1")
 	w("\tstur w4, [x0, #-4]") // len = oldLen + 1
 	w("\tret")
+	// rc != 1. If the buffer ALSO had room, the copy below is bought entirely
+	// by the extra reference — the rc==1 cliff — so count it and weight it by
+	// the bytes about to be copied. A genuinely full buffer is not a crossing.
+	// umull widens both 32-bit inputs, so the weight is exact past 4 GiB.
+	w(".Lssa_apg_shared:")
+	w("\tldur w4, [x0, #-12]") // cap
+	w("\tcmp w1, w4")
+	w("\tb.ge .Lssa_apg_copy")
+	w("\tadrp x3, %s", arrPushSharedSym)
+	w("\tadd x3, x3, #:lo12:%s", arrPushSharedSym)
+	w("\tldr w4, [x3]")
+	w("\tadd w4, w4, #1")
+	w("\tstr w4, [x3]")
+	w("\tumull x3, w1, w2") // oldLen * stride
+	w("\tadrp x4, %s", arrPushCopiedSym)
+	w("\tadd x4, x4, #:lo12:%s", arrPushCopiedSym)
+	w("\tldr x5, [x4]")
+	w("\tadd x5, x5, x3")
+	w("\tstr x5, [x4]")
 	w(".Lssa_apg_copy:")
 	w("\tadd w4, w1, #1") // w4 = newLen
 	// Sized in 64 bits: a 32-bit doubling goes negative past 2^30 elements
