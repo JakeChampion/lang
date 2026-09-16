@@ -1731,8 +1731,8 @@ same sources by `bin/fern-selfhost`:
 | compiler | built by | build | on `checker.fern` | on `fern.fern` |
 |---|---|---|---|---|
 | native-built (`bin/fern-selfhost`) | Go | — | 4.0 s, 398 MB | 47.4 s, 4,867 MB |
-| AST-lowered stage 2 | self-host, `FERN_SEM_IR` unset | 59 s, 5,489 MB | 5.0 s, 903 MB | 66.1 s, 9,973 MB |
-| semantically lowered stage 2 | self-host, `FERN_SEM_IR=1` | 9m26s, 8,396 MB | 7.1 s, 122 MB | 60.6 s, 830 MB |
+| AST-lowered stage 2 | self-host, `FERN_SEM_IR=` | 59 s, 5,489 MB | 5.0 s, 903 MB | 66.1 s, 9,973 MB |
+| semantically lowered stage 2 | self-host, `FERN_SEM_IR` unset | 9m26s, 8,396 MB | 7.1 s, 122 MB | 60.6 s, 830 MB |
 
 The produced compiler's output is identical to both others' on every input in
 the table. The 6,865 MB #9365 measured on `lexer.fern` is gone with the
