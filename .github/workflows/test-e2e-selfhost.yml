@@ -331,7 +331,7 @@ jobs:
   # it, in-process, reading the just-built driver from the LOCAL on-disk cache
   # (see the ISOLATED WHOLE-COMPILER DRIVER TESTS note above the env block).
   # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,
-  # and this ~4-min job would gate all seven of them on an artifact nobody
+  # and this ~4-min job would gate all test shards on an artifact nobody
   # downloads (no upload here — nothing consumes fern.fern outside this job).
   # The test step is STRICT. It used to carry continue-on-error so a flaky
   # qemu-aarch64 blip could not fail the lane, but that flag does not

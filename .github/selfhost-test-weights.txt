@@ -5,7 +5,7 @@
 # Tests absent from this file have weight 1. All registered tests are still
 # assigned exactly once by scripts/selfhost-shard-tests.
 #
-# Candidate awaiting held-out validation; see docs/CI-SHARD-REBALANCE.md.
+# Validation and omitted weight-one rows: docs/CI-SHARD-REBALANCE.md.
 TestSelfHostAddDifferentialX86_64 36
 TestSelfHostAllocCountMatrixX86_64 18
 TestSelfHostAllocDifferentialX86_64 2
