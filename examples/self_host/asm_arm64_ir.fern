@@ -847,6 +847,7 @@ function ssa_unary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
+    if (k >= 40 && k <= 55) { return true; }
     return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -874,14 +875,26 @@ function ssa_max_phis(f: ssa.SFunc): i32 {
     return most;
 }
 
-function ssa_block_at(f: ssa.SFunc, id: i32): i32 {
+// ssa_block_index maps a block id to its position in f.blocks (-1 for an id
+// no block carries), built once per function; ssa_block_at reads it. The
+// search this replaces ran once per edge.
+function ssa_block_index(f: ssa.SFunc): i32[] {
+    var most: i32 = 0;
+    for blk in f.blocks { if (blk.id > most) { most = blk.id; } }
+    var out: i32[] = [];
     var i: i32 = 0;
-    while (i < f.blocks.len()) { if (f.blocks[i].id == id) { return i; } i = i + 1; }
-    return 0 - 1;
+    while (i <= most) { out = out.append(0 - 1); i = i + 1; }
+    var pos: i32 = 0;
+    while (pos < f.blocks.len()) { out = out.with(f.blocks[pos].id, pos); pos = pos + 1; }
+    return out;
+}
+function ssa_block_at(fr: SsaFrame, id: i32): i32 {
+    if (id < 0 || id >= fr.blk_pos.len()) { return 0 - 1; }
+    return fr.blk_pos[id];
 }
 
-function ssa_has_phis(f: ssa.SFunc, id: i32): boolean {
-    var ti: i32 = ssa_block_at(f, id);
+function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
+    var ti: i32 = ssa_block_at(fr, id);
     if (ti < 0) { return false; }
     for ins in f.blocks[ti].insts { if (ins.kind_tag == 8) { return true; } }
     return false;
@@ -930,9 +943,184 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     return ssa_store(reg_of, ins.result, "x0", s);
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+
+// ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
+// with the instructions the stack machine's own arms use, operands in x0/x1/x2.
+function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    if (k == 40) {
+        s = s.write("    ldr x0, [x0, #" + util.i32_to_string(ins.imm) + "]\n");
+        return ssa_store(reg_of, ins.result, "x0", s);
+    }
+    s = ssa_load(reg_of, ins.args[1], "x1", s);
+    if (k == 41) { return s.write("    str x1, [x0, #" + util.i32_to_string(ins.imm) + "]\n"); }
+    if (k == 42) {
+        if (ins.imm != 1) {
+            s = s.mark_heap();
+            s = s.write("    ldr x2, [x0]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n");
+        }
+        s = s.write("    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n");
+        return ssa_store(reg_of, ins.result, "x0", s);
+    }
+    if (k == 44) {
+        s = s.mark_heap();
+        s = s.write("    ldr x2, [x0, #8]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n");
+        return ssa_store(reg_of, ins.result, "x0", s);
+    }
+    s = ssa_load(reg_of, ins.args[2], "x2", s);
+    s = s.mark_heap();
+    return s.write("    ldr x3, [x0]\n    cmp x1, x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
+}
+
+// ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
+// for a string or slice op: arguments pushed with the first on top, the
+// helper's need marked as the flat arm marks it.
+function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_str_marks(ins.str, s);
+    var argc: i32 = ins.args.len();
+    var i: i32 = argc - 1;
+    while (i >= 0) {
+        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = s.write("    str x0, [sp, #-16]!\n");
+        i = i - 1;
+    }
+    s = s.write("    bl __fn___fern_" + ssa_str_target(ins.str) + "\n    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n");
+    return ssa_store(reg_of, ins.result, "x0", s);
+}
+
+function ssa_str_target(op: string): string {
+    if (op == "str_from_bytes") { return "string_from_bytes"; }
+    return op;
+}
+
+function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
+    if (op == "str_concat") { return s.mark_heap().mark_str_concat(); }
+    if (op == "str_eq") { return s.mark_str_eq(); }
+    if (op == "str_cmp") { return s.mark_str_cmp(); }
+    if (op == "arr_slice") { return s.mark_heap().mark_arr_slice(); }
+    if (op == "print_str") { return s.need("str_print"); }
+    if (op == "eprint_str") { return s.need("eprint"); }
+    return s.mark_str_from_bytes();
+}
+
+// ssa_rt_call is the stack machine's call of a runtime routine on the register
+// ABI: the arguments in x0, x1, the result in x0.
+function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = s.mark_heap();
+    var sym: string = "__fern_alloc";
+    if (ins.str == "alloc_u8") { sym = "__fern_alloc_u8"; }
+    else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
+    else if (ins.str == "arr_push_owned") { s = s.mark_arr_push(); sym = "__fern_arr_push_owned"; }
+    else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "x1", s); }
+    // raw_alloc asks for 24 bytes more and hands back the pointer past them,
+    // the string box header a buffer may later grow (#7351).
+    if (ins.str == "raw_alloc") { s = s.write("    add x0, x0, #24\n"); }
+    s = s.write("    bl " + sym + "\n");
+    if (ins.str == "raw_alloc") { s = s.write("    add x0, x0, #24\n"); }
+    return ssa_store(reg_of, ins.result, "x0", s);
+}
+
+// ssa_view_slots gives each frame-resident string view (kind 51, imm 1) the
+// index of its three frame words, in instruction order, and -1 to every other
+// value; ssa_view_count is how many there are. The words sit after the values
+// and the phi stage.
+function ssa_view_slots(f: ssa.SFunc): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { out = out.append(0 - 1); i = i + 1; }
+    var n: i32 = 0;
+    for blk in f.blocks {
+        for ins in blk.insts {
+            if (ins.kind_tag == 51 && ins.imm == 1) { out = out.with(ins.result, n); n = n + 1; }
+        }
+    }
+    return out;
+}
+function ssa_view_count(views: i32[]): i32 {
+    var n: i32 = 0;
+    for v in views { if (v >= 0) { n = n + 1; } }
+    return n;
+}
+
+// ssa_str_view is the string slice kernel of emit_str_op with register
+// operands: the two bounds checks, then the {rc -1, data + lo, hi - lo} box
+// either in the frame words this site owns or freshly allocated. The operands
+// are read before the allocation and carried across it on the machine stack,
+// since the call clobbers every register they could live in.
+function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
+    s = s.mark_heap();
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    s = ssa_load(reg_of, ins.args[1], "x1", s);
+    s = ssa_load(reg_of, ins.args[2], "x2", s);
+    s = s.write("    ldr x3, [x0, #8]\n    cmp x2, x3\n    b.ls 1f\n    b __fern_oob_abort\n1:\n    cmp x1, x2\n    b.ls 1f\n    b __fern_oob_abort\n1:\n");
+    s = s.write("    sub x2, x2, x1\n    ldr x3, [x0]\n    add x1, x3, x1\n");
+    if (ins.imm == 1) {
+        s = fr_sub_imm(s, "x0", "x29", 0 - base_off);
+    } else {
+        s = s.write("    stp x1, x2, [sp, #-16]!\n    mov x0, #24\n    bl __fern_alloc\n    ldp x1, x2, [sp], #16\n");
+    }
+    s = s.write("    mov x3, #-1\n    str x3, [x0]\n    str x1, [x0, #8]\n    str x2, [x0, #16]\n    add x0, x0, #8\n");
+    return ssa_store(reg_of, ins.result, "x0", s);
+}
+
+// SsaFrame is the frame below the values: the phi stage words after the
+// values, then three words per frame-resident string view. ssa_view_off is
+// the offset of a view's lowest word, the base the view kernel writes at.
+struct SsaFrame { nvals: i32, nstage: i32, views: i32[], blk_pos: i32[] }
+
+function ssa_view_off(fr: SsaFrame, v: i32): i32 {
+    var first: i32 = fr.nvals + fr.nstage + 3 * fr.views[v];
+    return 0 - 8 * (first + 3);
+}
+
+// ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
+// byte loads and stores at base + idx.
+function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    s = ssa_load(reg_of, ins.args[1], "x1", s);
+    if (k == 52) { s = s.write("    ldr x0, [x0, x1, lsl #3]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
+    if (k == 54) { s = s.write("    add x0, x0, x1\n    ldrb w0, [x0]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
+    s = ssa_load(reg_of, ins.args[2], "x2", s);
+    if (k == 53) { return s.write("    str x2, [x0, x1, lsl #3]\n"); }
+    return s.write("    add x0, x0, x1\n    strb w2, [x0]\n");
+}
+
+// ssa_addr_inst selects the label addresses and the box allocation (45..48).
+function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    var label: string = "";
+    if (k == 45) { label = "__fn_" + asmcore.sanitize_label(ins.str); }
+    else if (k == 46) {
+        var sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
+        s = sh.state;
+        label = sh.label;
+    } else if (k == 47) {
+        s = s.mark_heap();
+        var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, ins.str);
+        s = lo.state;
+        label = asmcore.str_box_label(s, lo.idx);
+    } else {
+        s = s.mark_heap();
+        s = s.write("    mov x0, #" + util.i32_to_string(ins.imm) + "\n    bl __fern_arr_box\n");
+        return ssa_store(reg_of, ins.result, "x0", s);
+    }
+    s = s.write("    adrp x0, " + label + "\n    add x0, x0, :lo12:" + label + "\n");
+    return ssa_store(reg_of, ins.result, "x0", s);
+}
+
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
     if (k == 11) { return ssa_call(ins, reg_of, s); }
+    if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
+    if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
+    if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
+    if (k == 49) { return ssa_str_call(ins, reg_of, s); }
+    if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
+    if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 1) { s = ssa_const_x0(util.i32_to_string(ins.imm), s); }
     else if (k == 3) { s = ssa_const_x0(ins.str, s); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "x0", s); }
@@ -951,8 +1139,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
 // `succ`: each of succ's phis takes its operand for pred. With more than one
 // phi the sources are staged in the frame first, so two phis that swap a pair
 // of values read both before writing either.
-function ssa_phi_moves(f: ssa.SFunc, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
-    var ti: i32 = ssa_block_at(f, succ);
+function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
+    var ti: i32 = ssa_block_at(fr, succ);
     if (ti < 0) { return s; }
     var tb: ssa.SBlock = f.blocks[ti];
     var sl: i32 = ssa.pred_slot(tb, pred);
@@ -986,38 +1174,38 @@ function ssa_epilogue(): string {
 
 // ssa_brif branches on a value. An edge whose target has phis lands on a stub
 // carrying that edge's moves, since the moves of the two edges differ.
-function ssa_brif(f: ssa.SFunc, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     s = ssa_load(reg_of, t.cond, "x0", s);
     if (t.t == t.f) {
-        s = ssa_phi_moves(f, reg_of, blk.id, t.t, s);
+        s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
         return s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
     }
     var fl: string = lp + util.i32_to_string(t.f);
-    var stub: boolean = ssa_has_phis(f, t.f);
+    var stub: boolean = ssa_has_phis(f, fr, t.f);
     if (stub) { fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f); }
     s = s.write("    cbz x0, " + fl + "\n");
-    s = ssa_phi_moves(f, reg_of, blk.id, t.t, s);
+    s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     s = s.write("    b " + lp + util.i32_to_string(t.t) + "\n");
     if (stub) {
         s = s.write(fl + ":\n");
-        s = ssa_phi_moves(f, reg_of, blk.id, t.f, s);
+        s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
         s = s.write("    b " + lp + util.i32_to_string(t.f) + "\n");
     }
     return s;
 }
 
-function ssa_term(f: ssa.SFunc, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     var t: ssa.STerm = blk.term;
     if (t.kind_tag == 1) {
         s = ssa_load(reg_of, t.value, "x0", s);
         return s.write(ssa_epilogue());
     }
     if (t.kind_tag == 2) {
-        s = ssa_phi_moves(f, reg_of, blk.id, t.target, s);
+        s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
         return s.write("    b " + lp + util.i32_to_string(t.target) + "\n");
     }
-    if (t.kind_tag == 3) { return ssa_brif(f, blk, reg_of, lp, s); }
+    if (t.kind_tag == 3) { return ssa_brif(f, fr, blk, reg_of, lp, s); }
     // A block the lift left unterminated is one nothing reaches; the stack
     // machine's fallback return keeps the text well formed here too.
     return s.write("    mov x0, #0\n" + ssa_epilogue());
@@ -1047,16 +1235,18 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, s: asmco
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
-    var frame: i32 = (f.nvals + ssa_max_phis(f)) * 8;
+    var views: i32[] = ssa_view_slots(f);
+    var fr: SsaFrame = SsaFrame { nvals: f.nvals, nstage: ssa_max_phis(f), views: views, blk_pos: ssa_block_index(f) };
+    var frame: i32 = (f.nvals + fr.nstage + 3 * ssa_view_count(views)) * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
     s = ssa_load_params(f, reg_of, s);
     for blk in f.blocks {
         s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
         for ins in blk.insts {
-            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, s); }
+            if (ins.kind_tag != 6 && ins.kind_tag != 8) { s = ssa_inst(ins, reg_of, fr, s); }
         }
-        s = ssa_term(f, blk, reg_of, lp, s);
+        s = ssa_term(f, fr, blk, reg_of, lp, s);
     }
     return s.write("    .cfi_endproc\n    .ltorg\n");
 }

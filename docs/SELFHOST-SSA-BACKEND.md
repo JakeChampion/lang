@@ -18,8 +18,13 @@ and `asm_ir.fern`. For each lowered function it:
 
 1. lifts the ops to SSA with `ssa_lift.lift_from_ir_prod`, which admits the
    integer spine (constants, locals, the integer operators, `not`, the width
-   casts), the structured control flow and every `call_direct`, and bails on
-   anything else, naming the op;
+   casts), the structured control flow, every `call_direct`, and the box ops
+   spelled onto the flat backends' layouts (`ssa.fern` kinds 40 to 50: a load
+   and a store at an offset, the bounds-checked element read and store of a
+   length-prefixed box, the bounds-checked byte of a string, the address of a
+   function, a shape or a string literal, the rc-headered allocation, and
+   the two ways the stack machine calls the runtime), and bails on anything
+   else, naming the op;
 2. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
    the lift gives declared locals and most of the loop-header phis;
 3. allocates registers with `ssa.regalloc_linear` over the caller-saved
@@ -76,13 +81,16 @@ stopped each of the rest, most frequent first:
 | `str_index` | 78 |
 | `const_f64` | 65 |
 
-Everything below that is under 25. The first five are one piece of work
-each: the record and array layouts are the flat backend's, fixed and
-documented at the top of `asm_arm64_ir.fern`, so admitting `struct_get` is
-lifting it to a load at the field's slot and emitting that load with the
-same instruction the flat arm emits. The lift's existing arms for these ops
-lower to `build_func`'s layouts and are not usable here; the production arms
-replace them (see "What this retires").
+Everything below that is under 25. Those rows are now lifted (#9498): the
+record and array layouts are the flat backend's, fixed and documented at the
+top of `asm_arm64_ir.fern`, so `struct_get` is a load at the field's slot,
+`arr_len` a load at 0, `str_len` a load at 8, `variant_is` a load of the
+shape word compared with the variant's shape address, a construction an
+allocation followed by stores, and a string op or a push the same runtime
+call the flat arm makes. The lift's older arms for these ops lower to
+`build_func`'s layouts and are not usable here (see "What this retires").
+The histogram after that lift is in the ssa-log entry for #9498, and is the
+next checklist.
 
 ## The emitter today
 

@@ -191,7 +191,37 @@ pub function kind_name(id: i32): string {
     if (id == 26) { return "read_file"; }
     if (id == 27) { return "write_file"; }
     if (id >= 28 && id <= 34) { return buf_kind_name(id); }
+    if (id >= 40 && id <= 55) { return prod_kind_name(id); }
     return "invalid";
+}
+
+// Kinds 40..48 are the production lift's memory vocabulary
+// (ssa_lift.lift_from_ir_prod, docs/SELFHOST-SSA-BACKEND.md): the flat
+// backends' box layouts spelled as loads, stores, checked element reads, a
+// box allocation and label addresses, so every record, array, string and
+// variant op lifts to a few of these and each emitter selects them with the
+// flat backend's own instructions.
+//
+//   40 ld_at      args [base]           imm = byte offset; 8-byte load
+//   41 st_at      args [base, val]      imm = byte offset; 8-byte store, no result read
+//   42 arr_at     args [base, idx]      element idx of a length-prefixed box, bounds-checked (imm 1: unchecked)
+//   43 arr_st     args [base, idx, val] the checked store
+//   44 str_at     args [box, idx]       byte idx of a string box, bounds-checked
+//   45 fn_addr    str = function name   the address of __fn_<name>
+//   46 shape_addr str = shape name      the address of the interned shape
+//   47 str_lit    str = literal         the address of the literal's static box
+//   48 arr_box    imm = cap             __fern_arr_box(cap): a fresh rc-headered box (a call)
+//   49 str_call   str = IR op name      a Fern-compiled runtime helper on the stack ABI (str_concat, arr_slice, ...)
+//   50 rt_call    str = IR op name      a runtime routine on the register ABI (arr_push, alloc, ...)
+//   51 str_view   args [src, lo, hi]    a string slice: the {rc -1, data, len} view box, in the frame (imm 1) or on the heap (imm 0)
+//   52 ld_idx     args [base, idx]      8-byte load at base + idx*8, unchecked (the raw memory floor)
+//   53 st_idx     args [base, idx, val] 8-byte store at base + idx*8
+//   54 ld_byte    args [base, idx]      byte load at base + idx, zero-extended
+//   55 st_byte    args [base, idx, val] byte store at base + idx
+function prod_kind_name(id: i32): string {
+    var names: string[] = ["ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
+        "ld_idx", "st_idx", "ld_byte", "st_byte"];
+    return names[id - 40];
 }
 
 // Negative ids are the typed semantic phase's operations (ssasem.fern owns
@@ -2543,34 +2573,72 @@ function upd_hi(arr: i32[], idx: i32, pos: i32): i32[] {
     if (pos > arr[idx]) { return env_put(arr, idx, pos); }
     return arr;
 }
-// spans_call is true when some call position lies strictly inside (lo, hi).
-function spans_call(calls: i32[], lo: i32, hi: i32): boolean {
-    var i: i32 = 0;
-    while (i < calls.len()) {
-        if (calls[i] > lo && calls[i] < hi) { return true; }
-        i = i + 1;
-    }
-    return false;
+// inst_is_call names the instructions that clobber the caller-saved registers:
+// the calls proper, the toy runtime's string / output / file / buffer
+// helpers, and the production lift's box allocation.
+function inst_is_call(k: i32): boolean {
+    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51) { return true; }
+    return k >= 19 && k <= 27;
 }
-// order_by_lo returns value ids 0..n-1 sorted ascending by lo (insertion).
+
+// calls_before counts, for every position p, the calls at positions below
+// p; spans_call reads two entries. The scan over the call list it replaces
+// ran once per value, which on a function with thousands of calls and tens
+// of thousands of values was most of the allocator's time.
+function calls_before(calls: i32[], total_pos: i32): i32[] {
+    var cum: i32[] = zeros(total_pos + 2);
+    var ci: i32 = 0;
+    var p: i32 = 0;
+    while (p <= total_pos + 1) {
+        cum = env_put(cum, p, ci);
+        while (ci < calls.len() && calls[ci] < p + 1) { ci = ci + 1; }
+        p = p + 1;
+    }
+    return cum;
+}
+
+// spans_call is true when some call position lies strictly inside (lo, hi).
+function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
+    if (hi <= lo + 1) { return false; }
+    var a: i32 = lo + 1;
+    if (a >= cum.len()) { return false; }
+    var b: i32 = hi;
+    if (b >= cum.len()) { b = cum.len() - 1; }
+    return cum[b] - cum[a] > 0;
+}
+// order_by_lo returns value ids 0..n-1 sorted ascending by lo, ids ascending
+// within one lo. A counting sort over the positions: the insertion sort this
+// replaces rebuilt the output array once per value, which on a function with
+// tens of thousands of values was a quadratic number of allocations the arena
+// never returns.
 function order_by_lo(n: i32, lo: i32[]): i32[] {
-    var out: i32[] = [];
+    var maxp: i32 = 0;
     var v: i32 = 0;
+    while (v < n) { if (lo[v] < 2000000000 && lo[v] > maxp) { maxp = lo[v]; } v = v + 1; }
+    // Bucket maxp + 1 holds the values never referenced (lo left at the sentinel).
+    var starts: i32[] = zeros(maxp + 3);
+    v = 0;
     while (v < n) {
-        // insert v into out keeping lo ascending.
-        var ins: i32[] = [];
-        var placed: boolean = false;
-        var j: i32 = 0;
-        while (j < out.len()) {
-            if (!placed && lo[v] < lo[out[j]]) { ins = ins.append(v); placed = true; }
-            ins = ins.append(out[j]);
-            j = j + 1;
-        }
-        if (!placed) { ins = ins.append(v); }
-        out = ins;
+        var b: i32 = order_bucket(lo[v], maxp);
+        starts = env_put(starts, b + 1, starts[b + 1] + 1);
+        v = v + 1;
+    }
+    var b2: i32 = 1;
+    while (b2 < starts.len()) { starts = env_put(starts, b2, starts[b2] + starts[b2 - 1]); b2 = b2 + 1; }
+    var out: i32[] = zeros(n);
+    v = 0;
+    while (v < n) {
+        var bk: i32 = order_bucket(lo[v], maxp);
+        out = env_put(out, starts[bk], v);
+        starts = env_put(starts, bk, starts[bk] + 1);
         v = v + 1;
     }
     return out;
+}
+
+function order_bucket(lo: i32, maxp: i32): i32 {
+    if (lo >= 2000000000) { return maxp + 1; }
+    return lo;
 }
 
 function extend_backedge_phi_intervals(f: SFunc, def_pos: i32[], total_pos: i32, hi: i32[]): i32[] {
@@ -2684,7 +2752,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 22 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || ins.kind_tag == 18) { calls = calls.append(pos); }
+            if (inst_is_call(ins.kind_tag)) { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -2697,6 +2765,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
 
     hi = extend_backedge_phi_intervals(f, def_pos, total_pos, hi);
     hi = extend_loop_invariant_intervals(f, def_pos, hi);
+    var cum: i32[] = calls_before(calls, total_pos);
 
     var reg_of: i32[] = [];
     i = 0;
@@ -2725,7 +2794,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         }
         act_val = nv; act_hi = nh; act_reg = nr;
 
-        if (spans_call(calls, lo[v], hi[v]) || free.len() == 0) {
+        if (spans_call(cum, lo[v], hi[v]) || free.len() == 0) {
             reg_of = env_put(reg_of, v, 0 - 1);   // spill
         } else {
             var reg: i32 = free[free.len() - 1];
@@ -2762,7 +2831,14 @@ pub function prune_dead(f: SFunc): SFunc {
 // inst_has_effect names the instructions kept whether or not their result is
 // read: params, calls, allocation and stores, and the output and buffer ops.
 function inst_has_effect(k: i32): boolean {
-    if (k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17) { return true; }
+    // Below 19: params, calls, allocation, stores and concat. From 19 on
+    // everything but a load (40) and a label address (45..47) has one: the
+    // output, file and buffer ops, a store, a bounds-checked read (it may
+    // abort) and the box allocation.
+    var below: i32[] = [6, 11, 12, 14, 16, 17];
+    for e in below { if (k == e) { return true; } }
+    var pure: i32[] = [40, 45, 46, 47, 52, 54];
+    for q in pure { if (k == q) { return false; } }
     return k >= 19;
 }
 
