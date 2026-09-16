@@ -12209,22 +12209,20 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return pcs.emit(ir.op_putchar());
     }
     // Built-in `sleep_ms(ms)` — pause for `ms` milliseconds
-    // (no-op if ms <= 0). Lowers the i32 arg then op_sleep_ms,
-    // which the x86-64 / arm64 backends emit as a call into the
-    // __fern_sleep_ms nanosleep helper. A reserved builtin, so it
-    // never shadows a user function (#2843 — self-host IR path).
+    // (no-op if ms <= 0), which the x86-64 / arm64 backends emit as a
+    // call into the __fern_sleep_ms nanosleep helper. A reserved
+    // builtin, so it never shadows a user function (#2843 — self-host
+    // IR path).
+    //
+    // The count is an i64 in the checker's signature and every backend
+    // helper reads it as one, so it always lowers through lower_i64,
+    // exactly as sleep_ns does. A width dispatch here instead read
+    // either width, which the register backends tolerate because the
+    // count arrives in a 64-bit register either way; wasm does not,
+    // where the parameter's width is part of the type and an i32 count
+    // failed validation against the i64 helper (#9477).
     if (cid.name == "sleep_ms" && c.args.len() == 1) {
-        // The ms count is read into a 64-bit register (rdi / x0),
-        // so an i64 arg (`sleep_ms(5 as i64)`) lowers through the
-        // i64 path; a plain i32 count keeps the 32-bit path. Without
-        // the width dispatch an i64 arg bails lower_expr -> the
-        // whole timing module is IR-ineligible.
-        var sms: LowerState = s;
-        if (infer_expr_width(c.args[0], s) == 64) {
-            sms = lower_i64(c.args[0], s);
-        } else {
-            sms = lower_expr(c.args[0], s);
-        }
+        var sms: LowerState = lower_i64(c.args[0], s);
         if (!sms.ok) { return sms; }
         return sms.emit(ir.op_sleep_ms());
     }

@@ -6360,14 +6360,14 @@ pub function map_iter_helpers(): string {
 // the timeout. Heap-backed (the buffer), so gated into the heap runtime.
 pub function sleep_ms_func(): string {
     var o: string = "";
-    o = o + "  (func $__fern_sleep_ms (param $ms i32) (result i32)\n";
+    o = o + "  (func $__fern_sleep_ms (param $ms i64) (result i32)\n";
     o = o + "    (local $buf i32)\n";
-    o = o + "    (if (i32.gt_s (local.get $ms) (i32.const 0)) (then\n";
+    o = o + "    (if (i64.gt_s (local.get $ms) (i64.const 0)) (then\n";
     o = o + "      (local.set $buf (call $__fern_alloc (i32.const 88)))\n";
     o = o + "      (i64.store (local.get $buf) (i64.const 0))\n";
     o = o + "      (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))\n";
     o = o + "      (i32.store (i32.add (local.get $buf) (i32.const 16)) (i32.const 1))\n";
-    o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 24)) (i64.mul (i64.extend_i32_s (local.get $ms)) (i64.const 1000000)))\n";
+    o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 24)) (i64.mul (local.get $ms) (i64.const 1000000)))\n";
     o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 32)) (i64.const 0))\n";
     o = o + "      (i32.store16 (i32.add (local.get $buf) (i32.const 40)) (i32.const 0))\n";
     o = o + "      (drop (call $poll_oneoff (local.get $buf) (i32.add (local.get $buf) (i32.const 48)) (i32.const 1) (i32.add (local.get $buf) (i32.const 80))))))\n";
