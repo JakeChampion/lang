@@ -136,7 +136,8 @@ allocation-heavy benchmarks and cost 3-15% of the time
 The x86-64 SSA emitter carries the same freelist since 2026-09-16 (#9423):
 `__alloc` / `__free` with the same classes, reached from compiled code and
 the helpers through `__ssa_alloc_pres` (size in r11, base back in r11, every
-other register and the flags preserved) and the same release set, plus
+other register preserved, though not the flags, which no site reads across
+an allocation) and the same release set, plus
 strings. `__alloc_reuse` takes the block base as its token with sizes that
 include the rc header, and the element-retaining `__fern_arr_push_grow_*` and
 `__fern_arr_cow_inplace_str` spellings have their own bodies rather than
