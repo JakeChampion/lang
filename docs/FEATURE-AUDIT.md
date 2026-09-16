@@ -1789,9 +1789,10 @@ to the interpreter) by four coordinated `parser.fern` changes:
   type-arg of a non-builtin generic, e.g. `ArrayIter[T]`, via
   `feeds_user_parametric`) **and** is *bindable from a param* (appears at
   paren-depth 0 in a param type, the positions `bind_unify` unifies, via
-  `token_at_paren_depth0`). `of` qualifies; `find` / `reduce` / `count` /
-  `to_array` (whose `T` surfaces only in `Option[T]`, a function-type param, or
-  the trait bound) stay erased — so the 512-function IR budget and the existing
+  `token_at_paren_depth0`). `of` qualifies; `reduce` / `count` / `to_array`
+  (whose `T` surfaces only in `Option[T]` or the trait bound) stay erased —
+  `find`'s `T`, reachable through its predicate's argument, is promoted by
+  clause (c-fn) instead — so the 512-function IR budget and the existing
   generic surface are untouched.
 - **Clone-time `Self`-instantiation resolution** in `clone_struct_method` —
   normalise the finalize-baked bare struct name to the module-prefixed registered
