@@ -57,6 +57,12 @@ func TestSelfHostSleepWasm(t *testing.T) {
 		if err := os.WriteFile(watFile, wat, 0o644); err != nil {
 			t.Fatalf("write %s wat: %v", tag, err)
 		}
+		for _, body := range wasmFuncBodies(string(wat), "$__fern_sleep_") {
+			if strings.Contains(body, "$__fern_alloc") {
+				t.Errorf("a sleep helper allocates (ir=%v, %s) — the bump heap has no free, "+
+					"so that is a leak per call (#9480):\n%s", ir, name, body)
+			}
+		}
 		run := exec.Command("wasmtime", "run", watFile)
 		var runErr bytes.Buffer
 		run.Stderr = &runErr
