@@ -1367,7 +1367,8 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // exactly one unit goes in and `scratch` holds one nobody else shares.
 //
 // A receiver whose retain was DEFERRED never arrives here: `append_push` sends
-// it to `append_borrowed` or `append_field` instead, and `with` never defers.
+// it to `append_borrowed` or `append_field` instead, and `with_update` sends
+// one whose field the plan admitted to `with_field`.
 function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
     var elem: typeinfo.Type = elem_type(f.values[base]);
     r = emit(r, ir.op_load_local(base));
