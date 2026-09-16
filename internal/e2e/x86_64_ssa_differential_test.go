@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // Differential execution of `-target x86-64-linux -backend ssa` against the
@@ -29,7 +28,8 @@ import (
 //	                   reference answer to differ from
 //	ssa-refused        `-backend ssa` exited non-zero WITH a diagnostic: a
 //	                   coverage gap, counted and logged
-//	compared           both produced a binary, both ran
+//	compared           both produced a binary, both ran, and both stopped —
+//	                   by exiting, or by the wall (ssaDiffRunTimeout) on both
 //
 // A refusal that is really a compiler CRASH, or a silent non-zero exit with no
 // diagnostic, is not a refusal and fails — "unsupported errors rather than
@@ -48,17 +48,17 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 219 as measured 2026-09-13, once the string-builder helpers (buf_new …
-	// buf_free) had emitters: 194 came from #8570's `remove_dir_all` slice,
-	// 215 from the four float reinterprets, the last refusal that was not a
-	// missing runtime helper — every program still refused now names one or
-	// more helpers with no emitter. RAISE IT with each helper slice — that
-	// is the point of the number.
+	// 223 as measured 2026-09-16, once `args`, `env` and `stat` had
+	// emitters: 194 came from #8570's `remove_dir_all` slice, 215 from the
+	// four float reinterprets, the last refusal that was not a missing
+	// runtime helper, 219 from the string builder — every program still
+	// refused names one or more helpers with no emitter. RAISE IT with each
+	// helper slice — that is the point of the number.
 	//
-	// The 108 still refused want the Map method family, the Reader/host
-	// builtins, and `__memcpy` / `__free`, in groups
+	// The 105 still refused want the Map method family, the Reader/Writer
+	// methods, and `__memcpy` / `__free`, in groups
 	// (docs/SSA-CUTOVER-PLAN.md).
-	x86SSADiffMinCompared = 219
+	x86SSADiffMinCompared = 223
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {
@@ -68,7 +68,7 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 	fern := buildFernCLI(t)
 	corpus := arm64SSADiffCorpus(t) // the same walk; the corpus is not per-target
 
-	var baselineRejected, refused, agreed, diverged, tooSlow int64
+	var baselineRejected, refused, agreed, diverged, timedOut, tooSlow int64
 	for _, rel := range corpus {
 		rel := rel
 		t.Run(rel, func(t *testing.T) {
@@ -102,38 +102,39 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				return
 			}
 
-			started := time.Now()
-			baseOut, baseCode := runBin(exec.Command(baseBin), "")
-			flatElapsed := time.Since(started)
-			started = time.Now()
-			ssaOut, ssaCode := runBin(exec.Command(ssaBin), "")
-			ssaElapsed := time.Since(started)
-			if baseCode != ssaCode {
-				atomic.AddInt64(&diverged, 1)
-				t.Errorf("`-backend ssa` DISAGREES with the shipping x86-64 backend on the exit code: "+
-					"shipping %d, ssa %d.\ndocs/SSA-DECISION.md holds the SSA backends to identical "+
-					"behaviour across their covered subset, and this program is inside the subset "+
-					"because it compiled.", baseCode, ssaCode)
+			base := runSSADiffBinary("", baseBin)
+			ssa := runSSADiffBinary("", ssaBin)
+			// The wall expiring on one side only is a TIMEOUT, its own outcome:
+			// it says nothing about the answer, and cannot tell a hang from a
+			// build that is merely slower than the wall allows (#8069).
+			if base.timedOut != ssa.timedOut {
+				atomic.AddInt64(&timedOut, 1)
+				late, other := "ssa", base
+				if base.timedOut {
+					late, other = "flat", ssa
+				}
+				t.Errorf("the %s build did not finish within %s on %s, while the other exited %d.\n"+
+					"This is a TIMEOUT, not a disagreement — neither build has been shown to give\n"+
+					"the wrong answer. Time the two directly before reading it as a hang.\n%s",
+					late, ssaDiffRunTimeout, rel, other.exit, ssaDiffDetail(base, ssa))
 				return
 			}
-			if baseOut != ssaOut {
+			if d := ssaDiffCompare(base, ssa, false); d != "" {
 				atomic.AddInt64(&diverged, 1)
-				t.Errorf("`-backend ssa` DISAGREES with the shipping x86-64 backend on stdout.\n%s",
-					firstStdoutDiff(baseOut, ssaOut))
+				t.Errorf("`-backend ssa` DISAGREES with the shipping x86-64 backend on %s.\n%s\n"+
+					"docs/SSA-DECISION.md holds the SSA backends to identical behaviour across "+
+					"their covered subset, and this program is inside the subset because it compiled.",
+					rel, d)
 				return
 			}
 			atomic.AddInt64(&agreed, 1)
 			// Same answer, wildly different cost (#8069). Re-measured once
 			// before it is reported: the corpus runs in parallel on a shared
 			// machine, and one slow sample is not a finding.
-			if d := ssaSlowdown(flatElapsed, ssaElapsed); d != "" {
-				started = time.Now()
-				_, _ = runBin(exec.Command(baseBin), "")
-				flat2 := time.Since(started)
-				started = time.Now()
-				_, _ = runBin(exec.Command(ssaBin), "")
-				ssa2 := time.Since(started)
-				if d2 := ssaSlowdown(flat2, ssa2); d2 != "" {
+			if d := ssaSlowdown(base.elapsed, ssa.elapsed); d != "" {
+				base2 := runSSADiffBinary("", baseBin)
+				ssa2 := runSSADiffBinary("", ssaBin)
+				if d2 := ssaSlowdown(base2.elapsed, ssa2.elapsed); d2 != "" {
 					atomic.AddInt64(&tooSlow, 1)
 					t.Errorf("%s: %s\nSecond measurement: %s", rel, d2, d)
 				} else {
@@ -148,8 +149,10 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 			atomic.LoadInt64(&diverged), atomic.LoadInt64(&baselineRejected)
 		compared := a + d
 		t.Logf("x86-64 flat-vs-ssa differential over %d corpus programs: %d agree, %d ssa-refused, "+
-			"%d diverge, %d baseline-rejected, %d over the %.0fx slowdown gate",
-			len(corpus), a, r, d, b, atomic.LoadInt64(&tooSlow), ssaDiffMaxSlowdown)
+			"%d diverge, %d did not finish under one backend, %d baseline-rejected, %d over the "+
+			"%.0fx slowdown gate",
+			len(corpus), a, r, d, atomic.LoadInt64(&timedOut), b, atomic.LoadInt64(&tooSlow),
+			ssaDiffMaxSlowdown)
 		if compared < x86SSADiffMinCompared {
 			t.Errorf("only %d of %d corpus programs built under BOTH backends and ran, below the %d "+
 				"floor (%d ssa-refused, %d baseline-rejected). Refusals are a documented endpoint, "+

@@ -100,7 +100,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 219/347 compared, 0 divergences; 108 refused — every one for the runtime-helper table, in groups rather than one symbol |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 223/348 compared, 0 divergences; 105 refused — every one for the runtime-helper table, in groups rather than one symbol |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -218,6 +218,17 @@ Two concrete blockers, and only two:
    through a builder — `std/strings`, `std/csv`, `std/table`, `std/textwrap`
    — had been refused for those seven names together. The leg is at **219 of
    347 comparable, 0 divergences; 108 refused**.
+
+   **2026-09-16: `args`, `env` and `stat`** got emitters, so `sort.fern` and
+   the seven other coreutils that needed only those build (#8822). Two
+   things the slice exposed in the LEG itself: `examples/cli/yes.fern`
+   builds now, prints until it is killed, and the x86-64 leg ran it
+   unbounded — 89 minutes of a 90-minute timeout on one program — so the
+   leg now runs each binary through the same bounded, capture-capped runner
+   the arm64 leg has (`runSSADiffBinary`, 15 s, 1 MiB per stream), with a
+   wall expiring on one side its own outcome; and the lane completes in
+   under three minutes on a 4-core container. The leg is at **223 of 348
+   comparable, 0 divergences; 105 refused**.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than
