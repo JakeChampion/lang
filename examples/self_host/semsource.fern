@@ -2515,9 +2515,53 @@ function decl_key(fd: parser.FuncDecl): string {
     return util.base_type_name(fd.receiver_type) + "." + fd.name;
 }
 
+// A declaration that spells no result type is void unless its body returns a
+// value: a hoisted lambda carries no annotation, and its result is the type
+// the checker gives the first value it returns, read in the scope the
+// statements before it built.
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
-    if (fd.ret_type.len() == 0) { return t_void(); }
+    if (fd.ret_type.len() == 0) {
+        var (returned, at) = first_returned(fd.body, scope);
+        if (bare_return(returned)) { return t_void(); }
+        return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+    }
     return resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+}
+
+// The first `return` carrying a value, looked for through the branches, arms
+// and loops of a body, with the checker's scope at that statement; the `;`
+// sentinel when there is none.
+function first_returned(body: ast.Stmt[], scope: checker.Scope): (ast.Expr, checker.Scope) {
+    var none: ast.Expr = ast.ExprUnknown { kind: "punct:;", line: 0, col: 0 };
+    for st in body {
+        match (st) {
+            ast.StmtReturn(r) => { if (!bare_return(r.value)) { return (r.value, scope); } },
+            ast.StmtIf(f) => {
+                var (t, ts) = first_returned(f.then_body, scope);
+                if (!bare_return(t)) { return (t, ts); }
+                var (e, es) = first_returned(f.else_body, scope);
+                if (!bare_return(e)) { return (e, es); }
+            },
+            ast.StmtWhile(w) => {
+                var (v, vs) = first_returned(w.body, scope);
+                if (!bare_return(v)) { return (v, vs); }
+            },
+            ast.StmtFor(fo) => {
+                var (v, vs) = first_returned(fo.body, checker.for_body_scope(fo, scope));
+                if (!bare_return(v)) { return (v, vs); }
+            },
+            ast.StmtMatch(m) => {
+                var whole: typeinfo.Type = checker.expr_type(m.scrutinee, scope);
+                for a in m.arms {
+                    var (v, vs) = first_returned(a.body, checker.arm_scope(a, scope, whole));
+                    if (!bare_return(v)) { return (v, vs); }
+                }
+            },
+            _ => {}
+        }
+        scope = checker.bind_stmt(st, scope);
+    }
+    return (none, scope);
 }
 
 // A closure body's first parameter is the environment the lift hoisted it
