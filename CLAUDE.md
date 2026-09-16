@@ -58,10 +58,8 @@ Unscheduled; it constrains design choices today, it is not work in flight.
 - **x86-64 / amd64 Linux ELF** — System V AMD64 ABI. Baseline is
   **x86-64-v3**, Haswell-class 2013 (AMD: Excavator 2015, Zen 2017), so
   `popcnt` / `lzcnt` / `tzcnt`, `pshufb`, `pclmulqdq` and **AVX2** are all
-  assumable — the default backend's byte kernels have emitted 32-byte AVX2
-  loops with no cpuid check all along (`-backend ssa` names no register wider
-  than `xmm`, but still emits `popcnt`/`lzcnt`/`tzcnt`, so its own floor is
-  SSE4.2 + BMI1, not SSE2). Binaries are static with no runtime dispatch, so a
+  assumable — both backends' byte-scan kernels emit 32-byte AVX2 loops with
+  no cpuid check. Binaries are static with no runtime dispatch, so a
   selected instruction is a hard requirement, not a fast path. Note LZCNT/TZCNT fail
   **silently** below the baseline (same opcodes as bsr/bsf plus an F3 the older
   CPU ignores) where POPCNT faults. No Darwin x86-64.
