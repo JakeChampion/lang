@@ -265,3 +265,29 @@ func TestCmpFlipNilFunc(t *testing.T) {
 	}()
 	CmpFlip(nil)
 }
+
+// TestCmpFlipKeepsTheComparedWidth — `not(a > b)` on i64 operands
+// flips to an i64 `a <= b`. The width decides how SCCP and the
+// emitters read the operands, and a flipped compare that lost it was
+// evaluated at 32 bits: `not(1000000000000 > 1)` folded to true, and an
+// inlined `log2_floor` loop was never entered.
+func TestCmpFlipKeepsTheComparedWidth(t *testing.T) {
+	f := NewFunc("f")
+	a := f.AddParam()
+	b := f.AddParam()
+	entry := f.NewBlock()
+	cmp := f.AddOp(entry, OpGt, a, b)
+	entry.Ops[0].Width = 64
+	r := f.AddOp(entry, OpNot, cmp)
+	f.SetRet(entry, r)
+
+	CmpFlip(f)
+
+	flipped := entry.Ops[1]
+	if flipped.Kind != OpLe {
+		t.Fatalf("Kind = %v, want OpLe", flipped.Kind)
+	}
+	if flipped.Width != 64 {
+		t.Errorf("Width = %d, want 64: the flipped compare must read its operands at the width the original did", flipped.Width)
+	}
+}

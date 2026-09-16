@@ -415,15 +415,15 @@ func emitClockHelper(name string, clock int, secMul, nsDiv int64) func(w func(st
 func emitSleepMsHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("sleep_ms"))
-	w("\ttest edi, edi")
+	w("\ttest rdi, rdi") // ms is an i64
 	w("\tjle .Lssa_sleep_done")
 	w("\tsub rsp, 24")
-	w("\tmov eax, edi")
+	w("\tmov rax, rdi")
 	w("\txor edx, edx")
 	w("\tmov ecx, 1000")
-	w("\tdiv ecx") // eax = seconds, edx = milliseconds over
+	w("\tdiv rcx") // rax = seconds, rdx = milliseconds over
 	w("\tmov [rsp], rax")
-	w("\timul edx, edx, 1000000")
+	w("\timul rdx, rdx, 1000000")
 	w("\tmov [rsp + 8], rdx")
 	w("\tmov rdi, rsp")
 	w("\txor esi, esi")

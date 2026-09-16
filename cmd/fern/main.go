@@ -2059,7 +2059,11 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ir.LowerWith: %v", err)
 	}
-	ir.ElideClosurePair(irProg, 8)
+	// The whole battery the flat backends run before their emitters (TCO,
+	// Inline around Defunctionalise + ElideClosurePair +
+	// InlineZeroCaptureClosures, then the per-function tail), so the lift sees
+	// the same program they do. Native closure pair: 16 bytes, env_ptr at +8.
+	ir.OptimizeProgram(irProg, 8)
 	// Dead-function elimination: lift only the functions reachable from `main`
 	// (transitively, via direct/closure calls). Without this the whole of every
 	// imported stdlib module is lifted, so an `abs`-only program would drag in
@@ -2136,7 +2140,8 @@ func buildX86SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ir.LowerWith: %v", err)
 	}
-	ir.ElideClosurePair(irProg, 8)
+	// The whole battery, as the arm64 twin and the flat backends run it.
+	ir.OptimizeProgram(irProg, 8)
 	// Dead-function elimination, for the reason the arm64 twin documents: lift
 	// only what `main` reaches, or every imported stdlib module is lifted and a
 	// still-unported helper bails a program that never calls it. CodegenAliases

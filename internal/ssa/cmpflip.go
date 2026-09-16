@@ -64,6 +64,7 @@ func CmpFlip(f *Func) {
 					continue
 				}
 				op.Kind = flipped
+				op.Width = def.Width // the flipped compare reads its operands at the same width
 				op.Args = append([]Value(nil), def.Args...)
 			case OpSelect:
 				// select(not(c), a, b) → select(c, b, a). Unwrap
