@@ -5583,6 +5583,10 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, s: asmcore
 struct SsaTry { state: asmcore.EmitState, emitted: boolean, why: string }
 
 function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore.EmitState): SsaTry {
+    if (!ircore.ssa_selected(label_name)) {
+        if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": skipped\n"); }
+        return SsaTry { state: asmcore.EmitState { ...s, ssa_declined: s.ssa_declined + 1 }, emitted: false, why: "skipped" };
+    }
     var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
     var why: string = lifted.bail;
     if (lifted.ok) { why = ssa_unsupported(lifted.func); }
