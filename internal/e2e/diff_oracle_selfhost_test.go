@@ -45,6 +45,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -126,6 +127,34 @@ func requireSelfHostDiffLeg(t *testing.T) {
 // path, so asm the assembler REJECTS surfaces here as a link failure rather than
 // hiding, which is the #5862 / #6022 class.
 func TestDifferential_SelfHostX86_64(t *testing.T) {
+	testDifferentialSelfHostX86_64(t, false)
+}
+
+// TestDifferential_SelfHostSemanticX86_64 is the same corpus through the
+// self-host CLI with FERN_SEM_IR=1: every body semsource admits is produced
+// through the semantic lowering and the rest keep the AST one, so this is the
+// fuzz leg for the produced lowering AND for the mixed module the fallback
+// makes (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415). The interpreter is the
+// oracle as above, and the report's tally is read per seed: the fraction of
+// seeds whose module produced WHOLE is logged and held to a floor, since a
+// refusal is what turns a seed into a mixed module rather than into a
+// compile gap, and a generator change that widened the refusals would
+// otherwise hollow the leg out unseen.
+func TestDifferential_SelfHostSemanticX86_64(t *testing.T) {
+	testDifferentialSelfHostX86_64(t, true)
+}
+
+// selfHostSemDiffKnownFile is the semantic leg's own list: a seed the AST
+// lowering gets right and the semantic one does not belongs here and nowhere
+// else.
+const selfHostSemDiffKnownFile = "selfhost-diff-semantic-x86_64-known-divergences.txt"
+
+// selfHostSemDiffMinWholeRatio is the floor on seeds whose module produced
+// every declaration. Measured 2026-09-16 over seeds 0..63: 8 of 64 (0.12); the floor is a
+// ratchet to raise as the leaves in docs/SELFHOST-SEMANTIC-SOURCE.md close.
+const selfHostSemDiffMinWholeRatio = 0.10
+
+func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -142,9 +171,13 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	known := loadKnownDivergences(t, selfHostDiffKnownFile)
+	knownFile := selfHostDiffKnownFile
+	if semantic {
+		knownFile = selfHostSemDiffKnownFile
+	}
+	known := loadKnownDivergences(t, knownFile)
 
-	var sampled, ran int64
+	var sampled, ran, whole int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
 		seed := seed
 		sampled++
@@ -164,7 +197,10 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 				}
 				t.Errorf(format, args...)
 			}
-			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, failf)
+			r, gap, report := runSelfHostSeed(t, fernBin, stdlibRoot, src, semantic, failf)
+			if semantic && semReportWhole(report) {
+				atomic.AddInt64(&whole, 1)
+			}
 			if gap != "" {
 				// A compile bail is a documented endpoint, so an unlisted seed
 				// SKIPS. A listed one does not: the row says this seed produces
@@ -177,7 +213,7 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 				}
 				t.Errorf("seed %d is listed in testdata/%s (%s) but it no longer COMPILES, so the row "+
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
-					seed, selfHostDiffKnownFile, reason, gap)
+					seed, knownFile, reason, gap)
 				return
 			}
 			if r != nil {
@@ -186,7 +222,7 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 			}
 			if isKnown && !diverged {
 				t.Errorf("seed %d is listed in testdata/%s (%s) but it AGREES now — delete the entry",
-					seed, selfHostDiffKnownFile, reason)
+					seed, knownFile, reason)
 			}
 		})
 	}
@@ -202,7 +238,31 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 				"this rate the leg is not testing the compiler",
 				got, sampled, ratio, selfHostDiffMinRunRatio)
 		}
+		if semantic {
+			w := atomic.LoadInt64(&whole)
+			t.Logf("semantic lowering produced every declaration for %d of %d sampled seeds (%.2f)", w, sampled, float64(w)/float64(sampled))
+			if ratio := float64(w) / float64(sampled); ratio < selfHostSemDiffMinWholeRatio {
+				t.Errorf("the semantic lowering produced every declaration for only %d of %d sampled seeds (%.2f) — "+
+					"below the %.2f floor; the rest ran as mixed modules, which is the configuration this "+
+					"leg exists to keep rare", w, sampled, ratio, selfHostSemDiffMinWholeRatio)
+			}
+		}
 	})
+}
+
+// semReportWhole reads the production tally out of the compiler's stderr and
+// reports whether every declaration produced.
+func semReportWhole(report string) bool {
+	const marker = "module: produced "
+	at := strings.Index(report, marker)
+	if at < 0 {
+		return false
+	}
+	var n, m int
+	if _, err := fmt.Sscanf(report[at+len(marker):], "%d of %d declarations", &n, &m); err != nil {
+		return false
+	}
+	return n == m
 }
 
 // runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
@@ -223,7 +283,7 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 // selfHostRunTimeout and reported as such, rather than spending the lane's
 // budget. That matters more here than on the fixture legs: these programs are
 // generated, so nobody has ever eyeballed one to know it should terminate.
-func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFunc) (*selfHostRun, string) {
+func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic bool, failf failFunc) (*selfHostRun, string, string) {
 	t.Helper()
 	// Absolute paths throughout: a relative one was unopenable from an
 	// arm64-darwin binary until #6002, and absolute is what every other
@@ -234,20 +294,30 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFu
 		t.Fatalf("write src: %v", err)
 	}
 	asmPath := filepath.Join(dir, "prog.s")
-	out, err := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", srcPath, stdlibRoot, "-o", asmPath).CombinedOutput()
+	compile := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", srcPath, stdlibRoot, "-o", asmPath)
+	// The control leg spells the flag EMPTY rather than leaving it unset: an
+	// empty value is off (semlower.sem_ir_on), and writing it is what stops an
+	// ambient FERN_SEM_IR=1 in the environment turning both legs into the
+	// semantic one.
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_REPORT=1")
+	if semantic {
+		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
+	}
+	out, err := compile.CombinedOutput()
+	report := string(out)
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "x86-64-linux", []string{"-emit", "asm"}, srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "x86-64-linux", []string{"-emit", "asm"}, srcPath, stdlibRoot, out)), report
 	}
 	binPath := filepath.Join(dir, "prog")
 	// The flags every other self-host x86 link uses (linkSelfHostAsm's small
 	// path).
 	if out, err := exec.Command("gcc", "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		failf("the assembler/linker REJECTED the self-host asm — the artifact never ran (%v):\n%s\nsrc:\n%s", err, out, src)
-		return nil, ""
+		return nil, "", report
 	}
 	r := runSelfHostBin(exec.Command(binPath), "")
-	return &r, ""
+	return &r, "", report
 }
 
 // checkSelfHostSeedExit is checkSelfHostNativeRun's oracle-side sibling: the
