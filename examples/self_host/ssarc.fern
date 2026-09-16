@@ -208,15 +208,47 @@ function helper(own r: irlower.LowerResult, slot: i32, name: string): irlower.Lo
 // `defer0` holds an append receiver's retain back, so the push's own rc gate
 // reads the box rather than this supply — see `deferred_retain` for why the
 // order is the whole of it.
-function supplies(own r: irlower.LowerResult, step: ssaunits.Step, defer0: boolean): irlower.LowerResult {
+function supplies(own r: irlower.LowerResult, f: ssasem.Func, step: ssaunits.Step, defer0: boolean): irlower.LowerResult {
+    var j: i32 = 0;
     for supply in step.supplies {
         if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0)) {
             r = helper(r, supply.value, "__fern_rc_inc");
+        }
+        if (supply.mode == ssaunits.steal_unit()) {
+            r = steal(r, f, supply.value, f.graph.nvals + j);
+            j = j + 1;
         }
     }
     // A move transfers the existing unit. Value locals are never implicitly
     // swept, so neither a runtime decrement nor a clear is needed for a move.
     return r;
+}
+
+// The instruction that defines `v`.
+function definition(f: ssasem.Func, v: i32): ssa.SInst {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.result == v) { return ins; } }
+    }
+    return f.graph.blocks[0].insts[0];
+}
+
+// A stolen supply: when the record the value projects has no other holder,
+// the field is nulled and the value's unit is the callee's; otherwise the
+// value is retained, as `append_field` does around its push. The scratch
+// slot holds the record's answer; nothing reads it past this supply.
+function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32): irlower.LowerResult {
+    var get: ssa.SInst = definition(f, v);
+    r = reserve(r, unique + 1);
+    r = emit(r, ir.op_load_local(get.args[0]));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_store_local(unique));
+    r = emit(r, ir.op_load_local(unique));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(get.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_struct_set(get.imm, 0));
+    r = emit(r, ir.op_end());
+    return unless_unique(r, unique, v, "__fern_rc_inc");
 }
 
 // An in-place update whose receiver this frame does not own: its unit arrives
@@ -607,7 +639,7 @@ function successors(t: ssa.STerm): i32[] {
 
 function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, from: i32, target: i32): irlower.LowerResult {
     var step: ssaunits.Step = at(p, from, ssaunits.edge_point(), target);
-    r = supplies(r, step, false);
+    r = supplies(r, f, step, false);
     var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
     var pi: i32 = 0;
     while (dest.preds[pi] != from) { pi = pi + 1; }
@@ -1701,7 +1733,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             // `instruction` then takes, and two calls could drift apart with
             // nothing to catch it.
             var defer0: boolean = deferred_retain(f, p, step, ins);
-            r = supplies(r, step, defer0);
+            r = supplies(r, f, step, defer0);
             r = bracket_take(r, f, held);
             r = instruction(r, f, p, ins, structs, defer0);
             r = bracket_give(r, f, held);
@@ -1758,7 +1790,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     var b: ssa.SBlock = f.graph.blocks[order[position]];
     if (b.term.kind_tag == 1) {
         var ret: ssaunits.Step = at(p, b.id, ssaunits.return_point(), 0 - 1);
-        e = Emit { ...e, r: supplies(e.r, ret, false) };
+        e = Emit { ...e, r: supplies(e.r, f, ret, false) };
         e = Emit { ...e, r: drops(e.r, ret, f) };
         if (b.term.value >= 0) { e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) }; }
         else { e = Emit { ...e, r: emit(e.r, ir.op_const_i32(0)) }; }

@@ -11,6 +11,13 @@ pub function borrow_mode(): i32 { return ssasem.borrow_mode(); }
 pub function counted_mode(): i32 { return ssasem.counted_mode(); }
 pub function retain_unit(): i32 { return 1; }
 pub function move_unit(): i32 { return 2; }
+// A steal takes the unit from the record the value projects: at run time,
+// when the record has no other holder, the field is nulled and its unit goes
+// to the callee; otherwise the supply retains as any other. Chosen only where
+// the record is this frame's own and read no further through that field
+// (projection_root), so the null is seen by nothing but the record's own
+// release, which skips it.
+pub function steal_unit(): i32 { return 3; }
 pub function entry_point(): i32 { return 0 - 1; }
 pub function return_point(): i32 { return 0 - 2; }
 pub function edge_point(): i32 { return 0 - 3; }
@@ -506,6 +513,28 @@ function occurrences(xs: i32[], v: i32): i32 {
     return n;
 }
 
+// A direct call's counted slot fed by a projection of a record this frame
+// owns and reads no further through that field takes the field's unit rather
+// than a retained one (steal_unit): the callee then holds the buffer's only
+// count and grows it in place. `Emit { ...e, r: emit(e.r, op) }` is the shape,
+// and retaining there put a second count on every buffer the emit chain
+// threads, so the callee's first append copied it.
+function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
+    var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
+    if (ins.kind_tag != ssasem.call()) { return s; }
+    var out: Supply[] = s.supplies;
+    var i: i32 = 0;
+    while (i < out.len()) {
+        var v: i32 = out[i].value;
+        if (out[i].mode == retain_unit() && defs[v].kind_tag == ssasem.record_get() && occurrences(ins.args, v) == 1) {
+            var root: i32 = projection_root(f, a, owned, defs, bi, pos, v);
+            if (root >= 0 && owned[root]) { out = out.with(i, Supply { ...out[i], mode: steal_unit() }); }
+        }
+        i = i + 1;
+    }
+    return Step { ...s, supplies: out };
+}
+
 // The buffers a direct call at (`bi`, `pos`) is handed without a bracket:
 // an array operand this frame reads no further, either a borrowed parameter
 // of its own or a projection whose record it reads no further through that
@@ -598,7 +627,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                             vi = vi + 1;
                         }
                     }
-                    steps = steps.append(hands(f, analysis, owned, defs, bi, pos, choose(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned)));
+                    steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned))));
                     var root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
                     if (root >= 0) {
                         grows = grows.with(ins.result, root);
@@ -684,7 +713,7 @@ function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], ow
         if (got.value != wanted[i].value || got.slot != wanted[i].slot) { return "unit supply identity or slot"; }
         var why: string = read_error(state, got.value, owned, deps);
         if (why != "") { return why; }
-        if (got.mode != retain_unit() && got.mode != move_unit()) { return "invalid unit supply mode"; }
+        if (got.mode != retain_unit() && got.mode != move_unit() && got.mode != steal_unit()) { return "invalid unit supply mode"; }
         i = i + 1;
     }
     return "";

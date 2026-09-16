@@ -852,7 +852,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     right = shift_count(b.op, right, s.values[left.id]);
     s = right.s;
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
-    if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract"); }
+    if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + typeinfo.spelling(s.values[left.id]) + " " + b.op + " " + typeinfo.spelling(s.values[right.id])); }
     return define(s, 9, [left.id, right.id], 0, b.op, ty);
 }
 
@@ -875,7 +875,7 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
     s = operand.s;
     if (!s.ok) { return operand; }
     var ty: typeinfo.Type = ssasem.unary_result(u.op, s.values[operand.id]);
-    if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract"); }
+    if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id])); }
     return define(s, 10, [operand.id], 0, u.op, ty);
 }
 
@@ -1260,9 +1260,23 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
 function value_block(e: ast.Expr, c: ast.ExprCall, s: State): Value {
     var ty: typeinfo.Type = checked(e, s);
     var body: ast.Stmt[] = parser.vb_body(c);
-    if (body.len() != 1 || !semtypes.concrete(ty, false)) { return refused(s, "unsupported value block"); }
+    if (body.len() != 1) { return refused(s, "unsupported value block: " + util.i32_to_string(body.len()) + " statements"); }
+    if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported value block: type " + typeinfo.spelling(ty)); }
     if let ast.StmtIf(f) = body[0] { return value_if(f, s, ty); }
-    return refused(s, "unsupported value block");
+    return refused(s, "unsupported value block: " + block_stmt_kind(body[0]));
+}
+
+// The statement kind a value block ended on, for the refusal.
+function block_stmt_kind(st: ast.Stmt): string {
+    match (st) {
+        ast.StmtReturn(_) => { return "return"; },
+        ast.StmtMatch(_) => { return "match"; },
+        ast.StmtVar(_) => { return "var"; },
+        ast.StmtExpr(_) => { return "expression"; },
+        ast.StmtWhile(_) => { return "while"; },
+        ast.StmtFor(_) => { return "for"; },
+        _ => { return "other"; }
+    }
 }
 
 struct VArm { s: State, end: i32, env: i32[], value: i32 }
@@ -1686,7 +1700,7 @@ function ret(r: ast.StmtReturn, s: State): State {
     var value: Value = expr(r.value, s, s.result);
     s = value.s;
     if (!s.ok) { return s; }
-    if (!semtypes.equal(s.values[value.id], s.result)) { return fail(s, "return type"); }
+    if (!semtypes.equal(s.values[value.id], s.result)) { return fail(s, "return type: declared " + typeinfo.spelling(s.result) + ", returns " + typeinfo.spelling(s.values[value.id])); }
     return terminate(s, t_ret(value.id));
 }
 
@@ -2515,7 +2529,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
     var s: State = initial(fd, scope, contracts, binding, name, handers);
-    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type"); }
+    if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + typeinfo.spelling(s.result)); }
     if (ssasem.is_view(s.result)) { return refuse("view result escapes its source"); }
     if (ssasem.is_func(s.result)) { return refuse("function value result"); }
     s = parameters(fd, s);
