@@ -1,249 +1,664 @@
-# Duration weights (seconds) for the self-host e2e shard partition —
-# consumed by scripts/selfhost-shard-tests (greedy LPT). Only tests that
-# are meaningfully slower than the ~0.1-1s norm need an entry; everything
-# else defaults to weight 1.
+# Full-lifetime duration weights in seconds for self-host e2e sharding.
+# Refreshed from successful native x86 runs 35028280986 and 35032237412.
+# Each measured entry uses ceil(max observed active time); lowering requires
+# two distinct runs. Unobserved entries retain their previous weights.
+# Tests absent from this file have weight 1. All registered tests are still
+# assigned exactly once by scripts/selfhost-shard-tests.
 #
-# Baseline heavy entries measured on the x86_64 ubuntu-latest lane with
-# all drivers warm (2026-07-11, run 29157258229); the IR / wasm mid-tier
-# and the wasmtime-gated entries added from run 29165757576 (the first
-# with wasmtime restored to the shards).
-#
-# STALENESS IS NOT BENIGN. A wrong/missing/extra entry cannot drop or
-# double-run a test — the partition always covers the real -test.list
-# output — but a BADLY wrong one pushes its shard past the job timeout,
-# which fails the shard for real, deterministically, on unrelated
-# commits. That has happened twice: TestSelfHostInterpDriverX86_64 at 7
-# against ~166 s (#5914) and TestSelfHostAssumeEligibleByteIdenticalX86_64
-# with no entry at all against 482-738 s (#6823).
-#
-# NOTHING USED TO MEASURE THIS, which is why "update opportunistically"
-# meant "update after a shard dies". The `verify` job now audits this file
-# against the durations the shards report (scripts/ci-test-weights) and
-# prints a corrected-weights block in its job summary. Paste from that
-# block rather than guessing — it only ever raises a weight, for the
-# reason in the next paragraph.
-#
-# WEIGHT PESSIMISTICALLY. The same test measured 482 s and 738 s on
-# consecutive runs; its entry is the slower of the two. What matters to
-# LPT is RELATIVE order, so uniform drift is harmless and NON-UNIFORM
-# drift is what bites — which is why a single generous entry is safe and
-# a single mean one is not.
-#
-# Three entries (InterpDriver, LoadFixpoint, ModloadPerModuleWholeCompiler)
-# were re-measured locally on 2026-07-30; everything else still carries its
-# 2026-07-11 figure, so treat the rest as unverified rather than current
-# until an audit run reports on it.
-#
-# DO NOT TRUST A LOCALLY-COMPUTED SHARD INDEX. Reconstructing the
-# partition locally from `go test -list` disagrees with CI about which
-# bucket a test lands in, because that union does not exactly match the
-# one CI derives from its prebuilt binaries. The shard NUMBER is not
-# reproducible outside CI; the mis-weighting is, and giving a heavy test
-# its own bucket is the remedy whichever bucket that turns out to be.
-#
-# NOTE on the TestSelfHostExtern* family: those ~39 tests each build a
-# stdin driver that is byte-identical to the stock wasm_runio_run.fern,
-# which the `wasm*` warm jobs prime — so post-conversion each restores
-# the driver (~1s) and its remaining cost is just its own wasmtime +
-# wasm-tools compose run (~5-10s). They no longer need per-test weights;
-# left at the default 1 unless a shard log shows them dominating again.
-
-# A weight cannot buy a test more wall than the shard job has (#6667). When the
-# honest cost is a large fraction of the shards' `-test.timeout`, the remedy is
-# OWN_JOB_TESTS in test-e2e-selfhost.yml, not a bigger number here — those names
-# are filtered out before the partition sees them, so an entry for one is dead.
-# TestSelfHostWasmWholeCompilerShardedLink went that way: weighted 240 from a
-# 170 s local measurement, it still ran 12.8 min in CI and timed out its shard.
-# TestSelfHostModloadPerModuleWholeCompilerArm64 followed at ~945 s measured in
-# CI against an entry of 80 — 87% of the shards' wall for one test.
-
-# Whole-compiler self-builds / fixpoints — the genuine multi-minute tail.
-# Emit + link + run + self-compile of the whole compiler. Its emit phase moved
-# from one process per unit to `-per-module-emit-all` in batches of 8 (#8183):
-# MEASURED 805.7 s on run 33735246535 (of which 558.9 s was the 54-process emit)
-# against the 101.8 s the same run's emit-all took for the same 54 units, so the
-# new shape is ~349 s. Entry is that with the audit's own 1.5x pessimism band —
-# and note the old 460 was already UNDER the 805.7 s it was carrying.
-TestSelfHostModloadPerModuleWholeCompilerX86_64 525
-# The whole compiler's 56 planned units emitted by the checked per-process
-# route (four at a time) and compared byte-for-byte with one -assume-eligible
-# emit-all of the same windows, then linked and smoke-run. It once carried NO
-# entry — so LPT ranked ~10 minutes of work as 1 s — and the shard holding it
-# blew the 18-minute timeout on run 31759653118 (738 s). Measured locally
-# 2026-09-04 at 377 s (255 s per-process on 4 workers + 69 s emit-all) on a
-# shared 4-core box, against 475 s for the shape it replaced; entry is that
-# with the audit's 1.5x band. It varies ~50% run to run, so keep it pessimistic.
-TestSelfHostAssumeEligibleByteIdenticalX86_64 570
-# Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
-# the cost is almost entirely the driver restore.
-TestSelfHostFnArrayFieldGateX86_64 12
-TestSelfHostFnArrayFieldGateWasm 12
-TestSelfHostTupleFnZeroArgIRX86_64 12
-TestSelfHostTupleFnZeroArgIRWasm 12
-TestSelfHostFnValueCaptureIRX86_64 35
-TestSelfHostFnValueCaptureWasmIR 35
-TestSelfHostAsmIRPath 28
-TestSelfHostStdTestE2E 92
-TestSelfHostAppendValueSemanticsX86_64 45
-TestSelfHostAppendValueSemanticsWasmIR 45
-# Not a driver-restore cost like the block above: MEASURED 128 s against an entry
-# of 55 (audit, run 31782687541).
-TestSelfHostFieldReclaimIRX86_64 193
-
-# Tests the first audit run (31782687541) found above the 60 s threshold with no
-# entry at all, weighted at its measurement plus the standard band. Each was
-# being partitioned as 1 s.
-TestSelfHostIRVerifyGateWholeCompiler 179
-TestSelfHostStage2Compiler 175
-TestSelfHostIRVerifyProvidedCorpusClean 144
-TestSelfHostArm64NativeMmcMatchesCrossHost 124
-TestSelfHostStage2Bootstrap 119
-TestSelfHostCapabilityCorpusAgreesWithNative 106
-TestSelfHostStdTestE2EArm64 103
-
-# The watbin / wit / component family, un-quarantined from #4801 (measured on
-# the x86-64 lane, qemu-x86_64 + wasmtime v46.0.1, drivers warm). Each runs a
-# `wasm-tools component new` compose plus a wasmtime run; the four heaviest
-# also cold-build their own driver. The rest of the family sits at ~4s.
-TestSelfHostWasmComponentEndToEnd 54
-# The last #4801 quarantine entry, un-quarantined once its final subtests were
-# fixed. ~680 subtests through one warm driver, measured on the x86-64 lane.
-TestSelfHostWasmRun 125
-TestSelfHostWasmComponentAdapter 30
-TestSelfHostWasmComponentReadFile 29
-TestSelfHostWasmComponentStdout 28
-TestSelfHostComposeFromWorld 6
-TestSelfHostWitClassify 5
-TestSelfHostWitPrefixLayout 5
-TestSelfHostWasmComponentRandom 5
-TestSelfHostWasmComponentEnv 5
-TestSelfHostWasmComponentWriteFile 5
-TestSelfHostWasmComponentReadWriteFile 4
-TestSelfHostWasmComponentArgs 4
-TestSelfHostWasmComponentClock 4
-TestSelfHostWasmComponentClockMono 4
-TestSelfHostWasmComponentReadEnv 4
-TestSelfHostWasmComponentReadWriteEnv 4
-TestSelfHostWasmComponentRandomWrite 4
-TestSelfHostWasmComponentEprint 4
-TestSelfHostWasmComponentExit 4
-TestSelfHostWasmComponentArgsRead 4
-TestSelfHostWasmComponentArgsReadWrite 4
-TestSelfHostWasmComponent 4
-
-# Driver builds not (yet) warmed + heavier IR/wasm e2e legs.
-TestSelfHostWriteFileIRX86_64 16
-TestSelfHostCallOnCallIRX86_64 14
-TestSelfHostDeriveStdlibIR 13
-TestSelfHostNestedFnValueIRX86_64 13
-TestSelfHostBlockExprIRX86_64 13
-TestSelfHostCsvEscapeIRX86_64 13
-TestSelfHostBase64IRX86_64 13
-TestSelfHostWasmIRPath 13
-TestSelfHostFormatStringIRWasm 12
-TestSelfHostBigI64LiteralWasmIR 12
-TestSelfHostCmpCoreIRX86_64 12
-TestSelfHostAsyncCombinatorsModloadIRX86_64 12
-TestSelfHostEnumFnPayloadIRX86_64 11
-TestSelfHostWasmArityGate 10
-TestSelfHostBoundedArrayMethodIR 8
-TestSelfHostStructMultiLevelDropIRX86_64 8
-TestSelfHostInterpX86_64 8
-TestSelfHostSSALiftCoverageScan 6
-TestSelfHostExportAttributeCompiles 6
-TestSelfHostStructArrElemDropIRX86_64 6
-TestSelfHostParserX86_64 5
+# Validation and omitted weight-one rows: docs/CI-SHARD-REBALANCE.md.
+TestSelfHostAddDifferentialX86_64 36
+TestSelfHostAllocCountMatrixX86_64 18
+TestSelfHostAllocDifferentialX86_64 2
+TestSelfHostAnnotateBinaryRejectsX86_64 18
+TestSelfHostAnnotateBinaryWasm 34
+TestSelfHostAnnotateBinaryX86_64 19
+TestSelfHostAnnotateConsumersWasm 7
+TestSelfHostAnnotateConsumersX86_64 36
+TestSelfHostAnnotateEnumIR_X86_64 18
+TestSelfHostAnnotateEnumWasm 18
+TestSelfHostAnnotateIdentWasm 3
+TestSelfHostAnnotateIdentX86_64 3
+TestSelfHostAnnotateTupleIndexIR_X86_64 2
+TestSelfHostAppendFreshReclaimIRX86_64 2
+TestSelfHostArgsArm64 13
+TestSelfHostArm64Adrp 2
+TestSelfHostArm64BitOpsGas 2
+TestSelfHostArm64Bitmask 2
+TestSelfHostArm64BranchRange 2
+TestSelfHostArm64Branches 2
+TestSelfHostArm64DarwinAssemblesRealRuntime 3
+TestSelfHostArm64DarwinMachOBitOpsRuns 2
+TestSelfHostArm64DarwinMachOCallRuns 2
+TestSelfHostArm64DarwinMachODataRuns 2
+TestSelfHostArm64DarwinMachOExitRuns 2
+TestSelfHostArm64DarwinMachOFnGasRuns 2
+TestSelfHostArm64DarwinMachOFrameRuns 2
+TestSelfHostArm64DarwinMachOGasRuns 2
+TestSelfHostArm64DarwinMachOLoopRuns 2
+TestSelfHostArm64DarwinMachOMaxRuns 2
+TestSelfHostArm64DarwinMachORealAsm 14
+TestSelfHostArm64DarwinMachOSymbolRuns 2
+TestSelfHostArm64DarwinMmapFlags 2
+TestSelfHostArm64DataGas 2
+TestSelfHostArm64Encode 2
+TestSelfHostArm64Float 2
+TestSelfHostArm64ForwardRefs 2
+TestSelfHostArm64FrameGas 2
+TestSelfHostArm64Gas 2
+TestSelfHostArm64GasNumericLabels 2
+TestSelfHostArm64GasStringComment 2
+TestSelfHostArm64GasWriteback 2
+TestSelfHostArm64IntRuntime 2
+TestSelfHostArm64Labels 2
+TestSelfHostArm64LitPoolGas 2
+TestSelfHostArm64LitPoolRange 10
+TestSelfHostArm64LoadStore 2
+TestSelfHostArm64ModloadNativeBuild 14
+TestSelfHostArm64NativeMmcMatchesCrossHost 79
+TestSelfHostArm64OffsetPairGas 2
+TestSelfHostArm64UnsignedDivAST 2
+TestSelfHostArrLenCallIRX86_64 2
+TestSelfHostArrOwnedRetReleaseIRArm64 2
+TestSelfHostArrOwnedRetReleaseIRX86_64 2
+TestSelfHostArrOwnedRetReleaseWasmIR 2
+TestSelfHostArrPushCliffIRX86_64 2
+TestSelfHostArrPushIRX86_64 2
+TestSelfHostArrayChunksWindowsIR 2
+TestSelfHostArrayClaimContracts 2
+TestSelfHostArrayClosureMethodIR 4
+TestSelfHostArrayConcatMethodIR 3
+TestSelfHostArrayElemTypeStrideArm64 2
+TestSelfHostArrayElemTypeStrideWasm 2
+TestSelfHostArrayEqVerbsIRX86_64 2
+TestSelfHostArrayMethodMultiElemIR 5
+TestSelfHostArrayMethodSyntaxArm64 4
+TestSelfHostArrayMethodSyntaxX86_64 4
+TestSelfHostArrayMethodTreeshakeIR 2
+TestSelfHostArrayTyparamMethodIR 3
+TestSelfHostArrowLambdaIRX86_64 2
+TestSelfHostArrtupCallBindWasm 2
+TestSelfHostArrtupCallBindX86_64 2
+TestSelfHostAsmArm64Bootstrap 20
+TestSelfHostAsmIRArm64Path 17
+TestSelfHostAsmIRPath 13
+TestSelfHostAsmRunX86_64 4
+TestSelfHostAssocFnIRX86_64 2
+TestSelfHostAssocTypesDifferential 6
+TestSelfHostAssumeEligibleByteIdenticalX86_64 228
+TestSelfHostAuditStdArrayX86_64 5
+TestSelfHostBase64IRX86_64 2
+TestSelfHostBinaryBitwiseIRWasm 2
+TestSelfHostBinaryBitwiseIRX86_64 2
+TestSelfHostBindStmtScopeParity 5
+TestSelfHostBlockExprIRX86_64 2
+TestSelfHostBorrowInferInterprocX86_64 9
+TestSelfHostBoundedArrayMethodIR 3
+TestSelfHostBuildGateX86_64 3
+TestSelfHostBytesWriterIRX86_64 2
+TestSelfHostCLIPrunesStdlibImportClosureX86_64 2
+TestSelfHostCallOnCallIRX86_64 2
+TestSelfHostCallableTypeDiagnostics 4
+TestSelfHostCapabilitiesReportAgreesWithNative 2
+TestSelfHostCapabilityCorpusAgreesWithNative 76
+TestSelfHostCapsRules 2
+TestSelfHostCaptureContractRewritesX86_64 3
+TestSelfHostCastArm64 13
+TestSelfHostCheckWorkspaceDifferentialX86_64 2
+TestSelfHostCheckedWasmIR 2
+TestSelfHostCheckedX86IR 2
+TestSelfHostCheckerArm64 5
+TestSelfHostCheckerBundleDifferentialX86_64 15
+TestSelfHostCheckerCodeSequenceX86_64 9
+TestSelfHostCheckerCodesX86_64 14
+TestSelfHostCheckerDifferentialX86_64 11
+TestSelfHostCheckerDriverArm64 11
+TestSelfHostCheckerDriverX86_64 11
+TestSelfHostCheckerHintTextDifferential 12
+TestSelfHostCheckerX86_64 4
+TestSelfHostClockArm64 11
+TestSelfHostClockIRX86_64 2
+TestSelfHostClosureAliasIRX86_64 2
+TestSelfHostClosureArrayIRWasm 2
+TestSelfHostClosureArrayIRX86_64 2
+TestSelfHostClosureCallCensusPopulation 5
+TestSelfHostClosurePtrCaptureIRX86_64 2
+TestSelfHostCmpCoreIRX86_64 4
+TestSelfHostCmpHelpersIRX86_64 2
+TestSelfHostComposeFromUserWorld 2
+TestSelfHostComposeFromWorld 2
+TestSelfHostCompoundAssignWiderIRX86_64 2
+TestSelfHostCompoundBitwiseIRX86_64 2
+TestSelfHostConstStringIRX86_64 2
+TestSelfHostConstfoldArm64 3
+TestSelfHostConstfoldX86_64 2
+TestSelfHostConstructionRetainMatrixX86_64 2
+TestSelfHostContainerAliasBindIRArm64 2
+TestSelfHostContainerAliasBindWasmIR 2
+TestSelfHostContainerAliasBindX86_64 3
+TestSelfHostContainerAliasLifetimeArm64 3
+TestSelfHostContainerAliasLifetimeX86_64 2
+TestSelfHostContainerSinkMatrixX86_64 2
+TestSelfHostCoreIntParseIRX86_64 2
+TestSelfHostCoreIntRadixIRX86_64 2
+TestSelfHostCountedStrArrReturnProofX86_64 4
+TestSelfHostCrossTypeReuseIRX86_64 2
+TestSelfHostCrossValidationX86_64 4
+TestSelfHostCryptoForkIRArm64 14
+TestSelfHostCryptoForkIRWasm 13
+TestSelfHostCryptoForkIRX86_64 15
+TestSelfHostCryptoIRWasm 20
+TestSelfHostCryptoIRX86_64 12
+TestSelfHostCryptoModuleIR 14
+TestSelfHostCsvEscapeIRWasm 2
+TestSelfHostCsvEscapeIRX86_64 2
+TestSelfHostDebugSymsFlag 9
+TestSelfHostDeclModifiersChecker 11
+TestSelfHostDeclModifiersIRX86_64 2
+TestSelfHostDeclarationParse 2
+TestSelfHostDeclarationRuntime 2
+TestSelfHostDeclarationSpellingContracts 2
+TestSelfHostDefaultMethodIRX86_64 2
+TestSelfHostDeferBlockLocalIRX86_64 2
+TestSelfHostDeferInLoopIRX86_64 2
+TestSelfHostDeferValueBlockIR_X86_64 2
+TestSelfHostDeriveDefaultEnumIRX86_64 2
+TestSelfHostDeriveDefaultIRX86_64 2
+TestSelfHostDeriveEqIRX86_64 2
+TestSelfHostDeriveOrdIRX86_64 2
+TestSelfHostDeriveStdlibIR 8
+TestSelfHostDeriveStdlibIRArm64 8
+TestSelfHostDynArrayArgIRX86_64 2
+TestSelfHostDynArrayLocalIRX86_64 2
+TestSelfHostDynArrayParamIRX86_64 2
+TestSelfHostDynEnumIRX86_64 2
+TestSelfHostDynFnIndirectCoerceIRX86_64 2
+TestSelfHostDynFnParamIRX86_64 2
+TestSelfHostDynMultiTraitIRX86_64 2
+TestSelfHostDynTraitIRWasm 2
+TestSelfHostDynTraitIRX86_64 2
+TestSelfHostEmbedBundleAndSubstitution 2
+TestSelfHostEmbedMatchesNative 2
+TestSelfHostEnumCapturingPayloadIRX86_64 2
+TestSelfHostEnumContractIRArm64 67
+TestSelfHostEnumContractMissingRetainX86_64 13
+TestSelfHostEnumContractVerify 2
+TestSelfHostEnumCrossReuseIRX86_64 2
+TestSelfHostEnumFnPayloadIRX86_64 2
+TestSelfHostEnumFreshMethodIRX86_64 2
+TestSelfHostEnumQualifiedCtorReclaimIRX86_64 3
+TestSelfHostEnumStructPayloadDropIRX86_64 2
+TestSelfHostEnvArm64 11
+TestSelfHostEqualIRX86_64 2
+TestSelfHostErasedElemReturnWasm 2
+TestSelfHostErasedElemReturnX86_64 2
+TestSelfHostErasedWideArrayFixedWasm 3
+TestSelfHostErasedWideArrayGateBlindWasm 2
+TestSelfHostErasedWideArrayGateNarrowWasm 4
+TestSelfHostErasedWideArrayGateWasm 4
+TestSelfHostErrorTraitIRX86_64 2
+TestSelfHostF32ElemTagArm64 3
+TestSelfHostF32ElemTagWasm 3
+TestSelfHostF32ElemTagX86_64 3
+TestSelfHostF32IRX86_64 2
+TestSelfHostF64ArrayAppendIRX86_64 2
+TestSelfHostF64MethodIR_X86_64 5
+TestSelfHostF64RecvIRX86_64 2
+TestSelfHostFStringIRX86_64 2
+TestSelfHostFernDocModeMatchesFerndoc 2
+TestSelfHostFerndocMatchesNative 3
+TestSelfHostFerndocPagesMatchNative 3
+TestSelfHostFerndocSelfChecks 2
+TestSelfHostFetchFutureModloadIRX86_64 2
+TestSelfHostFieldAppendInPlaceArm64 2
+TestSelfHostFieldAppendInPlaceWasmIR 2
+TestSelfHostFieldAppendInPlaceX86_64 2
+TestSelfHostFieldReclaimIRX86_64 20
+TestSelfHostFinalCreditSiteKeyIRArm64 2
+TestSelfHostFipVerifyCorpusClean 3
+TestSelfHostFlattenX86_64 3
+TestSelfHostFloatBitsIRX86_64 2
+TestSelfHostFloatMathIRArm64 2
+TestSelfHostFloatMathIRX86_64 2
+TestSelfHostFloatNanIRX86_64 2
+TestSelfHostFloatTranscendentalsIRX86_64 2
+TestSelfHostFloatTypeContracts 3
+TestSelfHostFloatWidthCheckerX86_64 4
+TestSelfHostFloatWidthRuntime 2
+TestSelfHostFmtCorpusParityX86_64 9
+TestSelfHostFmtDiffCorpusParityX86_64 48
+TestSelfHostFmtNativeParityX86_64 3
+TestSelfHostFmtWriteAndDiffViaInterp 18
+TestSelfHostFmtWrittenFormViaInterp 17
+TestSelfHostFnArgInCondIRX86_64 2
+TestSelfHostFnRetIRX86_64 2
+TestSelfHostFnTypeFlattenWasm 2
+TestSelfHostFnTypeFlattenX86_64 2
+TestSelfHostFnValueCallWasm 2
+TestSelfHostFnValueCallX86_64 2
+TestSelfHostFnValueRecvDispatch 4
+TestSelfHostFnValueRecvDispatchArm64 4
+TestSelfHostForinCaptureIRArm64 2
+TestSelfHostFormatDurationIRWasm 2
+TestSelfHostFormatDurationIRX86_64 2
+TestSelfHostFormatSpecIRWasm 2
+TestSelfHostFormatSpecIRX86_64 2
+TestSelfHostFormatStringIRX86_64 2
+TestSelfHostFormerlyExemptCodesGateX86_64 18
+TestSelfHostFreestandingTargets 2
+TestSelfHostFrontEndNumericLiteralCodes 16
+TestSelfHostFrontendBundleX86_64 3
+TestSelfHostFsBuiltinsArm64 12
+TestSelfHostFsPathBufferReclaimX86_64 3
+TestSelfHostGenericCollectorIRX86_64 2
+TestSelfHostGenericCtorIR 3
+TestSelfHostGenericCtorWasmIR 3
+TestSelfHostGenericDefaultIRX86_64 2
+TestSelfHostGenericFoldCrossTypeIRX86_64 2
+TestSelfHostGenericNestedRetWasm 2
+TestSelfHostGenericNestedRetX86_64 2
+TestSelfHostGenericTraitBoundIRX86_64 2
+TestSelfHostHandlerStateX86_64 6
+TestSelfHostHeadersIRX86_64 2
+TestSelfHostHeapBumpBytesIRX86_64 2
+TestSelfHostHeapBumpFlatIRX86_64 2
+TestSelfHostHexIRX86_64 2
+TestSelfHostHttpHandlerRoutesIRX86_64 2
+TestSelfHostHttpHandlerServesX86_64 2
+TestSelfHostI32OverflowIRX86_64 2
+TestSelfHostI32PredicatesIRX86_64 2
+TestSelfHostI64ArrElemWidthIRX86_64 2
+TestSelfHostI64CallWidthIRX86_64 2
+TestSelfHostI64FieldWidthIRX86_64 2
+TestSelfHostI64MixWidthIRX86_64 2
+TestSelfHostIIFEFnArmIRArm64 2
+TestSelfHostIIFEFnArmIRX86_64 2
+TestSelfHostIIFEFnArmWasmIR 2
+TestSelfHostIRPipelineProbe 3
+TestSelfHostIRVerifyCorpusClean 3
+TestSelfHostIRVerifyGateWholeCompiler 88
+TestSelfHostIRVerifyProvidedCompilerClean 18
+TestSelfHostIRVerifyProvidedCorpusClean 53
+TestSelfHostIRVerifyRcCorpusClean 3
+TestSelfHostIRVerifyStackCorpusClean 3
+TestSelfHostIdentifierCountsX86_64 2
+TestSelfHostIifeI64AnnotIRX86_64 2
+TestSelfHostImplBounds 2
+TestSelfHostImportAliasIR 2
+TestSelfHostImportAsyncFunctionChecks 10
+TestSelfHostImportedMethodCollisionWasm 11
+TestSelfHostInherentImplIRX86_64 2
+TestSelfHostInterpArm64 3
+TestSelfHostInterpArrayReceiver 3
+TestSelfHostInterpDriverArm64 10
+TestSelfHostInterpDriverX86_64 4
+TestSelfHostInterpEnumConstructors 3
+TestSelfHostInterpFloatLiteralBits 4
+TestSelfHostInterpIOX86_64 4
+TestSelfHostInterpStdlibModload 6
+TestSelfHostInterpU64 3
+TestSelfHostInterpX86_64 3
+TestSelfHostIoErrorIRX86_64 2
+TestSelfHostIterCollectIRX86_64 2
+TestSelfHostIterEnumZipIRX86_64 2
+TestSelfHostIterFlatMapIRX86_64 2
+TestSelfHostIterPositionCountByIRX86_64 2
+TestSelfHostIterSingleParamIRX86_64 2
+TestSelfHostIterTakeSkipIRX86_64 2
+TestSelfHostIteratorTraitIRX86_64 2
+TestSelfHostJoinIR 2
+TestSelfHostJsonArm64 5
+TestSelfHostJsonCoreIRX86_64 6
+TestSelfHostJsonX86_64 5
+TestSelfHostLICMX86_64 2
+TestSelfHostLabeledBreakIRX86_64 2
+TestSelfHostLambdaLiftNestedIRX86_64 2
+TestSelfHostLambdaLiftPositionIRX86_64 2
+TestSelfHostLambdaLiftSliceFieldIRX86_64 2
+TestSelfHostLambdaScopeRuntime 2
+TestSelfHostLambdaScopeWalkX86_64 2
+TestSelfHostLargeIntLiteralIRX86_64 2
+TestSelfHostLargeTierFreelistX86_64 3
+TestSelfHostLeakMatrixIRArm64 6
+TestSelfHostLeakMatrixX86_64 7
+TestSelfHostLexicalCaptureTypesX86_64 3
+TestSelfHostLexicalIdentityX86_64 3
+TestSelfHostLogLeveledIRX86_64 2
+TestSelfHostLoopReuseIRX86_64 2
+TestSelfHostLstatMatchesNative 2
+TestSelfHostMachO 2
+TestSelfHostMachOPlacesEhFrame 3
+TestSelfHostMapAliasGroupX86_64 2
+TestSelfHostMapBoxColumnReclaimIRX86_64 2
+TestSelfHostMapCompositeKeyLitIRX86_64 2
+TestSelfHostMapCoreIRX86_64 2
+TestSelfHostMapI64ValueIRX86_64 2
+TestSelfHostMapInsertAliasIRX86_64 2
+TestSelfHostMapIterationOrderArm64 2
+TestSelfHostMapIterationOrderX86_64 2
+TestSelfHostMapKeyedArm64IR 2
+TestSelfHostMapKeysValuesIRX86_64 2
+TestSelfHostMapLiteralComputedKeyIR_X86_64 3
+TestSelfHostMapLiteralComputedKeyWasmIR 2
+TestSelfHostMapMethodTupleElem 2
+TestSelfHostMapScopedReclaimIRX86_64 2
+TestSelfHostMapValueAliasRetainIRX86_64 2
+TestSelfHostMapValuePtrIRX86_64 2
+TestSelfHostMapW64IterIRX86_64 2
+TestSelfHostMapW64RecvIRX86_64 2
+TestSelfHostMatchExprBinderBodyWasm 2
+TestSelfHostMatchExprBinderBodyX86_64 2
+TestSelfHostMatchExprValueLocalX86_64 2
+TestSelfHostMatchGuardIRX86_64 2
+TestSelfHostMathIRX86_64 2
+TestSelfHostMethodRecvTypeArm64 2
+TestSelfHostMethodRecvTypeWasm 2
+TestSelfHostMethodRecvTypeX86_64 2
+TestSelfHostMockPlatformIRX86_64 2
+TestSelfHostModloadPerModuleWholeCompilerX86_64 149
+TestSelfHostMonoIndexArgIR 4
+TestSelfHostNamedArgsIRX86_64 2
+TestSelfHostNestedArrFieldIRArm64 2
+TestSelfHostNestedArrayIRX86_64 2
+TestSelfHostNestedBodyPassBlindnessIRX86_64 2
+TestSelfHostNestedFnValueIRX86_64 2
+TestSelfHostNestedMatchIRX86_64 2
+TestSelfHostNestedOptResultIRX86_64 2
+TestSelfHostNestedParamType 2
+TestSelfHostNestedPassthroughFnValueWasm 2
+TestSelfHostNestedRecvFlattenIRX86_64 2
+TestSelfHostNestedTupleCaptureIRX86_64 2
+TestSelfHostNestedTupleIRX86_64 2
+TestSelfHostNestedTupleRetIRX86_64 2
+TestSelfHostNoMainModuleIRX86_64 2
+TestSelfHostNthTupleElem 3
+TestSelfHostNumReducersIRX86_64 2
+TestSelfHostNumericEdgesIRX86_64 2
+TestSelfHostNumericMethodsIRX86_64 2
+TestSelfHostNumericSettleChecker 10
+TestSelfHostNumericSettleIRX86_64 2
+TestSelfHostNumericSettleRejects 10
+TestSelfHostOpaqueUnderAttributes 11
+TestSelfHostOpenedHandleNeverLandsOnStdoutX86_64 2
+TestSelfHostOperatorOverloadRootsIRX86_64 2
+TestSelfHostOptAliasBindX86_64 2
+TestSelfHostOptArithNarrowF64IRX86_64 2
+TestSelfHostOptMakeI64IRX86_64 2
+TestSelfHostOptResultCombinatorsIRX86_64 2
+TestSelfHostOptStructPayloadFieldIRX86_64 2
+TestSelfHostOptUnusedWideBindIRX86_64 2
+TestSelfHostOrdEqArrayMethodIR 3
+TestSelfHostOuterMutCaptureIRX86_64 2
+TestSelfHostOverBudgetPerModuleIR 2
+TestSelfHostOverBudgetProgramsRunX86_64 2
+TestSelfHostOverBudgetRoutesIRArm64 2
+TestSelfHostOwnParamReleaseX86_64 2
+TestSelfHostPackageCapabilityDifferentialX86_64 2
+TestSelfHostParamAppendReclaimIRX86_64 2
+TestSelfHostParseErrorPositions 5
+TestSelfHostParseF64Arm64 2
+TestSelfHostParseF64Watbin 2
+TestSelfHostParseF64X86Gas 2
+TestSelfHostParseUnknownDiagSequence 16
+TestSelfHostParserArm64 3
+TestSelfHostParserX86_64 2
+TestSelfHostPathIRX86_64 2
+TestSelfHostPathSepIRX86_64 2
+TestSelfHostPerModuleCaptureTypes 14
+TestSelfHostPerModuleClosureArgLinkX86_64 3
+TestSelfHostPerModuleConcatArm64 2
+TestSelfHostPerModuleConcatX86_64 2
+TestSelfHostPerModuleEmitAllObjectCacheX86_64 2
+TestSelfHostPerModuleIncrementalCodegenX86_64 2
+TestSelfHostPerModuleLabelNS_X86_64 2
+TestSelfHostPerModuleObjectCacheX86_64 2
+TestSelfHostPerModuleTransitiveInvalidationX86_64 2
+TestSelfHostPipeHoleIRX86_64 2
+TestSelfHostPipelineArm64 5
+TestSelfHostPipelineX86_64 4
+TestSelfHostPlatformBuiltinLowers 2
+TestSelfHostPlatformsCapabilityRules 2
+TestSelfHostPlaygroundHostedInWasm 26
+TestSelfHostPlaygroundOverlay 13
+TestSelfHostPollIRX86_64 2
+TestSelfHostPrefixIRX86_64 2
+TestSelfHostPrinterArm64 3
+TestSelfHostPrinterX86_64 3
+TestSelfHostProcExecAsIRX86_64 2
+TestSelfHostProcForkIRX86_64 2
+TestSelfHostProgsArm64 2
+TestSelfHostRawIntrinsicsX86_64 2
+TestSelfHostRcArm64 3
+TestSelfHostRcMapGrowWasm 2
+TestSelfHostRcPreciseDropX86IR 8
+TestSelfHostRcStrBoxWasm 5
+TestSelfHostReadAllStdinModloadIRX86_64 3
+TestSelfHostReadFileArm64 12
+TestSelfHostReaderArm64 12
+TestSelfHostReaderStdinIRX86_64 2
+TestSelfHostRecEnumListIRX86_64 2
+TestSelfHostRecStructArrayEnumIRX86_64 2
+TestSelfHostRecursionIRX86_64 2
+TestSelfHostRegexModuleIR 2
+TestSelfHostRejectsConformanceErrorCasesX86_64 2
+TestSelfHostResolveDifferentialX86_64 2
+TestSelfHostResultStructErrIRX86_64 2
+TestSelfHostResultTuplePayloadIRX86_64 2
+TestSelfHostRetArrEnumIRX86_64 2
+TestSelfHostRetStructFieldIRX86_64 2
+TestSelfHostReturnClosureIRX86_64 2
+TestSelfHostReuseDifferentialX86_64 3
+TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR 2
+TestSelfHostSSADependencyVerification 7
+TestSelfHostSSADependencyVerificationIRArm64 2
+TestSelfHostSSADependencyVerificationIRWasm 2
+TestSelfHostSSADependencyVerificationIRX86_64 2
+TestSelfHostSSAEmitArm64 8
+TestSelfHostSSAEmitWasm 4
+TestSelfHostSSAEmitX86_64 5
+TestSelfHostSSALifetimeDependencies 2
+TestSelfHostSSALifetimeIRArm64 5
+TestSelfHostSSALifetimeIRWasm 5
+TestSelfHostSSALifetimeIRX86_64 5
+TestSelfHostSSALifetimeInvalidMetadata 7
+TestSelfHostSSALiftDifferential 2
+TestSelfHostSSALiftEmit 2
+TestSelfHostSSALiftIRLower 13
+TestSelfHostSSAPhysicalRC 13
+TestSelfHostSSAPhysicalRCIRArm64 56
+TestSelfHostSSAPhysicalRCRejects 5
+TestSelfHostSSASemantic 34
+TestSelfHostSSASemanticIRArm64 3
+TestSelfHostSSASemanticIRWasm 3
+TestSelfHostSSASemanticIRX86_64 3
+TestSelfHostSSAUnits 32
+TestSelfHostSSAUnitsIRArm64 3
+TestSelfHostSSAUnitsIRWasm 3
+TestSelfHostSSAUnitsIRX86_64 3
+TestSelfHostSelfrefStructIRX86_64 2
+TestSelfHostSemanticProduction 3
+TestSelfHostSemanticSourceCensusLoadsTheStdlib 11
+TestSelfHostSemanticSourcePrint 6
+TestSelfHostSemanticSourceRC 15
+TestSelfHostSetOpsIRX86_64 2
+TestSelfHostSignalDispositionIRArm64 2
+TestSelfHostSleepMsIRX86_64 2
+TestSelfHostSliceViewsIRX86_64 2
+TestSelfHostSnapshotParamReclaimIRX86_64 7
+TestSelfHostSortIRX86_64 2
+TestSelfHostStage2Bootstrap 83
+TestSelfHostStage2Compiler 83
+TestSelfHostStdPartitionAgreesWithNative 9
+TestSelfHostStdTestE2E 91
+TestSelfHostStdTestE2EArm64 95
+TestSelfHostStdinEntryDifferentialX86_64 2
+TestSelfHostStdlibFuncsIR 2
+TestSelfHostStdlibImportX86_64 2
+TestSelfHostStdlibModloadIRX86_64 4
+TestSelfHostStdlibModulesIR 6
+TestSelfHostStrBindSfrrecvStdlibX86_64 3
+TestSelfHostStrConcatTempIRX86_64 2
+TestSelfHostStrNeqIRX86_64 2
+TestSelfHostStrReclaimIRX86_64 2
+TestSelfHostStrRuntimeStdStringParityArm64 8
+TestSelfHostStrRuntimeStdStringParityX86_64 8
+TestSelfHostStrbufGrowsPastOldCeilingArm64 2
+TestSelfHostStrbufTakeIsRcHeaded 2
+TestSelfHostStreamIRX86_64 2
+TestSelfHostStrengthIRX86_64 2
+TestSelfHostStringArm64 5
+TestSelfHostStringEscapesIRX86_64 2
+TestSelfHostStringEscapesMatchNativeX86_64 2
+TestSelfHostStringFromBytesIRX86_64 2
+TestSelfHostStringModuleFnIR 6
+TestSelfHostStringX86_64 5
+TestSelfHostStructArrElemDropIRX86_64 7
+TestSelfHostStructArrayCallFieldIRX86_64 2
+TestSelfHostStructDeepDropIRX86_64 17
 TestSelfHostStructFreshRetFieldIRX86_64 4
-# The two `-ir-probe` gates over a stdlib closure (std/tcp with every std/ and
-# core/ module vendored; the whole stdlib under -no-treeshake). The probe
-# itself is ~2-4 s since #8204 built the eligibility registries once per
-# report (it was 83 s and 139 s on run 33735246535); what is left is the
-# driver build, which these entries carry against a cold cache: measured
-# locally 2026-09-04 at 31.7 s and 29.6 s test-total, weighted with the
-# audit's 1.5x band.
-TestSelfHostIRPipelineProbe 48
-TestSelfHostPlatformBuiltinLowers 45
-# Saturating arithmetic (#5542): ~30 subtests each, one warm driver apiece —
-# the x86 leg gcc-links every subtest, the wasm leg wasmtime-runs every subtest.
-TestSelfHostSaturatingX86IR 25
-TestSelfHostSaturatingWasmIR 25
-# Checked arithmetic (#5542): same shape — ~57 subtests each (incl. /? %?
-# <<? >>?), one warm driver.
-TestSelfHostCheckedX86IR 48
-TestSelfHostCheckedWasmIR 48
-# Append-fresh reclaim (#5608): one program through two warm drivers
-# (asm_run + asm_pathprobe_run), plus a native cross-check.
-TestSelfHostAppendFreshReclaimIRX86_64 6
-# Cell on the wasm IR path (#5510): 5 subtests through one warm driver, each
-# with a native cross-check compile.
-TestSelfHostCellWasmIR 6
-TestSelfHostReadAllStdinIRX86_64 10
-TestSelfHostReadAllStdinIRArm64 20
-TestSelfHostReadAllStdinIRRoutingX86_64 6
-TestSelfHostReadAllStdinIRWasm 12
-# Tuple element from a wide-returning call (#5902): 7 subtests through two
-# drivers (asm_run + asm_pathprobe_run). MEASURED 2.6 s with both restored from
-# the warm cache, per the FERN_SELFHOST_BUILD_CACHE method documented on the
-# interp-driver entry below — a cold `go test` reports 249 s, 94x higher,
-# because it re-emits both drivers.
-TestSelfHostTupleWideCallElem 3
-# The interp driver (#5912): self-host-compiles lexer + parser + interp + util
-# into a working interpreter, then feeds it 104 tiny programs. MEASURED 6.58 s
-# with the modload driver restored from the warm cache, which is what the shard
-# step configures via FERN_SELFHOST_BUILD_CACHE.
-#
-# Recorded because the naive measurement is off by ~23x and I nearly wrote it
-# here: `go test` with no FERN_SELFHOST_BUILD_CACHE has NO disk cache at all
-# (diskCacheReadDirs returns nil), so it re-emits the whole driver every
-# invocation and reports ~140-155 s. Almost all of that is the driver build the
-# warm artifact eliminates. To reproduce the real number, point the var at a dir
-# already holding `<hash>.driverbin` — note the suffix, `drv-<hash>` is the
-# separate link cache and will silently MISS.
-#
-# This test had no entry while it was segfaulting on every integer literal
-# (#5901, fixed by #5908), so its 18-minute shard-11 blowout was the hang, not a
-# scheduling error. 6.58 s is the honest cost; the entry is ordinary balance.
-TestSelfHostInterpDriverX86_64 170
-# The arm64 native-assembler lane (the branch-veneer coverage): builds
-# asm_modload_run for arm64 through the in-process pure-Go assembler — a
-# ~135 MB image — then runs it. No warm artifact applies (the warm jobs
-# build x86 host drivers), so this is a genuine cold build every shard.
-# MEASURED 117 s locally, of which ~110 s is the emit+assemble.
-TestSelfHostArm64ModloadNativeBuild 120
-# Executes the self-host arm64 __fern_proc_exec blob from both emitters.
-# Dominated by the one modload driver build it shares with the rest of the
-# suite; MEASURED 108 s cold, near-free once that driver is warm.
-TestSelfHostArm64ProcExecRuns 15
-# `TestSelfHostStage2FixedPointArm64` sat here at 900 — a real measurement
-# (run 30581856560: 53 s of stage-1/stage-2 build, then `self` 709 s of mmc2
-# re-emitting the compiler under qemu) for a test that had already been
-# deleted with `asm_arm64_load_run.fern` in #5972. Four other entries were
-# dead the same way. They cost nothing — the sharder only weights names its
-# `-test.list` input actually contains — but they read as coverage, and the
-# same staleness in `test-e2e-arm64.yml` was load-bearing there (#6310).
-# `make testnames` now fails on a name in .github/ that matches no test, so
-# an entry cannot outlive its test again.
-
-# Builds no driver: it interprets the self-host front end once per case
-# through the native `-interp`, so its cost is the 14 cases, not a compile.
-# Measured 26 s locally (4-core, machine busy); weighted pessimistically.
-TestSelfHostFrontEndNumericLiteralCodes 60
-
-# The corpus formatter-parity leg: one `-fmt` of each of the 425 .fern files
-# under examples/ + internal/stdlib through the linked driver. MEASURED 16 s
-# locally for the whole sweep (the driver's fixed startup is ~12 ms; the cost is
-# the ten 15-50 kloc self_host modules), on top of the fern.fern driver the two
-# older fmt tests already warm. Weighted generously against a cold cache.
-TestSelfHostFmtCorpusParityX86_64 60
-
-# The two host-independent fmt legs: they drive fern.fern through the native
-# `-interp` rather than linking a driver, so no gcc and no x86-64 host. Every
-# interp spawn re-parses and re-checks the whole self-host source (~6 s here)
-# before it formats anything, so the cost is the SPAWN COUNT: the written-form
-# leg formats all 54 cases in two spawns (`-fmt -w FILE...`, once per
-# idempotence pass) — 23 s measured locally 2026-09-04 against 432 s for one
-# spawn per case per pass — and the write/diff leg is nine spawns (29.5 s
-# locally, same day). Both entries are the local number with the audit's 1.5x
-# band; the runner ran the old shape at ~0.4x this machine.
-TestSelfHostFmtWrittenFormViaInterp 35
-TestSelfHostFmtWriteAndDiffViaInterp 45
+TestSelfHostStructLenMethodIRX86_64 2
+TestSelfHostStructMultiLevelDropIRX86_64 8
+TestSelfHostStructProducerLocalIRArm64 2
+TestSelfHostStructStrFieldReclaimIRX86_64 2
+TestSelfHostStructTupleFieldIRX86_64 2
+TestSelfHostSubwordWrapIRX86_64 2
+TestSelfHostSupertraitIRX86_64 2
+TestSelfHostSyncIRArm64 2
+TestSelfHostTangleDifferentialX86_64 2
+TestSelfHostTargetCapabilityDifferentialX86_64 2
+TestSelfHostTcoIRX86_64 2
+TestSelfHostTcpClientIRX86_64 2
+TestSelfHostTcpServerArm64 11
+TestSelfHostTimeDateIRWasm 2
+TestSelfHostTimeDateIRX86_64 3
+TestSelfHostTimeParseIRX86_64 2
+TestSelfHostTimeRfc3339IRWasm 2
+TestSelfHostTimeRfc3339IRX86_64 3
+TestSelfHostTimeSpanIRX86_64 2
+TestSelfHostTimeZonedIRX86_64 2
+TestSelfHostTimerFdIRX86_64 2
+TestSelfHostTodoIRX86_64 2
+TestSelfHostTraitsArm64 2
+TestSelfHostTransitiveDepsDifferentialX86_64 2
+TestSelfHostTreeshakeKeepsDerivedMethodsX86_64 2
+TestSelfHostTreeshakeKeepsDropFinalizerX86_64 2
+TestSelfHostTreeshakeStdlibIR 4
+TestSelfHostTryDeferIRX86_64 2
+TestSelfHostTryF64IRX86_64 2
+TestSelfHostTryFailCleanupIRX86_64 2
+TestSelfHostTryFromIRX86_64 2
+TestSelfHostTryStructIRX86_64 2
+TestSelfHostTupleDestructureIndexX86_64 2
+TestSelfHostTupleDestructureNestedStrIRX86_64 2
+TestSelfHostTupleElemTag 2
+TestSelfHostTupleFieldTypeLabelParity 10
+TestSelfHostTupleHandbackReclaimArm64 46
+TestSelfHostTupleHandbackReclaimSanitizeX86_64 28
+TestSelfHostTupleHandbackReclaimWasm 28
+TestSelfHostTupleHandbackReclaimX86_64 25
+TestSelfHostTupleTags 2
+TestSelfHostTupleWideCallElem 2
+TestSelfHostTyFromRef 2
+TestSelfHostU32DivRemIRX86_64 2
+TestSelfHostU32WrapArm64IR 2
+TestSelfHostU32WrapIR 2
+TestSelfHostU64ArrayIRX86_64 2
+TestSelfHostU64IRX86_64 2
+TestSelfHostU64MixWidthIRX86_64 2
+TestSelfHostU64TupArrIRX86_64 2
+TestSelfHostUdpSendArm64 11
+TestSelfHostUdpSendRejectsNonLiteralHostX86_64 2
+TestSelfHostUrlArm64 2
+TestSelfHostUrlCodecIRX86_64 2
+TestSelfHostUrlCoreIRX86_64 2
+TestSelfHostUrlParseIRX86_64 2
+TestSelfHostUrlQueryIRX86_64 2
+TestSelfHostUrlX86_64 2
+TestSelfHostUserFnShadowsBuiltinIRX86_64 2
+TestSelfHostValueBlockResultTypesIR 3
+TestSelfHostVarInferenceIRX86_64 2
+TestSelfHostVarShadowIRX86_64 2
+TestSelfHostVendorDifferentialX86_64 2
+TestSelfHostVoidBareReturnIRX86_64 2
+TestSelfHostWasmBinary 4
+TestSelfHostWasmComponentArgs 23
+TestSelfHostWasmComponentArgsRead 2
+TestSelfHostWasmComponentArgsReadWrite 2
+TestSelfHostWasmComponentClock 2
+TestSelfHostWasmComponentClockMono 11
+TestSelfHostWasmComponentEndToEnd 23
+TestSelfHostWasmComponentEnv 23
+TestSelfHostWasmComponentEprint 2
+TestSelfHostWasmComponentExit 12
+TestSelfHostWasmComponentFull 2
+TestSelfHostWasmComponentFullIO 2
+TestSelfHostWasmComponentFullIOArgs 2
+TestSelfHostWasmComponentFullIOClock 2
+TestSelfHostWasmComponentFullIOClockMono 2
+TestSelfHostWasmComponentFullIOEnv 2
+TestSelfHostWasmComponentFullIOEprint 2
+TestSelfHostWasmComponentFullIOExit 2
+TestSelfHostWasmComponentFullIOFS 2
+TestSelfHostWasmComponentFullIOFSArgsRead 2
+TestSelfHostWasmComponentFullIOFSRW 2
+TestSelfHostWasmComponentFullIOFSRWArgs 2
+TestSelfHostWasmComponentFullIOFSRWEnv 2
+TestSelfHostWasmComponentFullIOFSReadEnv 2
+TestSelfHostWasmComponentFullIOFSWrite 2
+TestSelfHostWasmComponentFullIORandom 2
+TestSelfHostWasmComponentFullIORandomWrite 2
+TestSelfHostWasmComponentIRPath 23
+TestSelfHostWasmComponentRandom 2
+TestSelfHostWasmComponentRandomWrite 12
+TestSelfHostWasmComponentReadEnv 2
+TestSelfHostWasmComponentReadFile 24
+TestSelfHostWasmComponentReadWriteEnv 2
+TestSelfHostWasmComponentReadWriteFile 21
+TestSelfHostWasmComponentStdout 24
+TestSelfHostWasmComponentWriteFile 13
+TestSelfHostWasmExternSum 3
+TestSelfHostWasmFuncRangeShard 11
+TestSelfHostWasmHostedX86CompilerMatchesNative 50
+TestSelfHostWasmIRPath 17
+TestSelfHostWasmIRPoll 2
+TestSelfHostWasmIRPollFds 2
+TestSelfHostWasmIRTcpServer 2
+TestSelfHostWasmLinkFromCache 12
+TestSelfHostWasmOptionPayload 3
+TestSelfHostWasmRun 9
+TestSelfHostWasmUnitsN2 12
+TestSelfHostWatbinFlat 2
+TestSelfHostWhileIRX86_64 2
+TestSelfHostWithAliasIRArm64 2
+TestSelfHostWithAliasIRWasm 2
+TestSelfHostWithAliasIRX86_64 2
+TestSelfHostWithCowIRArm64 3
+TestSelfHostWithCowIRWasm 2
+TestSelfHostWithCowIRX86_64 2
+TestSelfHostWriteFileIRX86_64 2
+TestSelfHostX86CallRuns 2
+TestSelfHostX86Capstone 3
+TestSelfHostX86ElfExitRuns 2
+TestSelfHostX86Encode 2
+TestSelfHostX86FrameRuns 2
+TestSelfHostX86Gas 2
+TestSelfHostX86GasByteImmRuns 2
+TestSelfHostX86GasByteRegRuns 2
+TestSelfHostX86GasCarryChainGroundTruth 2
+TestSelfHostX86GasCarryChainRuns 2
+TestSelfHostX86GasDivRuns 2
+TestSelfHostX86GasExtMemRuns 2
+TestSelfHostX86GasExtRegRuns 2
+TestSelfHostX86GasGroundTruth 2
+TestSelfHostX86GasIncShlRuns 2
+TestSelfHostX86GasIndexRuns 2
+TestSelfHostX86GasLoopRuns 2
+TestSelfHostX86GasMulRuns 2
+TestSelfHostX86GasNegativeQuadRuns 2
+TestSelfHostX86GasRodataRuns 2
+TestSelfHostX86GasRuntimeOpsRuns 2
+TestSelfHostX86LabelProgramRuns 2
+TestSelfHostX86Labels 2
+TestSelfHostX86LoopRuns 2
+TestSelfHostX86MaxRuns 2
+TestSelfHostX86RodataRuns 2
+TestSelfHostX86ScaleProbe 3
