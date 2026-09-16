@@ -620,7 +620,9 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return define(s, ssasem.array_get(), [container.id, at.id], 0, "", elem);
 }
 
-function field(fa: ast.ExprFieldAccess, s: State): Value {
+function field(e: ast.Expr, fa: ast.ExprFieldAccess, s: State, expected: typeinfo.Type): Value {
+    var head: string = type_head(fa.obj, s);
+    if (head.len() > 0) { return qualified_variant(e, head, fa.field, [], s, expected); }
     if (!decimal(fa.field)) { return record_field(fa, s); }
     var container: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = container.s;
@@ -1495,13 +1497,44 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (parser.is_value_block(c)) { return value_block(e, c, s, expected); }
-    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s, statement); }
+    if let ast.ExprFieldAccess(mfa) = c.callee {
+        var head: string = type_head(mfa.obj, s);
+        if (head.len() > 0) { return qualified_call(e, head, mfa.field, c, s, statement, expected); }
+        return method_call(c, mfa, s, statement);
+    }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
     return free_call(e, name, c, s, statement, expected);
+}
+
+// The head of a path that names a TYPE rather than a value: `E.A(7)` and
+// `E.B` name a variant of the enum, `Point.make(3, 4)` the associated function
+// an impl declared on the struct, which the contract table keys the way it
+// keys a method. A bound name shadows the type.
+function type_head(obj: ast.Expr, s: State): string {
+    if let ast.ExprIdent(id) = obj {
+        if (lookup(s, id.name) >= 0) { return ""; }
+        if (checker.struct_sig(s.scope, id.name).name.len() > 0) { return id.name; }
+        if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) { return id.name; }
+    }
+    return "";
+}
+
+function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (union_name(whole) != head || !names_variant(s, whole, name)) { return refused(s, "unsupported qualified path: " + head + "." + name); }
+    return variant(name, whole, args, s);
+}
+
+function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (union_name(whole) == head && names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
+    var at: i32 = ssasem.find_contract(s.contracts, head + "." + name);
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + head + "." + name); }
+    return direct_call(c, s.contracts[at], s, statement);
 }
 
 // A call of a free name: a builtin with a shape of its own, the lambda
@@ -1618,7 +1651,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
-        ast.ExprFieldAccess(fa) => { return field(fa, s); },
+        ast.ExprFieldAccess(fa) => { return field(e, fa, s, expected); },
         ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
         ast.ExprCall(c) => { return call(e, c, s, false, expected); },
@@ -1896,27 +1929,41 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
 // name, and a false guard leaves for the next arm's test; the bindings die
 // on that edge as on any other. The arm's body then opens a block of its
 // own.
-function guard_gate(a: ast.MatchArm, s: State, next: i32): State {
-    if (!a.has_guard) { return s; }
+// `from` is the block the guard's branch leaves from, which is the arm's own
+// block only when the guard opened no block of its own; -1 without a guard.
+struct Gate { s: State, from: i32 }
+
+function guard_gate(a: ast.MatchArm, s: State, next: i32): Gate {
+    if (!a.has_guard) { return Gate { s: s, from: 0 - 1 }; }
     var g: Value = expr(a.guard, s, t_bool());
     s = g.s;
-    if (!s.ok) { return s; }
-    if (!is_bool(s.values[g.id])) { return fail(s, "match guard type"); }
+    if (!s.ok) { return Gate { s: s, from: 0 - 1 }; }
+    if (!is_bool(s.values[g.id])) { return Gate { s: fail(s, "match guard type"), from: 0 - 1 }; }
     var pred: i32 = s.cur.id;
     var body: i32 = s.next_block;
     s = terminate(State { ...s, next_block: body + 1 }, t_brif(g.id, body, next));
-    return open(s, body, [pred]);
+    return Gate { s: open(s, body, [pred]), from: pred };
 }
 
 // The predecessors of the next arm's test: the failed test, and the failed
 // guard when the arm has one.
-function next_preds(a: ast.MatchArm, pred: i32, id: i32): i32[] {
-    if (a.has_guard) { return [pred, id]; }
+function next_preds(pred: i32, from: i32): i32[] {
+    if (from >= 0) { return [pred, from]; }
     return [pred];
+}
+
+// A pattern spelled with the union's own name ahead of the variant names the
+// variant; a head naming anything else is refused.
+function unqualified(pv: ast.PatVariant, owner: string): ast.PatVariant {
+    if (!qualified(pv.type_name)) { return pv; }
+    var dot: i32 = util.index_of_sub(pv.type_name, ".");
+    if (slice_unchecked(pv.type_name, 0, dot) != owner) { return pv; }
+    return ast.PatVariant { ...pv, type_name: slice_unchecked(pv.type_name, dot + 1, pv.type_name.len()) + "" };
 }
 
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
+    pv = unqualified(pv, owner);
     var layout: i32 = union_layout(s, owner);
     var shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
     var why: string = pattern_error(a, pv, shape, layout);
@@ -1930,10 +1977,10 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     s = terminate(test.s, t_brif(test.id, id, next));
     var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-    opened = guard_gate(a, opened, next);
-    if (!opened.ok) { return Arms { ...arms, s: opened }; }
-    var done: Arm = arm_body(a.body, opened, join, count, scope, ty);
-    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(a, pred, id)) };
+    var gate: Gate = guard_gate(a, opened, next);
+    if (!gate.s.ok) { return Arms { ...arms, s: gate.s }; }
+    var done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, gate.from)) };
     return collect(arms, done);
 }
 
@@ -1966,10 +2013,10 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
     }
     var next: i32 = id + 1;
     s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
-    var opened: State = guard_gate(a, open(State { ...s, vals: entry }, id, [pred]), next);
-    if (!opened.ok) { return Arms { ...arms, s: opened }; }
-    var done: Arm = arm_body(a.body, opened, join, count, scope, ty);
-    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [id]) };
+    var gate: Gate = guard_gate(a, open(State { ...s, vals: entry }, id, [pred]), next);
+    if (!gate.s.ok) { return Arms { ...arms, s: gate.s }; }
+    var done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [gate.from]) };
     return collect(arms, done);
 }
 
@@ -1990,9 +2037,9 @@ function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
     return out;
 }
 
-function arm_variant_name(a: ast.MatchArm): string {
+function arm_variant_name(a: ast.MatchArm, owner: string): string {
     if (a.has_guard || a.alt_cont) { return ""; }
-    if let ast.PatVariant(pv) = a.pattern { return pv.type_name; }
+    if let ast.PatVariant(pv) = a.pattern { return unqualified(pv, owner).type_name; }
     return "";
 }
 
@@ -2004,7 +2051,7 @@ function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i
     if (declared.len() == 0 || m.arms.len() != declared.len()) { return false; }
     var named: string[] = [];
     for a in m.arms {
-        var name: string = arm_variant_name(a);
+        var name: string = arm_variant_name(a, union_name(whole));
         if (util.index_of_str(declared, name) < 0) { return false; }
         if (util.index_of_str(named, name) >= 0) { return false; }
         named = named.append(name);

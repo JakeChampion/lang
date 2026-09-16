@@ -210,9 +210,15 @@ Unsupported constructs refuse the whole function with a reason.
   (`semrecords.Enum`) is its union identity and every variant's field shape,
   entered into the function's schema table beside the record schemas. Arms
   are tested in declaration order and each test's false edge enters the next,
-  so an arm after a wildcard is unreachable and is not produced. A
-  qualified pattern (`Shape.Dot`), a nested, tuple, struct-field, literal or
-  `@` pattern, and a non-enum scrutinee are refused.
+  so an arm after a wildcard is unreachable and is not produced. A pattern
+  may be spelled with the union's own name ahead of the variant
+  (`Shape.Dot`). A nested, tuple, struct-field, literal or `@` pattern, and a
+  non-enum scrutinee are refused.
+- Paths headed by a TYPE name. `E.A(7)` and `E.B` construct the variant of the
+  enum they name, `Option.Some(k)` the builtin's; `Point.make(3, 4)` calls the
+  associated function an impl declared on the struct, which the contract
+  table keys the way it keys a method (`Point.make`) and whose parameters
+  are the declared ones, with no receiver. A bound name shadows the type.
 
   A match whose unguarded arms NAME distinct variants, as many as the union
   declares, is TOTAL: a value is one of them, so the last arm is entered
