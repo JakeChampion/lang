@@ -129,6 +129,8 @@ type Assembler struct {
 	// encoding oracles compare .text byte for byte with GNU as, which pads
 	// nothing; the compiler driver turns it on for the programs it links.
 	alignBranches bool
+	// relaxPasses counts the passes the last relaxation took to settle.
+	relaxPasses int
 	// alignBase is the address .text offset 0 loads at, modulo 32: the
 	// boundaries are the CPU's, in addresses, and the linker places .text
 	// behind the ELF headers rather than on a line.

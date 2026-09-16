@@ -1,6 +1,7 @@
 package x86_64
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -202,5 +203,36 @@ func TestRelaxGasSnippets(t *testing.T) {
 		if got := asm(t, c.src); got != c.want {
 			t.Errorf("%s = %s, want %s", c.name, got, c.want)
 		}
+	}
+}
+
+// Relaxation settles in a few passes however many pads the text holds: the
+// SSA backend aligns every function, and pinning one branch per pass with
+// a whole-text layout in between made a program of a few thousand
+// functions, each with a branch that has to grow, take hours to assemble.
+func TestRelaxSettlesInAFewPassesAcrossManyPads(t *testing.T) {
+	var sb strings.Builder
+	const funcs = 4000
+	for i := 0; i < funcs; i++ {
+		fmt.Fprintf(&sb, ".p2align 4\nF%d:\njmp E%d\n%sE%d:\nret\n", i, i, nops(200), i)
+	}
+	a, err := ParseProgram(sb.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.TextLen(); err != nil {
+		t.Fatal(err)
+	}
+	if a.relaxPasses > 3 {
+		t.Errorf("relaxation took %d passes over %d aligned functions, want at most 3 (one to grow every branch, one to confirm)", a.relaxPasses, funcs)
+	}
+	long := 0
+	for _, e := range a.relaxEvents {
+		if e.align == 0 && !e.fixed && !e.short {
+			long++
+		}
+	}
+	if long != funcs {
+		t.Errorf("%d branches stayed long, want all %d: each jumps over 200 bytes", long, funcs)
 	}
 }
