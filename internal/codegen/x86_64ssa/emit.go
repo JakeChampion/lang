@@ -205,7 +205,7 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 	e := &emitter{
 		f:        f,
 		alloc:    alloc,
-		uses:     ssa.BuildUses(f),
+		uses:     alloc.Uses,
 		numAlloc: numAlloc,
 		folded:   foldableConsts(f),
 		s0:       numAlloc, s1: numAlloc + 1, s2: numAlloc + 2, s3: numAlloc + 3,
