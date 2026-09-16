@@ -142,6 +142,13 @@ include the rc header, and the element-retaining `__fern_arr_push_grow_*` and
 `__fern_arr_cow_inplace_str` spellings have their own bodies rather than
 aliasing the plain helpers, for the reason given above.
 
+A `MemAlloc` whose size is a constant in the exact 16-byte tier pops its
+class's list inline and calls the trampoline only when the list is empty,
+and a `__fern_box_free` of a constant size pushes inline; every other
+request goes through `__alloc` and `__free` as above. The three rc
+primitives are rendered inline at their call sites too, exactly as their
+helper bodies read.
+
 Its string producers all allocate through `__alloc` too (`__str_concat`,
 `__str_slice`, `string_from_bytes_unchecked` and the rest; `Reader.read_chunk`
 still bumps the cursor itself so it can rewind, but rounds the block to the

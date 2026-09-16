@@ -77,6 +77,9 @@ type Inst struct {
 	W    int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
 
 	// SrcImm (BinOp/SetCmp): the right operand is Imm rather than reg[Src].
+	// On a MemAlloc, or a Call to __fern_box_free, it says the size is the
+	// constant Imm as well as reg[Src] / the size argument's home, so a
+	// renderer can pick the freelist class at compile time.
 	// The constant that would have been materialised has every use in this
 	// position, so no register ever holds it.
 	SrcImm bool
@@ -206,6 +209,7 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 		idx:        map[*ssa.Block]int{},
 		phiTempCap: maxPhiCount(f),
 		strLen:     map[int32]int{},
+		consts:     map[int32]int64{},
 		// A register is caller-saved under this target iff it is not in the
 		// callee-saved partition. nil mask => whole file caller-saved (arm64).
 		callerSaved: func(r int) bool { return calleeSaved == nil || !calleeSaved[r] },
@@ -214,6 +218,9 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 		for _, op := range b.Ops {
 			if op.Kind == ssa.OpConstString && op.Result.IsValid() {
 				e.strLen[op.Result.ID] = len(op.Str)
+			}
+			if op.Kind == ssa.OpConstInt && op.Result.IsValid() {
+				e.consts[op.Result.ID] = op.Imm
 			}
 		}
 	}
@@ -297,6 +304,9 @@ type emitter struct {
 	phiTempCap  int
 	numSlots    int
 	strLen      map[int32]int // OpConstString result ID -> literal byte length
+	// consts is every OpConstInt result's value, for the sites that can use a
+	// size known at compile time (MemAlloc, __fern_box_free).
+	consts map[int32]int64
 
 	cur []Inst // instruction accumulator for the block being emitted
 }
@@ -894,7 +904,15 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		saveRegs, saveSet := e.callSaveRegs(op)
 		dst := e.callResultDst(op.Result, e.s2)
-		e.push(Inst{Op: Call, Dst: dst, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		call := Inst{Op: Call, Dst: dst, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet}
+		// A box released at a constant size names its freelist class at
+		// compile time; the renderer that can push it inline reads Imm.
+		if op.Str == "__fern_box_free" && len(op.Args) == 2 {
+			if n, ok := e.consts[op.Args[1].ID]; ok {
+				call.Imm, call.SrcImm = n, true
+			}
+		}
+		e.push(call)
 		e.place(op.Result, dst)
 		return nil
 
@@ -1012,7 +1030,14 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MemAlloc, Dst: e.s2, Src: size})
+		alloc := Inst{Op: MemAlloc, Dst: e.s2, Src: size}
+		// A constant size names its freelist class at compile time; Src still
+		// carries it for the renderers and the interpreter that allocate
+		// through the runtime.
+		if n, ok := e.consts[op.Args[0].ID]; ok {
+			alloc.Imm, alloc.SrcImm = n, true
+		}
+		e.push(alloc)
 		e.place(op.Result, e.s2)
 		return nil
 

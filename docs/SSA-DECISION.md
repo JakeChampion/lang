@@ -304,12 +304,29 @@ carries; the epic's size goal is measured against the flat backend, and the
 module is still smaller than its flat twin. arm64ssa still calls the helpers;
 whether it takes the same trade is its own measurement.
 
-What the same profile names next: `enum_match` runs 3.3x the flat build's
-time on 1.34x its instructions, and the profile is `make` / the enum drop
-with `__ssa_alloc_pres`, `__alloc`, `__free` and `__fern_box_free` per node —
-the allocation trampoline (nine pushes and a `pushfq` around every
-allocation) is the cost, and a constant-size `OpAlloc` knows its class at
-compile time.
+**The allocation fast path, the same day.** `enum_match` ran 3.3x the flat
+build's time on 1.34x its instructions, with no page faults and fewer
+mispredicted branches: the profile was `make` and the enum drop with
+`__ssa_alloc_pres`, `__alloc`, `__free` and `__fern_box_free` per node, and
+the allocation trampoline (nine pushes and a `pushfq`/`popfq` around every
+allocation) was the cost. A constant-size `OpAlloc` names its freelist class
+at compile time, so it pops that class's list inline and takes the
+trampoline only when the list is empty; a `__fern_box_free` of a constant
+size pushes inline (`allocinline.go`, the exact 16-byte tier only). Best of
+five, ratio to the flat backend:
+
+| bench | before | after | static |
+| --- | --- | --- | --- |
+| `ordmap_insert` | 1.21x | **0.95x** | +7.4% |
+| `pmap_insert` | 1.28x | **1.12x** | +4.9% |
+| `pvec_with` | 1.32x | **1.12x** | +4.9% |
+| `enum_match` | 3.25x | **2.33x** | +3.4% |
+| `struct_drop` | 2.03x | 1.82x | +0.7% |
+| `map_int`, `array_append`, `string_build` | | unchanged | 0% |
+
+`enum_match` and `struct_drop` still pay the drop side: the per-type drop
+helpers call `__fern_str_dec` and `__fern_box_free`, which call `__free`,
+which computes the class again for a size it was handed in a register.
 
 ### Per-backend disposition
 
