@@ -473,6 +473,12 @@ type lifter struct {
 	// OpIf/OpElse/OpEnd. nil after OpReturn/OpReturnVoid.
 	cur *Block
 
+	// deadDepth counts the scopes opened while cur is nil. Their ops
+	// never run, so they open no scope of their own; only their OpEnds
+	// are matched, so the enclosing live scope's OpElse/OpEnd is still
+	// the one that reaches the scope stack.
+	deadDepth int
+
 	// Operand stack — mirrors the legacy IR's stack-machine
 	// shape. Values pushed/popped by each Op.
 	stack []Value
@@ -540,7 +546,18 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	// Every other op handler bails when cur is nil.
 	if l.cur == nil {
 		switch op.Kind {
-		case ir.OpEnd, ir.OpElse:
+		case ir.OpIf, ir.OpBlock, ir.OpLoop:
+			l.deadDepth++
+			return nil
+		case ir.OpEnd:
+			if l.deadDepth > 0 {
+				l.deadDepth--
+				return nil
+			}
+		case ir.OpElse:
+			if l.deadDepth > 0 {
+				return nil
+			}
 		default:
 			return nil
 		}

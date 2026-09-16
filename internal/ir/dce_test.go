@@ -228,3 +228,24 @@ func TestDCEKeepsStructuredCFBalanced(t *testing.T) {
 		}
 	}
 }
+
+// A pair return leaves the function like the other two returns, so the
+// ops after it in the same scope are dead. The lifter met the survivors
+// as an `else` with no `if` on its scope stack.
+func TestDCEDropsOpsAfterReturnPair(t *testing.T) {
+	fn := &Func{
+		Name: "f",
+		Ops: []Op{
+			{Kind: OpConstI32, I32: 1},
+			{Kind: OpConstI32, I32: 2},
+			{Kind: OpReturnPair},
+			{Kind: OpConstI32, I32: 3},
+			{Kind: OpDrop},
+		},
+	}
+	p := &Program{Funcs: []*Func{fn}}
+	EliminateDeadCode(p)
+	if len(fn.Ops) != 3 || fn.Ops[2].Kind != OpReturnPair {
+		t.Fatalf("got %d ops, want the two consts and the return_pair:\n%s", len(fn.Ops), p)
+	}
+}
