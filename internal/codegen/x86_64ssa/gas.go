@@ -768,10 +768,12 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	var out []string
 	// 16-byte stack alignment at the call: rsp is 16-aligned in the body, and
 	// the pad, the saved registers and the stack arguments are all that shift
-	// it, so pad to make their combined count even.
-	pad := ((len(saved) + nStack) % 2) * 8
-	if pad != 0 {
-		out = append(out, "sub rsp, 8")
+	// it, so pad to make their combined count even. The pad is one more push
+	// rather than a stack adjust: a push is one or two bytes where the adjust
+	// is four, and a call site pays it twice.
+	pad := (len(saved)+nStack)%2 != 0
+	if pad {
+		out = append(out, fmt.Sprintf("push %s", padReg(saved)))
 	}
 	for _, r := range saved {
 		out = append(out, fmt.Sprintf("push %s", reg(r)))
@@ -787,15 +789,17 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	// ir.CodegenAlias resolves a Map / MapIter call onto the stdlib `_impl`
 	// that implements it; the driver keeps those alive under the same map.
 	out = append(out, fmt.Sprintf("call %s", fnLabel(ir.CodegenAlias(in.Callee))))
-	if nStack > 0 {
-		out = append(out, fmt.Sprintf("add rsp, %d", 8*nStack))
+	// With nothing saved the pad sits directly under the stack arguments and
+	// leaves with them in the one adjust.
+	if drop := nStack + padSlots(pad, saved); drop > 0 {
+		out = append(out, fmt.Sprintf("add rsp, %d", 8*drop))
 	}
 	restore := func() {
 		for i := len(saved) - 1; i >= 0; i-- {
 			out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
 		}
-		if pad != 0 {
-			out = append(out, "add rsp, 8")
+		if pad && len(saved) > 0 {
+			out = append(out, fmt.Sprintf("pop %s", reg(saved[0])))
 		}
 	}
 	maskDst := func() {
@@ -840,6 +844,27 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst2), reg(s0))) // place payload
 	}
 	return out, nil
+}
+
+// padReg names the register whose extra push realigns the stack at a call
+// site: the first saved register, so the matching pop restores a value that
+// is being restored anyway, or rax when nothing is saved, which the call
+// overwrites and the pad then leaves the stack with the arguments.
+func padReg(saved []int) string {
+	if len(saved) > 0 {
+		return reg(saved[0])
+	}
+	return "rax"
+}
+
+// padSlots is the number of pad slots the post-call stack adjust drops: one
+// when the pad was pushed with nothing saved, since only then is there no pop
+// to take it.
+func padSlots(pad bool, saved []int) int {
+	if pad && len(saved) == 0 {
+		return 1
+	}
+	return 0
 }
 
 // inSaveSet reports whether the call-save set contains register r — i.e. whether
@@ -897,9 +922,9 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 	// Everything below the call shifts rsp by 8: the pad, the saved registers,
 	// the stashed target, and the stack arguments. The register-half pushes are
 	// popped again before the call, so they do not count.
-	pad := ((len(saved) + 1 + nStack) % 2) * 8
-	if pad != 0 {
-		out = append(out, "sub rsp, 8")
+	pad := (len(saved)+1+nStack)%2 != 0
+	if pad {
+		out = append(out, fmt.Sprintf("push %s", padReg(saved)))
 	}
 	for _, r := range saved {
 		out = append(out, fmt.Sprintf("push %s", reg(r)))
@@ -934,13 +959,14 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 		fmt.Sprintf("mov rax, qword ptr [rsp + %d]", 8*nStack), // recover the stashed target
 		"call rax",
 		fmt.Sprintf("mov %s, rax", reg(scratch)), // capture result
-		fmt.Sprintf("add rsp, %d", 8*(nStack+1)), // drop the stack args + the stash
+		// drop the stack args, the stash, and the pad when nothing is saved
+		fmt.Sprintf("add rsp, %d", 8*(nStack+1+padSlots(pad, saved))),
 	)
 	for i := len(saved) - 1; i >= 0; i-- {
 		out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
 	}
-	if pad != 0 {
-		out = append(out, "add rsp, 8")
+	if pad && len(saved) > 0 {
+		out = append(out, fmt.Sprintf("pop %s", reg(saved[0])))
 	}
 	out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch))) // place result
 	if fix := maskFix(in.Dst, in.W); fix != "" {
