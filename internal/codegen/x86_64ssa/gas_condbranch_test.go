@@ -107,10 +107,10 @@ func emitOne(t *testing.T, f *ssa.Func) string {
 
 // The shape #6979 item 3 asks for: cmp and jcc, nothing between them. The 0/1
 // the branch used to test, the widening that followed it, and the copy that
-// only existed to give the comparison a left operand are all gone. The true
-// arm is the block laid out next, so the branch is on the INVERSE condition
-// to the false arm and the true arm is reached by falling through: one jcc
-// and no jmp at all.
+// only existed to give the comparison a left operand are all gone. The layout
+// puts the false arm next, so the branch is the predicate itself to the true
+// arm and the false arm is reached by falling through: one jcc and no jmp at
+// all.
 func TestFusedBranchIsCmpAndJccAlone(t *testing.T) {
 	body := emitOne(t, cmpBranchOnly(ssa.OpLt))
 	for _, gone := range []string{"setl", "movzx", "test ", "jmp "} {
@@ -118,8 +118,8 @@ func TestFusedBranchIsCmpAndJccAlone(t *testing.T) {
 			t.Errorf("fused branch still emits %q:\n%s", gone, body)
 		}
 	}
-	if !strings.Contains(body, "\tcmp rax, rcx\n\tjge .L_fn_f_b2\n.L_fn_f_b1:") {
-		t.Errorf("fused branch is not `cmp` then `jge` over the fallthrough arm:\n%s", body)
+	if !strings.Contains(body, "\tcmp rax, rcx\n\tjl .L_fn_f_b1\n.L_fn_f_b2:") {
+		t.Errorf("fused branch is not `cmp` then `jl` to the true arm over the fallthrough false arm:\n%s", body)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestUnfusedBranchKeepsTheBoolButStillBranchesOnFlags(t *testing.T) {
 	if strings.Contains(body, "test ") {
 		t.Errorf("branch still tests the materialised 0/1:\n%s", body)
 	}
-	if !strings.Contains(body, "\tjge .L_fn_f_b") {
+	if !strings.Contains(body, "\tjl .L_fn_f_b") {
 		t.Errorf("branch does not use a direct jcc on the flags:\n%s", body)
 	}
 }

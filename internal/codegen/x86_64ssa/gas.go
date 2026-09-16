@@ -315,11 +315,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", heapBaseSym)
 		w("\t.quad 0")
 	}
-	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") {
+	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") || strings.Contains(b.String(), freelistSym) {
 		emitFreelistBss(w)
 	}
 	emitProcBss(w, withArgs, withEnv)
-	emitHelperBss(w, helpers)
+	emitHelperBss(w, helpers, strings.Contains(b.String(), rcUnderflowSym))
 	w(".section .note.GNU-stack,\"\",@progbits")
 	asm := b.String()
 	if err := checkNoDanglingCalls(asm); err != nil {
@@ -394,7 +394,19 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 // with the matching save/restore. `restore` emits the callee-saved reloads that
 // precede each return.
 func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
-	for bi, blk := range p.Blocks {
+	order := LayoutOrder(p)
+	// nextInLayout[bi] is the block physically following bi in the emitted
+	// order, or -1 for the last one: a branch to it needs no instruction.
+	nextInLayout := make([]int, len(p.Blocks))
+	for i := range nextInLayout {
+		nextInLayout[i] = -1
+	}
+	for oi := 0; oi+1 < len(order); oi++ {
+		nextInLayout[order[oi]] = order[oi+1]
+	}
+	for _, bi := range order {
+		blk := p.Blocks[bi]
+		next := nextInLayout[bi]
 		w(".L_%s_b%d:", label, bi)
 		insts, cmpLine, jcc := fuseBranchCmp(blk)
 		for ii, in := range insts {
@@ -407,6 +419,26 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			if lines, ok := inlinePokeLines(in, numAlloc); ok {
 				for _, l := range lines {
 					w("\t%s", l)
+				}
+				continue
+			}
+			if lines, ok := inlineAllocLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
+				}
+				continue
+			}
+			if lines, ok := inlineRcLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
 				}
 				continue
 			}
@@ -499,7 +531,7 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			w("\tret")
 		case TJmp:
 			// A block that ends where its successor begins falls through.
-			if blk.Term.Target != bi+1 {
+			if blk.Term.Target != next {
 				w("\tjmp .L_%s_b%d", label, blk.Term.Target)
 			}
 		case TBrIf:
@@ -508,20 +540,20 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			// condition to the false arm and fall through to the true one.
 			t, f := blk.Term.True, blk.Term.False
 			if jcc != "" {
-				if inv, ok := invertJcc(jcc); ok && t == bi+1 && f != bi+1 {
+				if inv, ok := invertJcc(jcc); ok && t == next && f != next {
 					w("\t%s .L_%s_b%d", inv, label, f)
 					break
 				}
 				w("\t%s .L_%s_b%d", jcc, label, t)
 			} else {
 				w("\ttest %s, %s", reg(blk.Term.CondReg), reg(blk.Term.CondReg))
-				if t == bi+1 && f != bi+1 {
+				if t == next && f != next {
 					w("\tjz .L_%s_b%d", label, f)
 					break
 				}
 				w("\tjnz .L_%s_b%d", label, t)
 			}
-			if f != bi+1 {
+			if f != next {
 				w("\tjmp .L_%s_b%d", label, f)
 			}
 		default:
@@ -2349,7 +2381,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if in.Op == Call || in.Op == CallPair {
+				if (in.Op == Call || in.Op == CallPair) && !(in.Op == Call && (rcInline[in.Callee] || boxFreeInline(in))) {
 					add(in.Callee)
 				}
 			}
@@ -4531,10 +4563,10 @@ var (
 	rdxReg = gpIndex("rdx")
 )
 
-// shiftSeq renders a variable shift or rotate (count in cl). dst holds the value, src the
-// count. rcx is preserved with push/pop so a live value there survives; the
-// count is copied into rcx and the shift reads cl. dst is a scratch reg (never
-// rcx), so `<op> dst, cl` is safe.
+// shiftSeq renders a shift or rotate. dst holds the value; the count is the
+// immediate when the instruction carries one, else src, copied into rcx (which
+// is preserved with push/pop so a live value there survives) and read as cl.
+// dst is a scratch reg (never rcx), so `<op> dst, cl` is safe.
 func shiftSeq(in Inst) string {
 	var mnem string
 	switch in.K {
@@ -4564,8 +4596,15 @@ func shiftSeq(in Inst) string {
 	// The 32-bit form reads only the low 32 bits; the caller's trailing maskFix
 	// re-sign-extends to the storage convention.
 	dst := reg(in.Dst)
+	bits := int64(64)
 	if in.W != 64 {
 		dst = reg32[in.Dst]
+		bits = 32
+	}
+	if in.SrcImm {
+		// A constant count is the instruction's own imm8, masked as the
+		// register form's would be.
+		return fmt.Sprintf("%s %s, %d", mnem, dst, in.Imm&(bits-1))
 	}
 	return strings.Join([]string{
 		"push rcx",
