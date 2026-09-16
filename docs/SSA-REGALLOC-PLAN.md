@@ -927,7 +927,7 @@ byte count. Measure that against a base-matched build, not from this table.
 
 ### Two divergences the differential lane cannot see
 
-`arm64SSADiffCompare` compares exit status, signal and **stdout** — never
+`ssaDiffCompare` compares exit status, signal and **stdout** — never
 stderr. Both of these are inside the covered subset that `docs/SSA-DECISION.md`
 holds to byte-identical behaviour:
 
