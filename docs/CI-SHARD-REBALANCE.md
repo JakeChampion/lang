@@ -1,7 +1,7 @@
 # Self-host shard rebalance candidate
 
-Status: private candidate with successful held-out replay. Live validation
-and revalidation after the buffered compiler rollout remain required.
+Status: private candidate with successful held-out replays before and after
+the buffered compiler rollout. Live validation remains required.
 
 The old weights include terminal test durations that omit parallel children.
 The corrected collector measures each top-level test's full active lifetime.
@@ -64,6 +64,29 @@ Reproduction: `/tmp/lang-ci-replay-heldout.py`; downloaded binaries, timing
 artifacts, recovered inventory and report:
 `/tmp/lang-ci-heldout-35033613487`.
 
+### Buffered compiler validation
+
+The same frozen table was independently replayed against successful PR run
+[35036653947](https://github.com/JakeChampion/lang/actions/runs/35036653947),
+source `a6e4ca82aeb4e8fe335223e4a5dba55fbacd27f1`, now merged in #9411.
+The replay requires an authoritative successful run and matching revision.
+Its hash-checked binaries contain 2,602 selected tests, including the new
+`TestSelfHostOpBufferSnapshots`, with no removed tests. All 2,596 observations
+match their original shard and the same six tests remain untimed.
+
+| Assignment | Longest recorded active-time sum | Spread |
+| --- | ---: | ---: |
+| Original | 860.38 s | 403.58 s |
+| Frozen candidate | 743.02 s | 73.20 s |
+
+The new test uses the existing one-second scheduling fallback. No measured
+duration or weight was invented for it. Every selected test remains assigned
+exactly once. Artifacts and report:
+`/tmp/lang-ci-heldout-buffer-35036653947`.
+
+These results support the candidate after the compiler change, but remain
+recorded-duration replays rather than live execution of the new assignment.
+
 ## Frozen candidate and next gate
 
 The uncommented weight rows have SHA256
@@ -73,9 +96,10 @@ or untimed tests in subsequent validation instead of silently dropping them.
 Do not tune this table using the validation run and continue calling that
 same run independent evidence.
 
-The buffered compiler candidate changes execution costs and adds a test.
-Revalidate against its resulting inventory and observations before publishing
-this later rollout. Preserve all test selection, timeouts and outcome gates.
+The buffered compiler's inventory and observations have now been validated.
+The next gate is successful live CI with the frozen assignment. Preserve all
+test selection, timeouts and outcome gates, and report actual shard execution
+and fixture behavior separately from the replay's predicted work sums.
 
 Local replay driver: `/tmp/lang-ci-replay-two-runs.py`. Fixed rows, assignments,
 per-run inventories and report: `/tmp/lang-ci-two-lifetime-replays`.
