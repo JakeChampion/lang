@@ -65,6 +65,9 @@ type Allocation struct {
 	// the values the callee must not clobber, hence the ones the caller saves.
 	// Nil until LinearScan populates it.
 	CallLive map[*Op]map[int32]bool
+	// Uses is the def-use index LinearScan built over f, for the emit phase
+	// to read rather than build again. Nil until LinearScan populates it.
+	Uses *Uses
 }
 
 // LiveAcrossOp returns the values live across the call op `op`, and whether the
@@ -279,6 +282,7 @@ func LinearScan(f *Func, target Target) *Allocation {
 	alloc := allocateLinear(iv, target, crosses, spillOverSave)
 	alloc.OpPos = opPos
 	alloc.CallLive = callLive
+	alloc.Uses = uses
 	return alloc
 }
 
