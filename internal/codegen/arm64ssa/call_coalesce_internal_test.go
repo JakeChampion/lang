@@ -15,7 +15,7 @@ import (
 // exist.
 func TestCallResultStagingDependsOnTheSaveSet(t *testing.T) {
 	const numAlloc = DefaultNumAlloc
-	scratch := numAlloc + 3 // what emitFuncBody passes: p.NumRegFile - 1
+	scratch := numAlloc + 3 // what emitFunc passes: p.NumRegFile - 1
 
 	render := func(saveRegs []int) string {
 		t.Helper()
