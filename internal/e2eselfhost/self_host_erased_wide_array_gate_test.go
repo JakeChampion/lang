@@ -33,6 +33,24 @@ var erasedWideArrayFixedCases = []struct {
 	name string
 	src  string
 }{
+	// The array-method instance `__arrm_flat_map__i32` keeps `U[]` in its
+	// result; the semantic lowering binds `U` from the lambda and produces the
+	// instance at the wide element, so these compile and answer as the
+	// interpreter does.
+	{"flat_map_method_i64", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: i64[] = xs.flat_map((x: i32) => [(x as i64) * 2i64]);
+    if (w[2] != 6i64) { return 2; }
+    return 11;
+}`},
+	{"flat_map_method_f64", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: f64[] = xs.flat_map((x: i32) => [(x as f64) * 1.5]);
+    if (w[2] < 4.4) { return 2; }
+    return 11;
+}`},
 	{"reverse_f64", `import "std/array";
 function main(): i32 {
     var xs: f64[] = [1.5, 2.5, 4.5];
@@ -73,27 +91,15 @@ function main(): i32 {
 	// (#6287). `xs.map(f)` is folded to `__arrm_map__<elem>`, whose `T` the
 	// receiver fixes but whose `U` stays erased — so the wide element arrives on
 	// the RESULT side, which the param-direction gate above cannot see. These
-	// answered wrong (`flat_map` into `i64[]` returned the right length and the
-	// wrong values) or trapped, with the compiler exiting 0.
+	// answered wrong or trapped, with the compiler exiting 0. The `flat_map`
+	// rows moved to the fixed list once a type variable anywhere in a
+	// spelling marked the instance a template: the semantic lowering binds
+	// `U` from the lambda and produces it at the concrete element.
 	{"map_method_i64", `import "std/array";
 function main(): i32 {
     var xs: i32[] = [1, 2, 3];
     var w: i64[] = xs.map((x: i32) => (x as i64) * 2i64);
     if (w[2] != 6i64) { return 2; }
-    return 11;
-}`},
-	{"flat_map_method_i64", `import "std/array";
-function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: i64[] = xs.flat_map((x: i32) => [(x as i64) * 2i64]);
-    if (w[2] != 6i64) { return 2; }
-    return 11;
-}`},
-	{"flat_map_method_f64", `import "std/array";
-function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: f64[] = xs.flat_map((x: i32) => [(x as f64) * 1.5]);
-    if (w[2] < 4.4) { return 2; }
     return 11;
 }`},
 	// The result reaches its wide destination by `return` and by assignment, not
