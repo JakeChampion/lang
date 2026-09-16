@@ -484,7 +484,11 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
 pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
     if (!sem_ir_on()) { return ircore.no_sub(); }
     var built: semsource.Built = semsource.build_module(mod);
-    var r: Rows = prune(rows_of(mod, built, structs), mod, built);
+    util.arr_push_cliff_report("sem:built", 0);
+    var rows: Rows = rows_of(mod, built, structs);
+    util.arr_push_cliff_report("sem:lowered", 0);
+    var r: Rows = prune(rows, mod, built);
+    util.arr_push_cliff_report("sem:pruned", 0);
     var sigs: irlower.FnSigs = base;
     var helpers: irlower.LowerResult[] = [];
     var bodies: irlower.LowerResult[] = [];
@@ -526,6 +530,7 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     }
     if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, mod.funcs, structs, seeds); }
     if (consumed.len() > 0) { sigs = irlower.consume_sigs(sigs, mod.funcs, consumed); }
+    util.arr_push_cliff_report("sem:substituted", 0);
     // Production is all or nothing: a module with a refused declaration keeps
     // the AST lowering whole, since a produced body beside an AST-lowered one
     // is two memory conventions on one module, sound only where the contracts
