@@ -20,7 +20,7 @@ func TestArrPushGrowSizesIn64BitsAndRefusesOverflow(t *testing.T) {
 		b.WriteByte('\n')
 	})
 	body := b.String()
-	for _, want := range []string{"shl r9, 1", "imul r11, rdx", "cmp r11, 2147483647", "ja .Lssa_apg_sizebad", "imul rax, rdx", ".Lssa_apg_sizebad:\n\tmov edi, 134"} {
+	for _, want := range []string{"shl r9, 1", "imul r11, rdx", "cmp r11, 2147483647", "ja .Lssa_apg_sizebad", "imul rax, rdx", ".Lssa_apg_sizebad:\n\tjmp .Lssa_abort_alloc_size"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("__fern_arr_push_grow lacks %q:\n%s", want, body)
 		}

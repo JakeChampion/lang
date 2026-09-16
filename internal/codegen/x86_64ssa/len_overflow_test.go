@@ -35,13 +35,8 @@ func TestSSAStrConcatChecksLengthCeiling(t *testing.T) {
 		"lea r8, [rcx + rdx]",
 		"cmp r8, 2147483647",
 		"ja .Lssa_strcat_len_overflow",
-		".Lssa_strcat_len_overflow:")
-	if !strings.Contains(body, fmt.Sprintf("mov edi, %d", lenOverflowExit)) {
-		t.Errorf("__str_concat's overflow abort does not exit %d:\n%s", lenOverflowExit, body)
-	}
-	if !strings.Contains(body, fmt.Sprintf("mov edx, %d", len(msgAllocSizeOutOfRange))) {
-		t.Error("__str_concat's overflow abort writes the wrong diagnostic length")
-	}
+		".Lssa_strcat_len_overflow:",
+		"jmp "+abortAllocSize)
 }
 
 func TestSSAAllocU8RejectsNegativeLength(t *testing.T) {
