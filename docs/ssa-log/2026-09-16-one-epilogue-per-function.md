@@ -5,10 +5,12 @@
 ## Why
 
 Emitting call-frame information (#9495, #9500) made the cost of this emitter's
-shape visible. It returns from every block that ends in a return — 17,766 sites
-on x86-64 and 16,669 on arm64 across the self-host driver, against roughly
-4,800 functions — where the stack-machine emitter jumps every return to one
-epilogue. Each of those sites carried a full teardown AND its own CFI bracket,
+shape visible. It returns from every block that ends in a return — 17,149 sites
+on x86-64 and 16,669 on arm64 across the self-host driver, against 4,807
+functions on each — where the stack-machine emitter jumps every return to one
+epilogue. Both counts come from decoding the `.eh_frame` rule programs out of
+the two driver images, so they are the same measurement on each target rather
+than two. Each of those sites carried a full teardown AND its own CFI bracket,
 because blocks are emitted in layout order and a rule left in effect would
 describe whatever block came next.
 

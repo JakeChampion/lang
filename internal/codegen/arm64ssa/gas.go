@@ -9469,11 +9469,10 @@ func (f frameLayout) inArg(k int) int { return f.bytes + 8*k }
 // costs a store and a load, while a missed register is handed back to the
 // caller clobbered with nothing failing until unrelated code reads it.
 //
-// The blocks are emitted once, into a buffer carrying a marker line where each
-// return's teardown goes, because nothing a block addresses moves with the
-// saved set: every slot it names sits below csBase. The prologue and the
-// teardown do move with it, so they are rendered after the scan, and they name
-// only registers already in the set.
+// The blocks are emitted once, into a buffer, because nothing a block
+// addresses moves with the saved set: every slot it names sits below csBase.
+// The prologue and the epilogue do move with it, so they are rendered after the
+// scan, and they name only registers already in the set.
 //
 // The parameter moves are scanned too, since a parameter's home can be a
 // callee-saved register the body itself never names. They are rendered twice

@@ -340,18 +340,18 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 
 	// Callee-saved registers this function actually clobbers. Per the System V
 	// ABI the function must preserve them for its caller, so they are pushed
-	// below the spill area and popped at every return. A leaf that touches none
+	// below the spill area and popped in the epilogue. A leaf that touches none
 	// of them pays nothing.
 	//
 	// The set is read back off the emitted text rather than predicted from the
 	// Program, because predicting it means keeping a list of every field and
 	// every helper that can name a register, and a list that falls behind drops
 	// a save silently — the caller gets a clobbered register and the failure
-	// surfaces as a wrong answer somewhere else entirely. So the body is emitted
-	// once into a buffer with a marker line standing in for each restore,
-	// scanned for what it mentions, and then copied out behind the prologue
-	// with the marker replaced by the pops. The pops cannot widen the set: they
-	// name only registers already in it.
+	// surfaces as a wrong answer somewhere else entirely. So the body is
+	// emitted once into a buffer, scanned for what it mentions, and then copied
+	// out behind the prologue, with the epilogue rendered after it. The
+	// epilogue's pops cannot widen the set: they name only registers already in
+	// it.
 	var body strings.Builder
 	bodyW := func(format string, args ...any) {
 		fmt.Fprintf(&body, format+"\n", args...)
@@ -400,7 +400,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	// or branching to it. A teardown at each return site needs its own CFI
 	// bracket, because blocks are emitted in layout order and more body can
 	// follow a return; one at the end needs none, and it is the whole of the
-	// difference between 17,766 teardowns and 5,087 across the self-host
+	// difference between 17,149 teardowns and 4,807 across the self-host
 	// driver.
 	if FuncReturns(p) {
 		w(".L_%s_epi:", label)

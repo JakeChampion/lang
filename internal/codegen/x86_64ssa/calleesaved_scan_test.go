@@ -25,9 +25,9 @@ func TestCalleeSavedInTokenisesRegisterNames(t *testing.T) {
 	}
 }
 
-// The restore marker the body is emitted with never reaches the output: every
-// return carries the pops instead, in reverse push order.
-func TestRestoreMarkerIsReplacedByPops(t *testing.T) {
+// The epilogue pops exactly what the prologue pushed, in reverse push order:
+// a register saved and not restored is handed back to the caller clobbered.
+func TestEpiloguePopsWhatTheProloguePushed(t *testing.T) {
 	g := ssa.NewFunc("g")
 	gx := g.AddParam()
 	ge := g.NewBlock()
