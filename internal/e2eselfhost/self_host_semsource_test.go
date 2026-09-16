@@ -70,10 +70,15 @@ function ordered(a: string, b: str): i32 {
     if (a >= b) { return 3; }
     return 0;
 }
-function refused_fallthrough(n: i32): i32 { if (n > 0) { return 1; } }
+// The checker's E052 refuses this body; the print driver annotates without
+// checking it, and the live end is the unreachable terminator a checked
+// body's desugared total match leaves behind.
+function ends_unreachable(n: i32): i32 { if (n > 0) { return 1; } }
 function destructure(): i32 { var (a, b) = (1, 2); return a + b; }
 function split_pair(p: (i32, i32[])): i32 { var (_, xs) = p; var (n, ys) = p; return n + xs.len() + ys.len(); }
-function refused_nested_destructure(): i32 { var (a, (b, c)) = (1, (2, 3)); return a + b + c; }
+function nested_destructure(): i32 { var (a, (b, c)) = (1, (2, 3)); return a + b + c; }
+function struct_destructure(b: Bag): i32 { var whole @ Bag { tag, .. } = b; return tag.len() + whole.items.len(); }
+function for_pair(xs: (i32, i32)[]): i32 { var t: i32 = 0; for (a, b) in xs { t = t + a * b; } return t; }
 function halve(n: i32): i32 { return n / 2; }
 function refused_global(): i32 { return loop_phi(2); }
 const LIMIT: i32 = 7;
@@ -134,14 +139,15 @@ function refused_generic_record(n: i32): i32 { var g: G[i32] = G { v: n }; retur
 // branch's are and join at a phi — the golden pins that join, and a reference
 // value makes it a unit of this function's own. An else-if nests one arm
 // inside another, and a scalar match-expression desugars to the same chain. A
-// block whose value comes from anywhere else — a general block body, whose
-// type the checker does not resolve either — is refused.
+// block with leading statements — a general block body, a match expression
+// the tuple desugar routes through a value local — runs them in the enclosing
+// block and takes its trailing return's value.
 function if_expr(n: i32): i32 { var k: i32 = if (n > 0) { 1 } else { 0 }; return k + n; }
 function if_expr_chain(n: i32): i32 { var k: i32 = if (n > 2) { 2 } else if (n > 0) { 1 } else { 0 }; return k; }
 function if_expr_ref(n: i32): i32[] { var xs: i32[] = if (n > 0) { [n] } else { [n, n] }; return xs; }
 function if_expr_local(n: i32): i32 { var k: i32 = if (n > 0) { var d: i32 = n * 2; d + 1 } else { 0 }; return k; }
 function match_expr(n: i32): i32 { var k: i32 = match (n) { 1 => 5, _ => 0 }; return k; }
-function refused_block_expr(n: i32): i32 { var k: i32 = { var m: i32 = n + 1; m * 2 }; return k; }
+function block_expr(n: i32): i32 { var k: i32 = { var m: i32 = n + 1; m * 2 }; return k; }
 struct Bag { items: i32[], tag: string }
 function mapped(xs: i32[], f: (i32) => i32): i32[] { var out: i32[] = []; for x in xs { out = out.append(f(x)); } return out; }
 // The lift replaces a function-value argument with the closure box it builds,
@@ -319,13 +325,13 @@ function shape_tag(s: Shape): i32 {
         Pair(a, ys) => { return a + ys[0]; }
     }
 }
-function refused_guard(s: Shape): i32 {
+function guarded_line(s: Shape): i32 {
     match (s) {
         Line(n) when n > 0 => { return n; },
         _ => { return 0; }
     }
 }
-function refused_qualified(s: Shape): i32 {
+function qualified_arm(s: Shape): i32 {
     match (s) {
         Shape.Dot => { return 1; },
         _ => { return 0; }
@@ -714,6 +720,17 @@ function poked(): i32 {
 // place its shape is written; a construction reaching a slot that spells none
 // has no shape to take.
 function refused_map_bare(k: string): i32 { return map_new(2).insert(k, 1).get_or(k, 0); }
+// A guard is read after the payload bindings and a false one leaves for the
+// next arm's test; the end of a value-returning body the checker proved
+// unreachable aborts.
+function guarded_and(o: Option[i32], k: i32): i32 { match (o) { Some(n) when k > 0 && n > 2 => { return n; }, _ => { return 0; } } }
+function guarded(o: Option[i32]): i32 {
+    match (o) {
+        Some(k) when k > 5 => { return k * 2; },
+        Some(k) => { return k; },
+        None => { return 0; },
+    }
+}
 // An integer key column holds no unit, so the map is freed whole and its
 // reads carry the integer key kind.
 function int_map_key(m: Map[i32, i32], n: i32): i32 { return m.get_or(n, 0); }
@@ -723,6 +740,10 @@ function int_map_key(m: Map[i32, i32], n: i32): i32 { return m.get_or(n, 0); }
 // payload.
 function vb_empty(k: i32): i32[] { var o: Option[i32] = Some(k); return (match (o) { Some(v) => [v, v], None => [] }); }
 function vb_bare(k: i32): i32 { return (match (Some(k)) { Some(v) => v + 1, None => 0 }); }
+// A match expression the tuple desugar routes through a value local: the
+// block's leading statements run in the enclosing block and its trailing
+// return reads the local.
+function tm_line(k: i32): i32 { var t = (k, 2); return match (t) { (1, b) => b * 10, (a, _) => a }; }
 // An address has no saturating or checked operator: the clamp is at a width
 // the type names, which is the target's, and the native checker refuses it.
 function refused_usize_sat(a: usize, b: usize): usize { return a +| b; }
@@ -1869,6 +1890,32 @@ struct WideRec { d: f64, n: i64, s: string }
     var (w, count) = (s, s.len());
     return w.len() + count;
 }
+// A nested tuple position is projected and destructured again, a struct
+// pattern's names are field projections, and the at-binder names the whole.
+struct Dp { k: i32, name: string, tail: i32[] }
+@noinline function mk_dp(n: i32): Dp { return Dp { k: n, name: "dp" + "!", tail: [n, n, n] }; }
+@noinline function struct_unpack(n: i32): i32 {
+    var Dp { k, name: nm, .. } = mk_dp(n);
+    return k + nm.len();
+}
+@noinline function at_unpack(n: i32): i32 {
+    var whole @ Dp { tail, .. } = mk_dp(n);
+    return tail.len() + whole.name.len() + whole.k;
+}
+@noinline function nested_unpack(n: i32): i32 {
+    var (a, (w, xs)) = (n, ("ab" + "c", [n, n]));
+    return a + w.len() + xs.len();
+}
+// A for header takes the same pattern a declaration does, destructuring
+// each element.
+@noinline function for_pairs(n: i32): i32 {
+    var xs: (i32, string)[] = [(n, "a" + "b"), (n + 1, "c")];
+    var total: i32 = 0;
+    for (k, w) in xs { total = total + k + w.len(); }
+    var deep: ((i32, i32), string)[] = [((n, 2), "x" + "y")];
+    for ((a, b), s) in deep { total = total + a * b + s.len(); }
+    return total;
+}
 // A module-level constant is a zero-parameter function to the parser, and a
 // bare reference to one is a call; a string constant hands back a unit the
 // reader owns.
@@ -2023,6 +2070,128 @@ function bit_round(x: f64): i32 { return f64_from_bits(f64_bits(x)) as i32; }
 struct Slot { c: Cell[i32], n: i32 }
 struct Note { w: Cell[string], n: i32 }
 enum Held { Bare(i32), Celled(Cell[i32], i32) }
+// A nested arm pattern desugars at parse time into a done-flag chain of
+// flat matches that falls through by construction; the checker reads the
+// chain as diverging when every arm returns, so the body's end is
+// unreachable and aborts rather than being refused. A guard is read after
+// the payload bindings and a false one falls to the next arm.
+enum In2 { Ok2(i32), Er2(i32) }
+enum Out2 { Pr(In2, In2), Qn(i32) }
+@noinline function nested_arms(v: Out2): i32 {
+    match (v) {
+        Pr(Ok2(a), Ok2(b)) => { return a + b; },
+        Pr(Ok2(a), _) => { return 100 + a; },
+        Pr(_, Ok2(b)) => { return 200 + b; },
+        Qn(n) => { return 1000 + n; },
+        _ => { return 0; },
+    }
+}
+@noinline function mk_out(k: i32): Out2 {
+    if (k == 0) { return Pr(Ok2(1), Ok2(2)); }
+    if (k == 1) { return Pr(Ok2(1), Er2(9)); }
+    if (k == 2) { return Pr(Er2(1), Ok2(5)); }
+    if (k == 3) { return Pr(Er2(1), Er2(2)); }
+    return Qn(4);
+}
+@noinline function nested_case(k: i32): i32 {
+    var v: Out2 = mk_out(k);
+    return nested_arms(v);
+}
+@noinline function guarded_pick(n: i32): i32 {
+    var o: Option[i32] = Some(n);
+    match (o) {
+        Some(k) when k > 5 => { return k * 2; },
+        Some(k) => { return k; },
+        None => { return 0; },
+    }
+}
+@noinline function guarded_words(short: boolean, min: i32): i32 {
+    var ws: string[] = ["ab", "cdef", "g"];
+    if (short) { ws = ["ab"]; }
+    var total: i32 = 0;
+    for w in ws {
+        var o: Option[string] = Some(w + "");
+        match (o) {
+            Some(s) when s.len() >= min => { total = total + s.len(); },
+            _ => { total = total + 1; },
+        }
+    }
+    return total;
+}
+// A guard that short-circuits ends in a block of its own, and the next arm's
+// test lists that block, not the arm's, among its predecessors.
+@noinline function guarded_and(k: i32, w: string): i32 {
+    var o: Option[string] = Some(w + "");
+    match (o) {
+        Some(s) when k > 0 && s.len() > 2 => { return s.len() * 10; },
+        Some(s) => { return s.len(); },
+        None => { return 0; },
+    }
+}
+// A path headed by the union's own name constructs the variant, or names it
+// in a pattern; a path headed by a struct's name calls the associated
+// function its impl declared.
+enum Qe { Qa(string), Qb }
+trait Qmk { function make(n: i32): Self; }
+struct Qp { v: i32, tag: string }
+impl Qmk for Qp { function make(n: i32): Self { return Qp { v: n * 2, tag: "q" }; } }
+@noinline function qualified_pick(k: i32): i32 {
+    var e: Qe = Qe.Qb;
+    if (k > 0) { e = Qe.Qa("abc" + "d"); }
+    var o: Option[i32] = Option.Some(k);
+    var n: i32 = 0;
+    match (o) { Some(m) => { n = m; }, None => { n = 0 - 1; } }
+    match (e) {
+        Qe.Qa(s) => { return s.len() + n; },
+        Qe.Qb => { return n; },
+    }
+}
+@noinline function assoc_make(k: i32): i32 {
+    var p: Qp = Qp.make(k);
+    return p.v + p.tag.len();
+}
+// A match expression the tuple or struct desugar routes through a value
+// local: the block declares the local, runs the done-flag chain in the
+// enclosing block, and its trailing return reads the local.
+@noinline function tm_word(k: i32): string {
+    var t: (string, i32) = ("elem", k);
+    return match (t) {
+        (q, 4) => q + "!",
+        (q, n) => q
+    };
+}
+@noinline function tm_sum(n: i32): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var p = (i, n - i);
+        total = total + match (p) { (0, b) => b * 10, (a, b) when a == b => a + b, (a, _) => a };
+        i = i + 1;
+    }
+    return total;
+}
+@noinline function tm_words(n: i32): i32 {
+    var ws: string[] = ["ab", "", "cde"];
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var pair = (ws[i % 3], ws[i % 3].len());
+        var s: string = match (pair) { (t, 0) => "empty", (t, _) => t + "." };
+        acc = acc + s.len();
+        i = i + 1;
+    }
+    return acc;
+}
+@noinline function tm_show(k: i32): i32 { var s: string = tm_word(k); print(s); return s.len(); }
+struct Pt2 { x: i32, y: i32, tag: string }
+@noinline function sm_pick(k: i32): string {
+    var p: Pt2 = Pt2 { x: k, y: k * 2, tag: "pt" };
+    return match (p) {
+        Pt2 { x: 1, y, tag } => tag + ":" + tag,
+        Pt2 { x, y, tag } => tag
+    };
+}
+@noinline function sm_show(k: i32): i32 { var s: string = sm_pick(k); print(s); return s.len(); }
 @noinline function slot_n(own s: Slot): i32 { return s.n; }
 @noinline function note_n(own t: Note): i32 { return t.n; }
 @noinline function held_n(own h: Held): i32 {
@@ -2859,6 +3028,13 @@ function main(): i32 {
     print_int(lit_bytes(1)); print(""); print_int(lit_bytes(0 - 1)); print("");
     print_int(fill_field(4)); print(""); print_int(set_shared_field(5)); print(""); print_int(word_field_set(2)); print("");
     print_int(map_ints(5)); print(""); print_int(map_int_words("ab", "cde")); print("");
+    print_int(nested_case(0)); print(""); print_int(nested_case(1)); print(""); print_int(nested_case(2)); print("");
+    print_int(nested_case(3)); print(""); print_int(nested_case(4)); print("");
+    print_int(guarded_pick(7)); print(""); print_int(guarded_pick(3)); print(""); print_int(guarded_words(false, 2)); print(""); print_int(guarded_words(true, 200)); print("");
+    print_int(for_pairs(3)); print(""); print_int(struct_unpack(4)); print(""); print_int(at_unpack(2)); print(""); print_int(nested_unpack(5)); print("");
+    print_int(guarded_and(1, "abcd")); print(""); print_int(guarded_and(0, "abcd")); print(""); print_int(guarded_and(1, "ab")); print("");
+    print_int(qualified_pick(3)); print(""); print_int(qualified_pick(0)); print(""); print_int(assoc_make(5)); print("");
+    print_int(tm_show(4)); print(""); print_int(tm_show(2)); print(""); print_int(tm_sum(4)); print(""); print_int(tm_words(3)); print(""); print_int(sm_show(1)); print(""); print_int(sm_show(5)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -2963,7 +3139,7 @@ function main(): i32 {
 // the new figure belongs in this constant.
 const wasmSemsourceRCLeakFloor = 8976
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n9\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n9\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -3117,7 +3293,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "text_predicates", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "text_predicates", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words", "nested_arms", "mk_out", "nested_case", "guarded_pick", "guarded_words", "for_pairs", "mk_dp", "struct_unpack", "at_unpack", "nested_unpack", "guarded_and", "qualified_pick", "assoc_make", "tm_word", "tm_show", "tm_sum", "tm_words", "sm_pick", "sm_show"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}

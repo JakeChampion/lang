@@ -128,6 +128,7 @@ function t_ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, cond: 0,
 function t_br(target: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 }; }
 function t_brif(cond: i32, t: i32, f: i32): ssa.STerm { return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 }; }
 function t_none(): ssa.STerm { return ssa.STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
+function t_unreachable(): ssa.STerm { return ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
 
 // ---- graph construction ---------------------------------------------------
 
@@ -409,7 +410,7 @@ function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type
     var whole: typeinfo.Type = literal_union(e, s, expected);
     if (names_variant(s, whole, id.name)) { return variant(id.name, whole, [], s); }
     var at: i32 = ssasem.find_contract(s.contracts, id.name);
-    if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value"); }
+    if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value: " + id.name); }
     var contract: ssasem.Contract = s.contracts[at];
     if (ssasem.find_contract(s.calls, id.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
     return define(s, ssasem.call(), [], 0, id.name, contract.result);
@@ -619,7 +620,9 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return define(s, ssasem.array_get(), [container.id, at.id], 0, "", elem);
 }
 
-function field(fa: ast.ExprFieldAccess, s: State): Value {
+function field(e: ast.Expr, fa: ast.ExprFieldAccess, s: State, expected: typeinfo.Type): Value {
+    var head: string = type_head(fa.obj, s);
+    if (head.len() > 0) { return qualified_variant(e, head, fa.field, [], s, expected); }
     if (!decimal(fa.field)) { return record_field(fa, s); }
     var container: Value = expr(fa.obj, s, typeinfo.unchecked());
     s = container.s;
@@ -1265,17 +1268,29 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
 // last is the block's value (irlower.lower_value_block). The shape the parser
 // desugars an if-EXPRESSION to is one `if` whose arms each `return` that value,
 // so it is produced here as a branch whose arms join at a phi rather than at a
-// terminator. Every other block origin — a general `{ … }` body, a
-// match-expression, a comprehension — is refused: its value comes from a tail
-// this form has no join for.
+// terminator. The match-expression desugars that route their value through a
+// LOCAL declare it ahead of the done-flag chain and return it after: the
+// leading statements run in the enclosing block, in a scope of their own, and
+// the trailing return's value is the block's. A block whose last statement is
+// none of these — a comprehension's tail, a bare expression — is refused.
 function value_block(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
     var ty: typeinfo.Type = block_type(e, c, s, expected);
     var body: ast.Stmt[] = parser.vb_body(c);
-    if (body.len() != 1) { return refused(s, "unsupported value block: " + util.i32_to_string(body.len()) + " statements"); }
+    if (body.len() == 0) { return refused(s, "unsupported value block: no statements"); }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported value block: type " + typeinfo.spelling(ty)); }
-    if let ast.StmtIf(f) = body[0] { return value_if(f, s, ty); }
-    if let ast.StmtMatch(m) = body[0] { return value_match(m, s, ty); }
-    return refused(s, "unsupported value block: " + block_stmt_kind(body[0]));
+    var count: i32 = s.names.len();
+    var scope: checker.Scope = s.scope;
+    var i: i32 = 0;
+    while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
+    if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+    if (!s.live) { return refused(s, "value block leaves no live edge"); }
+    var last: ast.Stmt = body[body.len() - 1];
+    var v: Value = refused(s, "unsupported value block: " + block_stmt_kind(last));
+    if let ast.StmtIf(f) = last { v = value_if(f, s, ty); }
+    if let ast.StmtMatch(m) = last { v = value_match(m, s, ty); }
+    if let ast.StmtReturn(_) = last { v = arm_value(last, s, ty); }
+    if (!v.s.ok) { return v; }
+    return Value { s: leave(v.s, count, scope), id: v.id };
 }
 
 // A value block's type: what its destination expects, where the destination
@@ -1482,13 +1497,44 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (parser.is_value_block(c)) { return value_block(e, c, s, expected); }
-    if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s, statement); }
+    if let ast.ExprFieldAccess(mfa) = c.callee {
+        var head: string = type_head(mfa.obj, s);
+        if (head.len() > 0) { return qualified_call(e, head, mfa.field, c, s, statement, expected); }
+        return method_call(c, mfa, s, statement);
+    }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
     var bound: i32 = lookup(s, name);
     if (bound >= 0) { return bound_call(c, bound, s); }
     if (name == "") { return refused(s, "unsupported call target"); }
     return free_call(e, name, c, s, statement, expected);
+}
+
+// The head of a path that names a TYPE rather than a value: `E.A(7)` and
+// `E.B` name a variant of the enum, `Point.make(3, 4)` the associated function
+// an impl declared on the struct, which the contract table keys the way it
+// keys a method. A bound name shadows the type.
+function type_head(obj: ast.Expr, s: State): string {
+    if let ast.ExprIdent(id) = obj {
+        if (lookup(s, id.name) >= 0) { return ""; }
+        if (checker.struct_sig(s.scope, id.name).name.len() > 0) { return id.name; }
+        if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) { return id.name; }
+    }
+    return "";
+}
+
+function qualified_variant(e: ast.Expr, head: string, name: string, args: ast.Expr[], s: State, expected: typeinfo.Type): Value {
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (union_name(whole) != head || !names_variant(s, whole, name)) { return refused(s, "unsupported qualified path: " + head + "." + name); }
+    return variant(name, whole, args, s);
+}
+
+function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+    var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (union_name(whole) == head && names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
+    var at: i32 = ssasem.find_contract(s.contracts, head + "." + name);
+    if (at < 0) { return refused(s, "call target has no semantic contract: " + head + "." + name); }
+    return direct_call(c, s.contracts[at], s, statement);
 }
 
 // A call of a free name: a builtin with a shape of its own, the lambda
@@ -1605,7 +1651,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
-        ast.ExprFieldAccess(fa) => { return field(fa, s); },
+        ast.ExprFieldAccess(fa) => { return field(e, fa, s, expected); },
         ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
         ast.ExprCall(c) => { return call(e, c, s, false, expected); },
@@ -1624,39 +1670,76 @@ function destructures(v: ast.StmtVar): boolean {
     return parser.is_destr_marker(v.type_name);
 }
 
-// A tuple destructure binds each name to a projection of the one initializer
-// value, which stays live under those borrows as any container does. The
-// checker's post-declaration scope types each binding, and it must be the
-// tuple's element exactly; a discard is a binding no read follows. A nested
-// position, the struct form and the `@` binder are refused.
+// A destructure binds each name in its pattern to a projection of the one
+// initializer value, which stays live under those borrows as any container
+// does: a tuple position is a `tuple_get`, a struct field a `record_get`, a
+// nested tuple position is projected and destructured again, and the `@`
+// binder names the whole value. The checker's post-declaration scope types
+// each binding, and it must be the projection's type exactly; a discard is a
+// binding no read follows.
 function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-    var names: string[] = flat_names(v);
+    var marker: parser.DestrMarker = parser.destr_marker_split(v.type_name);
     var ty: typeinfo.Type = checked(v.init, s);
-    if (names.len() == 0 || tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var whole: Value = expr(v.init, s, ty);
     s = whole.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[whole.id])); }
-    var i: i32 = 0;
-    while (i < names.len()) {
-        var elem: typeinfo.Type = bound_type(s, names[i], after);
-        if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved type of binding " + names[i] + ": " + typeinfo.spelling(elem)); }
-        if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, mismatch(names[i], elem, tuple_element_type(ty, i))); }
-        var part: Value = define(s, ssasem.tuple_get(), [whole.id], i, "", elem);
-        s = bind(part.s, names[i], part.id);
-        i = i + 1;
-    }
+    if (marker.at.len() > 0) { s = bind_projection(s, marker.at, whole.id, after); }
+    if (marker.tag.len() > 0) { s = destructure_record(v.name, marker.tag, whole.id, s, after); }
+    else { s = destructure_tuple(v.name, whole.id, s, after); }
+    if (!s.ok) { return s; }
     return State { ...s, scope: after };
 }
 
-// The names of a flat tuple pattern, and none for the struct form, the `@`
-// binder or a nested position.
-function flat_names(v: ast.StmtVar): string[] {
-    if (parser.is_destr_marker(v.type_name)) { return []; }
-    var names: string[] = pattern_names(v.name);
-    for name in names { if (name.len() == 0 || name[0] == b'(') { return []; } }
-    return names;
+function bind_projection(s: State, name: string, id: i32, after: checker.Scope): State {
+    var want: typeinfo.Type = bound_type(s, name, after);
+    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + typeinfo.spelling(want)); }
+    if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
+    return bind(s, name, id);
+}
+
+function destructure_tuple(encoded: string, whole: i32, s: State, after: checker.Scope): State {
+    var names: string[] = pattern_names(encoded);
+    var ty: typeinfo.Type = s.values[whole];
+    if (names.len() == 0 || tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var elem: typeinfo.Type = tuple_element_type(ty, i);
+        if (!semtypes.concrete(elem, false)) { return fail(s, "tuple projection contract"); }
+        var part: Value = define(s, ssasem.tuple_get(), [whole], i, "", elem);
+        s = part.s;
+        if (names[i].len() > 0 && names[i][0] == b'(') {
+            s = destructure_tuple(slice_unchecked(names[i], 1, names[i].len() - 1) + "", part.id, s, after);
+        } else {
+            s = bind_projection(s, names[i], part.id, after);
+        }
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s;
+}
+
+// The struct form's marker is `@sd:<Struct>:<fields>`, the fields in the
+// order the pattern's names bind them.
+function destructure_record(encoded: string, tag: string, whole: i32, s: State, after: checker.Scope): State {
+    var rest: string = slice_unchecked(tag, 4, tag.len()) + "";
+    var colon: i32 = util.index_of_sub(rest, ":");
+    if (colon < 0) { return fail(s, "unsupported destructuring declaration"); }
+    var names: string[] = pattern_names(encoded);
+    var fields: string[] = pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
+    var sig: checker.StructSig = record_schema(struct_name(s.values[whole]), s);
+    if (sig.name.len() == 0 || sig.name != slice_unchecked(rest, 0, colon) || fields.len() != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var at: i32 = record_field_index(sig, fields[i]);
+        if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) { return fail(s, "record projection contract"); }
+        var part: Value = define(s, ssasem.record_get(), [whole], at, fields[i], sig.field_types[at]);
+        s = bind_projection(part.s, names[i], part.id, after);
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s;
 }
 
 function tuple_arity(t: typeinfo.Type): i32 {
@@ -1836,7 +1919,7 @@ function pattern_shape_error(pv: ast.PatVariant): string {
 }
 
 function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, layout: i32): string {
-    if (a.has_guard || a.alt_cont) { return "unsupported match guard"; }
+    if (a.alt_cont) { return "unsupported match guard"; }
     var why: string = pattern_shape_error(pv);
     if (why != "") { return why; }
     if (!shape.found) { return "unknown variant"; }
@@ -1879,8 +1962,45 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
+// A guard is read in the arm's block, after the payload bindings it may
+// name, and a false guard leaves for the next arm's test; the bindings die
+// on that edge as on any other. The arm's body then opens a block of its
+// own.
+// `from` is the block the guard's branch leaves from, which is the arm's own
+// block only when the guard opened no block of its own; -1 without a guard.
+struct Gate { s: State, from: i32 }
+
+function guard_gate(a: ast.MatchArm, s: State, next: i32): Gate {
+    if (!a.has_guard) { return Gate { s: s, from: 0 - 1 }; }
+    var g: Value = expr(a.guard, s, t_bool());
+    s = g.s;
+    if (!s.ok) { return Gate { s: s, from: 0 - 1 }; }
+    if (!is_bool(s.values[g.id])) { return Gate { s: fail(s, "match guard type"), from: 0 - 1 }; }
+    var pred: i32 = s.cur.id;
+    var body: i32 = s.next_block;
+    s = terminate(State { ...s, next_block: body + 1 }, t_brif(g.id, body, next));
+    return Gate { s: open(s, body, [pred]), from: pred };
+}
+
+// The predecessors of the next arm's test: the failed test, and the failed
+// guard when the arm has one.
+function next_preds(pred: i32, from: i32): i32[] {
+    if (from >= 0) { return [pred, from]; }
+    return [pred];
+}
+
+// A pattern spelled with the union's own name ahead of the variant names the
+// variant; a head naming anything else is refused.
+function unqualified(pv: ast.PatVariant, owner: string): ast.PatVariant {
+    if (!qualified(pv.type_name)) { return pv; }
+    var dot: i32 = util.index_of_sub(pv.type_name, ".");
+    if (slice_unchecked(pv.type_name, 0, dot) != owner) { return pv; }
+    return ast.PatVariant { ...pv, type_name: slice_unchecked(pv.type_name, dot + 1, pv.type_name.len()) + "" };
+}
+
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
+    pv = unqualified(pv, owner);
     var layout: i32 = union_layout(s, owner);
     var shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
     var why: string = pattern_error(a, pv, shape, layout);
@@ -1894,8 +2014,10 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     s = terminate(test.s, t_brif(test.id, id, next));
     var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-    var done: Arm = arm_body(a.body, opened, join, count, scope, ty);
-    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
+    var gate: Gate = guard_gate(a, opened, next);
+    if (!gate.s.ok) { return Arms { ...arms, s: gate.s }; }
+    var done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, gate.from)) };
     return collect(arms, done);
 }
 
@@ -1915,12 +2037,24 @@ function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Pay
     return collect(arms, arm_body(a.body, opened, join, count, scope, ty));
 }
 
+// A wildcard closes the chain, so the arms after it are not produced; a
+// GUARDED wildcard does not, and its failed guard leaves for the next arm's
+// test as a variant arm's does.
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
-    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
-    return collect(arms, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
+    if (!a.has_guard) {
+        s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+        return collect(arms, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
+    }
+    var next: i32 = id + 1;
+    s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
+    var gate: Gate = guard_gate(a, open(State { ...s, vals: entry }, id, [pred]), next);
+    if (!gate.s.ok) { return Arms { ...arms, s: gate.s }; }
+    var done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [gate.from]) };
+    return collect(arms, done);
 }
 
 function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
@@ -1940,9 +2074,9 @@ function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
     return out;
 }
 
-function arm_variant_name(a: ast.MatchArm): string {
+function arm_variant_name(a: ast.MatchArm, owner: string): string {
     if (a.has_guard || a.alt_cont) { return ""; }
-    if let ast.PatVariant(pv) = a.pattern { return pv.type_name; }
+    if let ast.PatVariant(pv) = a.pattern { return unqualified(pv, owner).type_name; }
     return "";
 }
 
@@ -1954,7 +2088,7 @@ function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i
     if (declared.len() == 0 || m.arms.len() != declared.len()) { return false; }
     var named: string[] = [];
     for a in m.arms {
-        var name: string = arm_variant_name(a);
+        var name: string = arm_variant_name(a, union_name(whole));
         if (util.index_of_str(declared, name) < 0) { return false; }
         if (util.index_of_str(named, name) >= 0) { return false; }
         named = named.append(name);
@@ -2113,7 +2247,7 @@ function index_name(): string { return "for index"; }
 // and its unit obligations are the container's.
 function iterate_array(fo: ast.StmtFor, s: State): State {
     if (fo.label != "") { return fail(s, "unsupported labelled loop"); }
-    if (fo.var_name == "" || util.contains(fo.var_name, ",")) { return fail(s, "unsupported loop binding"); }
+    if (fo.var_name == "") { return fail(s, "unsupported loop binding"); }
     var it: Value = expr(fo.iter, s, typeinfo.unchecked());
     s = it.s;
     if (!s.ok) { return s; }
@@ -2157,8 +2291,13 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     // A string's element is one byte, read rather than projected.
     if (text) { item = define(opened, ssasem.str_index(), [it.id, step.id], 0, "", elem); }
     // The element is a checker binding for the body's span as well: every type
-    // this boundary reads from the checker is read in s.scope.
-    var body_state: State = State { ...bind(item.s, fo.var_name, item.id), scope: checker.for_body_scope(fo, scope) };
+    // this boundary reads from the checker is read in s.scope. A pattern header
+    // destructures the element the way a declaration does.
+    var inner: checker.Scope = checker.for_body_scope(fo, scope);
+    var body_state: State = bind(item.s, fo.var_name, item.id);
+    if (util.contains(fo.var_name, ",")) { body_state = destructure_tuple(fo.var_name, item.id, item.s, inner); }
+    if (!body_state.ok) { return body_state; }
+    body_state = State { ...body_state, scope: inner };
     var latch: Arm = finish_arm(fo.body, body_state, header, count, scope);
     s = latch.s;
     if (!s.ok) { return s; }
@@ -2583,9 +2722,14 @@ function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
     return out;
 }
 
+// A value-returning body whose end is still live is one the checker proved
+// never reaches it (E052): the done-flag chain a nested, tuple, struct or
+// literal pattern match desugars to reads as falling through here while
+// every arm of it returns. That end aborts rather than returning a value it
+// does not have.
 function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     if (!s.ok) { return refuse(s.why); }
-    if (s.live && !is_void(s.result)) { return refuse("value-returning body falls through"); }
+    if (s.live && !is_void(s.result)) { s = terminate(s, t_unreachable()); }
     s = terminate(s, t_ret(0 - 1));
     var map: i32[] = trivial_phis(s.blocks, s.values.len());
     var f: ssasem.Func = renumber(s.blocks, map, s.values);
