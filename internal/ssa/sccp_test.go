@@ -212,3 +212,51 @@ func TestSCCPNilFunc(t *testing.T) {
 	}()
 	SCCP(nil)
 }
+
+// TestSCCPKeepsAProvenConstantsWidth — a phi SCCP proves constant is
+// rewritten to the constant AT ITS WIDTH. The x86-64 and arm64 emitters
+// materialise a const by its Width, sign-extending the low 32 bits of a
+// value with none, so an i64 that lost its width came out of the loop
+// below as -1 instead of i64.MAX: the inlined `bit_length` loop then ran
+// 64 times on every input.
+func TestSCCPKeepsAProvenConstantsWidth(t *testing.T) {
+	f := NewFunc("f")
+	entry := f.NewBlock()
+	thenB := f.NewBlock()
+	elseB := f.NewBlock()
+	merge := f.NewBlock()
+	c := f.AddOp(entry, OpConstBool)
+	entry.Ops[0].Imm = 1
+	f.SetBrIf(entry, c, thenB, elseB)
+	wide := f.AddOp(thenB, OpConstInt)
+	thenB.Ops[0].Imm = 9223372036854775807
+	thenB.Ops[0].Width = 64
+	f.SetBr(thenB, merge)
+	zero := f.AddOp(elseB, OpConstInt)
+	elseB.Ops[0].Width = 64
+	f.SetBr(elseB, merge)
+	phi := f.AddPhi(merge, wide, zero)
+	one := f.AddOp(merge, OpConstInt)
+	merge.Ops[1].Imm = 1
+	merge.Ops[1].Width = 64
+	sub := f.AddOp(merge, OpSub, phi, one)
+	merge.Ops[2].Width = 64
+	f.SetRet(merge, sub)
+
+	SCCP(f)
+
+	phiOp := merge.Ops[0]
+	if phiOp.Kind != OpConstInt || phiOp.Imm != 9223372036854775807 {
+		t.Fatalf("phi = {%v %d}, want {OpConstInt i64.MAX}", phiOp.Kind, phiOp.Imm)
+	}
+	if phiOp.Width != 64 {
+		t.Errorf("the proven phi has Width %d, want 64: a wide value without its width is sign-extended from its low 32 bits", phiOp.Width)
+	}
+	subOp := merge.Ops[2]
+	if subOp.Kind != OpConstInt || subOp.Imm != 9223372036854775806 {
+		t.Fatalf("sub = {%v %d}, want {OpConstInt i64.MAX-1}", subOp.Kind, subOp.Imm)
+	}
+	if subOp.Width != 64 {
+		t.Errorf("the folded i64 sub has Width %d, want 64", subOp.Width)
+	}
+}

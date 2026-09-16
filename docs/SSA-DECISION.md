@@ -371,6 +371,26 @@ inlined callees are culled (`ordmap_insert` 6,493 → 3,048, `coreutils/sort.fer
 `coreutils/sort.fern` on 2M lines: `sort` 2.73 s → 2.68 s, `sort -n`
 6.25 s → 6.16 s.
 
+The battery's output is IR the SSA layer had never seen, and the corpus
+differential caught four latent bugs on its first run with it, on both
+targets alike (316 agree, 8 refused, 4 diverge, against 328/0/0 before):
+
+- `CmpFlip` rewrote `not (a > b)` into `a <= b` without the compared
+  width, so the next SCCP round folded an i64 compare at 32 bits and the
+  inlined `log2_floor` loop was never entered.
+- SCCP rewrote a phi it proved constant without the constant's width,
+  so an inlined i64 argument was materialised from its low 32 bits and
+  `bit_length` ran its loop 64 times on every input.
+- The lifter skipped the ops on a dead path but not the scopes they
+  opened, so inlined drop glue after a `return_pair` reached its `else`
+  with no `if` on the scope stack (`utf8__codepoint_at`,
+  `http__http_parse_request`).
+- `internal/ir`'s DCE did not count `return_pair` as a terminator, which
+  is why that dead glue survived to the lifter at all.
+
+Each has a unit test now; the differential is back to 328 agree, 0
+refused, 0 diverge on x86-64 and 326 / 2 / 0 on arm64.
+
 ### Per-backend disposition
 
 | backend | disposition |
