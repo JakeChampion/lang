@@ -109,9 +109,11 @@ func dceOnce(ops []Op) []Op {
 // OpBrIf doesn't qualify because the branch is conditional — control
 // can fall through.
 func isTerminator(k OpKind) bool {
-	switch k {
-	case OpReturn, OpReturnVoid, OpReturnPair, OpBr:
-		return true
-	}
-	return false
+	return isReturnKind(k) || k == OpBr
+}
+
+// isReturnKind reports whether k leaves the function, in any of the three
+// shapes a return takes: one value, none, or a (tag, payload) pair.
+func isReturnKind(k OpKind) bool {
+	return k == OpReturn || k == OpReturnVoid || k == OpReturnPair
 }

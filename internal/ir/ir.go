@@ -6271,8 +6271,7 @@ func needsImplicitReturn(ops []Op) bool {
 	if len(ops) == 0 {
 		return true
 	}
-	last := ops[len(ops)-1].Kind
-	return last != OpReturn && last != OpReturnVoid
+	return !isReturnKind(ops[len(ops)-1].Kind)
 }
 
 // lookupVariantOn resolves a variant by name, restricted to a specific

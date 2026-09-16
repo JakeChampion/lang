@@ -111,7 +111,7 @@ func loopHeaderEnd(ops []Op, loopIdx int) int {
 
 func endsLoopHeader(k OpKind) bool {
 	switch k {
-	case OpBr, OpBrIf, OpIf, OpElse, OpBlock, OpLoop, OpEnd, OpReturn, OpReturnVoid:
+	case OpBr, OpBrIf, OpIf, OpElse, OpBlock, OpLoop, OpEnd, OpReturn, OpReturnVoid, OpReturnPair:
 		return true
 	}
 	return false

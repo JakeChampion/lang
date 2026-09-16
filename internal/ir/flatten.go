@@ -392,6 +392,9 @@ func tryFlattenIf(ops []Op, ifIdx int, retType ast.Type, ptrW int) ([]Op, int, b
 	if thenLastIdx <= ifIdx {
 		return nil, 0, false
 	}
+	// A pair return (OpReturnPair) is left alone: the typed if the rewrite
+	// emits carries one result, and returnBlockTypeFor has no block type
+	// for a (tag, payload) pair.
 	thenLast := ops[thenLastIdx]
 	if thenLast.Kind != OpReturn && thenLast.Kind != OpReturnVoid {
 		return nil, 0, false

@@ -484,7 +484,7 @@ func isInlineable(fn *Func) bool {
 		return false
 	}
 	last := fn.Ops[len(fn.Ops)-1].Kind
-	if last != OpReturn && last != OpReturnVoid && last != OpReturnPair {
+	if !isReturnKind(last) {
 		return false
 	}
 	for _, op := range fn.Ops {
@@ -671,7 +671,7 @@ func expandInline(caller *Func, cand inlineCandidate) []Op {
 	depth := int32(0)
 	for i, op := range cand.body {
 		isTrailing := i == len(cand.body)-1 &&
-			(op.Kind == OpReturn || op.Kind == OpReturnVoid || op.Kind == OpReturnPair)
+			isReturnKind(op.Kind)
 		if isTrailing {
 			break
 		}
@@ -715,7 +715,7 @@ func needsReturnWrapper(body []Op) bool {
 	}
 	for i, op := range body[:len(body)-1] {
 		_ = i
-		if op.Kind == OpReturn || op.Kind == OpReturnVoid || op.Kind == OpReturnPair {
+		if isReturnKind(op.Kind) {
 			return true
 		}
 	}
