@@ -642,7 +642,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
-	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
+	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `flat` names the stack-machine emitter that is every target's default today, for a caller who wants it selected rather than inherited. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
 	flag.Lookup("backend").Usage += " `typed-ssa` is the experimental typed pre-RC ownership pipeline for arm64-linux only: immutable array/tuple values, projections, direct calls, local replacement, branches and loops with i32 induction; unsupported constructs are errors. See docs/TYPED-OWNERSHIP-IR-MIGRATION.md."
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
@@ -1476,8 +1476,12 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		if target != "arm64-linux" && target != "x86-64-linux" {
 			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, x86-64-linux)", target)
 		}
+	case "flat":
+		// The stack-machine emitter every target has had all along. The
+		// dispatches below are all `ssa` or `typed-ssa`, so naming it selects
+		// it by falling past them.
 	default:
-		return 1, fmt.Errorf("unknown -backend %q (want ssa or typed-ssa, or omit it for the target's default emitter)", backend)
+		return 1, fmt.Errorf("unknown -backend %q (want ssa, flat or typed-ssa, or omit it for the target's default emitter)", backend)
 	}
 
 	switch emit {

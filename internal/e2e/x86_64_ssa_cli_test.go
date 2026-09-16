@@ -113,7 +113,7 @@ function main(): i32 {
 			src := mustWrite(t, dir, "prog.fern", c.src)
 
 			baseBin := filepath.Join(dir, "base")
-			if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", baseBin, src).CombinedOutput(); err != nil {
+			if out, err := exec.Command(fern, "-target", "x86-64-linux", "-backend", "flat", "-o", baseBin, src).CombinedOutput(); err != nil {
 				t.Fatalf("shipping backend failed to build: %v\n%s", err, out)
 			}
 			ssaBin := filepath.Join(dir, "ssa")
@@ -189,9 +189,13 @@ function main(): i32 {
 // shipping x86-64 emitter and the SSA one write assembly when no -o is given.
 func mustEmitAsm(t *testing.T, fern, src string, ssa bool) string {
 	t.Helper()
-	args := []string{"-target", "x86-64-linux"}
+	// Both arms name their backend. A baseline that takes whatever the
+	// default is stops being a baseline the moment the default moves, and
+	// would compare the SSA emitter against itself while still reporting a
+	// comparison (#4112).
+	args := []string{"-target", "x86-64-linux", "-backend", "flat"}
 	if ssa {
-		args = append(args, "-backend", "ssa")
+		args[len(args)-1] = "ssa"
 	}
 	args = append(args, src)
 	out, err := exec.Command(fern, args...).Output()
