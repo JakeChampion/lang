@@ -101,3 +101,64 @@ func TestStrAppendMovesOncePerSizeClass(t *testing.T) {
 		t.Errorf("the accumulator moved %d times over 4096 appends, want 132", got)
 	}
 }
+
+// A string's last release hands its block back: the next request of the same
+// class is the same block. A shared string is decremented and kept.
+func TestStrDecHandsTheBlockBack(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	s := wideCallOp(f, e, "__str_concat", constStr(f, e, "abc"), constStr(f, e, "de"))
+	callOp(f, e, "__fern_str_dec", s)
+	again := wideCallOp(f, e, "__str_concat", constStr(f, e, "xy"), constStr(f, e, "z")) // the same 16-byte class
+	reused := f.AddOp(e, ssa.OpEq, again, s)
+	callOp(f, e, "__fern_rc_inc", again)
+	callOp(f, e, "__fern_str_dec", again)
+	kept := f.AddOp(e, ssa.OpEq, strLen(f, e, again), constOp(f, e, 3))
+	fresh := wideCallOp(f, e, "__str_concat", constStr(f, e, "q"), constStr(f, e, "r"))
+	elsewhere := f.AddOp(e, ssa.OpNe, fresh, again)
+	sum := f.AddOp(e, ssa.OpAdd, reused, f.AddOp(e, ssa.OpShl, kept, constOp(f, e, 1)))
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, elsewhere, constOp(f, e, 2))))
+	if got := assembleRun(t, f, 8); got != 7 {
+		t.Errorf("block reused (1) + a shared string kept (2) + its block not handed out (4) = %d, want 7", got)
+	}
+}
+
+// The copy path of an append releases the accumulator it consumed, so the
+// block comes back for the next request of its class.
+func TestStrAppendCopyPathReleasesTheAccumulator(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abcdefgh"), constStr(f, e, "")) // 8 bytes: the 16-byte class, full
+	grown := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "x"))                // 9 bytes: a 32-byte block
+	moved := f.AddOp(e, ssa.OpNe, grown, acc)
+	again := wideCallOp(f, e, "__str_concat", constStr(f, e, "ab"), constStr(f, e, "c")) // the 16-byte class again
+	reused := f.AddOp(e, ssa.OpEq, again, acc)
+	bytes := callOp(f, e, "__str_eq", grown, constStr(f, e, "abcdefghx"))
+	sum := f.AddOp(e, ssa.OpAdd, moved, f.AddOp(e, ssa.OpShl, reused, constOp(f, e, 1)))
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 2))))
+	if got := assembleRun(t, f, 8); got != 7 {
+		t.Errorf("moved (1) + the old block reused (2) + bytes right (4) = %d, want 7", got)
+	}
+}
+
+// Copying a shared string array retains every element, so the copy and the
+// original each own a reference and neither's release frees a string the
+// other still holds.
+func TestArrCowInplaceStrRetainsTheElements(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	s := wideCallOp(f, e, "__str_concat", constStr(f, e, "abc"), constStr(f, e, "de"))
+	base := allocOp(f, e, 24)                                 // 16-byte header + one pointer
+	storeMem(f, e, base, 4, constOp(f, e, 1), ssa.OpStore32)  // cap
+	storeMem(f, e, base, 8, constOp(f, e, 2), ssa.OpStore32)  // rc: shared, so .with copies
+	storeMem(f, e, base, 12, constOp(f, e, 1), ssa.OpStore32) // len
+	data := f.AddOp(e, ssa.OpAdd, base, constOp(f, e, 16))
+	storeMem(f, e, data, 0, s, ssa.OpStore)
+	copied := wideCallOp(f, e, "__fern_arr_cow_inplace_str", data, constOp(f, e, 8))
+	moved := f.AddOp(e, ssa.OpNe, copied, data)
+	retained := f.AddOp(e, ssa.OpEq, loadMem(f, e, s, -8, ssa.OpLoad32U), constOp(f, e, 2))
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, moved, f.AddOp(e, ssa.OpShl, retained, constOp(f, e, 1))))
+	if got := assembleRun(t, f, 8); got != 3 {
+		t.Errorf("copied (1) + the element at rc 2 (2) = %d, want 3", got)
+	}
+}

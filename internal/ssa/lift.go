@@ -8,14 +8,16 @@ import (
 )
 
 // liftStrAppendRange expands `__fern_str_append_range(a, s, lo, hi)` into
-// the pair it fuses — `__fern_str_append(a, __str_slice(s, lo, hi))` — and
-// pushes the result. The fusion saves one copy where the accumulator grows
-// in place; the unfused pair keeps the growth and pays the slice, which is
-// the trade the SSA backends make rather than carry a fourth string helper.
+// the pair it fuses — `__fern_str_append(a, __str_slice(s, lo, hi))`, then
+// the release of the slice, which the append only borrowed — and pushes the
+// result. The fusion saves one copy where the accumulator grows in place;
+// the unfused pair keeps the growth and pays the slice, which is the trade
+// the SSA backends make rather than carry a fourth string helper.
 func (l *lifter) liftStrAppendRange(args []Value) {
 	w := l.strWords()
 	slice := l.callStringHelper("__str_slice", args[w:])
 	l.stack = append(l.stack, l.callStringHelper("__fern_str_append", append(append([]Value(nil), args[:w]...), slice...))...)
+	l.callStringHelper("__fern_str_dec", slice)
 }
 
 // callStringHelper emits a call to a runtime helper returning one string,

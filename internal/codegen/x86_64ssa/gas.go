@@ -2133,7 +2133,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_push_grow_move_str": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_str", "apgms", true),
 	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
 	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
-	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
+	"__fern_arr_cow_inplace_str":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_str", "__fern_rc_inc", "cows"),
 	"__str_eq":                      emitStrEqHelper,
 	"__str_ord":                     emitStrOrdHelper,
 	"__str_concat":                  emitStrConcatHelper,
@@ -2262,14 +2262,15 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
-	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
+	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
+	"__fern_str_dec":                {"__free"},
 	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
 	"__fern_drop_arr_ptr":           {"__fern_rc_dec", "__fern_arr_dec"},
 	"__fern_map_drop":               {"__free"},
 	"__fern_box_free":               {"__free"},
 	"__fern_arr_dec":                {"__free"},
 	"__alloc_reuse":                 {"__free", "__alloc"},
-	"__fern_str_append":             {"__str_concat"},
+	"__fern_str_append":             {"__str_concat", "__fern_str_dec"},
 	"__alloc_u8":                    {"__alloc"},
 	"__fern_map_hash_seed":          {"random_i32"},
 	"remove_dir_all":                {"__fern_io_error"},
@@ -2817,20 +2818,6 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "r10", "rdi", "rsi")
 	w("\tmov rax, r10")
 	w("\tret")
-}
-
-// emitAliasHelper writes `<name>:` as a jump to another helper, for a
-// spelling that natively differs from its target only by an element-retain
-// walk over STRING elements. Strings are never freed here (__fern_str_dec
-// leaks at rc == 1), so a copy that shares its string elements with the
-// original under a single count loses nothing; the pointer-element spellings,
-// whose elements are reclaimed, have their own bodies.
-func emitAliasHelper(name, target string) func(w func(string, ...any)) {
-	return func(w func(string, ...any)) {
-		w("")
-		w("%s:", fnLabel(name))
-		w("\tjmp %s", fnLabel(target))
-	}
 }
 
 // emitStrSliceHelper writes __str_slice(base, low, high) -> data: a fresh string
@@ -3643,16 +3630,17 @@ func emitStrConcatHelper(w func(string, ...any)) {
 // the slack past a's data, the length is restamped and the same pointer comes
 // back — no allocation, no re-copy of the accumulated prefix. Anything else
 // (a literal or other static sentinel, a shared buffer, a block the growth
-// would overflow) is a plain __str_concat, with the consumed a left behind as
-// __fern_str_dec would leave it.
+// would overflow) is a plain __str_concat followed by the release of a
+// through __fern_str_dec, which is what consuming it means.
 //
 // The fit test is the block's size class: every heap string is an __alloc of
 // at least la+8 bytes (the header plus its length; the string builder's
 // buffers request more), and __alloc hands out the class's whole rounded
 // extent, so the class of la+8 is capacity the string owns whatever produced
 // it. Reader.read_chunk, the one producer that bumps the cursor itself,
-// rounds its block to the same class. Strings are never freed, so growing
-// one changes nothing a later release reads. rdi=a, rsi=b; returns rax=data.
+// rounds its block to the same class. The grown string is freed at its new
+// length, which classes the same as the block. rdi=a, rsi=b; returns
+// rax=data.
 func emitStrAppendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_append"))
@@ -3679,29 +3667,49 @@ func emitStrAppendHelper(w func(string, ...any)) {
 	w("\tcall %s", bcopySym)
 	w("\tret")
 	w(".Lssa_strapp_copy:")
-	w("\tjmp %s", fnLabel("__str_concat"))
+	w("\tpush rbx") // one push past the return address: 16-aligned for the calls
+	w("\tmov rbx, rdi")
+	w("\tcall %s", fnLabel("__str_concat"))
+	w("\tmov rdi, rbx")
+	w("\tmov rbx, rax")
+	w("\tcall %s", fnLabel("__fern_str_dec"))
+	w("\tmov rax, rbx")
+	w("\tpop rbx")
+	w("\tret")
 }
 
-// emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a
-// string-valued local. Guarded (null / low-address / immortal-sentinel top bit —
-// so it skips .rodata literals); reads the rc at [ptr-8]; if uniquely held
-// (rc==1) the heap buffer would be freed — a no-op on the SSA bump heap, which
-// doesn't reclaim (leak-until-a-later-reuse slice) — else drops a shared
-// reference. Leaf.
+// emitStrDecHelper writes __fern_str_dec(ptr) -> ptr: the scope-exit drop
+// for a string-valued local. Guarded (null / low-address / immortal-sentinel
+// top bit, so it skips .rodata literals); on the last reference (rc == 1 at
+// [ptr-8]) the block goes back to the freelist at base = ptr-8 and len+8
+// bytes, which every string producer covers: each is an __alloc of at least
+// that with its data at base+8, and a string grown in place stayed inside
+// its class. A shared string is decremented in place.
 func emitStrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_dec"))
+	w("\tmov rax, rdi")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_strdec_ret")
-	w("\tmov eax, %s", memRef("rdi", -8)) // rc
-	w("\ttest eax, eax")
-	w("\tjs .Lssa_strdec_ret") // top bit = immortal literal sentinel
-	w("\tcmp eax, 1")
-	w("\tjle .Lssa_strdec_ret") // rc<=1: unique (leak) or already dropped
-	w("\tsub eax, 1")
-	w("\tmov %s, eax", memRef("rdi", -8))
+	w("\tmov ecx, %s", memRef("rdi", -8)) // rc
+	w("\ttest ecx, ecx")
+	w("\tjle .Lssa_strdec_ret") // static sentinel, or already dropped
+	w("\tcmp ecx, 1")
+	w("\tje .Lssa_strdec_free")
+	w("\tsub ecx, 1")
+	w("\tmov %s, ecx", memRef("rdi", -8))
 	w(".Lssa_strdec_ret:")
-	rcPassThroughRet(w)
+	w("\tret")
+	w(".Lssa_strdec_free:")
+	w("\tpush rbx") // one push past the return address: 16-aligned for the call
+	w("\tmov rbx, rdi")
+	w("\tmov esi, %s", memRef("rdi", -4)) // len
+	w("\tadd rsi, 8")                     // plus the header
+	w("\tsub rdi, 8")                     // base
+	w("\tcall %s", fnLabel("__free"))
+	w("\tmov rax, rbx")
+	w("\tpop rbx")
+	w("\tret")
 }
 
 // The capacity-carrying string builder (#8773), laid out word for word as the
