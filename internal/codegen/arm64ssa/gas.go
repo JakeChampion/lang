@@ -781,6 +781,7 @@ func emitBcopyCall(w func(string, ...any), dst, src, n string) {
 var bcopyUsingHelpers = map[string]bool{
 	"__memcpy":                    true,
 	"__str_concat":                true,
+	"__fern_str_append":           true,
 	"__str_slice":                 true,
 	"__fern_arr_push_grow":        true,
 	"__fern_arr_cow_inplace":      true,
@@ -811,7 +812,7 @@ func usesBcopy(helpers []string) bool {
 func emitAllocPres(w func(string, ...any)) {
 	w("")
 	w("%s:", allocPresSym)
-	w("\tstp x29, x30, [sp, #-112]!")
+	w("\tstp x29, x30, [sp, #-144]!")
 	w("\tmov x29, sp")
 	w("\tstp x0, x1, [sp, #16]")
 	w("\tstp x2, x3, [sp, #32]")
@@ -819,6 +820,8 @@ func emitAllocPres(w func(string, ...any)) {
 	w("\tstp x6, x7, [sp, #64]")
 	w("\tstp x8, x9, [sp, #80]")
 	w("\tstp x10, x11, [sp, #96]")
+	w("\tstp x12, x13, [sp, #112]")
+	w("\tstp x14, x15, [sp, #128]")
 	w("\tmrs x17, nzcv")
 	w("\tmov x0, x16")
 	w("\tbl %s", fnLabel("__alloc"))
@@ -830,14 +833,16 @@ func emitAllocPres(w func(string, ...any)) {
 	w("\tldp x6, x7, [sp, #64]")
 	w("\tldp x8, x9, [sp, #80]")
 	w("\tldp x10, x11, [sp, #96]")
-	w("\tldp x29, x30, [sp], #112")
+	w("\tldp x12, x13, [sp, #112]")
+	w("\tldp x14, x15, [sp, #128]")
+	w("\tldp x29, x30, [sp], #144")
 	w("\tret")
 }
 
 // allocPresLines is the inline splice: total block size in x16 on entry, the
-// 16-aligned block base in x16 on exit; x17 and the flags survive too (the
-// trampoline restores them), and x30 is stacked because the site may be a leaf
-// helper that keeps its return address there.
+// 16-aligned block base in x16 on exit; every other register survives, x0..x15
+// and x17 and the flags restored by the trampoline, and x30 stacked here
+// because the site may be a leaf helper that keeps its return address there.
 func allocPresLines() []string {
 	return []string{
 		"stp x29, x30, [sp, #-16]!",
@@ -851,6 +856,16 @@ func emitAllocPresCall(w func(string, ...any)) {
 	for _, l := range allocPresLines() {
 		w("\t%s", l)
 	}
+}
+
+// emitAllocBlock writes an __alloc of sizeReg+extra bytes through the
+// trampoline and leaves the block base in baseReg. Only x16 and baseReg
+// change; the block spans its whole size class, which is what lets a string
+// grow in place and __free take it back at its length.
+func emitAllocBlock(w func(string, ...any), baseReg, sizeReg string, extra int) {
+	w("\tadd x16, %s, #%d", sizeReg, extra)
+	emitAllocPresCall(w)
+	w("\tmov %s, x16", baseReg)
 }
 
 // emitFreelistClass writes the size-class computation __alloc and __free share,
@@ -2547,15 +2562,7 @@ func emitHostnameHelper(w func(string, ...any)) {
 	w("\tadd x10, x10, #1")
 	w("\tb .Lssa_hn_slen")
 	w(".Lssa_hn_alloc:")
-	w("\tadrp x12, %s", heapPtrSym)
-	w("\tadd x12, x12, #:lo12:%s", heapPtrSym)
-	w("\tldr x13, [x12]")
-	w("\tadd x13, x13, #15")
-	w("\tand x13, x13, #-16") // base
-	w("\tadd x14, x10, #9")   // header(8) + len + NUL(1)
-	w("\tadd x15, x13, x14")
-	w("\tstr x15, [x12]") // bump
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x13", "x10", 9) // header(8) + len + NUL(1)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -2639,18 +2646,10 @@ func emitGetcwdHelper(w func(string, ...any)) {
 
 // emitStrFromBytesTail writes the shared tail of the two helpers above: x10
 // bytes at x9 into a fresh single-word rc string (rc=1@base, len@base+4,
-// data@base+8, +NUL), bump-allocated inline and returned in x0. `lp` prefixes
+// data@base+8, +NUL), an __alloc, returned in x0. `lp` prefixes
 // the local labels so both can be emitted into one object.
 func emitStrFromBytesTail(w func(string, ...any), lp string) {
-	w("\tadrp x12, %s", heapPtrSym)
-	w("\tadd x12, x12, #:lo12:%s", heapPtrSym)
-	w("\tldr x13, [x12]")
-	w("\tadd x13, x13, #15")
-	w("\tand x13, x13, #-16") // base
-	w("\tadd x14, x10, #9")   // header(8) + len + NUL(1)
-	w("\tadd x15, x13, x14")
-	w("\tstr x15, [x12]") // bump
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x13", "x10", 9) // header(8) + len + NUL(1)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -2723,16 +2722,8 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("random_bytes"))
 	w("\tmov x9, x0") // n
-	// Allocate a u8[] box: 16-byte header + n data bytes.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x9, #16")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	// A u8[] box: 16-byte header + n data bytes.
+	emitAllocBlock(w, "x4", "x9", 16)
 	w("\tadd x10, x4, #16")     // data ptr (past 16-byte header)
 	w("\tstur w9, [x10, #-12]") // cap = n
 	w("\tmov w7, #1")
@@ -2838,16 +2829,8 @@ func emitTcpRecvHelper(w func(string, ...any)) {
 	w("\tmov x9, x0") // fd
 	w("\tcmp w1, #0")
 	w("\tcsel w10, w1, wzr, gt") // n = max, clamped to >= 0
-	// Allocate a u8[] box: 16-byte header + n data bytes.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x10, #16")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	// A u8[] box: 16-byte header + n data bytes.
+	emitAllocBlock(w, "x4", "x10", 16)
 	w("\tadd x11, x4, #16")      // data ptr (past 16-byte header)
 	w("\tstur w10, [x11, #-12]") // cap = n
 	w("\tmov w7, #1")
@@ -3023,22 +3006,17 @@ func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
 	}
 }
 
-// emitEmptyString bump-allocates a zero-length single-word rc string into `dst`
+// emitEmptyString allocates a zero-length single-word rc string into `dst`
 // (rc=1, len=0, one NUL byte). Used to supply a valid (empty) path to
-// __fern_io_error for write/close errors, which carry no path. Clobbers x3-x7.
+// __fern_io_error for write/close errors, which carry no path. Clobbers x7
+// and x16.
 func emitEmptyString(w func(string, ...any), dst string) {
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x6, x4, #9")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	w("\tmov x16, #9")
+	emitAllocPresCall(w)
 	w("\tmov w7, #1")
-	w("\tstr w7, [x4]")      // rc = 1
-	w("\tstr wzr, [x4, #4]") // len = 0
-	w("\tadd %s, x4, #8", dst)
+	w("\tstr w7, [x16]")      // rc = 1
+	w("\tstr wzr, [x16, #4]") // len = 0
+	w("\tadd %s, x16, #8", dst)
 	w("\tstrb wzr, [%s]", dst) // NUL
 }
 
@@ -3519,13 +3497,17 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__method_Reader_read_chunk"))
 	w("\tldr w9, [x0, #8]") // fd @ ptr+8
 	w("\tmov x10, x1")      // n
-	// Allocate a single-word rc string: 8-byte header + n + 1 NUL.
+	// Header + n + trailing NUL, rounded to its size class: a raw bump, so
+	// the rewind below can lower the cursor, but sized as __alloc would
+	// size it, which is the extent __fern_str_append takes a string to own.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x12, [x3]") // cursor before the bump = the rewind target
 	w("\tadd x4, x12, #15")
 	w("\tand x4, x4, #-16")
 	w("\tadd x5, x10, #9")
+	emitFreelistClass(w, "rrc_req", "x5", "x6", "x1", "x2", "x7", "x13", "x14", "x15", ".Lssa_rrc_req_none")
+	w(".Lssa_rrc_req_none:")
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
 	emitHeapGuardCall(w)
@@ -3544,9 +3526,13 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\tstur w0, [x11, #-4]") // len = bytes read
 	w("\tadd x1, x11, x0")
 	w("\tstrb wzr, [x1]") // trailing NUL
-	// A short read (a pipe hands back at most 64 KiB) keeps only the bytes
-	// it produced; the unread tail of the buffer goes back to the cursor.
-	w("\tadd x1, x1, #1")
+	// A short read (a pipe hands back at most 64 KiB) keeps only the class
+	// the bytes it produced fill; the rest of the buffer goes back to the
+	// cursor.
+	w("\tadd x5, x0, #9") // header + bytes + NUL
+	emitFreelistClass(w, "rrc_got", "x5", "x6", "x1", "x2", "x7", "x13", "x14", "x15", ".Lssa_rrc_got_none")
+	w(".Lssa_rrc_got_none:")
+	w("\tadd x1, x4, x5") // base + that class's extent, never above the cursor
 	emitHeapRewind(w, "x3", "x1")
 	// Ok(string): box {rc=1, tag=0, string@8}.
 	emitOptionBox(w, 0, "x11")
@@ -3579,7 +3565,7 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 // [reader+8]) into the shared 4 KiB .bss line buffer until '\n' (kept), 4 KiB, or
 // EOF/error, then copy the line into a fresh right-sized single-word rc string.
 // Returns None when the first read returns 0 (EOF before any byte), else
-// Some(line). Leaf: the read svc preserves every register but x0. x19=buffer /
+// Some(line). The read svc preserves every register but x0. x19=buffer /
 // x20=bytes read / x21=scratch-then-data / x22=fd. x0=reader handle.
 func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("")
@@ -3611,16 +3597,8 @@ func emitReaderReadLineHelper(w func(string, ...any)) {
 	w("\tb .Lssa_rrl_loop")
 	w(".Lssa_rrl_done:")
 	w("\tcbz x20, .Lssa_rrl_none") // no bytes → None (EOF)
-	// Allocate a single-word rc string of x20 bytes (+ NUL) and copy the line.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x20, #9")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	// A single-word rc string of x20 bytes (+ NUL), the line copied in.
+	emitAllocBlock(w, "x4", "x20", 9)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w20, [x4, #4]") // len = bytes read
@@ -3767,7 +3745,8 @@ func emitPollHelper(w func(string, ...any)) {
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
-	"__fern_str_append":               {"__str_concat"},
+	"__fern_str_append":               {"__str_concat", "__fern_str_dec"},
+	"__fern_str_dec":                  {"__free"},
 	"__fern_closure_drop":             {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_box_free":                 {"__free"},
 	"__fern_arr_dec":                  {"__free"},
@@ -3793,7 +3772,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_ptr":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":      {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"write_file":                      {"__fern_io_error"},
-	"read_file":                       {"__fern_io_error", "__fern_utf8_valid"},
+	"read_file":                       {"__fern_io_error", "__fern_utf8_valid", "__free"},
 	"stat":                            {"__fern_io_error"},
 	"lstat":                           {"__fern_io_error"},
 	"statfs":                          {"__fern_io_error"},
@@ -3801,7 +3780,7 @@ var runtimeHelperDeps = map[string][]string{
 	"set_window_size":                 {"__fern_io_error"},
 	"access":                          {"__fern_io_error"},
 	"__method_string_as_bytes":        {"__slice_make"},
-	"read_file_bytes":                 {"__fern_io_error", "__alloc_u8"},
+	"read_file_bytes":                 {"__fern_io_error", "__alloc_u8", "__free"},
 	"remove_file":                     {"__fern_io_error"},
 	"create_dir_all":                  {"__fern_io_error"},
 	"create_dir":                      {"__fern_io_error"},
@@ -4710,22 +4689,69 @@ func emitStrOrdHelper(w func(string, ...any)) {
 }
 
 // emitStrAppendHelper writes __fern_str_append(a, b) -> data, the string
-// self-append the IR emits for `s = s + piece`. The helper consumes `a`, and
-// on this backend a consumed string is simply left behind: __fern_str_dec
-// never frees at rc == 1, so growing the accumulator in place would save an
-// allocation this heap never reclaims anyway, and __str_concat satisfies the
-// contract with identical bytes. The x86-64 sibling grows in place.
+// self-append the IR emits for `s = s + piece` (#5637): it CONSUMES a, and the
+// assignment that follows skips its release. When a is a uniquely held heap
+// string and the grown length still fits the block, b's bytes are copied into
+// the slack past a's data, the length is restamped and the same pointer comes
+// back — no allocation, no re-copy of the accumulated prefix. Anything else
+// (a literal or other static sentinel, a shared buffer, a block the growth
+// would overflow) is a plain __str_concat followed by the release of a
+// through __fern_str_dec, which is what consuming it means.
+//
+// The fit test is the block's size class: every heap string is an __alloc of
+// at least la+8 bytes (the header plus its length; the string builder's
+// buffers request more), and __alloc hands out the class's whole rounded
+// extent, so the class of la+8 is capacity the string owns whatever produced
+// it. Reader.read_chunk, the one producer that bumps the cursor itself,
+// rounds its block to the same class. The grown string is freed at its new
+// length, which classes the same as the block. x0=a, x1=b; returns x0=data.
 func emitStrAppendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_append"))
-	w("\tb %s", fnLabel("__str_concat"))
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_strapp_copy")
+	w("\tldur w2, [x0, #-8]") // rc; a static sentinel has its top bit set
+	w("\tcmp w2, #1")
+	w("\tb.ne .Lssa_strapp_copy")
+	w("\tldur w3, [x0, #-4]") // la
+	w("\tldur w4, [x1, #-4]") // lb
+	w("\tadd x5, x3, x4")     // total, in 64 bits
+	w("\tlsr x6, x5, #31")
+	w("\tcbnz x6, .Lssa_strapp_copy") // __str_concat aborts on it
+	w("\tadd x6, x3, #8")             // the request the block was at least allocated at
+	// x6 becomes the class's extent.
+	emitFreelistClass(w, "strapp", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", ".Lssa_strapp_copy")
+	w("\tadd x7, x5, #23")
+	w("\tand x7, x7, #-16") // the grown request, 16-rounded
+	w("\tcmp x7, x6")
+	w("\tb.hi .Lssa_strapp_copy")
+	w("\tstur w5, [x0, #-4]") // len = total
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tadd x7, x0, x3") // dst = a + la
+	emitBcopyCall(w, "x7", "x1", "x4")
+	w("\tldr x0, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+	w(".Lssa_strapp_copy:")
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tbl %s", fnLabel("__str_concat"))
+	w("\tldr x1, [sp, #16]")
+	w("\tstr x0, [sp, #16]")
+	w("\tmov x0, x1")
+	w("\tbl %s", fnLabel("__fern_str_dec"))
+	w("\tldr x0, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
 }
 
-// emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: bump-allocate
-// a fresh length-prefixed string holding a's bytes then b's, and return its data
-// pointer. Inline-allocates the rc-headed block (rc=1 at base+0, total length at
-// base+4, data at base+8 — the same header ConstStr / heap strings use) and
-// copies each operand through __ssa_bcopy.
+// emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: a fresh
+// length-prefixed string holding a's bytes then b's (rc=1 at base+0, total
+// length at base+4, data at base+8 — the header ConstStr and every heap string
+// use). The block is an __alloc of total+8 bytes, so its extent is that
+// request's size class, which is what lets __fern_str_append grow it in place
+// later. Each operand is copied through __ssa_bcopy.
 func emitStrConcatHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_concat"))
@@ -4737,22 +4763,12 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tadd x4, x2, x3")
 	w("\tlsr x5, x4, #31")
 	w("\tcbnz x5, .Lssa_strcat_len_overflow")
-	// Bump-allocate total+8 bytes: base = align8(cursor); rc=1 at base+0, len at
-	// base+4; cursor advances past header+total; data = base+8.
-	w("\tadrp x5, %s", heapPtrSym)
-	w("\tadd x5, x5, #:lo12:%s", heapPtrSym) // x5 = &cursor
-	w("\tldr x6, [x5]")
-	w("\tadd x6, x6, #15")
-	w("\tand x6, x6, #-16") // x6 = base
+	emitAllocBlock(w, "x6", "x4", 8) // total + the header
 	w("\tmov w7, #1")
 	w("\tstr w7, [x6]")     // rc = 1
 	w("\tstr w4, [x6, #4]") // len = total
-	w("\tadd x7, x6, #8")
-	w("\tadd x7, x7, x4") // new cursor = base + 8 + total
-	w("\tstr x7, [x5]")
-	emitHeapGuardCall(w)
-	w("\tadd x9, x6, #8")  // x9 = data
-	w("\tadd x10, x9, x2") // x10 = data + la, where b's bytes go
+	w("\tadd x9, x6, #8")   // x9 = data
+	w("\tadd x10, x9, x2")  // x10 = data + la, where b's bytes go
 	// b and lb move clear of x0..x2 before the first copy consumes those.
 	w("\tmov x11, x1") // b
 	w("\tmov x12, x3") // lb
@@ -4763,13 +4779,14 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	emitLenOverflowAbort(w, ".Lssa_strcat_len_overflow", "__ssa_msg_alloc_size_str", msgAllocSizeOutOfRange)
 }
 
-// emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a
-// string-valued local. Guarded (null / low-address / immortal-sentinel top bit —
-// so it skips .rodata literals); reads the rc at [ptr-8]; rc<=1 leaks, else
-// drops a shared reference. Strings are the one class still not reclaimed:
-// their producers do not all put the block base at ptr-8 (strbuf_take hands
-// out a 16-byte-headed buffer), so a push from here could strand a block's
-// first slot outside its class and hand __alloc an undersized block. Leaf.
+// emitStrDecHelper writes __fern_str_dec(ptr) -> ptr: the scope-exit drop
+// for a string-valued local. Guarded (null / low-address / immortal-sentinel
+// top bit, so it skips .rodata literals); on the last reference (rc == 1 at
+// [ptr-8]) the block goes back to the freelist at base = ptr-8 and len+8
+// bytes, which every string producer covers: each is an __alloc of at least
+// that with its data at base+8 (Reader.read_chunk rounds its own bump to the
+// same class), and a string grown in place stayed inside its class. A shared
+// string is decremented in place.
 func emitStrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_dec"))
@@ -4778,10 +4795,21 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w("\tldur w1, [x0, #-8]")             // rc
 	w("\ttbnz w1, #31, .Lssa_strdec_ret") // immortal literal sentinel
 	w("\tcmp w1, #1")
-	w("\tb.le .Lssa_strdec_ret") // rc<=1: unique (leak) or already dropped
+	w("\tb.lt .Lssa_strdec_ret") // already dropped
+	w("\tb.eq .Lssa_strdec_free")
 	w("\tsub w1, w1, #1")
 	w("\tstur w1, [x0, #-8]")
 	w(".Lssa_strdec_ret:")
+	w("\tret")
+	w(".Lssa_strdec_free:")
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tstr x0, [sp, #16]")
+	w("\tldur w1, [x0, #-4]") // len
+	w("\tadd x1, x1, #8")     // plus the header
+	w("\tsub x0, x0, #8")     // base
+	w("\tbl %s", fnLabel("__free"))
+	w("\tldr x0, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 
@@ -5425,7 +5453,7 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tldr x3, [x3]")
 	// Allocate the container: 16-byte header + argc*8 entry pointers.
 	w("\tadrp x4, %s", heapPtrSym)
-	w("\tadd x4, x4, #:lo12:%s", heapPtrSym) // x4 = &cursor (held across the loop)
+	w("\tadd x4, x4, #:lo12:%s", heapPtrSym) // x4 = &cursor
 	w("\tldr x5, [x4]")
 	w("\tadd x5, x5, #15")
 	w("\tand x5, x5, #-16") // base (16-aligned)
@@ -5452,14 +5480,8 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tadd x12, x12, #1")
 	w("\tb .Lssa_args_slen")
 	w(".Lssa_args_slen_done:")
-	// Allocate a single-word string: 8-byte header + len bytes + 1 NUL.
-	w("\tldr x5, [x4]") // reload cursor
-	w("\tadd x5, x5, #15")
-	w("\tand x5, x5, #-16")
-	w("\tadd x6, x12, #9") // header(8) + len + NUL(1)
-	w("\tadd x7, x5, x6")
-	w("\tstr x7, [x4]") // bump
-	emitHeapGuardCall(w)
+	// A single-word string: 8-byte header + len bytes + 1 NUL.
+	emitAllocBlock(w, "x5", "x12", 9)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x5]")      // rc = 1
 	w("\tstr w12, [x5, #4]") // len
@@ -5531,15 +5553,7 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tb .Lssa_env_slen")
 	w(".Lssa_env_slen_done:")
 	// Allocate a single-word rc string of the value: rc=1@base, len@base+4, data@base+8, +1 NUL.
-	w("\tadrp x12, %s", heapPtrSym)
-	w("\tadd x12, x12, #:lo12:%s", heapPtrSym) // x12 = &cursor (held across both allocs)
-	w("\tldr x13, [x12]")
-	w("\tadd x13, x13, #15")
-	w("\tand x13, x13, #-16") // base
-	w("\tadd x14, x10, #9")   // header(8) + len + NUL(1)
-	w("\tadd x15, x13, x14")
-	w("\tstr x15, [x12]") // bump
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x13", "x10", 9) // header(8) + len + NUL(1)
 	w("\tmov w14, #1")
 	w("\tstr w14, [x13]")     // rc = 1
 	w("\tstr w10, [x13, #4]") // len
@@ -5555,6 +5569,8 @@ func emitEnvHelper(w func(string, ...any)) {
 	w(".Lssa_env_cpdone:")
 	w("\tstrb wzr, [x16, x10]") // NUL
 	// Allocate the Option box (rc=1@base, tag@base+8, value-ptr@base+16); return base+8.
+	w("\tadrp x12, %s", heapPtrSym)
+	w("\tadd x12, x12, #:lo12:%s", heapPtrSym)
 	w("\tldr x13, [x12]")
 	w("\tadd x13, x13, #15")
 	w("\tand x13, x13, #-16")
@@ -5652,16 +5668,8 @@ func emitIoErrorHelper(w func(string, ...any)) {
 	w("\tsubs w4, w4, #1")
 	w("\tb.ne .Lssa_ioe_prefix")
 	w("\tadd x7, sp, #32")
-	w("\tsub x7, x7, x2") // x7 = byte length
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16") // base
-	w("\tadd x5, x4, #9")   // 8 header + NUL
-	w("\tadd x5, x5, x7")   // + bytes
-	w("\tstr x5, [x3]")
-	emitHeapGuardCall(w)
+	w("\tsub x7, x7, x2")            // x7 = byte length
+	emitAllocBlock(w, "x4", "x7", 9) // 8 header + bytes + NUL
 	w("\tmov w5, #1")
 	w("\tstr w5, [x4]")     // rc = 1
 	w("\tstr w7, [x4, #4]") // len
@@ -5925,16 +5933,8 @@ func emitReadFileHelper(w func(string, ...any)) {
 	// the read — so the loop reads to EOF and grows, and the spare
 	// byte catches a file longer than its hint.
 	w("\tadd x22, x22, #1")
-	// Allocate a single-word rc string of cap bytes (+ NUL).
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x22, #9") // 8 header + cap + 1 NUL
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	// A single-word rc string of cap bytes (+ NUL).
+	emitAllocBlock(w, "x4", "x22", 9) // 8 header + cap + 1 NUL
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")    // rc = 1
 	w("\tadd x21, x4, #8") // x21 = string data ptr
@@ -5944,23 +5944,14 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tcmp x23, x22")
 	w("\tb.lo .Lssa_rf_read")
 	// Buffer full and not at EOF: double the capacity, with a page
-	// floor so a /proc file (hint 0, cap 1) gets there in one step.
-	// This emitter bump-allocates and never frees, so the outgrown
-	// buffer is simply left behind.
+	// floor so a /proc file (hint 0, cap 1) gets there in one step,
+	// and give the outgrown block back.
 	w("\tlsl x24, x22, #1")
 	w("\tcmp x24, #4096")
 	w("\tb.hs .Lssa_rf_grow")
 	w("\tmov x24, #4096")
 	w(".Lssa_rf_grow:")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x24, #9")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x4", "x24", 9)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")   // rc = 1
 	w("\tadd x5, x4, #8") // new string data ptr
@@ -5973,8 +5964,11 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tadd x6, x6, #1")
 	w("\tb .Lssa_rf_regrow")
 	w(".Lssa_rf_regrown:")
+	w("\tsub x0, x21, #8") // the outgrown block
+	w("\tadd x1, x22, #9") // at the size it was requested
 	w("\tmov x21, x5")
 	w("\tmov x22, x24")
+	w("\tbl %s", fnLabel("__free"))
 	w(".Lssa_rf_read:")
 	w("\tmov x0, x20")
 	w("\tadd x1, x21, x23")
@@ -6123,9 +6117,8 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tcmp x23, x22")
 	w("\tb.lo .Lssa_rfb_read")
 	// Buffer full and not at EOF: double the capacity, with a page
-	// floor so a /proc file (hint 0, cap 1) gets there in one step.
-	// This emitter bump-allocates and never frees, so the outgrown
-	// buffer is simply left behind.
+	// floor so a /proc file (hint 0, cap 1) gets there in one step,
+	// and give the outgrown block back.
 	w("\tlsl x24, x22, #1")
 	w("\tcmp x24, #4096")
 	w("\tb.hs .Lssa_rfb_grow")
@@ -6143,8 +6136,11 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tadd x6, x6, #1")
 	w("\tb .Lssa_rfb_regrow")
 	w(".Lssa_rfb_regrown:")
+	w("\tsub x0, x21, #16") // the outgrown block
+	w("\tadd x1, x22, #16") // at the size __alloc_u8 requested
 	w("\tmov x21, x5")
 	w("\tmov x22, x24")
+	w("\tbl %s", fnLabel("__free"))
 	w(".Lssa_rfb_read:")
 	w("\tmov x0, x20")
 	w("\tadd x1, x21, x23")
@@ -6407,15 +6403,7 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w(".Lssa_rlnk_fits:")
 	// The target string in its own rc block: {rc@0, len@4, data@8},
 	// data NUL-terminated so a C consumer can read it back.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x21, #9")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x4", "x21", 9)
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")      // rc = 1
 	w("\tstr w21, [x4, #4]") // len
@@ -7226,15 +7214,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tb .Lssa_td_ret")
 	w(".Lssa_td_ok:")
 	// Allocate a single-word rc string of path_len bytes (+ NUL).
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x21, #9")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x4", "x21", 9)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w21, [x4, #4]") // len = path_len
@@ -7400,16 +7380,8 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tmov x8, #62") // lseek
 	w("\tsvc #0")
 	// Allocate the string[] container: 16-byte header + count*8 pointers (x27).
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
 	w("\tlsl x5, x23, #3")
-	w("\tadd x6, x5, #16")
-	w("\tadd x7, x4, x6")
-	w("\tstr x7, [x3]")
-	emitHeapGuardCall(w)
+	emitAllocBlock(w, "x4", "x5", 16)
 	w("\tadd x27, x4, #16")      // container data
 	w("\tstur w23, [x27, #-12]") // cap = count
 	w("\tmov w9, #1")
@@ -7458,16 +7430,8 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tadd x12, x12, #1")
 	w("\tb %s", L("p2sl"))
 	w("%s:", L("p2sd"))
-	// Allocate a single-word rc string: 8-byte header + len + NUL.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x12, #9")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
+	// A single-word rc string: 8-byte header + len + NUL.
+	emitAllocBlock(w, "x4", "x12", 9)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")      // rc = 1
 	w("\tstr w12, [x4, #4]") // len
@@ -8775,16 +8739,8 @@ func emitStrbufTakeHelper(w func(string, ...any)) {
 	w("\tadrp x1, %s", strbufLenSym)
 	w("\tadd x1, x1, #:lo12:%s", strbufLenSym) // x1 = &len
 	w("\tldr x2, [x1]")                        // x2 = len
-	// Bump-allocate len+8: rc=1@base, len@base+4, data@base+8.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym) // x3 = &cursor
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16") // base
-	w("\tadd x5, x2, #8")   // allocSize = len + 8
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]") // bump
-	emitHeapGuardCall(w)
+	// An __alloc of len+8: rc=1@base, len@base+4, data@base+8.
+	emitAllocBlock(w, "x4", "x2", 8)
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")     // rc = 1
 	w("\tstr w2, [x4, #4]") // len
@@ -9088,10 +9044,9 @@ func emitBufFreeHelper(w func(string, ...any)) {
 
 // emitStrSliceHelper writes __str_slice(base, low, high) -> data: allocate a
 // fresh length-prefixed string holding base[low:high]. Bounds-traps (exit 134)
-// on low < 0, high > src_len, or low > high, matching the native helper. Like
-// the other string helpers it inlines the bump allocation (no __fern_alloc call)
-// into a fresh single-word rc-headered string (rc=1@base, len@base+4,
-// data@base+8), and copies through __ssa_bcopy. low/high arrive as i32;
+// on low < 0, high > src_len, or low > high, matching the native helper. The
+// result is an __alloc of new_len+8 bytes holding a single-word rc-headered
+// string (rc=1@base, len@base+4, data@base+8), copied through __ssa_bcopy. low/high arrive as i32;
 // they are sign-extended for the signed bound checks. x0=base, w1=low, w2=high;
 // returns x0=data.
 func emitStrSliceHelper(w func(string, ...any)) {
@@ -9107,20 +9062,12 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tb.gt .Lssa_strslice_trap")
 	w("\tcmp x1, x2")
 	w("\tb.gt .Lssa_strslice_trap")
-	w("\tsub w4, w2, w1") // new_len = high - low
-	// Bump-allocate new_len+8: rc=1@base, len@base+4, data@base+8.
-	w("\tadrp x5, %s", heapPtrSym)
-	w("\tadd x5, x5, #:lo12:%s", heapPtrSym) // x5 = &cursor
-	w("\tldr x6, [x5]")
-	w("\tadd x6, x6, #15")
-	w("\tand x6, x6, #-16") // x6 = base (16-aligned)
+	w("\tsub w4, w2, w1")            // new_len = high - low
+	emitAllocBlock(w, "x6", "x4", 8) // new_len + the header
 	w("\tmov w7, #1")
-	w("\tstr w7, [x6]")         // rc = 1
-	w("\tstr w4, [x6, #4]")     // len = new_len
-	w("\tadd x8, x6, #8")       // x8 = data
-	w("\tadd x9, x8, w4, uxtw") // new cursor = data + new_len
-	w("\tstr x9, [x5]")
-	emitHeapGuardCall(w)
+	w("\tstr w7, [x6]")     // rc = 1
+	w("\tstr w4, [x6, #4]") // len = new_len
+	w("\tadd x8, x6, #8")   // x8 = data
 	// Copy new_len bytes from base+low (x0+x1) to data (x8).
 	w("\tadd x10, x0, x1") // src = base + low
 	w("\tmov w11, w4")     // new_len, zero-extended into x11
@@ -9137,27 +9084,18 @@ func emitStrSliceHelper(w func(string, ...any)) {
 // payload into a fresh length-prefixed string and return its data pointer — the
 // round-trip companion to s.bytes(). arm64ssa strings are single-word and
 // rc-headered (rc=1@base+0, len@base+4, data@base+8 — the same layout ConstStr
-// and __str_concat use), with no small-string inline optimisation, so this is a
-// straight inline bump-allocate plus an __ssa_bcopy. bs is the input u8[] data pointer;
+// and __str_concat use), with no small-string inline optimisation, so this is an
+// __alloc plus an __ssa_bcopy. bs is the input u8[] data pointer;
 // its byte length is at [bs-4]. x0=bs; returns x0=data.
 func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("string_from_bytes_unchecked"))
-	w("\tldur w1, [x0, #-4]") // w1 = byte length of bs (zero-extends into x1)
-	// Bump-allocate len+8: rc=1@base, len@base+4, data@base+8.
-	w("\tadrp x2, %s", heapPtrSym)
-	w("\tadd x2, x2, #:lo12:%s", heapPtrSym) // x2 = &cursor
-	w("\tldr x3, [x2]")
-	w("\tadd x3, x3, #15")
-	w("\tand x3, x3, #-16") // x3 = base (16-aligned)
+	w("\tldur w1, [x0, #-4]")        // w1 = byte length of bs (zero-extends into x1)
+	emitAllocBlock(w, "x3", "x1", 8) // len + the header
 	w("\tmov w4, #1")
 	w("\tstr w4, [x3]")     // rc = 1
 	w("\tstr w1, [x3, #4]") // len
-	w("\tadd x5, x3, #8")
-	w("\tadd x5, x5, x1") // new cursor = base + 8 + len
-	w("\tstr x5, [x2]")
-	emitHeapGuardCall(w)
-	w("\tadd x6, x3, #8") // x6 = data
+	w("\tadd x6, x3, #8")   // x6 = data
 	// Copy len bytes from bs (x0) to data (x6).
 	w("\tmov x7, x0") // src
 	w("\tmov x8, x1") // len
@@ -9953,7 +9891,7 @@ func computeHelperClobbers() map[string][]bool {
 		heapGuardSym: renderHelper(emitHeapGuard),
 		bcopySym:     renderHelper(emitBcopy),
 		// Preserves every register it touches (that is its whole job), so a
-		// body reaching it inherits nothing; reading its text would say x0..x11.
+		// body reaching it inherits nothing; reading its text would say x0..x15.
 		allocPresSym: "",
 	}
 	for name, emit := range runtimeHelperEmitters {

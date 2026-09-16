@@ -118,12 +118,22 @@ through `__alloc_reuse`. `__fern_rc_dec` does not free at zero, like the flat
 backend's: the IR gates every release on rc == 1 and frees through the
 type-specific drop.
 
-**What is not.** Strings: `__fern_str_dec` still leaks at rc == 1, because not
-every string producer puts the block base at `ptr-8` (`strbuf_take` hands out
-a 16-byte-headed buffer), and a push from the wrong base would hand `__alloc`
-an undersized block. Fixing that means either a uniform string header or a
-size word every producer writes. Until then a string-heavy loop still grows;
-an allocation-heavy one over structs and arrays does not:
+Strings too, since 2026-09-16: every string producer on this backend is an
+`__alloc` of at least `len + 8` bytes with the data at `base + 8`
+(`__str_concat`, `__str_slice`, `string_from_bytes_unchecked`, `hostname`,
+`env`, `args`, `read_file`, `read_line`, `read_link`, `read_dir`, `temp_dir`,
+`strbuf_take` and the rest reach it through `__ssa_alloc_pres`;
+`Reader.read_chunk` keeps its own bump so it can rewind, but rounds the block
+to the same class both before the read and after a short one), so
+`__fern_str_dec` frees at rc == 1 at base `ptr - 8` and `len + 8` bytes, and
+`__fern_str_append` grows a uniquely held accumulator in place while the
+grown length fits its class. The same conversion covers the two u8[] producers
+that bumped raw (`random_bytes`, `tcp_recv`) and the read_dir container, whose
+`__fern_arr_dec` release already pushed them at their class: a raw bump only
+spans its 16-rounded size, so a block above 2 KiB, where a class rounds to
+three significant bits, could come back from `__alloc` larger than the bytes
+behind it. `read_file` and `read_file_bytes` also free the buffer they
+outgrow. An allocation-heavy loop over structs and arrays holds flat:
 `examples/bench/pmap_insert.fern` holds at 2 MB peak RSS from 1000 to 8000
 entries where it was 4 / 8 / 16 / 32 MB before (#8069), the same as the flat
 build.
@@ -159,14 +169,12 @@ every heap string is an `__alloc` of at least `len + 8` bytes, so the size
 class of `len + 8` is capacity the string owns whatever produced it, and a
 uniquely held accumulator whose grown length still fits that class takes the
 piece in place, and the same invariant is what lets `__fern_str_dec` free at
-rc == 1 here — base `ptr-8`, `len+8` bytes, a class the block always covers —
-where arm64ssa's paragraph above still cannot. The lift hands
-`__fern_str_append` through unchanged and releases the slice an unfused
-`__fern_str_append_range` borrows; arm64ssa branches the append to
-`__str_concat`, since a heap that never frees a string gains nothing from
-growing one. On x86-64 `examples/bench/string_build.fern` went from 178 ms to
-71 ms with the append and to 27 ms with the free, against the flat
-backend's 17 ms.
+rc == 1 — base `ptr-8`, `len+8` bytes, a class the block always covers. The
+lift hands `__fern_str_append` through unchanged and releases the slice an
+unfused `__fern_str_append_range` borrows. On x86-64
+`examples/bench/string_build.fern` went from 178 ms to 71 ms with the append
+and to 27 ms with the free, against the flat backend's 17 ms; arm64ssa got
+the same two helpers the same day, once its producers moved onto `__alloc`.
 
 ### Helper port order (leaf-first)
 

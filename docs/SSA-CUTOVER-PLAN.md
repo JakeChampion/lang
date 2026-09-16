@@ -347,9 +347,10 @@ Two concrete blockers, and only two:
    backends), which took `examples/bench/string_build.fern` from 10x the
    flat backend to 4x — the slowdown gate had been passing on that program
    only when the machine was quiet enough to keep the absolute gap under its
-   floor — and `__fern_str_dec` frees at rc == 1, the string leak arm64ssa
-   still carries, which took it to 1.6x. This backend's heap now
-   reclaims everything the flat backend's does.
+   floor — and `__fern_str_dec` frees at rc == 1, which took it to 1.6x.
+   This backend's heap now reclaims everything the flat backend's does, and
+   arm64ssa's does too since the same day, when its string producers moved
+   onto `__alloc` and it got the same two helpers.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than
