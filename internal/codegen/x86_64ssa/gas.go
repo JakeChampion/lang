@@ -458,15 +458,32 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			w("\tpop rbp")
 			w("\tret")
 		case TJmp:
-			w("\tjmp .L_%s_b%d", label, blk.Term.Target)
+			// A block that ends where its successor begins falls through.
+			if blk.Term.Target != bi+1 {
+				w("\tjmp .L_%s_b%d", label, blk.Term.Target)
+			}
 		case TBrIf:
+			// The false arm is the fallthrough where the layout allows it; when
+			// the TRUE arm is the next block instead, branch on the inverse
+			// condition to the false arm and fall through to the true one.
+			t, f := blk.Term.True, blk.Term.False
 			if jcc != "" {
-				w("\t%s .L_%s_b%d", jcc, label, blk.Term.True)
+				if inv, ok := invertJcc(jcc); ok && t == bi+1 && f != bi+1 {
+					w("\t%s .L_%s_b%d", inv, label, f)
+					break
+				}
+				w("\t%s .L_%s_b%d", jcc, label, t)
 			} else {
 				w("\ttest %s, %s", reg(blk.Term.CondReg), reg(blk.Term.CondReg))
-				w("\tjnz .L_%s_b%d", label, blk.Term.True)
+				if t == bi+1 && f != bi+1 {
+					w("\tjz .L_%s_b%d", label, f)
+					break
+				}
+				w("\tjnz .L_%s_b%d", label, t)
 			}
-			w("\tjmp .L_%s_b%d", label, blk.Term.False)
+			if f != bi+1 {
+				w("\tjmp .L_%s_b%d", label, f)
+			}
 		default:
 			return fmt.Errorf("x86_64ssa: unsupported terminator %d in real asm", blk.Term.Kind)
 		}
@@ -521,13 +538,34 @@ func fuseBranchCmp(blk MBlock) (insts []Inst, cmpLine, jcc string) {
 	// comparison reading its own destination on the right reads the value the
 	// copy put there, so dropping the copy would compare a stale register.
 	left := c.Dst
-	if n := len(insts); n > 0 && c.Src != c.Dst {
+	if n := len(insts); n > 0 && (c.SrcImm || c.Src != c.Dst) {
 		if m := insts[n-1]; m.Op == MovReg && m.Dst == c.Dst {
 			left = m.Src
 			insts = insts[:n-1]
 		}
 	}
-	return insts, fmt.Sprintf("cmp %s, %s", reg(left), reg(c.Src)), cc
+	return insts, fmt.Sprintf("cmp %s, %s", reg(left), rightOperandText(c)), cc
+}
+
+// rightOperandText renders a BinOp's or SetCmp's right operand: the immediate
+// it carries, else its source register.
+func rightOperandText(in Inst) string {
+	if in.SrcImm {
+		return strconv.FormatInt(in.Imm, 10)
+	}
+	return reg(in.Src)
+}
+
+// invertJcc is the conditional jump that takes the other arm. The integer
+// conditions come in exact pairs, so a branch on the inverse falls through to
+// the arm the original would have jumped to.
+func invertJcc(jcc string) (string, bool) {
+	inv, ok := map[string]string{
+		"je": "jne", "jne": "je",
+		"jl": "jge", "jge": "jl", "jle": "jg", "jg": "jle",
+		"jb": "jae", "jae": "jb", "jbe": "ja", "ja": "jbe",
+	}[jcc]
+	return inv, ok
 }
 
 // jccMnemonic is the conditional jump that branches on what setccMnemonic's
@@ -1142,7 +1180,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("x86_64ssa: binary op %v unsupported in the real-asm slice", in.K)
 		}
-		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), reg(in.Src)) + maskFix(in.Dst, in.W), nil
+		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), rightOperandText(in)) + maskFix(in.Dst, in.W), nil
 	case SetCmp:
 		cc, ok := setccMnemonic(in.K)
 		if !ok {
@@ -1150,7 +1188,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 		}
 		// dst = (dst CMP src): compare, set the low byte from flags, zero-extend.
 		return fmt.Sprintf("cmp %s, %s\n\t%s %s\n\tmovzx %s, %s",
-			reg(in.Dst), reg(in.Src), cc, reg8n(in.Dst), reg(in.Dst), reg8n(in.Dst)), nil
+			reg(in.Dst), rightOperandText(in), cc, reg8n(in.Dst), reg(in.Dst), reg8n(in.Dst)), nil
 	case MemAlloc:
 		// Bump allocator with an 8-byte rc header (rc=1 at base+0), mirroring the
 		// native __fern_alloc_rc1 layout so __fern_rc_is_unique / the drop helpers
@@ -1188,7 +1226,10 @@ func asmInst(in Inst, scratch int) (string, error) {
 			}
 			return fmt.Sprintf("movsx %s, %s %s", reg32n(in.Dst), size, mem) + maskFix(in.Dst, in.W), nil
 		}
-		return fmt.Sprintf("movzx %s, %s %s", reg32n(in.Dst), size, mem) + maskFix(in.Dst, in.W), nil
+		// A zero-extending sub-word load already leaves bits 63:8 (or 63:16)
+		// clear, which is the i32 sign-extension of a value that small, so the
+		// fixup would rewrite the register with itself.
+		return fmt.Sprintf("movzx %s, %s %s", reg32n(in.Dst), size, mem), nil
 	case MemStore:
 		mem := memRef(reg(in.Src), in.Imm)
 		switch in.Bytes {
@@ -1909,9 +1950,11 @@ func inlineArrIdxLines(in Inst, numAlloc int, seed string) ([]string, bool) {
 		if form.slice {
 			lenRef = memRef(reg(base), 8)
 		}
+		// The length is read where it lies: `cmp r32, m32` needs no register
+		// for it, and the loop that indexes a buffer repeatedly pays one load
+		// per access instead of a load and a move.
 		out = append(out,
-			fmt.Sprintf("mov %s, %s", reg32n(s2), lenRef),
-			fmt.Sprintf("cmp %s, %s", reg32n(idx), reg32n(s2)),
+			fmt.Sprintf("cmp %s, dword ptr %s", reg32n(idx), lenRef),
 			fmt.Sprintf("jb %s", okLbl),
 			"mov edi, 134",
 			"mov eax, 231", // exit_group
