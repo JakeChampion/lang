@@ -12,14 +12,15 @@ const mapSeedSym = "__ssa_map_seed"
 
 // emitMemsetHelper writes __memset(dst, byte, n): n copies of the low byte of
 // `byte` at dst. core/map fills a fresh control-byte array with its empty
-// marker through it. rep stosb takes dst in rdi as it arrives. Leaf.
+// marker through it. __ssa_bfill takes dst in rdi as it arrives.
 func emitMemsetHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__memset"))
 	w("\tmov eax, esi")
 	w("\tmov ecx, edx")
-	w("\tcld")
-	w("\trep stosb")
+	w("\tsub rsp, 8")
+	w("\tcall %s", bfillSym)
+	w("\tadd rsp, 8")
 	w("\tret")
 }
 
