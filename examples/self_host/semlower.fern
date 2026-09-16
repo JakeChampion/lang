@@ -150,7 +150,10 @@ function produced_plan(p: semsource.Produced, what: string): ssaunits.Plan {
     // A template's erased body is not a body this boundary has: its instances
     // are separate symbols of their own, and the erased symbol keeps the AST
     // lowering that its own AST callers name.
-    if (p.template) { return ssaunits.refused("generic template"); }
+    if (p.template) {
+        if (!p.ok && !p.bodyless) { report(what, p.why); }
+        return ssaunits.refused("generic template");
+    }
     if (!p.ok) { report(what, p.why); return ssaunits.refused(p.why); }
     var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
     if (!plan.ok) { report(what, plan.why); }
@@ -512,6 +515,12 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
             }
             helpers = util.append_all(helpers, ssarc.drop_helpers(built.decls[i].func));
             bodies = bodies.append(r.body[i]);
+            n = n + 1;
+        } else if (built.decls[i].template && (built.decls[i].ok || built.decls[i].bodyless)) {
+            // A template's erased body is no body of this module's: its
+            // produced instances stand for it, and one nothing instantiates
+            // is called by nobody. Neither is a refusal.
+            bodies = bodies.append(declined("generic template"));
             n = n + 1;
         } else { bodies = bodies.append(declined("kept the AST lowering")); }
         i = i + 1;
