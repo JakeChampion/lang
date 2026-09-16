@@ -2991,7 +2991,7 @@ function main(): i32 {
     }
     base = irlower.regrow_sigs(base, mod.funcs, tab, seeds);
     base = irlower.consume_sigs(base, mod.funcs, consumed);
-    var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi");
+    var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi", ircore.no_sub());
     if (!g.ok) { eprint("ast lowering failed"); return 3; }
     var cache: irlower.LowerResult[] = [];
     at = 0;
