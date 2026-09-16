@@ -333,7 +333,7 @@ five, ratio to the flat backend:
 | `pmap_insert` | 1.28x | **1.12x** | +4.9% |
 | `pvec_with` | 1.32x | **1.12x** | +4.9% |
 | `enum_match` | 3.25x | **2.33x** | +3.4% |
-| `struct_drop` | 2.03x | 1.82x | +0.7% |
+| `struct_drop` | 2.03x | 1.61x | +0.7% |
 | `map_int`, `array_append`, `string_build` | | unchanged | 0% |
 
 `enum_match` and `struct_drop` still pay the drop side: the per-type drop
@@ -351,8 +351,8 @@ constant shift count is the instruction's own immediate rather than a
 register copied into `cl` (or an AArch64 register) — the foldable set
 admits shifts and power-of-two divisors. `enum_match` 2.33x → **1.00x**;
 `map_int` 190 static instructions fewer; `coreutils/sort.fern` 15 `idiv` →
-2 and 668 `push rcx` → 487. `struct_drop` (1.88x) is unmoved: its cost is
-the drop side above.
+2 and 668 `push rcx` → 487. `struct_drop` (1.61x before and after, best of
+five re-measured on both builds) is unmoved: its cost is the drop side above.
 
 ### Per-backend disposition
 
