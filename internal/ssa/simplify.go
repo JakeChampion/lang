@@ -77,11 +77,11 @@ func Simplify(f *Func) {
 		return
 	}
 
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -130,14 +130,14 @@ func Simplify(f *Func) {
 	}
 }
 
-func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
+func identityReplacement(op *Op, defs idTable[*Op]) (Value, bool) {
 	// Unary cases first.
 	if op.Kind == OpNot || op.Kind == OpNeg || op.Kind == OpFNeg {
 		if len(op.Args) != 1 {
 			return Value{}, false
 		}
-		def, ok := defs[op.Args[0].ID]
-		if !ok || def.Kind != op.Kind || len(def.Args) != 1 {
+		def := defs.get(op.Args[0])
+		if def == nil || def.Kind != op.Kind || len(def.Args) != 1 {
 			return Value{}, false
 		}
 		return def.Args[0], true
@@ -149,8 +149,8 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 		if len(op.Args) != 1 {
 			return Value{}, false
 		}
-		def, ok := defs[op.Args[0].ID]
-		if !ok || def.Kind != op.Kind {
+		def := defs.get(op.Args[0])
+		if def == nil || def.Kind != op.Kind {
 			return Value{}, false
 		}
 		return def.Result, true
@@ -266,12 +266,12 @@ func identityReplacement(op *Op, defs map[int32]*Op) (Value, bool) {
 // by an OpXor with the same `cancellor` as one of its args.
 // Used by the xor-self-inverse rewrite. Order-agnostic: the
 // inner Xor's args may be [x, cancellor] or [cancellor, x].
-func xorCancel(inner, cancellor Value, defs map[int32]*Op) (Value, bool) {
+func xorCancel(inner, cancellor Value, defs idTable[*Op]) (Value, bool) {
 	if !inner.IsValid() || !cancellor.IsValid() {
 		return Value{}, false
 	}
-	def, ok := defs[inner.ID]
-	if !ok || def.Kind != OpXor || len(def.Args) != 2 {
+	def := defs.get(inner)
+	if def == nil || def.Kind != OpXor || len(def.Args) != 2 {
 		return Value{}, false
 	}
 	if def.Args[0] == cancellor {

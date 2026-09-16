@@ -61,11 +61,11 @@ func SCCP(f *Func) int {
 	// the phi meet calculation.
 	edgeReach := map[edge]bool{}
 	// Pre-index defs and uses for fast lookups.
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -278,7 +278,7 @@ func meet(a, b latticeVal) latticeVal {
 // latticeOf returns the lattice value of a Value, treating
 // const-op defs as constants (the analysis seeds Params as
 // Bottom; everything else starts Top).
-func latticeOf(v Value, val map[int32]latticeVal, defs map[int32]*Op) latticeVal {
+func latticeOf(v Value, val map[int32]latticeVal, defs idTable[*Op]) latticeVal {
 	if !v.IsValid() {
 		return latticeTop()
 	}
@@ -286,7 +286,7 @@ func latticeOf(v Value, val map[int32]latticeVal, defs map[int32]*Op) latticeVal
 		return lv
 	}
 	// Const op def — seed lazily.
-	if def, ok := defs[v.ID]; ok {
+	if def := defs.get(v); def != nil {
 		switch def.Kind {
 		case OpConstInt:
 			return latticeConstInt(def.Imm, def.Width)
@@ -305,7 +305,7 @@ func latticeOf(v Value, val map[int32]latticeVal, defs map[int32]*Op) latticeVal
 // on current arg lattice values. If the new value differs
 // from the cached one, records the new value and adds Result
 // to the value-worklist.
-func reevalOp(op *Op, b *Block, val map[int32]latticeVal, defs map[int32]*Op, reach map[*Block]bool, edgeReach map[edge]bool, valWL *[]Value) {
+func reevalOp(op *Op, b *Block, val map[int32]latticeVal, defs idTable[*Op], reach map[*Block]bool, edgeReach map[edge]bool, valWL *[]Value) {
 	if !op.Result.IsValid() {
 		return
 	}
@@ -345,7 +345,7 @@ func reevalOp(op *Op, b *Block, val map[int32]latticeVal, defs map[int32]*Op, re
 }
 
 // evalPhi computes the meet of phi args from reachable preds.
-func evalPhi(op *Op, b *Block, val map[int32]latticeVal, defs map[int32]*Op, edgeReach map[edge]bool) latticeVal {
+func evalPhi(op *Op, b *Block, val map[int32]latticeVal, defs idTable[*Op], edgeReach map[edge]bool) latticeVal {
 	if len(op.Args) != len(b.Preds) {
 		return latticeBottom()
 	}
@@ -366,7 +366,7 @@ func evalPhi(op *Op, b *Block, val map[int32]latticeVal, defs map[int32]*Op, edg
 // evalPureOp folds a pure binary/unary op when all args are
 // Const; bails to Bottom when any arg is Bottom; otherwise
 // returns Top (we'll re-eval when args change).
-func evalPureOp(op *Op, val map[int32]latticeVal, defs map[int32]*Op) latticeVal {
+func evalPureOp(op *Op, val map[int32]latticeVal, defs idTable[*Op]) latticeVal {
 	// Any Bottom arg → Bottom result.
 	for _, a := range op.Args {
 		if latticeOf(a, val, defs).tag == latticeTagBottom {
@@ -503,7 +503,7 @@ func foldFloatBinary(k OpKind, width int8, a, b float64) latticeVal {
 // Br: target is unconditionally reachable. BrIf with Const
 // cond: only the matching target. BrIf with Bottom cond:
 // both targets. BrIf with Top cond: neither (yet).
-func reevalTerm(b *Block, val map[int32]latticeVal, defs map[int32]*Op, _ *[]edge, _ map[edge]bool, markEdge func(from, to *Block)) {
+func reevalTerm(b *Block, val map[int32]latticeVal, defs idTable[*Op], _ *[]edge, _ map[edge]bool, markEdge func(from, to *Block)) {
 	switch b.Term.Kind {
 	case TermBr:
 		if b.Term.Target != nil {

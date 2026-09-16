@@ -39,11 +39,11 @@ func FoldBranches(f *Func) {
 	if f == nil {
 		return
 	}
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -69,8 +69,8 @@ func FoldBranches(f *Func) {
 		if !cond.IsValid() {
 			continue
 		}
-		def, ok := defs[cond.ID]
-		if !ok {
+		def := defs.get(cond)
+		if def == nil {
 			continue
 		}
 
@@ -88,13 +88,13 @@ func FoldBranches(f *Func) {
 			b.Term.True, b.Term.False = b.Term.False, b.Term.True
 			tBlock, fBlock = b.Term.True, b.Term.False
 			cond = b.Term.Cond
-			def, ok = defs[cond.ID]
-			if !ok {
+			def = defs.get(cond)
+			if def == nil {
 				break
 			}
 		}
 
-		if !ok || def.Kind != OpConstBool {
+		if def == nil || def.Kind != OpConstBool {
 			continue
 		}
 

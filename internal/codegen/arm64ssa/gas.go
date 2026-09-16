@@ -9282,49 +9282,57 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 	}
 }
 
-// emitFunc writes one function. It emits the body twice: the first pass finds
-// which callee-saved registers the body actually touches, the second emits the
-// prologue saves and epilogue restores for exactly those.
-//
-// Reading the set back off the emitted text is what makes it complete, the same
-// argument x86_64ssa's calleeSavedIn makes: the alternative is a list of every
-// Program field and line helper that can name a register, and the two failure
-// directions are not symmetric — an over-wide set costs a store and a load,
-// while a missed register is handed back to the caller clobbered with nothing
-// failing until unrelated code reads it. The second pass adds only saves and
-// restores of registers already in the set, so the set is stable.
-func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
-	var probe strings.Builder
-	pw := func(format string, args ...any) {
-		fmt.Fprintf(&probe, format, args...)
-		probe.WriteByte('\n')
-	}
-	if err := emitFuncBody(pw, name, p, numAlloc, nil, strLabels, sentLabels, fnIndex); err != nil {
-		return err
-	}
-	return emitFuncBody(w, name, p, numAlloc, calleeSavedIn(probe.String(), p.NumRegFile), strLabels, sentLabels, fnIndex)
-}
-
 // calleeSavedIn returns, in ascending abstract-index order, the callee-saved
-// registers the emitted text mentions. Tokens keep `_` and `.` so a label like
-// `.Lssa_x19_ok` stays one word rather than decomposing into a register name.
+// registers the emitted text mentions. Tokens keep `_` and `.` as word
+// characters so a label like `.Lssa_x19_ok` stays one word rather than
+// decomposing into a register name.
 func calleeSavedIn(asm string, numRegFile int) []int {
-	seen := map[string]bool{}
-	for _, tok := range armRegTokenRe.FindAllString(asm, -1) {
-		seen[tok] = true
+	seen := make([]bool, len(armX))
+	for i := 0; i < len(asm); {
+		if !isArmRegTokenStart(asm[i]) {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(asm) && isArmRegTokenByte(asm[j]) {
+			j++
+		}
+		if j-i <= maxArmRegSpelling {
+			if r, ok := armRegByName[asm[i:j]]; ok {
+				seen[r] = true
+			}
+		}
+		i = j
 	}
 	var out []int
 	for r := 0; r < numRegFile && r < len(armX); r++ {
-		if armCalleeSaved(r) && (seen[armX[r]] || seen[armW[r]]) {
+		if armCalleeSaved(r) && seen[r] {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-// armRegTokenRe splits assembly into identifier-ish tokens, treating `_` and `.`
-// as word characters so a label name cannot decompose into a register name.
-var armRegTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
+func isArmRegTokenStart(c byte) bool {
+	return c == '_' || c == '.' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+func isArmRegTokenByte(c byte) bool { return isArmRegTokenStart(c) || (c >= '0' && c <= '9') }
+
+// maxArmRegSpelling is the longest register name (`x28`); a longer token cannot
+// be one.
+const maxArmRegSpelling = 3
+
+// armRegByName maps both width spellings of every register to its abstract
+// index.
+var armRegByName = func() map[string]int {
+	m := make(map[string]int, 2*len(armX))
+	for r := range armX {
+		m[armX[r]] = r
+		m[armW[r]] = r
+	}
+	return m
+}()
 
 // maxFrameBytes is the largest frame the two-instruction adjustment below can
 // reach: both halves of an ADD/SUB immediate are 12 bits, one of them shifted
@@ -9375,6 +9383,18 @@ type frameLayout struct {
 	bytes        int // the whole frame, 16-aligned — what the prologue subtracts
 }
 
+// withSaves fills in the link-register slot and the total frame size for a
+// function that preserves n callee-saved registers.
+func (f frameLayout) withSaves(call bool, n int) frameLayout {
+	f.lrSlot = f.csBase + n
+	nslots := f.lrSlot
+	if call {
+		nslots = f.lrSlot + 1
+	}
+	f.bytes = align16(8 * nslots)
+	return f
+}
+
 // slot is the byte offset of spill/phi slot n.
 func (f frameLayout) slot(n int) int { return 8 * (f.slotBase + n) }
 
@@ -9386,14 +9406,33 @@ func (f frameLayout) outArg(k int) int { return 8 * k }
 // the caller's sp, which this frame sits entirely below.
 func (f frameLayout) inArg(k int) int { return f.bytes + 8*k }
 
-// emitFuncBody writes one function: its label, a stack frame (spill slots, plus
-// a call-save area, one slot per callee-saved register in csSaved, and a
+// emitFunc writes one function: its label, a stack frame (spill slots, plus a
+// call-save area, one slot per callee-saved register the body uses, and a
 // saved-x30 slot when the function makes calls), each block's straight-line body
 // under a namespaced label, and the terminators. The stack pointer stays fixed
 // for the whole body — call-crossing registers are preserved in the reserved
 // call-save area rather than by moving sp — so every slot access is a stable
 // sp-relative offset.
-func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc int, csSaved []int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
+//
+// Which callee-saved registers the function must preserve is read back off the
+// text it emits, the same argument x86_64ssa's calleeSavedIn makes: the
+// alternative is a list of every Program field and line helper that can name a
+// register, and the two failure directions are not symmetric — an over-wide set
+// costs a store and a load, while a missed register is handed back to the
+// caller clobbered with nothing failing until unrelated code reads it.
+//
+// The blocks are emitted once, into a buffer carrying a marker line where each
+// return's teardown goes, because nothing a block addresses moves with the
+// saved set: every slot it names sits below csBase. The prologue and the
+// teardown do move with it, so they are rendered after the scan, and they name
+// only registers already in the set.
+//
+// The parameter moves are scanned too, since a parameter's home can be a
+// callee-saved register the body itself never names. They are rendered twice
+// for that, once against a provisional frame and once against the final one:
+// the layout reaches paramMoveLines only as slot and incoming-argument offsets,
+// so the two renders differ in immediates and never in a register name.
+func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
@@ -9404,55 +9443,14 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 	fr.slotBase = fr.outArgs
 	fr.callSaveBase = fr.slotBase + p.NumSlots
 	fr.csBase = fr.callSaveBase + maxCallSaveSlots(p, numAlloc)
-	fr.lrSlot = fr.csBase + len(csSaved)
-	nslots := fr.lrSlot
-	if call {
-		nslots = fr.lrSlot + 1
-	}
-	fr.bytes = align16(8 * nslots)
 	scratch := p.NumRegFile - 1 // result-capture scratch; above the allocatable file
 
-	w("%s:", label)
-	if fr.bytes > 0 {
-		lines, err := spAdjustLines("sub", fr.bytes)
-		if err != nil {
-			return err
-		}
-		for _, l := range lines {
-			w("\t%s", l)
-		}
+	var body strings.Builder
+	w := func(format string, args ...any) {
+		fmt.Fprintf(&body, format, args...)
+		body.WriteByte('\n')
 	}
-	if call {
-		w("\tstr x30, [sp, #%d]", 8*fr.lrSlot)
-	}
-	for _, l := range slotSaveLines(csSaved, fr.csBase) {
-		w("\t%s", l)
-	}
-	// Parameter ABI: move each incoming argument register into its param's home.
-	// Must follow the frame setup (slot-homed params store to [sp]) and the
-	// callee-saved saves (a param's home may be one of them).
-	for _, l := range paramMoveLines(p.ParamLocs, fr, scratch) {
-		w("\t%s", l)
-	}
-
-	// teardown restores the link register and the callee-saved registers, then
-	// drops the frame. Emitted after the return value is in place, so restoring
-	// a callee-saved register that held it cannot clobber it.
-	teardown := func() {
-		if call {
-			w("\tldr x30, [sp, #%d]", 8*fr.lrSlot)
-		}
-		for _, l := range slotRestoreLines(csSaved, fr.csBase) {
-			w("\t%s", l)
-		}
-		if fr.bytes > 0 {
-			// The prologue already proved this frame fits.
-			lines, _ := spAdjustLines("add", fr.bytes)
-			for _, l := range lines {
-				w("\t%s", l)
-			}
-		}
-	}
+	teardown := func() { body.WriteString(teardownMarker + "\n") }
 
 	ret := func(reg int) {
 		if reg != 0 {
@@ -9659,7 +9657,74 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 			return fmt.Errorf("arm64ssa: unsupported terminator %d", blk.Term.Kind)
 		}
 	}
+
+	provisional := paramMoveLines(p.ParamLocs, fr.withSaves(call, 0), scratch)
+	saved := calleeSavedIn(body.String()+strings.Join(provisional, "\n"), p.NumRegFile)
+	fr = fr.withSaves(call, len(saved))
+
+	out("%s:", label)
+	if fr.bytes > 0 {
+		lines, err := spAdjustLines("sub", fr.bytes)
+		if err != nil {
+			return err
+		}
+		for _, l := range lines {
+			out("\t%s", l)
+		}
+	}
+	if call {
+		out("\tstr x30, [sp, #%d]", 8*fr.lrSlot)
+	}
+	for _, l := range slotSaveLines(saved, fr.csBase) {
+		out("\t%s", l)
+	}
+	// Parameter ABI: move each incoming argument register into its param's home.
+	// Must follow the frame setup (slot-homed params store to [sp]) and the
+	// callee-saved saves (a param's home may be one of them).
+	for _, l := range paramMoveLines(p.ParamLocs, fr, scratch) {
+		out("\t%s", l)
+	}
+	writeBody(out, body.String(), teardownLines(fr, call, saved))
 	return nil
+}
+
+// teardownMarker is the line emitFunc writes where a return's frame teardown
+// goes. It is replaced before the text leaves emitFunc, and the leading NUL
+// keeps it from colliding with any assembly line.
+const teardownMarker = "\x00teardown"
+
+// teardownLines restores the link register and the callee-saved registers, then
+// drops the frame. They follow the return value into place, so restoring a
+// callee-saved register that held it cannot clobber it.
+func teardownLines(fr frameLayout, call bool, saved []int) []string {
+	var out []string
+	if call {
+		out = append(out, fmt.Sprintf("ldr x30, [sp, #%d]", 8*fr.lrSlot))
+	}
+	out = append(out, slotRestoreLines(saved, fr.csBase)...)
+	if fr.bytes > 0 {
+		// The prologue already proved this frame fits.
+		lines, _ := spAdjustLines("add", fr.bytes)
+		out = append(out, lines...)
+	}
+	return out
+}
+
+// writeBody copies the emitted blocks to w a line at a time, replacing each
+// teardown marker with the teardown itself.
+func writeBody(w func(string, ...any), body string, teardown []string) {
+	for i, piece := range strings.Split(body, teardownMarker+"\n") {
+		if i > 0 {
+			for _, l := range teardown {
+				w("\t%s", l)
+			}
+		}
+		for piece != "" {
+			line, rest, _ := strings.Cut(piece, "\n")
+			w("%s", line)
+			piece = rest
+		}
+	}
 }
 
 // maxCallSaveSlots is the width of the call-save area: the largest number of

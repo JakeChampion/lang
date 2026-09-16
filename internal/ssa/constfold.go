@@ -31,18 +31,18 @@ func Fold(f *Func) {
 	if f == nil {
 		return
 	}
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			tryFold(op, defs)
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
 }
 
-func tryFold(op *Op, defs map[int32]*Op) {
+func tryFold(op *Op, defs idTable[*Op]) {
 	switch op.Kind {
 	case OpAdd, OpSub, OpMul, OpDiv, OpDivU, OpRem, OpRemU,
 		OpAnd, OpOr, OpXor,
@@ -260,12 +260,12 @@ func tryFold(op *Op, defs map[int32]*Op) {
 	}
 }
 
-func constInt(v Value, defs map[int32]*Op) (int64, bool) {
+func constInt(v Value, defs idTable[*Op]) (int64, bool) {
 	if !v.IsValid() {
 		return 0, false
 	}
-	def, ok := defs[v.ID]
-	if !ok {
+	def := defs.get(v)
+	if def == nil {
 		return 0, false
 	}
 	if def.Kind != OpConstInt {
@@ -277,12 +277,12 @@ func constInt(v Value, defs map[int32]*Op) (int64, bool) {
 // constBool is the boolean analogue of constInt — returns the
 // def's Imm (interpreted as 0/1) if `v` is defined by an
 // OpConstBool, else false.
-func constBool(v Value, defs map[int32]*Op) (bool, bool) {
+func constBool(v Value, defs idTable[*Op]) (bool, bool) {
 	if !v.IsValid() {
 		return false, false
 	}
-	def, ok := defs[v.ID]
-	if !ok {
+	def := defs.get(v)
+	if def == nil {
 		return false, false
 	}
 	if def.Kind != OpConstBool {
@@ -293,12 +293,12 @@ func constBool(v Value, defs map[int32]*Op) (bool, bool) {
 
 // constFloat is the float analogue of constInt — returns the
 // def's F64 if `v` is defined by an OpConstFloat, else false.
-func constFloat(v Value, defs map[int32]*Op) (float64, bool) {
+func constFloat(v Value, defs idTable[*Op]) (float64, bool) {
 	if !v.IsValid() {
 		return 0, false
 	}
-	def, ok := defs[v.ID]
-	if !ok {
+	def := defs.get(v)
+	if def == nil {
 		return 0, false
 	}
 	if def.Kind != OpConstFloat {
@@ -321,7 +321,7 @@ func constFloat(v Value, defs map[int32]*Op) (float64, bool) {
 // f32 literals folded to -360517687, a value f32 cannot even
 // represent (the ulp at that magnitude is 32), where the
 // interpreter and both native backends produce -360517664.
-func tryFoldFloat(op *Op, defs map[int32]*Op) {
+func tryFoldFloat(op *Op, defs idTable[*Op]) {
 	if len(op.Args) != 2 {
 		return
 	}

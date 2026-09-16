@@ -16,14 +16,14 @@ type UseSite struct {
 // after building invalidates the index — rebuild after every
 // transformation pass.
 type Uses struct {
-	of map[int32][]UseSite
+	of idTable[[]UseSite]
 }
 
 // BuildUses walks `f` and records every Value use in an index
 // keyed by Value.ID. Cost is O(N + total-uses); negligible at
 // SSA-function scale.
 func BuildUses(f *Func) *Uses {
-	u := &Uses{of: map[int32][]UseSite{}}
+	u := &Uses{of: newIDTable[[]UseSite](f)}
 	if f == nil {
 		return u
 	}
@@ -33,28 +33,28 @@ func BuildUses(f *Func) *Uses {
 				if !arg.IsValid() {
 					continue
 				}
-				u.of[arg.ID] = append(u.of[arg.ID], UseSite{
+				u.of.set(arg, append(u.of.get(arg), UseSite{
 					Block: b,
 					Op:    op,
 					Index: i,
-				})
+				}))
 			}
 		}
 		switch b.Term.Kind {
 		case TermBrIf:
 			if b.Term.Cond.IsValid() {
-				u.of[b.Term.Cond.ID] = append(u.of[b.Term.Cond.ID], UseSite{Block: b})
+				u.of.set(b.Term.Cond, append(u.of.get(b.Term.Cond), UseSite{Block: b}))
 			}
 		case TermRet:
 			if b.Term.Value.IsValid() {
-				u.of[b.Term.Value.ID] = append(u.of[b.Term.Value.ID], UseSite{Block: b})
+				u.of.set(b.Term.Value, append(u.of.get(b.Term.Value), UseSite{Block: b}))
 			}
 		case TermRetPair:
 			if b.Term.Value.IsValid() {
-				u.of[b.Term.Value.ID] = append(u.of[b.Term.Value.ID], UseSite{Block: b})
+				u.of.set(b.Term.Value, append(u.of.get(b.Term.Value), UseSite{Block: b}))
 			}
 			if b.Term.Value2.IsValid() {
-				u.of[b.Term.Value2.ID] = append(u.of[b.Term.Value2.ID], UseSite{Block: b})
+				u.of.set(b.Term.Value2, append(u.of.get(b.Term.Value2), UseSite{Block: b}))
 			}
 		}
 	}
@@ -66,20 +66,20 @@ func BuildUses(f *Func) *Uses {
 // Returns nil if `v` has no uses (callers can range over a
 // nil slice safely).
 func (u *Uses) Of(v Value) []UseSite {
-	if u == nil || !v.IsValid() {
+	if u == nil {
 		return nil
 	}
-	return u.of[v.ID]
+	return u.of.get(v)
 }
 
 // Count returns how many sites read `v`. Cheaper than
 // len(Of(v)) only marginally, but reads better at call sites
 // that just want a yes/no on "is this Value used at all".
 func (u *Uses) Count(v Value) int {
-	if u == nil || !v.IsValid() {
+	if u == nil {
 		return 0
 	}
-	return len(u.of[v.ID])
+	return len(u.of.get(v))
 }
 
 // HasUses reports whether `v` is read anywhere.
