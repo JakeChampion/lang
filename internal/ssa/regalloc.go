@@ -65,6 +65,9 @@ type Allocation struct {
 	// the values the callee must not clobber, hence the ones the caller saves.
 	// Nil until LinearScan populates it.
 	CallLive map[*Op]map[int32]bool
+	// Uses is the def-use index LinearScan built over f, for the emit phase
+	// to read rather than build again. Nil until LinearScan populates it.
+	Uses *Uses
 }
 
 // LiveAcrossOp returns the values live across the call op `op`, and whether the
@@ -242,6 +245,11 @@ func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
 	return iv
 }
 
+// spillOverSaveFactor is how many more calls than uses (and its definition)
+// a call-crossing value must have before a spill slot is preferred to a
+// caller-saved register.
+const spillOverSaveFactor = 8
+
 // LinearScan computes liveness + live intervals for f and runs linear-scan
 // register allocation against the given target, returning the assignment.
 func LinearScan(f *Func, target Target) *Allocation {
@@ -250,16 +258,31 @@ func LinearScan(f *Func, target Target) *Allocation {
 	opPos, _, _ := linearizePoints(f)
 	callLive := callLiveSets(f, live)
 	// A value is call-crossing if it is live across any call — the allocator
-	// steers those toward callee-saved registers.
+	// steers those toward callee-saved registers. One that would land in a
+	// caller-saved register instead is saved and restored around every call
+	// it crosses, where a spill slot costs a store at the definition and a
+	// reload at each use. The factor is measured, not derived: on the
+	// self-hosted driver the binary shrinks as the factor rises to eight and
+	// grows again past twelve (docs/ssa-log/2026-09-16-spill-over-save.md).
 	crosses := map[int32]bool{}
+	crossed := map[int32]int{}
 	for _, s := range callLive {
 		for id := range s {
 			crosses[id] = true
+			crossed[id]++
 		}
 	}
-	alloc := allocateLinear(iv, target, crosses)
+	uses := BuildUses(f)
+	spillOverSave := map[int32]bool{}
+	for id, n := range crossed {
+		if n > spillOverSaveFactor*(len(uses.of[id])+1) {
+			spillOverSave[id] = true
+		}
+	}
+	alloc := allocateLinear(iv, target, crosses, spillOverSave)
 	alloc.OpPos = opPos
 	alloc.CallLive = callLive
+	alloc.Uses = uses
 	return alloc
 }
 
@@ -275,8 +298,11 @@ func isCallOp(k OpKind) bool {
 }
 
 // allocateLinear is the register-assignment core, separated from interval
-// construction so it can be unit-tested on hand-built interval sets.
-func allocateLinear(iv map[int32]Interval, target Target, crosses map[int32]bool) *Allocation {
+// construction so it can be unit-tested on hand-built interval sets. A value
+// in crosses prefers a callee-saved register; one also in spillOverSave takes
+// a spill slot rather than a caller-saved register when no callee-saved one
+// is free, on a target that distinguishes the two.
+func allocateLinear(iv map[int32]Interval, target Target, crosses, spillOverSave map[int32]bool) *Allocation {
 	order := make([]Interval, 0, len(iv))
 	for _, i := range iv {
 		order = append(order, i)
@@ -305,6 +331,14 @@ func allocateLinear(iv map[int32]Interval, target Target, crosses map[int32]bool
 
 	calleeSaved := func(r int) bool {
 		return r < len(target.CalleeSaved) && target.CalleeSaved[r]
+	}
+	freeCalleeSaved := func() bool {
+		for _, r := range free {
+			if calleeSaved(r) {
+				return true
+			}
+		}
+		return false
 	}
 	// pickReg removes and returns a free register, preferring one whose
 	// callee-saved class matches wantCalleeSaved (so call-crossing values land in
@@ -367,6 +401,10 @@ func allocateLinear(iv map[int32]Interval, target Target, crosses map[int32]bool
 		}
 		active = kept
 
+		if spillOverSave[i.Value] && len(target.CalleeSaved) > 0 && !freeCalleeSaved() {
+			spill(i.Value)
+			continue
+		}
 		if len(free) == 0 {
 			// No register available: spill the interval that ends last, between
 			// i and the current furthest-ending active interval.
