@@ -78,7 +78,8 @@ func TestPowerOfTwoDivisionAvoidsIdiv(t *testing.T) {
 // Division and remainder by any other i32 constant multiply by the
 // reciprocal instead, and agree with the interpreter on every sign, including
 // the most negative dividend, the unsigned dividends past 2^31, the 33-bit
-// unsigned magics (7, 641) and the wrapped signed ones (a divisor past 2^30).
+// unsigned magics (7, 1000000007, 2147483647) and the signed ones whose
+// magic wrapped, so the dividend is added back (7) or subtracted (-3).
 func TestConstantDivisionUsesTheReciprocal(t *testing.T) {
 	args := [][]int64{{-9, 0}, {-8, 0}, {-7, 0}, {-1, 0}, {0, 0}, {1, 0}, {7, 0}, {8, 0}, {9, 0},
 		{99, 0}, {100, 0}, {101, 0}, {-100, 0}, {123456789, 0}, {-123456789, 0},
