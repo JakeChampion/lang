@@ -7291,7 +7291,9 @@ func emitReadDirAllHelper(w func(string, ...any)) {
 // string per base name and stores it into the string[] container (16-byte
 // header: cap@[data-12], rc@[data-8], len@[data-4]; element pointers at
 // [data + i*8]). Each pass loops getdents until it returns 0, so directories of
-// any size are listed (bounded only by the arena the strings must fit in). The
+// any size are listed (bounded only by the arena the strings must fit in). Pass
+// 2 sees the directory as it is then: an entry that appeared since pass 1 is
+// dropped, and the length is the count pass 2 reached. The
 // container is wrapped in the Result Ok box (tag 0, arr@8). Any openat/getdents
 // failure maps -errno through __fern_io_error and returns Err(IoError).
 // `skipDots` drops the "." / ".." records in both passes. Non-leaf; 96-byte
@@ -7441,6 +7443,11 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 		w("\tcbz w11, %s", L("p2a"))
 		w("%s:", L("p2t"))
 	}
+	// The directory can gain entries between the passes; the container was
+	// sized by the first, so the extras are dropped rather than written
+	// past it.
+	w("\tcmp x24, x23")
+	w("\tb.hs %s", L("p2a"))
 	// strlen(d_name) → x12.
 	w("\tmov x12, #0")
 	w("%s:", L("p2sl"))
@@ -7481,6 +7488,7 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tadd x19, x19, x11")
 	w("\tb %s", L("p2"))
 	w("%s:", L("g2d"))
+	w("\tstur w24, [x27, #-4]") // len = filled: entries can also go away between the passes
 	// close(fd).
 	w("\tmov x0, x20")
 	w("\tmov x8, #57") // close
