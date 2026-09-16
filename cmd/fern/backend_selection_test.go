@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -205,5 +206,44 @@ func TestArm64DefaultHonoursExternalCC(t *testing.T) {
 	}
 	if _, statErr := os.Stat(out); statErr == nil {
 		t.Error("-cc /bin/false wrote a binary despite failing to link")
+	}
+}
+
+// `fern -h` is the only place a caller can read which flags move an arm64
+// build off the default emitter, and each trigger it leaves out is one that
+// fails silently: the build succeeds, having quietly done something else.
+//
+// Every row drives resolveBackend as well as reading the help text, so a
+// trigger cannot be documented without being active, and one that stops
+// falling back is caught here as well as in the table above.
+func TestBackendHelpNamesEveryFallbackTrigger(t *testing.T) {
+	for _, tc := range []struct {
+		spelling       string
+		runIt          bool
+		cc, export     string
+		shared         bool
+		g, cover, sant bool
+	}{
+		{spelling: "--run", runIt: true},
+		{spelling: "-cc", cc: "gcc"},
+		{spelling: "-export", export: "add"},
+		{spelling: "-shared", shared: true},
+		{spelling: "-g", g: true},
+		{spelling: "-cover", cover: true},
+		{spelling: "-sanitize", sant: true},
+	} {
+		t.Run(tc.spelling, func(t *testing.T) {
+			// The trailing separator keeps `-c` from matching inside `-cover`.
+			if !strings.Contains(backendFlagUsage, tc.spelling+" ") && !strings.Contains(backendFlagUsage, tc.spelling+",") {
+				t.Errorf("`fern -h` does not name %s among the flags that fall back to the stack-machine emitter", tc.spelling)
+			}
+			wasG, wasCover, wasSan := emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled
+			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = tc.g, tc.cover, tc.sant
+			got := resolveBackend("", "arm64-linux", tc.runIt, tc.cc, tc.export, tc.shared)
+			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = wasG, wasCover, wasSan
+			if got != "flat" {
+				t.Errorf("%s resolved to %q: the help text documents a fallback that no longer happens", tc.spelling, got)
+			}
+		})
 	}
 }
