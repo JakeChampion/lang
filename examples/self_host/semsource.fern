@@ -565,7 +565,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
         if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
-        if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type"); }
+        if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type: " + typeinfo.spelling(s.values[v.id]) + " in " + typeinfo.spelling(ty)); }
         ids = ids.append(v.id);
     }
     return define(s, ssasem.array_new(), ids, 0, "", ty);
@@ -1267,13 +1267,33 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
 // terminator. Every other block origin — a general `{ … }` body, a
 // match-expression, a comprehension — is refused: its value comes from a tail
 // this form has no join for.
-function value_block(e: ast.Expr, c: ast.ExprCall, s: State): Value {
-    var ty: typeinfo.Type = checked(e, s);
+function value_block(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    var ty: typeinfo.Type = block_type(e, c, s, expected);
     var body: ast.Stmt[] = parser.vb_body(c);
     if (body.len() != 1) { return refused(s, "unsupported value block: " + util.i32_to_string(body.len()) + " statements"); }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported value block: type " + typeinfo.spelling(ty)); }
     if let ast.StmtIf(f) = body[0] { return value_if(f, s, ty); }
+    if let ast.StmtMatch(m) = body[0] { return value_match(m, s, ty); }
     return refused(s, "unsupported value block: " + block_stmt_kind(body[0]));
+}
+
+// A value block's type: what its destination expects, where the destination
+// names one; else the checker's; else the return type the desugar stamped on
+// the block's lambda from the arms (parser.if_expr_rt), which the checker
+// declines to type the block from ("typed from its branches, not its
+// value"). The destination outranks the checker because the stamp is a
+// syntactic guess the checker reads back — `i32` for an arm that is an empty
+// array literal — and the binding's own annotation is what the arms are
+// checked against. A stamp the arms contradict is caught where the arm's
+// value is checked against it.
+function block_type(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.Type): typeinfo.Type {
+    if (semtypes.concrete(expected, false)) { return expected; }
+    var ty: typeinfo.Type = checked(e, s);
+    if (semtypes.concrete(ty, false)) { return ty; }
+    if let ast.ExprLambda(lam) = c.callee {
+        if (lam.ret_type.len() > 0) { return resolved(s.scope.resolve_type(lam.ret_type), s.template, s.scope, s.binding); }
+    }
+    return ty;
 }
 
 // The statement kind a value block ended on, for the refusal.
@@ -1436,8 +1456,17 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
 // call is written against.
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
     var whole: typeinfo.Type = literal_union(e, s, expected);
+    if (!names_variant(s, whole, name) && name == "Some" && c.args.len() == 1) { whole = some_of(c.args[0], s); }
     if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
     return refused(s, "call target has no semantic contract: " + name);
+}
+
+// A `Some` with no destination to name its Option — a match scrutinee — is the
+// Option of its payload's own type.
+function some_of(payload: ast.Expr, s: State): typeinfo.Type {
+    var t: typeinfo.Type = checked(payload, s);
+    if (!semtypes.concrete(t, false)) { return typeinfo.unchecked(); }
+    return typeinfo.TypeUnion { name: "Option", args: [t] };
 }
 
 function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, statement: boolean): Value {
@@ -1450,7 +1479,7 @@ function direct_call(c: ast.ExprCall, contract: ssasem.Contract, s: State, state
 // no name binds it. In expression position a void result is refused, since
 // the checker types nothing by it.
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
-    if (parser.is_value_block(c)) { return value_block(e, c, s); }
+    if (parser.is_value_block(c)) { return value_block(e, c, s, expected); }
     if let ast.ExprFieldAccess(mfa) = c.callee { return method_call(c, mfa, s, statement); }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
@@ -1714,7 +1743,8 @@ function ret(r: ast.StmtReturn, s: State): State {
     return terminate(s, t_ret(value.id));
 }
 
-struct Arm { s: State, live: boolean, end: i32, env: i32[] }
+// `value` is the arm's value in a value block's match (-1 for a statement arm).
+struct Arm { s: State, live: boolean, end: i32, env: i32[], value: i32 }
 
 // Each arm starts from the environment at the branch, not from its sibling's.
 function arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope): Arm {
@@ -1727,7 +1757,27 @@ function finish_arm(body: ast.Stmt[], s: State, join: i32, count: i32, scope: ch
     var end: i32 = s.cur.id;
     var env: i32[] = prefix(s.vals, count);
     s = terminate(s, t_br(join));
-    return Arm { s: leave(s, count, scope), live: live, end: end, env: env };
+    return Arm { s: leave(s, count, scope), live: live, end: end, env: env, value: 0 - 1 };
+}
+
+// A match arm's body: statements, or in a value block's match the leading
+// statements and then the arm's value (as an if-expression's arm reads it),
+// which the join's phi takes on this arm's edge.
+function arm_body(body: ast.Stmt[], s: State, join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arm {
+    if (!semtypes.concrete(ty, false)) { return finish_arm(body, s, join, count, scope); }
+    var dead: Arm = Arm { s: s, live: false, end: 0, env: [], value: 0 - 1 };
+    if (body.len() == 0) { return Arm { ...dead, s: fail(s, "value block arm has no value") }; }
+    var i: i32 = 0;
+    while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
+    if (!s.ok) { return Arm { ...dead, s: s }; }
+    if (!s.live) { return Arm { ...dead, s: fail(s, "value block arm has no value") }; }
+    var v: Value = arm_value(body[body.len() - 1], s, ty);
+    s = v.s;
+    if (!s.ok) { return Arm { ...dead, s: s }; }
+    var end: i32 = s.cur.id;
+    var env: i32[] = prefix(s.vals, count);
+    s = terminate(s, t_br(join));
+    return Arm { s: leave(s, count, scope), live: true, end: end, env: env, value: v.id };
 }
 
 function branch(f: ast.StmtIf, s: State): State {
@@ -1758,11 +1808,11 @@ function branch(f: ast.StmtIf, s: State): State {
 
 // ---- match ------------------------------------------------------------------
 
-struct Arms { s: State, preds: i32[], envs: i32[][] }
+struct Arms { s: State, preds: i32[], envs: i32[][], values: i32[] }
 
 function collect(arms: Arms, done: Arm): Arms {
     if (!done.live) { return Arms { ...arms, s: done.s }; }
-    return Arms { s: done.s, preds: arms.preds.append(done.end), envs: arms.envs.append(done.env) };
+    return Arms { s: done.s, preds: arms.preds.append(done.end), envs: arms.envs.append(done.env), values: arms.values.append(done.value) };
 }
 
 function qualified(name: string): boolean {
@@ -1827,13 +1877,13 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
-function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
+function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
     var layout: i32 = union_layout(s, owner);
     var shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
     var why: string = pattern_error(a, pv, shape, layout);
     if (why != "") { return Arms { ...arms, s: fail(s, why) }; }
-    if (closing) { return closing_arm(a, pv, scrut, shape, arms, entry, join, count, scope, layout); }
+    if (closing) { return closing_arm(a, pv, scrut, shape, arms, entry, join, count, scope, layout, ty); }
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     var next: i32 = id + 1;
@@ -1842,7 +1892,7 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     s = terminate(test.s, t_brif(test.id, id, next));
     var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-    var done: Arm = finish_arm(a.body, opened, join, count, scope);
+    var done: Arm = arm_body(a.body, opened, join, count, scope, ty);
     done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
     return collect(arms, done);
 }
@@ -1853,28 +1903,28 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
 // makes a body whose every arm returns a body that does not fall through.
 // `ssasem.analyze` verifies this arm's payload projections against the same
 // exhaustion the omitted test rests on.
-function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32): Arms {
+function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
     var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-    return collect(arms, finish_arm(a.body, opened, join, count, scope));
+    return collect(arms, arm_body(a.body, opened, join, count, scope, ty));
 }
 
-function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope): Arms {
+function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
     s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
-    return collect(arms, arm(a.body, s, entry, id, pred, join, count, scope));
+    return collect(arms, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
 }
 
-function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean): Arms {
+function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
     match (a.pattern) {
-        ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope); },
-        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope, closing); }
+        ast.PatWildcard(_) => { return wildcard_arm(a, arms, entry, join, count, scope, ty); },
+        ast.PatVariant(pv) => { return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope, closing, ty); }
     }
     return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
@@ -1915,11 +1965,29 @@ function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i
 // last arm closes the chain, so only an incomplete one falls through to the
 // join, and only that one leaves the match live.
 function match_stmt(m: ast.StmtMatch, s: State): State {
+    var c: Chain = match_chain(m, s, typeinfo.unchecked());
+    var arms: Arms = c.arms;
+    s = arms.s;
+    if (!s.ok) { return s; }
+    if (s.live) {
+        arms = Arms { ...arms, preds: arms.preds.append(s.cur.id), envs: arms.envs.append(prefix(s.vals, c.count)) };
+        s = terminate(s, t_br(c.join));
+    }
+    if (arms.preds.len() == 0) { return s; }
+    return merge_env(open(s, c.join, arms.preds), arms.envs, c.count);
+}
+
+struct Chain { arms: Arms, join: i32, count: i32 }
+
+// The arms of a match, tested in order, each ending on the join; `ty` is the
+// value a value block's arms carry to it, unchecked for a statement.
+function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
+    var none: Chain = Chain { arms: Arms { s: s, preds: [], envs: [], values: [] }, join: 0, count: 0 };
     var scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
     s = scrut.s;
-    if (!s.ok) { return s; }
+    if (!s.ok) { return Chain { ...none, arms: Arms { ...none.arms, s: s } }; }
     var owner: string = union_name(s.values[scrut.id]);
-    if (owner == "" || union_layout(s, owner) == 0) { return fail(s, "unsupported match scrutinee"); }
+    if (owner == "" || union_layout(s, owner) == 0) { return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } }; }
     var closes: i32 = 0 - 1;
     if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) { closes = m.arms.len() - 1; }
     var join: i32 = s.next_block;
@@ -1927,20 +1995,27 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
     var count: i32 = s.names.len();
     var entry: i32[] = s.vals;
     var scope: checker.Scope = s.scope;
-    var arms: Arms = Arms { s: s, preds: [], envs: [] };
+    var arms: Arms = Arms { s: s, preds: [], envs: [], values: [] };
     var i: i32 = 0;
     while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes);
+        arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes, ty);
         i = i + 1;
     }
-    s = arms.s;
-    if (!s.ok) { return s; }
-    if (s.live) {
-        arms = Arms { ...arms, preds: arms.preds.append(s.cur.id), envs: arms.envs.append(prefix(s.vals, count)) };
-        s = terminate(s, t_br(join));
-    }
-    if (arms.preds.len() == 0) { return s; }
-    return merge_env(open(s, join, arms.preds), arms.envs, count);
+    return Chain { arms: arms, join: join, count: count };
+}
+
+// A match-expression: every arm carries a value to the join, where the
+// bindings merge and then the value, as an if-expression's do. A match that
+// can fall through has an edge with no value, so it is refused rather than
+// joined.
+function value_match(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Value {
+    var c: Chain = match_chain(m, s, ty);
+    s = c.arms.s;
+    if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+    if (s.live) { return refused(s, "value block match falls through"); }
+    if (c.arms.preds.len() == 0) { return refused(s, "value block match has no arm"); }
+    s = merge_env(open(s, c.join, c.arms.preds), c.arms.envs, c.count);
+    return define(s, 8, c.arms.values, 0, "", ty);
 }
 
 function current_loop(s: State): Loop { return s.loops[s.loops.len() - 1]; }

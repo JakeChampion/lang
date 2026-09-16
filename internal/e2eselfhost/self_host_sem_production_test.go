@@ -619,6 +619,30 @@ function main(): i32 {
 	// annotation in every body and dropped that flag, so the checker typed
 	// the binding `string` against a `str` value and every function holding
 	// one refused. Produces 0 of 2 with the flag dropped.
+	// Value blocks: a match-expression's arms carry a string, a record, an
+	// array and a tuple to the join, and an empty array arm takes the type
+	// the binding declares rather than the arms' syntactic guess.
+	{name: "value-blocks", atLeast: 3, src: `
+enum Shade { Dark, Light }
+struct Tagged { n: i32, tag: string }
+function vb_words(k: i32): i32 {
+    var o: Option[i32] = Some(k);
+    var words: string[] = (match (o) { Some(v) => ["a" + "b", "c"], None => [] });
+    var sh: Shade = Dark;
+    var tag: string = (match (sh) { Dark => "d" + "k", Light => "l" });
+    var ot: Option[string] = Some(tag);
+    var cell: Tagged = (match (ot) { Some(t) => Tagged { n: k, tag: t }, None => Tagged { n: 0, tag: "" } });
+    var pair: (i32, string) = (if (k > 1) { (k, cell.tag) } else { (0, "z") });
+    return words.len() * 100 + tag.len() * 10 + cell.tag.len() + pair.1.len();
+}
+function vb_rows(k: i32): i32 {
+    var rows: i32[] = (if (k > 0) { [k, k] } else { [k] });
+    var orows: Option[i32[]] = Some(rows);
+    var picked: i32[] = (match (orows) { Some(r) => r, None => [0 - 1] });
+    return rows.len() * 10 + picked.len();
+}
+function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
+`},
 	// The saturating and checked operators at every width the AST lowering
 	// clamps at, matched on the exit code: each function is one shape the
 	// shared op-list builders emit over the semantic lowering's own slots.
