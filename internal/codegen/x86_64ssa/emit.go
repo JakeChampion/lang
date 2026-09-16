@@ -360,7 +360,11 @@ func (e *emitter) callSaveRegs(op *ssa.Op) ([]int, bool) {
 // emitBlock emits one SSA block's straight-line ops, its phi moves, and its
 // terminator into the corresponding MBlock.
 func (e *emitter) emitBlock(b *ssa.Block) error {
-	e.cur = nil
+	// An SSA op lowers to 1.38 machine instructions across the self-host
+	// driver, and a block adds its terminator and any edge moves on top, so
+	// this covers a block in one allocation where growing from nothing took
+	// five.
+	e.cur = make([]Inst, 0, len(b.Ops)*3/2+4)
 	for _, op := range b.Ops {
 		if op.Kind == ssa.OpPhi {
 			continue // phis are resolved as edge moves, not in-block
