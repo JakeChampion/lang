@@ -1,4 +1,4 @@
-# Self-host shard rebalance candidate
+# Rebalance and parallelize self-host test shards
 
 Status: private candidate with successful held-out replays before and after
 the buffered compiler rollout. Live validation remains required.
@@ -87,6 +87,40 @@ exactly once. Artifacts and report:
 These results support the candidate after the compiler change, but remain
 recorded-duration replays rather than live execution of the new assignment.
 
+## Expand to twelve x86 shards
+
+The candidate also increases the x86 shard count from six to twelve. Each
+runner keeps its existing CPU allocation, memory limits and timeouts. The ARM
+lane remains one shard. The final outcome verifier requires all twelve x86
+markers; the existing source-policy test checks that its counts exactly match
+the matrix, including every shard index and partition denominator.
+
+The same frozen weights and 2,602-test inventory were replayed at increasing
+shard counts against run 35036653947. Every test remained assigned exactly once,
+all 2,596 timed observations were retained, and the same six tests remained
+untimed. Only the partition count changed. Repeating the six-shard replay
+reproduced the earlier report exactly.
+
+| X86 shards | Longest recorded active-time sum | Spread |
+| ---: | ---: | ---: |
+| 6 | 743.02 s | 73.20 s |
+| 8 | 588.30 s | 109.66 s |
+| 10 | 475.63 s | 98.64 s |
+| 12 | 411.89 s | 111.23 s |
+
+These observations support trying twelve shards; they are not live timing
+claims. The count was selected using this replay, so it is not an independent
+validation of that count. More runners add setup and artifact transfer work,
+can duplicate fixture builds, and may increase queue pressure. The old
+six-shard choice reflected longer individual tests and saturated admission.
+Live CI must now measure last-shard completion, queue and setup time, total
+job time, fixture reuse, and unchanged test coverage before accepting the
+larger matrix. Do not use the work sums as a full-workflow forecast.
+
+Reports: `/tmp/lang-ci-heldout-buffer-35036653947/report-shards-{6,8,10,12}.json`.
+Reproduction adds `--candidate-shards N --report-name report-shards-N.json` to
+the held-out replay command; it does not alter the frozen weight rows.
+
 ## Frozen candidate and next gate
 
 The uncommented weight rows have SHA256
@@ -97,7 +131,7 @@ Do not tune this table using the validation run and continue calling that
 same run independent evidence.
 
 The buffered compiler's inventory and observations have now been validated.
-The next gate is successful live CI with the frozen assignment. Preserve all
+The next gate is successful live CI with the frozen weights and twelve shards. Preserve all
 test selection, timeouts and outcome gates, and report actual shard execution
 and fixture behavior separately from the replay's predicted work sums.
 
