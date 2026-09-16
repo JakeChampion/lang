@@ -376,6 +376,34 @@ freelist heads want an `adrp`/`add` pair per site — and it is the trade the
 plan declined; measured, it is the right one. `map_int` pays something
 else, still to be profiled.
 
+### Measured 2026-09-16: every small copy paid a `rep movsb` startup
+
+With the allocator, the rc primitives and the divisions out of the way,
+`struct_drop` still took 1.6x the flat build's time and `to_string` 1.8x,
+and the instruction counts were within 15% with no cache or branch cost
+to account for the rest (callgrind: 528M instructions to the flat 536M
+on `struct_drop`, 24 data-cache misses each). The cost per instruction
+was in one helper: every string and array copy on x86-64 SSA went through
+`__ssa_bcopy`, a bare `rep movsb`, and every zero fill through a bare
+`rep stosb`. A rep string instruction costs tens of cycles to start on the
+Haswell-class baseline whatever the length, and nearly every copy the
+backend makes is a few bytes. Below 64 bytes both are loops now (8-byte
+moves with an overlapping tail, bytes under 8); rep takes over from 64.
+Best of five, x86-64 native, main at bfcb94d (before #9432) on both sides:
+
+| bench | flat | SSA before | SSA after | ratio before → after |
+| --- | --- | --- | --- | --- |
+| `struct_drop` | 0.065 s | 0.105 s | 0.064 s | 1.62x → **0.98x** |
+| `string_build` | 0.017 s | 0.023 s | 0.016 s | 1.35x → **0.94x** |
+| `to_string` loop | 0.026 s | 0.048 s | 0.028 s | 1.85x → 1.08x |
+| struct build loop | 0.036 s | 0.052 s | 0.034 s | 1.44x → **0.94x** |
+| `tokenize` | 0.014 s | 0.014 s | 0.013 s | 1.00x → 0.93x |
+| `map_int`, `ordmap_insert`, `array_append` | | | | unchanged |
+
+The last two loops are the `to_string` and the `mk` halves of `struct_drop`
+on their own. `docs/PERFORMANCE-AUDIT-2026-08.md` had measured the same
+trap on the flat backend's copy a month earlier.
+
 ### Per-backend disposition
 
 | backend | disposition |
