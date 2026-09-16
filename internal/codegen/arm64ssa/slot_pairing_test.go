@@ -26,8 +26,10 @@ func manyLiveAcrossCall(n int) map[string]*ssa.Func {
 		keep[i] = constOp(main, mb, int64(i+1))
 	}
 	sum := callOp(main, mb, "ident", constOp(main, mb, 1))
+	// Each kept value is the LEFT operand of its add: a constant read only as
+	// a right operand folds into the instruction and holds no register.
 	for _, v := range keep {
-		sum = main.AddOp(mb, ssa.OpAdd, sum, v)
+		sum = main.AddOp(mb, ssa.OpAdd, v, sum)
 	}
 	main.SetRet(mb, sum)
 	return map[string]*ssa.Func{"ident": ident, "main": main}

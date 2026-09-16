@@ -254,8 +254,8 @@ func TestFuseBranchCmpNeedsBothTheAnnotationAndTheShape(t *testing.T) {
 
 	t.Run("fuses and takes the left operand from the dropped copy", func(t *testing.T) {
 		insts, cc, left, right := fuseBranchCmp(x86.MBlock{Insts: []x86.Inst{mov, cmp}, Term: brIf(true)})
-		if cc != "lt" || left != 1 || right != 2 || len(insts) != 0 {
-			t.Errorf("got insts=%v cc=%q left=%d right=%d, want the block emptied and lt on (1, 2)", insts, cc, left, right)
+		if cc != "lt" || left != 1 || right.Src != 2 || right.SrcImm || len(insts) != 0 {
+			t.Errorf("got insts=%v cc=%q left=%d right=%v, want the block emptied and lt on (1, 2)", insts, cc, left, right)
 		}
 	})
 
