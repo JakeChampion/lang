@@ -3123,12 +3123,10 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
         ast.StmtIf(ifs) => {
             var cv: Value = eval_expr(ifs.cond, env);
             if (is_err(cv)) { return step_stop(env, cv); }
-            // lower_defers_module's synthesized cleanup guards
-            // (`if (__dfa0) { … }`) condition on i32 FLAGS, not bools —
-            // normalise a VInt cond to its non-zero truth here (#4348
-            // item 1). Checker-validated user programs can only reach
-            // this arm with a bool, so user-facing semantics are
-            // unchanged.
+            // A guard a desugar synthesized may carry an integer rather than a
+            // boolean, so read a VInt cond as its non-zero truth (#4348 item
+            // 1). Checker-validated user programs reach this arm only with a
+            // bool, so user-facing semantics are unchanged.
             match (cv) {
                 VInt(civ) => { cv = VBool { v: civ.v != 0 }; },
                 _ => {}

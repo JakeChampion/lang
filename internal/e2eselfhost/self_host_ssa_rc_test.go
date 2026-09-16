@@ -985,12 +985,17 @@ function main(): i32 {
     var strMapFunc = ssasem.Func { ...mapFunc, values: [strMapTy], params: [strMapTy], result: strMapTy };
     var strMapPlan = ssaunits.plan(strMapFunc, [3]);
     if (!strMapPlan.ok) { eprint(strMapPlan.why); return 142; }
-    // What is admitted is the shapes whose deep release the runtime provides —
-    // a string column and a column of string arrays — not every reference. A
-    // column of i32 arrays has no such walk and stays refused.
+    // A column of BOXES — here i32 arrays — is counted too: the map owns a
+    // unit of every value, and the value's own release, named by the physical
+    // lowering, is what the runtime walks the column with.
     var arrMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeArray { elem: i32ty } };
     var arrMapFunc = ssasem.Func { ...mapFunc, values: [arrMapTy], params: [arrMapTy], result: arrMapTy };
-    if (ssaunits.plan(arrMapFunc, [3]).why != "unsupported counted-unit type") { return 146; }
+    if (!ssaunits.plan(arrMapFunc, [3]).ok) { eprint(ssaunits.plan(arrMapFunc, [3]).why); return 146; }
+    // A column of function values owns nothing it could release: a function
+    // value is lent everywhere here, so it is no element of a container.
+    var fnMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true } };
+    var fnMapFunc = ssasem.Func { ...mapFunc, values: [fnMapTy], params: [fnMapTy], result: fnMapTy };
+    if (ssaunits.plan(fnMapFunc, [3]).why != "function value is not an element") { return 147; }
     // An integer key column holds no unit, so the map is admitted and freed
     // whole through the plain member of the free family, or the _vs one
     // beside a string value column; its ops carry key kind 1 and hand no
@@ -1015,6 +1020,37 @@ function main(): i32 {
     var sawIntStrFree: boolean = false;
     for o in dropIntStrLowered.ops { if (o.str == "__fern_map_free_vs") { sawIntStrFree = true; } }
     if (!sawIntStrFree) { return 173; }
+    // The free of a column of boxes takes the value's release as a second
+    // argument, a function value the lowering also emits as a helper; an
+    // insert into it names the same release (value kind 3, width bits 4 and
+    // 5) for the entry it supersedes.
+    var dropArrMap = ssasem.Func { ...dropIntMap, values: [arrMapTy, i32ty], params: [arrMapTy] };
+    var dropArrLowered = ssarc.lower(dropArrMap, [3], ssaunits.plan(dropArrMap, [3]), irlower.struct_tab_empty(), []);
+    if (!dropArrLowered.ok) { eprint(dropArrLowered.why); return 187; }
+    var releaseName: string = ssarc.release_helper_name(typeinfo.TypeArray { elem: i32ty });
+    var sawArrFree: boolean = false;
+    var sawArrRelease: boolean = false;
+    for o in dropArrLowered.ops {
+        if (o.kind_tag == 149 && o.str == "__fern_map_free_ksvf" && o.i32_imm == 2) { sawArrFree = true; }
+        if (o.kind_tag == 6 && o.str == releaseName) { sawArrRelease = true; }
+    }
+    if (!sawArrFree || !sawArrRelease) { return 188; }
+    var sawHelper: boolean = false;
+    for h in ssarc.drop_helpers(dropArrMap) { if (h.name == releaseName && h.n_params == 1) { sawHelper = true; } }
+    if (!sawHelper) { return 189; }
+    var arrInsertGraph = ssa.SFunc { name: "arr_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+            ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+    var arrInsert = ssasem.Func { graph: arrInsertGraph, values: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }, arrMapTy], params: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty }], result: arrMapTy, records: [], enums: [], calls: [] };
+    var arrInsertPlan = ssaunits.plan(arrInsert, [3, 3, 3]);
+    if (!arrInsertPlan.ok) { eprint(arrInsertPlan.why); return 190; }
+    var arrInsertLowered = ssarc.lower(arrInsert, [3, 3, 3], arrInsertPlan, irlower.struct_tab_empty(), []);
+    if (!arrInsertLowered.ok) { eprint(arrInsertLowered.why); return 191; }
+    var sawArrSet: boolean = false;
+    for o in arrInsertLowered.ops {
+        if (o.kind_tag == 125 && (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1 && o.str == releaseName) { sawArrSet = true; }
+    }
+    if (!sawArrSet) { return 192; }
     var intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };

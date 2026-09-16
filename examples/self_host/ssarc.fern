@@ -177,8 +177,9 @@ function release_name(t: typeinfo.Type): string {
 // A string key column takes a `_ks` member, which walks the keys through the
 // string dec; an integer one is freed whole. Which member of either depends on
 // the value column, whose entries the map owns when they are counted. The
-// names are the AST path's, so the deep frees they reach are the ones the
-// runtime already provides.
+// string and string-array members are the AST path's, so the deep frees they
+// reach are the ones the runtime already provides; the `_vf` members take the
+// value's release as a second argument and call it on every entry.
 function map_release_name(t: typeinfo.Type): string {
     var v: typeinfo.Type = ssasem.map_value(t);
     var ks: boolean = ssasem.is_string(ssasem.map_key(t));
@@ -186,12 +187,29 @@ function map_release_name(t: typeinfo.Type): string {
         if (ks) { return "__fern_map_free_kvs"; }
         return "__fern_map_free_vs";
     }
-    if (ssasem.counted_map_value(v)) {
+    if (ssasem.is_string_array(v)) {
         if (ks) { return "__fern_map_free_ksvsa"; }
         return "__fern_map_free_vsa";
     }
+    if (ssasem.boxed_map_value(v)) {
+        if (ks) { return "__fern_map_free_ksvf"; }
+        return "__fern_map_free_vf";
+    }
     if (ks) { return "__fern_map_free_ks"; }
     return "__fern_map_free";
+}
+
+// The one release of a unit in `slot`. A map of boxes hands its release the
+// function that releases one value, so the runtime can walk a column whose
+// shape it does not know.
+function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
+    if (ssasem.is_map(t) && ssasem.boxed_map_value(ssasem.map_value(t))) {
+        r = emit(r, ir.op_load_local(slot));
+        r = emit(r, ir.op_const_func(0, release_helper_name(ssasem.map_value(t))));
+        r = emit(r, ir.op_call_direct(release_name(t), 2));
+        return emit(r, ir.op_drop());
+    }
+    return helper(r, slot, release_name(t));
 }
 
 // The runtime's key kind: 0 a string column, whose unit the insert hands over
@@ -202,12 +220,14 @@ function map_key_kind(t: typeinfo.Type): i32 {
 }
 
 // The runtime's value-column kind: 0 the map owns nothing in it, 1 a string
-// column, 2 a column of string arrays. It is what tells map_set which release
-// the value it supersedes on an overwrite is owed (#9300).
+// column, 2 a column of string arrays, 3 a column of boxes released through
+// the function the insert names. It is what tells map_set which release the
+// value it supersedes on an overwrite is owed (#9300).
 function map_value_kind(t: typeinfo.Type): i32 {
     var v: typeinfo.Type = ssasem.map_value(t);
     if (ssasem.is_string(v)) { return 1; }
-    if (ssasem.counted_map_value(v)) { return 2; }
+    if (ssasem.is_string_array(v)) { return 2; }
+    if (ssasem.boxed_map_value(v)) { return 3; }
     return 0;
 }
 
@@ -433,7 +453,7 @@ function gated_field_slot(f: ssasem.Func, held: Held, g: i32): i32 {
 }
 
 function bracket_give(own r: irlower.LowerResult, f: ssasem.Func, held: Held): irlower.LowerResult {
-    for v in held.arrays { r = helper(r, v, release_name(f.values[v])); }
+    for v in held.arrays { r = release(r, v, f.values[v]); }
     var k: i32 = 0;
     while (k < held.records.len()) {
         r = helper(r, f.graph.nvals + k, "__fern_arr_share_dec");
@@ -521,7 +541,7 @@ function drop_value(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scr
         if (named(t) != "") { r = helper(r, slot, drop_helper_name(t)); }
         r = emit(r, ir.op_end());
     }
-    return helper(r, slot, release_name(t));
+    return release(r, slot, t);
 }
 
 // A builtin union's box carries no shape pointer, so the walk selects its one
@@ -767,6 +787,39 @@ function named(t: typeinfo.Type): string {
 // field itself and hands back the box. The two are not interchangeable.
 pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" + ssasem.type_key(t); }
 
+// The release of ONE value of a map's column of boxes, called by the runtime
+// on the entry an insert supersedes and on every entry the map's release
+// walks: the same drop a frame gives a unit of the type it holds.
+pub function release_helper_name(t: typeinfo.Type): string { return "__sem_release_" + ssasem.type_key(t); }
+
+function release_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
+    var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
+        n_params: 1, n_locals: 1, name: release_helper_name(t) };
+    r = drop_value(r, 0, t, 1, f);
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_return());
+    return r;
+}
+
+// The value types of the columns of boxes this function's values and schema
+// fields name, each once.
+function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    var names: string[] = [];
+    var all: typeinfo.Type[] = f.values;
+    for rec in f.records { for field in rec.fields { all = all.append(field.ty); } }
+    for e in f.enums { for v in e.variants { for field in v.fields { all = all.append(field.ty); } } }
+    for t in all {
+        if (!ssasem.is_map(t) || !ssasem.boxed_map_value(ssasem.map_value(t))) { continue; }
+        var v: typeinfo.Type = ssasem.map_value(t);
+        var name: string = release_helper_name(v);
+        if (util.index_of_str(names, name) >= 0) { continue; }
+        names = names.append(name);
+        out = out.append(v);
+    }
+    return out;
+}
+
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
 // allocated frame. The body is the raw op sequence: every function that
@@ -799,6 +852,7 @@ pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
     var out: irlower.LowerResult[] = [];
     for rec in f.records { if (has_children(rec.ty, f)) { out = out.append(one_helper(rec.ty, f)); } }
     for e in f.enums { if (has_children(e.ty, f)) { out = out.append(one_helper(e.ty, f)); } }
+    for v in boxed_columns(f) { out = out.append(release_helper(v, f)); }
     return out;
 }
 
@@ -1234,12 +1288,37 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     var t: typeinfo.Type = f.values[ins.args[0]];
     var kkind: i32 = map_key_kind(t);
     var vkind: i32 = map_value_kind(t);
-    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind == 0, true, false, "", 0, vkind)); }
+    if (ins.kind_tag == ssasem.map_insert()) {
+        var fn: string = "";
+        if (vkind == 3) { fn = release_helper_name(ssasem.map_value(t)); }
+        return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind == 0, true, false, fn, 0, vkind));
+    }
     if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, "")); }
-    if (ins.kind_tag == ssasem.map_get()) { return emit(r, ir.op_map_get(kkind, "", 0)); }
+    if (ins.kind_tag == ssasem.map_get()) { return map_get(r, ins, kkind, vkind != 0); }
     r = emit(r, ir.op_map_get_or(kkind, "", 0));
     if (vkind == 0) { return r; }
     return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+}
+
+// A get answers an Option box of the frame's own whose payload the runtime
+// copies out of the column without a retain, so a hit on a counted column
+// retains the payload here: the box then owns one unit of it, as any Option
+// this frame drops is expected to.
+function map_get(own r: irlower.LowerResult, ins: ssa.SInst, kkind: i32, counted: boolean): irlower.LowerResult {
+    r = emit(r, ir.op_map_get(kkind, "", 0));
+    if (!counted) { return r; }
+    r = emit(r, ir.op_store_local(ins.result));
+    r = emit(r, ir.op_load_local(ins.result));
+    r = emit(r, ir.op_opt_tag());
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(ins.result));
+    r = emit(r, ir.op_opt_payload());
+    r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_end());
+    return emit(r, ir.op_load_local(ins.result));
 }
 
 // A field read at the width its type names. Every slot is 8 bytes on every
@@ -1396,7 +1475,7 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_store_local(scratch));
     r = emit(r, ir.op_else());
-    r = helper(r, base, release_name(f.values[base]));
+    r = release(r, base, f.values[base]);
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_load_local(base));
