@@ -67,14 +67,19 @@ func emitMapHashSeedHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitMapSeedBss writes the seed's .bss word when the module references the
-// seed helper.
-func emitMapSeedBss(w func(string, ...any), helpers []string) {
-	if !referencesHelper(helpers, "__fern_map_hash_seed") {
-		return
+// emitHelperBss writes the .bss words and buffers the referenced helpers
+// read: the map seed and Reader.read_line's line buffer.
+func emitHelperBss(w func(string, ...any), helpers []string) {
+	if referencesHelper(helpers, "__fern_map_hash_seed") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", mapSeedSym)
+		w("\t.quad 0")
 	}
-	w(".section .bss")
-	w(".align 8")
-	w("%s:", mapSeedSym)
-	w("\t.quad 0")
+	if referencesHelper(helpers, "__method_Reader_read_line") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", readlineBufSym)
+		w("\t.space %d", readlineBytes)
+	}
 }

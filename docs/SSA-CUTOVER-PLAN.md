@@ -100,7 +100,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 301/348 compared, 0 divergences; 27 refused — every one for the runtime-helper table, in groups rather than one symbol |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 317/348 compared, 0 divergences; 11 refused — the socket family and five singletons |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -302,6 +302,19 @@ Two concrete blockers, and only two:
    The next slice is the four singletons (`write`, `read_dir`,
    `__method_Reader_read_line`, `__fern_heap_bump_bytes`: 16 programs), then
    the socket family.
+
+   **2026-09-16, the four singletons.** `write` (one write(2), as `print`
+   is), `__fern_heap_bump_bytes` (cursor minus a base the reservation now
+   records), `__method_Reader_read_line` (a byte at a time into a .bss line
+   buffer, then a right-sized string) and `read_dir` (two getdents64 passes
+   over a scratch block, count then fill, in the order the kernel reports,
+   as the flat backend lists) got emitters. The leg is at **317 of 348
+   comparable, 0 divergences; 11 refused**: the socket family (`tcp_*`,
+   `poll`, the pollables: 6 programs, always together) and one program each
+   for `create_dir_all`, `hostname`, `isatty`, `putchar` and
+   `__fern_rc_underflow_count`. Of the 348, 20 are baseline-rejected (the
+   flat backend cannot build them either), so 317 of the 328 buildable
+   programs now run under both backends and agree.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than
