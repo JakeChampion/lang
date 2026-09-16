@@ -50,16 +50,29 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`,
     return 0;
 }
 function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
-		// A use AFTER the defer was always correct — the last-use scan picked
-		// the later statement, so the local fell through to the exit sweep on
-		// its own. It is here so the fix stays a bail-out for defer-read
-		// locals rather than a blanket one for any function holding a defer.
-		{"use_after_defer_still_precise", `function f(out: Cell[i32]): i32 {
+		// A later use that is the `return` itself was always correct, but NOT
+		// because the local survived on merit: the scan picks the return
+		// statement and preciseDropTarget refuses to drop after a return, so
+		// the local fell through to the exit sweep by that abort alone. Kept
+		// as the shape that always worked, named for what it actually is.
+		{"later_use_is_the_return", `function f(out: Cell[i32]): i32 {
     var arr: i32[] = [1, 2, 3];
     defer out.set(arr[1]);
     return arr[0];
 }
 function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 2},
+		// A later use that is NOT a return is the shape the case above does
+		// not reach: the scan picks that statement, the drop-after-return
+		// abort does not apply, so the local was precise-dropped there and the
+		// replay still read the zeroed slot. 1 + 2 = 3.
+		{"later_use_is_not_a_return", `function sink(c: Cell[i32], v: i32): i32 { c.set(c.get() + v); return v; }
+function f(out: Cell[i32]): i32 {
+    var arr: i32[] = [1, 2, 3];
+    defer out.set(out.get() + arr[1]);
+    sink(out, arr[0]);
+    return 0;
+}
+function main(): i32 { var a: Cell[i32] = cell_new(0); f(a); return a.get(); }`, 3},
 		// errdefer replays through emitErrDeferCleanup rather than
 		// emitDeferCleanup, so it is a second replay site with the same
 		// hazard — and collectDefers gathers both forms into b.defers, so
