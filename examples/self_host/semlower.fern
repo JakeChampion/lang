@@ -6,11 +6,10 @@
 // now the only thing that ran that chain over a whole module was a test driver;
 // this is where a whole-program emit path asks for it.
 //
-// The substitution is per function against the AST lowering, which stays the
-// module's eligibility verdict: `ircore.lower_gated` still lowers and judges
-// every function, and a produced body replaces its cache entry afterwards. With
-// FERN_SEM_IR unset, what a backend receives is what it received before, op for
-// op.
+// The substitution is whole or nothing: every declaration produced, and
+// `ircore.lower_gated` reads the produced bodies in place of lowering them, or
+// none, and the module keeps the AST lowering it always had. With FERN_SEM_IR
+// empty, what a backend receives is what it received before, op for op.
 //
 // The result is handed to the emit path as a VALUE (`ircore.Sub`) rather than
 // produced inside it, so that only a driver that wants the path links the
@@ -58,19 +57,20 @@ struct Rows {
     called: typeinfo.Type[][],
 }
 
-// sem_ir_on reports whether FERN_SEM_IR selects the semantic lowering. Off is
-// the AST lowering unchanged.
+// sem_ir_on reports whether the semantic lowering runs: it does unless
+// FERN_SEM_IR is set EMPTY, which is the AST lowering unchanged.
 //
-// An EMPTY value is off, which is DELIBERATELY not what the flags beside it do
-// — `ircore.strict_ir_on` and its neighbours read presence alone — so do not
-// "fix" it back. `FERN_SEM_IR=` is how a differential harness spells the
-// control leg, and reading it as "set, therefore on" made one compare the
-// semantic path against itself: green, and measuring nothing. A flag whose
-// whole job is to have an off column has to have one.
+// The empty value is the off spelling, which is DELIBERATELY not what the
+// flags beside it do — `ircore.strict_ir_on` and its neighbours read presence
+// alone — so do not "fix" it back. `FERN_SEM_IR=` is how a differential
+// harness spells the control leg, and reading it as "set, therefore on" made
+// one compare the semantic path against itself: green, and measuring nothing.
+// A flag whose whole job is to have an off column has to have one, and now
+// that the path is the default the empty value is that column.
 pub function sem_ir_on(): boolean {
     match (env("FERN_SEM_IR")) {
         Some(v) => { return v.len() > 0; },
-        None => { return false; }
+        None => { return true; }
     }
 }
 

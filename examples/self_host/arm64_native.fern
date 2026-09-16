@@ -7907,21 +7907,21 @@ pub function cfi_sleb(b: i32[], v: i32): i32[] {
     return b;
 }
 
-function cfi_le32(b: i32[], v: i32): i32[] {
+function cfi_le32(own b: i32[], v: i32): i32[] {
     b = b.append(v & 255);
     b = b.append((v >> 8) & 255);
     b = b.append((v >> 16) & 255);
     return b.append((v >> 24) & 255);
 }
 
-function cfi_le32_i64(b: i32[], v: i64): i32[] {
+function cfi_le32_i64(own b: i32[], v: i64): i32[] {
     return cfi_le32(b, (v & (4294967295 as i64)) as i32);
 }
 
 // cfi_le64_i64 writes the eight-byte little-endian form the Mach-O pointer
 // encoding uses. A negative pcrel distance must keep its sign through the
 // upper word, so the shift is arithmetic and the mask comes after it.
-function cfi_le64_i64(b: i32[], v: i64): i32[] {
+function cfi_le64_i64(own b: i32[], v: i64): i32[] {
     b = cfi_le32_i64(b, v);
     return cfi_le32_i64(b, v >> (32 as i64));
 }
@@ -8039,7 +8039,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
 // cfi_advance appends the DW_CFA_advance_loc form covering a byte delta, in
 // units of the code alignment factor. A delta that is not a multiple of it
 // is reported through `bad`, so the caller passes it back.
-function cfi_advance(b: i32[], p: CfiProfile, delta: i32): i32[] {
+function cfi_advance(own b: i32[], p: CfiProfile, delta: i32): i32[] {
     var d: i32 = delta / p.code_align;
     if (d == 0) { return b; }
     if (d < 64) { return b.append(cfi_op_advance_loc() | d); }
@@ -8050,7 +8050,7 @@ function cfi_advance(b: i32[], p: CfiProfile, delta: i32): i32[] {
 }
 
 // cfi_pad4 fills an entry's payload with DW_CFA_nop to a multiple of 4.
-function cfi_pad4(b: i32[]): i32[] {
+function cfi_pad4(own b: i32[]): i32[] {
     while (b.len() % 4 != 0) { b = b.append(cfi_op_nop()); }
     return b;
 }
@@ -8058,7 +8058,7 @@ function cfi_pad4(b: i32[]): i32[] {
 // cfi_pad_entry pads one entry's payload so the entry ENDS on `align` — the
 // four-byte length field at `at` counts toward that boundary, which is why it
 // is not the payload's own length that is rounded.
-function cfi_pad_entry(b: i32[], at: i32, align: i32): i32[] {
+function cfi_pad_entry(own b: i32[], at: i32, align: i32): i32[] {
     while ((at + 4 + b.len()) % align != 0) { b = b.append(cfi_op_nop()); }
     return b;
 }
@@ -8082,7 +8082,7 @@ function cfi_cie(p: CfiProfile): i32[] {
     return cfi_cat(cfi_le32([], b.len()), b);
 }
 
-function cfi_cat(a: i32[], b: i32[]): i32[] {
+function cfi_cat(own a: i32[], b: i32[]): i32[] {
     var i: i32 = 0;
     while (i < b.len()) { a = a.append(b[i]); i = i + 1; }
     return a;
@@ -8114,7 +8114,8 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
         while (q < s.rule_len[r]) { b = b.append(s.rule_bytes[s.rule_pos[r] + q]); q = q + 1; }
         r = r + 1;
     }
-    return cfi_pad_entry(b, at, p.fde_align);
+    b = cfi_pad_entry(b, at, p.fde_align);
+    return b;
 }
 
 // cfi_eh_frame renders the recorded CFI as the .eh_frame of a final image
@@ -8153,7 +8154,8 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
         pos = pos + lens[k];
         k = k + 1;
     }
-    return cfi_cat(out, [0, 0, 0, 0]);
+    out = cfi_cat(out, [0, 0, 0, 0]);
+    return out;
 }
 
 // cfi_eh_frame_hdr_len is the size of the .eh_frame_hdr cfi_eh_frame_hdr
