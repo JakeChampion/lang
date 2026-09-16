@@ -10716,23 +10716,18 @@ struct E079Probe { found: boolean, line: i32, col: i32 }
 // draws one diagnostic.
 function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
   if (acc.found) { return acc; }
-  match (e) {
-    ast.ExprUnary(u) => {
-      if (u.op == "try_") { return E079Probe { found: true, line: u.line, col: u.col }; }
-      return acc;
-    },
-    _ => { return acc; }
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "try_") { return E079Probe { found: true, line: u.line, col: u.col }; }
   }
+  return acc;
 }
 
 // e079_not_lambda keeps the walk out of a lambda body: a `?` there leaves the
 // LAMBDA on its own exits, not the function whose defer replays the action, so
 // it is an ordinary use.
 function e079_not_lambda(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprLambda(_) => { return false; },
-    _ => { return true; }
-  }
+  if let ast.ExprLambda(lam) = e { return false; }
+  return true;
 }
 
 // e079_diags reports `?` inside a `defer` / `errdefer` action (#9470).
@@ -10756,19 +10751,16 @@ function e079_diags(mod: parser.Module): util.Diag[] {
 }
 
 function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
-  match (st) {
-    ast.StmtDefer(d) => {
-      var probe: E079Probe = astwalk.fold_stmt_pruned(d.action,
-        E079Probe { found: false, line: 0, col: 0 }, e079_note_try, e079_not_lambda);
-      if (probe.found) {
-        var kind: string = "a `defer`";
-        if (d.on_error != 0) { kind = "an `errdefer`"; }
-        return acc.append(dg_at("E079", "`?` is not allowed inside " + kind + " action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", probe.line, probe.col));
-      }
-      return acc;
-    },
-    _ => { return acc; }
+  if let ast.StmtDefer(d) = st {
+    var probe: E079Probe = astwalk.fold_stmt_pruned(d.action,
+      E079Probe { found: false, line: 0, col: 0 }, e079_note_try, e079_not_lambda);
+    if (probe.found) {
+      var kind: string = "a `defer`";
+      if (d.on_error != 0) { kind = "an `errdefer`"; }
+      return acc.append(dg_at("E079", "`?` is not allowed inside " + kind + " action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", probe.line, probe.col));
+    }
   }
+  return acc;
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
