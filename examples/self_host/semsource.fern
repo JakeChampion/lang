@@ -301,13 +301,22 @@ function resolved_list(ts: typeinfo.Type[], scope: checker.Scope, b: ssasem.Bind
 }
 
 function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type {
-    return resolved(checker.scope_type(scope, name), s.template, scope, s.binding);
+    return settled(resolved(checker.scope_type(scope, name), s.template, scope, s.binding));
+}
+
+// A float the checker left polymorphic — a literal's binding with no
+// annotation, or an expression over one — has settled nowhere else, so it
+// settles here at the width the checker carried, which is the f64 an
+// unsuffixed literal is.
+function settled(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return typeinfo.TypeFloat { width: f.width, polymorphic: false }; } }
+    return t;
 }
 
 // ---- expressions ------------------------------------------------------------
 
 function checked(e: ast.Expr, s: State): typeinfo.Type {
-    return resolved(checker.expr_type(e, s.scope), s.template, s.scope, s.binding);
+    return settled(resolved(checker.expr_type(e, s.scope), s.template, s.scope, s.binding));
 }
 
 function decimal(text: string): boolean {
