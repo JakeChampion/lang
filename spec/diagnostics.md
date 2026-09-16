@@ -123,6 +123,7 @@ language does not have. It is deleted.
 | `E076` | a parameter's default value is not a constant expression | `diag_e076` |
 | `E077` | invalid named argument | `diag_e077` |
 | `E078` | an `@try` enum does not have the shape `?` requires | — |
+| `E079` | `?` inside a `defer` / `errdefer` action | `diag_e079` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

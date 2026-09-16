@@ -10708,10 +10708,74 @@ function e078_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
+// E079Probe carries the first `?` a defer action reaches, for e079_diags.
+struct E079Probe { found: boolean, line: i32, col: i32 }
+
+// e079_note_try records the first `try_` unary — the `?` operator, as
+// parser.fern desugars it — and ignores every later one, so a defer with two
+// draws one diagnostic.
+function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
+  if (acc.found) { return acc; }
+  match (e) {
+    ast.ExprUnary(u) => {
+      if (u.op == "try_") { return E079Probe { found: true, line: u.line, col: u.col }; }
+      return acc;
+    },
+    _ => { return acc; }
+  }
+}
+
+// e079_not_lambda keeps the walk out of a lambda body: a `?` there leaves the
+// LAMBDA on its own exits, not the function whose defer replays the action, so
+// it is an ordinary use.
+function e079_not_lambda(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprLambda(_) => { return false; },
+    _ => { return true; }
+  }
+}
+
+// e079_diags reports `?` inside a `defer` / `errdefer` action (#9470).
+//
+// Mirrors native's rule in checker.go's StmtDefer arm. The shape is circular:
+// `?` leaves by the failure edge, which replays the deferred actions, one of
+// which carries this `?`. Both compilers recursed until they died on it.
+//
+// Refused rather than lowered: `?` propagates a failure to the caller, and a
+// deferred action has no caller to propagate to.
+function e079_diags(mod: parser.Module): util.Diag[] {
+  // fold_stmt_spine visits the statement NODES, which is where a StmtDefer is
+  // seen — so a defer nested in a block, loop or match arm is reached too.
+  var out: util.Diag[] = [];
+  for fd in mod.funcs {
+    for stmt in fd.body {
+      out = astwalk.fold_stmt_spine(stmt, out, e079_visit_stmt);
+    }
+  }
+  return out;
+}
+
+function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
+  match (st) {
+    ast.StmtDefer(d) => {
+      var probe: E079Probe = astwalk.fold_stmt_pruned(d.action,
+        E079Probe { found: false, line: 0, col: 0 }, e079_note_try, e079_not_lambda);
+      if (probe.found) {
+        var kind: string = "a `defer`";
+        if (d.on_error != 0) { kind = "an `errdefer`"; }
+        return acc.append(dg_at("E079", "`?` is not allowed inside " + kind + " action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", probe.line, probe.col));
+      }
+      return acc;
+    },
+    _ => { return acc; }
+  }
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
   out = util.append_diags(out, handler_state_diags(mod));
   out = util.append_diags(out, e078_diags(mod));
+  out = util.append_diags(out, e079_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
   // most one `__ev` field, so they never trip this).
   for sd in mod.structs {

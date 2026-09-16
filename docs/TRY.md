@@ -55,6 +55,11 @@ When the failure variant carries a payload, the source's and the return's must
 match, or be convertible by one of the two existing hooks: a `dyn`-trait box
 (#3234) or a `from(E1): E2` constructor (#2674).
 
+A `defer` / `errdefer` action has no enclosing function of its own to propagate
+out of — it runs on the exit edges of the function that registered it, including
+the failure edge `?` itself takes — so `?` directly inside one is refused
+(`E079`). Inside a lambda in the action it is ordinary: it leaves the lambda.
+
 ## One predicate, on purpose
 
 Everything that asks "is this `?`-able, and what does it unwrap to" goes through
@@ -109,3 +114,4 @@ conservatism predates the marker and covers every non-primitive operand — see
 |---|---|
 | `E078` | an `@try` enum does not have the shape `?` requires |
 | `E042` | `?` on a type that is not `?`-able, outside a function, or with a mismatched enclosing return type |
+| `E079` | `?` inside a `defer` / `errdefer` action |
