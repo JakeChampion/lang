@@ -191,7 +191,7 @@ pub function kind_name(id: i32): string {
     if (id == 26) { return "read_file"; }
     if (id == 27) { return "write_file"; }
     if (id >= 28 && id <= 34) { return buf_kind_name(id); }
-    if (id >= 40 && id <= 50) { return prod_kind_name(id); }
+    if (id >= 40 && id <= 51) { return prod_kind_name(id); }
     return "invalid";
 }
 
@@ -213,8 +213,9 @@ pub function kind_name(id: i32): string {
 //   48 arr_box    imm = cap             __fern_arr_box(cap): a fresh rc-headered box (a call)
 //   49 str_call   str = IR op name      a Fern-compiled runtime helper on the stack ABI (str_concat, arr_slice, ...)
 //   50 rt_call    str = IR op name      a runtime routine on the register ABI (arr_push, alloc, ...)
+//   51 str_view   args [src, lo, hi]    a string slice: the {rc -1, data, len} view box, in the frame (imm 1) or on the heap (imm 0)
 function prod_kind_name(id: i32): string {
-    var names: string[] = ["ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call"];
+    var names: string[] = ["ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view"];
     return names[id - 40];
 }
 
@@ -2571,7 +2572,7 @@ function upd_hi(arr: i32[], idx: i32, pos: i32): i32[] {
 // the calls proper, the toy runtime's string / output / file / buffer
 // helpers, and the production lift's box allocation.
 function inst_is_call(k: i32): boolean {
-    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50) { return true; }
+    if (k == 11 || k == 12 || k == 17 || k == 18 || k == 48 || k == 49 || k == 50 || k == 51) { return true; }
     return k >= 19 && k <= 27;
 }
 

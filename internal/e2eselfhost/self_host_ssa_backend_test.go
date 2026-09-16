@@ -155,15 +155,21 @@ function main(): i32 {
 	// The runtime calls the stack machine makes for string and array ops: the
 	// Fern-compiled helpers on the stack ABI (concat, equality, ordering) and
 	// the register-ABI routines (array push).
-	{name: "runtime_calls", viaSSA: []string{"join", "same", "before", "grow", "main"}, src: `
+	{name: "runtime_calls", viaSSA: []string{"join", "same", "before", "grow", "mid", "main"}, src: `
 function join(a: string, b: string): string { return a + b; }
 function same(a: string, b: string): boolean { return a == b; }
 function before(a: string, b: string): boolean { return a < b; }
 function grow(xs: i32[], v: i32): i32[] { return xs.append(v); }
+function mid(s: string, lo: i32, hi: i32): i32 {
+    match (s[lo:hi]) {
+        Some(t) => { return t.len() * 10 + (t[0] as i32); },
+        None => { return 0 - 1; },
+    }
+}
 function main(): i32 {
     var s: string = join("fe", "rn");
     var xs: i32[] = grow([1, 2], 3);
-    var n: i32 = xs.len() * 10 + s.len() + xs[2];
+    var n: i32 = xs.len() * 10 + s.len() + xs[2] + mid(s, 1, 3) + mid("abcdef", 2, 5) + mid("ab", 1, 9);
     if (same(s, "fern")) { n = n + 100; }
     if (before("apple", s)) { n = n + 1; }
     return n % 256;
