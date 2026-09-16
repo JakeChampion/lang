@@ -412,6 +412,24 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			src:      "enum W { Wrap(i32), Er2 }\nfunction main(): i32 { var w: W = W.Er2; match (w) { Wrap(Er2) => { return 1; }, Er2 => { return 2; } } }\n",
 			wantDiag: "",
 		},
+		{
+			// #9472: `s[a:b]` yields `Option[str]`, so its payload is a
+			// borrowed view of the source's bytes. The self-host checker
+			// built the payload as an owned `string`, so storing it in a
+			// `string` passed here and the frame released storage the
+			// source owns. Native reports E003 on the same program.
+			name:     "slice-payload-is-a-view-E003",
+			src:      "function main(): i32 { var s: string = \"abcdef\"; match (s[0:3]) { Some(v) => { var w: string = v; return w.len(); }, None => { return 0; } } }\n",
+			wantDiag: "error[E003]",
+		},
+		{
+			// The negative control: the same payload bound at its own type
+			// must still compile, so the rule fires on the mismatch and not
+			// on the slice.
+			name:     "slice-payload-at-its-own-type-compiles",
+			src:      "function main(): i32 { var s: string = \"abcdef\"; match (s[0:3]) { Some(v) => { var w: str = v; return w.len(); }, None => { return 0; } } }\n",
+			wantDiag: "",
+		},
 	}
 
 	for _, tc := range cases {

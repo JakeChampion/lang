@@ -3872,7 +3872,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
           // `s[a:b]` on a string is bounds- and codepoint-boundary-checked
           // (#5634), so it yields `Option[str]`. The unchecked byte slice
           // keeps its `string` type under `slice_unchecked`.
-          var slcoa: typeinfo.Type[] = [t_string()];
+          var slcoa: typeinfo.Type[] = [t_str()];
           return t_union_g("Option", slcoa);
         },
         _ => {
