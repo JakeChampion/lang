@@ -399,7 +399,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-backend ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
     eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
@@ -2075,7 +2075,8 @@ function run(): i32 {
     var use_ssa: boolean = false;
     // -backend ssa: the register-allocating SSA emit for every function it
     // admits, beside the stack machine for the rest (docs/SELFHOST-SSA-BACKEND.md).
-    // Empty is the target's default emitter.
+    // `flat` names the stack machine, so a comparison can ask for it; empty is
+    // the target's default emitter.
     var backend: string = "";
     var mode_scan: boolean = false;
     // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
@@ -2258,8 +2259,8 @@ function run(): i32 {
         eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit\n");
         return 2;
     }
-    if (backend != "" && backend != "ssa") {
-        eprint("fern: unknown -backend: " + backend + " (want ssa, or omit it for the target's default emitter)\n");
+    if (backend != "" && backend != "ssa" && backend != "flat") {
+        eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)\n");
         return 2;
     }
     if (backend == "ssa" && platforms.for_target(target).isa != "arm64" && platforms.for_target(target).isa != "x86-64") {
