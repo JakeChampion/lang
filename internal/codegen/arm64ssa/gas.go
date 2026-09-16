@@ -10653,6 +10653,11 @@ func divShiftSeq(in x86.Inst, left, scratch int) []string {
 	// count, and a sign-extended operand divides correctly at either width.
 	width32 := in.W != 64
 	dw, sw := wreg(in.Dst), wreg(in.Src)
+	if in.SrcImm {
+		// A constant shift count is the instruction's own immediate, masked
+		// as the register form's would be. Only shifts carry one here.
+		s, sw = fmt.Sprintf("#%d", in.Imm&63), fmt.Sprintf("#%d", in.Imm&31)
+	}
 	var out []string
 	switch in.K {
 	case ssa.OpShl:

@@ -328,6 +328,20 @@ five, ratio to the flat backend:
 helpers call `__fern_str_dec` and `__fern_box_free`, which call `__free`,
 which computes the class again for a size it was handed in a register.
 
+**Constant shift counts and power-of-two divisors, the same day.** With the
+allocator out of the way `enum_match` ran 1.33e8 instructions to the flat
+build's 1.30e8 and still took 2.33x the time: three `idiv` per iteration for
+`k % 4`. `internal/ir`'s strength reduction deliberately leaves signed
+division by a power of two alone (an arithmetic shift rounds the wrong way),
+and the flat backends lower it themselves with a sign bias; the shared SSA
+emitter now does the same (`emitPow2DivRem`), for both SSA backends, and a
+constant shift count is the instruction's own immediate rather than a
+register copied into `cl` (or an AArch64 register) — the foldable set
+admits shifts and power-of-two divisors. `enum_match` 2.33x → **1.00x**;
+`map_int` 190 static instructions fewer; `coreutils/sort.fern` 15 `idiv` →
+2 and 668 `push rcx` → 487. `struct_drop` (1.88x) is unmoved: its cost is
+the drop side above.
+
 ### Per-backend disposition
 
 | backend | disposition |
