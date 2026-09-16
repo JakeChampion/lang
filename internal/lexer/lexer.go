@@ -264,7 +264,11 @@ func hexVal(r rune) int {
 // / hover-doc consumers walk the comment list explicitly.
 func Tokenize(src string) ([]Token, []ast.Comment, error) {
 	l := &lexer{src: src, line: 1, col: 1}
-	var out []Token
+	// One token per 7 source bytes: the repository's own Fern sources average
+	// 7.46 bytes per token, so the reserve covers a typical file outright
+	// instead of walking up from nothing. Code with no comments or long string
+	// literals is denser and still grows, once.
+	out := make([]Token, 0, len(src)/7+16)
 	for {
 		tok, err := l.next()
 		if err != nil {
