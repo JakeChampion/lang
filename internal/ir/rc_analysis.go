@@ -5266,6 +5266,26 @@ func blockDeclIndices(stmts []ast.Stmt, reassigned map[string]bool) map[string]i
 	return declIdx
 }
 
+// deferReadLocals is the set of names any of this function's `defer` actions
+// reads. Computed once and memoised: both precise-drop passes ask per
+// candidate name.
+func (b *builder) deferReadLocals() map[string]bool {
+	if b.deferReads != nil {
+		return b.deferReads
+	}
+	out := map[string]bool{}
+	for _, d := range b.defers {
+		if d == nil || d.Expr == nil {
+			continue
+		}
+		for name := range identCounts(d.Expr) {
+			out[name] = true
+		}
+	}
+	b.deferReads = out
+	return out
+}
+
 // reassignedAnywhere collects every local the function body assigns to, at ANY
 // depth. A precise drop allows the last use to sit inside a nested block, so a
 // `name = ...` buried in an `if`/`while` rebinds the slot and the straight-line
@@ -5415,6 +5435,17 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 	// dec'd on the shared path, and its slot zeroed) — dropping it again
 	// here would double-release. The reuse site subsumes its drop.
 	if b.rc.reuseConsumed[name] {
+		return 0, false
+	}
+	// A local a `defer` reads stays on the exit sweep (#9471). The last-use
+	// scan below sees the reference at the `defer` STATEMENT, but that
+	// statement only registers the action — emitDeferCleanupKind re-evaluates
+	// the expression at each exit, after the scan's chosen drop has already
+	// released the local and zeroed its slot, so the replay read a null.
+	// Placing the drop later cannot fix it: the replay sites are the exits,
+	// and the exit sweep (emitRcDecLocalsAtExit, which every exit runs AFTER
+	// emitDeferCleanup) is already exactly that placement.
+	if b.deferReadLocals()[name] {
 		return 0, false
 	}
 	if !b.preciseDroppableType(name) {
