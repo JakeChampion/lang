@@ -39,10 +39,16 @@ The tables that now use it:
 - `collectUses`, the per-value use counts DCE and `ThreadPhiBranches` read.
 - The `booleans` set in `ThreadPhiBranches`.
 - The `defs` table that `Fold`, `Simplify`, `Canonicalize`, `CmpFlip`,
-  `FoldBranches`, `StrengthReduce` and `SCCP` each build over every result in
-  the function. The lookup helpers (`constInt`, `constBool`, `constFloat`,
+  `FoldBranches`, `StrengthReduce`, `SCCP` and `TrivialPhis` each build over
+  every result in the function. The lookup helpers (`constInt`, `constBool`, `constFloat`,
   `isConstOp`, `negArg`) take the table and test for a nil definition where they
   tested the map's second return.
+
+The scope is the tables the optimisation pipeline rebuilds on every iteration
+over every function, which is what the profile measured. The ownership and
+unit analyses (`units.go`, `ownership_returns.go`, `certify.go`) keep their
+maps: they run once per function in a separate phase and none of them appears
+in the profile.
 
 ## Result
 

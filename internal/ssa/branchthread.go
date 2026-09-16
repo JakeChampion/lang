@@ -66,9 +66,7 @@ func ThreadPhiBranches(f *Func) {
 					if op.Kind == OpPhi {
 						arg := op.Args[edge.slot]
 						op.Args = append(op.Args, arg)
-						if arg.IsValid() {
-							uses[arg.ID]++
-						}
+						uses.set(arg, uses.get(arg)+1)
 					}
 				}
 				edge.target.Preds = append(edge.target.Preds, p)
