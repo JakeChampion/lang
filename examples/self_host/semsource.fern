@@ -38,7 +38,7 @@ pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.C
 // Environments are the values of the bindings visible at loop entry, in
 // binding order, captured where a body leaves the loop.
 struct Exit { block: i32, env: i32[] }
-struct Loop { header: i32, exit: i32, entry_count: i32, breaks: Exit[], continues: Exit[] }
+struct Loop { label: string, header: i32, exit: i32, entry_count: i32, breaks: Exit[], continues: Exit[] }
 
 struct State {
     ok: boolean,
@@ -2204,14 +2204,27 @@ function with_loop(s: State, l: Loop): State {
     return State { ...s, loops: s.loops.with(s.loops.len() - 1, l) };
 }
 
+// A labelled exit leaves the loop the label names and every loop inside it:
+// the edge records the environment at that loop's entry, so the bindings the
+// inner loops made die on it.
 function leave_loop(s: State, label: string, is_break: boolean): State {
     if (s.loops.len() == 0) { return fail(s, "loop exit outside a loop"); }
-    if (label != "") { return fail(s, "unsupported labelled loop exit"); }
-    var l: Loop = current_loop(s);
+    var at: i32 = s.loops.len() - 1;
+    if (label != "") {
+        at = 0 - 1;
+        var i: i32 = 0;
+        while (i < s.loops.len()) { if (s.loops[i].label == label) { at = i; } i = i + 1; }
+        if (at < 0) { return fail(s, "loop exit names no enclosing loop"); }
+    }
+    var l: Loop = s.loops[at];
     var e: Exit = Exit { block: s.cur.id, env: prefix(s.vals, l.entry_count) };
-    if (is_break) { s = with_loop(s, Loop { ...l, breaks: l.breaks.append(e) }); return terminate(s, t_br(l.exit)); }
-    s = with_loop(s, Loop { ...l, continues: l.continues.append(e) });
+    if (is_break) { s = with_loop_at(s, at, Loop { ...l, breaks: l.breaks.append(e) }); return terminate(s, t_br(l.exit)); }
+    s = with_loop_at(s, at, Loop { ...l, continues: l.continues.append(e) });
     return terminate(s, t_br(l.header));
+}
+
+function with_loop_at(s: State, at: i32, l: Loop): State {
+    return State { ...s, loops: s.loops.with(at, l) };
 }
 
 // Header phis are created before the body is known and completed afterwards
@@ -2247,7 +2260,6 @@ function complete_header(s: State, header: i32, exits: Exit[]): State {
 }
 
 function iterate(w: ast.StmtWhile, s: State): State {
-    if (w.label != "") { return fail(s, "unsupported labelled loop"); }
     var pred: i32 = s.cur.id;
     var header: i32 = s.next_block;
     var body: i32 = header + 1;
@@ -2258,7 +2270,7 @@ function iterate(w: ast.StmtWhile, s: State): State {
     s = terminate(s, t_br(header));
     s = header_phis(open(s, header, [pred]), count);
     var entry_env: i32[] = s.vals;
-    s = State { ...s, loops: s.loops.append(Loop { header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
+    s = State { ...s, loops: s.loops.append(Loop { label: w.label, header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
     var cond: Value = expr(w.cond, s, t_bool());
     s = cond.s;
     if (!s.ok) { return s; }
@@ -2290,7 +2302,6 @@ function index_name(): string { return "for index"; }
 // never terminate. The element is a projection of the container, so it borrows
 // and its unit obligations are the container's.
 function iterate_array(fo: ast.StmtFor, s: State): State {
-    if (fo.label != "") { return fail(s, "unsupported labelled loop"); }
     if (fo.var_name == "") { return fail(s, "unsupported loop binding"); }
     var it: Value = expr(fo.iter, s, typeinfo.unchecked());
     s = it.s;
@@ -2313,7 +2324,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     var scope: checker.Scope = s.scope;
     s = terminate(s, t_br(header));
     s = header_phis(open(s, header, [pred]), count);
-    s = State { ...s, loops: s.loops.append(Loop { header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
+    s = State { ...s, loops: s.loops.append(Loop { label: fo.label, header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
 
     // advance, then test: both live in the header, so a continue re-runs them.
     var one: Value = define(s, 1, [], 1, "", t_i32());
@@ -2488,7 +2499,6 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 // the binding here is read off a free function's parameters.
 function unsupported_declaration(fd: parser.FuncDecl, scope: checker.Scope): string {
     if (fd.import_iface.len() > 0 || fd.async) { return "unsupported external or async function"; }
-    for p in fd.params { if (p.has_default) { return "unsupported default argument"; } }
     return "";
 }
 

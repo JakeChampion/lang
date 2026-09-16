@@ -2846,6 +2846,69 @@ func log_bag {
     ret v5
 }
 
+modes 1 result i32
+v0:i32 v1:i32 v2:i32 v3:i32 v4:i32 v5:boolean v6:i32 v7:i32 v8:i32 v9:i32 v10:i32 v11:i32 v12:boolean v13:i32 v14:i32 v15:boolean v16:i32 v17:boolean v18:i32 v19:i32 v20:i32 v21:i32
+func labelled {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = const_int 0
+    br b1
+  b1:
+    v3 = phi v1 v9 v9
+    v4 = phi v2 v7 v7
+    v5 = binary < v4 v0
+    brif v5 b2 b3
+  b2:
+    v6 = const_int 1
+    v7 = binary + v4 v6
+    v8 = const_int 0
+    br b4
+  b4:
+    v9 = phi v3 v19
+    v10 = phi v8 v14
+    v11 = const_int 3
+    v12 = binary < v10 v11
+    brif v12 b5 b6
+  b5:
+    v13 = const_int 1
+    v14 = binary + v10 v13
+    v15 = binary == v14 v7
+    brif v15 b7 b8
+  b7:
+    br b1
+  b8:
+    br b9
+  b9:
+    v16 = const_int 2
+    v17 = binary == v14 v16
+    brif v17 b10 b11
+  b10:
+    br b3
+  b11:
+    br b12
+  b12:
+    v18 = const_int 1
+    v19 = binary + v9 v18
+    br b4
+  b6:
+    br b1
+  b3:
+    v20 = phi v3 v9
+    v21 = phi v4 v7
+    ret v20
+}
+
+modes 1 1 result i32
+v0:i32 v1:i32 v2:i32
+func with_default {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = binary + v0 v1
+    ret v2
+}
+
 modes 1 result i32[]
 v0:i32 v1:Option[i32] v2:boolean v3:i32 v4:i32[] v5:i32[] v6:i32[]
 func vb_empty {
