@@ -1398,19 +1398,36 @@ func runCheck(srcPath, target string) error {
 //
 // A build that asks for something the SSA path does not serve keeps the
 // emitter that does. That is what makes this a default rather than a
-// migration: -shared, -g, -cover and -sanitize go on working exactly as they
-// did, and nobody has to learn a new flag to keep them. Asking for the SSA
-// backend explicitly alongside one of those is still an error
-// (ssaUnservedFlag), because there the caller named a backend that cannot do
-// the job.
-func resolveBackend(backend, target string, shared bool) string {
+// migration: everything below goes on working exactly as it did, and nobody
+// has to learn a new flag to keep it.
+//
+// Naming the backend explicitly is a different matter, and the answer is not
+// uniform: -shared, -g and -cover are refused outright (ssaUnservedFlag),
+// while -sanitize warns that the build carries no checks and proceeds, and
+// --run, -cc and -export are simply not reached. Only the first three are
+// this function's mirror image; the rest is why the list here is longer than
+// that one.
+//
+// The list is what the SSA arm64 block does NOT reach, and each entry fails
+// silently rather than loudly if it is left out — which is why they are
+// enumerated here rather than discovered:
+//
+//   - runIt: that block writes assembly to stdout when outPath is empty, so
+//     `--run` would print the program instead of running it;
+//   - cc: it links in-process, so an external linker would be ignored and a
+//     `-cc` that cannot link would still "succeed";
+//   - export: flat serves it through EmitWithOptions{Exports}, and the SSA
+//     path drops the list;
+//   - shared, -g, -cover, -sanitize: no shared object, no line table, no
+//     instrumentation, no detectors.
+func resolveBackend(backend, target string, runIt bool, cc, export string, shared bool) string {
 	if backend != "" {
 		return backend
 	}
 	if target != "arm64-linux" {
 		return "flat"
 	}
-	if shared || emitDebugSyms || ast.CoverEnabled || ast.SanitizeEnabled {
+	if runIt || cc != "" || export != "" || shared || emitDebugSyms || ast.CoverEnabled || ast.SanitizeEnabled {
 		return "flat"
 	}
 	return "ssa"
@@ -1551,7 +1568,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// The emitter for this build: SSA where it is the default and serves what
 	// was asked for, otherwise the stack-machine emitter. Everything below
 	// dispatches on the resolved name, never on the flag.
-	backend = resolveBackend(backend, target, shared)
+	backend = resolveBackend(backend, target, runIt, cc, export, shared)
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
 		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)

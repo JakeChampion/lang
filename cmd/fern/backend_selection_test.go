@@ -139,3 +139,71 @@ func TestArm64DefaultBuildCarriesUnwindData(t *testing.T) {
 		t.Errorf(".eh_frame_hdr is %d bytes for %d FDEs, want %d", hdrSz, n, want)
 	}
 }
+
+// resolveBackend keeps the stack-machine emitter for everything the SSA arm64
+// block does not reach. Every entry here fails SILENTLY if it is left out —
+// `--run` prints the program's assembly instead of running it, `-cc` is
+// ignored by an in-process link, `-export` drops the export list — so the list
+// is a table rather than something to rediscover.
+func TestResolveBackendKeepsTheEmitterThatServesTheFlag(t *testing.T) {
+	type flags struct {
+		runIt          bool
+		cc, export     string
+		shared         bool
+		g, cover, sant bool
+	}
+	for _, tc := range []struct {
+		name   string
+		target string
+		f      flags
+		want   string
+	}{
+		{"plain", "arm64-linux", flags{}, "ssa"},
+		{"run", "arm64-linux", flags{runIt: true}, "flat"},
+		{"cc", "arm64-linux", flags{cc: "gcc"}, "flat"},
+		{"export", "arm64-linux", flags{export: "add"}, "flat"},
+		{"shared", "arm64-linux", flags{shared: true}, "flat"},
+		{"g", "arm64-linux", flags{g: true}, "flat"},
+		{"cover", "arm64-linux", flags{cover: true}, "flat"},
+		{"sanitize", "arm64-linux", flags{sant: true}, "flat"},
+		{"x86-64 plain", "x86-64-linux", flags{}, "flat"},
+		{"wasm plain", "wasm32-wasi", flags{}, "flat"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wasG, wasCover, wasSan := emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled
+			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = tc.f.g, tc.f.cover, tc.f.sant
+			got := resolveBackend("", tc.target, tc.f.runIt, tc.f.cc, tc.f.export, tc.f.shared)
+			emitDebugSyms, ast.CoverEnabled, ast.SanitizeEnabled = wasG, wasCover, wasSan
+			if got != tc.want {
+				t.Errorf("resolveBackend = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// A named backend is never second-guessed: the caller said which emitter,
+	// and ssaUnservedFlag is what refuses a combination it cannot serve.
+	if got := resolveBackend("ssa", "arm64-linux", true, "gcc", "add", false); got != "ssa" {
+		t.Errorf("an explicit -backend ssa resolved to %q", got)
+	}
+}
+
+// The predicate above is only half the fix; this proves the wiring reaches
+// it. `-cc /bin/false` cannot link, so a build that honours -cc fails — and
+// one that silently links in-process instead reports success and writes a
+// binary, which is what the flip did before this.
+func TestArm64DefaultHonoursExternalCC(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "p.fern")
+	if err := os.WriteFile(src, []byte(defaultBackendProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "p")
+	// native=false, as the CLI passes unless -native is given: `useNative`
+	// otherwise forces the in-process link and cc never gets a say.
+	code, err := run(src, out, "arm64-linux", "", "", "/bin/false", false, false, "", false, false, false, nil, false, "", false, nil)
+	if err == nil && code == 0 {
+		t.Fatal("-cc /bin/false succeeded: the build linked in-process and ignored the external linker it was given")
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Error("-cc /bin/false wrote a binary despite failing to link")
+	}
+}

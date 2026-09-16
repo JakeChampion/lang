@@ -48,11 +48,31 @@ x86-64 is a one-line change to the same function.
 
 ## What a build that needs something SSA does not serve gets
 
-`resolveBackend` hands `-shared`, `-g`, `-cover` and `-sanitize` to the
-stack-machine emitter on arm64 as before. That is what makes this a default
-rather than a migration: nobody learns a new flag to keep what they had.
-Naming `-backend ssa` alongside one of those is still an error, because there
-the caller named a backend that cannot do the job.
+`resolveBackend` hands it to the stack-machine emitter. That is what makes
+this a default rather than a migration: nobody learns a new flag to keep what
+they had. The list is `--run`, `-cc`, `-export`, `-shared`, `-g`, `-cover`
+and `-sanitize`.
+
+The first three were missing from the first version of this change, and each
+failed SILENTLY rather than loudly, which is why they are now enumerated in
+the code rather than left to be rediscovered:
+
+- `--run` reached the SSA block with an empty output path, and that block
+  writes assembly to stdout when there is nowhere to write a binary. So
+  `fern -target arm64-linux --run p.fern` printed the program's assembly and
+  exited 0 instead of running it.
+- `-cc` was ignored, because the SSA path links in process and never consults
+  it. `-cc /bin/false` — a linker that cannot link — exited 0 and wrote a
+  binary.
+- `-export` is served by the stack-machine emitter through
+  `EmitWithOptions{Exports}`, and the SSA path drops the list.
+
+Naming the backend explicitly is a different matter, and the answer is not
+uniform: `-shared`, `-g` and `-cover` are refused outright
+(`ssaUnservedFlag`), `-sanitize` warns that the build carries no checks and
+proceeds — `TestSanitizeWarnsForSSABackend` pins that deliberately, and
+changing it is not this slice's call — and `--run`, `-cc` and `-export` are
+simply not reached.
 
 ## Tests
 
@@ -68,6 +88,13 @@ the caller named a backend that cannot do the job.
   exactly how both SSA backends came to ship with no `.eh_frame` at all.
 - `TestArm64DefaultFallsBackForFlagsSSACannotServe`: `-g` and `-cover` still
   build on arm64 without naming a backend.
+- `TestResolveBackendKeepsTheEmitterThatServesTheFlag`: the whole list, as a
+  table. Each entry fails silently when it is missing, so the table is the
+  record of what the SSA arm64 block does not reach.
+- `TestArm64DefaultHonoursExternalCC`: the predicate is half the fix, and this
+  is the other half — `-cc /bin/false` has to fail the build. It passes
+  `native=false`, as the CLI does unless `-native` is given, because
+  `useNative` otherwise forces the in-process link and `cc` never gets a say.
 - `TestBackendFlatIsTheDefaultEmitter` is gone. It pinned "flat == default" on
   every target, which this change makes false on one of them;
   `TestDefaultBackendPerTarget` is that test, per target.
