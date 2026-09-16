@@ -10730,6 +10730,12 @@ function e079_not_lambda(e: ast.Expr): boolean {
   return true;
 }
 
+// e079_no_expr is the expression half of the walk, for a scan whose whole
+// contribution is statement-shaped.
+function e079_no_expr(e: ast.Expr, own acc: util.Diag[]): util.Diag[] {
+  return acc;
+}
+
 // e079_diags reports `?` inside a `defer` / `errdefer` action (#9470).
 //
 // Mirrors native's rule in checker.go's StmtDefer arm. The shape is circular:
@@ -10739,12 +10745,15 @@ function e079_not_lambda(e: ast.Expr): boolean {
 // Refused rather than lowered: `?` propagates a failure to the caller, and a
 // deferred action has no caller to propagate to.
 function e079_diags(mod: parser.Module): util.Diag[] {
-  // fold_stmt_spine visits the statement NODES, which is where a StmtDefer is
-  // seen — so a defer nested in a block, loop or match arm is reached too.
+  // fold_stmt_nodes rather than fold_stmt_spine: the spine enters no
+  // expression, so a `defer` inside a LAMBDA body stayed out of reach and the
+  // self-host accepted what native refused. A defer there registers on the
+  // lambda's own exits, and a `?` in its action is the same circular shape one
+  // level down. The expression half contributes nothing, so it is a no-op.
   var out: util.Diag[] = [];
   for fd in mod.funcs {
     for stmt in fd.body {
-      out = astwalk.fold_stmt_spine(stmt, out, e079_visit_stmt);
+      out = astwalk.fold_stmt_nodes(stmt, out, e079_visit_stmt, e079_no_expr, astwalk.descend_all);
     }
   }
   return out;

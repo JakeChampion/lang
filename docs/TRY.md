@@ -58,7 +58,15 @@ match, or be convertible by one of the two existing hooks: a `dyn`-trait box
 A `defer` / `errdefer` action has no enclosing function of its own to propagate
 out of — it runs on the exit edges of the function that registered it, including
 the failure edge `?` itself takes — so `?` directly inside one is refused
-(`E079`). Inside a lambda in the action it is ordinary: it leaves the lambda.
+(`E079`). The rule follows the exits, not the syntax: a `defer` nested in a
+lambda body registers on the LAMBDA's exits, so a `?` in its action is the same
+refusal one level down.
+
+A `?` inside a lambda that is merely part of the action is a different thing —
+it leaves the lambda, not the function whose defer replays it — so `E079` does
+not fire there. It is not usable today for an unrelated reason: `?` anywhere in
+a lambda reads the enclosing function's return type rather than the lambda's and
+draws `E042` (#9515).
 
 ## One predicate, on purpose
 

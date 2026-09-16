@@ -42,15 +42,34 @@ func TestDeferTryOpRefused(t *testing.T) {
 	return Some(n);
 }`, "`?` is not allowed inside an `errdefer` action"},
 		// A `?` in a lambda inside the action leaves the LAMBDA on its own
-		// exits, not the function whose defer replays the action, so it is an
-		// ordinary use and the walk must not descend into it.
-		{"lambda_in_defer_is_ordinary", `function run(h: (i32) => Option[i32]): i32 {
-	match (h(1)) { Some(v) => { return v; }, None => { return 0; } }
-}
-function f(out: Cell[i32]): i32 {
-	defer out.set(run((x: i32) => g(x)));
+		// exits, not the function whose defer replays the action, so the walk
+		// must not descend into it. The lambda body carries a real `?`, so the
+		// case fails if the pruning is dropped.
+		//
+		// It is not a clean accept: the checker refuses a `?` in any lambda
+		// today, reading the ENCLOSING function's return type rather than the
+		// lambda's (#9515), so this program draws E042 either way. The
+		// assertion is that it does not ALSO draw E079 — which is what the
+		// pruning decides, and all that is observable until #9515 is fixed.
+		{"try_in_lambda_in_defer_is_not_this_rule", `function f(out: Cell[i32]): i32 {
+	var h: (i32) => i32 = (x: i32) => { var y: i32 = g(x)?; return y; };
+	defer out.set(h(1));
 	return 0;
 }`, ""},
+		// A `defer` nested INSIDE a lambda body is the same circular shape one
+		// level down — it registers on the lambda's own exits, and the `?` in
+		// its action propagates out of the lambda, which is what replays it.
+		// The self-host mirror missed this: its walk entered no expression, so
+		// the lambda body stayed out of reach.
+		{"defer_inside_a_lambda_body", `function f(out: Cell[i32]): i32 {
+	var h: (i32) => i32 = (x: i32) => {
+		var n: i32 = x;
+		defer n = g(n)?;
+		return n;
+	};
+	out.set(h(1));
+	return 0;
+}`, "`?` is not allowed inside a `defer` action"},
 		// The operator is unaffected everywhere else in a function that also
 		// holds a defer — the rule is about the action, not the function.
 		{"try_outside_the_defer", `function f(out: Cell[i32]): Option[i32] {

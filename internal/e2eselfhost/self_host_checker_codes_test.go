@@ -242,6 +242,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e078-three-variants", "@try\nenum Three[T] { A(T), B, C }\nfunction main(): i32 { return 0; }\n", []string{"E078"}},
 		{"e078-success-variant-payloadless", "@try\nenum NoPay { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E078"}},
 		{"e078-failure-variant-two-payloads", "@try\nenum TwoPay[T, E] { A(T), B(E, E) }\nfunction main(): i32 { return 0; }\n", []string{"E078"}},
+		// E079: `?` inside a `defer` action (#9470). The second row is the
+		// shape the first one's walk missed — a defer nested in a LAMBDA body,
+		// where the self-host mirror entered no expression and so accepted what
+		// native refused. Both draw E042 as well, because a `?` anywhere in a
+		// lambda reads the enclosing function's return type rather than the
+		// lambda's (#9515); the differential is what pins them together.
+		{"e079-defer-try-op", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(): Option[i32] { var n: i32 = 0; defer n = g(n)?; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E079"}},
+		{"e079-defer-inside-lambda-body", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h: (i32) => i32 = (x: i32) => { var n: i32 = x; defer n = g(n)?; return n; }; return h(1); }\n", []string{"E042", "E079"}},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a
