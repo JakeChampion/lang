@@ -183,6 +183,107 @@ through the semantic path in 4.4 GB (arena 4.69 GB, against the
 native-built compiler's 7.21 GB) and its assembly is byte-identical to the
 native-built compiler's: the fixpoint holds.
 
+## The assembler's code buffer
+
+Binary output still exhausted the arena where the assembly held: the
+produced compiler's `-o fern.fern` reached 13.4 GB before the host killed
+it, and `-o checker.fern` passed 10 GB in six minutes. The phase readout
+at `x86:assembled` on `lexer.fern` said which step: 34,967 shared appends
+copying 12.3 GB, the arena growing from 17 MB to 6.85 GB across the
+assembler alone, against the native-built compiler's 24,004 appends
+copying 4.4 MB. The watchpoint sampler put the copies under `x86_le32`,
+`x86_rex_r` and `x86_rex_rr`, the byte emitters at the bottom of
+`x86_native`, reached through `x86_emit_mem`, `x86_gas_mem_op` and
+`x86_gas_emit`.
+
+Every one of those emitters took the code buffer as a borrowed `buf:
+i32[]` and returned it grown, and every caller held the buffer inside an
+owned `X86Asm` record, writing `a = X86Asm { ...a, code: x86_le32(a.code,
+0) }`. The field read lends the buffer while the record still counts it,
+so the append inside the callee finds a shared buffer and copies it, once
+per byte emitted. The 88 buffer-threading emitters now take `own buf`:
+the field of an owned record is a legal own argument, the steal supply
+moves it out of the record for the call, and the append grows the buffer
+in place. The native-built compiler and the produced compiler still emit
+byte-identical binaries for `lexer.fern` and `checker.fern` on both
+lowerings.
+With the buffers owned, the produced compiler's `-o lexer.fern` shows 8,743
+appends copying 2.3 MB, the assembler adding 155 MB to the arena, 1.5 s and
+138 MB resident.
+
+## The label tables' `with` copied per label
+
+With the byte emitters fixed, `-o parser.fern` from the produced compiler
+still grew the arena by 7.3 GB across the assembler alone, against 68 MB
+for the native-built compiler, and the shared-append counter did not move:
+the growth was fresh allocation, not un-share copies. A watchpoint on the
+allocator's bump pointer, armed at `x86_gas_assemble`, put 5 GB under
+`__fern_arr_push` and 1.4 GB under `__fern_arr_slice`, both called from
+`x86_add_label`.
+
+`x86_add_label` places a label with four appends and three `with`s on
+fields of its owned `X86Asm`: `lab_next.with(prev, at)` over an array as
+long as the label list, `lab_head.with(b, at)` and `lab_tail.with(b, at)`
+over the 4,093-bucket index. The plan admitted an append on a field of a
+record read no further through it (`field_grow_root`) and grew it in
+place, but a `with` on the same shape went through `with_update`'s
+sole-owned base: the projected field was retained, the count test found it
+shared, and `arr_slice` copied the whole array per label. The slice is
+exact-size, so the next label's `lab_next.append` had no spare capacity and
+`__fern_arr_push` reallocated the whole buffer again: two copies of an
+n-entry array per label, quadratic in the label count.
+
+The admission now covers a `with`: `field_grow_root` names the record at a
+with's result as at an append's, `deferred_retain` holds the receiver's
+retain back where the plan admitted the field, and `ssarc.with_field`
+tests the record's count and the buffer's count in turn, writing in place
+and nulling the field when both are sole-held, and writing into an
+`arr_slice` copy with its elements retained otherwise, so a second holder
+of the buffer keeps its value. A with on a borrowed array parameter has no
+field to null and no non-consuming helper to write through, so it keeps
+the retain-then-copy form and contributes no grow row.
+
+With both fixes the produced compiler's `-o parser.fern` takes 1.10 GB of
+arena at `x86:assembled` and 11.6 s (from 7.64 GB and 25 s), its `-o
+checker.fern` 2.67 GB and 27 s where it was killed at 13.4 GB, and the
+binaries it emits for `lexer.fern`, `parser.fern` and `checker.fern` are
+byte-identical to the native-built compiler's. The assembler phase still
+adds 1.7 GB on `checker.fern` where the native-built compiler's adds
+136 MB, so a site remains.
+
+## The unwind renderer's borrowed buffer
+
+The allocation sampler on `parser.fern` after the two fixes above put what
+was left of the assembler's growth, 700 MB of 725, under `cfi_le32` and
+`cfi_cat` in `cfi_eh_frame`, the .eh_frame renderer, half through
+`__fern_arr_push_owned` and half through `__fern_arr_slice`. The helpers
+took the buffer as a borrowed `b: i32[]` and appended to it four times:
+`b = b.append(v & 255); b = b.append((v >> 8) & 255); ...`. The first
+append is the non-consuming push on a borrowed parameter, which grows the
+caller's buffer in place and then retains the result for the unit this
+frame owes; the second append's receiver is that result, a local this
+frame owns one unit of while the caller owns the other, so the sole-owned
+base finds it shared and `arr_slice` copies the whole buffer before the
+push. Once per helper call, and the renderer calls the helper several
+times per FDE over a buffer that grows with the section: quadratic in the
+number of functions.
+
+The helpers in both native backends take the buffer by `own` now, which
+is what they do with it; the four callers that returned a local through
+one rebind it first. This is the same shape as the byte emitters' and the
+same cost the lowering leaves on any borrowed array a frame appends to
+more than once: the identity arm's retain makes the second append copy.
+The fix for that shape belongs in the lowering, as a deferred retain
+across a chain of appends on a borrowed receiver, and is not in this
+entry.
+
+With the buffer owned the assembler adds 42 MB to the arena on
+`parser.fern` (the native-built compiler's adds 68 MB) and 99 MB on
+`checker.fern` (136 MB), the binaries stay byte-identical to the
+native-built compiler's, and the produced compiler rebuilds itself to a
+byte-identical binary in 4m47s at 6.06 GB peak RSS, from 6m15s and
+11.9 GB with the label tables fixed alone.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The
