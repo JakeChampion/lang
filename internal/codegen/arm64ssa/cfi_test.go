@@ -35,23 +35,34 @@ func countDirective(asm, d string) int {
 	return strings.Count(asm, "\t"+d+"\n") + strings.Count(asm, "\t"+d+" ")
 }
 
-// Every function carries call-frame information, and the rules are balanced:
-// one startproc and one endproc, and a remembered state for every teardown,
-// restored after it. Without the pairing the rule for a released frame would
-// still be in effect for whatever block the layout puts next, describing those
-// instructions wrongly.
-func TestEveryFunctionCarriesBalancedCFI(t *testing.T) {
-	// Two returns, so the layout puts a block after a teardown.
+// twoReturnsWithAFrame is a function with two returns, so the layout puts a
+// block after a teardown, and one call, so it has a frame to describe. A
+// frameless function changes no rule, and a fixture without a frame turns
+// every count below into 0 against 0.
+func twoReturnsWithAFrame() map[string]*ssa.Func {
 	f := ssa.NewFunc("f")
 	x := f.AddParam()
 	entry := f.NewBlock()
 	small := f.NewBlock()
 	big := f.NewBlock()
 	f.SetBrIf(entry, f.AddOp(entry, ssa.OpLt, x, constOp(f, entry, 10)), small, big)
-	f.SetRet(small, constOp(f, small, 1))
+	f.SetRet(small, callOp(f, small, "leaf", x))
 	f.SetRet(big, f.AddOp(big, ssa.OpMul, x, x))
 
-	asm, err := arm64ssa.EmitAsmModule(map[string]*ssa.Func{"f": f}, "f", 8, []int64{3})
+	leaf := ssa.NewFunc("leaf")
+	lp := leaf.AddParam()
+	lb := leaf.NewBlock()
+	leaf.SetRet(lb, leaf.AddOp(lb, ssa.OpAdd, lp, constOp(leaf, lb, 1)))
+	return map[string]*ssa.Func{"f": f, "leaf": leaf}
+}
+
+// Every function carries call-frame information, and the rules are balanced:
+// one startproc and one endproc, and a remembered state for every teardown,
+// restored after it. Without the pairing the rule for a released frame would
+// still be in effect for whatever block the layout puts next, describing those
+// instructions wrongly.
+func TestEveryFunctionCarriesBalancedCFI(t *testing.T) {
+	asm, err := arm64ssa.EmitAsmModule(twoReturnsWithAFrame(), "f", 8, []int64{3})
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
 	}
@@ -62,13 +73,19 @@ func TestEveryFunctionCarriesBalancedCFI(t *testing.T) {
 	if starts != ends {
 		t.Errorf("%d .cfi_startproc against %d .cfi_endproc", starts, ends)
 	}
-	if remembered, restored := countDirective(asm, ".cfi_remember_state"), countDirective(asm, ".cfi_restore_state"); remembered != restored {
+	remembered, restored := countDirective(asm, ".cfi_remember_state"), countDirective(asm, ".cfi_restore_state")
+	// Nothing below distinguishes "balanced" from "absent", so say outright
+	// that the fixture reached the code under test.
+	if remembered == 0 {
+		t.Fatal("no .cfi_remember_state in the module: the fixture built no frame, so the balance checks below would compare 0 against 0")
+	}
+	if remembered != restored {
 		t.Errorf("%d .cfi_remember_state against %d .cfi_restore_state", remembered, restored)
 	}
 	// Each teardown releases the frame and says so, so the CFA offset goes
 	// back to the CIE's initial 0 as many times as it was established.
-	if released, taken := countDirective(asm, ".cfi_def_cfa_offset 0"), countDirective(asm, ".cfi_remember_state"); released != taken {
-		t.Errorf("%d `.cfi_def_cfa_offset 0` against %d teardowns", released, taken)
+	if released := countDirective(asm, ".cfi_def_cfa_offset 0"); released != remembered {
+		t.Errorf("%d `.cfi_def_cfa_offset 0` against %d teardowns", released, remembered)
 	}
 }
 
@@ -148,21 +165,7 @@ func TestFramelessFunctionCarriesNoFrameRules(t *testing.T) {
 // the prologue's state to the one instruction an unwinder most wants to read
 // — and both balance. So pin where each rule sits.
 func TestTeardownRulesSitAtTheirInstructions(t *testing.T) {
-	f := ssa.NewFunc("f")
-	x := f.AddParam()
-	entry := f.NewBlock()
-	small := f.NewBlock()
-	big := f.NewBlock()
-	f.SetBrIf(entry, f.AddOp(entry, ssa.OpLt, x, constOp(f, entry, 10)), small, big)
-	f.SetRet(small, callOp(f, small, "leaf", x))
-	f.SetRet(big, f.AddOp(big, ssa.OpMul, x, x))
-
-	leaf := ssa.NewFunc("leaf")
-	lp := leaf.AddParam()
-	lb := leaf.NewBlock()
-	leaf.SetRet(lb, leaf.AddOp(lb, ssa.OpAdd, lp, constOp(leaf, lb, 1)))
-
-	asm, err := arm64ssa.EmitAsmModule(map[string]*ssa.Func{"f": f, "leaf": leaf}, "f", 8, []int64{3})
+	asm, err := arm64ssa.EmitAsmModule(twoReturnsWithAFrame(), "f", 8, []int64{3})
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
 	}
