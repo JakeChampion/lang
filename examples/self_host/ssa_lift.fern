@@ -294,6 +294,77 @@ function fbin_sym(k: string): string {
 // ---- the lift ------------------------------------------------------------
 
 pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[], structs: parser.StructDecl[]): LResult {
+    return lift_impl(name, nparams, nslots, ops, structs, false);
+}
+
+// lift_from_ir_prod is the lift the production backends read
+// (docs/SELFHOST-SSA-BACKEND.md): it admits the integer spine, the structured
+// control flow and every `call_direct`, and bails on the rest. The runtime
+// helper calls the lowering threads through — the reference-count pair, the
+// per-type drops, the reclaim helpers — stay calls, so the emitted function
+// keeps the memory model of the stack-machine function beside it. A binary
+// carries its IR kind name and width (`str`, `imm`) rather than the symbol the
+// optimiser reads, and an integer cast carries the cast in `str`, so the
+// emitter selects instructions from the same table the stack machine does.
+pub function lift_from_ir_prod(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
+    return lift_impl(name, nparams, nslots, ops, [], true);
+}
+
+// prod_kind is the op vocabulary lift_from_ir_prod admits.
+function prod_kind(k: string): boolean {
+    if (bin_sym(k) != "") { return true; }
+    var spine: string[] = ["const_i32", "const_i32_text", "const_i64",
+        "int_extend", "int_wrap", "int_cast", "u32_wrap", "not",
+        "load_local", "store_local", "tee_local", "drop", "return",
+        "block", "loop", "if", "else", "end", "br", "brif", "call_direct"];
+    for x in spine { if (x == k) { return true; } }
+    return false;
+}
+
+// bin_str / bin_imm are what a lifted binary carries: the optimiser's symbol
+// for the optimiser's consumers, the IR kind name and width for the production
+// emitter.
+function bin_str(k: string, prod: boolean): string {
+    if (prod) { return k; }
+    return bin_sym(k);
+}
+function bin_imm(op: ir.Op, prod: boolean): i32 {
+    if (prod) { return op.width; }
+    return 0;
+}
+
+// lift_int_narrow_prod lifts the integer width ops as the stack machine
+// selects them: a pointer-width extend or wrap moves nothing, so the value
+// flows through; the rest become one unary carrying the op (and the cast's
+// target type) in `str` and the unsigned flag in `imm`.
+function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+    if (stack.len() < 1) { return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: false }; }
+    if ((k == "int_extend" || k == "int_wrap") && op.width == ir.width_ptr()) {
+        return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+    }
+    var a: i32 = stack[stack.len() - 1];
+    stack = drop_last(stack);
+    var what: string = k;
+    if (k == "int_cast") { what = "int_cast:" + op.str; }
+    var flag: i32 = 0;
+    if (op.unsigned) { flag = 1; }
+    var v: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: v, args: [a], imm: flag, str: what });
+    stack = stack.append(v);
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+// lift_const_text_prod lifts a literal carried as source text to the text
+// constant (kind 3), which the emitter materialises the way the stack machine
+// does: one MOVZ when the text is a small decimal, the literal pool otherwise.
+function lift_const_text_prod(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
+    var v: i32 = nvals; nvals = nvals + 1;
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 3, result: v, args: [], imm: 0, str: op.str });
+    stack = stack.append(v);
+    return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
+}
+
+function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], structs: parser.StructDecl[], prod: boolean): LResult {
     var nvals: i32 = 0;
     var next_blk: i32 = 0;
     var bail: string = "";   // the op kind that forced a fall-back (scan diagnostic)
@@ -360,7 +431,15 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             continue;
         }
 
-        if (k == "const_i32") {
+        if (prod && !prod_kind(k)) {
+            ok = false;
+        } else if (prod && (k == "const_i32_text" || k == "const_i64")) {
+            var lv: LiftVals = lift_const_text_prod(op, nvals, stack, cur_insts);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts;
+        } else if (prod && (k == "int_extend" || k == "int_wrap" || k == "int_cast" || k == "u32_wrap")) {
+            var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, cur_insts, ok);
+            nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
+        } else if (k == "const_i32") {
             var v: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: op.i32_imm, str: "" });
             stack = stack.append(v);
@@ -567,7 +646,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 var l: i32 = stack[stack.len() - 2];
                 stack = drop_last2(stack);
                 var bv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: 0, str: bin_sym(k) });
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: bin_imm(op, prod), str: bin_str(k, prod) });
                 stack = stack.append(bv);
             }
         } else if (fbin_sym(k) != "") {
@@ -618,7 +697,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(fiv);
             }
         } else if (k == "call_direct") {
-            var lv: LiftVals = lift_call_direct(op, nvals, stack, cur_insts, ok);
+            var lv: LiftVals = lift_call_direct(op, nvals, stack, cur_insts, ok, prod);
             nvals = lv.nvals; stack = lv.stack; cur_insts = lv.insts; ok = lv.ok;
         } else if (k == "const_func") {
             // A function VALUE — the address of a top-level function or a lifted
@@ -1195,7 +1274,9 @@ function lift_float_binop(k: string, nvals: i32, stack: i32[], cur_insts: ssa.SI
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
-function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+// In production mode every callee is a call, the runtime helpers included:
+// the emitted function keeps the stack machine's memory model.
+function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean, prod: boolean): LiftVals {
     var argc: i32 = op.i32_imm;
     if (stack.len() < argc) { ok = false; }
     else {
@@ -1204,7 +1285,11 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
         while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
         var e: i32 = 0;
         while (e < argc) { stack = drop_last(stack); e = e + 1; }
-        if (op.str == "__fern_rc_is_unique" && argc == 1) {
+        if (prod) {
+            var pv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: pv, args: cargs, imm: 0, str: op.str });
+            stack = stack.append(pv);
+        } else if (op.str == "__fern_rc_is_unique" && argc == 1) {
             // The constructor-reuse guard (#6134 routes the record
             // update `p = T { ...p, … }` through it). There is no rc
             // header on the leak-only SSA heap, so nothing is ever
