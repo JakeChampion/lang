@@ -210,9 +210,15 @@ Unsupported constructs refuse the whole function with a reason.
   (`semrecords.Enum`) is its union identity and every variant's field shape,
   entered into the function's schema table beside the record schemas. Arms
   are tested in declaration order and each test's false edge enters the next,
-  so an arm after a wildcard is unreachable and is not produced. A guard, a
-  qualified pattern (`Shape.Dot`), a nested, tuple, struct-field, literal or
-  `@` pattern, and a non-enum scrutinee are refused.
+  so an arm after a wildcard is unreachable and is not produced. A pattern
+  may be spelled with the union's own name ahead of the variant
+  (`Shape.Dot`). A nested, tuple, struct-field, literal or `@` pattern, and a
+  non-enum scrutinee are refused.
+- Paths headed by a TYPE name. `E.A(7)` and `E.B` construct the variant of the
+  enum they name, `Option.Some(k)` the builtin's; `Point.make(3, 4)` calls the
+  associated function an impl declared on the struct, which the contract
+  table keys the way it keys a method (`Point.make`) and whose parameters
+  are the declared ones, with no receiver. A bound name shadows the type.
 
   A match whose unguarded arms NAME distinct variants, as many as the union
   declares, is TOTAL: a value is one of them, so the last arm is entered
@@ -224,6 +230,21 @@ Unsupported constructs refuse the whole function with a reason.
   variants. A value-returning body whose last statement is a total match
   therefore needs no `return` after it, which is what the AST lowering and
   every other Fern backend already assume.
+
+  A GUARDED arm is read after its payload bindings, in the arm's own block:
+  a true guard enters the body and a false one leaves for the next arm's
+  test, with the bindings released on that edge as on any other. A guarded
+  arm never counts towards totality, and a guarded wildcard does not close
+  the chain.
+
+  The parser desugars a nested, tuple, struct-field or literal arm pattern
+  into a done-flag chain of flat matches (`build_nested_arm_match` and its
+  siblings) that falls through by construction, and the checker's E052
+  reads every arm of the chain returning as a body that cannot reach its
+  end. That live end is the `unreachable` terminator here: it releases what
+  the frame still holds, as a return does, and aborts. It is the one
+  terminator the plan and the verifier admit with no value, and it is only
+  sound because the module was checked.
 
   `ssasem.analyze` carries the matching rule, because the closing arm
   projects its payload with no test above it. A variant projection is
@@ -519,11 +540,9 @@ Unsupported constructs refuse the whole function with a reason.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
-unsigned negation, generic records, the struct,
-nested and `@`-bound destructuring forms, labelled loops, match guards and
-the pattern shapes above,
-`defer`, receiver methods, generic methods, external and async functions,
-and a value-returning body that falls through.
+unsigned negation, generic records, labelled loops, the pattern shapes
+above, `defer`, receiver methods, generic methods, external and async
+functions.
 
 ## Calls
 
@@ -541,9 +560,13 @@ caller's own. A discarded call result is released at the call.
 A value-position block is not a call at all. `parser.is_value_block` names the
 zero-argument call of a zero-parameter lambda the parser desugars an
 if-expression, a match-expression, a comprehension or a `{ … }` body to, and
-this boundary INLINES it the way every backend does. Only the if-expression
-shape is produced: one `if` whose arms each `return` the block's value, joined
-at a phi.
+this boundary INLINES it the way every backend does. The if-expression shape is
+one `if` whose arms each `return` the block's value, joined at a phi. A block
+with leading statements — a `{ … }` body, or the match-expression desugars that
+route their value through a local declared ahead of a done-flag chain — runs
+them in the enclosing block, in a scope of their own, and takes the trailing
+return's value; a block whose last statement is none of an `if`, a `match` or
+a `return` is refused.
 
 The module is closed: a produced function whose callee was refused is refused
 in turn, transitively, because a contract is only honoured by a body verified
@@ -705,10 +728,9 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the struct and nested destructuring forms or
-a generic method, so no production consumer is switched and no AST ownership
-analysis is deleted. Those forms appear nowhere in the self-hosted compiler,
-so nothing in it refuses for want of them.
+The producer does not yet admit a generic method, so no production consumer
+is switched and no AST ownership analysis is deleted. The form appears
+nowhere in the self-hosted compiler, so nothing in it refuses for want of it.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
