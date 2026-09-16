@@ -1103,9 +1103,12 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // helper only ever reaches entries still in the column. 0 = the column owns
 // nothing (today's register behaviour, and what the AST path passes); 1 = a
 // string column, released through __fern_str_free; 2 = a string[] column,
-// through __fern_str_arr_free. wasm ignores it: $__fern_map_set already
-// releases the old value under `vis`, which is where the register halves are
-// being brought into line.
+// through __fern_str_arr_free; 3 = a column of boxes released by calling the
+// function `str` names on each, which is how a record, union, array or tuple
+// column is owned (the semantic lowering names its own per-type release, and
+// its maps carry no derived key equality, so the field is free for it). wasm
+// releases the old value under `vis` for kinds 1 and 2 already, and calls
+// through the named function's table slot for kind 3.
 // `widekind` (carried in i64_imm) marks an 8-byte VALUE column: 0 = narrow
 // (i32/string pointer), 1 = i64/u64, 2 = f64. The x86-64 and arm64 runtimes store
 // the value 8-byte unconditionally (movq / str x), so they ignore it. On wasm the
@@ -1120,6 +1123,7 @@ pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsu
     if (vretain) { w = w + 8; }
     if (vkind == 1) { w = w + 16; }
     if (vkind == 2) { w = w + 32; }
+    if (vkind == 3) { w = w + 48; }
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }

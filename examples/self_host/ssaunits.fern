@@ -174,8 +174,12 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (semtypes.is_cell(t)) { return supported(semtypes.cell_elem(t), f); }
     // A map holds one unit of its own and one of every key in its column, and
     // one of every value when that column is counted; only the shapes whose
-    // release does that are admitted.
-    if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
+    // release does that are admitted, and a column of boxes only when the box
+    // itself is a value this pass plans.
+    if (ssasem.is_map(t)) {
+        if (!ssasem.is_supported_map(t)) { return false; }
+        return !ssasem.boxed_map_value(ssasem.map_value(t)) || supported(ssasem.map_value(t), f);
+    }
     if let typeinfo.TypeStruct(_) = t { return semrecords.find(f.records, t) >= 0; }
     if let typeinfo.TypeUnion(_) = t { return semrecords.find_enum(f.enums, t) >= 0; }
     return false;

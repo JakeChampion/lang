@@ -344,6 +344,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_calls_optarrarr_free(cache)) { out = out.append("@calls_optarrarr_free"); }
     if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
     if (module_calls_map_free_vsa(cache)) { out = out.append("@map_free_vsa"); }
+    if (module_calls_map_free_vf(cache)) { out = out.append("@map_free_vf"); }
     var mvsd: string[] = map_vals_struct_drop_types(cache);
     var mvi: i32 = 0;
     while (mvi < mvsd.len()) { out = out.append("@map_vals_struct_drop:" + mvsd[mvi]); mvi = mvi + 1; }
@@ -918,6 +919,10 @@ function wasm_helper_symbol(name: string): string {
     // flat per-value $__fern_arr_dec of $__fern_map_release does not.
     if (name == "__fern_map_free_vsa") { return "$__fern_map_release_vsa"; }
     if (name == "__fern_map_free_ksvsa") { return "$__fern_map_release_vsa"; }
+    // A column of boxes: the release's value walk calls the function whose
+    // table slot the caller passes as the second argument.
+    if (name == "__fern_map_free_vf") { return "$__fern_map_release_vf"; }
+    if (name == "__fern_map_free_ksvf") { return "$__fern_map_release_vf"; }
     if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
     // i32.to_string()'s decimal helper — i32_to_string_helper emits it as
     // $__fern_i32_to_str (param i32 -> i32 box), gated on @uses_i32_to_string.
@@ -1506,6 +1511,13 @@ pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean 
 pub function module_calls_map_free_vsa(cache: irlower.LowerResult[]): boolean {
     return module_calls_direct(cache, "__fern_map_free_vsa")
         || module_calls_direct(cache, "__fern_map_free_ksvsa");
+}
+
+// module_calls_map_free_vf: any function frees a map whose value column is
+// boxes — gates the $__fern_map_release_vf body.
+pub function module_calls_map_free_vf(cache: irlower.LowerResult[]): boolean {
+    return module_calls_direct(cache, "__fern_map_free_vf")
+        || module_calls_direct(cache, "__fern_map_free_ksvf");
 }
 
 pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean {
@@ -3303,6 +3315,12 @@ pub function pipe_after(s: string): string {
     return slice_unchecked(s, i + 1, s.len()) + "";
 }
 
+// map_set_vkind3: the op's value column is a column of boxes (width bits 4 and
+// 5 both set), whose release `str` names.
+pub function map_set_vkind3(o: ir.Op): boolean {
+    return o.kind_tag == 125 && (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
+}
+
 pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
@@ -3322,6 +3340,11 @@ pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
                 var ef: string = pipe_after(r.ops[i].str);
                 if (util.index_of_str(out, hf) < 0) { out = out.append(hf); }
                 if (util.index_of_str(out, ef) < 0) { out = out.append(ef); }
+            }
+            // A map_set into a column of boxes names the value release the
+            // runtime calls through the table on an overwrite.
+            if (r.ops[i].kind_tag == 125 && map_set_vkind3(r.ops[i]) && util.index_of_str(out, r.ops[i].str) < 0) {
+                out = out.append(r.ops[i].str);
             }
             i = i + 1;
         }
@@ -4505,7 +4528,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         if ((o.width / 2) % 2 == 1) { kcons_w = "1"; }
         parts = parts.append("    i32.const " + kcons_w + "\n    call $__fern_map_set_w64\n");
     } else if (o.kind_tag == 125) {  // map_set
-        parts = emit_wasm_map_set(o, parts);
+        parts = emit_wasm_map_set(o, cx, parts);
     } else if (o.kind_tag == 138) {  // struct_make
         parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
     } else if (o.kind_tag == 218) {  // const_struct
@@ -8708,8 +8731,10 @@ pub function map_helpers(): string {
     o = o + "    (drop (call $__fern_arr_dec (local.get $ov)))\n";
     o = o + "    (drop (call $__fern_arr_dec (local.get $oo)))\n";
     o = o + "    (drop (call $__fern_arr_dec (local.get $ou))))\n";
-    // $__fern_map_set(box, k, v) → box. Grows at load factor 3/4.
-    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (param $vconsume i32) (param $kconsume i32) (param $vdeep i32) (result i32)\n";
+    // $__fern_map_set(box, k, v) → box. Grows at load factor 3/4. `vdeep` names
+    // the release a superseded value is owed: 0 the shallow dec, 1 the string
+    // array's deep dec, 2 the function whose table slot `vf` holds.
+    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (param $vconsume i32) (param $kconsume i32) (param $vdeep i32) (param $vf i32) (result i32)\n";
     o = o + "    (local $cap i32) (local $keys i32) (local $vals i32) (local $used i32) (local $idx i32) (local $kis i32) (local $ff i32) (local $u i32) (local $slot i32)\n";
     // Record value-is-string on the box (homogeneous value type, so always the
     // same flag) so $__fern_map_release knows to release the value column.
@@ -8772,9 +8797,11 @@ pub function map_helpers(): string {
     // elements are only ever dec'd on a deep release. $__fern_arr_dec_ptr is
     // that deep release, and it is what $__fern_map_release_vsa already uses
     // for the same column — an overwrite owes what the map's death owes.
-    o = o + "            (if (local.get $vdeep)\n";
-    o = o + "              (then (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4)))))))\n";
-    o = o + "              (else (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))))\n";
+    o = o + "            (if (i32.eq (local.get $vdeep) (i32.const 2))\n";
+    o = o + "              (then (drop (call_indirect (type $fn1) (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4)))) (local.get $vf))))\n";
+    o = o + "              (else (if (local.get $vdeep)\n";
+    o = o + "                (then (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4)))))))\n";
+    o = o + "                (else (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))))))\n";
     // Same $vconsume exception as the insert path: a fresh replacement value is
     // TAKEN by the map (no inc) so release's dec balances it; the OLD value is
     // released above unconditionally when vis.
@@ -8943,10 +8970,14 @@ pub function map_helpers(): string {
 
 // map_release_func: the $__fern_map_release<suffix> body, its per-value release
 // spelled by `vfree` — $__fern_arr_dec for the plain release, $__fern_arr_dec_ptr
-// (each string, then the buffer) for a string[] value column.
+// (each string, then the buffer) for a string[] value column, and "" for a
+// column of boxes, whose release the caller passes as a table slot ($vf) and
+// the walk calls through.
 pub function map_release_func(suffix: string, vfree: string): string {
     var o: string = "";
-    o = o + "  (func $__fern_map_release" + suffix + " (param $box i32) (result i32)\n";
+    var params: string = " (param $box i32)";
+    if (vfree == "") { params = params + " (param $vf i32)"; }
+    o = o + "  (func $__fern_map_release" + suffix + params + " (result i32)\n";
     o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32) (local $vals i32)\n";
     o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
     o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
@@ -8974,7 +9005,12 @@ pub function map_release_func(suffix: string, vfree: string): string {
     o = o + "        (block $mvd (loop $mvl\n";
     o = o + "          (br_if $mvd (i32.ge_u (local.get $i) (local.get $cap)))\n";
     o = o + "          (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "            (drop (call " + vfree + " (i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4))))))))\n";
+    var value: string = "(i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4))))";
+    if (vfree == "") {
+        o = o + "            (drop (call_indirect (type $fn1) " + value + " (local.get $vf)))))\n";
+    } else {
+        o = o + "            (drop (call " + vfree + " " + value + "))))\n";
+    }
     o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "          (br $mvl))))) \n";
     o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 8)))))\n";
@@ -9558,7 +9594,7 @@ pub function map_w64_helpers(): string {
     o = o + "    (local $cell i32)\n";
     o = o + "    (local.set $cell (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i64.store (local.get $cell) (local.get $v))\n";
-    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (local.get $kcons) (i32.const 0))))\n";
+    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (local.get $kcons) (i32.const 0) (i32.const 0))))\n";
     // $__fern_map_get_or_w64(box, k, d) → the 8-byte value at k, or default d on a
     // miss. vals[idx] holds the cell pointer; deref it with i64.load.
     o = o + "  (func $__fern_map_get_or_w64 (param $box i32) (param $k i32) (param $d i64) (result i64)\n";
@@ -10205,6 +10241,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // arr_dec_ptr2_func for why it must not be included unconditionally.
     if (need(needs, "@calls_strarrarr_free")) { parts = parts.append(arr_dec_ptr2_func(heap_base_for_strs(sv, cv))); }
     if (need(needs, "@map_free_vsa")) { parts = parts.append(map_release_func("_vsa", "$__fern_arr_dec_ptr")); }
+    if (need(needs, "@map_free_vf")) { parts = parts.append(map_release_func("_vf", "")); }
     if (need(needs, "@calls_optarrarr_free")) { parts = parts.append(optarrarr_free_func(heap_base_for_strs(sv, cv))); }
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
@@ -13528,7 +13565,7 @@ function emit_wasm_putchar(eltmp: i32, parts: string[]): string[] {
     return parts;
 }
 
-function emit_wasm_map_set(o: ir.Op, parts: string[]): string[] {
+function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
     // stack: map, k, v -> push vis -> map_set -> map. `vis` (value-is-
     // RC-pointer) comes from op_map_set's `unsigned` flag, set by
     // irlower from the map's VALUE type. A pointer value (string /
@@ -13553,12 +13590,18 @@ function emit_wasm_map_set(o: ir.Op, parts: string[]): string[] {
     var kcons: string = "0";
     if ((o.width / 2) % 2 == 1) { kcons = "1"; }
     // vkind (width bits 4/5, #9303) names what the map owns in its value
-    // column. Only kind 2 — a column of string ARRAYS — needs more than the
-    // shallow dec on an overwrite, so that is the one this flag carries; the
-    // register backends read the same two bits for the same purpose.
+    // column. A string column (kind 1) takes the shallow dec on an overwrite;
+    // a column of string ARRAYS (kind 2) the deep one (vdeep 1); a column of
+    // boxes (kind 3) the function o.str names, called through its table slot
+    // (vdeep 2, the slot in vf). The register backends read the same two bits
+    // for the same purpose.
     var vdeep: string = "0";
-    if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
-    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    i32.const " + vdeep + "\n    call $__fern_map_set\n");
+    var vf: string = "    i32.const 0\n";
+    if (map_set_vkind3(o)) {
+        vdeep = "2";
+        vf = "    global.get " + fn_base_global(cx.ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(cx.fn_table, o.str) - fn_table_base()) + "\n    i32.add\n";
+    } else if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
+    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n    i32.const " + vdeep + "\n" + vf + "    call $__fern_map_set\n");
 
     return parts;
 }

@@ -169,10 +169,11 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irlo
     return r;
 }
 
-// A per-type drop helper is emitted alongside whichever bodies need it, so it
-// is a provided body during the scan rather than a call that escapes.
+// A per-type drop or release helper is emitted alongside whichever bodies
+// need it, so it is a provided body during the scan rather than a call that
+// escapes.
 function is_drop_helper(name: string): boolean {
-    return util.str_has_prefix(name, "__sem_drop_");
+    return util.str_has_prefix(name, "__sem_drop_") || util.str_has_prefix(name, "__sem_release_");
 }
 
 function live_reg(r: Rows): irlower.SigReg {

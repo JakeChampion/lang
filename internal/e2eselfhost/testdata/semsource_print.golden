@@ -2619,6 +2619,45 @@ func flagged {
     ret v17
 }
 
+modes 2 1 result i32
+v0:string v1:i32 v2:i32 v3:Map[string, Q] v4:i32[] v5:P v6:Q v7:Map[string, Q] v8:string v9:i32 v10:i32 v11:i32[] v12:P v13:Q v14:Map[string, Q] v15:i32 v16:Option[Q] v17:boolean v18:Q v19:P v20:i32 v21:i32 v22:i32 v23:i32
+func keyed_recs {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = const_int 2
+    v3 = map_new v2
+    v4 = array_new v1
+    v5 = record_new v1 v4
+    v6 = record_new v0 v5
+    v7 = map_insert v3 v0 v6
+    v8 = binary + v0 v0
+    v9 = const_int 1
+    v10 = binary + v1 v9
+    v11 = array_new
+    v12 = record_new v10 v11
+    v13 = record_new v8 v12
+    v14 = map_insert v7 v0 v13
+    v15 = const_int 0
+    v16 = map_get v14 v0
+    v17 = variant_is Some v16
+    brif v17 b2 b3
+  b2:
+    v18 = variant_get 0 Some v16
+    v19 = record_get 1 v18
+    v20 = record_get 0 v19
+    br b1
+  b3:
+    br b4
+  b4:
+    br b1
+  b1:
+    v21 = phi v20 v15
+    v22 = map_len v14
+    v23 = binary + v21 v22
+    ret v23
+}
+
 modes 2 2 result i32
 v0:Map[string, string] v1:string v2:string v3:i32
 func map_value {
@@ -2777,7 +2816,7 @@ func map_get_line {
   b0:
     v0 = param 0
     v1 = param 1
-    v2 = invalid v0 v1
+    v2 = map_get v0 v1
     v3 = variant_is Some v2
     brif v3 b2 b3
   b2:

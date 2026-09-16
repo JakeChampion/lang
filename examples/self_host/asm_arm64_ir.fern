@@ -2294,7 +2294,8 @@ function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
     // set owncols → x4=0 → old behaviour for the compiler's own maps.
     //   bits 2/3 = vkind (o.width bits 4/5, #9300): the value column owns one
     //     unit per live entry, so the superseded value on an overwrite is
-    //     released — 1 through __fern_str_free, 2 through __fern_str_arr_free.
+    //     released — 1 through __fern_str_free, 2 through __fern_str_arr_free,
+    //     3 through the function in x6, which o.str names.
     var x4bits: i32 = 0;
     if ((o.width / 2) % 2 == 1) { x4bits = x4bits + 1; }
     if ((o.width / 4) % 2 == 1) { x4bits = x4bits + 2; }
@@ -2302,7 +2303,12 @@ function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
     if ((o.width / 32) % 2 == 1) { x4bits = x4bits + 8; }
     if (x4bits >= 4) { s = s.need("map_vfree"); }
     s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
-    s = map_eqfn_x5(s, o.str);   // x5 = derived K.eq for a struct/enum key, else 0
+    var vkind3: boolean = (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
+    if (o.i32_imm == 2) { s = map_eqfn_x5(s, o.str); } else { s = map_eqfn_x5(s, ""); }   // x5 = derived K.eq for a struct/enum key, else 0
+    if (vkind3) {
+        var rel: string = "__fn_" + asmcore.sanitize_label(o.str);
+        s = s.write("    adrp x6, " + rel + "\n    add x6, x6, :lo12:" + rel + "\n");
+    } else { s = s.write("    mov x6, #0\n"); }
     s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
 
     return s;
@@ -2553,6 +2559,9 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     // __fern_strarrarr_free, so they pull in its body as well as their own.
     if (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa") {
         s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
+    }
+    if (o.str == "__fern_map_free_vf" || o.str == "__fern_map_free_ksvf") {
+        s = s.mark_heap(); s = s.need("maps"); s = s.need("map_free_vf");
     }
     if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
     if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
@@ -5855,6 +5864,12 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_arm64_map_free_variant(s, "_vsa",   "arr_dec",      "strarrarr_free", "mapfvsa");
     s = emit_arm64_map_free_variant(s, "_ksvsa", "str_arr_free", "strarrarr_free", "mapfksvsa");
     }
+    // A column of boxes: each value is released by the function the caller
+    // passes, then the column buffer is freed shallow.
+    if (s.has_need("map_free_vf")) {
+    s = emit_arm64_map_free_vf_variant(s, "_vf",   "arr_dec",      "mapfvf");
+    s = emit_arm64_map_free_vf_variant(s, "_ksvf", "str_arr_free", "mapfksvf");
+    }
     s = s.write("__fn___fern_drop_arr_ptr:\n");
     s = s.write("    ret\n");
 
@@ -6005,6 +6020,68 @@ function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree
     s = s.write("    str x10, [x19]\n");                // *box = old head
     s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
     s = s.write("    mov x0, x19\n");                   // return box (caller drops)
+    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write(".L" + lbl + "_ret:\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_arm64_map_free_vf_variant emits __fern_map_free<suffix>(box, release):
+// the `_vf` members of the map free family, whose value column holds boxes of
+// a shape only the caller knows. Every non-null value is handed to `release`
+// (a stack-ABI Fern function of one argument), then the value buffer is freed
+// shallow, the keys as `kfree` says, and the box goes back to its freelist.
+// x19/x20/x21/x22 hold the box, the values, the release and the index across
+// the calls.
+function emit_arm64_map_free_vf_variant(s: asmcore.EmitState, suffix: string, kfree: string, lbl: string): asmcore.EmitState {
+    s = s.write("__fn___fern_map_free" + suffix + ":\n");
+    s = s.write("    ldr x0, [sp, #16]\n");             // box (the arguments sit in push order: release on top)
+    s = s.write("    cbz x0, .L" + lbl + "_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .L" + lbl + "_ret\n");         // low-addr guard
+    s = s.write("    ldr x1, [sp]\n");                  // release
+    s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
+    s = s.write("    stp x20, x21, [sp, #-16]!\n");
+    s = s.write("    stp x22, x23, [sp, #-16]!\n");
+    s = s.write("    mov x19, x0\n");                   // box
+    s = s.write("    mov x21, x1\n");                   // release
+    s = s.write("    ldr x20, [x19, #8]\n");            // vals = box[8]
+    s = s.write("    cmp x20, x9\n");
+    s = s.write("    blo .L" + lbl + "_cols\n");
+    s = s.write("    mov x22, #0\n");                   // i = 0
+    s = s.write(".L" + lbl + "_loop:\n");
+    s = s.write("    ldr x9, [x20]\n");                 // len = vals[0]
+    s = s.write("    cmp x22, x9\n");
+    s = s.write("    b.ge .L" + lbl + "_cols\n");
+    s = s.write("    add x10, x22, #1\n");
+    s = s.write("    ldr x0, [x20, x10, lsl #3]\n");    // value = vals[(i+1)*8]
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .L" + lbl + "_next\n");
+    s = s.write("    str x0, [sp, #-16]!\n");           // push stack arg (16-aligned)
+    s = s.write("    blr x21\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write(".L" + lbl + "_next:\n");
+    s = s.write("    add x22, x22, #1\n");
+    s = s.write("    b .L" + lbl + "_loop\n");
+    s = s.write(".L" + lbl + "_cols:\n");
+    s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_" + kfree + "\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    str x20, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_arr_dec\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = lc_bump_free_add(s, "#16", "x3", "x10");
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
+    s = s.write("    str x10, [x19]\n");                // *box = old head
+    s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
+    s = s.write("    mov x0, x19\n");                   // return box (caller drops)
+    s = s.write("    ldp x22, x23, [sp], #16\n");
+    s = s.write("    ldp x20, x21, [sp], #16\n");
     s = s.write("    ldp x19, x30, [sp], #16\n");
     s = s.write(".L" + lbl + "_ret:\n");
     s = s.write("    ret\n");
@@ -6693,7 +6770,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write(".size __fern_map_snapshot_col_str, .-__fern_map_snapshot_col_str\n");
 
         // __fern_map_set(x0 = mapbox, x1 = key, x2 = val, x3 = keykind,
-        // x4 = flags, x5 = derived K.eq or 0) → mapbox.
+        // x4 = flags, x5 = derived K.eq or 0, x6 = the value release of a
+        // column of boxes or 0) → mapbox.
         // Updates in place on a key hit, else appends.
         s = s.write(".globl __fern_map_set\n");
         s = s.write(".type __fern_map_set, %function\n");
@@ -6703,9 +6781,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
         s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    stp x25, x26, [sp, #-16]!\n");
         s = s.write("    mov x19, x0\n");           // mapbox
         s = s.write("    mov x20, x1\n");           // key
         s = s.write("    mov x21, x2\n");           // val
+        s = s.write("    mov x25, x6\n");           // value release (vkind 3), callee-saved across the probe
         // x24 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
         // fresh sole-owned string temp, from irlower o.width bit 1; bit 1 =
         // owncols: i32/string-column map whose keys()/values() reads ALL
@@ -6756,7 +6836,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    add x10, x23, #1\n");
         s = s.write("    ldr x9, [x9, x10, lsl #3]\n");  // superseded value
         s = s.write("    str x9, [sp, #-16]!\n");
-        s = s.write("    tbz x24, #2, .Lms_found_vsa\n");
+        s = s.write("    tbz x24, #3, .Lms_found_vs\n");    // vkind 1: a string
+        s = s.write("    tbz x24, #2, .Lms_found_vsa\n");   // vkind 2: a string array
+        s = s.write("    blr x25\n");                       // vkind 3: the named release
+        s = s.write("    b .Lms_found_vfdone\n");
+        s = s.write(".Lms_found_vs:\n");
         s = s.write("    bl __fn___fern_str_free\n");
         s = s.write("    b .Lms_found_vfdone\n");
         s = s.write(".Lms_found_vsa:\n");
@@ -6811,6 +6895,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    str x0, [x19, #8]\n");
         s = s.write(".Lms_ret:\n");
         s = s.write("    mov x0, x19\n");
+        s = s.write("    ldp x25, x26, [sp], #16\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
