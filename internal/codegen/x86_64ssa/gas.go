@@ -227,6 +227,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if usesBcopy(helpers) {
 		emitBcopy(w)
 	}
+	if usesBfill(helpers) {
+		emitBfill(w)
+	}
 	if heap {
 		emitHeapGuard(w)
 	}
@@ -2707,22 +2710,109 @@ const bcopySym = "__ssa_bcopy"
 // emitBcopy writes __ssa_bcopy(rdi=dst, rsi=src, rdx=n): a forward copy of n
 // bytes. Regions must not overlap.
 //
-// One instruction does the work. `rep movsb` is the fast path on the declared
-// Haswell-2013 baseline (ERMSB), which is why this backend needs no size-classed
-// SSE2 copy like the native __fern_memcpy — and why arm64ssa's sibling, which
-// has no such instruction, spends fifteen lines on a 16/8/1 ladder.
+// Below 64 bytes the copy is a loop of 8-byte moves with an overlapping
+// 8-byte tail, or a byte loop under 8: `rep movsb` costs about 35 cycles to
+// start on the declared Haswell-class baseline whatever the length, and
+// nearly every copy this backend makes is a string of a few bytes (a
+// `to_string`, a slice, an appended fragment). Paying the startup on each of
+// them was 1.7x the flat build on `to_string` and 1.6x on `struct_drop`. From
+// 64 bytes `rep movsb` is the fast path (ERMSB) and takes over, which is why
+// there is no size-classed SSE2 copy like the native __fern_memcpy.
 //
-// It clobbers only rdi, rsi and rcx, all caller-saved and all already dead at
-// every call site (each passes its own arguments in them). `cld` is one byte of
-// insurance: System V guarantees DF is clear at every call boundary and nothing
-// in this backend sets it, but a copy running backwards would corrupt the heap
-// silently rather than fault.
+// It clobbers rdi, rsi and rcx, which leave as `rep movsb` leaves them (both
+// pointers advanced by n, rcx zero), and the flags. All are caller-saved and
+// dead at every call site, each of which passes its own arguments. `cld` is
+// one byte of insurance on the rep path: System V guarantees DF is clear at
+// every call boundary and nothing in this backend sets it, but a copy running
+// backwards would corrupt the heap silently rather than fault.
 func emitBcopy(w func(string, ...any)) {
 	w("")
 	w("%s:", bcopySym)
+	w("\tcmp rdx, %d", bcopyRepFrom)
+	w("\tjae .Lssa_bcopy_rep")
+	w("\tpush rax")
+	w("\txor ecx, ecx")
+	w("\tcmp rdx, 8")
+	w("\tjb .Lssa_bcopy_bytes")
+	w(".Lssa_bcopy_words:")
+	w("\tmov rax, [rsi + rcx]")
+	w("\tmov [rdi + rcx], rax")
+	w("\tadd rcx, 8")
+	w("\tmov rax, rdx")
+	w("\tsub rax, rcx")
+	w("\tcmp rax, 8")
+	w("\tjae .Lssa_bcopy_words")
+	w("\tmov rax, [rsi + rdx - 8]") // the last 8 bytes, overlapping what the loop wrote
+	w("\tmov [rdi + rdx - 8], rax")
+	w("\tjmp .Lssa_bcopy_done")
+	w(".Lssa_bcopy_bytes:")
+	w("\tcmp rcx, rdx")
+	w("\tjae .Lssa_bcopy_done")
+	w("\tmov al, [rsi + rcx]")
+	w("\tmov [rdi + rcx], al")
+	w("\tadd rcx, 1")
+	w("\tjmp .Lssa_bcopy_bytes")
+	w(".Lssa_bcopy_done:")
+	w("\tpop rax")
+	w("\tadd rdi, rdx")
+	w("\tadd rsi, rdx")
+	w("\txor ecx, ecx")
+	w("\tret")
+	w(".Lssa_bcopy_rep:")
 	w("\tcld")
 	w("\tmov rcx, rdx")
 	w("\trep movsb")
+	w("\tret")
+}
+
+// bcopyRepFrom is the length from which __ssa_bcopy and __ssa_bfill use the
+// rep string instructions; below it their startup cost exceeds the loop.
+const bcopyRepFrom = 64
+
+// bfillSym names the shared byte fill: __ssa_bfill(rdi=dst, eax=byte, rcx=n)
+// writes n copies of the low byte of eax at dst, the same way __ssa_bcopy
+// copies: 8-byte stores of the replicated byte below bcopyRepFrom, `rep
+// stosb` from there. Internal like __ssa_bcopy. It clobbers rdi (advanced by
+// n), rcx (zero), rax (the replicated byte) and the flags.
+const bfillSym = "__ssa_bfill"
+
+func emitBfill(w func(string, ...any)) {
+	w("")
+	w("%s:", bfillSym)
+	w("\tcmp rcx, %d", bcopyRepFrom)
+	w("\tjae .Lssa_bfill_rep")
+	w("\tmovzx eax, al")
+	w("\tpush rdx")
+	w("\tmov rdx, 72340172838076673") // 0x0101010101010101: the byte in every lane
+	w("\timul rax, rdx")
+	w("\tmov rdx, rcx") // n
+	w("\txor ecx, ecx")
+	w("\tcmp rdx, 8")
+	w("\tjb .Lssa_bfill_bytes")
+	w(".Lssa_bfill_words:")
+	w("\tmov [rdi + rcx], rax")
+	w("\tadd rcx, 8")
+	w("\tsub rdx, 8")
+	w("\tcmp rdx, 8")
+	w("\tjae .Lssa_bfill_words")
+	w("\tadd rcx, rdx")
+	w("\tmov [rdi + rcx - 8], rax") // the last 8 bytes, overlapping what the loop wrote
+	w("\tjmp .Lssa_bfill_done")
+	w(".Lssa_bfill_bytes:")
+	w("\ttest rdx, rdx")
+	w("\tjz .Lssa_bfill_done")
+	w("\tmov [rdi + rcx], al")
+	w("\tadd rcx, 1")
+	w("\tsub rdx, 1")
+	w("\tjmp .Lssa_bfill_bytes")
+	w(".Lssa_bfill_done:")
+	w("\tadd rdi, rcx")
+	w("\txor ecx, ecx")
+	w("\tpop rdx")
+	w("\tret")
+	w(".Lssa_bfill_rep:")
+	w("\tcld")
+	w("\trep stosb")
 	w("\tret")
 }
 
@@ -2772,6 +2862,17 @@ func usesBcopy(helpers []string) bool {
 	return false
 }
 
+// usesBfill reports whether the module needs __ssa_bfill: the two helpers
+// that fill a block byte by byte call it.
+func usesBfill(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "__alloc_u8" || h == "__memset" {
+			return true
+		}
+	}
+	return false
+}
+
 // emitMemcpyHelper writes __memcpy(dst, src, n) -> dst through __ssa_bcopy.
 // std/string.fern's bytes() and core/map.fern's buffer moves call it; n is a
 // non-negative i32.
@@ -2812,15 +2913,14 @@ func emitAllocU8Helper(w func(string, ...any)) {
 	w("\tmov dword ptr [rax - 12], ebx") // cap = n
 	w("\tmov dword ptr [rax - 8], 1")    // rc = 1
 	w("\tmov dword ptr [rax - 4], ebx")  // len = n
-	// Zero the payload — a popped block carries its last contents. rep stosb
-	// writes through rdi and consumes rcx, so the return value is parked in
-	// r10 for the duration.
+	// Zero the payload — a popped block carries its last contents. The fill
+	// writes through rdi and consumes rcx and rax, so the return value is
+	// parked in r10 for the duration.
 	w("\tmov r10, rax")
 	w("\tmov rdi, rax")
 	w("\tmov ecx, ebx")
 	w("\txor eax, eax")
-	w("\tcld")
-	w("\trep stosb")
+	w("\tcall %s", bfillSym)
 	w("\tmov rax, r10")
 	w("\tpop rbx")
 	w("\tret")
