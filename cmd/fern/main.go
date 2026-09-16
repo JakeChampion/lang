@@ -1385,6 +1385,20 @@ func runCheck(srcPath, target string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
+// ssaUnservedFlag reports the flag a -backend ssa build cannot serve, so the
+// build stops instead of quietly producing something other than what was
+// asked for. Each entry is a feature the default emitter has and this one does
+// not yet: they are gaps to close, not decisions.
+func ssaUnservedFlag(backend string, shared bool) error {
+	switch {
+	case shared:
+		return fmt.Errorf("-backend %s: -shared has no shared-object output on this backend — it would link an ordinary executable; build without -backend %s, or drop -shared", backend, backend)
+	case emitDebugSyms:
+		return fmt.Errorf("-backend %s: -g has no line table on this backend — it emits .debug_info without .debug_line, so a debugger cannot map an address to a source line; build without -backend %s, or drop -g", backend, backend)
+	}
+	return nil
+}
+
 func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
@@ -1482,6 +1496,19 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
 		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
+	}
+
+	// The SSA backends link their own output and return before the flag
+	// handling further down, so a flag served only down there does not reach
+	// them. Saying so is the whole of this check: -cover already refuses
+	// inside the lowering, and these two used to pass silently — -shared
+	// produced an ordinary executable rather than a shared object, and -g
+	// produced DWARF with no .debug_line, so a debugger had symbol names and
+	// no way to map an address to a source line.
+	if backend == "ssa" || backend == "typed-ssa" {
+		if err := ssaUnservedFlag(backend, shared); err != nil {
+			return 1, err
+		}
 	}
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
@@ -2270,10 +2297,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		if err != nil {
 			return fmt.Errorf("native linker: %w", err)
 		}
-		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-			return err
-		}
-		return os.Chmod(outPath, 0o755)
+		return writeExecutable(outPath, bin)
 	}
 	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
@@ -2284,15 +2308,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		return err
 	}
 	bin := nativeelf.StaticExecutableDataWXEhFrame(text, u, rodata)
-	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-		return err
-	}
-	// WriteFile keeps existing permissions, and --run's temp binary is
-	// pre-created by CreateTemp at 0600 — chmod so it's executable.
-	if err := os.Chmod(outPath, 0o755); err != nil {
-		return err
-	}
-	return nil
+	return writeExecutable(outPath, bin)
 }
 
 // unwindLayout is the assembler surface the W^X-with-unwind layout needs.
@@ -2376,6 +2392,20 @@ func linkNativePIE(asm, outPath string) error {
 		elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
 	}
 	bin := nativeelf.StaticPieExecutable(text, rodata, elfRelocs)
+	return writeExecutable(outPath, bin)
+}
+
+// writeExecutable replaces outPath with bin, executable. It unlinks first
+// rather than truncating in place: macOS caches a binary's code-signature
+// verdict by inode, so rewriting a signed executable through its existing
+// inode leaves the kernel holding the old verdict and kills the new program at
+// exec (SIGKILL, "Code Signature Invalid") although the file's own signature
+// is valid. A fresh inode carries no verdict. The chmod keeps the mode explicit
+// under any umask, and for --run's temp binary CreateTemp made at 0600.
+func writeExecutable(outPath string, bin []byte) error {
+	if err := os.Remove(outPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
@@ -2413,10 +2443,7 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 		}
 		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, asmNames, ev), soname)
 	}
-	if err := os.WriteFile(outPath, so, 0o755); err != nil {
-		return err
-	}
-	return os.Chmod(outPath, 0o755)
+	return writeExecutable(outPath, so)
 }
 
 // sharedExports pairs each export's Fern name with the vaddr the assembler
@@ -2640,10 +2667,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		if err != nil {
 			return fmt.Errorf("native linker: %w", err)
 		}
-		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-			return err
-		}
-		return os.Chmod(outPath, 0o755)
+		return writeExecutable(outPath, bin)
 	}
 	a, err := nativex86.ParseProgram(asm)
 	if err != nil {
@@ -2655,13 +2679,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		return err
 	}
 	bin := nativeelf.StaticExecutableDataX86WXEhFrame(text, u, rodata)
-	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-		return err
-	}
-	if err := os.Chmod(outPath, 0o755); err != nil {
-		return err
-	}
-	return nil
+	return writeExecutable(outPath, bin)
 }
 
 // linkNativeDarwin assembles arm64 asm and wraps it in a static, ad-hoc-
@@ -2689,10 +2707,7 @@ func linkNativeDarwin(asm, outPath string) error {
 	} else {
 		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
 	}
-	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-		return err
-	}
-	return os.Chmod(outPath, 0o755)
+	return writeExecutable(outPath, bin)
 }
 
 // layoutMachO is the Mach-O counterpart of layoutWithUnwind: the code size

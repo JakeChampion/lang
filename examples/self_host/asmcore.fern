@@ -118,7 +118,13 @@ pub struct EmitState {
     // `<shape label>|<w0>,<w1>,…`. Populated by the const_struct op arm and
     // flushed as one data block per entry alongside the string pool. See
     // add_const_agg.
-    const_aggs: string[]
+    const_aggs: string[],
+    // ssa_backend selects the register-allocating SSA emit for each function
+    // whose lowered ops the lift admits (docs/SELFHOST-SSA-BACKEND.md); the
+    // rest take the stack-machine emit. The two counters are the module tally.
+    ssa_backend: boolean,
+    ssa_emitted: i32,
+    ssa_declined: i32
 }
 
 pub function new_state(): EmitState {
@@ -161,7 +167,10 @@ pub function new_state(): EmitState {
         // sets this to keep each module's `.rodata` pool collision-free.
         str_ns: "",
         shape_lits: [],
-        const_aggs: []
+        const_aggs: [],
+        ssa_backend: false,
+        ssa_emitted: 0,
+        ssa_declined: 0
     };
 }
 

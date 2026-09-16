@@ -1,7 +1,18 @@
 # A generic call's result reaches the call site with its type var unresolved
 
-**Status:** open, root cause MEASURED. No fix in this note.
-**Severity:** silent wrong values — compiler exits 0, no diagnostic.
+**Status:** the two reproducers below are fixed — both answer 45 on x86-64 and
+wasm, on either lowering. **The mechanism is not.** `type_to_irtag` still yields
+"" for an element type the checker left unresolved, and the backends still fall
+back to an untyped 4-byte read of it, so every shape the call-site binding does
+not reach still answers silent wrong values with exit 0 and no diagnostic. What
+closes is one shape at a time, as `gc_bind_param` learns to unify it: an array
+element, a tuple element, and (#9485) a callable's parameter. Nine
+`unresolved type of binding` refusals remain in the corpus, and #9488 is the
+same hazard one layer down, in the backend rather than the checker.
+
+#9489 is the question this raises and does not answer: whether an empty tag
+should be a REFUSAL on the AST path, which would convert the whole class from a
+silent 0 into a diagnostic.
 
 ## Reproducer
 
@@ -84,27 +95,30 @@ serialises fine — as the non-generic `mk()` row proves.
 blamed that. It is not sufficient: `dup` and `pk` are annotated at exactly the
 same point and both work. Ordering would predict failures that do not happen.
 
-## Fix direction
+## The fix
 
-Bind the type args from the arguments at a generic call site and substitute into
-the return type before `check_expr` hands it back, so the tag never names a type
-var. That fixes every consumer of the tag at once rather than the destructure or
-the field read individually.
+`check_call_expr` binds the type args from the arguments at a generic call site
+and substitutes into the return type before handing it back, so the tag never
+names a type var — every consumer of the tag at once rather than the destructure
+or the field read individually. Re-annotating after monomorphisation would also
+have worked and is a smaller diff, but it treats the symptom: the checker would
+still be returning a type with an unbound var in it for anything that asks
+before that point.
 
-Re-annotating after monomorphisation would also work and is a smaller diff, but
-it treats the symptom: the checker would still be returning a type with an
-unbound var in it for anything that asks before that point.
+`gc_bind_param` is the unification that binding runs on. Each shape a variable
+can hide in has had to be taught to it separately — an array element, a tuple
+element, and (#9485) a callable parameter, where `filter[T, I: Iterator[T]]`
+keeps its only `T`.
 
-## A second, separate bug found alongside
+## A second bug found alongside, since fixed
 
 ```fern
 function mk(): (i32, f64)[] { return [(0, 4.5)]; }
 function main(): i32 { var ps = mk(); var t = ps[0]; return (t.1 * 10.0) as i32; }
 ```
 
-interp 45 | self-host x86-64 45 | **self-host wasm 1**
-
-NON-generic, so not the above. It produced no output from the `ExprIndex` probe,
-so it is not that arm either — binding a tuple LOCAL from an index of an
-unannotated array local loses the element widths somewhere else, on wasm only.
-Recorded here so it is not lost; it wants its own reduction.
+It answered 45 on interp and self-host x86-64 and **1** on self-host wasm:
+NON-generic, so not the above, and it produced no output from the `ExprIndex`
+probe either — binding a tuple LOCAL from an index of an unannotated array local
+lost the element widths somewhere else, on wasm only. It answers 45 everywhere
+now.

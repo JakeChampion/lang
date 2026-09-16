@@ -1717,7 +1717,7 @@ pub function optimize(f: SFunc): SFunc {
         f = cse(f);
         f = branch_simplify(f);
         f = merge_blocks(f);
-        f = dead_code_elim(f);
+        f = prune_dead(f);
         rounds = rounds + 1;
     }
     return f;
@@ -2574,10 +2574,13 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
 }
 
 function extend_backedge_phi_intervals(f: SFunc, def_pos: i32[], total_pos: i32, hi: i32[]): i32[] {
-    // Back-edge fix: a phi operand whose definition comes AFTER the phi (a
-    // loop back-edge value) is live from its def through the back-edge, not
-    // just to the phi's (earlier) position. Extend its interval to the end
-    // so it can't share a register with values computed in the loop body.
+    // Back-edge fix: a phi operand not defined BEFORE the phi is a loop
+    // back-edge value, live from its definition through the back-edge and
+    // not just to the phi's (earlier) position. Extend its interval to the
+    // end so it can't share a register with values computed in the loop
+    // body. The phi itself is such an operand when a loop carries a value
+    // it never changes, and the register it lost to a body temporary was
+    // read again at the back edge.
     var bj: i32 = 0;
     var ppos: i32 = 0;
     while (bj < f.blocks.len()) {
@@ -2588,7 +2591,7 @@ function extend_backedge_phi_intervals(f: SFunc, def_pos: i32[], total_pos: i32,
             if (pin.kind_tag == 8) {  // phi
                 var pa2: i32 = 0;
                 while (pa2 < pin.args.len()) {
-                    if (def_pos[pin.args[pa2]] > ppos) { hi = upd_hi(hi, pin.args[pa2], total_pos); }
+                    if (def_pos[pin.args[pa2]] >= ppos) { hi = upd_hi(hi, pin.args[pa2], total_pos); }
                     pa2 = pa2 + 1;
                 }
             }
@@ -2738,51 +2741,71 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
     return reg_of;
 }
 
-// dead_code_elim drops pure instructions (const / binary / unary / phi)
-// whose result is never used, iterating to a fixpoint. Params and calls
-// are always kept (calls may have side effects).
-function dead_code_elim(f: SFunc): SFunc {
-    var changed: boolean = true;
-    var rounds: i32 = 0;
-    while (changed && rounds < 100000) {
-        changed = false;
-        rounds = rounds + 1;
-        // Mark every value referenced by a (currently present) instruction
-        // operand or terminator.
-        var used: i32[] = zeros(f.nvals);
-        var bi: i32 = 0;
-        while (bi < f.blocks.len()) {
-            var blk: SBlock = f.blocks[bi];
-            var k: i32 = 0;
-            while (k < blk.insts.len()) {
-                var ins: SInst = blk.insts[k];
-                var ai: i32 = 0;
-                while (ai < ins.args.len()) { used = env_put(used, ins.args[ai], 1); ai = ai + 1; }
-                k = k + 1;
-            }
-            if (blk.term.kind_tag == 1) { used = env_put(used, blk.term.value, 1); }
-            else if (blk.term.kind_tag == 3) { used = env_put(used, blk.term.cond, 1); }
-            bi = bi + 1;
+// prune_dead drops every pure instruction (const / copy / binary / unary /
+// phi) whose result reaches no instruction with an effect and no terminator,
+// through any number of pure instructions. Marking from those roots, rather
+// than asking whether each result has a reader, is what removes a cycle of
+// phis that only read each other. Params and calls are always kept.
+pub function prune_dead(f: SFunc): SFunc {
+    var live: i32[] = prune_mark(f, prune_roots(f));
+    var nblocks: SBlock[] = [];
+    for blk in f.blocks {
+        var ninsts: SInst[] = [];
+        for ins in blk.insts {
+            if (inst_has_effect(ins.kind_tag) || live[ins.result] == 1) { ninsts = ninsts.append(ins); }
         }
-        // Drop unused pure instructions.
-        var nblocks: SBlock[] = [];
-        bi = 0;
-        while (bi < f.blocks.len()) {
-            var blk: SBlock = f.blocks[bi];
-            var ninsts: SInst[] = [];
-            var k: i32 = 0;
-            while (k < blk.insts.len()) {
-                var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind_tag == 6 || ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 14 || ins.kind_tag == 16 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || used[ins.result] == 1;
-                if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
-                k = k + 1;
-            }
-            nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
-            bi = bi + 1;
-        }
-        f = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+        nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
     }
-    return f;
+    return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+}
+
+// inst_has_effect names the instructions kept whether or not their result is
+// read: params, calls, allocation and stores, and the output and buffer ops.
+function inst_has_effect(k: i32): boolean {
+    if (k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17) { return true; }
+    return k >= 19;
+}
+
+// prune_roots is every value an effectful instruction or a terminator reads.
+function prune_roots(f: SFunc): i32[] {
+    var work: i32[] = [];
+    for blk in f.blocks {
+        for ins in blk.insts {
+            if (inst_has_effect(ins.kind_tag)) { for a in ins.args { work = work.append(a); } }
+        }
+        if (blk.term.kind_tag == 1) { work = work.append(blk.term.value); }
+        if (blk.term.kind_tag == 3) { work = work.append(blk.term.cond); }
+    }
+    return work;
+}
+
+// prune_mark marks the roots and, through the pure instructions that define
+// them, everything they read.
+function prune_mark(f: SFunc, work: i32[]): i32[] {
+    var live: i32[] = zeros(f.nvals);
+    var def_b: i32[] = zeros(f.nvals);
+    var def_k: i32[] = zeros(f.nvals);
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var k: i32 = 0;
+        while (k < f.blocks[bi].insts.len()) {
+            var r: i32 = f.blocks[bi].insts[k].result;
+            def_b = env_put(def_b, r, bi + 1);
+            def_k = env_put(def_k, r, k);
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    var at: i32 = 0;
+    while (at < work.len()) {
+        var v: i32 = work[at];
+        at = at + 1;
+        if (v < 0 || v >= f.nvals || live[v] == 1) { continue; }
+        live = env_put(live, v, 1);
+        if (def_b[v] == 0) { continue; }
+        for a in f.blocks[def_b[v] - 1].insts[def_k[v]].args { work = work.append(a); }
+    }
+    return live;
 }
 
 // count_insts totals the instructions across all blocks (used by tests to
