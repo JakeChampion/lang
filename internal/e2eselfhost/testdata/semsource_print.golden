@@ -2553,6 +2553,8 @@ func vb_bare {
     ret v6
 }
 
+refused operator contract: usize +| usize
+refused operator contract: usize *? usize
 modes 2 1 result i32
 v0:i32[] v1:i32 v2:i32 v3:i32
 func lifted_field$wrap0 {

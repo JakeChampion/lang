@@ -721,6 +721,10 @@ function refused_map_key(m: Map[i32, i32], n: i32): i32 { return m.get_or(n, 0);
 // payload.
 function vb_empty(k: i32): i32[] { var o: Option[i32] = Some(k); return (match (o) { Some(v) => [v, v], None => [] }); }
 function vb_bare(k: i32): i32 { return (match (Some(k)) { Some(v) => v + 1, None => 0 }); }
+// An address has no saturating or checked operator: the clamp is at a width
+// the type names, which is the target's, and the native checker refuses it.
+function refused_usize_sat(a: usize, b: usize): usize { return a +| b; }
+function refused_usize_chk(a: usize, b: usize): i32 { match (a *? b) { Some(_) => { return 1; }, None => { return 0; } } }
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
