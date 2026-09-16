@@ -16604,10 +16604,17 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 	g.line(".size " + sym + ", .-" + sym)
 }
 
-// linuxStatFields maps each FileStat field onto the Linux x86-64
-// `struct stat` field it is read from: the box offset, the statbuf
-// offset, and how many bytes to load. It is all that makes
-// this target-specific — everything else about the helper is shared.
+// LinuxStatField is one FileStat field read out of the Linux x86-64
+// `struct stat`: the box offset, the statbuf offset, and how many bytes
+// to load.
+type LinuxStatField struct {
+	Box, Src, Width int32
+}
+
+// LinuxStatFields maps each FileStat field onto the Linux x86-64
+// `struct stat` field it is read from. It is all that makes
+// this target-specific — everything else about the helper is shared,
+// and the x86-64 SSA emitter's stat reads the same table.
 //
 // Two loads are narrower than the field they fill. `st_nlink` is a
 // 64-bit word here (it is 32-bit on arm64 Linux) and FileStat's `nlink`
@@ -16615,9 +16622,7 @@ func (g *generator) emitReadDirLike(sym string, lb string, skipDots bool) {
 // not a thing any filesystem produces. Everything else is width-for-
 // width, and the three timestamps happen to sit at the same offsets in
 // both records.
-var linuxStatFields = []struct {
-	box, src, width int32
-}{
+var LinuxStatFields = []LinuxStatField{
 	{ir.FileStat.Mode, 24, 4},
 	{ir.FileStat.Nlink, 16, 4},
 	{ir.FileStat.UID, 28, 4},
@@ -16638,7 +16643,7 @@ var linuxStatFields = []struct {
 // emitStatRuntime emits `__fern_stat(path) →
 // Result[FileStat, IoError]` — newfstatat(AT_FDCWD, path, buf, 0)
 // into a 144-byte stack buffer, projected onto FileStat by
-// linuxStatFields. The box is ir.FileStat.Bytes from __fern_alloc_box
+// LinuxStatFields. The box is ir.FileStat.Bytes from __fern_alloc_box
 // (immortal, same class as the Result boxes).
 // System V: rdi = path string value.
 func (g *generator) emitStatRuntime() {
@@ -16806,14 +16811,14 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string, byFd
 	g.emit("mov [rax], r12d")
 	g.emit("mov [rax + 4], r14d")
 	g.emit(fmt.Sprintf("mov [rax + %d], r15", ir.FileStat.Size))
-	for _, f := range linuxStatFields {
-		if f.width == 4 {
-			g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", f.src))
-			g.emit(fmt.Sprintf("mov [rax + %d], r9d", f.box))
+	for _, f := range LinuxStatFields {
+		if f.Width == 4 {
+			g.emit(fmt.Sprintf("mov r9d, [rsp + %d]", f.Src))
+			g.emit(fmt.Sprintf("mov [rax + %d], r9d", f.Box))
 			continue
 		}
-		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.src))
-		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.box))
+		g.emit(fmt.Sprintf("mov r9, [rsp + %d]", f.Src))
+		g.emit(fmt.Sprintf("mov [rax + %d], r9", f.Box))
 	}
 	g.emit("mov r13, rax")
 	g.emit("mov edi, 16")

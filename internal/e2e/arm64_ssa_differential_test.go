@@ -99,7 +99,7 @@ const (
 	// a gap quiet.
 	arm64SSADiffMinCompared = 281
 
-	// arm64SSADiffRunTimeout bounds one execution. It is sized against the
+	// ssaDiffRunTimeout bounds one execution. It is sized against the
 	// programs that never terminate at all — the listening servers under
 	// examples/wasm and examples/cli/yes.fern, which reach it by design under
 	// both backends and so pay it twice. Those dominate the lane: at 30 s they
@@ -111,12 +111,12 @@ const (
 	// 15 s (#8069). What a wall can say is "this did not finish", which is why
 	// crossing it is now its own outcome rather than a disagreement, and why
 	// the performance question is asked as a ratio (ssaSlowdown) instead.
-	arm64SSADiffRunTimeout = 15 * time.Second
+	ssaDiffRunTimeout = 15 * time.Second
 
-	// arm64SSADiffMaxCapture caps per-stream capture. examples/cli/yes.fern
+	// ssaDiffMaxCapture caps per-stream capture. examples/cli/yes.fern
 	// writes until it is killed, so an unbounded buffer would grow for the
 	// whole timeout.
-	arm64SSADiffMaxCapture = 1 << 20
+	ssaDiffMaxCapture = 1 << 20
 )
 
 // TestArm64SSABackendDifferential drives every examples/** program through both
@@ -195,8 +195,8 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 				return
 			}
 
-			base := runArm64Binary(runner, baseBin)
-			ssa := runArm64Binary(runner, ssaBin)
+			base := runSSADiffBinary(runner, baseBin)
+			ssa := runSSADiffBinary(runner, ssaBin)
 			// A wall expiring on one side and not the other is a TIMEOUT, and
 			// saying so is the point: it is not an answer mismatch, and it
 			// cannot tell a hang from a program that is merely slower than the
@@ -210,7 +210,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 					late, other = "flat", ssa
 				}
 				if isKnown {
-					stale("did not FINISH under one backend", arm64SSADiffDetail(base, ssa))
+					stale("did not FINISH under one backend", ssaDiffDetail(base, ssa))
 					return
 				}
 				t.Errorf("the %s build did not finish within %s on %s, while the other exited %d.\n"+
@@ -218,11 +218,11 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 					"the wrong answer. Time the two directly before reading it as a hang: this leg\n"+
 					"runs under qemu on a cross host, where the same work takes several times\n"+
 					"longer than on the native runner the wall was sized for.\n%s",
-					late, arm64SSADiffRunTimeout, rel, other.exit, arm64SSADiffDetail(base, ssa))
+					late, ssaDiffRunTimeout, rel, other.exit, ssaDiffDetail(base, ssa))
 				return
 			}
 			_, stdoutUnstable := unstable[rel]
-			if d := arm64SSADiffCompare(base, ssa, stdoutUnstable); d != "" {
+			if d := ssaDiffCompare(base, ssa, stdoutUnstable); d != "" {
 				atomic.AddInt64(&diverged, 1)
 				if isKnown {
 					t.Logf("known divergence (%s): %s", reason, d)
@@ -246,8 +246,8 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 			// before it is reported: these runs share a loaded machine with the
 			// rest of the corpus, and one slow sample is not a finding.
 			if d := ssaSlowdown(base.elapsed, ssa.elapsed); d != "" {
-				base2 := runArm64Binary(runner, baseBin)
-				ssa2 := runArm64Binary(runner, ssaBin)
+				base2 := runSSADiffBinary(runner, baseBin)
+				ssa2 := runSSADiffBinary(runner, ssaBin)
 				if d2 := ssaSlowdown(base2.elapsed, ssa2.elapsed); d2 != "" {
 					atomic.AddInt64(&tooSlow, 1)
 					t.Errorf("%s: %s\nSecond measurement: %s", rel, d2, d)
@@ -276,7 +276,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 	})
 }
 
-// arm64SSADiffCompare returns "" when the two runs are indistinguishable, or a
+// ssaDiffCompare returns "" when the two runs are indistinguishable, or a
 // description of the first difference. The three failure modes are kept apart
 // because they diagnose different things: a signal is a miscompile in the
 // emitted code, a hang under one backend only is a lost loop condition, and a
@@ -284,7 +284,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 //
 // stdoutUnstable drops the stdout comparison for programs whose output is not a
 // function of the compiler; every other observable still applies.
-func arm64SSADiffCompare(base, ssa arm64Run, stdoutUnstable bool) string {
+func ssaDiffCompare(base, ssa ssaDiffRun, stdoutUnstable bool) string {
 	switch {
 	case base.timedOut != ssa.timedOut:
 		// Handled by the caller as its own outcome: a wall expiring says
@@ -295,21 +295,21 @@ func arm64SSADiffCompare(base, ssa arm64Run, stdoutUnstable bool) string {
 		return "" // Both run forever by design; nothing else is observable.
 	case base.exited != ssa.exited:
 		return fmt.Sprintf("one build CRASHED and the other did not — flat: %s, ssa: %s\n%s",
-			base.state, ssa.state, arm64SSADiffDetail(base, ssa))
+			base.state, ssa.state, ssaDiffDetail(base, ssa))
 	case !base.exited && !ssa.exited && base.state != ssa.state:
 		return fmt.Sprintf("both builds died, on different signals — flat: %s, ssa: %s\n%s",
-			base.state, ssa.state, arm64SSADiffDetail(base, ssa))
+			base.state, ssa.state, ssaDiffDetail(base, ssa))
 	case base.exit != ssa.exit:
 		return fmt.Sprintf("exit code: flat = %d, ssa = %d\n%s",
-			base.exit, ssa.exit, arm64SSADiffDetail(base, ssa))
+			base.exit, ssa.exit, ssaDiffDetail(base, ssa))
 	case !stdoutUnstable && base.stdout != ssa.stdout:
 		return fmt.Sprintf("stdout differs (both exited %d)\n%s\n%s",
-			base.exit, firstStdoutDiff(base.stdout, ssa.stdout), arm64SSADiffDetail(base, ssa))
+			base.exit, firstStdoutDiff(base.stdout, ssa.stdout), ssaDiffDetail(base, ssa))
 	}
 	return ""
 }
 
-func arm64SSADiffDetail(base, ssa arm64Run) string {
+func ssaDiffDetail(base, ssa ssaDiffRun) string {
 	return fmt.Sprintf("  flat stdout: %s\n  flat stderr: %s\n   ssa stdout: %s\n   ssa stderr: %s",
 		clip(base.stdout), clip(base.stderr), clip(ssa.stdout), clip(ssa.stderr))
 }
@@ -439,8 +439,8 @@ func arm64SSADiffCheckListedPaths(t *testing.T, corpus []string, lists ...map[st
 	}
 }
 
-// arm64Run is one execution of an emitted arm64 binary.
-type arm64Run struct {
+// ssaDiffRun is one execution of an emitted binary, on either SSA differential leg.
+type ssaDiffRun struct {
 	stdout   string
 	stderr   string
 	exit     int
@@ -451,30 +451,30 @@ type arm64Run struct {
 	elapsed time.Duration
 }
 
-// runArm64Binary executes bin (directly, or under runner when cross-hosted)
+// runSSADiffBinary executes bin (directly, or under runner when cross-hosted)
 // with an empty stdin, capping each captured stream and killing the process at
-// arm64SSADiffRunTimeout. A program that only stops when it is killed is a
+// ssaDiffRunTimeout. A program that only stops when it is killed is a
 // legitimate corpus member here, so an unbounded buffer is not an option.
-func runArm64Binary(runner, bin string) arm64Run {
+func runSSADiffBinary(runner, bin string) ssaDiffRun {
 	var cmd *exec.Cmd
 	if runner == "" {
 		cmd = exec.Command(bin)
 	} else {
 		cmd = exec.Command(runner, bin)
 	}
-	so, se := &cappedBuffer{limit: arm64SSADiffMaxCapture}, &cappedBuffer{limit: arm64SSADiffMaxCapture}
+	so, se := &cappedBuffer{limit: ssaDiffMaxCapture}, &cappedBuffer{limit: ssaDiffMaxCapture}
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout, cmd.Stderr = so, se
 	if err := cmd.Start(); err != nil {
-		return arm64Run{stderr: err.Error(), exit: -1, state: err.Error()}
+		return ssaDiffRun{stderr: err.Error(), exit: -1, state: err.Error()}
 	}
 	started := time.Now()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	r := arm64Run{exit: -1}
+	r := ssaDiffRun{exit: -1}
 	select {
 	case <-done:
-	case <-time.After(arm64SSADiffRunTimeout):
+	case <-time.After(ssaDiffRunTimeout):
 		r.timedOut = true
 		_ = cmd.Process.Kill()
 		<-done
