@@ -2792,8 +2792,6 @@ func emitBfill(w func(string, ...any)) {
 	w(".Lssa_bfill_words:")
 	w("\tmov [rdi + rcx], rax")
 	w("\tadd rcx, 8")
-	w("\tlea rcx, [rcx]")
-	w("\tmov rcx, rcx")
 	w("\tsub rdx, 8")
 	w("\tcmp rdx, 8")
 	w("\tjae .Lssa_bfill_words")
