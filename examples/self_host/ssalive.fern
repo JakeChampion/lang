@@ -67,7 +67,7 @@ pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
     while (bi < f.blocks.len()) {
         var b: ssa.SBlock = f.blocks[bi];
         if (b.id < 0 || block_index(f, b.id) != bi) { return "duplicate or negative block id"; }
-        if (b.term.kind_tag < 1 || b.term.kind_tag > 3) { return "invalid terminator"; }
+        if (b.term.kind_tag < 1 || b.term.kind_tag > 4) { return "invalid terminator"; }
         if (b.term.kind_tag == 1 && (b.term.value < 0 - 1 || b.term.value >= f.nvals)) { return "return value out of range"; }
         if (b.term.kind_tag == 3 && (b.term.cond < 0 || b.term.cond >= f.nvals)) { return "condition value out of range"; }
         var pi: i32 = 0;

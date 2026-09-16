@@ -372,8 +372,10 @@ pub function callee_modes(f: ssasem.Func, ins: ssa.SInst): i32[] {
     return f.calls[at].modes;
 }
 
+// An unreachable end (kind 4) supplies nothing and, like a return, releases
+// every unit the frame still holds at its step.
 function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
-    if (b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
     return [];
 }
 function edge_supplies(f: ssasem.Func, b: ssa.SBlock, target: i32, owned: boolean[]): Supply[] {
@@ -643,8 +645,9 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                 if ((ins.kind_tag == 6 || ins.kind_tag == 8) && owned[ins.result] && !live[ins.result]) { entry_dead = entry_dead.with(ins.result, true); }
             }
             steps = steps.append(choose(step(b.id, entry_point(), 0 - 1), [], entry_dead, owned));
-            if (b.term.kind_tag == 1) {
-                var dead: boolean[] = add_use(bits(f.graph.nvals), b.term.value, analysis.dependencies);
+            if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
+                var dead: boolean[] = bits(f.graph.nvals);
+                if (b.term.kind_tag == 1) { dead = add_use(dead, b.term.value, analysis.dependencies); }
                 steps = steps.append(choose(step(b.id, return_point(), 0 - 1), return_supplies(f, b), dead, owned));
             }
             for target in successors(b) {
@@ -783,8 +786,10 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolea
 }
 
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, state: boolean[], owned: boolean[], deps: i32[][]): string {
-    var why: string = read_error(state, b.term.value, owned, deps);
-    if (why != "") { return why; }
+    if (b.term.kind_tag == 1) {
+        var why: string = read_error(state, b.term.value, owned, deps);
+        if (why != "") { return why; }
+    }
     var at: i32 = find_step(p, b.id, return_point(), 0 - 1);
     if (at < 0) { return "missing or duplicate return step"; }
     var done: Ledger = replay(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, deps);
@@ -827,7 +832,7 @@ function verify_block(f: ssasem.Func, bi: i32, p: Plan, owned: boolean[], analys
     if (operations.why != "") { return operations; }
     state = operations.state;
     var count: i32 = 1 + operations.count;
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
         var why: string = verify_return(f, b, p, state, owned, analysis.dependencies);
         if (why != "") { return progress_error(why); }
         count = count + 1;
