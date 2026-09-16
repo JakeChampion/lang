@@ -61,11 +61,14 @@ STDLIB="$ROOT/internal/stdlib"
 #
 # `go build` is incremental, so rebuilding bin/fern unconditionally is close to
 # free. The self-host CLI is not, so it is rebuilt only when its own sources or
-# the compiler that emits it are newer.
+# the compiler that emits it are newer. Both are judged by their SOURCES, never
+# by bin/fern's timestamp: `go build -o` rewrites its output whether or not
+# anything changed, so testing `bin/fern -nt bin/fern-selfhost` rebuilt the
+# self-host CLI on every run and measured nothing sooner for it.
 go build -o bin/fern ./cmd/fern
 if [ ! -x bin/fern-selfhost ] ||
-   [ bin/fern -nt bin/fern-selfhost ] ||
-   [ -n "$(find examples/self_host -name '*.fern' -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
+   [ -n "$(find examples/self_host cmd internal \
+       \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
   echo "perf-bench-selfhost: building bin/fern-selfhost (missing or stale)" >&2
   make selfhost-cli >&2
 fi

@@ -6938,7 +6938,11 @@ const MsgArenaExhausted = "fern: out of memory (heap arena exhausted)\n"
 // survives being reported through wasmtime.
 const ExitArenaExhausted = 125
 
-func abortMsg(label string) (text string, code int) {
+// AbortMsg is the diagnostic text and exit status for a fatal-abort label.
+// Exported so the x86-64 SSA backend emits the identical text and status for
+// the same failure: a program's abort output must not depend on which x86-64
+// emitter built it (#5538).
+func AbortMsg(label string) (text string, code int) {
 	for _, m := range abortMessages {
 		if m.label == label {
 			return m.text, m.code
@@ -6952,7 +6956,7 @@ func abortMsg(label string) (text string, code int) {
 // (which writes to stderr, then exit_group). Replaces a bare, silent
 // `mov edi, code; syscall` so the failure names its cause (#5538).
 func (g *generator) emitAbort(label string) {
-	text, code := abortMsg(label)
+	text, code := AbortMsg(label)
 	g.emit(fmt.Sprintf("lea rsi, [rip + %s]", label))
 	g.emit(fmt.Sprintf("mov edx, %d", len(text)))
 	g.emit(fmt.Sprintf("mov edi, %d", code))

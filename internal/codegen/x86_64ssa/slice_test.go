@@ -1,6 +1,7 @@
 package x86_64ssa
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,9 +48,16 @@ func runSliceModule(t *testing.T, f *ssa.Func, regs int) int {
 	if runner != "" {
 		cmd = exec.Command(runner, bin)
 	}
-	out, err := cmd.CombinedOutput()
-	if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() < 0 || len(out) != 0 {
-		t.Fatalf("run: %v, state=%v, output=%q", err, cmd.ProcessState, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() < 0 || stdout.Len() != 0 {
+		t.Fatalf("run: %v, state=%v, stdout=%q", err, cmd.ProcessState, stdout.String())
+	}
+	// A trap names its cause on stderr (#5538). Anything else there is output
+	// these programs have no business writing.
+	if e := stderr.String(); e != "" && !strings.HasPrefix(e, "fern: ") {
+		t.Fatalf("unexpected stderr: %q", e)
 	}
 	return cmd.ProcessState.ExitCode()
 }

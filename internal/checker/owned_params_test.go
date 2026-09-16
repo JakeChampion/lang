@@ -227,6 +227,38 @@ function f(): i32 {
 }`)
 }
 
+// A payload-less variant is spelled as a bare name, so it arrives as an Ident
+// where `Wrap([1, 2])` above arrives as a Call. Both are fresh enum values, and
+// the guard admitted only the Call shape (#9517).
+func TestOwnGuardAllowsPayloadlessVariant(t *testing.T) {
+	wantOK(t, "payloadless-variant-arg", `enum Span { Empty, Wide(i32[]) }
+function eat(own sp: Span): i32 { return 0; }
+function f(): i32 {
+    return eat(Empty);                 // fresh enum value → owned
+}`)
+}
+
+// The qualified spelling stays a FieldAccess rather than being rewritten to an
+// Ident, so it needs its own admission.
+func TestOwnGuardAllowsQualifiedPayloadlessVariant(t *testing.T) {
+	wantOK(t, "qualified-payloadless-variant-arg", `enum Span { Empty, Wide(i32[]) }
+function eat(own sp: Span): i32 { return 0; }
+function f(): i32 {
+    return eat(Span.Empty);            // fresh enum value → owned
+}`)
+}
+
+// The admission is for VARIANTS, not for any bare name that happens to match a
+// declaration: a plain local of enum type is still a borrow.
+func TestOwnGuardRejectsEnumLocal(t *testing.T) {
+	wantE051(t, "enum-local-arg", `enum Span { Empty, Wide(i32[]) }
+function eat(own sp: Span): i32 { return 0; }
+function f(): i32 {
+    var sp: Span = Empty;
+    return eat(sp);                    // a plain local is not owned
+}`)
+}
+
 // A call to a function whose EVERY pointer parameter is `own` returns a
 // freshly-owned result (the callee consumed each pointer input, so it can't
 // hand back a borrowed one) — so it passes the E051 transfer guard. This is

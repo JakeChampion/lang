@@ -73,7 +73,7 @@ func TestArrayIndexIsInlinedNotCalled(t *testing.T) {
 	// four of these themselves, so a module-wide search would pass on an inline
 	// that dropped the check entirely.
 	body := idxFuncBody(t, asm, "main")
-	for _, want := range []string{"cmp", "b.lo", "#134"} {
+	for _, want := range []string{"cmp", "b.lo", "b .Lssa_abort_arr_oob"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inlined index is missing %q — the bounds check must survive\n%s", want, body)
 		}
@@ -140,7 +140,7 @@ func TestSliceIndexIsInlinedNotCalled(t *testing.T) {
 	if !regexp.MustCompile(`ldr\s+w\d+, \[x\d+, #8\]`).MatchString(body) {
 		t.Errorf("inlined slice index never loads the length field at +8\n%s", body)
 	}
-	for _, want := range []string{"cmp", "b.lo", "#134"} {
+	for _, want := range []string{"cmp", "b.lo", "b .Lssa_abort_slice_oob"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inlined slice index is missing %q — the bounds check must survive\n%s", want, body)
 		}

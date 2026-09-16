@@ -202,6 +202,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	emitRuntimeHelpers(w, helpers)
+	emitAbortTails(w, b.String())
 	// The allocator and its trampoline go in when the text so far reaches
 	// them — a compiled OpAlloc, a closure cell, or a helper's allocation — so
 	// a module that never allocates carries neither.
@@ -1693,39 +1694,89 @@ func emitHeapGuard(w func(string, ...any)) {
 	w(".text")
 }
 
-// emitLenOverflowAbort writes the tail a helper branches to when a length it
-// was asked to build does not fit the 4-byte prefix it has to live in (#8457):
-// the diagnostic on stderr, then exit 134 — the status and text the natives'
-// __fern_report gives the same failure. Self-contained per helper, like the
-// heap guard's exhaustion tail above.
-// The length/size refusal shares the flat emitters' wording so one
-// diagnostic covers every backend (#8457).
-const msgAllocSizeOutOfRange = "fern: allocation size out of range\n"
-
-func emitLenOverflowAbort(w func(string, ...any), label, msgSym, text string) {
-	w("%s:", label)
-	w("\tmov edi, 2") // stderr
-	w("\tlea rsi, [rip + %s]", msgSym)
-	w("\tmov edx, %d", len(text))
-	w("\tmov eax, 1") // write
-	w("\tsyscall")
-	w("\tmov edi, %d", lenOverflowExit)
-	w("\tmov eax, 231") // exit_group
-	w("\tsyscall")
-	w(".section .rodata")
-	w("%s:", msgSym)
-	bytes := make([]string, len(text))
-	for i := 0; i < len(text); i++ {
-		bytes[i] = strconv.Itoa(int(text[i]))
-	}
-	w("\t.byte %s", strings.Join(bytes, ", "))
-	w(".text")
+// abortKinds are the fatal aborts this backend has check sites for. Each names
+// an entry in the flat x86-64 backend's table (nativex86_64.AbortMsg), which
+// is where the text and the exit status come from: a program's abort output
+// must not depend on which x86-64 emitter built it (#5538). The sanitizer
+// diagnostics are absent because their detectors are.
+//
+// A tail is emitted only when the module reaches it, like every other helper
+// here — emitAbortTails looks for its label in what has already been written.
+// A check site is then a single jump instead of the three instructions it used to
+// open-code.
+var abortKinds = []struct{ tail, msgSym string }{
+	{".Lssa_abort_arr_oob", "__fern_msg_arr_oob"},
+	{".Lssa_abort_slice_oob", "__fern_msg_slice_oob"},
+	{".Lssa_abort_slice_range", "__fern_msg_slice_range"},
+	{".Lssa_abort_str_slice", "__fern_msg_str_slice"},
+	{".Lssa_abort_alloc_size", "__fern_msg_alloc_size"},
 }
 
-// lenOverflowExit is the status a length-ceiling abort exits with — the same
-// 134 the natives' bounds and slice aborts use, since both are a program
-// asking for something outside what the representation can hold.
-const lenOverflowExit = 134
+// Tail labels, named rather than spelled at each site so a typo is a build
+// error instead of a silent jump to whichever kind sorts next to it.
+const (
+	abortArrOOB     = ".Lssa_abort_arr_oob"
+	abortSliceOOB   = ".Lssa_abort_slice_oob"
+	abortSliceRange = ".Lssa_abort_slice_range"
+	abortStrSlice   = ".Lssa_abort_str_slice"
+	abortAllocSize  = ".Lssa_abort_alloc_size"
+)
+
+// abortKindForIdx picks the tail an index check jumps to. One emitter serves
+// arrays, single-word strings and slice views, and the flat backend gives each
+// of the three its own message.
+func abortKindForIdx(name string, slice bool) string {
+	switch {
+	case name == "__str_idx":
+		return abortStrSlice
+	case slice:
+		return abortSliceOOB
+	}
+	return abortArrOOB
+}
+
+// emitAbortTails writes a tail for every abortKinds entry `emitted` — the
+// module text written so far — branches to: the diagnostic to stderr, then
+// exit with that kind's status, followed by the read-only messages they point
+// at. Every site that can reach a tail is already written by the time this
+// runs, so a label absent from `emitted` is one no path takes.
+func emitAbortTails(w func(string, ...any), emitted string) {
+	var used []int
+	for i, k := range abortKinds {
+		if strings.Contains(emitted, k.tail) {
+			used = append(used, i)
+		}
+	}
+	if len(used) == 0 {
+		return
+	}
+	w("")
+	for _, i := range used {
+		k := abortKinds[i]
+		text, code := nativex86_64.AbortMsg(k.msgSym)
+		w("%s:", k.tail)
+		w("\tmov edi, 2") // stderr
+		w("\tlea rsi, [rip + %s]", k.msgSym)
+		w("\tmov edx, %d", len(text))
+		w("\tmov eax, 1") // write
+		w("\tsyscall")
+		w("\tmov edi, %d", code)
+		w("\tmov eax, 231") // exit_group
+		w("\tsyscall")
+	}
+	w(".section .rodata")
+	for _, i := range used {
+		k := abortKinds[i]
+		text, _ := nativex86_64.AbortMsg(k.msgSym)
+		bytes := make([]string, len(text))
+		for i := 0; i < len(text); i++ {
+			bytes[i] = strconv.Itoa(int(text[i]))
+		}
+		w("%s:", k.msgSym)
+		w("\t.byte %s", strings.Join(bytes, ", "))
+	}
+	w(".text")
+}
 
 // heapGuardCall is the instruction a bump site emits immediately after
 // publishing its new cursor. Every such site must carry it: one that does not
@@ -2137,9 +2188,7 @@ func inlineArrIdxLines(in Inst, numAlloc int, seed string) ([]string, bool) {
 		out = append(out,
 			fmt.Sprintf("cmp %s, dword ptr %s", reg32n(idx), lenRef),
 			fmt.Sprintf("jb %s", okLbl),
-			"mov edi, 134",
-			"mov eax, 231", // exit_group
-			"syscall",
+			"jmp "+abortKindForIdx(in.Callee, form.slice),
 			okLbl+":",
 		)
 	}
@@ -2744,9 +2793,7 @@ func emitArrIdxHelperNChecked(name string, shift int, checked bool) func(w func(
 			w("\tmov edx, %s", memRef("rdi", -4)) // len
 			w("\tcmp esi, edx")
 			w("\tjb %s", ok)
-			w("\tmov edi, 134")
-			w("\tmov eax, 231") // exit_group
-			w("\tsyscall")
+			w("\tjmp %s", abortKindForIdx(name, false))
 			w("%s:", ok)
 		}
 		// lea scales by 1, 2, 4 or 8 only, so stride 16 needs the shift spelled
@@ -3146,7 +3193,8 @@ func emitAllocU8Helper(w func(string, ...any)) {
 	w("\tmov rax, r10")
 	w("\tpop rbx")
 	w("\tret")
-	emitLenOverflowAbort(w, ".Lssa_allocu8_len_overflow", "__ssa_msg_alloc_size", msgAllocSizeOutOfRange)
+	w(".Lssa_allocu8_len_overflow:")
+	w("\tjmp %s", abortAllocSize)
 }
 
 // emitStringFromBytesHelper writes string_from_bytes_unchecked(bs) -> data: copy
@@ -3210,9 +3258,7 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tmov rax, r11")
 	w("\tret")
 	w(".Lssa_strslice_trap:")
-	w("\tmov edi, 134")
-	w("\tmov eax, 231") // exit_group
-	w("\tsyscall")
+	w("\tjmp %s", abortStrSlice)
 }
 
 // emitArrPushGrowHelper writes __fern_arr_push_grow(arr, oldLen, stride) ->
@@ -3277,9 +3323,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov rax, r11")
 	w("\tret")
 	w(".Lssa_apg_sizebad:")
-	w("\tmov edi, 134")
-	w("\tmov eax, 231") // exit_group
-	w("\tsyscall")
+	w("\tjmp %s", abortAllocSize)
 }
 
 // emitArrPushGrowElemHelper returns the emitter for the element-retaining
@@ -4062,7 +4106,8 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tsub rdi, r10")                  // data + la
 	emitBcopyCall(w, "rdi", "r9", "r10") // b's lb bytes after them
 	w("\tret")
-	emitLenOverflowAbort(w, ".Lssa_strcat_len_overflow", "__ssa_msg_alloc_size_str", msgAllocSizeOutOfRange)
+	w(".Lssa_strcat_len_overflow:")
+	w("\tjmp %s", abortAllocSize)
 }
 
 // emitStrAppendHelper writes __fern_str_append(a, b) -> data, the string
