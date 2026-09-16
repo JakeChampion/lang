@@ -13430,7 +13430,7 @@ function dl_for(fr: ast.StmtFor, body: ast.Stmt[]): ast.Stmt {
 
 // dl_iter_cleanup builds one loop body's per-iteration cleanup: for the
 // actions that body registered (indices [start, end)), in reverse source
-// order, `if (__dfa<i>) { ACTION; __dfa<i> = 0; }`. Clearing the flag is
+// order, `if (__dfa<i>) { ACTION; __dfa<i> = false; }`. Clearing the flag is
 // what makes the run count per iteration — the next iteration re-arms, and
 // the function-exit replay skips an iteration that already ended. An
 // errdefer only clears: leaving the body normally is not an error exit, and
@@ -13633,7 +13633,7 @@ function dl_loop_body(body: ast.Stmt[], actions: ast.Stmt[], flags: i32[], start
 }
 
 // dl_collect_stmt(s) rebuild the body with each `defer ACTION` replaced by
-// `__dfa<i> = 1`, accumulating the actions (index = position in the list)
+// `__dfa<i> = true`, accumulating the actions (index = position in the list)
 // and a parallel `flags` list (0 = plain defer, 1 = errdefer). Recurses
 // through nested blocks so a conditional defer gets its flag set only when
 // its branch runs. A loop body additionally gets its own defers replayed on
