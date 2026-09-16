@@ -814,6 +814,15 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	// check is what keeps that an optimisation rather than depending on an
 	// assumption about a pass in another package.
 	if !inSaveSet(saved, in.Dst) && (in.Op != CallPair || !inSaveSet(saved, in.Dst2)) {
+		if in.Op != CallPair {
+			// A 32-bit result is sign-extended as it is taken from eax, so no
+			// fix follows; a 64-bit one already in place needs no move.
+			if in.Dst != raxReg || in.W != 64 {
+				out = append(out, captureRax(in.Dst, in.W))
+			}
+			restore()
+			return out, nil
+		}
 		// System V returns in rax (tag) / rdx (payload), so delivering a pair into
 		// its destinations is a parallel copy over abstract indices. Self-moves
 		// are dropped rather than emitted as `mov rax, rax`, which is the whole
@@ -822,7 +831,7 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		if in.Dst != raxReg {
 			moves = append(moves, [2]int{in.Dst, raxReg})
 		}
-		if in.Op == CallPair && in.Dst2 != rdxReg {
+		if in.Dst2 != rdxReg {
 			moves = append(moves, [2]int{in.Dst2, rdxReg})
 		}
 		out = append(out, resolveRegMoves(moves)...)
@@ -830,7 +839,9 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		maskDst()
 		return out, nil
 	}
-	out = append(out, fmt.Sprintf("mov %s, rax", reg(scratch))) // capture result (tag)
+	// The capture sign-extends a 32-bit result, so the placing move below
+	// carries a value that needs no fix.
+	out = append(out, captureRax(scratch, in.W)) // capture result (tag)
 	if in.Op == CallPair {
 		// The second return (payload) is in rdx. Capture it into s0 — free during
 		// the call inst and not in the caller-saved set — so the restores below
@@ -839,7 +850,6 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	}
 	restore()
 	out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch))) // place result
-	maskDst()
 	if in.Op == CallPair {
 		out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst2), reg(s0))) // place payload
 	}
@@ -865,6 +875,16 @@ func padSlots(pad bool, saved []int) int {
 		return 1
 	}
 	return 0
+}
+
+// captureRax takes a call's result out of rax into dst: a 32-bit result is
+// sign-extended on the way (`movsxd dst, eax`), which is the same instruction
+// count as a move and leaves nothing for a later fix to do.
+func captureRax(dst int, w int8) string {
+	if w != 64 {
+		return fmt.Sprintf("movsxd %s, eax", reg(dst))
+	}
+	return fmt.Sprintf("mov %s, rax", reg(dst))
 }
 
 // inSaveSet reports whether the call-save set contains register r — i.e. whether
@@ -958,7 +978,7 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 	out = append(out,
 		fmt.Sprintf("mov rax, qword ptr [rsp + %d]", 8*nStack), // recover the stashed target
 		"call rax",
-		fmt.Sprintf("mov %s, rax", reg(scratch)), // capture result
+		captureRax(scratch, in.W), // capture result, sign-extended when 32-bit
 		// drop the stack args, the stash, and the pad when nothing is saved
 		fmt.Sprintf("add rsp, %d", 8*(nStack+1+padSlots(pad, saved))),
 	)
@@ -969,9 +989,6 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 		out = append(out, fmt.Sprintf("pop %s", reg(saved[0])))
 	}
 	out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch))) // place result
-	if fix := maskFix(in.Dst, in.W); fix != "" {
-		out = append(out, strings.TrimPrefix(fix, "\n\t"))
-	}
 	return out, nil
 }
 
