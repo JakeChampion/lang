@@ -213,11 +213,50 @@ would slow the compiler. The worst remaining rows are `ordmap_insert` 2.28x,
 | track | blocker | state |
 | ----- | ------- | ----- |
 | **arm64 default flip** (#4112 phase 4) | codegen quality in loop bodies, with seven named reproducers | size and correctness settled; speed converging, worst rows are persistent collections paying per-call RC helpers |
-| **x86-64** (#8822) | **coverage, not speed** — `sort.fern` does not build under `-backend ssa` (17 undefined call targets), so the claim that it fixes sort's dominant cost is UNMEASURED | the 84-symbol helper gap (#8047), with its step-function unlock curve |
+| **x86-64** (#8822) | was coverage; **now loop-body codegen quality too** — `sort.fern` builds under `-backend ssa` as of 2026-09-16 and runs no faster (the measurement below) | `sort` and seven other coreutils build; `wc`/`cat`/`head`/`tail` want four more helpers; the corpus differential's remaining refusals are groups (`__memcpy`, `__alloc`, the Map family) |
 
 The next decision point is which of those to fund first. They are independent,
 and the x86-64 one is cheaper to make answerable: coverage work is mechanical,
 where loop-body codegen quality is open-ended.
+
+### Measured 2026-09-16: `sort` builds under x86-64 SSA, and it is not faster
+
+With `args`, `env` and `stat` given emitters (the handle family and
+`read_chunk` landed the day before), `coreutils/sort.fern` builds under
+`-target x86-64-linux -backend ssa`, and so do `uniq`, `tr`, `cut`, `comm`,
+`fold`, `nl` and `paste`. #8822's claim is measurable, and measured it does not
+hold as the backend stands. 2M-line inputs, `LC_ALL=C`, best of three on the
+4-core dev container:
+
+| workload | flat | SSA | GNU 9.4 |
+| --- | --- | --- | --- |
+| `sort`, 11 lowercase letters a line | 2.99 s | 3.12 s | 0.70 s |
+| `sort -n`, signed 10-digit integers | 7.76 s | 7.79 s | 1.08 s |
+
+The three outputs are byte-identical on both inputs. callgrind on `sort -n`
+over 200k lines: 5.07e9 instructions flat, 4.83e9 SSA, 5% fewer. The static
+count goes the other way on this program, 61,899 instructions flat against
+65,475 SSA; the 45% figure above is the examples corpus, where the flat
+backend's push/pop traffic dominates small functions.
+
+`magcompare` under SSA has its hot values in registers (rbx, r12, r14), so
+the allocator did what it is for. What it emits around them is the cost:
+every block ends in a `jmp` to the label that follows it (712 such jumps in
+the file, 3,465 block-end jumps in all), a constant is moved into a register
+before each compare (294), the string length is reloaded from `[base - 4]`
+on every bounds check (281, loop-invariant in the loops that matter), and a
+`movsxd` follows each `movzx byte` (161). None of that is allocation; it is
+instruction selection and block layout, and it leaves the function at 362
+instructions against the flat backend's 434 rather than the several-fold
+reduction the issue's arithmetic assumed.
+
+**So the two tracks have one blocker.** Coverage was what kept x86-64's
+claim unmeasurable; measured, the x86-64 emitter is blocked on the same
+thing as arm64's phase 4: loop-body code quality, now with a profiled real
+program on each ISA. The coverage that remains (`wc`, `cat`, `head` and
+`tail` want the Reader/Writer `stat`, Reader `seek` and `sleep_ms`; the
+corpus wants `__memcpy`, `__alloc` and the Map family) still widens the
+differential, but it is not what makes `sort` faster.
 
 ### Per-backend disposition
 
