@@ -2010,7 +2010,7 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 // target selects, against the SAME normalisation that path gates on — the
 // register backends' (semlower.gated_module) and wasm's own
 // (wasm_ir.route_normalized), each after the lambda lift the emit entry does
-// before it. Off (FERN_SEM_IR unset) it produces nothing and costs nothing.
+// before it. Off (FERN_SEM_IR set empty) it produces nothing and costs nothing.
 //
 // It is produced here rather than inside the emit path so that the pipeline
 // behind it is linked by the CLI alone: linking it from the three backend
@@ -2509,7 +2509,7 @@ function run(): i32 {
     }
 
     var full: parser.Module = parser.module_with_builtins(merged);
-    // The typed semantic lowering, when FERN_SEM_IR selects it. It is produced
+    // The typed semantic lowering, unless FERN_SEM_IR= turns it off. It is produced
     // HERE and threaded into whichever emit path runs, so the pipeline behind
     // it is linked by the CLI and not by every driver that links a backend
     // (docs/SELFHOST-SEMANTIC-SOURCE.md). Off, this is ircore.no_sub() and the
