@@ -100,7 +100,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 282/348 compared, 0 divergences; 46 refused — every one for the runtime-helper table, in groups rather than one symbol |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 301/348 compared, 0 divergences; 27 refused — every one for the runtime-helper table, in groups rather than one symbol |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -276,6 +276,32 @@ Two concrete blockers, and only two:
    So the next slice is the Map family with the trio, which is the last
    large group; after it the leg's refusals are the socket family and a
    handful of singletons.
+
+   **2026-09-16, the Map family.** The Map is core/map.fern on every
+   backend; what the x86-64 SSA emitter lacked was the runtime names that
+   Fern bottoms out in — `__alloc` (the bump sequence behind a label),
+   `__free` (nothing, as `__fern_box_free` already is on this heap),
+   `__memset`, `__fern_map_hash_seed` (drawn once through `random_i32`,
+   cached in `.bss`), `__fern_map_drop` (a reference drop, since nothing is
+   reclaimed) and `__fern_drop_arr_ptr` (the element walk `__fern_drop_arr_str`
+   already had, now one emitter over the element drop) — and the call-site
+   half of `ir.CodegenAliases`, so `map_new` names `map_new_impl` the way the
+   driver's reachability walk already assumed. The leg is at **301 of 348
+   comparable, 0 divergences; 27 refused**, 21 of them missing one or two
+   helpers:
+
+   | | refused for it | refused for it ALONE |
+   |---|---|---|
+   | the socket family (`tcp_*`, `poll`, the pollables) | 6 | 0 |
+   | `read_dir` | 5 | 4 |
+   | `write` | 5 | 5 |
+   | `__method_Reader_read_line` | 4 | 4 |
+   | `__fern_heap_bump_bytes` | 4 | 3 |
+   | `tcp_connect`, `create_dir_all`, `hostname` | 1–2 | 0 |
+
+   The next slice is the four singletons (`write`, `read_dir`,
+   `__method_Reader_read_line`, `__fern_heap_bump_bytes`: 16 programs), then
+   the socket family.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than

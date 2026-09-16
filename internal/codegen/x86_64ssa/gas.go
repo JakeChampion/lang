@@ -301,6 +301,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.quad 0")
 	}
 	emitProcBss(w, withArgs, withEnv)
+	emitMapSeedBss(w, helpers)
 	w(".section .note.GNU-stack,\"\",@progbits")
 	asm := b.String()
 	if err := checkNoDanglingCalls(asm); err != nil {
@@ -727,7 +728,9 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		regArgs = in.ArgLocs[:len(sysvArgRegs)]
 	}
 	out = append(out, argMoveLines(regArgs)...)
-	out = append(out, fmt.Sprintf("call %s", fnLabel(in.Callee)))
+	// ir.CodegenAlias resolves a Map / MapIter call onto the stdlib `_impl`
+	// that implements it; the driver keeps those alive under the same map.
+	out = append(out, fmt.Sprintf("call %s", fnLabel(ir.CodegenAlias(in.Callee))))
 	if nStack > 0 {
 		out = append(out, fmt.Sprintf("add rsp, %d", 8*nStack))
 	}
@@ -2137,7 +2140,13 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_ord":                     emitStrOrdHelper,
 	"__str_concat":                  emitStrConcatHelper,
 	"__fern_str_dec":                emitStrDecHelper,
-	"__fern_drop_arr_str":           emitDropArrStrHelper,
+	"__fern_drop_arr_str":           emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "dropstr"),
+	"__fern_drop_arr_ptr":           emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dropptr"),
+	"__fern_map_drop":               emitAliasHelper("__fern_map_drop", "__fern_arr_dec"),
+	"__fern_map_hash_seed":          emitMapHashSeedHelper,
+	"__alloc":                       emitAllocHelper,
+	"__free":                        emitFreeHelper,
+	"__memset":                      emitMemsetHelper,
 	"buf_new":                       emitBufNewHelper,
 	"__fern_buf_reserve":            emitBufReserveHelper,
 	"buf_push":                      emitBufPushHelper,
@@ -2213,6 +2222,7 @@ var heapUsingHelpers = map[string]bool{
 	"remove_file":                true,
 	"temp_dir":                   true,
 	"random_bytes":               true,
+	"__alloc":                    true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2228,6 +2238,9 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
+	"__fern_drop_arr_ptr":           {"__fern_rc_dec", "__fern_arr_dec"},
+	"__fern_map_drop":               {"__fern_arr_dec"},
+	"__fern_map_hash_seed":          {"random_i32"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
 	"__method_Writer_close":         {"__fern_io_error"},
@@ -3980,18 +3993,28 @@ func emitAllocReuseHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitDropArrStrHelper writes __fern_drop_arr_str(ptr, stride) -> ptr — the
-// scope-exit drop of a string ARRAY, which owns its elements: at rc == 1 the
-// array is about to die, so each element's own reference goes first, then the
-// array's. A SHARED array (rc != 1) walks nothing — the other owner still reads
-// those elements — which is the same test the stack-machine backend makes.
+// emitDropArrElemHelper returns the emitter for name(ptr, stride) -> ptr — the
+// scope-exit drop of an ARRAY that owns its elements: at rc == 1 the array is
+// about to die, so each element's own reference goes first through elemDrop,
+// then the array's through __fern_arr_dec. A SHARED array (rc != 1) walks
+// nothing — the other owner still reads those elements — which is the same
+// test the stack-machine backend makes. The guards (null, low address, static
+// sentinel, rc underflow) are stated once each in the callees, so this is the
+// walk alone.
 //
-// The element release is __fern_str_dec and the array's is __fern_arr_dec, so
-// the guards (null, low address, static sentinel, rc underflow) are stated once
-// each and this helper is the walk alone.
-func emitDropArrStrHelper(w func(string, ...any)) {
+// Two instantiations: __fern_drop_arr_str releases string elements through
+// __fern_str_dec, and __fern_drop_arr_ptr releases rc-tracked elements
+// (arrays, maps, structs) through __fern_rc_dec, which is what core/map needs
+// for a Map's array-typed value column. tag keeps their labels apart.
+func emitDropArrElemHelper(name, elemDrop, tag string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		emitDropArrElemBody(w, name, elemDrop, ".Lssa_"+tag+"_")
+	}
+}
+
+func emitDropArrElemBody(w func(string, ...any), name, elemDrop, lbl string) {
 	w("")
-	w("%s:", fnLabel("__fern_drop_arr_str"))
+	w("%s:", fnLabel(name))
 	w("\tpush rbp")
 	w("\tmov rbp, rsp")
 	w("\tpush rbx")
@@ -4001,28 +4024,28 @@ func emitDropArrStrHelper(w func(string, ...any)) {
 	w("\tmov rbx, rdi")
 	w("\tmov r14, rsi") // stride
 	w("\tcmp rbx, 0x10000")
-	w("\tjb .Lssa_dropstr_ret")
+	w("\tjb %sret", lbl)
 	w("\tmov eax, %s", memRef("rbx", -8)) // rc
 	w("\ttest eax, eax")
-	w("\tjs .Lssa_dropstr_ret") // static sentinel
+	w("\tjs %sret", lbl) // static sentinel
 	w("\tcmp eax, 1")
-	w("\tjne .Lssa_dropstr_arr")           // shared: the elements are not ours to drop
+	w("\tjne %sarr", lbl)                  // shared: the elements are not ours to drop
 	w("\tmov r12d, %s", memRef("rbx", -4)) // len
 	w("\txor r13, r13")
-	w(".Lssa_dropstr_loop:")
+	w("%sloop:", lbl)
 	w("\tcmp r13, r12")
-	w("\tjge .Lssa_dropstr_arr")
+	w("\tjge %sarr", lbl)
 	w("\tmov rax, r13")
 	w("\timul rax, r14")
 	w("\tmov rdi, [rbx + rax]") // element i, a string pointer
-	w("\tcall %s", fnLabel("__fern_str_dec"))
+	w("\tcall %s", fnLabel(elemDrop))
 	w("\tinc r13")
-	w("\tjmp .Lssa_dropstr_loop")
-	w(".Lssa_dropstr_arr:")
+	w("\tjmp %sloop", lbl)
+	w("%sarr:", lbl)
 	w("\tmov rdi, rbx")
 	w("\tmov rsi, r14")
 	w("\tcall %s", fnLabel("__fern_arr_dec"))
-	w(".Lssa_dropstr_ret:")
+	w("%sret:", lbl)
 	w("\tmov rax, rbx")
 	w("\tpop r14")
 	w("\tpop r13")

@@ -48,18 +48,19 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 282 as measured 2026-09-16, once the file, clock and random helpers
-	// had emitters: 194 came from #8570's `remove_dir_all` slice, 215 from
-	// the four float reinterprets, the last refusal that was not a missing
+	// 301 as measured 2026-09-16, once the Map family's runtime names had
+	// emitters: 194 came from #8570's `remove_dir_all` slice, 215 from the
+	// four float reinterprets, the last refusal that was not a missing
 	// runtime helper, 219 from the string builder, 223 from `args`, `env`
-	// and `stat`, 253 from `__memcpy` and the f64 math family — every
-	// program still refused names one or more helpers with no emitter.
-	// RAISE IT with each helper slice — that is the point of the number.
+	// and `stat`, 253 from `__memcpy` and the f64 math family, 282 from the
+	// file, clock and random helpers — every program still refused names
+	// one or more helpers with no emitter. RAISE IT with each helper slice
+	// — that is the point of the number.
 	//
-	// The 46 still refused want the Map method family with the memory trio
-	// (24, always together) and the socket family, in groups
-	// (docs/SSA-CUTOVER-PLAN.md).
-	x86SSADiffMinCompared = 282
+	// The 27 still refused want the socket family (6, always together),
+	// `read_dir`, `write`, `__method_Reader_read_line` and
+	// `__fern_heap_bump_bytes` (docs/SSA-CUTOVER-PLAN.md).
+	x86SSADiffMinCompared = 301
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {
