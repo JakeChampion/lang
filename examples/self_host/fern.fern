@@ -2013,9 +2013,13 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 
 // cli_substitution produces the semantic lowering for whichever emit path the
 // target selects, against the SAME normalisation that path gates on — the
-// register backends' (semlower.gated_module) and wasm's own
-// (wasm_ir.route_normalized), each after the lambda lift the emit entry does
-// before it. Off (FERN_SEM_IR set empty) it produces nothing and costs nothing.
+// register backends' (semlower.gated_module) after the lambda lift their emit
+// entries do before it, and wasm's own (wasm_ir.route_normalized), which lifts
+// inside and takes the unlifted module as its emit entry does. Lifting once
+// more before it renames every local of an already-lifted body, and a mutated
+// capture's `$cell$` parameter renamed that way is no longer one the semantic
+// lowering refuses to write through. Off (FERN_SEM_IR set empty) it produces
+// nothing and costs nothing.
 //
 // It is produced here rather than inside the emit path so that the pipeline
 // behind it is linked by the CLI alone: linking it from the three backend
@@ -2023,9 +2027,8 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 // flag they never read.
 function cli_substitution(full: parser.Module, target: string): ircore.Sub {
     if (!semlower.sem_ir_on()) { return ircore.no_sub(); }
-    var lm: parser.Module = ircore.lift_lambdas(full);
-    var im: parser.Module = semlower.gated_module(lm);
-    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized(lm); }
+    var im: parser.Module = semlower.gated_module(ircore.lift_lambdas(full));
+    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized(full); }
     var stab: irlower.StructTab = irlower.struct_tab(im.structs);
     util.arr_push_cliff_report("sem:gated", 0);
     return semlower.substitution(im, stab, ircore.wp_fn_sigs(im.funcs, stab));

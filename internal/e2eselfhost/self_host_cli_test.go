@@ -189,6 +189,55 @@ function main(): i32 {
 		}
 	})
 
+	// The semantic lowering the CLI substitutes on the wasm route has to come
+	// from the module the wasm emit entry normalises, which lifts the lambdas
+	// itself. Lifting once more before it renamed every local of the lifted
+	// closure body, so the mutated capture's `$cell$` parameter was no longer
+	// one the lowering refuses to write through: the write was produced as a
+	// value-semantics `with`, landed in a copy, and `bump` answered 11 twice
+	// with `m` still 10. The register backends lift before their entries and
+	// never saw it.
+	t.Run("wasm-semantic-capture-write", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping capture-write wasm check")
+		}
+		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+		if err != nil {
+			t.Fatalf("abs stdlib root: %v", err)
+		}
+		src := `import "std/i32";
+
+function main(): i32 {
+    var m: i32 = 10;
+    var bump = (): i32 => { m = m + 1; return m; };
+    print(bump().to_string());
+    print(bump().to_string());
+    print(m.to_string());
+    return 0;
+}
+`
+		srcPath := filepath.Join(dir, "capture_write.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
+		if code != 0 {
+			t.Fatalf("-target wasm emit exited %d, want 0", code)
+		}
+		watPath := filepath.Join(dir, "capture_write.wat")
+		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		cmd := exec.Command("wasmtime", "run", watPath)
+		out, _ := cmd.CombinedOutput()
+		if got := cmd.ProcessState.ExitCode(); got != 0 {
+			t.Errorf("capture write on wasm exited %d, want 0\n%s", got, out)
+		}
+		if string(out) != "11\n12\n12\n" {
+			t.Errorf("capture write on wasm printed %q, want \"11\\n12\\n12\\n\"", out)
+		}
+	})
+
 	// Two traits may each provide a method of the same name for one type
 	// (#6931). The self-host emits a method as the flat `<Type>.<name>`
 	// symbol, so without disambiguation both providers land on `$P.scale` —
