@@ -35,6 +35,41 @@ before native validation; no production workflow enables weighted assignment.
 
 ## Validation plan
 
+### Initial live result
+
+The corrected frozen table passed native pilot
+[35036185732](https://github.com/JakeChampion/lang/actions/runs/35036185732)
+and full ABBA
+[35036397178](https://github.com/JakeChampion/lang/actions/runs/35036397178)
+at `011ae1f169a49e3a8290fc8a21f6aff40d007770`.
+
+| Assignment | Trial wall times (seconds) | Mean (seconds) |
+| --- | --- | ---: |
+| Unweighted | 593.316, 590.025 | 591.670 |
+| Weighted | 475.593, 472.429 | 474.011 |
+
+All four trials had 517 parents, 4,699 outcomes and the same four pre-existing
+skips. Independent verification checked raw starts and terminal outcomes,
+worker CPU allocations and the pilot/full binary and runner hashes. This is
+a live native suite result on four CPUs, not whole-workflow latency.
+
+### Revalidation with expected-crash filtering
+
+The experiment now includes #9412's production helper and #9411's buffered
+compiler. Only two weights change: `TestX86_64TrmcDeepStack` uses 0.23 seconds
+and `TestX86_64TrmcWidenedDeepStack` uses 0.21 seconds. These are the slower
+observed complete test durations from the two filtered trials of independent
+[run 35038387393](https://github.com/JakeChampion/lang/actions/runs/35038387393),
+not forecasts. The other weights remain frozen.
+
+This new table must pass a new pilot and full ABBA before drawing conclusions
+about the combined change. Do not add the earlier balancing speedup to the
+isolated crash-test saving. The harness now retains the actual selected binary
+inventory as `inventory.txt`, alongside raw events and summaries. No production
+workflow enables weighted assignment.
+
+### Gates
+
 Parser and assignment tests cover malformed inputs, missing/stale weights,
 overflow, deterministic ties, registration order and complete worker groups.
 Subprocess tests cover successful tests, failing tests and crashes with the

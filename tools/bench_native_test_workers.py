@@ -95,6 +95,7 @@ def main():
     parents = set(names)
     if not parents or len(parents) != len(names) or any(not name.startswith("Test") for name in names):
         raise RuntimeError("invalid baseline inventory")
+    (args.output / "inventory.txt").write_text("\n".join(names) + "\n")
     env = dict(os.environ, GOMAXPROCS=str(cpus))
     started = time.perf_counter()
     for index, weighted in enumerate((False, True, True, False)):

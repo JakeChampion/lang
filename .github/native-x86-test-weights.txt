@@ -2,6 +2,7 @@
 # Frozen before evaluating the second trial. No production workflow uses this file.
 # Unlisted selected tests receive weight 1; every inventoried test still runs.
 # Rounded zero observations use a 0.01-second scheduling floor, not measured time.
+# Deep-stack weights use the slower filtered trial from run 35038387393.
 TestX86_64AbortBacktrace	0.87
 TestX86_64AbortBacktraceOff	1.76
 TestX86_64AbortMessages	0.90
@@ -468,10 +469,10 @@ TestX86_64TraitSupertrait	0.14
 TestX86_64Transcendentals	0.15
 TestX86_64Trmc	0.02
 TestX86_64TrmcConsumePeakHalved	0.05
-TestX86_64TrmcDeepStack	83.22
+TestX86_64TrmcDeepStack	0.23
 TestX86_64TrmcMatchesNoTrmc	0.04
 TestX86_64TrmcWidened	0.05
-TestX86_64TrmcWidenedDeepStack	83.31
+TestX86_64TrmcWidenedDeepStack	0.21
 TestX86_64Truncate	0.03
 TestX86_64TryConvert	0.01
 TestX86_64TryDynError	0.01
