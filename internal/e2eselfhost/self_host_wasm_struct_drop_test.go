@@ -47,9 +47,14 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
-		// wantBody is a substring the emitted $__struct_drop_<T> body must contain
-		// (the real deep-drop call), proving IR routing + the real (non-pass-through)
-		// shape. The pass-through body is just `(local.get $box))` with no call.
+		// wantFn is the $__struct_drop_<T> whose body carries the reclaim, and
+		// wantBody the deep-drop call that body must contain — together proving
+		// IR routing + the real (non-pass-through) shape. The pass-through body
+		// is just `(local.get $box))` with no call. Naming the function rather
+		// than searching the whole module keeps the assertion on ONE body, so a
+		// prologue (the #9481 box guard) does not break it and another type's
+		// identically-shaped body cannot satisfy it.
+		wantFn   string
 		wantBody string
 	}{
 		// SCALAR-array field (i32[]) — the k_scalar path: the buffer is freed flat
@@ -60,7 +65,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			"struct Bag { items: i32[] } " +
 				"function mk(): i32 { var b: Bag = Bag { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }; return b.items[0] + b.items[15]; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 17; }",
-			"(func $__struct_drop_Bag (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__struct_drop_Bag",
+			"    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
 		// STRUCT-array field (Inner[]) — the k_box path: $__fern_arr_dec_ptr also
 		// releases each element box. 400k cycles stay bounded ⇒ both the buffer and
@@ -71,7 +77,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			"struct Inner { v: i32 } struct Nest { inners: Inner[] } " +
 				"function mk(): i32 { var nz: Nest = Nest { inners: [Inner{v:1},Inner{v:2},Inner{v:3},Inner{v:4},Inner{v:5},Inner{v:6},Inner{v:7},Inner{v:8}] }; return nz.inners[0].v + nz.inners[7].v; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 9; }",
-			"(func $__struct_drop_Nest (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec_ptr (i32.load offset=8 (local.get $box))))",
+			"$__struct_drop_Nest",
+			"    (drop (call $__fern_arr_dec_ptr (i32.load offset=8 (local.get $box))))",
 		},
 		// DIRECT nested-struct field (Inner, not an array) — the k_struct path
 		// (Perceus slice 3c): the inner box is freed SHALLOW via $__fern_arr_dec at
@@ -83,7 +90,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			"struct Inner { v: i32, w: i32 } struct Outer { inner: Inner, tag: i32 } " +
 				"function mk(): i32 { var o: Outer = Outer { inner: Inner { v: 5, w: 6 }, tag: 3 }; return o.inner.v + o.inner.w + o.tag; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 14; }",
-			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__struct_drop_Outer",
+			"    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
 		// DEEP nested-struct field (Perceus slice 3 deep-drop): the inner is a LEAF
 		// carrying its OWN rc-array field (`Inner { items: i32[] }`). When the inner
@@ -98,7 +106,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			"struct Inner { items: i32[] } struct Outer { inner: Inner, tag: i32 } " +
 				"function mk(): i32 { var o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 }; return o.inner.items[0] + o.inner.items[15] + o.tag; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
-			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__struct_drop_Outer",
+			"    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
 		// DEPTH-2 DEEP-DROP (#5336): `Outer { mid: Mid }`, `Mid { inner: Inner }`,
 		// `Inner { items: i32[] }`. nested_field_deep_drop_ok admits arbitrary acyclic
@@ -113,7 +122,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			"struct Inner { items: i32[] } struct Mid { inner: Inner, m: i32 } struct Outer { mid: Mid, tag: i32 } " +
 				"function mk(): i32 { var o: Outer = Outer { mid: Mid { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, m: 2 }, tag: 7 }; return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag; } " +
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 26; }",
-			"(func $__struct_drop_Mid (param $box i32) (result i32)\n    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__struct_drop_Mid",
+			"    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
 		// STRING field (#4297 A2 — the k_str path): a reclaimable struct (it has the
 		// `items` rc-array field, so it gets a $__struct_drop) whose `name: string`
@@ -127,7 +137,8 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			"struct R { name: string, items: i32[] } " +
 				"function mk(pre: string): i32 { var r: R = R { name: pre + \"x\", items: [1,2,3,4] }; return r.name.len() + r.items[0]; } " +
 				"function main(): i32 { var p: string = \"aa\"; var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(p); k = k + 1; } return s - 4; }",
-			"(func $__struct_drop_R (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+			"$__struct_drop_R",
+			"    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
 	}
 
@@ -137,8 +148,12 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
-			if !strings.Contains(string(wat), tc.wantBody) {
-				t.Fatalf("%s: emitted $__struct_drop body missing real deep-drop\nwant substring:\n%s\n--- WAT ---\n%s", tc.name, tc.wantBody, wat)
+			bodies := wasmFuncBodies(string(wat), tc.wantFn+" ")
+			if len(bodies) != 1 {
+				t.Fatalf("%s: want exactly one %s body, found %d\n--- WAT ---\n%s", tc.name, tc.wantFn, len(bodies), wat)
+			}
+			if !strings.Contains(bodies[0], tc.wantBody) {
+				t.Fatalf("%s: %s body missing real deep-drop\nwant substring:\n%s\n--- BODY ---\n%s", tc.name, tc.wantFn, tc.wantBody, bodies[0])
 			}
 			watPath := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watPath, wat, 0o644); err != nil {

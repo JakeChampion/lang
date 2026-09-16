@@ -92,21 +92,41 @@ func TestSelfHostNullStructDropWasmIR(t *testing.T) {
 // no guard.
 func unguardedStructDropBodies(wat string) []string {
 	var bad []string
-	lines := strings.Split(wat, "\n")
-	for i, line := range lines {
-		name, ok := strings.CutPrefix(strings.TrimSpace(line), "(func $__struct_drop_")
-		if !ok {
+	for _, body := range wasmFuncBodies(wat, "$__struct_drop_") {
+		lines := strings.Split(body, "\n")
+		if len(lines) < 2 {
 			continue
 		}
-		name, _, _ = strings.Cut(name, " ")
-		if i+1 >= len(lines) {
-			continue
-		}
-		next := strings.TrimSpace(lines[i+1])
+		next := strings.TrimSpace(lines[1])
 		if next == "(local.get $box))" || strings.HasPrefix(next, "(if (i32.ge_u (local.get $box) (i32.const ") {
 			continue
 		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(lines[0]), "(func $__struct_drop_"), " ")
 		bad = append(bad, name)
 	}
 	return bad
+}
+
+// wasmFuncBodies returns each emitted `(func <prefix>…)` body in `wat`, header
+// line included, from the header through the line before the next function.
+//
+// Matching a function by name and reading its body is what lets a test assert
+// what is in ONE body: a bare substring search over the whole module spans
+// whatever follows, so it breaks whenever a prologue is added (the #9481 guard
+// broke six such assertions) and it can match text belonging to a different
+// type's body.
+func wasmFuncBodies(wat, prefix string) []string {
+	var out []string
+	lines := strings.Split(wat, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "(func "+prefix) {
+			continue
+		}
+		body := []string{line}
+		for j := i + 1; j < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[j]), "(func "); j++ {
+			body = append(body, lines[j])
+		}
+		out = append(out, strings.Join(body, "\n"))
+	}
+	return out
 }
