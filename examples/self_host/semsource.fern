@@ -991,12 +991,13 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: S
 
 // A map's methods: `insert` (spelled `set` too, as the AST lowering admits
 // both) hands over the receiver's unit and the key's and takes the map back;
-// `has` and `get_or` read through borrowed operands and answer a scalar. The
-// delete, the columns and the iteration have backend ops but no contract here
-// yet.
+// `has`, `get_or` and `len` read through borrowed operands and answer a
+// scalar. The delete, the option-typed get, the columns and the iteration
+// have backend ops but no contract here yet.
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     if (!ssasem.is_supported_map(t)) { return refused(s, "unsupported map shape"); }
+    if (fa.field == "len" && c.args.len() == 0) { return define(s, ssasem.map_len(), [recv.id], 0, "", t_i32()); }
     if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) { return map_write(c, recv, s, t); }
     if (fa.field == "has" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_has(), t_bool()); }
     if (fa.field == "get_or" && c.args.len() == 2) { return map_read(c, recv, s, t, ssasem.map_get_or(), ssasem.map_value(t)); }

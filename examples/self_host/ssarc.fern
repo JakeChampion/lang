@@ -174,15 +174,31 @@ function release_name(t: typeinfo.Type): string {
     return "__fern_rc_dec";
 }
 
-// Every key in the column is a string, so every helper here is a `_ks` one;
-// which of them depends on the value column, whose entries the map owns when
-// they are counted. The names are the AST path's, so the deep frees they reach
-// are the ones the runtime already provides.
+// A string key column takes a `_ks` member, which walks the keys through the
+// string dec; an integer one is freed whole. Which member of either depends on
+// the value column, whose entries the map owns when they are counted. The
+// names are the AST path's, so the deep frees they reach are the ones the
+// runtime already provides.
 function map_release_name(t: typeinfo.Type): string {
     var v: typeinfo.Type = ssasem.map_value(t);
-    if (ssasem.is_string(v)) { return "__fern_map_free_kvs"; }
-    if (ssasem.counted_map_value(v)) { return "__fern_map_free_ksvsa"; }
-    return "__fern_map_free_ks";
+    var ks: boolean = ssasem.is_string(ssasem.map_key(t));
+    if (ssasem.is_string(v)) {
+        if (ks) { return "__fern_map_free_kvs"; }
+        return "__fern_map_free_vs";
+    }
+    if (ssasem.counted_map_value(v)) {
+        if (ks) { return "__fern_map_free_ksvsa"; }
+        return "__fern_map_free_vsa";
+    }
+    if (ks) { return "__fern_map_free_ks"; }
+    return "__fern_map_free";
+}
+
+// The runtime's key kind: 0 a string column, whose unit the insert hands over
+// for the column to hold, and 1 an integer column, which holds no unit.
+function map_key_kind(t: typeinfo.Type): i32 {
+    if (ssasem.is_string(ssasem.map_key(t))) { return 0; }
+    return 1;
 }
 
 // The runtime's value-column kind: 0 the map owns nothing in it, 1 a string
@@ -1213,12 +1229,14 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
 // result a unit of its own because the value may be the column's or the
 // caller's default, and only a retain gives one owner to both.
 function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irlower.LowerResult {
-    if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(0, "")); }
+    if (ins.kind_tag == ssasem.map_new()) { return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), "")); }
+    if (ins.kind_tag == ssasem.map_len()) { return emit(r, ir.op_map_len()); }
     var t: typeinfo.Type = f.values[ins.args[0]];
+    var kkind: i32 = map_key_kind(t);
     var vkind: i32 = map_value_kind(t);
-    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(0, vkind != 0, vkind != 0, true, true, false, "", 0, vkind)); }
-    if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(0, "")); }
-    r = emit(r, ir.op_map_get_or(0, "", 0));
+    if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind == 0, true, false, "", 0, vkind)); }
+    if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, "")); }
+    r = emit(r, ir.op_map_get_or(kkind, "", 0));
     if (vkind == 0) { return r; }
     return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
 }
