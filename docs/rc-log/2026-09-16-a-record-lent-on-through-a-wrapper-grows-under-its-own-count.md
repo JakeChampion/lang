@@ -162,9 +162,26 @@ high-water mark did not move on `asm_modload_run` either — 3.76 GB with
 the copies and without them — because a copied buffer goes back to the
 freelist when its shared count drops, and the exact-size freelist hands it
 out again. What is left in the produced compiler's arena on the whole tree
-is not the copies, so the next instrument is the one the entry above named
-first: a `FERN_LEAKCHECK` build of the produced compiler, run with the flag
-on over a mid-sized input, reading what is live at exit.
+is not the copies.
+
+## What it was
+
+A `FERN_LEAKCHECK` build of the produced compiler, with the flag on over
+`checker.fern`, frees everything it allocates (8 bytes live at exit, from
+77 million allocations), and per input the produced compiler is leaner
+than the native-built one at every size measured (checker_run 1,198
+declarations: 1.02 GB against 1.07; irlower_run 4,014: 3.25 against 4.42;
+asm_load_run 5,205: 4.00 against 6.95). Only the whole tree (8,322)
+exhausted the arena, and the phase readout `FERN_CLIFF_REPORT` prints at
+each step of the substitution said where: the AST lowering, which
+`ircore.lower_gated` ran over every declaration for the eligibility
+verdict the substitution then replaced. Inside the produced compiler that
+lowering's working set for 8,322 declarations, beside the semantic
+lowering's own, was the arena. With the gate reading the produced body in
+the declaration's place, the produced compiler compiles the whole tree
+through the semantic path in 4.4 GB (arena 4.69 GB, against the
+native-built compiler's 7.21 GB) and its assembly is byte-identical to the
+native-built compiler's: the fixpoint holds.
 
 ## Traps
 
