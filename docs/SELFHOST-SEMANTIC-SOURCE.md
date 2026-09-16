@@ -1745,23 +1745,43 @@ lowering, with the output byte-identical. What remains is `semsource` +
 `ssaunits` + `ssarc` running once per declaration on top of the AST lowering
 that still runs for the eligibility verdict.
 
-**The fixpoint is not reached, and the reason is memory in the produced code
-of those same modules.** The produced compiler rebuilding itself through the
-semantic path prints the same tally and then exhausts the 16 GiB arena
-(exit 125) at 13.5 GB RSS — 19 minutes in before the copies were chased,
-10m25s in after (`docs/rc-log/2026-09-16-a-record-lent-on-through-a-wrapper-grows-under-its-own-count.md`)
-— where the native-built compiler does the identical job in 8.4 GB. The two
-runs execute the same algorithm on the same input; what differs is the
-memory management of the compiler running it, so the excess is the produced
-lowering's own on `semsource`, `ssaunits`, `ssarc`, `semlower` and their
-neighbours — the modules a build with `FERN_SEM_IR` unset never executes,
-which is why the whole-tree run above is twelve times leaner and this one
-is not. The shared-append copies were not it: with them cut from 5.8 GB to
-577 MB on `asm_modload_run`, the arena's high-water mark on that input did
-not move, because a copied buffer returns to the exact-size freelist. A
-`FERN_LEAKCHECK` build of the produced compiler on a mid-sized input with
-the flag on is the instrument. `TestSelfHostSemanticWholeCompilerX86_64`
-pins the tally and the byte-identity; the fixpoint joins it when it holds.
+**Production is all or nothing.** A module with a refused declaration keeps
+the AST lowering whole: `semlower.substitution` reports the refusals and the
+tally as `produced 0 of N declarations … K refused, the AST lowering stands`
+and hands the emit `no_sub()`. A produced body beside an AST-lowered one is
+two memory conventions on one module — every crash this path has had was a
+mixed module — and the contracts `prune` reads cover the crossings it can
+see, not every data structure that crosses. The bisect knobs
+(`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`) keep the mixed module, which is
+what they exist to halve, and the production suite's skip legs run under
+them. The other half of the same decision: a declaration the substitution
+produced is not lowered by the AST lowering at all (`ircore.lower_gated`
+takes the substitution and reads the produced body in its place), so the
+AST lowering's verdict is not asked for it, and a module the semantic
+lowering produces whole compiles where the AST lowering would have refused
+it — a `match` on a bare `Some(x)`, an empty array literal as a match arm's
+value — and the semantic self-build no longer pays for two lowerings of
+every declaration.
+
+**The fixpoint holds.** The produced compiler rebuilding the whole tree
+through the semantic path emits assembly byte-identical to the native-built
+compiler's, at a lower arena high-water mark: 4.69 GB against 7.21 GB
+(4.4 GB against 6.5 GB peak RSS), in 4m34s against 2m47s. What exhausted
+the 16 GiB arena before (19 minutes in, then 10) was the AST lowering
+running inside the produced compiler for every one of the 8,322
+declarations it was also producing: not a leak (a `FERN_LEAKCHECK` build
+of the produced compiler frees everything it allocates on `checker.fern`
+with the flag on) but the AST lowering's own working set, doubled by
+being asked for a verdict the substitution then discarded. With
+`ircore.lower_gated` reading the produced body in the declaration's place
+the AST lowering runs for nothing on a whole module, and the phase readout
+puts the produced compiler's arena at 0.31 GB after the gate, 0.83 GB with
+the bodies built, 1.36 GB lowered and pruned, 4.13 GB with the registries
+rewritten and the helpers merged, 4.69 GB emitted; the native-built
+compiler's at 1.77, 3.09, 3.66, 5.75 and 7.21 GB at the same points. The
+registry rewrite is the next lead in both. `TestSelfHostSemanticWholeCompilerX86_64`
+pins the tally, the byte-identity and the fixpoint.
+
 
 Read these the way this file reads every leaf: probe the refused functions by
 name before building, because the histogram has repeatedly ranked the work

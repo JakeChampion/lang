@@ -1094,6 +1094,13 @@ pub function no_sub(): Sub {
     return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty() };
 }
 
+// The body the substitution produced for declaration `i`, else the AST
+// lowering's.
+function produced_or_lowered(sub: Sub, i: i32, fd: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
+    if (sub.on && i < sub.bodies.len() && sub.bodies[i].ok) { return sub.bodies[i]; }
+    return irlower.lower_func(fd, structs, sg, for_wasm);
+}
+
 // The registry base the lowering and the emit share: the caller's own when no
 // substitution is happening, and the rewritten set when one is.
 pub function sub_sigs(sub: Sub, base: irlower.FnSigs): irlower.FnSigs {
@@ -1142,12 +1149,20 @@ pub struct Lowered {
 // `for_wasm` selects the wasm lowering shape (the erased-param widening and
 // arg-stash forms); it changes instruction selection, never whether a body
 // lowers, so the wasm gate can sit on the same cache its emit consumes.
-pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irlower.FnSigs, known: string[], for_wasm: boolean): Lowered {
+pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irlower.FnSigs, known: string[], for_wasm: boolean, sub: Sub): Lowered {
     var cache: irlower.LowerResult[] = [];
     var freg: irlower.SigReg = module_func_reg(mod);
+    // The bodies the substitution defines beside the declarations, which a
+    // produced body calls by name the way an AST one calls a declaration.
+    var extra: string[] = [];
+    for x in sub.extra { extra = extra.append(x.name); }
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[i], structs, sg, for_wasm);
+        // A declaration the substitution produced is not lowered again: its
+        // body is the one the emit reads, and the AST lowering's verdict on it
+        // is not asked for, so the semantic lowering reaches what the AST
+        // lowering refuses.
+        var r: irlower.LowerResult = produced_or_lowered(sub, i, mod.funcs[i], structs, sg, for_wasm);
         if (!r.ok) {
             if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (did not lower: " + r.why + ")"); }
             return Lowered { ok: false, cache: [] };
@@ -1156,12 +1171,12 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
         while (j < r.ops.len()) {
             var o: ir.Op = r.ops[j];
             if (o.kind_tag == 149) {  // call_direct
-                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
                     if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
                     return Lowered { ok: false, cache: [] };
                 }
             } else if (o.kind_tag == 6) {  // const_func
-                if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+                if (!module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
                     if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)"); }
                     return Lowered { ok: false, cache: [] };
                 }

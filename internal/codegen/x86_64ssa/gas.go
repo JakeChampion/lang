@@ -394,7 +394,19 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 // with the matching save/restore. `restore` emits the callee-saved reloads that
 // precede each return.
 func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
-	for bi, blk := range p.Blocks {
+	order := LayoutOrder(p)
+	// nextInLayout[bi] is the block physically following bi in the emitted
+	// order, or -1 for the last one: a branch to it needs no instruction.
+	nextInLayout := make([]int, len(p.Blocks))
+	for i := range nextInLayout {
+		nextInLayout[i] = -1
+	}
+	for oi := 0; oi+1 < len(order); oi++ {
+		nextInLayout[order[oi]] = order[oi+1]
+	}
+	for _, bi := range order {
+		blk := p.Blocks[bi]
+		next := nextInLayout[bi]
 		w(".L_%s_b%d:", label, bi)
 		insts, cmpLine, jcc := fuseBranchCmp(blk)
 		for ii, in := range insts {
@@ -519,7 +531,7 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			w("\tret")
 		case TJmp:
 			// A block that ends where its successor begins falls through.
-			if blk.Term.Target != bi+1 {
+			if blk.Term.Target != next {
 				w("\tjmp .L_%s_b%d", label, blk.Term.Target)
 			}
 		case TBrIf:
@@ -528,20 +540,20 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			// condition to the false arm and fall through to the true one.
 			t, f := blk.Term.True, blk.Term.False
 			if jcc != "" {
-				if inv, ok := invertJcc(jcc); ok && t == bi+1 && f != bi+1 {
+				if inv, ok := invertJcc(jcc); ok && t == next && f != next {
 					w("\t%s .L_%s_b%d", inv, label, f)
 					break
 				}
 				w("\t%s .L_%s_b%d", jcc, label, t)
 			} else {
 				w("\ttest %s, %s", reg(blk.Term.CondReg), reg(blk.Term.CondReg))
-				if t == bi+1 && f != bi+1 {
+				if t == next && f != next {
 					w("\tjz .L_%s_b%d", label, f)
 					break
 				}
 				w("\tjnz .L_%s_b%d", label, t)
 			}
-			if f != bi+1 {
+			if f != next {
 				w("\tjmp .L_%s_b%d", label, f)
 			}
 		default:

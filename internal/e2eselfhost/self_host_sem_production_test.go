@@ -49,11 +49,25 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 			}
 			for _, target := range []string{"x86-64-linux", "x86-64-sanitize", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
+					if prog.want != "" {
+						semRefusedByAST(t, fernBin, stdlibRoot, src, target)
+						got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
+						if got != prog.want {
+							t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, prog.want, report)
+						}
+						if n := semProducedCount(t, report); n < prog.atLeast {
+							t.Fatalf("produced %d declarations, want at least %d:\n%s", n, prog.atLeast, report)
+						}
+						return
+					}
 					base, _, baseLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, false, "")
 					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, "")
 					if got != base {
 						t.Fatalf("FERN_SEM_IR changed the answer:\n with = %q\nwithout = %q\nreport: %s",
 							got, base, report)
+					}
+					if prog.skip == "" && prog.refuses != "" && !strings.Contains(report, prog.refuses) {
+						t.Fatalf("FERN_SEM_IR did not report %q:\n%s", prog.refuses, report)
 					}
 					if prog.skip != "" {
 						mixed, mixedReport, mixedLeak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, true, prog.skip)
@@ -90,6 +104,27 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// semRefusedByAST asserts the AST lowering refuses the program outright: with
+// the semantic path off the compile fails and strict mode names the bail site.
+// It is what makes a `want` case a claim about reach rather than agreement.
+func semRefusedByAST(t *testing.T, fernBin, stdlibRoot, src, target string) {
+	t.Helper()
+	if target == "x86-64-sanitize" {
+		target = "x86-64-linux"
+	}
+	out := filepath.Join(t.TempDir(), "prog")
+	cmd := exec.Command(fernBin, "-target", target, "-emit", "asm", src, stdlibRoot, "-o", out)
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_STRICT_IR=1")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("the AST lowering compiled a program the case says it refuses")
+	}
+	if !strings.Contains(stderr.String(), "did not lower") {
+		t.Fatalf("the AST lowering failed for another reason:\n%s", stderr.String())
 	}
 }
 
@@ -202,9 +237,16 @@ var semProductionPrograms = []struct {
 	// hold together.
 	skip string
 	// refuses, when set, is a line the skip leg's report must carry: a
-	// produced body the mixed module has to turn off, and why.
+	// produced body the mixed module has to turn off, and why. Without a skip
+	// leg it is a line the plain report must carry: the refusal that drops
+	// the whole module to the AST lowering.
 	refuses string
-	src     string
+	// want, when set, is the answer ("<exit>|<stdout>") of a program the AST
+	// lowering REFUSES and the semantic lowering produces whole, confirmed
+	// against the native compiler; the AST leg is asserted to refuse it
+	// rather than run.
+	want string
+	src  string
 }{
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
@@ -549,7 +591,9 @@ function main(): i32 {
 	// mixed: the produced bodies are emitted beside AST-lowered ones, with
 	// ssarc.caller_sigs holding the two sides' release of a shared result
 	// together. It answers the same either way, which is the whole point.
-	{name: "capture-write", atLeast: 1, src: `
+	// A whole-module fallback: the capture the closure writes is refused, and
+	// with it the module keeps the AST lowering whole rather than mixing.
+	{name: "capture-write", atLeast: 0, refuses: "the AST lowering stands", src: `
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
     var total: i32 = 0;
@@ -619,6 +663,88 @@ function main(): i32 {
 	// annotation in every body and dropped that flag, so the checker typed
 	// the binding `string` against a `str` value and every function holding
 	// one refused. Produces 0 of 2 with the flag dropped.
+	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
+	// array arm and an empty array literal as an arm's value are both
+	// refused by the AST lowering ("immediately-invoked value block"), and
+	// produced here, so the module compiles only through the semantic path.
+	{name: "beyond-ast", atLeast: 3, want: "23|", src: `
+function picked(k: i32): i32 {
+    var rows: i32[] = [k, k];
+    var some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] });
+    return some.len();
+}
+function widen(k: i32): i32[] {
+    var o: Option[i32] = Some(k);
+    return (match (o) { Some(v) => [v, v, v], None => [] });
+}
+function main(): i32 { return picked(4) * 10 + widen(2).len(); }
+`},
+	// Value blocks: a match-expression's arms carry a string, a record, an
+	// array and a tuple to the join, and an empty array arm takes the type
+	// the binding declares rather than the arms' syntactic guess.
+	{name: "value-blocks", atLeast: 3, src: `
+enum Shade { Dark, Light }
+struct Tagged { n: i32, tag: string }
+function vb_words(k: i32): i32 {
+    var o: Option[i32] = Some(k);
+    var words: string[] = (match (o) { Some(v) => ["a" + "b", "c"], None => [] });
+    var sh: Shade = Dark;
+    var tag: string = (match (sh) { Dark => "d" + "k", Light => "l" });
+    var ot: Option[string] = Some(tag);
+    var cell: Tagged = (match (ot) { Some(t) => Tagged { n: k, tag: t }, None => Tagged { n: 0, tag: "" } });
+    var pair: (i32, string) = (if (k > 1) { (k, cell.tag) } else { (0, "z") });
+    return words.len() * 100 + tag.len() * 10 + cell.tag.len() + pair.1.len();
+}
+function vb_rows(k: i32): i32 {
+    var rows: i32[] = (if (k > 0) { [k, k] } else { [k] });
+    var orows: Option[i32[]] = Some(rows);
+    var picked: i32[] = (match (orows) { Some(r) => r, None => [0 - 1] });
+    return rows.len() * 10 + picked.len();
+}
+function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
+`},
+	// The saturating and checked operators at every width the AST lowering
+	// clamps at, matched on the exit code: each function is one shape the
+	// shared op-list builders emit over the semantic lowering's own slots.
+	{name: "overflow-operators", atLeast: 7, src: `
+function s32(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function s64(a: i64, b: i64): i64 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function u8s(a: u8, b: u8): u8 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function c32(a: i32, b: i32): i32 {
+    var t: i32 = 0;
+    match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1; } }
+    match (a -? b) { Some(v) => { t = t + v; }, None => { t = t + 2; } }
+    match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3; } }
+    match (a /? b) { Some(v) => { t = t + v; }, None => { t = t + 4; } }
+    match (a %? b) { Some(v) => { t = t + v; }, None => { t = t + 5; } }
+    match (a <<? b) { Some(v) => { t = t + v; }, None => { t = t + 6; } }
+    match (a >>? b) { Some(v) => { t = t + v; }, None => { t = t + 7; } }
+    return t;
+}
+function c64(a: i64, b: i64): i64 {
+    var t: i64 = 0;
+    match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1i64; } }
+    match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3i64; } }
+    match (a /? b) { Some(v) => { t = t + v; }, None => { t = t + 4i64; } }
+    match (a <<? b) { Some(v) => { t = t + v; }, None => { t = t + 6i64; } }
+    return t;
+}
+function cu(a: u32, b: u32): u32 {
+    var t: u32 = 0;
+    match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1u32; } }
+    match (a -? b) { Some(v) => { t = t + v; }, None => { t = t + 2u32; } }
+    match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3u32; } }
+    match (a %? b) { Some(v) => { t = t + v; }, None => { t = t + 5u32; } }
+    match (a >>? b) { Some(v) => { t = t + v; }, None => { t = t + 7u32; } }
+    return t;
+}
+function main(): i32 {
+    var r: i32 = s32(2147483000, 1000) + s32(-5, 7) + (u32s(4000000000u32, 500000000u32) as i32) + ((s64(9223372036854775000i64, 1000i64) >> 40i64) as i32) + (u8s(200u8, 100u8) as i32);
+    r = r + c32(2147483000, 1000) + c32(7, 0) + c32(-2147483648, -1) + ((c64(5i64, 3i64) & 1023i64) as i32) + (cu(4000000000u32, 500000000u32) as i32);
+    return r & 255;
+}
+`},
 	{name: "str-binding-beside-a-generic-struct", atLeast: 2, src: `
 struct Box[T] { v: T }
 function head(s: string): i32 {

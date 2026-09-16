@@ -265,6 +265,18 @@ next slice, and arm64's emitter has the first two of the four already
 (0 jumps to the next label, 4 constants moved before a compare, on the same
 program) but reloads the length 401 times.
 
+**Layout, the next day.** The `jmp` where neither arm is the next block was
+arm64's `layoutOrder`, a walk that follows each block's fallthrough successor
+(a jump's target, a conditional's false arm) as far as it goes and parks the
+other arm for a later chain, applied at render time to the shared abstract
+program. It now lives in `x86_64ssa` as `LayoutOrder` and both renderers emit
+in that order. On `coreutils/sort.fern` under x86-64 SSA: 2,005 `jmp` → 1,211,
+60,277 static instructions → 59,483, `sort -n` on 200k lines 4.19e9 → 4.12e9
+instructions, and 2M lines `sort -n` 6.57 s → 6.48 s, `sort` 3.04 s → 2.96 s
+(flat: 7.81 s and 2.97 s), outputs byte-identical. The remaining three
+shapes (the `movsxd` after an i32 add, the copy out of a load's scratch, the
+two reloaded parameters) are still the next slice.
+
 **So the two tracks have one blocker.** Coverage was what kept x86-64's
 claim unmeasurable; measured, the x86-64 emitter is blocked on the same
 thing as arm64's phase 4: loop-body code quality, now with a profiled real

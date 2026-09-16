@@ -107,7 +107,7 @@ function main(): i32 {
     var mod = parser.parse_module(lexer.tokenize(src));
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
-    var g = ircore.lower_gated(mod, tab, base, [], false);
+    var g = ircore.lower_gated(mod, tab, base, [], false, ircore.no_sub());
     if (!g.ok) { return 3; }
     var cache: irlower.LowerResult[] = [];
     var at: i32 = 0;

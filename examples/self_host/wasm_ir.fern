@@ -127,8 +127,8 @@ pub function lower_all_for_base(mod: parser.Module, all_structs: irlower.StructT
 // uses, and the module's IR-eligibility verdict comes from that lowering
 // (ircore.lower_gated) rather than from a separate gate pass that lowered
 // everything a first time and discarded it.
-pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs): ircore.Lowered {
-    return ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true);
+pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs, sub: ircore.Sub): ircore.Lowered {
+    return ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true, sub);
 }
 
 // str_values collects the module's distinct string literals (first-seen order,
@@ -1597,7 +1597,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // (kind_tag 62+), which emit `call $__fern_<op>_f64`. They are NOT in the
     // deferral list.
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    var g: ircore.Lowered = lower_all_gated(mod, stab, ircore.wp_fn_sigs(mod.funcs, stab));
+    var g: ircore.Lowered = lower_all_gated(mod, stab, ircore.wp_fn_sigs(mod.funcs, stab), ircore.no_sub());
     return g.ok && wasm_ir_deferrals_ok(g.cache);
 }
 
@@ -2623,7 +2623,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
 pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean): boolean {
     if (!asmcore.new_state().use_ir) { return false; }
     var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-    var g: ircore.Lowered = lower_all_gated(lm, stab, ircore.wp_fn_sigs(lm.funcs, stab));
+    var g: ircore.Lowered = lower_all_gated(lm, stab, ircore.wp_fn_sigs(lm.funcs, stab), ircore.no_sub());
     return g.ok && ir_route_final(g.cache, component, io);
 }
 
@@ -2683,7 +2683,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
     if (asmcore.new_state().use_ir) {
         var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
         var base: irlower.FnSigs = ircore.sub_sigs(sub, ircore.wp_fn_sigs(lm.funcs, stab));
-        var g: ircore.Lowered = lower_all_gated(lm, stab, base);
+        var g: ircore.Lowered = lower_all_gated(lm, stab, base, sub);
         var cache: irlower.LowerResult[] = ircore.sub_cache(sub, g.cache);
         if (g.ok && ir_route_final(cache, component, io)) {
             return emit_ir_module_mode(lm, cache, mode, base);
