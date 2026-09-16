@@ -341,14 +341,15 @@ Two concrete blockers, and only two:
    trampoline, and boxes, arrays, closures, maps and mispaired reuse tokens
    go back through `__free`. The reclamation probe agrees, so the corpus is
    **328 compared, 0 refused, 0 divergences** and the known-divergences file
-   is empty. Strings are still the gap the arm64 leg has: `__fern_str_dec`
-   leaks at rc == 1 — but with every string producer allocating through
-   `__alloc`, `__fern_str_append` grows a uniquely held accumulator in place
-   on this backend (the lift used to rename it to `__str_concat` for both
-   SSA backends), which took `examples/bench/string_build.fern` from 10x the
-   flat backend to 4x. The slowdown gate had been passing on that program
+   is empty. With every string producer allocating through `__alloc`,
+   `__fern_str_append` grows a uniquely held accumulator in place on this
+   backend (the lift used to rename it to `__str_concat` for both SSA
+   backends), which took `examples/bench/string_build.fern` from 10x the
+   flat backend to 4x — the slowdown gate had been passing on that program
    only when the machine was quiet enough to keep the absolute gap under its
-   floor.
+   floor — and `__fern_str_dec` frees at rc == 1, the string leak arm64ssa
+   still carries, which took it to 1.6x. This backend's heap now
+   reclaims everything the flat backend's does.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than

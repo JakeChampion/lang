@@ -136,11 +136,11 @@ allocation-heavy benchmarks and cost 3-15% of the time
 The x86-64 SSA emitter carries the same freelist since 2026-09-16 (#9423):
 `__alloc` / `__free` with the same classes, reached from compiled code and
 the helpers through `__ssa_alloc_pres` (size in r11, base back in r11, every
-other register and the flags preserved), the same release set, and the same
-gap — strings still leak at rc == 1. `__alloc_reuse` takes the block base as
-its token with sizes that include the rc header, and the element-retaining
-`__fern_arr_push_grow_*` spellings have their own bodies rather than aliasing
-the plain grow, for the reason given above.
+other register and the flags preserved) and the same release set, plus
+strings. `__alloc_reuse` takes the block base as its token with sizes that
+include the rc header, and the element-retaining `__fern_arr_push_grow_*` and
+`__fern_arr_cow_inplace_str` spellings have their own bodies rather than
+aliasing the plain helpers, for the reason given above.
 
 Its string producers all allocate through `__alloc` too (`__str_concat`,
 `__str_slice`, `string_from_bytes_unchecked` and the rest; `Reader.read_chunk`
@@ -149,12 +149,15 @@ same class), which is what makes `__fern_str_append` real on this backend:
 every heap string is an `__alloc` of at least `len + 8` bytes, so the size
 class of `len + 8` is capacity the string owns whatever produced it, and a
 uniquely held accumulator whose grown length still fits that class takes the
-piece in place. The lift hands `__fern_str_append` through unchanged; arm64ssa
-branches it to `__str_concat`, since a heap that never frees a string gains
-nothing from growing one. On x86-64 `examples/bench/string_build.fern` went
-from 178 ms to 71 ms against the flat backend's 17 ms; the rest of that gap is
-the leak — every copy lands in fresh memory where the flat backend's freelist
-hands the same few blocks back.
+piece in place, and the same invariant is what lets `__fern_str_dec` free at
+rc == 1 here — base `ptr-8`, `len+8` bytes, a class the block always covers —
+where arm64ssa's paragraph above still cannot. The lift hands
+`__fern_str_append` through unchanged and releases the slice an unfused
+`__fern_str_append_range` borrows; arm64ssa branches the append to
+`__str_concat`, since a heap that never frees a string gains nothing from
+growing one. On x86-64 `examples/bench/string_build.fern` went from 178 ms to
+71 ms with the append and to 27 ms with the free, against the flat
+backend's 17 ms.
 
 ### Helper port order (leaf-first)
 

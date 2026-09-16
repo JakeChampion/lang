@@ -1823,7 +1823,8 @@ func TestLiftMarksAStaticClosureCell(t *testing.T) {
 
 // TestLiftStrAppendRangeUnfuses: `__fern_str_append_range(a, s, lo, hi)` has
 // no emitter in these backends. The lift expands it back into the pair it
-// fuses, a slice appended to the accumulator.
+// fuses, a slice appended to the accumulator, and releases the slice the
+// append borrowed.
 func TestLiftStrAppendRangeUnfuses(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
@@ -1849,15 +1850,18 @@ func TestLiftStrAppendRangeUnfuses(t *testing.T) {
 			names = append(names, op.Str)
 		}
 	}
-	want := []string{"__str_slice", "__fern_str_append"}
-	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
+	want := []string{"__str_slice", "__fern_str_append", "__fern_str_dec"}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
 		t.Fatalf("calls = %v, want %v (the fused helper has no emitter here)", names, want)
 	}
-	slice, concat := out.Blocks[0].Ops[4], out.Blocks[0].Ops[5]
+	slice, concat, dec := out.Blocks[0].Ops[4], out.Blocks[0].Ops[5], out.Blocks[0].Ops[6]
 	if len(slice.Args) != 3 {
 		t.Errorf("__str_slice takes %d args, want 3 (source, lo, hi)", len(slice.Args))
 	}
 	if len(concat.Args) != 2 || concat.Args[1] != slice.Result {
 		t.Errorf("__fern_str_append args = %v, want the accumulator and __str_slice's result %v", concat.Args, slice.Result)
+	}
+	if len(dec.Args) != 1 || dec.Args[0] != slice.Result {
+		t.Errorf("__fern_str_dec args = %v, want __str_slice's result %v", dec.Args, slice.Result)
 	}
 }
