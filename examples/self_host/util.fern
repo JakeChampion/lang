@@ -713,7 +713,8 @@ pub function arr_push_cliff_report(who: string, code: i32): i32 {
         Some(_) => {
             var copied: i64 = __arr_push_shared_bytes();
             eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
-                + " arr_push_shared_bytes=" + i64_to_string(copied) + "\n");
+                + " arr_push_shared_bytes=" + i64_to_string(copied)
+                + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()) + "\n");
             return code;
         },
         None => { return code; }
