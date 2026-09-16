@@ -553,7 +553,10 @@ functions.
 A call is verified against its callee's declared contract, never its body.
 `ssasem.Contract` holds the exact parameter types, one unit mode per
 parameter (value, borrow or counted, as the callee's own production reads
-them from the declaration) and the result type. `build_module` derives one
+them from the declaration) and the result type. A declaration spelling no
+result — a hoisted lambda — has the type the checker gives the first value
+it returns, read in the scope the statements before it built, and is void
+when it returns none. `build_module` derives one
 contract per declaration this boundary can produce and hands the table to
 every function; `ssasem.analyze` checks each call's argument and result types
 against it, and the unit planner treats a counted parameter like a
