@@ -49,6 +49,6 @@ func TestSSAAllocU8RejectsNegativeLength(t *testing.T) {
 	wantHelperLines(t, "__alloc_u8", body,
 		"test edi, edi",
 		"js .Lssa_allocu8_len_overflow",
-		"lea rdx, [rsi + 16]",
+		"lea edi, [rbx + 16]",
 		".Lssa_allocu8_len_overflow:")
 }

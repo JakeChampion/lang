@@ -1217,6 +1217,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_eq":                  emitStrEqHelper,
 	"__str_ord":                 emitStrOrdHelper,
 	"__str_concat":              emitStrConcatHelper,
+	"__fern_str_append":         emitStrAppendHelper,
 	"__fern_str_dec":            emitStrDecHelper,
 	"__fern_arr_dec":            emitArrDecHelper,
 	"__fern_drop_arr_str":       emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "das"),
@@ -3764,6 +3765,7 @@ func emitPollHelper(w func(string, ...any)) {
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"__fern_str_append":               {"__str_concat"},
 	"__fern_closure_drop":             {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_box_free":                 {"__free"},
 	"__fern_arr_dec":                  {"__free"},
@@ -4703,6 +4705,18 @@ func emitStrOrdHelper(w func(string, ...any)) {
 	w("\tsub w0, w2, w3")
 	w("\tsxtw x0, w0")
 	w("\tret")
+}
+
+// emitStrAppendHelper writes __fern_str_append(a, b) -> data, the string
+// self-append the IR emits for `s = s + piece`. The helper consumes `a`, and
+// on this backend a consumed string is simply left behind: __fern_str_dec
+// never frees at rc == 1, so growing the accumulator in place would save an
+// allocation this heap never reclaims anyway, and __str_concat satisfies the
+// contract with identical bytes. The x86-64 sibling grows in place.
+func emitStrAppendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_str_append"))
+	w("\tb %s", fnLabel("__str_concat"))
 }
 
 // emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: bump-allocate

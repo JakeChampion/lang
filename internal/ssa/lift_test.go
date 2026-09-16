@@ -1822,10 +1822,8 @@ func TestLiftMarksAStaticClosureCell(t *testing.T) {
 }
 
 // TestLiftStrAppendRangeUnfuses: `__fern_str_append_range(a, s, lo, hi)` has
-// no emitter in these backends and, growing a buffer in place, nothing they
-// would do with one — they bump-allocate and never reclaim. The lift expands
-// it back into the pair it fuses, the same way ssaHelperName renames
-// __fern_str_append to __str_concat.
+// no emitter in these backends. The lift expands it back into the pair it
+// fuses, a slice appended to the accumulator.
 func TestLiftStrAppendRangeUnfuses(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
@@ -1851,7 +1849,7 @@ func TestLiftStrAppendRangeUnfuses(t *testing.T) {
 			names = append(names, op.Str)
 		}
 	}
-	want := []string{"__str_slice", "__str_concat"}
+	want := []string{"__str_slice", "__fern_str_append"}
 	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
 		t.Fatalf("calls = %v, want %v (the fused helper has no emitter here)", names, want)
 	}
@@ -1860,6 +1858,6 @@ func TestLiftStrAppendRangeUnfuses(t *testing.T) {
 		t.Errorf("__str_slice takes %d args, want 3 (source, lo, hi)", len(slice.Args))
 	}
 	if len(concat.Args) != 2 || concat.Args[1] != slice.Result {
-		t.Errorf("__str_concat args = %v, want the accumulator and __str_slice's result %v", concat.Args, slice.Result)
+		t.Errorf("__fern_str_append args = %v, want the accumulator and __str_slice's result %v", concat.Args, slice.Result)
 	}
 }

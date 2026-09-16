@@ -82,6 +82,11 @@ function main(): i32 {
 		// erased the whole win. It no longer does — 182 instructions against
 		// the stack machine's 193 — so the smaller-than assertion below covers
 		// the shape that was hardest for it.
+		{"string-array-len", `function main(): i32 {
+    var xs: string[] = ["a", "b"];
+    return xs.len() as i32;
+}
+`},
 		{"call-heavy-loop-match", `enum Shape { Circle, Square, Triangle }
 function pick(n: i32): Shape {
     if (n == 0) { return Shape.Circle; }
@@ -136,15 +141,13 @@ function main(): i32 {
 		})
 	}
 
-	// The coverage endpoints. Two shapes are outside the subset for different
-	// reasons, and BOTH must refuse with a diagnostic naming the backend — that
-	// is the property that makes the subset safe to widen one slice at a time.
-	//
-	//   - A float reinterpret is refused during instruction selection, by name.
-	//   - A program needing a runtime helper the emitter has no body for used to
-	//     get all the way to the assembler and die on `undefined label
-	//     "fn___fern_drop_arr_str"`, which names neither the backend nor the
-	//     coverage gap. checkNoDanglingCalls now catches it at emit time.
+	// The coverage endpoint: a shape outside the subset must refuse with a
+	// diagnostic naming the backend — the property that makes the subset safe
+	// to widen one slice at a time. A float reinterpret is refused during
+	// instruction selection, by name. (A program needing a runtime helper the
+	// emitter had no body for was the other case, caught by
+	// checkNoDanglingCalls at emit time rather than by the assembler; every
+	// corpus helper has a body now, so that program is in the covered table.)
 	for _, c := range []struct {
 		name string
 		src  string
@@ -158,11 +161,6 @@ function main(): i32 {
     return (b % 7) as i32;
 }
 `, "reinterpret_f64_to_i64"},
-		{"missing-runtime-helper", `function main(): i32 {
-    var xs: string[] = ["a", "b"];
-    return xs.len() as i32;
-}
-`, "call target(s) the module never defines"},
 	} {
 		t.Run("uncovered-refuses-cleanly/"+c.name, func(t *testing.T) {
 			dir := t.TempDir()
