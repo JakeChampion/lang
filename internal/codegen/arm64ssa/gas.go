@@ -445,16 +445,13 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.quad 0")
 	}
 	if withStrbuf {
-		// The string-builder's length counter + byte buffer. BSS, so the large
-		// buffer costs no file space; it lands in the R+W data segment under the
-		// W^X layout, so appends can write to it.
+		// The string builder's control block: data, length, capacity.
 		w(".section .bss")
 		w(".align 8")
-		w("%s:", strbufLenSym)
+		w("%s:", strbufCtlSym)
 		w("\t.quad 0")
-		w(".align 8")
-		w("%s:", strbufDataSym)
-		w("\t.space %d", strbufBytes)
+		w("\t.quad 0")
+		w("\t.quad 0")
 	}
 	if withMapSeed {
 		// core/map's per-process string-hash seed. One word, zero-initialised —
@@ -533,17 +530,16 @@ const (
 	// the detector actually runs, so the two ship together.
 	rcUnderflowSym = "__fern_rc_underflow"
 
-	// The global string-builder: an 8-byte length counter and a fixed 64 MiB
-	// .bss byte buffer that strbuf_append writes into and strbuf_take copies out
-	// of, with no bounds check (the register backends grow theirs on demand;
-	// this experimental one never builds the compiler). It costs no file space:
-	// the W^X ELF writer stores the data segment only up to its last non-zero
-	// byte (p_filesz) and lets the loader zero-fill the rest via p_memsz, so the
-	// whole zero-init buffer is NOBITS (see elf.imageWX / trailingTrimZeros).
-	strbufLenSym  = "__ssa_strbuf_len"
-	mapSeedSym    = "__ssa_map_seed"
-	strbufDataSym = "__ssa_strbuf_data"
-	strbufBytes   = 64 << 20 // 64 MiB (NOBITS — no file cost)
+	// The global string builder behind strbuf_reset / strbuf_append /
+	// strbuf_take, which the self-hosted compiler emits its output through:
+	// one .bss control block holding the buffer's data pointer at +0, the
+	// bytes written at +8 and the capacity at +16. The buffer is an __alloc
+	// that doubles when an append would overflow it, the outgrown block
+	// freed, so it grows to whatever the program appends; a take copies the
+	// bytes into a right-sized string and keeps the buffer for the next build.
+	strbufCtlSym = "__ssa_strbuf"
+	strbufMinCap = 4096
+	mapSeedSym   = "__ssa_map_seed"
 
 	// The Reader.read_line scratch buffer: read_line reads one byte at a time into
 	// this fixed .bss buffer (reused across calls, so a read-loop doesn't leak the
@@ -3763,6 +3759,8 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push_byte":                   {"__fern_buf_reserve"},
 	"buf_push_u64":                    {"__fern_buf_reserve"},
 	"buf_take":                        {"__alloc"},
+	"strbuf_append":                   {"__alloc", "__free"},
+	"strbuf_take":                     {"__alloc"},
 	"buf_free":                        {"__free"},
 	"__alloc_reuse":                   {"__free", "__alloc"},
 	"__fern_arr_push_grow_ptr":        {"__fern_arr_push_grow", "__fern_rc_inc"},
@@ -3871,6 +3869,7 @@ var heapUsingHelpers = map[string]bool{
 	"string_from_bytes_unchecked":     true,
 	"__str_slice":                     true,
 	"args":                            true,
+	"strbuf_append":                   true,
 	"strbuf_take":                     true,
 	"env":                             true,
 	"write_file":                      true,
@@ -8696,61 +8695,106 @@ func emitExitHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 }
 
-// emitStrbufResetHelper writes strbuf_reset(): zero the global string-builder
-// length counter. Leaf; unused return is 0.
+// emitStrbufResetHelper writes strbuf_reset(): the builder starts over at
+// the buffer it has. Leaf; unused return is 0.
 func emitStrbufResetHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("strbuf_reset"))
-	w("\tadrp x0, %s", strbufLenSym)
-	w("\tadd x0, x0, #:lo12:%s", strbufLenSym)
-	w("\tstr xzr, [x0]")
+	w("\tadrp x0, %s", strbufCtlSym)
+	w("\tadd x0, x0, #:lo12:%s", strbufCtlSym)
+	w("\tstr xzr, [x0, #8]")
 	w("\tmov x0, xzr")
 	w("\tret")
 }
 
-// emitStrbufAppendHelper writes strbuf_append(s): copy the single-word string's
-// bytes (length at [s-4]) into the builder buffer past the current tail and bump
-// the length counter. Unused return is 0.
+// emitStrbufAppendHelper writes strbuf_append(s): copy the string's bytes
+// (length at [s-4]) past the builder's tail and count them. When they would
+// not fit, the buffer first moves to a block of at least twice its capacity,
+// the appended length and strbufMinCap, whichever is largest, and the old
+// block goes back to the freelist. x0=s; unused return is 0.
 func emitStrbufAppendHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("strbuf_append"))
-	w("\tldur w2, [x0, #-4]") // w2 = append length (zero-extends into x2)
-	w("\tadrp x3, %s", strbufLenSym)
-	w("\tadd x3, x3, #:lo12:%s", strbufLenSym) // x3 = &len
-	w("\tldr x4, [x3]")                        // x4 = current len
-	w("\tadrp x5, %s", strbufDataSym)
-	w("\tadd x5, x5, #:lo12:%s", strbufDataSym)
-	w("\tadd x5, x5, x4") // x5 = dst = data + len
-	w("\tmov x6, x0")     // src, clear of __ssa_bcopy's argument registers
-	w("\tmov x7, x2")     // append length
-	w("\tadd x4, x4, x2") // len += append length
-	w("\tstr x4, [x3]")
-	emitBcopyCall(w, "x5", "x6", "x7")
+	w("\tldur w2, [x0, #-4]") // n (zero-extends into x2)
+	w("\tadrp x3, %s", strbufCtlSym)
+	w("\tadd x3, x3, #:lo12:%s", strbufCtlSym)
+	w("\tldr x4, [x3, #8]")  // len
+	w("\tadd x5, x4, x2")    // len + n
+	w("\tldr x6, [x3, #16]") // cap
+	w("\tcmp x5, x6")
+	w("\tb.hi .Lssa_sba_grow")
+	w(".Lssa_sba_copy:")
+	w("\tldr x7, [x3]")     // data
+	w("\tadd x7, x7, x4")   // dst = data + len
+	w("\tstr x5, [x3, #8]") // len += n
+	w("\tmov x6, x0")       // src, clear of __ssa_bcopy's argument registers
+	w("\tmov x9, x2")       // n
+	emitBcopyCall(w, "x7", "x6", "x9")
 	w("\tmov x0, xzr")
 	w("\tret")
+	w(".Lssa_sba_grow:")
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tmov x19, x0")     // s
+	w("\tmov x20, x2")     // n
+	w("\tlsl x21, x6, #1") // twice the capacity
+	w("\tcmp x21, x5")
+	w("\tcsel x21, x5, x21, lo") // at least the grown length
+	w("\tmov x7, #%d", strbufMinCap)
+	w("\tcmp x21, x7")
+	w("\tcsel x21, x7, x21, lo")
+	w("\tmov x16, x21")
+	emitAllocPresCall(w)
+	w("\tmov x22, x16") // the new buffer
+	w("\tadrp x3, %s", strbufCtlSym)
+	w("\tadd x3, x3, #:lo12:%s", strbufCtlSym)
+	w("\tldr x1, [x3]") // the bytes so far
+	w("\tldr x2, [x3, #8]")
+	emitBcopyCall(w, "x22", "x1", "x2")
+	w("\tadrp x3, %s", strbufCtlSym)
+	w("\tadd x3, x3, #:lo12:%s", strbufCtlSym)
+	w("\tldr x0, [x3]")      // the outgrown block, if there was one
+	w("\tldr x1, [x3, #16]") // at the size it was requested
+	w("\tstr x22, [x3]")
+	w("\tstr x21, [x3, #16]")
+	w("\tcbz x1, .Lssa_sba_grown")
+	w("\tbl %s", fnLabel("__free"))
+	w(".Lssa_sba_grown:")
+	w("\tmov x0, x19")
+	w("\tmov x2, x20")
+	w("\tadrp x3, %s", strbufCtlSym)
+	w("\tadd x3, x3, #:lo12:%s", strbufCtlSym)
+	w("\tldr x4, [x3, #8]")
+	w("\tadd x5, x4, x2")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tb .Lssa_sba_copy")
 }
 
-// emitStrbufTakeHelper writes strbuf_take() -> string: bump-allocate a fresh
-// single-word rc-headered string of the current builder length, copy the builder
-// bytes into it, reset the counter, and return the new string. Leaf.
+// emitStrbufTakeHelper writes strbuf_take() -> string: a fresh single-word
+// rc string (rc=1@base, len@base+4, data@base+8) holding the builder's
+// bytes, which it then counts from zero again. Returns x0=data.
 func emitStrbufTakeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("strbuf_take"))
-	w("\tadrp x1, %s", strbufLenSym)
-	w("\tadd x1, x1, #:lo12:%s", strbufLenSym) // x1 = &len
-	w("\tldr x2, [x1]")                        // x2 = len
-	// An __alloc of len+8: rc=1@base, len@base+4, data@base+8.
-	emitAllocBlock(w, "x4", "x2", 8)
+	w("\tadrp x1, %s", strbufCtlSym)
+	w("\tadd x1, x1, #:lo12:%s", strbufCtlSym)
+	w("\tldr x2, [x1, #8]")          // len
+	emitAllocBlock(w, "x4", "x2", 8) // len + the header
 	w("\tmov w7, #1")
 	w("\tstr w7, [x4]")     // rc = 1
 	w("\tstr w2, [x4, #4]") // len
 	w("\tadd x8, x4, #8")   // x8 = data
-	w("\tadrp x9, %s", strbufDataSym)
-	w("\tadd x9, x9, #:lo12:%s", strbufDataSym) // x9 = builder buffer
-	w("\tmov x10, x2")                          // len, clear of __ssa_bcopy's argument registers
+	w("\tldr x9, [x1]")     // the builder buffer
+	w("\tmov x10, x2")      // len, clear of __ssa_bcopy's argument registers
 	emitBcopyCall(w, "x8", "x9", "x10")
-	w("\tstr xzr, [x1]") // reset len = 0
-	w("\tmov x0, x8")    // return data pointer
+	w("\tadrp x1, %s", strbufCtlSym)
+	w("\tadd x1, x1, #:lo12:%s", strbufCtlSym)
+	w("\tstr xzr, [x1, #8]") // len = 0
+	w("\tmov x0, x8")
 	w("\tret")
 }
 
@@ -10701,45 +10745,76 @@ func memAllocSeq(in x86.Inst) []string {
 // in.Signed. The trailing maskFix reproduces the model's i32 width mask.
 func memLoadSeq(in x86.Inst) []string {
 	d, dw := xreg(in.Dst), wreg(in.Dst)
-	mem := fmt.Sprintf("[%s, #%d]", xreg(in.Src), in.Imm)
+	pre, mem := memOperand(xreg(in.Src), in.Imm, int(in.Bytes))
 	// AArch64's loads already sign- or zero-extend into the full register, so
 	// an i32 result's sign-extension is either part of the load's own form or a
 	// no-op — only the 8-byte load actually narrows.
 	narrow := in.W != 64
+	var load string
 	switch in.Bytes {
 	case 8:
-		return append([]string{fmt.Sprintf("ldr %s, %s", d, mem)}, maskFix(in.Dst, in.W)...)
+		load = fmt.Sprintf("ldr %s, %s", d, mem)
+		return append(append(pre, load), maskFix(in.Dst, in.W)...)
 	case 4:
 		if narrow {
-			return []string{fmt.Sprintf("ldrsw %s, %s", d, mem)}
+			load = fmt.Sprintf("ldrsw %s, %s", d, mem)
+		} else {
+			load = fmt.Sprintf("ldr %s, %s", dw, mem) // zero-extends to 64
 		}
-		return []string{fmt.Sprintf("ldr %s, %s", dw, mem)} // zero-extends to 64
 	case 2:
 		if in.Signed {
-			return []string{fmt.Sprintf("ldrsh %s, %s", d, mem)}
+			load = fmt.Sprintf("ldrsh %s, %s", d, mem)
+		} else {
+			load = fmt.Sprintf("ldrh %s, %s", dw, mem)
 		}
-		return []string{fmt.Sprintf("ldrh %s, %s", dw, mem)}
 	default: // 1 byte
 		if in.Signed {
-			return []string{fmt.Sprintf("ldrsb %s, %s", d, mem)}
+			load = fmt.Sprintf("ldrsb %s, %s", d, mem)
+		} else {
+			load = fmt.Sprintf("ldrb %s, %s", dw, mem)
 		}
-		return []string{fmt.Sprintf("ldrb %s, %s", dw, mem)}
 	}
+	return append(pre, load)
 }
 
 // memStoreSeq renders a store of the low in.Bytes bytes of Src2 to [Src + Imm].
 func memStoreSeq(in x86.Inst) []string {
-	mem := fmt.Sprintf("[%s, #%d]", xreg(in.Src), in.Imm)
+	pre, mem := memOperand(xreg(in.Src), in.Imm, int(in.Bytes))
+	var store string
 	switch in.Bytes {
 	case 1:
-		return []string{fmt.Sprintf("strb %s, %s", wreg(in.Src2), mem)}
+		store = fmt.Sprintf("strb %s, %s", wreg(in.Src2), mem)
 	case 2:
-		return []string{fmt.Sprintf("strh %s, %s", wreg(in.Src2), mem)}
+		store = fmt.Sprintf("strh %s, %s", wreg(in.Src2), mem)
 	case 4:
-		return []string{fmt.Sprintf("str %s, %s", wreg(in.Src2), mem)}
+		store = fmt.Sprintf("str %s, %s", wreg(in.Src2), mem)
 	default: // 8 bytes
-		return []string{fmt.Sprintf("str %s, %s", xreg(in.Src2), mem)}
+		store = fmt.Sprintf("str %s, %s", xreg(in.Src2), mem)
 	}
+	return append(pre, store)
+}
+
+// memOperand renders [base + imm] for an access of `bytes` bytes. An offset
+// the instruction can carry (the unsigned scaled form up to 4095 units of
+// the access size, or the unscaled -256..255) stays in the operand; any
+// other is added into x16 first, which nothing live around a memory op
+// occupies.
+func memOperand(base string, imm int64, bytes int) (pre []string, mem string) {
+	scaled := imm >= 0 && imm <= 4095*int64(bytes) && imm%int64(bytes) == 0
+	if scaled || (imm >= -256 && imm <= 255) {
+		return nil, fmt.Sprintf("[%s, #%d]", base, imm)
+	}
+	switch {
+	case imm > 0 && imm < 4096:
+		pre = []string{fmt.Sprintf("add x16, %s, #%d", base, imm)}
+	case imm < 0 && -imm < 4096:
+		pre = []string{fmt.Sprintf("sub x16, %s, #%d", base, -imm)}
+	case imm > 0:
+		pre = append(movImmLines("x16", uint64(imm)), fmt.Sprintf("add x16, %s, x16", base))
+	default:
+		pre = append(movImmLines("x16", uint64(-imm)), fmt.Sprintf("sub x16, %s, x16", base))
+	}
+	return pre, "[x16]"
 }
 
 // Floats live in GP registers as their f64 bit pattern (like ssa.Eval and the

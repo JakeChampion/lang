@@ -1124,6 +1124,23 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			want: 4,
 		},
 		{
+			// A build that outgrows the builder's first block many times over: a
+			// 1 MB take with the right ends, then an independent build after it.
+			name: "strbuf_grows",
+			src: `function main(): i32 {
+  strbuf_reset();
+  var i: i32 = 0;
+  while (i < 100000) { strbuf_append("0123456789"); i = i + 1; }
+  var s: string = strbuf_take();
+  if (s.len() != 1000000) { return 1; }
+  if (s[0] != 48 || s[999999] != 57) { return 2; }
+  strbuf_append("tail");
+  if (strbuf_take() != "tail") { return 3; }
+  return 7;
+}`,
+			want: 7,
+		},
+		{
 			// The global string builder: reset, append three fragments, take. The
 			// result is "Hello, Fern!" (len 12). Exercises strbuf_reset / _append /
 			// _take and the shared .bss buffer.
