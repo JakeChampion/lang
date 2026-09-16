@@ -11366,6 +11366,15 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   var out: util.Diag[] = [];
   match (c.callee) {
     ast.ExprIdent(id) => {
+      // A parameter shadowing a global function's name is a function VALUE,
+      // and its consuming positions come from its own type — not from the
+      // declaration it happens to share a name with. `filter(xs, keep)`
+      // calling its own `keep` parameter was read against a user's
+      // `keep(own …)` declared elsewhere, so importing std/string stopped
+      // compiling as soon as a program declared one (#9532).
+      if (util.has_str(ctx.owned, id.name) || util.has_str(ctx.borrowed, id.name)) {
+        return out;
+      }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
         var flags: boolean[] = ow_func_flags(ctx.ofuncs, id.name);
         var i: i32 = 0;

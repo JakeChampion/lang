@@ -12303,11 +12303,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// passed to an `own` parameter of a (plain, same-module) callee must be an
 	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
 	// callees are conservatively skipped here — a later slice widens the guard.
+	// Parameters shadowing a global function name: a call through one is a
+	// call through a VALUE, whose own positions come from its type and are
+	// recorded per call node, so the by-name fallback below must not claim it
+	// (#9532). Locals are covered at the recording site, which has a scope.
+	shadowed := map[string]bool{}
+	for _, p := range fn.Params {
+		shadowed[p.Name] = true
+	}
 	guardCallArgs := func(x *ast.Call) {
 		flags, isOwn := c.callOwnFlags[x]
 		if !isOwn {
 			id, idOK := x.Callee.(*ast.Ident)
 			if !idOK {
+				return
+			}
+			if shadowed[id.Name] {
 				return
 			}
 			if flags, isOwn = c.ownFuncs[id.Name]; !isOwn {
@@ -16712,7 +16723,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// its argument, which disables argAssignable's str-view borrow.
 		var calleeOwnFlags []bool
 		if cid, ok := n.Callee.(*ast.Ident); ok {
-			calleeOwnFlags = c.info.OwnFuncs[cid.Name]
+			// Only when the name is the global function. A parameter or local
+			// that shadows it is a function VALUE, and its own positions come
+			// from its TYPE below — `filter(xs, keep)` calling its own `keep`
+			// parameter must not be read against a `keep(own …)` declared
+			// elsewhere in the program (#9532).
+			if _, isValue := c.identValueBinding(cid.Name, s); !isValue {
+				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
+			}
 		}
 		// A call through a function VALUE has no declaration to read them
 		// from; the function type carries them (`(own T) => T`).

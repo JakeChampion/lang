@@ -227,6 +227,38 @@ function f(): i32 {
 }`)
 }
 
+// A parameter or local that shadows an `own` function's name is a function
+// VALUE. Its consuming positions come from its own TYPE, not from the global
+// declaration it happens to share a name with — the stdlib's
+// `filter(xs, keep)` was being checked against a user's `keep(own …)` and
+// refusing to compile (#9532).
+func TestOwnGuardIgnoresShadowingParameter(t *testing.T) {
+	wantOK(t, "shadowing-param", ownConsumer+`
+function filterish(xs: i32[], consume: (i32) => boolean): i32 {
+    var n: i32 = 0;
+    for x in xs { if (consume(x)) { n = n + 1; } }
+    return n;
+}
+function main(): i32 { return filterish([1, 2], (v: i32) => v > 1); }`)
+}
+
+func TestOwnGuardIgnoresShadowingLocal(t *testing.T) {
+	wantOK(t, "shadowing-local", ownConsumer+`
+function f(): i32 {
+    var consume: (i32) => boolean = (v: i32) => v > 1;
+    if (consume(3)) { return 1; }
+    return 0;
+}`)
+}
+
+// The shadowing rule must not disarm the guard for the real function.
+func TestOwnGuardStillFiresForTheRealFunction(t *testing.T) {
+	wantE051(t, "unshadowed-still-guarded", ownConsumer+`
+function g(xs: i32[]): i32 {
+    return consume(xs);
+}`)
+}
+
 // A payload-less variant is spelled as a bare name, so it arrives as an Ident
 // where `Wrap([1, 2])` above arrives as a Call. Both are fresh enum values, and
 // the guard admitted only the Call shape (#9517).
