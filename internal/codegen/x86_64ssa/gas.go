@@ -146,10 +146,13 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		fnIndex[n] = i + 1
 	}
 
+	withArgs := usesArgs(helpers)
+	withEnv := usesEnv(helpers)
 	w(".intel_syntax noprefix")
 	w(".text")
 	w(".globl _start")
 	w("_start:")
+	emitProcCapture(w, withArgs, withEnv)
 	if heap {
 		emitHeapReserve(w)
 	}
@@ -276,6 +279,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", heapEndSym)
 		w("\t.quad 0")
 	}
+	emitProcBss(w, withArgs, withEnv)
 	w(".section .note.GNU-stack,\"\",@progbits")
 	asm := b.String()
 	if err := checkNoDanglingCalls(asm); err != nil {
@@ -2084,6 +2088,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"__fern_io_error":               emitIoErrorHelper,
 	"eprint":                        emitPrintHelper("eprint", 2),
+	"args":                          emitArgsHelper,
+	"env":                           emitEnvHelper,
+	"stat":                          emitStatHelper,
 }
 
 // heapUsingHelpers are runtime helpers that allocate on the SSA bump heap, so
@@ -2111,6 +2118,9 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_read_chunk": true,
 	"open_reader":                true,
 	"open_writer":                true,
+	"args":                       true,
+	"env":                        true,
+	"stat":                       true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2132,6 +2142,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_write":         {"__fern_io_error"},
 	"__method_Reader_read_chunk":    {"__fern_io_error"},
 	"open_reader":                   {"__fern_io_error"},
+	"stat":                          {"__fern_io_error"},
 	"open_writer":                   {"__fern_io_error"},
 	"__fern_buf_reserve":            {"__fern_box_free"},
 	"buf_push":                      {"__fern_buf_reserve"},
