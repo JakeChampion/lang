@@ -555,9 +555,13 @@ caller's own. A discarded call result is released at the call.
 A value-position block is not a call at all. `parser.is_value_block` names the
 zero-argument call of a zero-parameter lambda the parser desugars an
 if-expression, a match-expression, a comprehension or a `{ … }` body to, and
-this boundary INLINES it the way every backend does. Only the if-expression
-shape is produced: one `if` whose arms each `return` the block's value, joined
-at a phi.
+this boundary INLINES it the way every backend does. The if-expression shape is
+one `if` whose arms each `return` the block's value, joined at a phi. A block
+with leading statements — a `{ … }` body, or the match-expression desugars that
+route their value through a local declared ahead of a done-flag chain — runs
+them in the enclosing block, in a scope of their own, and takes the trailing
+return's value; a block whose last statement is none of an `if`, a `match` or
+a `return` is refused.
 
 The module is closed: a produced function whose callee was refused is refused
 in turn, transitively, because a contract is only honoured by a body verified

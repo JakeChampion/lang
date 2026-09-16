@@ -1266,17 +1266,29 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State): Value {
 // last is the block's value (irlower.lower_value_block). The shape the parser
 // desugars an if-EXPRESSION to is one `if` whose arms each `return` that value,
 // so it is produced here as a branch whose arms join at a phi rather than at a
-// terminator. Every other block origin — a general `{ … }` body, a
-// match-expression, a comprehension — is refused: its value comes from a tail
-// this form has no join for.
+// terminator. The match-expression desugars that route their value through a
+// LOCAL declare it ahead of the done-flag chain and return it after: the
+// leading statements run in the enclosing block, in a scope of their own, and
+// the trailing return's value is the block's. A block whose last statement is
+// none of these — a comprehension's tail, a bare expression — is refused.
 function value_block(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
     var ty: typeinfo.Type = block_type(e, c, s, expected);
     var body: ast.Stmt[] = parser.vb_body(c);
-    if (body.len() != 1) { return refused(s, "unsupported value block: " + util.i32_to_string(body.len()) + " statements"); }
+    if (body.len() == 0) { return refused(s, "unsupported value block: no statements"); }
     if (!semtypes.concrete(ty, false)) { return refused(s, "unsupported value block: type " + typeinfo.spelling(ty)); }
-    if let ast.StmtIf(f) = body[0] { return value_if(f, s, ty); }
-    if let ast.StmtMatch(m) = body[0] { return value_match(m, s, ty); }
-    return refused(s, "unsupported value block: " + block_stmt_kind(body[0]));
+    var count: i32 = s.names.len();
+    var scope: checker.Scope = s.scope;
+    var i: i32 = 0;
+    while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
+    if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+    if (!s.live) { return refused(s, "value block leaves no live edge"); }
+    var last: ast.Stmt = body[body.len() - 1];
+    var v: Value = refused(s, "unsupported value block: " + block_stmt_kind(last));
+    if let ast.StmtIf(f) = last { v = value_if(f, s, ty); }
+    if let ast.StmtMatch(m) = last { v = value_match(m, s, ty); }
+    if let ast.StmtReturn(_) = last { v = arm_value(last, s, ty); }
+    if (!v.s.ok) { return v; }
+    return Value { s: leave(v.s, count, scope), id: v.id };
 }
 
 // A value block's type: what its destination expects, where the destination
