@@ -75,14 +75,37 @@ func TestPowerOfTwoDivisionAvoidsIdiv(t *testing.T) {
 	}
 }
 
-// The sign bit's own power of two, a non-power, and a divisor only a
-// register knows all stay with the real division.
+// Division and remainder by any other i32 constant multiply by the
+// reciprocal instead, and agree with the interpreter on every sign, including
+// the most negative dividend, the unsigned dividends past 2^31, the 33-bit
+// unsigned magics (7, 641) and the wrapped signed ones (a divisor past 2^30).
+func TestConstantDivisionUsesTheReciprocal(t *testing.T) {
+	args := [][]int64{{-9, 0}, {-8, 0}, {-7, 0}, {-1, 0}, {0, 0}, {1, 0}, {7, 0}, {8, 0}, {9, 0},
+		{99, 0}, {100, 0}, {101, 0}, {-100, 0}, {123456789, 0}, {-123456789, 0},
+		{-2147483648, 0}, {2147483647, 0}, {-2147483647, 0}}
+	for _, kind := range []ssa.OpKind{ssa.OpDiv, ssa.OpRem, ssa.OpDivU, ssa.OpRemU} {
+		for _, n := range []int64{3, 5, 6, 7, 10, 100, 641, 1000, 1000000007, 2147483647, -3, -100, -5, -2147483647} {
+			asm, err := EmitAsm(binOnParams(kind, 32, n)(), 8)
+			if err != nil {
+				t.Fatalf("EmitAsm: %v", err)
+			}
+			if strings.Contains(asm, "idiv") || strings.Contains(asm, "\tdiv ") {
+				t.Errorf("%v by %d still divides:\n%s", kind, n, asm)
+			}
+			differential(t, binOnParams(kind, 32, n), args)
+		}
+	}
+}
+
+// The sign bit's own power of two, a negative power of two, a 64-bit
+// non-power, and a divisor only a register knows all stay with the real
+// division.
 func TestNonPowerOfTwoDivisionStillDivides(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		width int8
 		n     int64
-	}{{"three", 32, 3}, {"the sign bit", 32, 1 << 31}, {"a register", 32, 0}} {
+	}{{"the sign bit", 32, 1 << 31}, {"minus eight", 32, -8}, {"three at 64 bits", 64, 3}, {"a register", 32, 0}} {
 		asm, err := EmitAsm(binOnParams(ssa.OpDiv, c.width, c.n)(), 8)
 		if err != nil {
 			t.Fatalf("EmitAsm: %v", err)
@@ -91,6 +114,7 @@ func TestNonPowerOfTwoDivisionStillDivides(t *testing.T) {
 			t.Errorf("%s: division by %d no longer divides:\n%s", c.name, c.n, asm)
 		}
 	}
-	differential(t, binOnParams(ssa.OpDiv, 32, 3), [][]int64{{-9, 0}, {9, 0}})
+	differential(t, binOnParams(ssa.OpDiv, 32, -8), [][]int64{{-9, 0}, {9, 0}, {-2147483648, 0}})
+	differential(t, binOnParams(ssa.OpDiv, 64, 3), [][]int64{{-9, 0}, {9, 0}, {1 << 40, 0}})
 	differential(t, binOnParams(ssa.OpRem, 32, 0), [][]int64{{-9, 4}, {9, -4}, {7, 3}})
 }

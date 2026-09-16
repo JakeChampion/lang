@@ -17,9 +17,11 @@ package x86_64ssa
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"sort"
 
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
@@ -701,10 +703,37 @@ func foldableRightUse(reader *ssa.Op, imm int64) bool {
 	case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr:
 		return true
 	case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
-		_, ok := powerOfTwoDivisor(imm, reader.Width)
-		return ok
+		if _, ok := powerOfTwoDivisor(imm, reader.Width); ok {
+			return true
+		}
+		return magicDivisor(imm, reader.Kind, reader.Width)
 	}
 	return false
+}
+
+// magicDivisor reports whether an i32 division or remainder by the constant
+// n lowers to a multiply by its reciprocal (emitMagicDivRem): every divisor
+// but the ones with a cheaper or no lowering. Unsigned reads n's low 32 bits;
+// signed excludes 0, ±1 (the identities) and the most negative value, which
+// has no magnitude. A power of two, of either sign, is left to the shift
+// lowering or the real division. Only the 32-bit reciprocals are derived.
+func magicDivisor(n int64, k ssa.OpKind, w int8) bool {
+	if w == 64 {
+		return false
+	}
+	if k == ssa.OpDivU || k == ssa.OpRemU {
+		d := uint32(n)
+		return d > 1 && d&(d-1) != 0
+	}
+	v := int32(n)
+	if v == 0 || v == 1 || v == -1 || v == math.MinInt32 {
+		return false
+	}
+	mag := uint32(v)
+	if v < 0 {
+		mag = uint32(-v)
+	}
+	return mag&(mag-1) != 0
 }
 
 // powerOfTwoDivisor is the shift a division or remainder by the constant n
@@ -759,6 +788,9 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			if n, ok := e.consts[op.Args[1].ID]; ok {
 				if sh, ok := powerOfTwoDivisor(n, op.Width); ok {
 					return e.emitPow2DivRem(op, sh)
+				}
+				if magicDivisor(n, op.Kind, op.Width) {
+					return e.emitMagicDivRem(op, n)
 				}
 			}
 		}
@@ -1265,6 +1297,92 @@ func (e *emitter) emitPow2DivRem(op *ssa.Op, sh int64) error {
 			e.movReg(dst, bias)
 			shift(dst, ssa.OpShr, sh)
 		}
+	}
+	if dst == e.s2 {
+		e.place(op.Result, e.s2)
+	}
+	return nil
+}
+
+// emitMagicDivRem lowers an i32 division or remainder by a constant that is
+// neither 0, ±1 nor a power of two to a multiply by the reciprocal from
+// ir.DeriveMagic*32 — the same lowering the flat x86-64 backend takes, in
+// the abstract ops both renderers already have: the dividend is widened to
+// 64 bits, multiplied by the magic, and the product's high half shifted down
+// (a divide is 20-40 cycles where the multiply and shifts are a few). The
+// fixups are the reciprocal's: signed adds or subtracts the dividend back
+// when the magic wrapped and rounds a negative quotient toward zero; a 33-bit
+// unsigned magic averages the dividend and the high half by shifting so the
+// carry is kept. The remainder is the dividend less the quotient times the
+// divisor. Scratch: s1 holds the widened dividend and then the quotient, s2
+// the magic and then the divisor; the dividend's register is read until the
+// last instruction that needs it and written, if it is dst, after.
+func (e *emitter) emitMagicDivRem(op *ssa.Op, n int64) error {
+	ra, err := e.materialize(op.Args[0], e.s0)
+	if err != nil {
+		return err
+	}
+	h, m := e.s1, e.s2
+	dst := e.coalesceDst(op.Result, -1)
+	rem := op.Kind == ssa.OpRem || op.Kind == ssa.OpRemU
+	unsigned := op.Kind == ssa.OpDivU || op.Kind == ssa.OpRemU
+	bin := func(d int, k ssa.OpKind, src int, w int8) {
+		e.push(Inst{Op: BinOp, Dst: d, Src: src, K: k, W: w})
+	}
+	shift := func(d int, k ssa.OpKind, count int64, w int8) {
+		e.push(Inst{Op: BinOp, Dst: d, K: k, Imm: count, SrcImm: true, W: w})
+	}
+	var divisor int64
+	if unsigned {
+		mg := ir.DeriveMagicU32(uint32(n))
+		divisor = int64(uint32(n))
+		e.movReg(h, ra)
+		e.push(Inst{Op: UnOp, Dst: h, K: ssa.OpExtendU, W: 64})
+		e.push(Inst{Op: MovImm, Dst: m, Imm: int64(mg.M), W: 64})
+		bin(h, ssa.OpMul, m, 64)
+		shift(h, ssa.OpShrU, 32, 64) // the high half of the 64-bit product
+		if !mg.Add {
+			shift(h, ssa.OpShrU, int64(mg.S), 32)
+		} else {
+			// A 33-bit magic: (x - h) / 2 + h is (x + h) / 2 with the carry
+			// a plain add of two u32 would lose.
+			e.movReg(m, ra)
+			bin(m, ssa.OpSub, h, 32)
+			shift(m, ssa.OpShrU, 1, 32)
+			bin(m, ssa.OpAdd, h, 32)
+			shift(m, ssa.OpShrU, int64(mg.S)-1, 32)
+			e.movReg(h, m)
+		}
+	} else {
+		mg := ir.DeriveMagicS32(int32(n))
+		divisor = int64(int32(n))
+		e.movReg(h, ra)
+		e.push(Inst{Op: UnOp, Dst: h, K: ssa.OpExtendS, W: 64})
+		e.push(Inst{Op: MovImm, Dst: m, Imm: int64(mg.M), W: 64})
+		bin(h, ssa.OpMul, m, 64)
+		shift(h, ssa.OpShr, 32, 64) // the signed high half
+		switch {
+		case mg.Add:
+			bin(h, ssa.OpAdd, ra, 32)
+		case mg.Sub:
+			bin(h, ssa.OpSub, ra, 32)
+		}
+		if mg.S != 0 {
+			shift(h, ssa.OpShr, int64(mg.S), 32)
+		}
+		// The shift floors, so a negative quotient is one too low.
+		e.movReg(m, h)
+		shift(m, ssa.OpShrU, 31, 32)
+		bin(h, ssa.OpAdd, m, 32)
+	}
+	if rem {
+		// dst may be s2 (m), so the product goes in h, which dst never is.
+		e.push(Inst{Op: MovImm, Dst: m, Imm: divisor, W: 32})
+		bin(h, ssa.OpMul, m, 32)
+		e.movReg(dst, ra)
+		bin(dst, ssa.OpSub, h, 32)
+	} else {
+		e.movReg(dst, h)
 	}
 	if dst == e.s2 {
 		e.place(op.Result, e.s2)
