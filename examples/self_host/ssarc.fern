@@ -651,6 +651,111 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func):
     return r;
 }
 
+// The drops of a step less the one a construction took as its box: that value's
+// storage became the result's, so releasing it here would free a live box.
+function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32): irlower.LowerResult {
+    for value in step.drops {
+        if (value != taken) { r = drop_value(r, value, f.values[value], f.graph.nvals, f); }
+    }
+    return r;
+}
+
+// Where a block's constructions can build in a box already dying in it.
+//
+// Perceus places a drop at a value's last use, so the record a `with`-style
+// update supersedes dies BEFORE the record replacing it is built. Reuse is the
+// pairing of that drop with that later construction: instead of returning the
+// box to the allocator and taking another of the same shape, the drop keeps it
+// as a token and the construction builds in it. This is Koka's ParcReuse
+// applied to the plan's dying set rather than to syntax.
+//
+// `tokens[i]` is the value whose drop at instruction i becomes a token, and
+// `builds[i]` the token an instruction i construction builds in; -1 for
+// neither. One pairing is live at a time, so one token slot serves the block —
+// a second candidate while one is pending is simply left to drop normally.
+struct ReusePairs { tokens: i32[], builds: i32[] }
+
+// A record with no reference fields. Its box is pure storage: the reuse arm has
+// no old field value to release before the new stores, and no unit the plan
+// carried out of the donor can still be reading one. A record that owns
+// references needs both, and needs to agree with the supply chosen for each
+// carried field — its own slice.
+function reuse_shape(t: typeinfo.Type, f: ssasem.Func): boolean {
+    return named(t) != "" && !has_children(t, f);
+}
+
+function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): ReusePairs {
+    var tokens: i32[] = [];
+    var builds: i32[] = [];
+    var pending: i32 = 0 - 1;
+    var pending_at: i32 = 0 - 1;
+    var pos: i32 = 0;
+    while (pos < b.insts.len()) {
+        tokens = tokens.append(0 - 1);
+        builds = builds.append(0 - 1);
+        var ins: ssa.SInst = b.insts[pos];
+        if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+            var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
+            if (pending >= 0 && ins.kind_tag == ssasem.record_new()
+                    && semtypes.equal(f.values[ins.result], f.values[pending])
+                    && util.index_of_i32(ins.args, pending) < 0) {
+                builds = builds.with(pos, pending);
+                tokens = tokens.with(pending_at, pending);
+                pending = 0 - 1;
+                pending_at = 0 - 1;
+            } else if (pending < 0) {
+                for d in step.drops {
+                    if (pending < 0 && reuse_shape(f.values[d], f)) { pending = d; pending_at = pos; }
+                }
+            }
+        }
+        pos = pos + 1;
+    }
+    return ReusePairs { tokens: tokens, builds: builds };
+}
+
+// The donor's box when this frame holds its only count, and null otherwise —
+// the token recipe of docs/SELFHOST-PERCEUS-REUSE.md §6.2, emitted in place of
+// the drop. The runtime helper is pure: it hands a token back when the size
+// class matches and allocates when the token is null, so the shared arm
+// releases the donor's count here and passes null. The static plan already
+// proved the donor dead; the count test makes a hole in that proof degrade to a
+// fresh box rather than corrupt one another holder still reads (#4350).
+function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32, token: i32): irlower.LowerResult {
+    r = reserve(r, token + 1);
+    r = emit(r, ir.op_load_local(donor));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(donor));
+    r = emit(r, ir.op_store_local(token));
+    r = emit(r, ir.op_else());
+    r = release(r, donor, f.values[donor]);
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(token));
+    r = emit(r, ir.op_end());
+    // Dead from here: the box is the construction's, and nothing may reach it
+    // through the name it arrived under.
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_store_local(donor));
+}
+
+function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, token: i32): irlower.LowerResult {
+    var fields: semrecords.Field[] = record_fields(f.values[ins.result], f);
+    r = emit(r, ir.op_load_local(token));
+    r = emit(r, ir.op_const_i32(fields.len() + 1));
+    r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
+    r = emit(r, ir.op_store_local(ins.result));
+    var i: i32 = 0;
+    while (i < ins.args.len() && i < fields.len()) {
+        r = emit(r, ir.op_load_local(ins.result));
+        r = emit(r, ir.op_load_local(ins.args[i]));
+        if (ssasem.is_wide(fields[i].ty)) { r = emit(r, ir.op_struct_set_i64(i)); }
+        else { r = emit(r, ir.op_struct_set(i, load_width(fields[i].ty))); }
+        i = i + 1;
+    }
+    return r;
+}
+
 function at(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.Step {
     for step in p.steps {
         if (step.block == block && step.point == point && step.target == target) { return step; }
@@ -1927,6 +2032,8 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
 function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
     r = drops(r, at(p, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
+    var pairs: ReusePairs = reuse_pairs(f, p, b);
+    var token_slot: i32 = f.graph.nvals + 1;
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, b.id, pos, 0 - 1);
@@ -1937,9 +2044,11 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             var defer0: boolean = deferred_retain(f, p, step, ins);
             r = supplies(r, f, step, defer0);
             r = bracket_take(r, f, held);
-            r = instruction(r, f, p, ins, structs, defer0);
+            if (pairs.builds[pos] >= 0) { r = reuse_construct(r, f, ins, token_slot); }
+            else { r = instruction(r, f, p, ins, structs, defer0); }
             r = bracket_give(r, f, held);
-            r = drops(r, step, f);
+            if (pairs.tokens[pos] >= 0) { r = reuse_token(r, f, pairs.tokens[pos], token_slot); }
+            r = drops_less(r, step, f, pairs.tokens[pos]);
         }
         pos = pos + 1;
     }
