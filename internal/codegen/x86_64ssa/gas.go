@@ -3294,8 +3294,8 @@ func emitMismatchHelper(w func(string, ...any)) {
 // emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the first
 // `byte` at or after `from`, or -1. Leaf.
 //
-// SSE2, 16 bytes an iteration, mirroring the shipping backend's kernel
-// (x86_64.emitMemchrRuntime). The scalar loop this replaces was five
+// AVX2 32 bytes an iteration then SSE2 16, mirroring the shipping backend's
+// kernel (x86_64.emitMemchrRuntime). The scalar loop this replaces was five
 // instructions per byte, which read as a 20x flat-vs-ssa divergence on
 // examples/bench/string_find_byte and is what the #8069 ratio gate exists to
 // name. Indices rather than pointers throughout, so the whole thing fits in
@@ -3323,6 +3323,29 @@ func emitMemchrHelper(w func(string, ...any)) {
 	w("\tpunpcklbw xmm1, xmm1")
 	w("\tpunpcklwd xmm1, xmm1")
 	w("\tpshufd xmm1, xmm1, 0")
+	w("\tvpbroadcastb ymm1, xmm1")
+	// 32 bytes an iteration while at least 32 remain; a hit leaves for the
+	// caller with the upper halves cleared, as does the fall into the 16-byte
+	// legacy-SSE loop.
+	w(".Lssa_memchr_avx:")
+	w("\tmov eax, r8d")
+	w("\tsub eax, edx")
+	w("\tcmp eax, 32")
+	w("\tjl .Lssa_memchr_avx_done")
+	w("\tvmovdqu ymm0, [rdi + rdx]")
+	w("\tvpcmpeqb ymm0, ymm0, ymm1")
+	w("\tvpmovmskb eax, ymm0")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_memchr_hit32")
+	w("\tadd edx, 32")
+	w("\tjmp .Lssa_memchr_avx")
+	w(".Lssa_memchr_hit32:")
+	w("\tvzeroupper")
+	w("\tbsf eax, eax")
+	w("\tadd eax, edx")
+	w("\tret")
+	w(".Lssa_memchr_avx_done:")
+	w("\tvzeroupper")
 	w(".Lssa_memchr_vec:")
 	w("\tmov eax, r8d")
 	w("\tsub eax, edx") // bytes left at or after the cursor
@@ -3387,6 +3410,28 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("\tpunpcklbw xmm1, xmm1")
 	w("\tpunpcklwd xmm1, xmm1")
 	w("\tpshufd xmm1, xmm1, 0")
+	w("\tvpbroadcastb ymm1, xmm1")
+	// Each iteration covers the 32 bytes ENDING at the cursor, [edx-31, edx],
+	// while a whole block fits below it; the 16-byte loop takes over from
+	// whatever cursor is left, negative included.
+	w(".Lssa_rmemchr_avx:")
+	w("\tcmp edx, 31")
+	w("\tjl .Lssa_rmemchr_avx_done")
+	w("\tlea r9d, [rdx - 31]")
+	w("\tvmovdqu ymm0, [rdi + r9]")
+	w("\tvpcmpeqb ymm0, ymm0, ymm1")
+	w("\tvpmovmskb eax, ymm0")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_rmemchr_hit32")
+	w("\tsub edx, 32")
+	w("\tjmp .Lssa_rmemchr_avx")
+	w(".Lssa_rmemchr_hit32:")
+	w("\tvzeroupper")
+	w("\tbsr eax, eax") // the LAST match in the block
+	w("\tadd eax, r9d")
+	w("\tret")
+	w(".Lssa_rmemchr_avx_done:")
+	w("\tvzeroupper")
 	// Each iteration covers the 16 bytes ENDING at the cursor, [edx-15, edx].
 	w(".Lssa_rmemchr_vec:")
 	w("\tcmp edx, 15")
@@ -3443,6 +3488,26 @@ func emitAsciiRunHelper(w func(string, ...any)) {
 	// upper bits. One instruction, once — every later write to esi zeroes the
 	// top half itself.
 	w("\tmov esi, esi")
+	// 32 bytes an iteration while at least 32 remain: vpmovmskb of the raw
+	// block IS the test, so the AVX loop needs no splat either.
+	w(".Lssa_ascii_avx:")
+	w("\tmov eax, r8d")
+	w("\tsub eax, esi")
+	w("\tcmp eax, 32")
+	w("\tjl .Lssa_ascii_avx_done")
+	w("\tvmovdqu ymm0, [rdi + rsi]")
+	w("\tvpmovmskb eax, ymm0")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_ascii_hit32")
+	w("\tadd esi, 32")
+	w("\tjmp .Lssa_ascii_avx")
+	w(".Lssa_ascii_hit32:")
+	w("\tvzeroupper")
+	w("\tbsf eax, eax")
+	w("\tadd eax, esi")
+	w("\tret")
+	w(".Lssa_ascii_avx_done:")
+	w("\tvzeroupper")
 	w(".Lssa_ascii_vec:")
 	w("\tmov eax, r8d")
 	w("\tsub eax, esi") // bytes left at or after the cursor
@@ -3589,11 +3654,29 @@ func emitCountByteHelper(w func(string, ...any)) {
 	w("\tpunpcklbw xmm1, xmm1")
 	w("\tpunpcklwd xmm1, xmm1")
 	w("\tpshufd xmm1, xmm1, 0")
-	// 16 bytes an iteration while at least 16 remain, then the scalar loop
-	// takes the 0..15-byte tail — and the whole string when it is shorter than
-	// one block. The load is unaligned on purpose: the pointer comes from the
-	// allocator, so a 16-byte read starting inside the string cannot cross into
-	// an unmapped page, and a scalar align-up prologue would cost more.
+	w("\tvpbroadcastb ymm1, xmm1")
+	// 32 bytes an iteration while at least 32 remain (AVX2, in the x86-64-v3
+	// baseline), then 16 while at least 16 remain, then the scalar loop takes
+	// the 0..15-byte tail — and the whole string when it is shorter than one
+	// block. The loads are unaligned on purpose: the pointer comes from the
+	// allocator, so a read starting inside the string cannot cross into an
+	// unmapped page, and a scalar align-up prologue would cost more.
+	w(".Lssa_count_avx:")
+	w("\tmov r9d, r8d")
+	w("\tsub r9d, edx")
+	w("\tcmp r9d, 32")
+	w("\tjl .Lssa_count_avx_done")
+	w("\tvmovdqu ymm0, [rdi + rdx]")
+	w("\tvpcmpeqb ymm0, ymm0, ymm1")
+	w("\tvpmovmskb r9d, ymm0")
+	w("\tpopcnt r9d, r9d")
+	w("\tadd eax, r9d")
+	w("\tadd edx, 32")
+	w("\tjmp .Lssa_count_avx")
+	w(".Lssa_count_avx_done:")
+	// The 16-byte loop is legacy SSE: the upper halves are cleared once here,
+	// the only way from the AVX loop to it.
+	w("\tvzeroupper")
 	w(".Lssa_count_vec:")
 	w("\tmov r9d, r8d")
 	w("\tsub r9d, edx")
