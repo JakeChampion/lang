@@ -25,23 +25,31 @@ func callCrossing(calls, uses int) (*Func, Value) {
 // and restore; one read more often than that stays in a register, and a free
 // callee-saved register takes either.
 func TestLinearScanSpillsACallCrossingValueOverSavingIt(t *testing.T) {
+	scan := func(f *Func, target Target) *Allocation {
+		t.Helper()
+		a := LinearScan(f, target)
+		if msg := VerifyAllocation(a); msg != "" {
+			t.Fatalf("unsound allocation: %s", msg)
+		}
+		return a
+	}
 	callerSavedOnly := Target{NumRegs: 4, CalleeSaved: []bool{false, false, false, false}}
 	f, p := callCrossing(20, 1)
-	if a := LinearScan(f, callerSavedOnly); a.Slot[p.ID] != 0 || len(a.Slot) != 1 {
+	if a := scan(f, callerSavedOnly); a.Slot[p.ID] != 0 || len(a.Slot) != 1 {
 		t.Errorf("a parameter crossing twenty calls with one use has a register (%v); want the one spill slot", a.Reg)
 	}
 	f, p = callCrossing(1, 6)
-	if a := LinearScan(f, callerSavedOnly); len(a.Slot) != 0 {
+	if a := scan(f, callerSavedOnly); len(a.Slot) != 0 {
 		t.Errorf("a parameter read six times across one call was spilled (%v); want a register", a.Slot)
 	}
 	oneCalleeSaved := Target{NumRegs: 4, CalleeSaved: []bool{false, false, false, true}}
 	f, p = callCrossing(20, 1)
-	if a := LinearScan(f, oneCalleeSaved); a.Reg[p.ID] != 3 {
+	if a := scan(f, oneCalleeSaved); a.Reg[p.ID] != 3 {
 		t.Errorf("with a callee-saved register free the parameter is homed at %v; want register 3", a.Reg)
 	}
 	noHints := Target{NumRegs: 4}
 	f, p = callCrossing(20, 1)
-	if a := LinearScan(f, noHints); len(a.Slot) != 0 {
+	if a := scan(f, noHints); len(a.Slot) != 0 {
 		t.Errorf("a target with no callee-saved hint spilled %v; want the allocation unchanged", a.Slot)
 	}
 }
