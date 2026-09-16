@@ -283,7 +283,37 @@ func split_pair {
     ret v8
 }
 
-refused unsupported destructuring declaration
+modes result i32
+v0:i32 v1:i32 v2:i32 v3:(i32, i32) v4:(i32, (i32, i32)) v5:i32 v6:(i32, i32) v7:i32 v8:i32 v9:i32 v10:i32
+func nested_destructure {
+  b0:
+    v0 = const_int 1
+    v1 = const_int 2
+    v2 = const_int 3
+    v3 = tuple_new v1 v2
+    v4 = tuple_new v0 v3
+    v5 = tuple_get 0 v4
+    v6 = tuple_get 1 v4
+    v7 = tuple_get 0 v6
+    v8 = tuple_get 1 v6
+    v9 = binary + v5 v7
+    v10 = binary + v9 v8
+    ret v10
+}
+
+modes 2 result i32
+v0:Bag v1:string v2:i32 v3:i32[] v4:i32 v5:i32
+func struct_destructure {
+  b0:
+    v0 = param 0
+    v1 = record_get 1 v0
+    v2 = length v1
+    v3 = record_get 0 v0
+    v4 = length v3
+    v5 = binary + v2 v4
+    ret v5
+}
+
 modes 1 result i32
 v0:i32 v1:i32 v2:i32
 func halve {

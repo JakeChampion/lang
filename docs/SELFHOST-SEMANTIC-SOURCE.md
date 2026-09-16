@@ -540,10 +540,9 @@ Unsupported constructs refuse the whole function with a reason.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
-unsigned negation, generic records, the struct,
-nested and `@`-bound destructuring forms, labelled loops, the pattern
-shapes above, `defer`, receiver methods, generic methods, external and
-async functions.
+unsigned negation, generic records, labelled loops, the pattern shapes
+above, `defer`, receiver methods, generic methods, external and async
+functions.
 
 ## Calls
 
@@ -729,10 +728,9 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit the struct and nested destructuring forms or
-a generic method, so no production consumer is switched and no AST ownership
-analysis is deleted. Those forms appear nowhere in the self-hosted compiler,
-so nothing in it refuses for want of them.
+The producer does not yet admit a generic method, so no production consumer
+is switched and no AST ownership analysis is deleted. The form appears
+nowhere in the self-hosted compiler, so nothing in it refuses for want of it.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,

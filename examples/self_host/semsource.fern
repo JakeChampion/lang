@@ -1670,39 +1670,76 @@ function destructures(v: ast.StmtVar): boolean {
     return parser.is_destr_marker(v.type_name);
 }
 
-// A tuple destructure binds each name to a projection of the one initializer
-// value, which stays live under those borrows as any container does. The
-// checker's post-declaration scope types each binding, and it must be the
-// tuple's element exactly; a discard is a binding no read follows. A nested
-// position, the struct form and the `@` binder are refused.
+// A destructure binds each name in its pattern to a projection of the one
+// initializer value, which stays live under those borrows as any container
+// does: a tuple position is a `tuple_get`, a struct field a `record_get`, a
+// nested tuple position is projected and destructured again, and the `@`
+// binder names the whole value. The checker's post-declaration scope types
+// each binding, and it must be the projection's type exactly; a discard is a
+// binding no read follows.
 function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-    var names: string[] = flat_names(v);
+    var marker: parser.DestrMarker = parser.destr_marker_split(v.type_name);
     var ty: typeinfo.Type = checked(v.init, s);
-    if (names.len() == 0 || tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var whole: Value = expr(v.init, s, ty);
     s = whole.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[whole.id])); }
-    var i: i32 = 0;
-    while (i < names.len()) {
-        var elem: typeinfo.Type = bound_type(s, names[i], after);
-        if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved type of binding " + names[i] + ": " + typeinfo.spelling(elem)); }
-        if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, mismatch(names[i], elem, tuple_element_type(ty, i))); }
-        var part: Value = define(s, ssasem.tuple_get(), [whole.id], i, "", elem);
-        s = bind(part.s, names[i], part.id);
-        i = i + 1;
-    }
+    if (marker.at.len() > 0) { s = bind_projection(s, marker.at, whole.id, after); }
+    if (marker.tag.len() > 0) { s = destructure_record(v.name, marker.tag, whole.id, s, after); }
+    else { s = destructure_tuple(v.name, whole.id, s, after); }
+    if (!s.ok) { return s; }
     return State { ...s, scope: after };
 }
 
-// The names of a flat tuple pattern, and none for the struct form, the `@`
-// binder or a nested position.
-function flat_names(v: ast.StmtVar): string[] {
-    if (parser.is_destr_marker(v.type_name)) { return []; }
-    var names: string[] = pattern_names(v.name);
-    for name in names { if (name.len() == 0 || name[0] == b'(') { return []; } }
-    return names;
+function bind_projection(s: State, name: string, id: i32, after: checker.Scope): State {
+    var want: typeinfo.Type = bound_type(s, name, after);
+    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + typeinfo.spelling(want)); }
+    if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
+    return bind(s, name, id);
+}
+
+function destructure_tuple(encoded: string, whole: i32, s: State, after: checker.Scope): State {
+    var names: string[] = pattern_names(encoded);
+    var ty: typeinfo.Type = s.values[whole];
+    if (names.len() == 0 || tuple_arity(ty) != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var elem: typeinfo.Type = tuple_element_type(ty, i);
+        if (!semtypes.concrete(elem, false)) { return fail(s, "tuple projection contract"); }
+        var part: Value = define(s, ssasem.tuple_get(), [whole], i, "", elem);
+        s = part.s;
+        if (names[i].len() > 0 && names[i][0] == b'(') {
+            s = destructure_tuple(slice_unchecked(names[i], 1, names[i].len() - 1) + "", part.id, s, after);
+        } else {
+            s = bind_projection(s, names[i], part.id, after);
+        }
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s;
+}
+
+// The struct form's marker is `@sd:<Struct>:<fields>`, the fields in the
+// order the pattern's names bind them.
+function destructure_record(encoded: string, tag: string, whole: i32, s: State, after: checker.Scope): State {
+    var rest: string = slice_unchecked(tag, 4, tag.len()) + "";
+    var colon: i32 = util.index_of_sub(rest, ":");
+    if (colon < 0) { return fail(s, "unsupported destructuring declaration"); }
+    var names: string[] = pattern_names(encoded);
+    var fields: string[] = pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
+    var sig: checker.StructSig = record_schema(struct_name(s.values[whole]), s);
+    if (sig.name.len() == 0 || sig.name != slice_unchecked(rest, 0, colon) || fields.len() != names.len()) { return fail(s, "unsupported destructuring declaration"); }
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var at: i32 = record_field_index(sig, fields[i]);
+        if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) { return fail(s, "record projection contract"); }
+        var part: Value = define(s, ssasem.record_get(), [whole], at, fields[i], sig.field_types[at]);
+        s = bind_projection(part.s, names[i], part.id, after);
+        if (!s.ok) { return s; }
+        i = i + 1;
+    }
+    return s;
 }
 
 function tuple_arity(t: typeinfo.Type): i32 {
