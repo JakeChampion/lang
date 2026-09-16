@@ -81,11 +81,12 @@ func weightedSumShifted(s string, n, base int) int {
 	return total
 }
 
-// __str_eq compares 8 bytes per iteration, then one 4-byte step, then up to 3
-// single bytes. Every length from 0 to 40 lands in a different combination of
-// the three, and a mismatch in the last residue byte is what a word compare
-// gets wrong: the equal case has to survive the tail, and a difference planted
-// in it has to still be found.
+// __str_eq hands lengths of 16 and over to the __fern_mismatch kernel and
+// compares shorter operands inline: 8-byte words, then one 4-byte step, then
+// up to 3 single bytes. Every length from 0 to 40 lands on a different path or
+// residue combination, and a mismatch in the last residue byte is what a word
+// compare gets wrong: the equal case has to survive the tail, and a difference
+// planted in it has to still be found.
 //
 // The equal operand is sliced onto the heap rather than written as a second
 // literal, because identical literals share one .rodata label and the helper's

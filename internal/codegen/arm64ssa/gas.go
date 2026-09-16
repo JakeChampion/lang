@@ -3741,6 +3741,8 @@ func emitPollHelper(w func(string, ...any)) {
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"__str_eq":                        {"__fern_mismatch"},
+	"__str_ord":                       {"__fern_mismatch"},
 	"__fern_str_append":               {"__str_concat", "__fern_str_dec"},
 	"__fern_str_dec":                  {"__free"},
 	"__fern_closure_drop":             {"__fern_box_free", "__fern_rc_dec"},
@@ -4607,45 +4609,61 @@ func emitMemsetHelper(w func(string, ...any)) {
 // that layout, the arm64 siblings of the x86-64 string helpers.
 
 // emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
-// are byte-equal, else 0. Fast paths on pointer identity and length mismatch,
-// then 8 bytes per iteration, one 4-byte step and a tail of at most 3. Equality
-// needs no first-difference position, so a whole word compares in one cmp — the
-// byte loop this replaces cost six instructions per byte, which is the whole
-// cost of a linear symbol-table lookup. Leaf; both pointers are advanced.
+// are byte-equal, else 0. Fast paths on pointer identity and length mismatch
+// (length at [ptr-4]), then asks __fern_mismatch where the bytes first differ
+// once 16 or more bytes are left to compare: the NEON kernel takes 16 an
+// iteration where the word loop takes 8, and shorter strings keep the word
+// loop, whose bytes cost less than the kernel's call and vector setup. The IR
+// lowers `a == b` on strings (OpStrEq) to a call here. The link register and
+// the length are kept across the call; every other register the kernel
+// touches is caller-saved.
 func emitStrEqHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_eq"))
 	w("\tcmp x0, x1")
 	w("\tb.eq .Lssa_streq_eq") // same pointer → equal
-	w("\tldur w2, [x0, #-4]")  // len a — also the remaining count below
+	w("\tldur w4, [x0, #-4]")  // len a, the n the kernel scans
 	w("\tldur w3, [x1, #-4]")  // len b
-	w("\tcmp w2, w3")
+	w("\tcmp w4, w3")
 	w("\tb.ne .Lssa_streq_neq") // different lengths
+	// Under 16 bytes the kernel's call, frame and vector setup cost more than
+	// the bytes: a word loop, one 4-byte step and a tail of at most 3.
+	w("\tcmp w4, #16")
+	w("\tb.lo .Lssa_streq_8")
+	w("\tstp x30, x4, [sp, #-16]!")
+	w("\tmov x2, x1") // b
+	w("\tmov w1, #0") // ao
+	w("\tmov w3, #0") // bo
+	w("\tbl %s", fnLabel("__fern_mismatch"))
+	w("\tldp x30, x4, [sp], #16")
+	w("\tcmp w0, w4")
+	w("\tb.ne .Lssa_streq_neq") // a byte differs before the end
+	w("\tb .Lssa_streq_eq")
 	w(".Lssa_streq_8:")
-	w("\tcmp w2, #8")
+	w("\tcmp w4, #8")
 	w("\tb.lo .Lssa_streq_4")
-	w("\tldr x4, [x0], #8")
-	w("\tldr x5, [x1], #8")
-	w("\tcmp x4, x5")
+	w("\tldr x5, [x0], #8")
+	w("\tldr x6, [x1], #8")
+	w("\tcmp x5, x6")
 	w("\tb.ne .Lssa_streq_neq")
-	w("\tsub w2, w2, #8")
+	w("\tsub w4, w4, #8")
 	w("\tb .Lssa_streq_8")
 	w(".Lssa_streq_4:")
-	w("\tcmp w2, #4")
+	w("\tcmp w4, #4")
 	w("\tb.lo .Lssa_streq_1")
-	w("\tldr w4, [x0], #4")
-	w("\tldr w5, [x1], #4")
-	w("\tcmp w4, w5")
+	w("\tldr w5, [x0], #4")
+	w("\tldr w6, [x1], #4")
+	w("\tcmp w5, w6")
 	w("\tb.ne .Lssa_streq_neq")
-	w("\tsub w2, w2, #4")
+	w("\tsub w4, w4, #4")
 	w(".Lssa_streq_1:")
-	w("\tcbz w2, .Lssa_streq_eq")
+	w("\tcbz w4, .Lssa_streq_eq")
 	w(".Lssa_streq_byte:")
-	w("\tldrb w4, [x0], #1")
-	w("\tldrb w5, [x1], #1")
-	w("\tcmp w4, w5")
+	w("\tldrb w5, [x0], #1")
+	w("\tldrb w6, [x1], #1")
+	w("\tcmp w5, w6")
 	w("\tb.ne .Lssa_streq_neq")
-	w("\tsubs w2, w2, #1")
+	w("\tsubs w4, w4, #1")
 	w("\tb.ne .Lssa_streq_byte")
 	w(".Lssa_streq_eq:")
 	w("\tmov x0, #1")
@@ -4659,7 +4677,10 @@ func emitStrEqHelper(w func(string, ...any)) {
 // behind `<` / `<=` / `>` / `>=` on strings — the first differing byte's
 // difference, or the length difference when one is a prefix of the other.
 // Unlike __str_eq it cannot bail on a length mismatch: ordering is decided by
-// the FIRST difference. Lengths live at [ptr-4]. Leaf.
+// the FIRST difference, which __fern_mismatch finds over the shorter length
+// when that is 16 bytes or more, and a byte loop under it. Lengths live at
+// [ptr-4]. The link register, both pointers, both lengths and n are kept
+// across the call.
 func emitStrOrdHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_ord"))
@@ -4667,7 +4688,28 @@ func emitStrOrdHelper(w func(string, ...any)) {
 	w("\tldur w3, [x1, #-4]") // lb
 	w("\tcmp w2, w3")
 	w("\tcsel w4, w2, w3, lo") // n = min(la, lb), unsigned
-	w("\tmov w5, #0")          // i = 0
+	// Under 16 bytes a byte loop beats the kernel's call and setup.
+	w("\tcmp w4, #16")
+	w("\tb.lo .Lssa_strord_short")
+	w("\tstp x30, x0, [sp, #-48]!")
+	w("\tstp x1, x2, [sp, #16]")
+	w("\tstp x3, x4, [sp, #32]")
+	w("\tmov x2, x1") // b
+	w("\tmov w1, #0") // ao
+	w("\tmov w3, #0") // bo
+	w("\tbl %s", fnLabel("__fern_mismatch"))
+	w("\tldp x3, x4, [sp, #32]")
+	w("\tldp x1, x2, [sp, #16]")
+	w("\tldp x30, x5, [sp], #48") // x5 = a
+	w("\tcmp w0, w4")
+	w("\tb.hs .Lssa_strord_len")
+	w("\tldrb w6, [x5, x0]")
+	w("\tldrb w7, [x1, x0]")
+	w("\tsub w0, w6, w7")
+	w("\tsxtw x0, w0")
+	w("\tret")
+	w(".Lssa_strord_short:")
+	w("\tmov w5, #0") // i = 0
 	w(".Lssa_strord_loop:")
 	w("\tcmp w5, w4")
 	w("\tb.hs .Lssa_strord_len")
