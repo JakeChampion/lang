@@ -952,6 +952,34 @@ jobs:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticArm64$' -v -timeout 43m
 
+  # The same corpus through the self-host WASM emitter, one lane per lowering.
+  #
+  # The third backend, and the last to get a generated corpus pointed at it. It
+  # is a different emitter over a different string and map layout, and it is
+  # where the semantic lowering reaches a map column's release through a
+  # funcref table slot rather than a code address — so neither register lane
+  # covers what this one does. It found two real bugs on its first run.
+  #
+  # No cross toolchain and no qemu: the driver runs natively, emits `.wat`, and
+  # wasmtime runs that, so this is the cheapest of the three pairs.
+  diff-selfhost-wasm:
+    name: diff-selfhost-wasm-${{ matrix.lowering }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { lowering: ast, selector: TestDifferential_SelfHostWasm }
+          - { lowering: semantic, selector: TestDifferential_SelfHostSemanticWasm }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: run the fernsmith corpus through the self-host wasm emitter (${{ matrix.lowering }})
+        env:
+          FERN_SELFHOST_DIFF: "1"
+        run: go test ./internal/e2e/ -run "^${{ matrix.selector }}$" -v -timeout 43m
+
   test:
     needs: warm
     strategy:
