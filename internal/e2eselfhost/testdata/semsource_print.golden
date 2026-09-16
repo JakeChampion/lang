@@ -2822,6 +2822,30 @@ func mapped_to {
     ret v3
 }
 
+modes 2 result void
+v0:Bag v1:string v2:void
+func log {
+  b0:
+    v0 = param 0
+    v1 = record_get 1 v0
+    v2 = call print v1
+    ret
+}
+
+template instantiated
+modes 2 2 result i32
+v0:Bag v1:Option[i32] v2:void v3:void v4:i32[] v5:i32
+func log_bag {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = call Bag.log v0
+    v3 = call Option.note$i32 v1
+    v4 = record_get 0 v0
+    v5 = length v4
+    ret v5
+}
+
 modes 1 result i32[]
 v0:i32 v1:Option[i32] v2:boolean v3:i32 v4:i32[] v5:i32[] v6:i32[]
 func vb_empty {
@@ -3428,6 +3452,16 @@ func __arrm_map_to$i32$string {
     v1 = param 1
     v2 = call map_to$i32$string v0 v1
     ret v2
+}
+
+modes 2 result void
+v0:Option[i32] v1:string v2:void
+func Option.note$i32 {
+  b0:
+    v0 = param 0
+    v1 = const_str
+    v2 = call print v1
+    ret
 }
 
 modes 2 2 result string[]

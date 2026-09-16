@@ -1080,7 +1080,7 @@ function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind
 // to that template with the receiver at argument 0. `__mapm_` is the map
 // sibling. The instance is asked for on this call's request, the way any other
 // generic call asks, so the method body is produced once per element type.
-function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
     if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
     var prefix: string = "";
     if let typeinfo.TypeArray(_) = s.values[recv.id] { prefix = "__arrm_"; }
@@ -1091,12 +1091,12 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
     // refuses on the contract its receiver's spelling does not name. Keying
     // the prefix is not enough on its own: the fold leaves the method's own
     // variables on the template, and nothing here binds them.
-    if (prefix == "") { return primitive_method(c, fa, recv, s); }
+    if (prefix == "") { return primitive_method(c, fa, recv, s, statement); }
     var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
-    if (at < 0) { return primitive_method(c, fa, recv, s); }
+    if (at < 0) { return primitive_method(c, fa, recv, s, statement); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
-    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     return invoke_method(recv, c.args, contract, s);
 }
 
@@ -1106,14 +1106,14 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
 // `string` owner above; every other scalar had no owner name at all, so the
 // key was never built and the whole of std/i32's surface read as a builtin
 // this boundary does not own.
-function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
+function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
     var owner: string = typeinfo.spelling(s.values[recv.id]);
     if (owner.len() == 0) { return refused(s, "unsupported call target"); }
     var at: i32 = ssasem.find_contract(s.contracts, owner + "." + fa.field);
     if (at < 0) { return refused(s, "unsupported call target"); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
-    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     return invoke_method(recv, c.args, contract, s);
 }
 
@@ -1157,7 +1157,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         // shape this boundary lowers itself keeps its op, and the declared
         // method fills the rest; the refused attempt's state is dropped, so
         // the retry produces the arguments once.
-        var folded: Value = folded_method(c, fa, recv, s);
+        var folded: Value = folded_method(c, fa, recv, s, statement);
         if (folded.s.ok) { return folded; }
         return b;
     }
@@ -1167,7 +1167,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     if (at < 0) { return refused(s, "call target has no semantic contract: " + key); }
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
-    if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
+    if (is_void(contract.result) && !statement) { return refused(s, "unsupported void call"); }
     // A method on a generic receiver is a template the receiver instantiates.
     if (ssasem.contract_variables(contract).len() > 0) { return invoke_method(recv, c.args, contract, s); }
     recv = lend(recv, contract.params[0], contract.modes[0], keeps(s, key));
