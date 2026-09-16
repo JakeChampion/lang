@@ -1461,8 +1461,9 @@ function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expe
     return refused(s, "call target has no semantic contract: " + name);
 }
 
-// A `Some` with no destination to name its Option — a match scrutinee — is the
-// Option of its payload's own type.
+// A `Some` with no destination to name its Option — a match scrutinee, a
+// binding with no annotation — is the Option of its payload's own type, as
+// the checker infers it for the binding.
 function some_of(payload: ast.Expr, s: State): typeinfo.Type {
     var t: typeinfo.Type = checked(payload, s);
     if (!semtypes.concrete(t, false)) { return typeinfo.unchecked(); }
