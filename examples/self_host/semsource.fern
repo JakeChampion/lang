@@ -1018,6 +1018,7 @@ function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
 // Negation keeps its operand's type, so a destination width reaches the
 // operand through it; a cast names its own destination and passes none on.
 function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
+    if (u.op == "try_") { return try_expr(u, s); }
     if (parser.is_cast_op(u.op)) { return cast(e, u, s); }
     var want: typeinfo.Type = typeinfo.unchecked();
     if (u.op == "-") { want = expected; }
@@ -1027,6 +1028,64 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
     var ty: typeinfo.Type = ssasem.unary_result(u.op, s.values[operand.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id])); }
     return define(s, 10, [operand.id], 0, u.op, ty);
+}
+
+// `e?` unwraps a two-variant enum: the success payload continues the
+// expression, and the failure leaves the function carrying the same failure,
+// rebuilt at the function's own result type. It is control flow rather than an
+// operator, so the failure edge RETURNS and nothing joins — the value is the
+// payload and the block left open is the success edge.
+//
+// Success is the first variant declared and failure the second, which is the
+// order the tag test relies on (docs/TRY.md). Native's E078 has already
+// enforced both the shape and the `@try` opt-in before any of this runs, so
+// this re-derives only what the lowering needs rather than re-policing them.
+function try_expr(u: ast.ExprUnary, s: State): Value {
+    var v: Value = expr(u.operand, s, typeinfo.unchecked());
+    s = v.s;
+    if (!s.ok) { return v; }
+    var from: typeinfo.Type = s.values[v.id];
+    var flayout: i32 = union_layout(s, union_name(from));
+    var rlayout: i32 = union_layout(s, union_name(s.result));
+    if (!try_layout(flayout)) { return refused(s, "try of a value that is not a union"); }
+    if (!try_layout(rlayout)) { return refused(s, "try in a body whose result is not a union"); }
+    var fnames: string[] = variant_names(s, from, flayout);
+    var rnames: string[] = variant_names(s, s.result, rlayout);
+    if (fnames.len() != 2 || rnames.len() != 2) { return refused(s, "try of a union that is not two variants"); }
+    var good_shape: Payloads = arm_payloads(s, from, fnames[0], flayout);
+    var gone_shape: Payloads = arm_payloads(s, from, fnames[1], flayout);
+    var out_shape: Payloads = literal_payloads(s, s.result, rnames[1], rlayout);
+    if (!good_shape.found || good_shape.types.len() != 1) { return refused(s, "try of a success variant that is not one payload"); }
+    if (!gone_shape.found || !out_shape.found) { return refused(s, "try failure is not a variant"); }
+    if (gone_shape.types.len() > 1 || gone_shape.types.len() != out_shape.types.len()) {
+        return refused(s, "try failure does not match the body's result");
+    }
+    if (gone_shape.types.len() == 1 && !semtypes.equal(gone_shape.types[0], out_shape.types[0])) {
+        return refused(s, "try failure does not match the body's result");
+    }
+
+    var pred: i32 = s.cur.id;
+    var good: i32 = s.next_block;
+    var leave: i32 = good + 1;
+    s = State { ...s, next_block: leave + 1 };
+    var test: Value = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], t_bool());
+    s = terminate(test.s, t_brif(test.id, good, leave));
+
+    var gone: State = open(s, leave, [pred]);
+    var args: i32[] = [];
+    if (gone_shape.types.len() == 1) {
+        var carried: Value = define(gone, ssasem.variant_get(), [v.id], 0, fnames[1], gone_shape.types[0]);
+        gone = carried.s;
+        args = [carried.id];
+    }
+    var out: Value = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
+    s = terminate(out.s, t_ret(out.id));
+
+    return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
+}
+
+function try_layout(layout: i32): boolean {
+    return layout == semrecords.layout_option() || layout == semrecords.layout_variant();
 }
 
 // `e as T` reaches here as a unary whose operator names T. The destination is
@@ -3339,14 +3398,23 @@ function outcome_contracts(): ssasem.Contract[] {
     ];
 }
 
-// The builtins whose result owns nothing: the process arguments are a fresh
-// array of this function's own, the byte write and the two bit reinterprets
-// of the single-precision float are values, and the over-release counter and
-// the two shared-append totals are reads of a runtime word.
+// The builtins whose result owns nothing: the process arguments and the
+// random buffer are fresh arrays of this function's own, the byte write and
+// the two bit reinterprets of the single-precision float are values, the
+// three clocks read a host counter, the two sleeps hand it one, and the
+// over-release counter and the two shared-append totals are reads of a runtime
+// word. None of them is handed a reference, so none of them borrows.
 function value_contracts(): ssasem.Contract[] {
     var value: i32[] = [ssaunits.value_mode()];
     return [
         ssasem.Contract { name: "args", params: [], modes: [], result: typeinfo.TypeArray { elem: t_string() } },
+        ssasem.Contract { name: "random_bytes", params: [t_i32()], modes: value, result: typeinfo.TypeArray { elem: t_u8() } },
+        ssasem.Contract { name: "random_i32", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "now_unix_ms", params: [], modes: [], result: t_i64() },
+        ssasem.Contract { name: "now_ns", params: [], modes: [], result: t_i64() },
+        ssasem.Contract { name: "monotonic_ns", params: [], modes: [], result: t_i64() },
+        ssasem.Contract { name: "sleep_ms", params: [t_i64()], modes: value, result: t_void() },
+        ssasem.Contract { name: "sleep_ns", params: [t_i64()], modes: value, result: t_void() },
         ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
         ssasem.Contract { name: "f32_bits", params: [t_f32()], modes: value, result: t_i32() },
         ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f32() },

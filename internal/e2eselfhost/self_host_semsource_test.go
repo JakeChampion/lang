@@ -53,6 +53,10 @@ function view(s: string): string { return s; }
 // of the view and that None. The length is read once and each bound
 // evaluated once, ahead of every test.
 function window(s: string, lo: i32, hi: i32): Option[str] { return s[lo:hi]; }
+// e? is control flow rather than an operator: the failure edge RETURNS the
+// same failure rebuilt at this body's own result type, so nothing joins and
+// the value is the success payload on the edge left open.
+function unwrapped(o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v + 1); }
 function refused_call(n: i32): i32 { return abs(n); }
 function float_literal(): f64 { return 1.5; }
 // The unsigned widths: the u64 occupies the i64's slot and the u32 the i32's, and
@@ -1526,6 +1530,59 @@ struct Lit { text: string, neg: boolean }
     match (open_base()[:]) {
         Some(v) => { t = t + v.len(); },
         None => { t = t + 70; }
+    }
+    return t;
+}
+@try enum Tr { Fine(i32), Bad(string) }
+
+// e? unwraps a two-variant enum: the success payload continues the expression,
+// and the failure leaves the function with the same failure rebuilt at its own
+// result type. try_quarter takes both edges over an Option of a scalar;
+// try_head carries a VIEW off the success edge, so its source has to outlive
+// it; try_parse's failure carries a counted string, which the failure edge
+// MOVES into the variant it builds rather than copying; and try_loop runs both
+// edges five times over, so a leak on either has somewhere to show.
+@noinline function try_even(n: i32): Option[i32] {
+    if (n % 2 == 0) { return Some(n / 2); }
+    return None;
+}
+@noinline function try_quarter(n: i32): Option[i32] {
+    var h: i32 = try_even(n)?;
+    return try_even(h);
+}
+@noinline function try_opt(n: i32): i32 {
+    match (try_quarter(n)) {
+        Some(v) => { return v; },
+        None => { return 60; }
+    }
+}
+@noinline function try_head(s: string): Option[i32] {
+    var v: str = s[0:3]?;
+    return Some(v.len() + s.len());
+}
+@noinline function try_view(s: string): i32 {
+    match (try_head(s)) {
+        Some(v) => { return v; },
+        None => { return 50; }
+    }
+}
+@noinline function try_parse(n: i32): Tr {
+    if (n > 0) { return Tr.Fine(n); }
+    return Tr.Bad(grown(n + 3));
+}
+@noinline function try_msg(n: i32): Tr {
+    var v: i32 = try_parse(n)?;
+    return Tr.Fine(v * 2);
+}
+@noinline function try_loop(k: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0 - 2;
+    while (i < k) {
+        match (try_msg(i)) {
+            Fine(v) => { t = t + v; },
+            Bad(m) => { t = t + m.len(); }
+        }
+        i = i + 1;
     }
     return t;
 }
@@ -3287,6 +3344,9 @@ function main(): i32 {
     print_int(checked_temp(0)); print(""); print_int(checked_miss(0)); print("");
     print_int(checked_split(0)); print(""); print_int(checked_scan("abcd")); print("");
     print_int(open_window()); print("");
+    print_int(try_opt(8)); print(""); print_int(try_opt(3)); print("");
+    print_int(try_view("abcdef")); print(""); print_int(try_view("ab")); print("");
+    print_int(try_loop(3)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -3391,7 +3451,7 @@ function main(): i32 {
 // the new figure belongs in this constant.
 const wasmSemsourceRCLeakFloor = 8976
 
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n9\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n"
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n9\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -3545,7 +3605,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "text_predicates", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words", "map_get_hit", "map_get_int", "opt_has", "opt_words", "lam_inferred", "lam_text", "float_bound", "map_lit_words", "show", "show_pt", "labelled_sum", "inc_by", "inc_calls", "nested_arms", "mk_out", "nested_case", "guarded_pick", "guarded_words", "for_pairs", "mk_dp", "struct_unpack", "at_unpack", "nested_unpack", "guarded_and", "qualified_pick", "assoc_make", "tm_word", "tm_show", "tm_sum", "tm_words", "sm_pick", "sm_show", "map_vrec", "map_venum", "map_varr", "checked_head", "checked_mid", "checked_temp", "checked_miss", "checked_split", "checked_scan", "open_base", "open_window"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "text_predicates", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words", "map_get_hit", "map_get_int", "opt_has", "opt_words", "lam_inferred", "lam_text", "float_bound", "map_lit_words", "show", "show_pt", "labelled_sum", "inc_by", "inc_calls", "nested_arms", "mk_out", "nested_case", "guarded_pick", "guarded_words", "for_pairs", "mk_dp", "struct_unpack", "at_unpack", "nested_unpack", "guarded_and", "qualified_pick", "assoc_make", "tm_word", "tm_show", "tm_sum", "tm_words", "sm_pick", "sm_show", "map_vrec", "map_venum", "map_varr", "checked_head", "checked_mid", "checked_temp", "checked_miss", "checked_split", "checked_scan", "open_base", "open_window", "try_even", "try_quarter", "try_opt", "try_head", "try_view", "try_parse", "try_msg", "try_loop"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
