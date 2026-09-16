@@ -43,9 +43,7 @@ func emitSliceIdxHelper(name string, shift int) func(w func(string, ...any)) {
 		w("\tmov edx, dword ptr [rdi + 8]")
 		w("\tcmp esi, edx")
 		w("\tjb %s", ok)
-		w("\tmov edi, 134")
-		w("\tmov eax, 231") // Linux exit_group
-		w("\tsyscall")
+		w("\tjmp %s", abortSliceOOB)
 		w("%s:", ok)
 		w("\tmov edx, esi")
 		w("\tmov rax, qword ptr [rdi]")
@@ -71,7 +69,5 @@ func emitSliceRangeHelper(w func(string, ...any)) {
 	w("\tsub eax, edi")
 	w("\tret")
 	w(".Lssa_slice_range_trap:")
-	w("\tmov edi, 134")
-	w("\tmov eax, 231")
-	w("\tsyscall")
+	w("\tjmp %s", abortSliceRange)
 }

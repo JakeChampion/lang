@@ -6,7 +6,6 @@ package arm64ssa
 // ~2 GiB operand, so asserted on the emitted text.
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -26,18 +25,14 @@ func TestSSAStrConcatChecksLengthCeiling(t *testing.T) {
 		"add x4, x2, x3",
 		"lsr x5, x4, #31",
 		"cbnz x5, .Lssa_strcat_len_overflow",
-		".Lssa_strcat_len_overflow:")
-	if !strings.Contains(body, fmt.Sprintf("mov x0, #%d", lenOverflowExit)) {
-		t.Errorf("__str_concat's overflow abort does not exit %d:\n%s", lenOverflowExit, body)
-	}
-	if !strings.Contains(body, fmt.Sprintf("mov x2, #%d", len(msgAllocSizeOutOfRange))) {
-		t.Error("__str_concat's overflow abort writes the wrong diagnostic length")
-	}
+		".Lssa_strcat_len_overflow:",
+		"b "+abortAllocSize)
 }
 
 func TestSSAAllocU8RejectsNegativeLength(t *testing.T) {
 	body := helperText(t, emitAllocU8Helper)
 	wantHelperLines(t, "__alloc_u8", body,
 		"tbnz w0, #31, .Lssa_allocu8_len_overflow",
-		".Lssa_allocu8_len_overflow:")
+		".Lssa_allocu8_len_overflow:",
+		"b "+abortAllocSize)
 }

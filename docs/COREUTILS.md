@@ -1010,6 +1010,26 @@ with the same command shape for all three and any pipeline partner taken from
 the GNU directory so it is a constant. Wall time, mean ± σ, ≥20 runs; only
 comparable within one run on one machine.
 
+**Fern is measured under both of its compilers.** `fern` is `bin/fern`'s
+build of a utility and `fern-sh` is `bin/fern-selfhost`'s build of the same
+source, and the table carries `gnu / fern-sh` and `uutils / fern-sh` beside
+the native pair plus `fern / fern-sh` for what the two compilers cost against
+each other. The self-hosted compiler is becoming the default one (CLAUDE.md),
+so requirement 2 is not answered by the native column alone: a utility can be
+comfortably faster than GNU as native builds it and lose to GNU as the
+self-host builds it, and before this leg existed nothing in the tree would
+have said so. `FERN_BENCH_COMPILERS=native` drops back to the old single
+column.
+
+The self-host leg needs a bound the native leg never did. A self-host build
+can be slower by a factor that turns a benchmark into a hang — #8688 has
+`seq` roughly 400x slower and growing to 11 GB — so each Fern build runs one
+trial of a workload under `timeout` (60 s, `FERN_BENCH_PROBE_TIMEOUT`) before
+hyperfine sees it, and a build that does not finish gets `did not finish` in
+its cell rather than being dropped from the table. The bound is on time and
+not on memory because the arena is a 16 GiB `MAP_NORESERVE` reservation, so
+`ulimit -v` and `ulimit -d` refuse every Fern binary at startup.
+
 Baseline, first four utilities, 2026-09-05, each bench run alone on its
 machine. Ratios above 1 mean Fern is faster.
 

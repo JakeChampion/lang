@@ -55,11 +55,24 @@ it cannot find its oracle is worse than no gate.
 ```
 $ scripts/coreutils-bench                 # every utility, table to stdout
 $ scripts/coreutils-bench -o bench.md yes # one utility, table also to a file
+$ FERN_BENCH_COMPILERS=native scripts/coreutils-bench yes   # skip the self-host leg
 ```
 
-hyperfine over Fern (built with `-O`), GNU and uutils on the same workloads;
+hyperfine over Fern, GNU and uutils on the same workloads;
 `FERN_GNU_COREUTILS` and `FERN_UUTILS` name the reference directories when
 they are not on PATH. Wall time, so compare within one run only.
+
+Fern gets **two columns**, because there are two Fern compilers: `fern` is
+`bin/fern`'s build of the source and `fern-sh` is `bin/fern-selfhost`'s, both
+with `-O`. The self-hosted compiler is becoming the default one, so the
+question the epic asks — faster than GNU and uutils — has to be answered for
+its output and not only for native's. `FERN_BENCH_COMPILERS` picks `both`
+(default), `native` or `selfhost`.
+
+Each Fern build runs one trial of a workload under `timeout` before hyperfine
+sees it, so a build that cannot carry the workload is reported in its cell
+rather than hanging the bench; `FERN_BENCH_PROBE_TIMEOUT` sets the bound
+(default 60 s).
 
 ## What is here
 

@@ -12240,8 +12240,24 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Binary:
 			return x.IsStringConcat
 		case *ast.Ident:
+			// A payloadless variant is an Ident where one carrying a payload is
+			// a Call, so it reaches here rather than the Call arm below; both
+			// are fresh enum values (#9517).
+			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
+				return true
+			}
 			return owned[x.Name] || selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.FieldAccess:
+			// `Span.Empty` — a qualified payload-less variant stays a
+			// FieldAccess rather than being rewritten to an Ident, so it is
+			// recognised here (#9517).
+			if tid, ok := x.Target.(*ast.Ident); ok {
+				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+					if _, vrOk, _ := c.resolveVariant(x.Field, tid.Name); vrOk {
+						return true
+					}
+				}
+			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
