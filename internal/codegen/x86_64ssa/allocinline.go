@@ -14,10 +14,10 @@ import "fmt"
 // function __alloc and __free compute at run time (emitFreelistClass), which
 // TestInlineAllocationAgreesWithTheHelpersOnEveryClass pins.
 
-// smallClassIndex is the freelist index of an n-byte request in the exact
+// SmallClassIndex is the freelist index of an n-byte request in the exact
 // 16-byte tier, or false above it: the large tier's 3-significant-bit
 // rounding stays with the helpers.
-func smallClassIndex(n int64) (int, bool) {
+func SmallClassIndex(n int64) (int, bool) {
 	if n < 0 || n > 2048 {
 		return 0, false
 	}
@@ -34,7 +34,7 @@ func boxFreeInline(in Inst) bool {
 	if in.Op != Call || in.Callee != "__fern_box_free" || !in.SrcImm || len(in.ArgLocs) != 2 {
 		return false
 	}
-	_, ok := smallClassIndex(in.Imm + 8)
+	_, ok := SmallClassIndex(in.Imm + 8)
 	return ok
 }
 
@@ -46,7 +46,7 @@ func boxFreeInline(in Inst) bool {
 func inlineAllocLines(in Inst, numAlloc int, seed string) ([]string, bool) {
 	lbl := func(suffix string) string { return fmt.Sprintf(".Lssa_alloc_%s_%s", seed, suffix) }
 	if in.Op == MemAlloc && in.SrcImm {
-		idx, ok := smallClassIndex(in.Imm)
+		idx, ok := SmallClassIndex(in.Imm)
 		if !ok {
 			return nil, false
 		}
@@ -69,7 +69,7 @@ func inlineAllocLines(in Inst, numAlloc int, seed string) ([]string, bool) {
 	if !boxFreeInline(in) {
 		return nil, false
 	}
-	idx, _ := smallClassIndex(in.Imm + 8) // the payload plus its rc header
+	idx, _ := SmallClassIndex(in.Imm + 8) // the payload plus its rc header
 	head := fmt.Sprintf("[rip + %s + %d]", freelistSym, 8*idx)
 	s0, s1 := numAlloc, numAlloc+1
 	var out []string

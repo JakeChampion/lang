@@ -143,10 +143,11 @@ include the rc header, and the element-retaining `__fern_arr_push_grow_*` and
 `__fern_arr_cow_inplace_str` spellings have their own bodies rather than
 aliasing the plain helpers, for the reason given above.
 
-A `MemAlloc` whose size is a constant in the exact 16-byte tier pops its
-class's list inline and calls the trampoline only when the list is empty,
-and a `__fern_box_free` of a constant size pushes inline; every other
-request goes through `__alloc` and `__free` as above. The three rc
+On both SSA backends a `MemAlloc` whose size is a constant in the exact
+16-byte tier pops its class's list inline and calls the trampoline only when
+the list is empty, and a `__fern_box_free` of a constant size pushes inline;
+every other request goes through `__alloc` and `__free` as above, and so do
+all of them under the leak census, which counts there. The three rc
 primitives are rendered inline at their call sites too, exactly as their
 helper bodies read.
 
