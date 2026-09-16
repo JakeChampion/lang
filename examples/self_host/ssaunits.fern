@@ -323,7 +323,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     } else if (ins.kind_tag == ssasem.cell_set()) {
         counted = [false, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.map_insert()) {
-        counted = [true, true, ssasem.reference(f.values[ins.args[2]])];
+        counted = [true, ssasem.reference(f.values[ins.args[1]]), ssasem.reference(f.values[ins.args[2]])];
     } else if (ins.kind_tag == ssasem.append()) {
         counted = [true, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.with()) {

@@ -452,12 +452,14 @@ Unsupported constructs refuse the whole function with a reason.
   name, which is the half `TestSelfHostKnowsEveryNativeBuiltin` describes as
   self-reporting.
 
-- `Map[string, V]` at a NARROW SCALAR `V` — the runtime hash map, at the one
-  shape whose release this boundary can state. `__fern_map_free_ks` releases
-  every key in the string column and frees the scalar value column and the box;
-  a reference value column would be freed whole, dropping boxes its elements
-  still name, and a key column that is not strings is one that release does not
-  walk. Both are refused ("unsupported map shape").
+- `Map[K, V]` at a string or narrow integer `K` and a `V` the runtime's free
+  family releases: a NARROW SCALAR column freed whole, a string column or a
+  column of string arrays walked entry by entry. A string key column is walked
+  through the string dec (`__fern_map_free_ks` and its `_kvs` / `_ksvsa`
+  members); an integer one holds no unit and is freed whole (`__fern_map_free`,
+  `_vs`, `_vsa`). A key column of records, and a value column of records,
+  arrays of scalars or unions, have no release the runtime provides and stay
+  refused ("unsupported map shape").
 
   A map's unit is LINEAR. Its box on the register backends is the raw
   `{keys, vals}` pair that helper frees, with no reference count in it, so a

@@ -991,10 +991,61 @@ function main(): i32 {
     var arrMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeArray { elem: i32ty } };
     var arrMapFunc = ssasem.Func { ...mapFunc, values: [arrMapTy], params: [arrMapTy], result: arrMapTy };
     if (ssaunits.plan(arrMapFunc, [3]).why != "unsupported counted-unit type") { return 146; }
-    // A key that is not a string keys a column that release does not walk.
+    // An integer key column holds no unit, so the map is admitted and freed
+    // whole through the plain member of the free family, or the _vs one
+    // beside a string value column; its ops carry key kind 1 and hand no
+    // key unit over.
     var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
     var intMapFunc = ssasem.Func { ...mapFunc, values: [intMapTy], params: [intMapTy], result: intMapTy };
-    if (ssaunits.plan(intMapFunc, [3]).why != "unsupported counted-unit type") { return 143; }
+    if (!ssaunits.plan(intMapFunc, [3]).ok) { eprint(ssaunits.plan(intMapFunc, [3]).why); return 143; }
+    var dropMapGraph = ssa.SFunc { name: "drop_map", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 7)], term: ret(1) }] };
+    var dropIntMap = ssasem.Func { graph: dropMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: [], enums: [], calls: [] };
+    var dropIntPlan = ssaunits.plan(dropIntMap, [3]);
+    if (!dropIntPlan.ok) { eprint(dropIntPlan.why); return 169; }
+    var dropIntLowered = ssarc.lower(dropIntMap, [3], dropIntPlan, irlower.struct_tab_empty(), []);
+    if (!dropIntLowered.ok) { eprint(dropIntLowered.why); return 170; }
+    var sawIntFree: boolean = false;
+    for o in dropIntLowered.ops { if (o.str == "__fern_map_free") { sawIntFree = true; } }
+    if (!sawIntFree) { return 171; }
+    var intStrMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: strTy };
+    var dropIntStr = ssasem.Func { ...dropIntMap, values: [intStrMapTy, i32ty], params: [intStrMapTy] };
+    var dropIntStrLowered = ssarc.lower(dropIntStr, [3], ssaunits.plan(dropIntStr, [3]), irlower.struct_tab_empty(), []);
+    if (!dropIntStrLowered.ok) { eprint(dropIntStrLowered.why); return 172; }
+    var sawIntStrFree: boolean = false;
+    for o in dropIntStrLowered.ops { if (o.str == "__fern_map_free_vs") { sawIntStrFree = true; } }
+    if (!sawIntStrFree) { return 173; }
+    var intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+            ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+    var intInsert = ssasem.Func { graph: intInsertGraph, values: [intMapTy, i32ty, i32ty, intMapTy], params: [intMapTy, i32ty, i32ty], result: intMapTy, records: [], enums: [], calls: [] };
+    var intInsertPlan = ssaunits.plan(intInsert, [3, 1, 1]);
+    if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
+    var intInsertLowered = ssarc.lower(intInsert, [3, 1, 1], intInsertPlan, irlower.struct_tab_empty(), []);
+    if (!intInsertLowered.ok) { eprint(intInsertLowered.why); return 175; }
+    var sawIntSet: boolean = false;
+    for o in intInsertLowered.ops {
+        if (o.kind_tag == 125 && o.i32_imm == 1 && (o.width / 2) % 2 == 0) { sawIntSet = true; }
+        if (o.str == "__fern_rc_inc" || o.str == "__fern_rc_dec") { return 176; }
+    }
+    if (!sawIntSet) { return 177; }
+    // The length borrows the map: the op reads it and the owned map is still
+    // freed by its own helper on the way out.
+    var lenMapGraph = ssa.SFunc { name: "map_len", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
+            ssa.SInst { kind_tag: ssasem.map_len(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
+    var lenMap = ssasem.Func { graph: lenMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: [], enums: [], calls: [] };
+    var lenMapPlan = ssaunits.plan(lenMap, [3]);
+    if (!lenMapPlan.ok) { eprint(lenMapPlan.why); return 178; }
+    var lenMapLowered = ssarc.lower(lenMap, [3], lenMapPlan, irlower.struct_tab_empty(), []);
+    if (!lenMapLowered.ok) { eprint(lenMapLowered.why); return 179; }
+    var sawLen: boolean = false;
+    var sawLenFree: boolean = false;
+    for o in lenMapLowered.ops {
+        if (ir.render_op(o) == "map_len") { sawLen = true; }
+        if (o.str == "__fern_map_free") { sawLenFree = true; }
+    }
+    if (!sawLen || !sawLenFree) { return 180; }
     // A map and a boolean spell different drop helpers: without a key of its
     // own a map would key as the fall-through leaf does.
     if (ssasem.type_key(mapTy) == ssasem.type_key(typeinfo.TypeBool { tag: 0 })) { return 144; }
