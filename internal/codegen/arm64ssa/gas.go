@@ -9505,7 +9505,6 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 			w("\tmov x0, %s", xreg(reg))
 		}
 		teardown()
-		w("\tret")
 	}
 
 	order := x86.LayoutOrder(p)
@@ -9673,7 +9672,6 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 				w("\t%s", l)
 			}
 			teardown()
-			w("\tret")
 		case x86.TJmp:
 			if blk.Term.Target != nextInLayout[bi] {
 				w("\tb .L%s_b%d", label, blk.Term.Target)
@@ -9711,6 +9709,16 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 	fr = fr.withSaves(call, len(saved))
 
 	out("%s:", label)
+	// Call-frame information, so a profiler or debugger can walk out of this
+	// frame. The assembler turns these into .eh_frame (internal/native/cfi);
+	// without them the image carries no unwind data at all, which is what the
+	// stack-machine emitter has always provided and this one did not.
+	//
+	// sp does not move for the body's lifetime — a call-crossing register goes
+	// to the reserved call-save area rather than to a push — so the one rule
+	// the prologue's subtraction establishes covers every instruction up to a
+	// teardown, and the callee-saved stores below need no rules of their own.
+	out("\t.cfi_startproc")
 	if fr.bytes > 0 {
 		lines, err := spAdjustLines("sub", fr.bytes)
 		if err != nil {
@@ -9719,9 +9727,15 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 		for _, l := range lines {
 			out("\t%s", l)
 		}
+		out("\t.cfi_def_cfa_offset %d", fr.bytes)
 	}
 	if call {
 		out("\tstr x30, [sp, #%d]", 8*fr.lrSlot)
+		// x30 needs a rule as soon as the function calls: the CIE's initial
+		// state says the return address is still in it, and the first call
+		// makes that false. The offset is from the CFA, which is the entry sp
+		// — fr.bytes above sp now.
+		out("\t.cfi_offset x30, %d", 8*fr.lrSlot-fr.bytes)
 	}
 	for _, l := range slotSaveLines(saved, fr.csBase) {
 		out("\t%s", l)
@@ -9733,19 +9747,29 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 		out("\t%s", l)
 	}
 	writeBody(out, body.String(), teardownLines(fr, call, saved))
+	out("\t.cfi_endproc")
 	return nil
 }
 
 // teardownMarker is the line emitFunc writes where a return's frame teardown
-// goes. It is replaced before the text leaves emitFunc, and the leading NUL
-// keeps it from colliding with any assembly line.
+// and the return itself go. It is replaced before the text leaves emitFunc,
+// and the leading NUL keeps it from colliding with any assembly line.
 const teardownMarker = "\x00teardown"
 
-// teardownLines restores the link register and the callee-saved registers, then
-// drops the frame. They follow the return value into place, so restoring a
-// callee-saved register that held it cannot clobber it.
+// teardownLines restores the link register and the callee-saved registers,
+// drops the frame and returns. They follow the return value into place, so
+// restoring a callee-saved register that held it cannot clobber it.
+//
+// The `ret` belongs here because the frame's CFA rule has to be bracketed
+// around the teardown: blocks are emitted in layout order, so more body can
+// follow a return, and a rule describing a released frame would describe those
+// instructions wrongly. A single-epilogue emitter gets that for free. A
+// function with no frame changes no rule, so it needs no bracket either.
 func teardownLines(fr frameLayout, call bool, saved []int) []string {
 	var out []string
+	if fr.bytes > 0 {
+		out = append(out, ".cfi_remember_state")
+	}
 	if call {
 		out = append(out, fmt.Sprintf("ldr x30, [sp, #%d]", 8*fr.lrSlot))
 	}
@@ -9754,6 +9778,11 @@ func teardownLines(fr frameLayout, call bool, saved []int) []string {
 		// The prologue already proved this frame fits.
 		lines, _ := spAdjustLines("add", fr.bytes)
 		out = append(out, lines...)
+		out = append(out, ".cfi_def_cfa_offset 0")
+	}
+	out = append(out, "ret")
+	if fr.bytes > 0 {
+		out = append(out, ".cfi_restore_state")
 	}
 	return out
 }
