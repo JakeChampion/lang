@@ -52,3 +52,38 @@ func TestAsmRunStringComparisonsAcrossLengths(t *testing.T) {
 		}
 	}
 }
+
+// Each of __ssa_mismatch's three vector loops requires exactly the bytes it
+// then consumes: a guard below the stride would read past the shorter
+// string, which does not reliably fault, so a functional sweep cannot be the
+// proof. The constants are read off the emitted text instead.
+func TestMismatchGuardsMatchStrides(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	f.SetRet(e, callOp(f, e, "__str_eq", constStr(f, e, "banana"), constStr(f, e, "bandana")))
+	asm, err := EmitAsmModule(map[string]*ssa.Func{"main": f}, "main", 8, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, loop := range []struct{ start, end, load, cursor string }{
+		{".Lssa_mm_avx:", ".Lssa_mm_hit32:", "vmovdqu", "add rcx, "},
+		{".Lssa_mm_vec:", ".Lssa_mm_hit16:", "movdqu", "add rcx, "},
+		{".Lssa_mm_word:", ".Lssa_mm_hit8:", "mov r8, [rdi + rcx]", "add rcx, "},
+	} {
+		start, end := strings.Index(asm, loop.start), strings.Index(asm, loop.end)
+		if start < 0 || end < start {
+			t.Fatalf("no body between %s and %s in the emitted module", loop.start, loop.end)
+		}
+		body := asm[start:end]
+		if !strings.Contains(body, loop.load) {
+			t.Fatalf("the %s loop has no %s load, so this test checked nothing", loop.start, loop.load)
+		}
+		guard := operandAfter(t, body, "cmp rax, ")
+		stride := operandAfter(t, body, loop.cursor)
+		if guard != stride {
+			t.Errorf("__ssa_mismatch's %s loop requires %s bytes before a block but advances %s: "+
+				"requiring fewer than it consumes reads past the end of the shorter string\n%s",
+				loop.start, guard, stride, body)
+		}
+	}
+}
