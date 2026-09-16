@@ -4563,10 +4563,10 @@ var (
 	rdxReg = gpIndex("rdx")
 )
 
-// shiftSeq renders a variable shift or rotate (count in cl). dst holds the value, src the
-// count. rcx is preserved with push/pop so a live value there survives; the
-// count is copied into rcx and the shift reads cl. dst is a scratch reg (never
-// rcx), so `<op> dst, cl` is safe.
+// shiftSeq renders a shift or rotate. dst holds the value; the count is the
+// immediate when the instruction carries one, else src, copied into rcx (which
+// is preserved with push/pop so a live value there survives) and read as cl.
+// dst is a scratch reg (never rcx), so `<op> dst, cl` is safe.
 func shiftSeq(in Inst) string {
 	var mnem string
 	switch in.K {
@@ -4596,8 +4596,15 @@ func shiftSeq(in Inst) string {
 	// The 32-bit form reads only the low 32 bits; the caller's trailing maskFix
 	// re-sign-extends to the storage convention.
 	dst := reg(in.Dst)
+	bits := int64(64)
 	if in.W != 64 {
 		dst = reg32[in.Dst]
+		bits = 32
+	}
+	if in.SrcImm {
+		// A constant count is the instruction's own imm8, masked as the
+		// register form's would be.
+		return fmt.Sprintf("%s %s, %d", mnem, dst, in.Imm&(bits-1))
 	}
 	return strings.Join([]string{
 		"push rcx",
