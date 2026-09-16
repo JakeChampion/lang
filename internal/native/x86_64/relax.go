@@ -168,40 +168,97 @@ func (a *Assembler) relaxOnce() error {
 		_, ok := a.textLabels[a.relFixups[e.fixup].sym]
 		e.short = ok
 	}
-	// Without text pads every event only ever grows, so two points can only
-	// move apart: a branch out of rel8 range stays out however many others
-	// are pinned, and a whole pass's verdicts can be applied in one batch.
-	// A pad breaks that monotonicity — it can absorb an earlier branch's
-	// growth and pull a later branch back INTO range (which gas's
-	// incremental growth honors) — so with pads present each pass pins only
-	// the first out-of-range branch, then re-lays out. Compiler-emitted
-	// .text has no pads, so the O(passes×n) precise path is confined to
-	// hand-written assembly.
-	hasPad := false
+	// The sizes settle the way GNU as settles them: passes over the events
+	// in offset order, each branch judged against the layout as it stands
+	// mid-pass, so a target behind it sits at this pass's position and a
+	// target ahead at its last position plus the growth so far (gas's
+	// "stretch"), and a pad is re-measured at the offset the pass has
+	// reached. That is what lets a pad absorb an earlier branch's growth
+	// and keep a later branch short, as gas does. Growth is monotone, so
+	// the passes are bounded by the branch count and in practice a few.
+	layout()
+	before := make([]int, len(ev)) // prefix under the pass before this one
+	// padsBefore[i]: pads among the events before event i. Growth does not
+	// reach a target on the far side of a pad within the pass, as gas has
+	// it (its "regions"): the pad is taken to absorb it, and where it does
+	// not, the next pass sees the settled positions and grows the branch
+	// then. Shrinkage, which only a pad produces, always carries.
+	padsBefore := make([]int, len(ev)+1)
 	for i := range ev {
+		padsBefore[i+1] = padsBefore[i]
 		if ev[i].align > 0 {
-			hasPad = true
-			break
+			padsBefore[i+1]++
+		}
+	}
+	// seenFrom is where sym stands as event i sees it mid-pass, with cum
+	// the growth so far: a position already laid out this pass, or the
+	// last pass's position moved by the stretch that reaches it.
+	seenFrom := func(sym string, i, cum int) int {
+		stretch := cum
+		if i > 0 {
+			stretch -= before[i-1]
+		}
+		carried := func(j int) int { // stretch as seen from a label after events 0..j-1
+			if stretch < 0 || padsBefore[j] == padsBefore[i] {
+				return stretch
+			}
+			return 0
+		}
+		if k, ok := boundSym[sym]; ok {
+			at := ev[k].newStart + ev[k].newSize
+			if k >= i {
+				at += carried(k + 1)
+			}
+			return at
+		}
+		off := a.textLabels[sym]
+		j := sort.Search(len(ev), func(j int) bool { return ev[j].start >= off })
+		switch {
+		case j == 0:
+			return off
+		case j-1 < i:
+			return off + prefix[j-1]
+		default:
+			return off + before[j-1] + carried(j)
 		}
 	}
 	converged := false
 	for iter := 0; iter < len(ev)+2; iter++ {
-		layout()
+		copy(before, prefix)
+		cum := 0
 		changed := false
 		for i := range ev {
 			e := &ev[i]
-			if e.align > 0 || !e.short {
-				continue
-			}
-			sym := a.relFixups[e.fixup].sym
-			if disp := labelPos(sym) - (e.newStart + e.bpad + 2); disp < -128 || disp > 127 {
-				e.short = false
-				changed = true
-				if hasPad {
-					break
+			e.newStart = e.start + cum
+			switch {
+			case e.align > 0:
+				e.newSize = padWidth(e.newStart, e.align, e.maxSkip)
+			default:
+				n := e.size
+				if e.short {
+					n = 2
 				}
+				e.bpad = 0
+				if a.alignBranches {
+					e.bpad = branchPad(a.alignBase+e.newStart, n)
+				}
+				if e.short {
+					sym := a.relFixups[e.fixup].sym
+					if disp := seenFrom(sym, i, cum) - (e.newStart + e.bpad + 2); disp < -128 || disp > 127 {
+						e.short = false
+						changed = true
+						n = e.size
+						if a.alignBranches {
+							e.bpad = branchPad(a.alignBase+e.newStart, n)
+						}
+					}
+				}
+				e.newSize = e.bpad + n
 			}
+			cum += e.newSize - e.size
+			prefix[i] = cum
 		}
+		a.relaxPasses = iter + 1
 		if !changed {
 			converged = true
 			break
