@@ -847,7 +847,7 @@ function ssa_unary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
-    if (k >= 40 && k <= 55) { return true; }
+    if (k >= 40 && k <= 57) { return true; }
     return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -1011,7 +1011,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     var sym: string = "__fern_alloc";
     if (ins.str == "alloc_u8") { sym = "__fern_alloc_u8"; }
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
-    else if (ins.str == "arr_push_owned") { s = s.mark_arr_push(); sym = "__fern_arr_push_owned"; }
+    else if (util.str_has_prefix(ins.str, "arr_push_owned")) { s = s.mark_arr_push(); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
     s = ssa_load(reg_of, ins.args[0], "x0", s);
     if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "x1", s); }
@@ -1089,6 +1089,53 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return s.write("    add x0, x0, x1\n    strb w2, [x0]\n");
 }
 
+// AggPack is a constant aggregate's `<shape label>|<w0>,<w1>,..` text for
+// asmcore.add_const_agg, with the state the shape interning left.
+struct AggPack { state: asmcore.EmitState, text: string }
+
+function ssa_agg_pack(packed: string, s: asmcore.EmitState): AggPack {
+    var kshp: asmcore.ShapeRefOut = asmcore.shape_ref(s, ir.const_struct_type(packed));
+    s = kshp.state;
+    var text: string = kshp.label + "|";
+    var kvals: string[] = ir.const_struct_values(packed);
+    var kv: i32 = 0;
+    while (kv < kvals.len()) {
+        if (kv > 0) { text = text + ","; }
+        text = text + kvals[kv];
+        kv = kv + 1;
+    }
+    return AggPack { state: s, text: text };
+}
+
+// ssa_call_ind is the stack machine's call through a function value: the
+// arguments pushed with the first on top, the target in x9, which nothing
+// live can occupy at a call.
+function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var argc: i32 = ins.args.len() - 1;
+    var i: i32 = argc;
+    while (i >= 1) {
+        s = ssa_load(reg_of, ins.args[i], "x0", s);
+        s = s.write("    str x0, [sp, #-16]!\n");
+        i = i - 1;
+    }
+    s = ssa_load(reg_of, ins.args[0], "x9", s);
+    s = s.write("    blr x9\n");
+    if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
+    return ssa_store(reg_of, ins.result, "x0", s);
+}
+
+// ssa_agg_lit is the address of a static record or variant box the lowering
+// folded whole (ir.const_struct_*), interned as the flat arm interns it.
+function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var pk: AggPack = ssa_agg_pack(ins.str, s);
+    s = pk.state;
+    var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
+    s = kout.state;
+    var klbl: string = asmcore.const_agg_label(s, kout.idx);
+    s = s.write("    adrp x0, " + klbl + "\n    add x0, x0, :lo12:" + klbl + "\n");
+    return ssa_store(reg_of, ins.result, "x0", s);
+}
+
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
 function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
@@ -1121,6 +1168,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitSt
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
     if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
+    if (k == 56) { return ssa_call_ind(ins, reg_of, s); }
+    if (k == 57) { return ssa_agg_lit(ins, reg_of, s); }
     if (k == 1) { s = ssa_const_x0(util.i32_to_string(ins.imm), s); }
     else if (k == 3) { s = ssa_const_x0(ins.str, s); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "x0", s); }
@@ -1257,6 +1306,10 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, s: asmco
 struct SsaTry { state: asmcore.EmitState, emitted: boolean, why: string }
 
 function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore.EmitState): SsaTry {
+    if (!ircore.ssa_selected(label_name)) {
+        if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": skipped\n"); }
+        return SsaTry { state: asmcore.EmitState { ...s, ssa_declined: s.ssa_declined + 1 }, emitted: false, why: "skipped" };
+    }
     var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
     var why: string = lifted.bail;
     if (lifted.ok) { why = ssa_unsupported(lifted.func); }

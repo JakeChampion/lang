@@ -162,7 +162,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 			src := langSrcAbs(t, rel)
 
 			baseBin := filepath.Join(dir, "base")
-			if out, err := exec.Command(fern, "-target", "arm64-linux", "-o", baseBin, src).CombinedOutput(); err != nil {
+			if out, err := exec.Command(fern, "-target", "arm64-linux", "-backend", "flat", "-o", baseBin, src).CombinedOutput(); err != nil {
 				// No reference answer: the SHIPPING backend declined it (an
 				// unavailable capability, a deliberately-invalid probe). Not a
 				// finding about the SSA backend either way.
