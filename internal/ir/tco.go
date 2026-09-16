@@ -4,7 +4,7 @@
 // inside `function f(...)` — lowers to two adjacent ops:
 //
 //	OpCallDirect f argc=N
-//	OpReturn  (or OpReturnVoid)
+//	OpReturn  (or OpReturnVoid / OpReturnPair)
 //
 // TailCallOptimize rewrites every such pair into a parameter rebind plus
 // a backward branch to a synthetic outer loop wrapping the function
@@ -75,7 +75,7 @@ func applyTCO(fn *Func) {
 		}
 		if isSelfTailCall(op, fn) && i+1 < len(wrapped) {
 			next := wrapped[i+1]
-			if next.Kind == OpReturn || next.Kind == OpReturnVoid {
+			if isReturnKind(next.Kind) {
 				for p := int32(len(fn.Params)) - 1; p >= 0; p-- {
 					out = append(out, Op{Kind: OpStoreLocal, I32: p, Pos: op.Pos})
 				}
@@ -98,8 +98,7 @@ func hasSelfTailCall(fn *Func) bool {
 		if !isSelfTailCall(fn.Ops[i], fn) {
 			continue
 		}
-		next := fn.Ops[i+1]
-		if next.Kind == OpReturn || next.Kind == OpReturnVoid {
+		if isReturnKind(fn.Ops[i+1].Kind) {
 			return true
 		}
 	}
