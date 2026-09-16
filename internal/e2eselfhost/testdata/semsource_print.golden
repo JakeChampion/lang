@@ -986,7 +986,7 @@ func via_arrm {
     ret v2
 }
 
-refused unsupported call target
+refused unsupported call target: Holder[string].tagged
 modes 1 result i32
 v0:i32 v1:i32
 func via_prim {
@@ -2705,6 +2705,25 @@ func int_map_key {
     v2 = const_int 0
     v3 = map_get_or v0 v1 v2
     ret v3
+}
+
+modes 2 1 result i32
+v0:Map[i32, i32] v1:i32 v2:Option[i32] v3:boolean v4:i32 v5:i32
+func map_get_line {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = invalid v0 v1
+    v3 = variant_is Some v2
+    brif v3 b2 b3
+  b2:
+    v4 = variant_get 0 Some v2
+    ret v4
+  b3:
+    br b4
+  b4:
+    v5 = const_int 0
+    ret v5
 }
 
 modes 1 result i32[]

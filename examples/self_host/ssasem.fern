@@ -70,6 +70,7 @@ pub function map_insert(): i32 { return 0 - 26; }
 pub function map_has(): i32 { return 0 - 27; }
 pub function map_get_or(): i32 { return 0 - 28; }
 pub function map_len(): i32 { return 0 - 29; }
+pub function map_get(): i32 { return 0 - 30; }
 
 function failed(why: string): Analysis {
     return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, live_in: [], live_out: [] } };
@@ -254,7 +255,7 @@ pub function is_supported_map(t: typeinfo.Type): boolean {
 }
 
 // A value column the map releases by freeing the buffer alone.
-function narrow_map_value(v: typeinfo.Type): boolean {
+pub function narrow_map_value(v: typeinfo.Type): boolean {
     return is_bool(v) || (is_integer(v) && !is_wide(v));
 }
 
@@ -674,7 +675,7 @@ function is_builtin_op(kind: i32): boolean {
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
 
 pub function is_map_op(kind: i32): boolean {
-    return kind == map_new() || kind == map_insert() || kind == map_has() || kind == map_get_or() || kind == map_len();
+    return kind == map_new() || kind == map_insert() || kind == map_has() || kind == map_get_or() || kind == map_len() || kind == map_get();
 }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -733,8 +734,23 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == map_insert()) { return map_insert_error(ins, f, result); }
     if (ins.kind_tag == map_has()) { return map_has_error(ins, f, result); }
     if (ins.kind_tag == map_len()) { return map_len_error(ins, f, result); }
+    if (ins.kind_tag == map_get()) { return map_get_error(ins, f, result); }
     return map_get_or_error(ins, f, result);
 }
+
+// A get answers an Option of the value column in a box of its own; the
+// payload is a copy of the column's entry, so the column must be one the map
+// frees by freeing the buffer alone.
+function map_get_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 2) { return "map get arity"; }
+    var m: typeinfo.Type = f.values[ins.args[0]];
+    if (!is_supported_map(m)) { return "map get type"; }
+    if (!narrow_map_value(map_value(m))) { return "map get of a counted value column"; }
+    if (!semtypes.equal(option_of(map_value(m)), result)) { return "map get result"; }
+    return map_operand_error(m, f.values[ins.args[1]], map_value(m));
+}
+
+pub function option_of(v: typeinfo.Type): typeinfo.Type { return typeinfo.TypeUnion { name: "Option", args: [v] }; }
 
 function map_len_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "map len arity"; }

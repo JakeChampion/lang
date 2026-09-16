@@ -1236,6 +1236,7 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     var vkind: i32 = map_value_kind(t);
     if (ins.kind_tag == ssasem.map_insert()) { return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, kkind == 0, true, false, "", 0, vkind)); }
     if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, "")); }
+    if (ins.kind_tag == ssasem.map_get()) { return emit(r, ir.op_map_get(kkind, "", 0)); }
     r = emit(r, ir.op_map_get_or(kkind, "", 0));
     if (vkind == 0) { return r; }
     return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
