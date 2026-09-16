@@ -1582,12 +1582,12 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     var whole: Value = expr(v.init, s, ty);
     s = whole.s;
     if (!s.ok) { return s; }
-    if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, "binding type does not match its semantic value"); }
+    if (!semtypes.equal(s.values[whole.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[whole.id])); }
     var i: i32 = 0;
     while (i < names.len()) {
         var elem: typeinfo.Type = bound_type(s, names[i], after);
-        if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved binding type"); }
-        if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, "binding type does not match its semantic value"); }
+        if (!semtypes.concrete(elem, false)) { return fail(s, "unresolved type of binding " + names[i] + ": " + typeinfo.spelling(elem)); }
+        if (!semtypes.equal(elem, tuple_element_type(ty, i))) { return fail(s, mismatch(names[i], elem, tuple_element_type(ty, i))); }
         var part: Value = define(s, ssasem.tuple_get(), [whole.id], i, "", elem);
         s = bind(part.s, names[i], part.id);
         i = i + 1;
@@ -1628,17 +1628,23 @@ function pattern_names(encoded: string): string[] {
     return out.append(slice_unchecked(encoded, start, encoded.len()) + "");
 }
 
+// A binding whose declared type and initializer's value disagree, named,
+// with both spellings: the refusal a reader can act on.
+function mismatch(name: string, declared: typeinfo.Type, value: typeinfo.Type): string {
+    return "binding " + name + " declared " + typeinfo.spelling(declared) + " holds a semantic value of " + typeinfo.spelling(value);
+}
+
 // The checker's post-declaration scope names the binding's type; the
 // initializer's semantic value must carry exactly that type.
 function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = bound_type(s, v.name, after);
-    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved binding type"); }
+    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + typeinfo.spelling(ty)); }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
-    if (!semtypes.equal(s.values[init.id], ty)) { return fail(s, "binding type does not match its semantic value"); }
+    if (!semtypes.equal(s.values[init.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[init.id])); }
     return State { ...bind(s, v.name, init.id), scope: after };
 }
 
