@@ -156,6 +156,16 @@ and reads the shared-append counter: 210 with the steal, 214 without;
 `thread_shared` keeps a second holder of the record and reads both
 holders' fields after the call.
 
+The fixpoint is not reached by it: the produced compiler rebuilding itself
+still exhausts the arena, 10m25s in at 13.5 GB RSS (from 11m22s). The
+high-water mark did not move on `asm_modload_run` either — 3.76 GB with
+the copies and without them — because a copied buffer goes back to the
+freelist when its shared count drops, and the exact-size freelist hands it
+out again. What is left in the produced compiler's arena on the whole tree
+is not the copies, so the next instrument is the one the entry above named
+first: a `FERN_LEAKCHECK` build of the produced compiler, run with the flag
+on over a mid-sized input, reading what is live at exit.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The
