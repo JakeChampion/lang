@@ -406,6 +406,10 @@ it.
 - **Module loading** — there is no prelude injector; a program sees only what it
   `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.
+- **Self-host SSA backend** (`-backend ssa`, per-function register allocation
+  beside the stack machine, the self-host half of #4112) —
+  `docs/SELFHOST-SSA-BACKEND.md`. `FERN_SSA_REPORT=1` names what each declined
+  function needs; that histogram is the coverage checklist.
 - **Capabilities** — two independent systems. `internal/platforms` gates what a
   *target* provides (the OS boundary; E066 post-tree-shake) —
   `docs/FREESTANDING-CORE.md` has the core-vs-host rule and every judgement call.
