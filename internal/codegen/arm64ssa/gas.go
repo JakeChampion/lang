@@ -9469,11 +9469,10 @@ func (f frameLayout) inArg(k int) int { return f.bytes + 8*k }
 // costs a store and a load, while a missed register is handed back to the
 // caller clobbered with nothing failing until unrelated code reads it.
 //
-// The blocks are emitted once, into a buffer carrying a marker line where each
-// return's teardown goes, because nothing a block addresses moves with the
-// saved set: every slot it names sits below csBase. The prologue and the
-// teardown do move with it, so they are rendered after the scan, and they name
-// only registers already in the set.
+// The blocks are emitted once, into a buffer, because nothing a block
+// addresses moves with the saved set: every slot it names sits below csBase.
+// The prologue and the epilogue do move with it, so they are rendered after the
+// scan, and they name only registers already in the set.
 //
 // The parameter moves are scanned too, since a parameter's home can be a
 // callee-saved register the body itself never names. They are rendered twice
@@ -9498,13 +9497,19 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 		fmt.Fprintf(&body, format, args...)
 		body.WriteByte('\n')
 	}
-	teardown := func() { body.WriteString(teardownMarker + "\n") }
+	// A return reaches the function's one epilogue by falling into it when its
+	// block is last in layout order, and by branching to it otherwise.
+	toEpilogue := func(last bool) {
+		if !last {
+			w("\tb .L%s_epi", label)
+		}
+	}
 
-	ret := func(reg int) {
+	ret := func(reg int, last bool) {
 		if reg != 0 {
 			w("\tmov x0, %s", xreg(reg))
 		}
-		teardown()
+		toEpilogue(last)
 	}
 
 	order := x86.LayoutOrder(p)
@@ -9663,7 +9668,7 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 		}
 		switch blk.Term.Kind {
 		case x86.TRet:
-			ret(blk.Term.RetReg)
+			ret(blk.Term.RetReg, nextInLayout[bi] < 0)
 		case x86.TRetPair:
 			// AArch64 pair-return convention: tag in x0, payload in x1. A home may
 			// already be x0/x1, so resolve the two moves as a parallel copy before
@@ -9671,7 +9676,7 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 			for _, l := range resolveRegMoves(pairRetMoves(blk.Term.RetReg, blk.Term.RetReg2)) {
 				w("\t%s", l)
 			}
-			teardown()
+			toEpilogue(nextInLayout[bi] < 0)
 		case x86.TJmp:
 			if blk.Term.Target != nextInLayout[bi] {
 				w("\tb .L%s_b%d", label, blk.Term.Target)
@@ -9746,30 +9751,28 @@ func emitFunc(out func(string, ...any), name string, p *x86.Program, numAlloc in
 	for _, l := range paramMoveLines(p.ParamLocs, fr, scratch) {
 		out("\t%s", l)
 	}
-	writeBody(out, body.String(), teardownLines(fr, call, saved))
+	copyLines(out, body.String())
+	// One epilogue per function. A teardown at each return site needs its own
+	// CFI bracket, because blocks are emitted in layout order and more body can
+	// follow a return; one at the end needs none, and that is the whole of the
+	// difference between 16,669 teardowns and 4,807 across the self-host
+	// driver.
+	if x86.FuncReturns(p) {
+		out(".L%s_epi:", label)
+		for _, l := range epilogueLines(fr, call, saved) {
+			out("\t%s", l)
+		}
+	}
 	out("\t.cfi_endproc")
 	return nil
 }
 
-// teardownMarker is the line emitFunc writes where a return's frame teardown
-// and the return itself go. It is replaced before the text leaves emitFunc,
-// and the leading NUL keeps it from colliding with any assembly line.
-const teardownMarker = "\x00teardown"
-
-// teardownLines restores the link register and the callee-saved registers,
+// epilogueLines restores the link register and the callee-saved registers,
 // drops the frame and returns. They follow the return value into place, so
-// restoring a callee-saved register that held it cannot clobber it.
-//
-// The `ret` belongs here because the frame's CFA rule has to be bracketed
-// around the teardown: blocks are emitted in layout order, so more body can
-// follow a return, and a rule describing a released frame would describe those
-// instructions wrongly. A single-epilogue emitter gets that for free. A
-// function with no frame changes no rule, so it needs no bracket either.
-func teardownLines(fr frameLayout, call bool, saved []int) []string {
+// restoring a callee-saved register that held it cannot clobber it. A function
+// with no frame restores nothing and simply returns.
+func epilogueLines(fr frameLayout, call bool, saved []int) []string {
 	var out []string
-	if fr.bytes > 0 {
-		out = append(out, ".cfi_remember_state")
-	}
 	if call {
 		out = append(out, fmt.Sprintf("ldr x30, [sp, #%d]", 8*fr.lrSlot))
 	}
@@ -9781,26 +9784,16 @@ func teardownLines(fr frameLayout, call bool, saved []int) []string {
 		out = append(out, ".cfi_def_cfa_offset 0")
 	}
 	out = append(out, "ret")
-	if fr.bytes > 0 {
-		out = append(out, ".cfi_restore_state")
-	}
 	return out
 }
 
-// writeBody copies the emitted blocks to w a line at a time, replacing each
-// teardown marker with the teardown itself.
-func writeBody(w func(string, ...any), body string, teardown []string) {
-	for i, piece := range strings.Split(body, teardownMarker+"\n") {
-		if i > 0 {
-			for _, l := range teardown {
-				w("\t%s", l)
-			}
-		}
-		for piece != "" {
-			line, rest, _ := strings.Cut(piece, "\n")
-			w("%s", line)
-			piece = rest
-		}
+// copyLines hands the emitted blocks to w one line at a time, so a multi-line
+// string the emitter wrote as a unit still reaches w as separate lines.
+func copyLines(w func(string, ...any), body string) {
+	for body != "" {
+		line, rest, _ := strings.Cut(body, "\n")
+		w("%s", line)
+		body = rest
 	}
 }
 

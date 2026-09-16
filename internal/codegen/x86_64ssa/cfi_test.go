@@ -8,10 +8,9 @@ import (
 )
 
 // Every function carries call-frame information, and the rules are balanced:
-// one startproc and one endproc, and a remembered state for every epilogue,
-// restored after it. Without the pairing a rule meant for the few instructions
-// of one epilogue would still be in effect for whatever block the layout puts
-// next, describing those instructions wrongly.
+// one startproc and one endproc, and one epilogue rule for the one epilogue.
+// Nothing needs remembering and restoring, because the epilogue is the last
+// thing in the function and no block follows it for a stale rule to describe.
 func TestEveryFunctionCarriesBalancedCFI(t *testing.T) {
 	// Two returns, so the layout puts a block after an epilogue.
 	f := ssa.NewFunc("f")
@@ -36,13 +35,21 @@ func TestEveryFunctionCarriesBalancedCFI(t *testing.T) {
 	if starts != ends {
 		t.Errorf("%d .cfi_startproc against %d .cfi_endproc", starts, ends)
 	}
-	if remembered, restored := count(".cfi_remember_state"), count(".cfi_restore_state"); remembered != restored {
-		t.Errorf("%d .cfi_remember_state against %d .cfi_restore_state", remembered, restored)
+	// A bracket is what a teardown at each return site needed. One epilogue at
+	// the end of the function needs none, and emitting them anyway would be
+	// .eh_frame nothing reads.
+	if remembered, restored := count(".cfi_remember_state"), count(".cfi_restore_state"); remembered != 0 || restored != 0 {
+		t.Errorf("%d .cfi_remember_state and %d .cfi_restore_state, want none: there is one epilogue and nothing follows it", remembered, restored)
 	}
 	// Every `ret` is an epilogue, and each one re-describes the CFA before it,
-	// since rsp is no longer reachable through rbp by then.
-	if rets, defs := strings.Count(asm, "\tret\n"), count(".cfi_def_cfa rsp, 8"); defs != rets {
+	// since rsp is no longer reachable through rbp by then. With one epilogue
+	// per function there are as many of each as there are functions.
+	rets, defs := strings.Count(asm, "\tret\n"), count(".cfi_def_cfa rsp, 8")
+	if defs != rets {
 		t.Errorf("%d ret against %d `.cfi_def_cfa rsp, 8`", rets, defs)
+	}
+	if rets != starts {
+		t.Errorf("%d ret across %d functions: a function returns through its one epilogue", rets, starts)
 	}
 }
 
@@ -97,10 +104,9 @@ func fnBody(t *testing.T, asm, name string) string {
 
 // Balanced counts would pass a rule sitting at the wrong instruction. A
 // `.cfi_def_cfa rsp, 8` before `pop rbp` describes rsp as 8 past the CFA while
-// it is still the frame pointer, and a `.cfi_restore_state` before the `ret`
-// hands the prologue's state to the one instruction an unwinder most wants to
-// read — and both balance. So pin where each rule sits, which is what the
-// stack-machine emitter's own test does for its single epilogue.
+// it is still the frame pointer, and a `ret` before the rule leaves the CFA
+// described through an rbp the caller owns again — and both leave the counts
+// untouched. So pin where each rule sits.
 func TestEpilogueRulesSitAtTheirInstructions(t *testing.T) {
 	f := ssa.NewFunc("f")
 	x := f.AddParam()
@@ -115,37 +121,16 @@ func TestEpilogueRulesSitAtTheirInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
 	}
-	lines := strings.Split(fnBody(t, asm, "f"), "\n")
-	at := func(i int) string {
-		if i < 0 || i >= len(lines) {
-			return "(past the end of the function)"
-		}
-		return lines[i]
+	body := fnBody(t, asm, "f")
+	// The epilogue is the tail of the function: the CFA rule sits between the
+	// `pop rbp` that invalidates the old one and the `ret` that uses it, and
+	// nothing follows.
+	if want := "\tmov rsp, rbp\n\tpop rbp\n\t.cfi_def_cfa rsp, 8\n\tret\n"; !strings.HasSuffix(body, want) {
+		t.Errorf("function does not end in the epilogue %q:\n%s", want, body)
 	}
-	epilogues := 0
-	for i, l := range lines {
-		if l != "\t.cfi_remember_state" {
-			continue
-		}
-		epilogues++
-		// The teardown between the two is a variable number of pops, so find
-		// the next rule rather than counting instructions.
-		j := i + 1
-		for j < len(lines) && !strings.HasPrefix(lines[j], "\t.cfi_") {
-			j++
-		}
-		for off, want := range map[int]string{
-			-1: "\tpop rbp",
-			0:  "\t.cfi_def_cfa rsp, 8",
-			1:  "\tret",
-			2:  "\t.cfi_restore_state",
-		} {
-			if got := at(j + off); got != want {
-				t.Errorf("epilogue remembered at line %d: want %q, got %q\n%s", i, want, got, strings.Join(lines[i:min(len(lines), j+4)], "\n"))
-			}
-		}
-	}
-	if epilogues != 2 {
-		t.Errorf("walked %d epilogues, want the 2 returns the function has", epilogues)
+	// Both returns reach that one epilogue: the block the layout puts last
+	// falls into it, the other branches to it.
+	if jumps, rets := strings.Count(body, "\tjmp .L_"+fnLabel("f")+"_epi\n"), strings.Count(body, "\tret\n"); jumps != 1 || rets != 1 {
+		t.Errorf("%d jumps to the epilogue and %d `ret` for a function with two returns, want 1 and 1:\n%s", jumps, rets, body)
 	}
 }
