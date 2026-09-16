@@ -1,6 +1,6 @@
 # Rebalance and parallelize self-host test shards
 
-Status: private candidate with successful held-out replays before and after
+Status: candidate with successful held-out replays before and after
 the buffered compiler rollout. Live validation remains required.
 
 The old weights include terminal test durations that omit parallel children.
