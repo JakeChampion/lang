@@ -89,7 +89,7 @@ function main(): i32 { return fib(9) + fact(1); }`
 				t.Errorf(".eh_frame_hdr is %d bytes for %d FDEs, want %d", hdrSz, n, want)
 			}
 			// Every row has to name a function in the R+X segment and an FDE
-			// at or after the CIE; a row pointing elsewhere unwinds with
+			// inside .eh_frame itself; a row pointing elsewhere unwinds with
 			// whatever bytes happen to be there.
 			const base = 0x400000
 			hdrVAddr := base + hdrOff
@@ -100,7 +100,7 @@ function main(): i32 { return fib(9) + fact(1); }`
 				if fn < base+codeOff || fn >= base+codeOff+codeSz {
 					t.Errorf("row %d names a function at %#x, outside the R+X segment", i, fn)
 				}
-				if fde < base+uint64(off) || fde >= base+codeOff+codeSz {
+				if fde < base+uint64(off) || fde >= base+uint64(ehFrameEnd(t, img, off)) {
 					t.Errorf("row %d names an FDE at %#x, outside .eh_frame", i, fde)
 				}
 			}

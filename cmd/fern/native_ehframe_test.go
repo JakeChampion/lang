@@ -102,7 +102,7 @@ function main(): i32 { return fib(9); }`
 		if fn < base+codeOff || fn >= base+codeOff+codeSz {
 			t.Errorf("row %d names a function at %#x, outside the R+X segment", i, fn)
 		}
-		if fde < ptr || fde >= base+codeOff+codeSz {
+		if fde < ptr || fde >= base+uint64(ehFrameEnd(t, img, off)) {
 			t.Errorf("row %d names an FDE at %#x, outside .eh_frame", i, fde)
 		}
 	}
@@ -136,6 +136,29 @@ func findCIE(img []byte) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// ehFrameEnd returns the file offset one past the last entry of the .eh_frame
+// that starts at off, by walking the entry lengths to the zero terminator.
+//
+// The R+X segment is not a substitute for it. Bounding a search-table row by
+// the segment accepts a row pointing at .eh_frame_hdr, or at arbitrary .text,
+// as readily as one pointing at a real FDE — which is the whole of what the
+// row is supposed to name.
+func ehFrameEnd(t *testing.T, img []byte, off int) int {
+	t.Helper()
+	for off+4 <= len(img) {
+		n := int(binary.LittleEndian.Uint32(img[off:]))
+		if n == 0 {
+			return off + 4
+		}
+		if off+4+n > len(img) {
+			t.Fatalf(".eh_frame entry at %#x claims %d bytes, past the end of the image", off, n)
+		}
+		off += 4 + n
+	}
+	t.Fatal(".eh_frame ran off the end of the image without a zero-length terminator")
+	return 0
 }
 
 // firstLoad returns the file offset and size of the first PT_LOAD.
