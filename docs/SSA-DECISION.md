@@ -354,6 +354,28 @@ admits shifts and power-of-two divisors. `enum_match` 2.33x → **1.00x**;
 2 and 668 `push rcx` → 487. `struct_drop` (1.88x) is unmoved: its cost is
 the drop side above.
 
+**arm64 takes the same two, the same day.** The rc primitives inline and the
+constant-size pop and push are one renderer file each on arm64ssa
+(`inline_rc_alloc.go`), reading the same emitter annotations; under the leak
+census the allocation fast paths stay calls, since `__alloc` and `__free` are
+where it counts. Best of five under qemu-aarch64, ratio to the flat build:
+
+| bench | before | after | static |
+| --- | --- | --- | --- |
+| `ordmap_insert` | 2.50x | **0.87x** | +37% |
+| `pvec_with` | 2.46x | **1.14x** | +38% |
+| `pmap_insert` | 2.15x | **1.07x** | +34% |
+| `enum_match` | 1.28x | **0.67x** | -6% |
+| `struct_drop` | 1.13x | **0.95x** | +2% |
+| `map_int` | 2.20x | 2.27x | +1% |
+
+The persistent-collection rows the arm64 plan named as the default flip's
+blocker are at or under the flat build. The static cost is larger than on
+x86-64 — a guard chain is more instructions on a load/store ISA and the
+freelist heads want an `adrp`/`add` pair per site — and it is the trade the
+plan declined; measured, it is the right one. `map_int` pays something
+else, still to be profiled.
+
 ### Per-backend disposition
 
 | backend | disposition |
