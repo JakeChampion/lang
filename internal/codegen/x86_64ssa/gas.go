@@ -2172,6 +2172,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_eq":                      emitStrEqHelper,
 	"__str_ord":                     emitStrOrdHelper,
 	"__str_concat":                  emitStrConcatHelper,
+	"strbuf_reset":                  emitStrbufResetHelper,
+	"strbuf_append":                 emitStrbufAppendHelper,
+	"strbuf_take":                   emitStrbufTakeHelper,
 	"__fern_str_append":             emitStrAppendHelper,
 	"__fern_str_dec":                emitStrDecHelper,
 	"__fern_drop_arr_str":           emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "dropstr"),
@@ -2247,6 +2250,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 // the .bss heap section + cursor must be emitted whenever one is referenced even
 // if the program body has no direct heap op.
 var heapUsingHelpers = map[string]bool{
+	"strbuf_append":               true,
+	"strbuf_take":                 true,
 	"__slice_make":                true,
 	"__str_concat":                true,
 	"__alloc_u8":                  true,
@@ -2291,6 +2296,8 @@ var heapUsingHelpers = map[string]bool{
 // calls another must have that callee emitted too — the module never references
 // it directly). Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
+	"strbuf_append":                 {"__alloc", "__free"},
+	"strbuf_take":                   {"__alloc"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"__fern_closure_drop":           {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow", "__fern_rc_inc"},
@@ -2834,6 +2841,8 @@ func emitBcopyCall(w func(string, ...any), dst, src, n string) {
 // is emitted whenever one of them is. It is not in runtimeHelperEmitters (the IR
 // cannot name it), so this gate is what puts it in the module.
 var bcopyUsingHelpers = map[string]bool{
+	"strbuf_append":               true,
+	"strbuf_take":                 true,
 	"string_from_bytes_unchecked": true,
 	"__str_slice":                 true,
 	"__str_concat":                true,
