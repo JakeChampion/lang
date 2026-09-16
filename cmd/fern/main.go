@@ -642,7 +642,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
-	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `flat` names the stack-machine emitter that is every target's default today, for a caller who wants it selected rather than inherited. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
+	backend := flag.String("backend", "", backendFlagUsage)
 	flag.Lookup("backend").Usage += " `typed-ssa` is the experimental typed pre-RC ownership pipeline for arm64-linux only: immutable array/tuple values, projections, direct calls, local replacement, branches and loops with i32 induction; unsupported constructs are errors. See docs/TYPED-OWNERSHIP-IR-MIGRATION.md."
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
@@ -1385,6 +1385,61 @@ func runCheck(srcPath, target string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
+// resolveBackend picks the emitter this build uses.
+//
+// On arm64-linux the SSA backend is the default: it allocates registers
+// instead of walking a stack machine, so it emits less code — the self-host
+// driver is 13.4% smaller — and the corpus differential runs it against the
+// stack-machine emitter on every change, where all 328 programs both backends
+// build agree. x86-64-linux keeps the stack-machine emitter for now: the SSA
+// one is 2.0% LARGER there, and all but 9% of that is the `movsxd` an i32
+// result costs when its high half is re-established whether or not anything
+// reads it (#4112).
+//
+// A build that asks for something the SSA path does not serve keeps the
+// emitter that does. That is what makes this a default rather than a
+// migration: everything below goes on working exactly as it did, and nobody
+// has to learn a new flag to keep it.
+//
+// Naming the backend explicitly is a different matter, and the answer is not
+// uniform: -shared, -g and -cover are refused outright (ssaUnservedFlag),
+// while -sanitize warns that the build carries no checks and proceeds, and
+// --run, -cc and -export are simply not reached. Only the first three are
+// this function's mirror image; the rest is why the list here is longer than
+// that one.
+//
+// The list is what the SSA arm64 block does NOT reach, and each entry fails
+// silently rather than loudly if it is left out — which is why they are
+// enumerated here rather than discovered:
+//
+//   - runIt: that block writes assembly to stdout when outPath is empty, so
+//     `--run` would print the program instead of running it;
+//   - cc: it links in-process, so an external linker would be ignored and a
+//     `-cc` that cannot link would still "succeed";
+//   - export: flat serves it through EmitWithOptions{Exports}, and the SSA
+//     path drops the list;
+//   - shared, -g, -cover, -sanitize: no shared object, no line table, no
+//     instrumentation, no detectors.
+
+// backendFlagUsage is `fern -h`'s description of -backend. It names every
+// flag resolveBackend falls back for, because each of them fails silently if
+// the fallback is ever dropped, and a caller has no other way to learn which
+// flags move the build off the default emitter.
+const backendFlagUsage = "code-generation backend for the selected -target. On -target arm64-linux the default is the SSA-direct backend, which allocates registers instead of walking a stack machine and so emits less code; a build asking for --run, -cc, -export, -shared, -g, -cover or -sanitize uses the stack-machine emitter automatically, since the SSA one does not serve those yet. `flat` names the stack-machine emitter, which is the default on every other target, for a caller who wants it selected rather than inherited. `ssa` names the SSA-direct backend explicitly, available for -target arm64-linux and -target x86-64-linux; on x86-64-linux it is not yet the default because it emits 2.0% more text there. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter."
+
+func resolveBackend(backend, target string, runIt bool, cc, export string, shared bool) string {
+	if backend != "" {
+		return backend
+	}
+	if target != "arm64-linux" {
+		return "flat"
+	}
+	if runIt || cc != "" || export != "" || shared || emitDebugSyms || ast.CoverEnabled || ast.SanitizeEnabled {
+		return "flat"
+	}
+	return "ssa"
+}
+
 // ssaUnservedFlag reports the flag a -backend ssa build cannot serve, so the
 // build stops instead of quietly producing something other than what was
 // asked for. Each entry is a feature the default emitter has and this one does
@@ -1516,6 +1571,11 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 			return 1, err
 		}
 	}
+
+	// The emitter for this build: SSA where it is the default and serves what
+	// was asked for, otherwise the stack-machine emitter. Everything below
+	// dispatches on the resolved name, never on the flag.
+	backend = resolveBackend(backend, target, runIt, cc, export, shared)
 
 	if (backend == "ssa" || backend == "typed-ssa") && target == "arm64-linux" {
 		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)
