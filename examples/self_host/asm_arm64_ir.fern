@@ -1310,15 +1310,26 @@ function ssa_try_function(r: irlower.LowerResult, label_name: string, s: asmcore
         if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": skipped\n"); }
         return SsaTry { state: asmcore.EmitState { ...s, ssa_declined: s.ssa_declined + 1 }, emitted: false, why: "skipped" };
     }
+    var t_lift: i64 = monotonic_ns();
     var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
     var why: string = lifted.bail;
     if (lifted.ok) { why = ssa_unsupported(lifted.func); }
+    var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
     if (why != "") {
         if (ircore.ssa_report_on()) { eprint("FERN_SSA: " + label_name + ": " + why + "\n"); }
         return SsaTry { state: asmcore.EmitState { ...s, ssa_declined: s.ssa_declined + 1 }, emitted: false, why: why };
     }
     s = asmcore.EmitState { ...s, ssa_emitted: s.ssa_emitted + 1 };
-    return SsaTry { state: emit_ssa_function_arm64(lifted.func, label_name, s), emitted: true, why: "" };
+    var t_emit: i64 = monotonic_ns();
+    s = emit_ssa_function_arm64(lifted.func, label_name, s);
+    // Under the report, a function whose lift or emit took over 200 ms is
+    // named with both times: the whole-compiler build is where a phase's
+    // cost shows, and this is how a slow one is found.
+    var emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
+    if (ircore.ssa_report_on() && lift_ms + emit_ms > 200i64) {
+        eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string((lift_ms as i32)) + " ms, emit " + util.i32_to_string((emit_ms as i32)) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots\n");
+    }
+    return SsaTry { state: s, emitted: true, why: "" };
 }
 
 // emit_function_via_ir emits one IR-eligible function as arm64. The frame +

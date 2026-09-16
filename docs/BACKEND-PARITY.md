@@ -1,12 +1,17 @@
 # Backend parity tracker
 
-Three code-generation backends ship today — `internal/codegen/{arm64,x86_64,wasmbin}`,
-each lowering the flat `ir.Program`. Two more, `arm64ssa` and `x86_64ssa`, are
-reachable only through `-backend ssa` / `-backend typed-ssa`: **not production
-paths, but candidates to become ones** — they emit 45.3% of flat's `.text` over
-the corpus at 286/0 run-differential parity, and an arm64 default flip is
-blocked on loop-body speed alone (`docs/SSA-DECISION.md`, #4112, #8822). A
-sixth, `wasmssa`, was retired (#9397).
+Four code-generation backends ship today. Three lower the flat `ir.Program` —
+`internal/codegen/{arm64,x86_64,wasmbin}` — and `arm64ssa` allocates registers
+instead, which is **the default on arm64-linux**: it emits less code (the
+self-host driver is 13.4% smaller) and is at or under the stack-machine
+emitter on all 28 `examples/bench` programs. `x86_64ssa` is still reachable
+only through `-backend ssa`, because there it emits 2.0% MORE text than the
+stack-machine emitter — 91% of that being the `movsxd` an i32 result costs
+when its high half is re-established whether or not anything reads it — and
+`string_rfind_byte` remains 1.60x. `-backend flat` names the stack-machine
+emitter on any target. `-backend typed-ssa` is the experimental typed
+pre-RC pipeline, arm64-linux only. A sixth, `wasmssa`, was retired (#9397).
+Background: `docs/SSA-DECISION.md`, #4112, #8822.
 
 Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
 environment half says what the host provides. Neither is implied — there is no

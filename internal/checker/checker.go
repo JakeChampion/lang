@@ -10091,6 +10091,28 @@ func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	c.report(c.currentModule(), pos, code, fmt.Sprintf(format, args...))
 }
 
+// firstTryOp reports the position of the first `?` in `e`, not descending into
+// a nested function or lambda body — those replay on their own exits, not on
+// the enclosing one, so a `?` there is ordinary.
+func firstTryOp(e ast.Expr) (ast.Position, bool) {
+	var pos ast.Position
+	found := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda, *ast.FuncDecl:
+			return false
+		case *ast.TryOp:
+			pos, found = x.P, true
+			return false
+		}
+		return true
+	})
+	return pos, found
+}
+
 // report records one diagnostic against the module at path.
 func (c *checker) report(path string, pos ast.Position, code, msg string) {
 	// Identical diagnostics at the same position are dropped. Several
@@ -12218,8 +12240,24 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Binary:
 			return x.IsStringConcat
 		case *ast.Ident:
+			// A payloadless variant is an Ident where one carrying a payload is
+			// a Call, so it reaches here rather than the Call arm below; both
+			// are fresh enum values (#9517).
+			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
+				return true
+			}
 			return owned[x.Name] || selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.FieldAccess:
+			// `Span.Empty` — a qualified payload-less variant stays a
+			// FieldAccess rather than being rewritten to an Ident, so it is
+			// recognised here (#9517).
+			if tid, ok := x.Target.(*ast.Ident); ok {
+				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+					if _, vrOk, _ := c.resolveVariant(x.Field, tid.Name); vrOk {
+						return true
+					}
+				}
+			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
@@ -13129,6 +13167,15 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, assignHint(want, got))
 		}
 	case *ast.Defer:
+		// `?` leaves by the failure edge, and that edge replays the deferred
+		// actions — including this one. Refused rather than lowered: E079.
+		if pos, found := firstTryOp(n.Expr); found {
+			kind := "a `defer`"
+			if n.OnError {
+				kind = "an `errdefer`"
+			}
+			c.errfCode(pos, "E079", "`?` is not allowed inside %s action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", kind)
+		}
 		// Just type-check the action; its result is discarded (defer is
 		// statement-shaped, not expression-shaped). The IR builder is
 		// responsible for replaying it at function exits.

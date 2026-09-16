@@ -10708,10 +10708,75 @@ function e078_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
+// E079Probe carries the first `?` a defer action reaches, for e079_diags.
+struct E079Probe { found: boolean, line: i32, col: i32 }
+
+// e079_note_try records the first `try_` unary — the `?` operator, as
+// parser.fern desugars it — and ignores every later one, so a defer with two
+// draws one diagnostic.
+function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
+  if (acc.found) { return acc; }
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "try_") { return E079Probe { found: true, line: u.line, col: u.col }; }
+  }
+  return acc;
+}
+
+// e079_not_lambda keeps the walk out of a lambda body: a `?` there leaves the
+// LAMBDA on its own exits, not the function whose defer replays the action, so
+// it is an ordinary use.
+function e079_not_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lam) = e { return false; }
+  return true;
+}
+
+// e079_no_expr is the expression half of the walk, for a scan whose whole
+// contribution is statement-shaped.
+function e079_no_expr(e: ast.Expr, own acc: util.Diag[]): util.Diag[] {
+  return acc;
+}
+
+// e079_diags reports `?` inside a `defer` / `errdefer` action (#9470).
+//
+// Mirrors native's rule in checker.go's StmtDefer arm. The shape is circular:
+// `?` leaves by the failure edge, which replays the deferred actions, one of
+// which carries this `?`. Both compilers recursed until they died on it.
+//
+// Refused rather than lowered: `?` propagates a failure to the caller, and a
+// deferred action has no caller to propagate to.
+function e079_diags(mod: parser.Module): util.Diag[] {
+  // fold_stmt_nodes rather than fold_stmt_spine: the spine enters no
+  // expression, so a `defer` inside a LAMBDA body stayed out of reach and the
+  // self-host accepted what native refused. A defer there registers on the
+  // lambda's own exits, and a `?` in its action is the same circular shape one
+  // level down. The expression half contributes nothing, so it is a no-op.
+  var out: util.Diag[] = [];
+  for fd in mod.funcs {
+    for stmt in fd.body {
+      out = astwalk.fold_stmt_nodes(stmt, out, e079_visit_stmt, e079_no_expr, astwalk.descend_all);
+    }
+  }
+  return out;
+}
+
+function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
+  if let ast.StmtDefer(d) = st {
+    var probe: E079Probe = astwalk.fold_stmt_pruned(d.action,
+      E079Probe { found: false, line: 0, col: 0 }, e079_note_try, e079_not_lambda);
+    if (probe.found) {
+      var kind: string = "a `defer`";
+      if (d.on_error != 0) { kind = "an `errdefer`"; }
+      return acc.append(dg_at("E079", "`?` is not allowed inside " + kind + " action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", probe.line, probe.col));
+    }
+  }
+  return acc;
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
   out = util.append_diags(out, handler_state_diags(mod));
   out = util.append_diags(out, e078_diags(mod));
+  out = util.append_diags(out, e079_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
   // most one `__ev` field, so they never trip this).
   for sd in mod.structs {
@@ -11043,6 +11108,20 @@ function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
   return false;
 }
 
+// ow_variant_known reports whether `name` is a declared VARIANT, optionally of
+// one named enum. A payload-less variant is spelled as a bare name rather than
+// a call, so it reaches the ownership predicate as an identifier (or, spelled
+// `Span.Empty`, as a field access) and not through the call arm that already
+// admits `Wide(1.5, "ab")` (#9517).
+function ow_variant_known(structs: parser.StructDecl[], name: string, owner: string): boolean {
+  for sd in structs {
+    if (sd.name == name && sd.enum_owner != "" && (owner == "" || sd.enum_owner == owner)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ow_struct_known reports whether `name` is a declared struct/variant — a
 // call to one is a fresh (owned) construction.
 function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
@@ -11091,9 +11170,15 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
         return true;
       }
+      if (ow_variant_known(ctx.structs, id.name, "")) {
+        return true;
+      }
       return ow_is_owned(ctx, id.name);
     },
     ast.ExprFieldAccess(fa) => {
+      if (ow_variant_known(ctx.structs, fa.field, ow_ident_name(fa.obj))) {
+        return true;
+      }
       return util.has_str(ctx.admit_fields, ow_ident_name(fa.obj) + "." + fa.field);
     },
     ast.ExprCall(c) => {

@@ -129,29 +129,13 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
     return insts;
 }
 
-// vset replaces one element. `.with` writes in place when the array is
-// uniquely owned, which the lift's slot vector always is; rebuilding the
-// vector per store made the lift quadratic on the compiler's largest
-// functions.
-function vset(a: i32[], idx: i32, val: i32): i32[] {
-    return a.with(idx, val);
-}
+// The lift writes its slot vector and scope rows with `.with` on the local
+// itself: an element update through a helper's parameter copies the whole
+// array, since the caller's reference keeps it shared, and on the compiler's
+// largest functions that copy per store made the lift quadratic. The scope
+// rows never shrink; a scope exit leaves its row and the next entry at that
+// depth overwrites it.
 
-// row_set writes row `d` of a stride-nslots scope stack: `vals[i]` when
-// from_vals, else 0. The row stacks never shrink; a scope exit leaves its
-// row behind and the next entry at that depth overwrites it, so a scope
-// costs O(nslots) rather than a copy of every row above it.
-function row_set(rows: i32[], d: i32, nslots: i32, vals: i32[], from_vals: boolean): i32[] {
-    var i: i32 = 0;
-    while (i < nslots) {
-        var v: i32 = 0;
-        if (from_vals) { v = vals[i]; }
-        var at: i32 = d * nslots + i;
-        if (at < rows.len()) { rows = rows.with(at, v); } else { rows = rows.append(v); }
-        i = i + 1;
-    }
-    return rows;
-}
 // buf_lift_tag maps one of the string builder's IR op tags (#8773) to its SSA
 // kind, or 0 when the op is not one of them; buf_lift_pops is that op's operand
 // count. The two are kept side by side because the lift needs both for the same
@@ -887,11 +871,11 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             else {
                 var sv: i32 = stack[stack.len() - 1];
                 stack = drop_last(stack);
-                slots = vset(slots, op.i32_imm, sv);
+                slots = slots.with(op.i32_imm, sv);
             }
         } else if (k == "tee_local") {
             if (stack.len() < 1) { ok = false; }
-            else { slots = vset(slots, op.i32_imm, stack[stack.len() - 1]); }
+            else { slots = slots.with(op.i32_imm, stack[stack.len() - 1]); }
         } else if (bin_sym(k) != "") {
             if (stack.len() < 2) { ok = false; }
             else {
@@ -1133,9 +1117,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_parent = sc_parent.append(parent_id);
                 sc_edge_from = sc_edge_from.append(edge_owner.len());
                 var rd_if: i32 = sc_kind.len() - 1;
-                sc_snap = row_set(sc_snap, rd_if, nslots, slots, true);
-                sc_then_slots = row_set(sc_then_slots, rd_if, nslots, slots, false);
-                sc_header_phis = row_set(sc_header_phis, rd_if, nslots, slots, false);
+                var rs_rd_if: i32 = 0;
+                while (rs_rd_if < nslots) {
+                    var at_rd_if: i32 = rd_if * nslots + rs_rd_if;
+                    if (at_rd_if < sc_snap.len()) {
+                        sc_snap = sc_snap.with(at_rd_if, slots[rs_rd_if]); sc_then_slots = sc_then_slots.with(at_rd_if, 0); sc_header_phis = sc_header_phis.with(at_rd_if, 0);
+                    } else {
+                        sc_snap = sc_snap.append(slots[rs_rd_if]); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(0);
+                    }
+                    rs_rd_if = rs_rd_if + 1;
+                }
                 cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none(); cur_dead = false;
             }
         } else if (k == "else") {
@@ -1148,16 +1139,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 // continue), which leaves cur_dead with an empty terminator.
                 var reaches: i32 = 0; if (cur_term.kind_tag == 0 && !cur_dead) { reaches = 1; }
                 if (reaches == 1) { cur_term = STerm_br(merge_id2); }
-                sc_then_blk = vset(sc_then_blk, top, cur_id);
-                sc_then_reaches = vset(sc_then_reaches, top, reaches);
+                sc_then_blk = sc_then_blk.with(top, cur_id);
+                sc_then_reaches = sc_then_reaches.with(top, reaches);
                 var fs: i32 = 0;
-                while (fs < nslots) { sc_then_slots = vset(sc_then_slots, top * nslots + fs, slots[fs]); fs = fs + 1; }
+                while (fs < nslots) { sc_then_slots = sc_then_slots.with(top * nslots + fs, slots[fs]); fs = fs + 1; }
                 // Don't emit a phantom block for an arm that already branched
                 // out (its real terminated block was appended at the branch).
                 if (!cur_dead) { blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds }); }
-                sc_seen_else = vset(sc_seen_else, top, 1);
+                sc_seen_else = sc_seen_else.with(top, 1);
                 var rs: i32 = 0;
-                while (rs < nslots) { slots = vset(slots, rs, sc_snap[top * nslots + rs]); rs = rs + 1; }
+                while (rs < nslots) { slots = slots.with(rs, sc_snap[top * nslots + rs]); rs = rs + 1; }
                 cur_id = sc_else[top]; cur_insts = []; cur_preds = [sc_parent[top]]; cur_term = STerm_none(); cur_dead = false;
             }
         } else if (k == "block") {
@@ -1172,9 +1163,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             sc_parent = sc_parent.append(0);
             sc_edge_from = sc_edge_from.append(edge_owner.len());
             var rd_blk: i32 = sc_kind.len() - 1;
-            sc_snap = row_set(sc_snap, rd_blk, nslots, slots, false);
-            sc_then_slots = row_set(sc_then_slots, rd_blk, nslots, slots, false);
-            sc_header_phis = row_set(sc_header_phis, rd_blk, nslots, slots, false);
+            var rs_rd_blk: i32 = 0;
+            while (rs_rd_blk < nslots) {
+                var at_rd_blk: i32 = rd_blk * nslots + rs_rd_blk;
+                if (at_rd_blk < sc_snap.len()) {
+                    sc_snap = sc_snap.with(at_rd_blk, 0); sc_then_slots = sc_then_slots.with(at_rd_blk, 0); sc_header_phis = sc_header_phis.with(at_rd_blk, 0);
+                } else {
+                    sc_snap = sc_snap.append(0); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(0);
+                }
+                rs_rd_blk = rs_rd_blk + 1;
+            }
         } else if (k == "loop") {
             var hdr_id: i32 = next_blk; next_blk = next_blk + 1;
             var entry_blk: i32 = cur_id;
@@ -1193,7 +1191,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 var ph: i32 = nvals; nvals = nvals + 1;
                 hdr_insts = hdr_insts.append(ssa.SInst { kind_tag: 8, result: ph, args: [], imm: 0, str: "" });
                 hp_row = hp_row.append(ph);
-                slots = vset(slots, hs, ph);
+                slots = slots.with(hs, ph);
                 hs = hs + 1;
             }
             sc_kind = sc_kind.append("loop");
@@ -1206,9 +1204,16 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             sc_parent = sc_parent.append(entry_blk);
             sc_edge_from = sc_edge_from.append(edge_owner.len() - 1);
             var rd_loop: i32 = sc_kind.len() - 1;
-            sc_snap = row_set(sc_snap, rd_loop, nslots, slots, false);
-            sc_then_slots = row_set(sc_then_slots, rd_loop, nslots, slots, false);
-            sc_header_phis = row_set(sc_header_phis, rd_loop, nslots, hp_row, true);
+            var rs_rd_loop: i32 = 0;
+            while (rs_rd_loop < nslots) {
+                var at_rd_loop: i32 = rd_loop * nslots + rs_rd_loop;
+                if (at_rd_loop < sc_snap.len()) {
+                    sc_snap = sc_snap.with(at_rd_loop, 0); sc_then_slots = sc_then_slots.with(at_rd_loop, 0); sc_header_phis = sc_header_phis.with(at_rd_loop, hp_row[rs_rd_loop]);
+                } else {
+                    sc_snap = sc_snap.append(0); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(hp_row[rs_rd_loop]);
+                }
+                rs_rd_loop = rs_rd_loop + 1;
+            }
             cur_id = hdr_id; cur_insts = hdr_insts; cur_preds = [entry_blk]; cur_term = STerm_none(); cur_dead = false;
         } else if (k == "br" || k == "brif") {
             var depth: i32 = op.i32_imm;
@@ -1268,9 +1273,9 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                             if (tv2 != snapv) {
                                 var ph2a: i32 = nvals; nvals = nvals + 1;
                                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 8, result: ph2a, args: [tv2, snapv], imm: 0, str: "" });
-                                slots = vset(slots, s2, ph2a);
-                            } else { slots = vset(slots, s2, tv2); }
-                        } else { slots = vset(slots, s2, snapv); }
+                                slots = slots.with(s2, ph2a);
+                            } else { slots = slots.with(s2, tv2); }
+                        } else { slots = slots.with(s2, snapv); }
                         s2 = s2 + 1;
                     }
                 } else {
@@ -1293,11 +1298,11 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                             if (tvv != evv) {
                                 var ph3: i32 = nvals; nvals = nvals + 1;
                                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 8, result: ph3, args: [tvv, evv], imm: 0, str: "" });
-                                slots = vset(slots, s3, ph3);
-                            } else { slots = vset(slots, s3, tvv); }
-                        } else if (then_reaches2 == 1) { slots = vset(slots, s3, tvv); }
-                        else if (e_reaches == 1) { slots = vset(slots, s3, evv); }
-                        else { slots = vset(slots, s3, tvv); }
+                                slots = slots.with(s3, ph3);
+                            } else { slots = slots.with(s3, tvv); }
+                        } else if (then_reaches2 == 1) { slots = slots.with(s3, tvv); }
+                        else if (e_reaches == 1) { slots = slots.with(s3, evv); }
+                        else { slots = slots.with(s3, tvv); }
                         s3 = s3 + 1;
                     }
                 }
@@ -1342,7 +1347,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 }
                 blocks = nb;
                 var rsl: i32 = 0;
-                while (rsl < nslots) { slots = vset(slots, rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
+                while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 cur_dead = true;
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
@@ -1386,11 +1391,11 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                         var alleq: boolean = true;
                         var qv: i32 = 0;
                         while (qv < vals.len()) { if (vals[qv] != first) { alleq = false; } qv = qv + 1; }
-                        if (alleq) { slots = vset(slots, es, first); }
+                        if (alleq) { slots = slots.with(es, first); }
                         else {
                             var phe: i32 = nvals; nvals = nvals + 1;
                             eo_insts = eo_insts.append(ssa.SInst { kind_tag: 8, result: phe, args: vals, imm: 0, str: "" });
-                            slots = vset(slots, es, phe);
+                            slots = slots.with(es, phe);
                         }
                     }
                     es = es + 1;

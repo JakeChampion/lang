@@ -17,6 +17,30 @@
 #                       the nix store. Optional — the column is dropped when
 #                       there is none, and the header names what was found.
 #   FERN_TARGET         the -target to build for. Default: the host.
+#   FERN_BENCH_COMPILERS  which Fern compiler builds the utilities: `both`
+#                       (default), `native` (bin/fern alone) or `selfhost`
+#                       (bin/fern-selfhost alone).
+#   FERN_BENCH_PROBE_TIMEOUT  seconds one trial of a workload may take before
+#                       the row records that the build did not finish.
+#                       Default: 60.
+#
+# TWO FERN COLUMNS, because there are two Fern compilers and the project is
+# moving to the self-hosted one by default (CLAUDE.md). `fern` is the native
+# compiler's build and `fern-sh` the self-hosted compiler's build of the SAME
+# source, so the pair answers the two questions separately: whether Fern beats
+# GNU and uutils, and whether it still does once the default compiler changes.
+# Measuring only the native build would have let the self-host leg regress
+# against GNU unobserved, which is what #9077 (accumulation is quadratic under
+# the self-host) and #8688 (a field-place `.with` clones the buffer) cost
+# today.
+#
+# A BOUND ON ONE TRIAL, because a self-host build can be slower by a factor
+# that turns a benchmark into a hang: #8688 has `seq` ~400x slower and growing
+# to 11 GB. Each Fern build therefore runs the workload once under `timeout`
+# before hyperfine sees it, and a build that does not finish is REPORTED in
+# its cell rather than dropped. The bound is time and not memory on purpose:
+# the arena is a 16 GiB MAP_NORESERVE reservation (docs/LOCAL-DEV-LOOP.md), so
+# `ulimit -v` and `ulimit -d` would refuse every Fern binary at startup.
 #
 # WALL TIME, deliberately. `scripts/perf-bench` counts retired instructions
 # because a count is reproducible to the digit, and that is right for a
@@ -109,13 +133,19 @@ gnu_bin() {
   return 1
 }
 
-# is_uutils_multicall BIN — Debian's rust-coreutils: one binary dispatching
-# on argv[0]. Invoked bare it names itself "(multi-call binary)" and exits
-# non-zero; `--version` is refused as an unknown utility; GNU's own
-# multi-call prints a usage line. Output is captured rather than piped
-# because under pipefail the non-zero exit would mask the match.
+# is_uutils_multicall BIN — uutils' rust-coreutils: one binary dispatching on
+# argv[0]. BOTH spellings are probed because the marker MOVED: Debian's 0.0.24
+# names itself "(multi-call binary)" when invoked bare and refuses `--version`
+# as an unknown utility, while 0.11.0 answers a bare call with `coreutils:
+# missing argument` and carries the marker on `--version` instead. Probing the
+# bare form alone silently dropped the uutils column on any host with a
+# current uutils. GNU's own multi-call matches neither: it prints a usage line
+# bare and `coreutils (GNU coreutils) <ver>` for --version. Output is captured
+# rather than piped because under pipefail the non-zero exit would mask the
+# match.
 is_uutils_multicall() {
   case "$("$1" 2>&1 || true)" in *"multi-call binary"*) return 0 ;; esac
+  case "$("$1" --version 2>&1 || true)" in *"multi-call binary"*) return 0 ;; esac
   return 1
 }
 
@@ -163,14 +193,45 @@ if [ -z "$target" ]; then
   esac
 fi
 
+# WHICH FERN COMPILER BUILDS THE UTILITIES. `both` is the default: the
+# self-hosted compiler is becoming the default one, so a row measured under
+# the native build alone stops describing what a user gets.
+compilers="${FERN_BENCH_COMPILERS:-both}"
+case "$compilers" in
+  both)     want_native=y;  want_selfhost=y  ;;
+  native)   want_native=y;  want_selfhost="" ;;
+  selfhost) want_native=""; want_selfhost=y  ;;
+  *) echo "coreutils-bench: FERN_BENCH_COMPILERS must be both, native or selfhost (got '$compilers')" >&2; exit 2 ;;
+esac
+probe_timeout="${FERN_BENCH_PROBE_TIMEOUT:-60}"
+
 go build -o bin/fern ./cmd/fern
+
+# bin/fern-selfhost is rebuilt when MISSING OR STALE. A binary left over from
+# an earlier commit compiles the same sources into different code, and the
+# column would then name a compiler nobody can identify. It is built for the
+# HOST, because it has to run here; the utilities it emits are built for
+# $target like the native leg's.
+#
+# Staleness is judged against the SOURCES of both compilers, never against
+# bin/fern: `go build -o` rewrites its output whether or not anything changed,
+# so `bin/fern -nt bin/fern-selfhost` is true on every run after the build
+# above and would rebuild the self-host CLI every time.
+if [ -n "$want_selfhost" ]; then
+  if [ ! -x bin/fern-selfhost ] || [ -n "$(find examples/self_host cmd internal \
+       \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
+    echo "coreutils-bench: building bin/fern-selfhost (missing or stale)" >&2
+    make selfhost-cli >&2
+  fi
+fi
+
 out=$(mktemp -d)
 if [ -n "$uu_multicall" ]; then
   uu="$out/uutils"
   mkdir -p "$uu"
 fi
 trap 'rm -rf "$out"' EXIT
-mkdir -p "$out/fern"
+mkdir -p "$out/fern" "$out/selfhost"
 
 if [ $# -eq 0 ]; then
   utils=()
@@ -179,8 +240,32 @@ if [ $# -eq 0 ]; then
 fi
 for u in "$@"; do
   [ -f "coreutils/$u.fern" ] || { echo "coreutils-bench: no coreutils/$u.fern" >&2; exit 1; }
-  ./bin/fern -O -target "$target" -o "$out/fern/$u" "coreutils/$u.fern"
+  if [ -n "$want_native" ]; then
+    ./bin/fern -O -target "$target" -o "$out/fern/$u" "coreutils/$u.fern"
+  fi
+  # The self-host CLI takes the stdlib root as a second operand and needs
+  # ABSOLUTE paths: a relative one is unopenable from an arm64-darwin binary
+  # (AT_FDCWD is -2 on XNU), and every other harness passes absolute for it.
+  if [ -n "$want_selfhost" ]; then
+    ./bin/fern-selfhost -O -target "$target" -o "$out/selfhost/$u" \
+      "$PWD/coreutils/$u.fern" "$PWD/internal/stdlib"
+  fi
 done
+
+# probe_completes CMD — run one trial of CMD under a time bound, so a build
+# that cannot carry the workload is a reported cell instead of a hung bench.
+# A NON-ZERO EXIT IS FINE and must stay fine: `false` exits 1 by design and
+# `yes | head` dies of SIGPIPE, so only a timeout (124, or 137 after the kill
+# signal) means the binary did not finish. Always through `sh -c`, including
+# for the rows hyperfine times with -N: the probe is not timed, so a shell
+# costs nothing here, and it is the only way a template carrying quoted
+# operands (`fmt -p "" -w 40`) is split the way hyperfine will split it.
+probe_completes() {
+  local rc=0
+  timeout -k 2 "$probe_timeout" sh -c "$1" >/dev/null 2>&1 || rc=$?
+  case "$rc" in 124|137) return 1 ;; esac
+  return 0
+}
 
 # --- workloads --------------------------------------------------------------
 #
@@ -209,14 +294,27 @@ for u in "$@"; do
   uub=$(uutils_bin "$u")
   while IFS=$'\t' read -r label shell template; do
     cmds=()
-    for impl in fern gnu uutils; do
+    incomplete=()
+    for impl in fern selfhost gnu uutils; do
       case "$impl" in
-        fern)   bin="$out/fern/$u" ;;
-        gnu)    bin=$(gnu_bin "$u") || exit 1 ;;
-        uutils) bin="$uub"; [ -n "$bin" ] || continue ;;
+        fern)     [ -n "$want_native" ] || continue; bin="$out/fern/$u" ;;
+        selfhost) [ -n "$want_selfhost" ] || continue; bin="$out/selfhost/$u" ;;
+        gnu)      bin=$(gnu_bin "$u") || exit 1 ;;
+        uutils)   bin="$uub"; [ -n "$bin" ] || continue ;;
       esac
       cmd=${template//\{gnu\}/$gnu}
       cmd=${cmd//\{\}/$bin}
+      # Only the Fern builds are probed. The references are the binaries the
+      # workload was sized against, so a GNU that did not finish would be the
+      # finding rather than something to route around.
+      case "$impl" in
+        fern|selfhost)
+          if ! probe_completes "$cmd"; then
+            echo "coreutils-bench: $u: $label: $impl did not finish in ${probe_timeout}s" >&2
+            incomplete+=("$impl")
+            continue
+          fi ;;
+      esac
       cmds+=(-n "$impl" "$cmd")
     done
     json="$out/$u-$(echo "$label" | tr -c 'a-zA-Z0-9' '_').json"
@@ -226,11 +324,11 @@ for u in "$@"; do
     hyperfine --warmup 3 --min-runs 20 -i "${shellopt[@]}" --export-json "$json" \
       "${cmds[@]}" >/dev/null 2>&1 || {
       echo "coreutils-bench: hyperfine failed for $u: $label" >&2; exit 1; }
-    python3 - "$json" "$u" "$label" <<'PY'
+    python3 - "$json" "$u" "$label" ${incomplete[@]+"${incomplete[@]}"} <<'PY'
 import json, sys
-path, util, label = sys.argv[1:]
+path, util, label = sys.argv[1:4]
 d = json.load(open(path))
-d["util"], d["label"] = util, label
+d["util"], d["label"], d["incomplete"] = util, label, sys.argv[4:]
 json.dump(d, open(path, "w"))
 PY
     jsons+=("$json")
@@ -241,36 +339,54 @@ done
 
 table=$(python3 - "${jsons[@]}" <<'PY'
 import json, sys
+
+# `fern` is the native compiler's build, `fern-sh` the self-hosted compiler's
+# build of the same source. Columns appear only for the implementations this
+# run actually measured.
+DISPLAY = {"fern": "fern", "selfhost": "fern-sh", "gnu": "gnu", "uutils": "uutils"}
+ORDER = ["fern", "selfhost", "gnu", "uutils"]
+
 rows = []
-have_uu = False
+present = set()
 for path in sys.argv[1:]:
     d = json.load(open(path))
     by = {r["command"]: r for r in d["results"]}
-    have_uu = have_uu or "uutils" in by
-    rows.append((d["util"], d["label"], by))
+    inc = set(d.get("incomplete", []))
+    present |= set(by) | inc
+    rows.append((d["util"], d["label"], by, inc))
 
-def ms(r):
+impls = [i for i in ORDER if i in present]
+
+# A ratio cell is mean(first) / mean(second), so above 1 the SECOND is faster.
+# Each Fern build is ranked against each reference, then the two Fern builds
+# against each other — which is the column that says what changing the default
+# compiler costs.
+ratios = []
+for fern in ("fern", "selfhost"):
+    if fern in impls:
+        ratios += [(ref, fern) for ref in ("gnu", "uutils") if ref in impls]
+if "fern" in impls and "selfhost" in impls:
+    ratios.append(("fern", "selfhost"))
+
+def ms(by, inc, impl):
+    if impl in inc:
+        return "did not finish"
+    r = by.get(impl)
     return f'{r["mean"]*1000:.2f} ± {r["stddev"]*1000:.2f}' if r else "—"
 
-def ratio(a, b):
-    return f'{b["mean"]/a["mean"]:.2f}×' if a and b else "—"
+def ratio(by, a, b):
+    ra, rb = by.get(a), by.get(b)
+    return f'{ra["mean"]/rb["mean"]:.2f}×' if ra and rb else "—"
 
-hdr = ["utility", "workload", "fern (ms)", "gnu (ms)"]
-if have_uu:
-    hdr.append("uutils (ms)")
-hdr.append("gnu / fern")
-if have_uu:
-    hdr.append("uutils / fern")
+hdr = (["utility", "workload"]
+       + [f"{DISPLAY[i]} (ms)" for i in impls]
+       + [f"{DISPLAY[a]} / {DISPLAY[b]}" for a, b in ratios])
 print("| " + " | ".join(hdr) + " |")
 print("|" + "|".join("---" for _ in hdr) + "|")
-for util, label, by in rows:
-    f, g, u = by.get("fern"), by.get("gnu"), by.get("uutils")
-    cells = [f"`{util}`", label, ms(f), ms(g)]
-    if have_uu:
-        cells.append(ms(u))
-    cells.append(ratio(f, g))
-    if have_uu:
-        cells.append(ratio(f, u))
+for util, label, by, inc in rows:
+    cells = ([f"`{util}`", label]
+             + [ms(by, inc, i) for i in impls]
+             + [ratio(by, a, b) for a, b in ratios])
     print("| " + " | ".join(cells) + " |")
 PY
 )
@@ -279,7 +395,16 @@ header="coreutils-bench: $(date -u +%Y-%m-%d) $(uname -s)/$(uname -m), fern $(gi
 # uutils prints argv[0] before its version, which for a symlink dir is a
 # scratch path; name the implementation instead.
 [ -n "$uu" ] && header="$header, uutils $("$(uutils_bin yes)" --version | head -1 | awk '{print $NF}')"
-header="$header. mean ± σ over ≥20 runs; a ratio above 1 means Fern is faster."
+header="$header. mean ± σ over ≥20 runs."
+# Name the compiler behind each Fern column: two builds of one source are two
+# different programs, and a table that does not say which is which cannot be
+# read a month later.
+if [ -n "$want_native" ] && [ -n "$want_selfhost" ]; then
+  header="$header \`fern\` is the native compiler's build, \`fern-sh\` the self-hosted compiler's build of the same source."
+elif [ -n "$want_selfhost" ]; then
+  header="$header \`fern-sh\` is the self-hosted compiler's build."
+fi
+header="$header A ratio is mean(first) / mean(second), so above 1 the second-named build is faster — in a \`gnu / …\` or \`uutils / …\` column, above 1 means Fern is faster."
 
 printf '%s\n\n%s\n' "$header" "$table"
 if [ -n "$report" ]; then
