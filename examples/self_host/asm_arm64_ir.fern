@@ -847,7 +847,7 @@ function ssa_unary_known(what: string): boolean {
 function ssa_inst_known(ins: ssa.SInst): boolean {
     var k: i32 = ins.kind_tag;
     if (k == 10) { return ssa_unary_known(ins.str); }
-    if (k >= 40 && k <= 51) { return true; }
+    if (k >= 40 && k <= 55) { return true; }
     return k == 1 || k == 3 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11;
 }
 
@@ -990,6 +990,8 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
     if (op == "str_eq") { return s.mark_str_eq(); }
     if (op == "str_cmp") { return s.mark_str_cmp(); }
     if (op == "arr_slice") { return s.mark_heap().mark_arr_slice(); }
+    if (op == "print_str") { return s.need("str_print"); }
+    if (op == "eprint_str") { return s.need("eprint"); }
     return s.mark_str_from_bytes();
 }
 
@@ -999,11 +1001,16 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
     s = s.mark_heap();
     var sym: string = "__fern_alloc";
     if (ins.str == "alloc_u8") { sym = "__fern_alloc_u8"; }
+    else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (ins.str == "arr_push_owned") { s = s.mark_arr_push(); sym = "__fern_arr_push_owned"; }
     else if (util.str_has_prefix(ins.str, "arr_push")) { s = s.mark_arr_push(); sym = "__fern_arr_push"; }
     s = ssa_load(reg_of, ins.args[0], "x0", s);
     if (ins.args.len() > 1) { s = ssa_load(reg_of, ins.args[1], "x1", s); }
+    // raw_alloc asks for 24 bytes more and hands back the pointer past them,
+    // the string box header a buffer may later grow (#7351).
+    if (ins.str == "raw_alloc") { s = s.write("    add x0, x0, #24\n"); }
     s = s.write("    bl " + sym + "\n");
+    if (ins.str == "raw_alloc") { s = s.write("    add x0, x0, #24\n"); }
     return ssa_store(reg_of, ins.result, "x0", s);
 }
 
@@ -1060,6 +1067,19 @@ function ssa_view_off(fr: SsaFrame, v: i32): i32 {
     return 0 - 8 * (first + 3);
 }
 
+// ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
+// byte loads and stores at base + idx.
+function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    var k: i32 = ins.kind_tag;
+    s = ssa_load(reg_of, ins.args[0], "x0", s);
+    s = ssa_load(reg_of, ins.args[1], "x1", s);
+    if (k == 52) { s = s.write("    ldr x0, [x0, x1, lsl #3]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
+    if (k == 54) { s = s.write("    add x0, x0, x1\n    ldrb w0, [x0]\n"); return ssa_store(reg_of, ins.result, "x0", s); }
+    s = ssa_load(reg_of, ins.args[2], "x2", s);
+    if (k == 53) { return s.write("    str x2, [x0, x1, lsl #3]\n"); }
+    return s.write("    add x0, x0, x1\n    strb w2, [x0]\n");
+}
+
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
 function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
     var k: i32 = ins.kind_tag;
@@ -1091,6 +1111,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitSt
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50) { return ssa_rt_call(ins, reg_of, s); }
+    if (k >= 52 && k <= 55) { return ssa_raw_inst(ins, reg_of, s); }
     if (k == 1) { s = ssa_const_x0(util.i32_to_string(ins.imm), s); }
     else if (k == 3) { s = ssa_const_x0(ins.str, s); }
     else if (k == 7) { s = ssa_load(reg_of, ins.args[0], "x0", s); }

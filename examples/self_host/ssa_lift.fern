@@ -326,7 +326,8 @@ function prod_kind(k: string): boolean {
 function prod_mem_kind(k: string): boolean {
     var mem: string[] = ["struct_get", "struct_set", "arr_len", "str_len", "tuple_get", "opt_tag", "opt_payload",
         "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is",
-        "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none", "str_slice"];
+        "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none", "str_slice",
+        "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "struct_copy"];
     for x in mem { if (x == k) { return true; } }
     return prod_call_argc(k) > 0;
 }
@@ -338,13 +339,13 @@ function prod_mem_kind(k: string): boolean {
 function prod_call_argc(k: string): i32 {
     var two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64"];
     for x in two { if (x == k) { return 2; } }
-    var one: string[] = ["str_from_bytes", "alloc", "alloc_u8"];
+    var one: string[] = ["str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str"];
     for y in one { if (y == k) { return 1; } }
     if (k == "arr_slice") { return 3; }
     return 0;
 }
 function prod_call_kind(k: string): i32 {
-    if (k == "alloc" || k == "alloc_u8" || util.str_has_prefix(k, "arr_push")) { return 50; }
+    if (k == "alloc" || k == "alloc_u8" || k == "raw_alloc" || util.str_has_prefix(k, "arr_push")) { return 50; }
     return 49;
 }
 
@@ -365,17 +366,35 @@ function ld_off(k: string, op: ir.Op): i32 {
 // stays aligned with the IR's own accounting.
 function lift_prod_mem(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
     var lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
+    if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "arr_set") { return lift_prod_store(k, op, lv); }
+    if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
+    if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }
+    if (prod_call_argc(k) > 0) { return lift_pop_push(lv, prod_call_argc(k), prod_call_kind(k), 0, k); }
+    var made: LiftVals = lift_prod_make(k, op, lv);
+    if (made.ok || made.stack.len() != lv.stack.len()) { return made; }
+    return lift_prod_read(k, op, lv);
+}
+
+// lift_prod_store is the four stores: a record field and a checked array
+// element push nothing back, the raw stores leave the stored value.
+function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (k == "struct_set") { return lift_store(lv, 41, (op.i32_imm + 1) * 8); }
     if (k == "arr_set") { return lift_store(lv, 43, 0); }
-    if (k == "variant_is") { return lift_variant_is_prod(op, lv); }
+    if (k == "raw_store_ptr") { return lift_store_keep(lv, 53); }
+    return lift_store_keep(lv, 55);
+}
+
+// lift_prod_make is the constructions: a box allocated and filled, or copied.
+// For any other op it hands back `lv` unchanged with ok false, which
+// lift_prod_mem reads as "not a construction".
+function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (k == "struct_make") { return lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv); }
     if (k == "arr_make") { return lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv); }
     if (k == "tuple_make") { return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv); }
     if (k == "opt_make") { return lift_opt_make_prod(op.i32_imm, true, lv); }
     if (k == "opt_none") { return lift_opt_make_prod(1, false, lv); }
-    if (prod_call_argc(k) > 0) { return lift_pop_push(lv, prod_call_argc(k), prod_call_kind(k), 0, k); }
-    if (k == "str_slice") { return lift_pop_push(lv, 3, 51, view_in_frame(op), ""); }
-    return lift_prod_read(k, op, lv);
+    if (k == "struct_copy") { return lift_struct_copy_prod(op, lv); }
+    return LiftVals { ...lv, ok: false };
 }
 
 // A str_slice whose lowering gave it frame slots for the view box (i32_imm
@@ -386,10 +405,29 @@ function view_in_frame(op: ir.Op): i32 {
     return 0;
 }
 
+// lift_store_keep is a raw store that leaves the stored value on the stack,
+// as raw_store_ptr and raw_store8 push it back.
+function lift_store_keep(lv: LiftVals, kind: i32): LiftVals {
+    if (lv.stack.len() < 3) { return LiftVals { ...lv, ok: false }; }
+    var val: i32 = lv.stack[lv.stack.len() - 1];
+    var stored: LiftVals = lift_store(lv, kind, 0);
+    if (!stored.ok) { return stored; }
+    return LiftVals { ...stored, stack: stored.stack.append(val) };
+}
+
+// struct_copy(box) copies `imm` fields through the runtime; the field count
+// travels as a constant in the second register argument.
+function lift_struct_copy_prod(op: ir.Op, lv: LiftVals): LiftVals {
+    var n: LiftVals = lift_pop_push(lv, 0, 1, op.i32_imm, "");
+    return lift_pop_push(n, 2, 50, 0, "struct_copy");
+}
+
 // lift_prod_read is the value-producing half: the single loads, the checked
 // element and byte reads, and the two label addresses.
 function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (ld_off(k, op) >= 0) { return lift_pop_push(lv, 1, 40, ld_off(k, op), ""); }
+    if (k == "raw_load_ptr") { return lift_pop_push(lv, 2, 52, 0, ""); }
+    if (k == "raw_load8") { return lift_pop_push(lv, 2, 54, 0, ""); }
     if (k == "arr_get") { return lift_pop_push(lv, 2, 42, op.i32_imm, ""); }
     if (k == "str_index") { return lift_pop_push(lv, 2, 44, 0, ""); }
     if (k == "const_func") { return lift_pop_push(lv, 0, 45, 0, op.str); }
@@ -415,7 +453,7 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
 // pops [base, idx, val] (val on top in both).
 function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
     var npop: i32 = 2;
-    if (kind == 43) { npop = 3; }
+    if (kind == 43 || kind == 53 || kind == 55) { npop = 3; }
     var pushed: LiftVals = lift_pop_push(lv, npop, kind, imm, "");
     if (!pushed.ok) { return pushed; }
     return LiftVals { ...pushed, stack: drop_last(pushed.stack) };
