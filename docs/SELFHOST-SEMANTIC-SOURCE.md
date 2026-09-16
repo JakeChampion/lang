@@ -508,7 +508,9 @@ Unsupported constructs refuse the whole function with a reason.
   A map names no element in its construction, so the DESTINATION is the only
   place its shape is written: `map_new(2)` at an annotated binding or a
   contract's parameter produces, and one reaching a slot that spells no shape
-  is refused.
+  is refused. A literal desugars to a `map_new(n).insert(k, v)` chain, and
+  an insert hands its receiver back, so the chain's head takes the
+  destination's shape through the inserts.
 
 - `Cell[T]`, the language's one mutable slot, as a VALUE and a declared field.
   It is a nominal name over a one-element box rather than a declared record —

@@ -2693,7 +2693,7 @@ func poked {
     ret v4
 }
 
-refused unsupported map shape: no destination names one
+refused unsupported map shape: columns unresolved
 modes 2 1 result i32
 v0:Option[i32] v1:i32 v2:boolean v3:i32 v4:i32 v5:boolean v6:i32 v7:boolean v8:boolean v9:boolean v10:i32
 func guarded_and {
@@ -2788,6 +2788,25 @@ func map_get_line {
   b4:
     v5 = const_int 0
     ret v5
+}
+
+modes 1 result i32
+v0:i32 v1:i32 v2:Map[i32, i32] v3:i32 v4:Map[i32, i32] v5:i32 v6:i32 v7:i32 v8:Map[i32, i32] v9:i32 v10:i32 v11:i32
+func map_lit {
+  b0:
+    v0 = param 0
+    v1 = const_int 8
+    v2 = map_new v1
+    v3 = const_int 1
+    v4 = map_insert v2 v3 v0
+    v5 = const_int 2
+    v6 = const_int 1
+    v7 = binary + v0 v6
+    v8 = map_insert v4 v5 v7
+    v9 = const_int 2
+    v10 = const_int 0
+    v11 = map_get_or v8 v9 v10
+    ret v11
 }
 
 modes 1 result i32[]
