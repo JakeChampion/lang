@@ -752,7 +752,9 @@ pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" +
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
-// allocated frame.
+// allocated frame. The body is the raw op sequence: every function that
+// mentions the type produces one, and `merge_helpers` runs the peephole once
+// per symbol it keeps rather than once per producer.
 function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
@@ -761,8 +763,12 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     // The one value the caller's `drop` after the call discards.
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_return());
-    var optimized: ir.OptimizedOps = ir.optimize_ops(r.ops, 1, r.n_locals);
-    return irlower.LowerResult { ...r, ops: optimized.ops, n_locals: optimized.n_locals };
+    return r;
+}
+
+function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
+    var optimized: ir.OptimizedOps = ir.optimize_ops(h.ops, 1, h.n_locals);
+    return irlower.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
 // One helper per nominal schema the walk can call, gated on has_children —
@@ -805,14 +811,19 @@ function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult
 // it becomes a refusal the emit path stops on instead.
 pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
     var out: irlower.LowerResult[] = cache;
+    var raw: irlower.LowerResult[] = [];
     for h in helpers {
-        var at: i32 = named_index(out, h.name);
-        if (at < 0) { out = out.append(h); }
-        else if (!ir.ops_equal(out[at].ops, h.ops) || out[at].n_params != h.n_params
-                || out[at].n_locals != h.n_locals) {
-            out = replaced(out, at, irlower.LowerResult { ...h, ok: false,
+        var at: i32 = named_index(raw, h.name);
+        if (at < 0) { raw = raw.append(h); }
+        else if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params
+                || raw[at].n_locals != h.n_locals) {
+            raw = replaced(raw, at, irlower.LowerResult { ...h, ok: false,
                 why: "conflicting drop helper for " + h.name });
         }
+    }
+    for h in raw {
+        if (named_index(out, h.name) >= 0) { continue; }
+        if (h.ok) { out = out.append(optimized_helper(h)); } else { out = out.append(h); }
     }
     return out;
 }
