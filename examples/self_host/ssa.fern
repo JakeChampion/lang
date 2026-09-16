@@ -2581,14 +2581,30 @@ function inst_is_call(k: i32): boolean {
     return k >= 19 && k <= 27;
 }
 
-// spans_call is true when some call position lies strictly inside (lo, hi).
-function spans_call(calls: i32[], lo: i32, hi: i32): boolean {
-    var i: i32 = 0;
-    while (i < calls.len()) {
-        if (calls[i] > lo && calls[i] < hi) { return true; }
-        i = i + 1;
+// calls_before counts, for every position p, the calls at positions below
+// p; spans_call reads two entries. The scan over the call list it replaces
+// ran once per value, which on a function with thousands of calls and tens
+// of thousands of values was most of the allocator's time.
+function calls_before(calls: i32[], total_pos: i32): i32[] {
+    var cum: i32[] = zeros(total_pos + 2);
+    var ci: i32 = 0;
+    var p: i32 = 0;
+    while (p <= total_pos + 1) {
+        cum = env_put(cum, p, ci);
+        while (ci < calls.len() && calls[ci] < p + 1) { ci = ci + 1; }
+        p = p + 1;
     }
-    return false;
+    return cum;
+}
+
+// spans_call is true when some call position lies strictly inside (lo, hi).
+function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
+    if (hi <= lo + 1) { return false; }
+    var a: i32 = lo + 1;
+    if (a >= cum.len()) { return false; }
+    var b: i32 = hi;
+    if (b >= cum.len()) { b = cum.len() - 1; }
+    return cum[b] - cum[a] > 0;
 }
 // order_by_lo returns value ids 0..n-1 sorted ascending by lo, ids ascending
 // within one lo. A counting sort over the positions: the insertion sort this
@@ -2749,6 +2765,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
 
     hi = extend_backedge_phi_intervals(f, def_pos, total_pos, hi);
     hi = extend_loop_invariant_intervals(f, def_pos, hi);
+    var cum: i32[] = calls_before(calls, total_pos);
 
     var reg_of: i32[] = [];
     i = 0;
@@ -2777,7 +2794,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         }
         act_val = nv; act_hi = nh; act_reg = nr;
 
-        if (spans_call(calls, lo[v], hi[v]) || free.len() == 0) {
+        if (spans_call(cum, lo[v], hi[v]) || free.len() == 0) {
             reg_of = env_put(reg_of, v, 0 - 1);   // spill
         } else {
             var reg: i32 = free[free.len() - 1];
