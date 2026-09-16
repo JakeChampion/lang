@@ -2121,13 +2121,25 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// `map_new_impl`, so passing nil here culled every Map impl as unreachable
 	// and the link failed on a dangling label (#6609). Must stay in step with
 	// the alias the emitter applies — same map, both ends.
-	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases, dynRoots...)
-	funcs := map[string]*ssa.Func{}
 	shapes := ir.NewCallShapes(irProg)
-	for _, fn := range irProg.Funcs {
-		if live != nil && !live[fn.Name] {
-			continue
+	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases, dynRoots...)
+	if live != nil {
+		kept := irProg.Funcs[:0]
+		for _, fn := range irProg.Funcs {
+			if live[fn.Name] {
+				kept = append(kept, fn)
+			}
 		}
+		irProg.Funcs = kept
+	}
+	// The IR gate the flat backends run on the program they hand their
+	// emitter (#8798). Without it FERN_IR_VERIFY=1 covers only the emitters it
+	// was written for, and says nothing while it does.
+	if err := ir.VerifyOrRefuse(irProg); err != nil {
+		return "", err
+	}
+	funcs := map[string]*ssa.Func{}
+	for _, fn := range irProg.Funcs {
 		f, err := ssa.LiftFromIRWith(fn, shapes)
 		if err != nil {
 			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
@@ -2180,13 +2192,23 @@ func buildX86SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// still-unported helper bails a program that never calls it. CodegenAliases
 	// keeps a Map call site's `_impl` alive — the IR emits `map_new` and only
 	// the emitter knows that resolves to `map_new_impl`.
-	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases)
-	funcs := map[string]*ssa.Func{}
 	shapes := ir.NewCallShapes(irProg)
-	for _, fn := range irProg.Funcs {
-		if live != nil && !live[fn.Name] {
-			continue
+	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases)
+	if live != nil {
+		kept := irProg.Funcs[:0]
+		for _, fn := range irProg.Funcs {
+			if live[fn.Name] {
+				kept = append(kept, fn)
+			}
 		}
+		irProg.Funcs = kept
+	}
+	// The IR gate, as the arm64 twin and the flat backends run it (#8798).
+	if err := ir.VerifyOrRefuse(irProg); err != nil {
+		return "", err
+	}
+	funcs := map[string]*ssa.Func{}
+	for _, fn := range irProg.Funcs {
 		f, err := ssa.LiftFromIRWith(fn, shapes)
 		if err != nil {
 			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
