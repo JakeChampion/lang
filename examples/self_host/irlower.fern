@@ -621,6 +621,17 @@ pub struct FnSigs {
     // Declared own scalar-array positions sharing the counted-buffer ABI.
     // Pointer-element arrays require a separate element-unit protocol.
     own_scalar_arr_positions: string[],
+    // own_consumed_positions: "fn|idx" for every `own` array position whose
+    // callee CONSUMES the buffer — reclaims it when a push supersedes it, or
+    // releases it at exit — so the caller transfers its reference the way it
+    // does at an own_scalar_arr_positions entry, whatever the element type.
+    // A body this lowering emits consumes only a scalar-element `own` array
+    // (the pointer-element protocol leaks the superseded buffer for the
+    // caller's rebind to release), so this set is empty until a body the
+    // semantic lowering produced takes such a position; the AST-lowered
+    // functions that pass their own `own` parameter on to one join it
+    // (own_consumed_positions_of).
+    own_consumed_positions: string[],
     // consumed_arr_positions: "fn|idx" for every consumed-threaded array
     // parameter of a free function (reassigned, not `own` — the ownflag_name
     // protocol): the callee never releases the incoming buffer, so a temp the
@@ -13288,7 +13299,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             var arg_consumed: boolean = !arg_releasable
                 && util.index_of_str(sc.frame.sigs.consumed_arr_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0;
             if (arrlit_arg && sc.ok && (arg_releasable || arg_consumed)
-                && util.index_of_str(sc.frame.sigs.own_scalar_arr_positions, cid.name + "|" + util.i32_to_string(ai)) < 0) {
+                && !sc.callee_consumes_own_array(cid.name, ai)) {
                 var laan: string = "$laa" + util.i32_to_string(sc.locals.len());
                 sc = sc.add_local(laan);
                 var laas: i32 = sc.slot_of(laan);
@@ -13317,8 +13328,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             match (c.args[ai]) {
                 ast.ExprFieldAccess(ofa) => { sc = emit_own_field_arg(ofa, sc); },
                 ast.ExprIdent(oid) => {
-                    var scalar_move: boolean = util.index_of_str(sc.frame.sigs.own_scalar_arr_positions,
-                        cid.name + "|" + util.i32_to_string(ai)) >= 0;
+                    var scalar_move: boolean = sc.callee_consumes_own_array(cid.name, ai);
                     sc = emit_own_borrowed_param_arg(oid, scalar_move, sc);
                     var oas: i32 = sc.slot_of(oid.name);
                     if (scalar_move && oas >= 0 && sc.is_arr_slot(oas)) { own_arr_moves = own_arr_moves.append(oas); }
@@ -67945,7 +67955,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
         opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e,
-        consumed_arr_positions: e, param_counted: e, cnt_struct_ret_fns: e, cnt_handback_params: e, enum_regions: [] };
+        own_consumed_positions: e, consumed_arr_positions: e, param_counted: e, cnt_struct_ret_fns: e, cnt_handback_params: e, enum_regions: [] };
 }
 
 // fn_sigs_empty is the all-empty registry, for the analysis-only lowerings that
@@ -67959,7 +67969,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e, handback_carry_params: e,
+        tuple_fresh_ret_fns: e, own_positions: e, own_scalar_arr_positions: e, own_consumed_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e, handback_carry_params: e,
         cnt_struct_ret_fns: e, cnt_handback_params: e,
         str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e };
 }
@@ -68436,6 +68446,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         own_positions: own_positions_of(funcs),
         own_scalar_arr_positions: own_scalar_arr_positions_of(funcs),
+        own_consumed_positions: [],
         consumed_arr_positions: consumed_arr_positions_of(funcs),
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
@@ -78563,6 +78574,72 @@ pub function grow_field_positions_of(funcs: parser.FuncDecl[], gflags: string[])
         }
     }
     return out;
+}
+
+// callee_consumes_own_array: whether the callee takes the buffer at this
+// `own` array position — a scalar-element one under this lowering's own ABI,
+// or any position own_consumed_positions names — so the caller transfers its
+// reference: an owned local moves (own_arr_moves clears its slot), a borrowed
+// one buys the callee the reference it will spend
+// (emit_own_borrowed_param_arg), and a fresh temp is not freed after the call.
+pub function (s: LowerState) callee_consumes_own_array(name: string, idx: i32): boolean {
+    var key: string = name + "|" + util.i32_to_string(idx);
+    return util.index_of_str(s.frame.sigs.own_scalar_arr_positions, key) >= 0
+        || util.index_of_str(s.frame.sigs.own_consumed_positions, key) >= 0;
+}
+
+// own_consumed_positions_of closes `seeds` — "fn|idx" rows for the `own`
+// array positions of bodies the semantic lowering produced, which consume
+// their buffer — over the free functions this lowering emits: one that
+// passes its own `own` array parameter to a consuming position in a dying
+// shape (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
+// the buffer when it returns, so its callers must transfer theirs too. A
+// row only ever gains, so the rounds converge.
+pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]): string[] {
+    var out: string[] = seeds;
+    var changed: boolean = out.len() > 0;
+    while (changed) {
+        changed = false;
+        for fn in funcs {
+            if (fn.receiver_name.len() > 0) { continue; }
+            var owned: string[] = [];
+            var pi: i32 = 0;
+            while (pi < fn.params.len()) {
+                if (fn.params[pi].own && is_array_type_name(fn.params[pi].type_name)) { owned = owned.append(fn.params[pi].name); }
+                pi = pi + 1;
+            }
+            if (owned.len() == 0) { continue; }
+            var sole: string[] = grow_sole_exempt_names_of(fn);
+            var passes: string[] = [];
+            var si: i32 = 0;
+            while (si < fn.body.len()) { passes = grow_dying_passes_stmt(fn.body[si], owned, sole, passes); si = si + 1; }
+            for entry in passes {
+                var b1: i32 = 0;
+                while (b1 < entry.len() && entry[b1] != b'|') { b1 = b1 + 1; }
+                var b2: i32 = b1 + 1;
+                while (b2 < entry.len() && entry[b2] != b'|') { b2 = b2 + 1; }
+                var cname: string = slice_unchecked(entry, 0, b1) + "";
+                var slot: i32 = util.digits_to_i32(slice_unchecked(entry, b1 + 1, b2));
+                var pname: string = slice_unchecked(entry, b2 + 1, entry.len()) + "";
+                if (cname.len() == 0 || cname[0] == b'@' || slot < 1) { continue; }
+                if (util.index_of_str(out, cname + "|" + util.i32_to_string(slot - 1)) < 0) { continue; }
+                var at: i32 = 0;
+                while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
+                var row: string = fn.name + "|" + util.i32_to_string(at);
+                if (at < fn.params.len() && util.index_of_str(out, row) < 0) {
+                    out = out.append(row);
+                    changed = true;
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// consume_sigs installs the consuming `own` array positions the produced
+// bodies contribute (`seeds`), closed over the functions this lowering emits.
+pub function consume_sigs(sg: FnSigs, funcs: parser.FuncDecl[], seeds: string[]): FnSigs {
+    return FnSigs { ...sg, own_consumed_positions: own_consumed_positions_of(funcs, seeds) };
 }
 
 // callee_param_may_grow reads flag '4' — the may-grow array param positions

@@ -68,11 +68,8 @@ struct State {
     // as a parameter. Replacing the binding that holds one is a write back
     // through a capture — see `assign`.
     foreign: i32[],
-    // The view retags `lend` made. A callee handed one may hand that very box
-    // out, which is what `escaping_args` records on the call — see it for why.
-    lent: i32[],
     // The module declarations whose body may hand one of their parameters out,
-    // by contract name; `handers` computes it and `escaping_args` consults it.
+    // by contract name; `handers` computes it and `lend` consults it.
     handers: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
@@ -1121,13 +1118,13 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
     var contract: ssasem.Contract = s.contracts[at];
     if (c.type_argc > 0 || c.args.len() + 1 != contract.params.len()) { return refused(s, "call arity"); }
     if (is_void(contract.result)) { return refused(s, "unsupported void call"); }
-    recv = lend(recv, contract.params[0], contract.modes[0]);
+    recv = lend(recv, contract.params[0], contract.modes[0], keeps(s, key));
     s = recv.s;
     if (!semtypes.equal(s.values[recv.id], contract.params[0])) { return refused(s, "call receiver type"); }
     var ids: i32[] = [recv.id];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1]);
+        var v: Value = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], keeps(s, key));
         s = v.s;
         if (!s.ok) { return v; }
         if (!semtypes.equal(s.values[v.id], contract.params[i + 1])) { return refused(s, "call argument type"); }
@@ -1135,7 +1132,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
         i = i + 1;
     }
     if (ssasem.find_contract(s.calls, key) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
-    return define(s, ssasem.call(), ids, escaping_args(s, ids, key), key, contract.result);
+    return define(s, ssasem.call(), ids, 0, key, contract.result);
 }
 
 // `cell_new(v)` builds the shared one-element box over v's unit. The checker
@@ -1189,40 +1186,30 @@ function string_slice(c: ast.ExprCall, s: State): Value {
 // borrowed argument's are (the checker's str_arg_borrow). A counted parameter
 // would take the box as its own, which a view's box is not, so the retag is
 // not offered there and the exact-type rule refuses the call.
-function lend(v: Value, param: typeinfo.Type, m: i32): Value {
+//
+// A callee that may KEEP what it is lent (`kept`: `handers` holds its name) is
+// handed an owned copy of the bytes instead. A view's box carries the immortal
+// rc sentinel, so the retain such a callee owes for a reference it keeps is a
+// no-op, and the bytes belong to the view's source, which the frame that
+// sliced it may release before the reference is read (#9328, #9407). The
+// copy is a unit of this frame's own, released like any other; what the
+// callee keeps is its own counted reference to it.
+function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
     var s: State = v.s;
     if (!s.ok || m != ssaunits.borrow_mode()) { return v; }
     if (!ssasem.is_view(s.values[v.id]) || !ssasem.is_string(param)) { return v; }
-    var t: Value = define(s, ssasem.str_as(), [v.id], 0, "", param);
-    return Value { s: State { ...t.s, lent: t.s.lent.append(t.id) }, id: t.id };
+    if (!kept) { return define(s, ssasem.str_as(), [v.id], 0, "", param); }
+    var empty: Value = define(s, 5, [], 0, "", param);
+    return define(empty.s, 9, [v.id, empty.id], 0, "+", param);
 }
 
-// The set of arguments this call may hand out, as a BITMASK over positions in
-// `ids` — which is what a call's `imm` carries, the one immediate nothing else
-// reads on a call.
-//
-// A callee lent a string VIEW can hand that box out
-// (`function keep(t: string): string { return t; }`, and every `*_tok`
-// constructor in the lexer, which stores the view in the token it builds). A
-// view's box carries the immortal rc sentinel, so the retain a callee owes for
-// a borrowed reference it keeps is a NO-OP, and the frame that sliced the view
-// then reclaims the box out from under whatever holds it — a use-after-free,
-// and what stopped the compiler compiling itself through this path (#9328).
-//
-// Whether a callee does this is a property of its BODY, which no contract
-// records: a callee returning a fresh string (the fixture's `copied()`) is
-// clean, and refusing on the signature took it out of production. `handers` is
-// that property, read off the bodies once per module, and `ssaunits.handed_on`
-// is what the mask recorded here reaches.
-function escaping_args(s: State, ids: i32[], callee: string): i32 {
-    if (util.index_of_str(s.handers, callee) < 0) { return 0; }
-    var mask: i32 = 0;
-    var i: i32 = 0;
-    while (i < ids.len() && i < 31) {
-        if (util.index_of_i32(s.lent, ids[i]) >= 0) { mask = mask + (1 << i); }
-        i = i + 1;
-    }
-    return mask;
+// Whether the declaration a call names may hand one of its arguments out —
+// as its result, or stored inside one — which no contract records: a callee
+// returning a fresh string (the fixture's `copied()`) is clean, and refusing
+// on the signature took it out of production. `handers` is that property,
+// read off the bodies once per module.
+function keeps(s: State, callee: string): boolean {
+    return util.index_of_str(s.handers, callee) >= 0;
 }
 
 // A call of a bound name whose value is a function: the callee is the closure
@@ -1230,7 +1217,8 @@ function escaping_args(s: State, ids: i32[], callee: string): i32 {
 // is in hand. Every reference argument is lent except at a slot the type
 // spells `own`, which the callee consumes. The result is a unit of this
 // function's own, the way a direct call's is, and the box itself is lent: it
-// is the environment the body reads its captures out of.
+// is the environment the body reads its captures out of. No body is in hand
+// to ask whether it keeps a lent view, so every view is handed as a copy.
 function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
     var params: typeinfo.Type[] = ssasem.func_params(s.values[callee]);
     var result: typeinfo.Type = ssasem.func_result(s.values[callee]);
@@ -1239,7 +1227,7 @@ function indirect_call(c: ast.ExprCall, callee: i32, s: State): Value {
     var ids: i32[] = [callee];
     var i: i32 = 0;
     while (i < c.args.len()) {
-        var v: Value = lend(expr(c.args[i], s, params[i]), params[i], ssaunits.borrow_mode());
+        var v: Value = lend(expr(c.args[i], s, params[i]), params[i], ssaunits.borrow_mode(), true);
         s = v.s;
         if (!s.ok) { return v; }
         if (!semtypes.equal(s.values[v.id], params[i])) { return refused(s, "call argument type"); }
@@ -1485,7 +1473,7 @@ function invoke(args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
 // for one expression, so it is bound and lent from the value in hand and the
 // written arguments follow it.
 function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract, s: State): Value {
-    var v: Value = lend(recv, contract.params[0], contract.modes[0]);
+    var v: Value = lend(recv, contract.params[0], contract.modes[0], keeps(s, contract.name));
     s = v.s;
     if (!s.ok) { return v; }
     var bound: ssasem.Binding = ssasem.bind_type(ssasem.unbound(), contract.params[0], s.values[v.id]);
@@ -1501,7 +1489,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     while (i < args.len()) {
         var at: i32 = base + i;
         var want: typeinfo.Type = ssasem.substitute(contract.params[at], bound);
-        var v: Value = lend(expr(args[i], s, want), want, contract.modes[at]);
+        var v: Value = lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract.name));
         s = v.s;
         if (!s.ok) { return v; }
         bound = ssasem.bind_type(bound, contract.params[at], s.values[v.id]);
@@ -1518,7 +1506,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
         s = request(s, contract.name, callee.name, bound);
     }
     if (ssasem.find_contract(s.calls, callee.name) < 0) { s = State { ...s, calls: s.calls.append(callee) }; }
-    return define(s, ssasem.call(), ids, escaping_args(s, ids, contract.name), callee.name, callee.result);
+    return define(s, ssasem.call(), ids, 0, callee.name, callee.result);
 }
 
 // An instance a call or a closure constructor names is asked for once.
@@ -2337,7 +2325,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], lent: [], handers: handers,
+        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], handers: handers,
         name: name, modes: [] };
 }
 
@@ -2636,9 +2624,10 @@ function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
 }
 
 // The declarations that may hand a caller's argument back out — as the result,
-// or inside one — by contract name. `escaping_args` reads it: a caller that
-// lends a string VIEW to one of these loses track of the box, and a view's box
-// carries no count to keep the other reference safe.
+// or inside one — by contract name. `lend` reads it: a caller that lends a
+// string VIEW to one of these hands it a copy, since a view's box carries no
+// count to keep the other reference safe and its bytes belong to a source
+// the caller may release first.
 function handers(mod: parser.Module): string[] {
     var out: string[] = [];
     var changed: boolean = true;
