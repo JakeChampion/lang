@@ -138,6 +138,10 @@ Two things that bear on the choice and are easy to lose:
 
 ## Where this stands (2026-09-15)
 
+Dated measurements from 2026-09-16 on are one file each in `docs/ssa-log/`
+(`docs/ssa-log/README.md` says why); the sections below are the ones that
+landed here before that.
+
 **The codegen question is still OPEN, and the "tripwires 1–3 unfired" line
 above is STALE.** This section corrects it rather than deciding on top of it.
 

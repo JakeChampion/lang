@@ -1196,11 +1196,13 @@ feeds `caller_sigs` to the remaining AST callers is below.
 ## The production consumer
 
 `examples/self_host/semlower.fern` is where a whole-program emit path asks for
-this pipeline instead of a test driver. `FERN_SEM_IR=1` selects it;
-`FERN_SEM_IR_REPORT=1` prints a line per refusal and a per-module tally.
-Unset, a backend receives what it received before, op for op — the substitution
-is the only thing the flag adds, and the AST lowering still runs and still
-gives the module its eligibility verdict.
+this pipeline instead of a test driver. It is the default; `FERN_SEM_IR=` (the
+empty value) turns it off, and `FERN_SEM_IR_REPORT=1` prints a line per
+refusal and a per-module tally. Off, a backend receives what it received
+before, op for op — the substitution is the only thing the path adds. On, a
+module is produced whole or not at all, and `ircore.lower_gated` reads the
+produced bodies in place of lowering them, so the AST lowering's verdict is
+asked only of a module that fell back to it.
 
 All three whole-program paths take one: `asm_ir`, `asm_arm64_ir` and `wasm_ir`
 each gained a `_sub` sibling of their gated entry that threads an `ircore.Sub`
@@ -1640,6 +1642,15 @@ lets the caller hand the buffer on without a bracket (`ssaunits.hands`), with
 the rows closed transitively over every produced plan (`ssaunits.grow_table`).
 Mechanism and traps: `rc-log/2026-09-15-field-append-grows-in-place-on-the-semantic-path.md`.
 
+The same admission covers a `with` on the field — `a = X86Asm { ...a,
+lab_tail: a.lab_tail.with(b, at) }` — which writes the element into the
+record's own buffer when the record and the buffer are each sole-held and
+nulls the field, and into a copy otherwise (`ssarc.with_field`). Without it
+the assembler's label placement copied its three bucket arrays per label,
+and the exact-size copy left the next append no room to grow in place:
+7.3 GB of arena for the assembly of `parser.fern` where the native-built
+compiler takes 68 MB.
+
 The 40,000-push reproducer through a borrowed record: 11.1 s and 8.9 GB to
 60 ms, matching the AST lowering. The compiler built through the path,
 against the two compilers of the section above:
@@ -1720,8 +1731,8 @@ same sources by `bin/fern-selfhost`:
 | compiler | built by | build | on `checker.fern` | on `fern.fern` |
 |---|---|---|---|---|
 | native-built (`bin/fern-selfhost`) | Go | — | 4.0 s, 398 MB | 47.4 s, 4,867 MB |
-| AST-lowered stage 2 | self-host, `FERN_SEM_IR` unset | 59 s, 5,489 MB | 5.0 s, 903 MB | 66.1 s, 9,973 MB |
-| semantically lowered stage 2 | self-host, `FERN_SEM_IR=1` | 9m26s, 8,396 MB | 7.1 s, 122 MB | 60.6 s, 830 MB |
+| AST-lowered stage 2 | self-host, `FERN_SEM_IR=` | 59 s, 5,489 MB | 5.0 s, 903 MB | 66.1 s, 9,973 MB |
+| semantically lowered stage 2 | self-host, `FERN_SEM_IR` unset | 9m26s, 8,396 MB | 7.1 s, 122 MB | 60.6 s, 830 MB |
 
 The produced compiler's output is identical to both others' on every input in
 the table. The 6,865 MB #9365 measured on `lexer.fern` is gone with the
@@ -1781,6 +1792,18 @@ rewritten and the helpers merged, 4.69 GB emitted; the native-built
 compiler's at 1.77, 3.09, 3.66, 5.75 and 7.21 GB at the same points. The
 registry rewrite is the next lead in both. `TestSelfHostSemanticWholeCompilerX86_64`
 pins the tally, the byte-identity and the fixpoint.
+
+**The binary fixpoint holds too.** The produced compiler compiling the
+whole tree to an ELF binary (`-o`, its own assembler and linker in
+process) reproduces itself byte for byte. Three sites in the assembler
+stood in the way, each a buffer lent where the lowering needed it owned:
+the code buffer projected out of `X86Asm` and lent to the byte emitters,
+the label tables written through `with` on a field with no in-place path,
+and the .eh_frame renderer's buffer appended to through a borrowed
+parameter more than once. With the first two fixed the self-rebuild took
+6m15s at 11.9 GB peak RSS; `rc-log/2026-09-16-a-record-lent-on-through-a-wrapper-grows-under-its-own-count.md`
+has each site's measurement; with all three fixed it takes 4m47s at
+6.06 GB.
 
 
 Read these the way this file reads every leaf: probe the refused functions by
