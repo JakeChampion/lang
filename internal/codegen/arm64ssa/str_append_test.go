@@ -1,24 +1,173 @@
-package arm64ssa
+package arm64ssa_test
 
 import (
-	"fmt"
-	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// __fern_str_append is __str_concat here: this heap never frees a string, so
-// the consumed accumulator is left behind either way. The body is a branch,
-// and the dependency edge is what puts __str_concat in the module.
-func TestStrAppendIsAConcat(t *testing.T) {
-	var b strings.Builder
-	runtimeHelperEmitters["__fern_str_append"](func(format string, args ...any) {
-		b.WriteString(strings.TrimSpace(fmt.Sprintf(format, args...)) + "\n")
-	})
-	if want := "b " + fnLabel("__str_concat") + "\n"; !strings.HasSuffix(b.String(), want) {
-		t.Errorf("__fern_str_append does not end in %q:\n%s", strings.TrimSpace(want), b.String())
+// strLen reads a string's length word.
+func strLen(f *ssa.Func, b *ssa.Block, s ssa.Value) ssa.Value {
+	v := f.AddOp(b, ssa.OpLoad32U, s)
+	b.Ops[len(b.Ops)-1].Imm = -4
+	return v
+}
+
+// A uniquely held accumulator grows in place while the grown length still
+// fits its size class, and moves to a fresh block the first time it does not.
+// "abc"+"de" is a 5-byte string in the 16-byte class (13 bytes requested), so
+// three more bytes fit exactly and a fourth does not.
+func TestArmStrAppendGrowsInPlaceWhileTheBlockHasRoom(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abc"), constStr(f, e, "de"))
+	r1 := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "xyz"))
+	same1 := f.AddOp(e, ssa.OpEq, r1, acc)
+	r2 := wideCallOp(f, e, "__fern_str_append", r1, constStr(f, e, "w"))
+	moved := f.AddOp(e, ssa.OpNe, r2, r1)
+	bytes := callOp(f, e, "__str_eq", r2, constStr(f, e, "abcdexyzw"))
+	length := f.AddOp(e, ssa.OpEq, strLen(f, e, r2), constOp(f, e, 9))
+	sum := f.AddOp(e, ssa.OpAdd, same1, f.AddOp(e, ssa.OpShl, moved, constOp(f, e, 1)))
+	sum = f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 2)))
+	sum = f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, length, constOp(f, e, 3)))
+	f.SetRet(e, sum)
+	if got := assembleRunArm(t, f, 8); got != 15 {
+		t.Errorf("in place (1) + moved when full (2) + bytes right (4) + length 9 (8) = %d, want 15", got)
 	}
-	deps := runtimeHelperDeps["__fern_str_append"]
-	if len(deps) != 1 || deps[0] != "__str_concat" {
-		t.Errorf("__fern_str_append depends on %v, want [__str_concat]", deps)
+}
+
+// A shared accumulator is copied, not grown: the other holder keeps reading
+// the bytes and length it had.
+func TestArmStrAppendCopiesASharedAccumulator(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abc"), constStr(f, e, "de"))
+	callOp(f, e, "__fern_rc_inc", acc)
+	r := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "x"))
+	moved := f.AddOp(e, ssa.OpNe, r, acc)
+	kept := f.AddOp(e, ssa.OpEq, strLen(f, e, acc), constOp(f, e, 5))
+	bytes := callOp(f, e, "__str_eq", r, constStr(f, e, "abcdex"))
+	sum := f.AddOp(e, ssa.OpAdd, moved, f.AddOp(e, ssa.OpShl, kept, constOp(f, e, 1)))
+	sum = f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 2)))
+	f.SetRet(e, sum)
+	if got := assembleRunArm(t, f, 8); got != 7 {
+		t.Errorf("moved (1) + the shared holder unchanged (2) + bytes right (4) = %d, want 7", got)
+	}
+}
+
+// A literal is never grown: it lives in .rodata under an immortal sentinel.
+func TestArmStrAppendCopiesALiteral(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	lit := constStr(f, e, "abc")
+	r := wideCallOp(f, e, "__fern_str_append", lit, constStr(f, e, "d"))
+	moved := f.AddOp(e, ssa.OpNe, r, lit)
+	bytes := callOp(f, e, "__str_eq", r, constStr(f, e, "abcd"))
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, moved, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 1))))
+	if got := assembleRunArm(t, f, 8); got != 3 {
+		t.Errorf("moved (1) + bytes right (2) = %d, want 3", got)
+	}
+}
+
+// Growth is amortised: 4096 one-byte appends move the accumulator once per
+// size class it outgrows — 16-byte steps to 2048 bytes, then steps of a
+// quarter to a half of its size — rather than once per append.
+func TestArmStrAppendMovesOncePerSizeClass(t *testing.T) {
+	f := ssa.NewFunc("main")
+	entry, header, body, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
+	start := wideCallOp(f, entry, "__str_concat", constStr(f, entry, ""), constStr(f, entry, ""))
+	zero := constOp(f, entry, 0)
+	f.SetBr(entry, header)
+	iNext, accNext, movesNext := f.NewValue(), f.NewValue(), f.NewValue()
+	i := f.AddPhi(header, zero, iNext)
+	acc := f.AddPhi(header, start, accNext)
+	moves := f.AddPhi(header, zero, movesNext)
+	f.SetBrIf(header, f.AddOp(header, ssa.OpLt, i, constOp(f, header, 4096)), body, exit)
+	grown := f.AddOpNoResult(body, ssa.OpCall, acc, constStr(f, body, "x"))
+	grown.Str, grown.Width, grown.Addr, grown.Result = "__fern_str_append", 64, true, accNext
+	movedOp := f.AddOpNoResult(body, ssa.OpAdd, moves, f.AddOp(body, ssa.OpNe, accNext, acc))
+	movedOp.Result = movesNext
+	inc := f.AddOpNoResult(body, ssa.OpAdd, i, constOp(f, body, 1))
+	inc.Result = iNext
+	f.SetBr(body, header)
+	// The exit code is the move count, or 255 when the length is wrong.
+	wrong := f.AddOp(exit, ssa.OpNe, strLen(f, exit, acc), constOp(f, exit, 4096))
+	f.SetRet(exit, f.AddOp(exit, ssa.OpAdd, moves, f.AddOp(exit, ssa.OpMul, wrong, constOp(f, exit, 255))))
+	got := assembleRunArm(t, f, 8)
+	if got == 255 {
+		t.Fatalf("the accumulator is not 4096 bytes long after 4096 appends")
+	}
+	// A class of c bytes holds c-8 bytes of string: 127 moves up through the
+	// 16-byte classes to 2048, then into 2560, 3072, 3584, 4096 and 5120.
+	if got != 132 {
+		t.Errorf("the accumulator moved %d times over 4096 appends, want 132", got)
+	}
+}
+
+// A string's last release hands its block back: the next request of the same
+// class is the same block. A shared string is decremented and kept.
+func TestArmStrDecHandsTheBlockBack(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	s := wideCallOp(f, e, "__str_concat", constStr(f, e, "abc"), constStr(f, e, "de"))
+	callOp(f, e, "__fern_str_dec", s)
+	again := wideCallOp(f, e, "__str_concat", constStr(f, e, "xy"), constStr(f, e, "z")) // the same 16-byte class
+	reused := f.AddOp(e, ssa.OpEq, again, s)
+	callOp(f, e, "__fern_rc_inc", again)
+	callOp(f, e, "__fern_str_dec", again)
+	kept := f.AddOp(e, ssa.OpEq, strLen(f, e, again), constOp(f, e, 3))
+	fresh := wideCallOp(f, e, "__str_concat", constStr(f, e, "q"), constStr(f, e, "r"))
+	elsewhere := f.AddOp(e, ssa.OpNe, fresh, again)
+	sum := f.AddOp(e, ssa.OpAdd, reused, f.AddOp(e, ssa.OpShl, kept, constOp(f, e, 1)))
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, elsewhere, constOp(f, e, 2))))
+	if got := assembleRunArm(t, f, 8); got != 7 {
+		t.Errorf("block reused (1) + a shared string kept (2) + its block not handed out (4) = %d, want 7", got)
+	}
+}
+
+// The copy path of an append releases the accumulator it consumed, so the
+// block comes back for the next request of its class.
+func TestArmStrAppendCopyPathReleasesTheAccumulator(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	acc := wideCallOp(f, e, "__str_concat", constStr(f, e, "abcdefgh"), constStr(f, e, "")) // 8 bytes: the 16-byte class, full
+	grown := wideCallOp(f, e, "__fern_str_append", acc, constStr(f, e, "x"))                // 9 bytes: a 32-byte block
+	moved := f.AddOp(e, ssa.OpNe, grown, acc)
+	again := wideCallOp(f, e, "__str_concat", constStr(f, e, "ab"), constStr(f, e, "c")) // the 16-byte class again
+	reused := f.AddOp(e, ssa.OpEq, again, acc)
+	bytes := callOp(f, e, "__str_eq", grown, constStr(f, e, "abcdefghx"))
+	sum := f.AddOp(e, ssa.OpAdd, moved, f.AddOp(e, ssa.OpShl, reused, constOp(f, e, 1)))
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, sum, f.AddOp(e, ssa.OpShl, bytes, constOp(f, e, 2))))
+	if got := assembleRunArm(t, f, 8); got != 7 {
+		t.Errorf("moved (1) + the old block reused (2) + bytes right (4) = %d, want 7", got)
+	}
+}
+
+// Every string producer allocates through __alloc, so a slice, a copy from
+// bytes and a concatenation each free at their length into the class they
+// came from. The 5-byte slice and the 4-byte copy are 16-byte-class blocks
+// and come back, last released first, as the next two requests of that
+// class; the 9-byte concatenation is a 32-byte-class block and comes back for
+// the next 9-byte string.
+func TestArmStrProducersFreeIntoTheirClass(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	src := constStr(f, e, "hello, world")
+	sl := wideCallOp(f, e, "__str_slice", src, constOp(f, e, 0), constOp(f, e, 5))
+	bs := wideCallOp(f, e, "__alloc_u8", constOp(f, e, 4))
+	fb := wideCallOp(f, e, "string_from_bytes_unchecked", bs)
+	cc := wideCallOp(f, e, "__str_concat", sl, fb)
+	callOp(f, e, "__fern_str_dec", sl)
+	callOp(f, e, "__fern_str_dec", fb)
+	callOp(f, e, "__fern_str_dec", cc)
+	a := wideCallOp(f, e, "__str_concat", constStr(f, e, "1"), constStr(f, e, "2"))
+	b := wideCallOp(f, e, "__str_concat", constStr(f, e, "3"), constStr(f, e, "4"))
+	c := wideCallOp(f, e, "__str_concat", constStr(f, e, "12345678"), constStr(f, e, "9"))
+	got := f.AddOp(e, ssa.OpEq, a, fb)
+	got = f.AddOp(e, ssa.OpAdd, got, f.AddOp(e, ssa.OpShl, f.AddOp(e, ssa.OpEq, b, sl), constOp(f, e, 1)))
+	got = f.AddOp(e, ssa.OpAdd, got, f.AddOp(e, ssa.OpShl, f.AddOp(e, ssa.OpEq, c, cc), constOp(f, e, 2)))
+	f.SetRet(e, got)
+	if got := assembleRunArm(t, f, 8); got != 7 {
+		t.Errorf("the from-bytes string (1), the slice (2) and the concatenation (4) came back = %d, want 7", got)
 	}
 }

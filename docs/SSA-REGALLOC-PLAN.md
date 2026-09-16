@@ -1023,6 +1023,12 @@ the allocator work in this plan was originally about.
 So phase 4 is blocked on codegen quality in loop bodies, with seven named
 reproducers to work against. Nothing else about it is outstanding.
 
+**2026-09-16.** The seven are gone, and so is the shape: with the IR battery
+on the SSA paths, the rc primitives and the constant-size freelist paths
+inline, and the string reclaim, no benchmark is slower than flat on arm64 and
+one is on x86-64 by 3 ms. The full table, both targets, is in
+`docs/SSA-DECISION.md` under "Measured 2026-09-16: the full sweep".
+
 ### What the map-shaped reproducers were actually paying
 
 Two of the named reproducers were not loop-body codegen at all. Both were
