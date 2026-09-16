@@ -641,6 +641,36 @@ function main(): i32 {
 			want: 1,
 		},
 		{
+			// One process plays both ends over loopback: connect(2) to a listener
+			// completes in the kernel's backlog before accept(2) runs, so the
+			// connected fd, the accepted fd and the bytes all come back without a
+			// second thread. Covers the helper's sockaddr_in, its htons and the
+			// -errno passthrough, since a connect to a closed port must be negative.
+			//
+			// The port is fixed because nothing exposes the bound port of an
+			// ephemeral listener; it differs from the x86 leg's so the two can run
+			// at once.
+			name: "tcp_connect_loopback_roundtrip",
+			src: `function main(): i32 {
+  var port: i32 = 48620;
+  var l = tcp_listen(port);
+  if (l < 0) { return 90; }
+  var loopback: i32 = 127 + (1 << 24);
+  var c = tcp_connect(loopback, port);
+  if (c < 0) { return 92; }
+  var s = tcp_accept(l);
+  if (s < 0) { return 93; }
+  var sent = tcp_send(c, "ping!");
+  var got: u8[] = tcp_recv(s, 16);
+  var closed = tcp_close(c) + tcp_close(s) + tcp_close(l);
+  if (closed != 0) { return 94; }
+  var refused = tcp_connect(loopback, port);
+  if (refused >= 0) { return 95; }
+  return sent + got.len();
+}`,
+			want: 10,
+		},
+		{
 			// tcp_pollable is the identity on native (a socket's readiness token IS its
 			// fd), so tcp_pollable(42) == 42.
 			name: "tcp_pollable_id",
