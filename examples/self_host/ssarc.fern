@@ -205,8 +205,8 @@ function helper(own r: irlower.LowerResult, slot: i32, name: string): irlower.Lo
     return emit(r, ir.op_drop());
 }
 
-// `defer0` holds an append receiver's retain back, so the push's own rc gate
-// reads the box rather than this supply — see `deferred_retain` for why the
+// `defer0` holds an append's or a with's receiver's retain back, so the
+// operation's own rc gate reads the box rather than this supply — see `deferred_retain` for why the
 // order is the whole of it.
 function supplies(own r: irlower.LowerResult, f: ssasem.Func, step: ssaunits.Step, defer0: boolean): irlower.LowerResult {
     var j: i32 = 0;
@@ -271,10 +271,11 @@ function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32):
 // no caller names. An array reached any other way the frame does not own —
 // an element of a borrowed array of arrays, say — has no bracket standing
 // behind it, and growing it in place would rewrite what the container still
-// holds.
+// holds. A with has no non-consuming helper to fall back on, so it defers
+// only where the plan admitted the field.
 function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): boolean {
-    if (ins.kind_tag != ssasem.append()) { return false; }
-    if (ins.args[0] >= f.graph.nparams && p.grows[ins.result] < 0) { return false; }
+    if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) { return false; }
+    if (p.grows[ins.result] < 0 && (ins.kind_tag == ssasem.with() || ins.args[0] >= f.graph.nparams)) { return false; }
     if (ins.args[0] < p.owned.len() && p.owned[ins.args[0]]) { return false; }
     for supply in step.supplies {
         if (supply.slot == 0 && supply.mode == ssaunits.retain_unit()) { return true; }
@@ -752,7 +753,9 @@ pub function drop_helper_name(t: typeinfo.Type): string { return "__sem_drop_" +
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
 // is smaller than its parameters puts the prologue's parameter copy below the
-// allocated frame.
+// allocated frame. The body is the raw op sequence: every function that
+// mentions the type produces one, and `merge_helpers` runs the peephole once
+// per symbol it keeps rather than once per producer.
 function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
@@ -761,8 +764,12 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     // The one value the caller's `drop` after the call discards.
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_return());
-    var optimized: ir.OptimizedOps = ir.optimize_ops(r.ops, 1, r.n_locals);
-    return irlower.LowerResult { ...r, ops: optimized.ops, n_locals: optimized.n_locals };
+    return r;
+}
+
+function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
+    var optimized: ir.OptimizedOps = ir.optimize_ops(h.ops, 1, h.n_locals);
+    return irlower.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
 // One helper per nominal schema the walk can call, gated on has_children —
@@ -805,14 +812,19 @@ function replaced(rows: irlower.LowerResult[], at: i32, row: irlower.LowerResult
 // it becomes a refusal the emit path stops on instead.
 pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
     var out: irlower.LowerResult[] = cache;
+    var raw: irlower.LowerResult[] = [];
     for h in helpers {
-        var at: i32 = named_index(out, h.name);
-        if (at < 0) { out = out.append(h); }
-        else if (!ir.ops_equal(out[at].ops, h.ops) || out[at].n_params != h.n_params
-                || out[at].n_locals != h.n_locals) {
-            out = replaced(out, at, irlower.LowerResult { ...h, ok: false,
+        var at: i32 = named_index(raw, h.name);
+        if (at < 0) { raw = raw.append(h); }
+        else if (!ir.ops_equal(raw[at].ops, h.ops) || raw[at].n_params != h.n_params
+                || raw[at].n_locals != h.n_locals) {
+            raw = replaced(raw, at, irlower.LowerResult { ...h, ok: false,
                 why: "conflicting drop helper for " + h.name });
         }
+    }
+    for h in raw {
+        if (named_index(out, h.name) >= 0) { continue; }
+        if (h.ok) { out = out.append(optimized_helper(h)); } else { out = out.append(h); }
     }
     return out;
 }
@@ -1329,7 +1341,7 @@ function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5; }
 
 function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean): irlower.LowerResult {
     r = negation_zero(r, f, ins);
-    if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
@@ -1355,7 +1367,8 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // exactly one unit goes in and `scratch` holds one nobody else shares.
 //
 // A receiver whose retain was DEFERRED never arrives here: `append_push` sends
-// it to `append_borrowed` or `append_field` instead, and `with` never defers.
+// it to `append_borrowed` or `append_field` instead, and `with_update` sends
+// one whose field the plan admitted to `with_field`.
 function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
     var elem: typeinfo.Type = elem_type(f.values[base]);
     r = emit(r, ir.op_load_local(base));
@@ -1499,7 +1512,8 @@ function drop_replaced(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // unit was the box's only one and in a fresh copy otherwise, the AST lowering's
 // two forms chosen here by the count at run time rather than by the receiver's
 // syntax.
-function with_update(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function with_update(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
+    if (defer0 && p.grows[ins.result] >= 0) { return with_field(r, f, p, ins); }
     var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
     var scratch: i32 = f.graph.nvals;
     r = reserve(r, scratch + 1);
@@ -1510,6 +1524,53 @@ function with_update(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst)
     r = emit(r, ir.op_load_local(ins.args[2]));
     r = emit(r, arr_set_op(elem));
     return emit(r, ir.op_load_local(scratch));
+}
+
+// One element replaced in a record FIELD the plan admitted (grows): written
+// in place when the record and its buffer are each sole-held, with the field
+// nulled so the record's release skips the buffer the result now owns, and
+// in a fresh copy otherwise, which leaves the record whole for its other
+// holders. The receiver's retain was held back (deferred_retain), so the two
+// count tests read the boxes rather than this frame's supply, as the field
+// append's do.
+function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+    var root: i32 = p.grows[ins.result];
+    var unique: i32 = f.graph.nvals;
+    var res: i32 = unique + 1;
+    r = reserve(r, res + 1);
+    r = emit(r, ir.op_load_local(root));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+    r = emit(r, ir.op_store_local(unique));
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(unique));
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_load_local(unique));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(res));
+    r = emit(r, ir.op_load_local(root));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_arr_len());
+    r = emit(r, ir.op_arr_slice(elem_width(elem)));
+    if (reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
+    r = emit(r, ir.op_store_local(res));
+    r = emit(r, ir.op_end());
+    if (reference(elem)) { r = drop_replaced(r, f, ins, res, elem); }
+    r = emit(r, ir.op_load_local(res));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    r = emit(r, arr_set_op(elem));
+    return emit(r, ir.op_load_local(res));
 }
 
 // A cell is a one-element array box shared by every holder, built over the
