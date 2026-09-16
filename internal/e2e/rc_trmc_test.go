@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -123,20 +124,27 @@ function main(): i32 {
 // TRMC-off leg's inc_all recursion needs ~24 MB. A host soft limit of 8 MB
 // fails the "on" leg, unlimited passes the "off" leg — so pin 16 MB instead
 // of inheriting whatever the host happens to use.
-func runWithStackLimit(t *testing.T, kib int, bin string) int {
+func runWithStackLimit(t *testing.T, kib int, bin string, expectCrash bool) int {
 	t.Helper()
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib), "--", bin)
+	script := "set -e; "
+	if expectCrash && os.Getenv("FERN_STACK_CORE_FILTER") == "omit" {
+		script += "printf '0\\n' > /proc/self/coredump_filter; "
+	}
+	script += "printf 'core-filter='; cat /proc/self/coredump_filter; "
+	script += fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib)
+	cmd := exec.Command("bash", "-c", script, "--", bin)
 	started := time.Now()
-	if out, err := cmd.CombinedOutput(); err != nil && cmd.ProcessState == nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil && cmd.ProcessState == nil {
 		t.Fatalf("run %s: %v\n%s", bin, err, out)
 	}
-	t.Logf("stack-profile: wall=%s user=%s system=%s status=%s", time.Since(started), cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState)
+	t.Logf("stack-profile: wall=%s user=%s system=%s status=%s output=%q", time.Since(started), cmd.ProcessState.UserTime(), cmd.ProcessState.SystemTime(), cmd.ProcessState, out)
 	return cmd.ProcessState.ExitCode()
 }
 
 func TestCINativeStackProfilePilot(t *testing.T) {
 	bin, _ := compileX86_64FreeOn(t, "function main(): i32 { return 0; }")
-	if code := runWithStackLimit(t, 16*1024, bin); code != 0 {
+	if code := runWithStackLimit(t, 16*1024, bin, true); code != 0 {
 		t.Fatalf("pilot exit = %d", code)
 	}
 }
@@ -145,11 +153,11 @@ func TestX86_64TrmcDeepStack(t *testing.T) {
 	var on, off int
 	withTrmc(true, func() {
 		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
-		on = runWithStackLimit(t, 16*1024, bin)
+		on = runWithStackLimit(t, 16*1024, bin, false)
 	})
 	withTrmc(false, func() {
 		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
-		off = runWithStackLimit(t, 16*1024, bin)
+		off = runWithStackLimit(t, 16*1024, bin, true)
 	})
 	if on != 0 {
 		t.Errorf("TRMC on: deep map should succeed, got %d", on)

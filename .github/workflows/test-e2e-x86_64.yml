@@ -127,23 +127,19 @@ jobs:
           } > "$RUNNER_TEMP/stack-profile/environment.txt"
       - name: Build fixed native test binary
         run: go test -c -o "$RUNNER_TEMP/stack-profile/e2e.test" ./internal/e2e
+      - uses: astral-sh/setup-uv@v7
+      - name: Verify outcome checks
+        run: uv run --no-project python -m unittest discover -s tools -p test_bench_native_test_workers.py
       - name: Profile stack-limited programs
         env:
           SCALE: ${{ inputs.profile }}
-        run: |
-          set -euo pipefail
-          pattern='^TestCINativeStackProfilePilot$'
-          if [ "$SCALE" = full ]; then
-            pattern='^TestX86_64Trmc(DeepStack|WidenedDeepStack)$'
-          fi
-          started=$SECONDS
-          cd internal/e2e
-          gotestsum --format standard-verbose --jsonfile "$RUNNER_TEMP/stack-profile/events.jsonl" --raw-command -- \
-            go tool test2json -t -p e2e /usr/bin/env --default-signal=INT \
-            "$RUNNER_TEMP/stack-profile/e2e.test" -test.v=test2json -test.count=1 -test.run "$pattern" -test.timeout=15m
-          if [ "$SCALE" = pilot ]; then
-            test "$((SECONDS - started))" -lt 60
-          fi
+          # The ABBA harness selects omit only for candidate subprocesses.
+          FERN_STACK_CORE_FILTER: ""
+        run: >-
+          uv run --no-project python tools/bench_stack_core_filter.py
+          --binary "$RUNNER_TEMP/stack-profile/e2e.test"
+          --output "$RUNNER_TEMP/stack-profile/trials"
+          --scale "$SCALE"
       - name: Retain profiling evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -151,6 +147,6 @@ jobs:
           name: native-stack-profile-${{ inputs.profile }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/stack-profile/environment.txt
-            ${{ runner.temp }}/stack-profile/events.jsonl
+            ${{ runner.temp }}/stack-profile/trials
           retention-days: 7
           if-no-files-found: error
