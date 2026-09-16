@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/jakechampion/lang/internal/strerror"
 	"math"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -134,14 +133,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 
 	var b strings.Builder
-	w := func(format string, args ...any) {
-		line := fmt.Sprintf(format, args...)
-		if isDeadSelfMove(line) {
-			return
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
+	w := lineWriter(&b)
 
 	// Runtime helpers to append to .text (module-referenced + transitive deps).
 	// Some of them allocate (e.g. __str_concat bumps the heap cursor), so the
@@ -356,22 +348,19 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	// every helper that can name a register, and a list that falls behind drops
 	// a save silently — the caller gets a clobbered register and the failure
 	// surfaces as a wrong answer somewhere else entirely. So the body is emitted
-	// once into a buffer with nothing saved, scanned for what it actually
-	// mentions, and only then emitted for real. Adding the saves cannot widen
-	// the set: they name only registers already in it.
-	var probe strings.Builder
-	probeW := func(format string, args ...any) {
-		fmt.Fprintf(&probe, format+"\n", args...)
+	// once into a buffer with a marker line standing in for each restore,
+	// scanned for what it mentions, and then copied out behind the prologue
+	// with the marker replaced by the pops. The pops cannot widen the set: they
+	// name only registers already in it.
+	var body strings.Builder
+	bodyW := func(format string, args ...any) {
+		fmt.Fprintf(&body, format+"\n", args...)
 	}
-	if err := emitFuncBlocks(probeW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, func() {}); err != nil {
+	mark := func() { body.WriteString(restoreMarker + "\n") }
+	if err := emitFuncBlocks(bodyW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, mark); err != nil {
 		return err
 	}
-	saved := calleeSavedIn(probe.String(), p.NumRegFile)
-	restore := func() {
-		for i := len(saved) - 1; i >= 0; i-- {
-			w("\tpop %s", reg(saved[i]))
-		}
-	}
+	saved := calleeSavedIn(body.String(), p.NumRegFile)
 
 	w("%s:", label)
 	w("\tpush rbp")
@@ -391,14 +380,35 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 		w("\t%s", line)
 	}
 
-	return emitFuncBlocks(w, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, restore)
+	writeBody(w, body.String(), saved)
+	return nil
 }
 
-// emitFuncBlocks writes every block body and terminator. Split out of
-// emitFuncBody so the same emission can be run twice: once into a scratch buffer
-// to discover which callee-saved registers the output names, then once for real
-// with the matching save/restore. `restore` emits the callee-saved reloads that
-// precede each return.
+// writeBody copies the emitted body to w a line at a time, so w's per-line
+// filtering still applies, with each restore marker replaced by the pops of
+// `saved` in reverse push order.
+func writeBody(w func(string, ...any), body string, saved []int) {
+	for i, piece := range strings.Split(body, restoreMarker+"\n") {
+		if i > 0 {
+			for j := len(saved) - 1; j >= 0; j-- {
+				w("\tpop %s", reg(saved[j]))
+			}
+		}
+		for piece != "" {
+			line, rest, _ := strings.Cut(piece, "\n")
+			w("%s", line)
+			piece = rest
+		}
+	}
+}
+
+// restoreMarker is the line emitFuncBlocks writes where a return's callee-saved
+// pops go. It is replaced before the text leaves emitFuncBody, and the leading
+// NUL keeps it from colliding with any assembly line.
+const restoreMarker = "\x00restore"
+
+// emitFuncBlocks writes every block body and terminator. `restore` emits the
+// callee-saved reloads that precede each return.
 func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
 	order := LayoutOrder(p)
 	// nextInLayout[bi] is the block physically following bi in the emitted
@@ -709,28 +719,55 @@ var calleeSavedRegs = func() []int {
 // merely reads one still gets it saved, which is safe and keeps the scan free of
 // per-opcode operand knowledge.
 func calleeSavedIn(asm string, numRegFile int) []int {
-	seen := map[string]bool{}
-	for _, tok := range regTokenRe.FindAllString(asm, -1) {
-		seen[tok] = true
+	seen := make([]bool, len(gpRegs))
+	for i := 0; i < len(asm); {
+		if !isRegTokenStart(asm[i]) {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(asm) && isRegTokenByte(asm[j]) {
+			j++
+		}
+		if j-i <= maxRegSpelling {
+			if r, ok := calleeSavedByName[asm[i:j]]; ok {
+				seen[r] = true
+			}
+		}
+		i = j
 	}
 	var out []int
 	for _, r := range calleeSavedRegs {
-		if r >= numRegFile {
-			continue
-		}
-		for _, name := range regSpellings(r) {
-			if seen[name] {
-				out = append(out, r)
-				break
-			}
+		if r < numRegFile && seen[r] {
+			out = append(out, r)
 		}
 	}
 	return out
 }
 
-// regTokenRe splits assembly into identifier-ish tokens, treating `_` and `.` as
-// word characters so label names cannot decompose into register names.
-var regTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
+// Tokens are identifier-shaped, with `_` and `.` as word characters so a label
+// name cannot decompose into a register name.
+func isRegTokenStart(c byte) bool {
+	return c == '_' || c == '.' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+func isRegTokenByte(c byte) bool { return isRegTokenStart(c) || (c >= '0' && c <= '9') }
+
+// maxRegSpelling is the longest register name (`r12d`); a longer token cannot
+// be one.
+const maxRegSpelling = 4
+
+// calleeSavedByName maps every width spelling of each callee-saved register to
+// its gpRegs index.
+var calleeSavedByName = func() map[string]int {
+	m := map[string]int{}
+	for _, r := range calleeSavedRegs {
+		for _, name := range regSpellings(r) {
+			m[name] = r
+		}
+	}
+	return m
+}()
 
 // regSpellings returns every width spelling of gpRegs index r, so a 32-bit or
 // byte-width use counts as a use.
@@ -1009,8 +1046,19 @@ func selectLines(in Inst) []string {
 	return out
 }
 
-// gpRegs is the allocatable+scratch register pool (rsp/rbp reserved for the
-// frame). reg8 is the parallel 8-bit subregister used by setcc.
+// lineWriter returns the emitter's line writer over b: one formatted line per
+// call, dropping the dead self-moves register allocation leaves behind.
+func lineWriter(b *strings.Builder) func(string, ...any) {
+	return func(format string, args ...any) {
+		line := fmt.Sprintf(format, args...)
+		if isDeadSelfMove(line) {
+			return
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+}
+
 // isDeadSelfMove reports whether `line` is a 64-bit register-to-itself move,
 // which the CPU does nothing for. Register allocation leaves a few behind
 // (a result already in its home register still gets a placement mov), and they
