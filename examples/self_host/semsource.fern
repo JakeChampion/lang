@@ -31,7 +31,9 @@ pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[],
 pub struct Request { key: string, name: string, binding: ssasem.Binding }
 
 // Every declaration in order, then every instance the declarations reached.
-pub struct Built { decls: Produced[], instances: Produced[] }
+// `contracts` is the module's contract table, by declaration key: what a
+// caller of a declaration reads, whether or not the declaration produced.
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contract[] }
 
 // Environments are the values of the bindings visible at loop entry, in
 // binding order, captured where a body leaves the loop.
@@ -3013,5 +3015,5 @@ pub function build_module(mod: parser.Module): Built {
         if (decls[i].template) { decls = decls.with(i, template_verdict(names[i], instances)); }
         i = i + 1;
     }
-    return Built { decls: decls, instances: instances };
+    return Built { decls: decls, instances: instances, contracts: table };
 }
