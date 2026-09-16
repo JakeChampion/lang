@@ -925,6 +925,33 @@ jobs:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostArm64$' -v -timeout 43m
 
+  # The same corpus through the same emitter with the SEMANTIC lowering, the
+  # arm64 sibling of diff-selfhost-semantic above.
+  #
+  # The lane above pins the AST lowering and this one the semantic, which is
+  # what the pair is for: the semantic lowering emits target-specific runtime
+  # of its own, so covering it on x86-64 alone left the arm64 half of that
+  # untested. One shard for the reason the lane above gives.
+  diff-selfhost-semantic-arm64:
+    name: diff-selfhost-semantic-arm64-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nshard: 1, shard: 0 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: aarch64 cross toolchain + qemu
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: run the fernsmith corpus through the arm64 emitter's semantic lowering
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
+        run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticArm64$' -v -timeout 43m
+
   test:
     needs: warm
     strategy:
