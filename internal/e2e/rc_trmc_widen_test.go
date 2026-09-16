@@ -142,11 +142,11 @@ func TestX86_64TrmcWidenedDeepStack(t *testing.T) {
 	var on, off int
 	withTrmc(true, func() {
 		bin, _ := compileX86_64FreeOn(t, trmcWidenDeepSrc)
-		on = runWithStackLimit(t, 16*1024, bin)
+		on = runWithStackLimit(t, 16*1024, bin, false)
 	})
 	withTrmc(false, func() {
 		bin, _ := compileX86_64FreeOn(t, trmcWidenDeepSrc)
-		off = runWithStackLimit(t, 16*1024, bin)
+		off = runWithStackLimit(t, 16*1024, bin, true)
 	})
 	if on != 0 {
 		t.Errorf("TRMC on: deep filter should succeed, got %d", on)
