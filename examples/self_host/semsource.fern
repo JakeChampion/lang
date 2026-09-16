@@ -798,6 +798,7 @@ function operand_type(t: typeinfo.Type): boolean { return ssasem.is_integer(t) |
 // arithmetic result is the width the checker's type for the whole expression
 // names; a comparison's is not, so it comes from whichever operand names one.
 function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): typeinfo.Type {
+    if (ssasem.checked_arith(b.op)) { expected = option_payload(expected); }
     if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) { return expected; }
     var addr: typeinfo.Type = address_width(b, s);
     if (ssasem.is_usize(addr)) { return addr; }
@@ -810,6 +811,15 @@ function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typei
     if (width_bearing(b.right)) {
         var r: typeinfo.Type = checked(b.right, s);
         if (operand_type(r)) { return r; }
+    }
+    return typeinfo.unchecked();
+}
+
+// The payload an Option expectation names, for the checked operator whose
+// operands are what the expectation is an Option of.
+function option_payload(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeUnion(u) = t {
+        if (u.name == "Option" && u.args.len() == 1) { return u.args[0]; }
     }
     return typeinfo.unchecked();
 }

@@ -619,6 +619,48 @@ function main(): i32 {
 	// annotation in every body and dropped that flag, so the checker typed
 	// the binding `string` against a `str` value and every function holding
 	// one refused. Produces 0 of 2 with the flag dropped.
+	// The saturating and checked operators at every width the AST lowering
+	// clamps at, matched on the exit code: each function is one shape the
+	// shared op-list builders emit over the semantic lowering's own slots.
+	{name: "overflow-operators", atLeast: 7, src: `
+function s32(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function s64(a: i64, b: i64): i64 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function u8s(a: u8, b: u8): u8 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
+function c32(a: i32, b: i32): i32 {
+    var t: i32 = 0;
+    match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1; } }
+    match (a -? b) { Some(v) => { t = t + v; }, None => { t = t + 2; } }
+    match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3; } }
+    match (a /? b) { Some(v) => { t = t + v; }, None => { t = t + 4; } }
+    match (a %? b) { Some(v) => { t = t + v; }, None => { t = t + 5; } }
+    match (a <<? b) { Some(v) => { t = t + v; }, None => { t = t + 6; } }
+    match (a >>? b) { Some(v) => { t = t + v; }, None => { t = t + 7; } }
+    return t;
+}
+function c64(a: i64, b: i64): i64 {
+    var t: i64 = 0;
+    match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1i64; } }
+    match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3i64; } }
+    match (a /? b) { Some(v) => { t = t + v; }, None => { t = t + 4i64; } }
+    match (a <<? b) { Some(v) => { t = t + v; }, None => { t = t + 6i64; } }
+    return t;
+}
+function cu(a: u32, b: u32): u32 {
+    var t: u32 = 0;
+    match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1u32; } }
+    match (a -? b) { Some(v) => { t = t + v; }, None => { t = t + 2u32; } }
+    match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3u32; } }
+    match (a %? b) { Some(v) => { t = t + v; }, None => { t = t + 5u32; } }
+    match (a >>? b) { Some(v) => { t = t + v; }, None => { t = t + 7u32; } }
+    return t;
+}
+function main(): i32 {
+    var r: i32 = s32(2147483000, 1000) + s32(-5, 7) + (u32s(4000000000u32, 500000000u32) as i32) + ((s64(9223372036854775000i64, 1000i64) >> 40i64) as i32) + (u8s(200u8, 100u8) as i32);
+    r = r + c32(2147483000, 1000) + c32(7, 0) + c32(-2147483648, -1) + ((c64(5i64, 3i64) & 1023i64) as i32) + (cu(4000000000u32, 500000000u32) as i32);
+    return r & 255;
+}
+`},
 	{name: "str-binding-beside-a-generic-struct", atLeast: 2, src: `
 struct Box[T] { v: T }
 function head(s: string): i32 {

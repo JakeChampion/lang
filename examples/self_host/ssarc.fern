@@ -1020,6 +1020,33 @@ function into_float(own r: irlower.LowerResult, from: typeinfo.Type, to: typeinf
     return r;
 }
 
+// A saturating or checked operator is the AST lowering's own shape
+// (irlower.sat_binary_ops / chk_binary_ops) over this function's slots: the
+// operands are values, so they are already in slots, the result's slot holds
+// the shape's outcome, and an intermediate the shape reads twice is
+// recomputed from the operands rather than spilled, so it takes no scratch.
+function overflow_binary(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var t: typeinfo.Type = f.values[ins.args[0]];
+    var wide: boolean = ssasem.is_wide(t);
+    var ops: ir.Op[] = [];
+    if (ssasem.saturating(ins.str)) {
+        ops = irlower.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result, 0 - 1, 0 - 1);
+    } else {
+        ops = irlower.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], 0 - 1, ins.result);
+    }
+    for op in ops { r = emit(r, op); }
+    return r;
+}
+
+// The width-and-signedness name the shape is written against.
+function overflow_kind(t: typeinfo.Type): string {
+    if (ssasem.is_u8(t)) { return "u8"; }
+    if (ssasem.is_u32(t)) { return "u32"; }
+    if (ssasem.is_i64(t)) { return "i64"; }
+    if (ssasem.is_u64(t)) { return "u64"; }
+    return "i32";
+}
+
 function scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.cast()) { return cast(r, f, ins); }
     if (ins.kind_tag == 9 && ssasem.is_text(f.values[ins.args[0]])) { return string_binary(r, ins); }
@@ -1306,6 +1333,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }

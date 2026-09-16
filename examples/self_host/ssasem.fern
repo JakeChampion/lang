@@ -1082,8 +1082,18 @@ function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
     return integer_result(op, t);
 }
 
+// A saturating operator clamps to its operand type and a checked one answers
+// an Option of it; both are integer-only (checker E009).
+pub function saturating(op: string): boolean {
+    return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
+}
+pub function checked_arith(op: string): boolean {
+    return op == "+?" || op == "-?" || op == "*?" || op == "/?" || op == "%?" || op == "<<?" || op == ">>?";
+}
+
 function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {
-    if (integer_op(op)) { return t; }
+    if (integer_op(op) || saturating(op)) { return t; }
+    if (checked_arith(op)) { return typeinfo.TypeUnion { name: "Option", args: [t] }; }
     if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }
