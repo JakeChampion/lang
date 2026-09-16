@@ -1046,6 +1046,25 @@ function main(): i32 {
         if (o.str == "__fern_map_free") { sawLenFree = true; }
     }
     if (!sawLen || !sawLenFree) { return 180; }
+    // An UNREACHABLE end (terminator 4) is the live end of a value-returning
+    // body the checker proved never runs: it releases every unit the frame
+    // still holds, as a return does, and aborts. An owned string parameter
+    // still dies there and no value is read.
+    var endGraph = ssa.SFunc { name: "ends", nparams: 1, nvals: 1, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)],
+            term: ssa.STerm { kind_tag: 4, value: 0, cond: 0, target: 0, t: 0, f: 0 } }] };
+    var endFunc = ssasem.Func { graph: endGraph, values: [strTy], params: [strTy], result: i32ty, records: [], enums: [], calls: [] };
+    var endPlan = ssaunits.plan(endFunc, [3]);
+    if (!endPlan.ok) { eprint(endPlan.why); return 181; }
+    var endLowered = ssarc.lower(endFunc, [3], endPlan, irlower.struct_tab_empty(), []);
+    if (!endLowered.ok) { eprint(endLowered.why); return 182; }
+    var sawExit: boolean = false;
+    var sawEndFree: boolean = false;
+    for o in endLowered.ops {
+        if (ir.render_op(o) == "exit") { sawExit = true; }
+        if (o.str == "__fern_str_free") { sawEndFree = true; }
+    }
+    if (!sawExit || !sawEndFree) { return 183; }
     // A map and a boolean spell different drop helpers: without a key of its
     // own a map would key as the fall-through leaf does.
     if (ssasem.type_key(mapTy) == ssasem.type_key(typeinfo.TypeBool { tag: 0 })) { return 144; }

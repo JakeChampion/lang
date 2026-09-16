@@ -237,7 +237,23 @@ func ordered {
     ret v8
 }
 
-refused value-returning body falls through
+modes 1 result i32
+v0:i32 v1:i32 v2:boolean v3:i32
+func ends_unreachable {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = binary > v0 v1
+    brif v2 b1 b2
+  b1:
+    v3 = const_int 1
+    ret v3
+  b2:
+    br b3
+  b3:
+    unreachable
+}
+
 modes result i32
 v0:i32 v1:i32 v2:(i32, i32) v3:i32 v4:i32 v5:i32
 func destructure {
@@ -1305,7 +1321,27 @@ func shape_tag {
     ret v13
 }
 
-refused unsupported match guard
+modes 2 result i32
+v0:Shape v1:boolean v2:i32 v3:i32 v4:boolean v5:i32
+func guarded_line {
+  b0:
+    v0 = param 0
+    v1 = variant_is Line v0
+    brif v1 b2 b3
+  b2:
+    v2 = variant_get 0 Line v0
+    v3 = const_int 0
+    v4 = binary > v2 v3
+    brif v4 b4 b3
+  b4:
+    ret v2
+  b3:
+    br b5
+  b5:
+    v5 = const_int 0
+    ret v5
+}
+
 refused unsupported qualified pattern
 modes 1 result Node
 v0:i32 v1:i32 v2:boolean v3:i32 v4:Leaf v5:Node v6:i32 v7:i32 v8:i32[] v9:Twig v10:Node
@@ -2510,6 +2546,40 @@ func poked {
 }
 
 refused unsupported map shape
+modes 2 result i32
+v0:Option[i32] v1:boolean v2:i32 v3:i32 v4:boolean v5:i32 v6:i32 v7:boolean v8:i32 v9:boolean v10:i32
+func guarded {
+  b0:
+    v0 = param 0
+    v1 = variant_is Some v0
+    brif v1 b2 b3
+  b2:
+    v2 = variant_get 0 Some v0
+    v3 = const_int 5
+    v4 = binary > v2 v3
+    brif v4 b4 b3
+  b4:
+    v5 = const_int 2
+    v6 = binary * v2 v5
+    ret v6
+  b3:
+    v7 = variant_is Some v0
+    brif v7 b5 b6
+  b5:
+    v8 = variant_get 0 Some v0
+    ret v8
+  b6:
+    v9 = variant_is None v0
+    brif v9 b7 b8
+  b7:
+    v10 = const_int 0
+    ret v10
+  b8:
+    br b1
+  b1:
+    unreachable
+}
+
 modes 2 1 result i32
 v0:Map[i32, i32] v1:i32 v2:i32 v3:i32
 func int_map_key {

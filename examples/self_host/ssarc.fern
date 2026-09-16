@@ -1895,11 +1895,17 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
 
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
     var b: ssa.SBlock = f.graph.blocks[order[position]];
-    if (b.term.kind_tag == 1) {
+    if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
         var ret: ssaunits.Step = at(p, b.id, ssaunits.return_point(), 0 - 1);
         e = Emit { ...e, r: supplies(e.r, f, ret, false) };
         e = Emit { ...e, r: drops(e.r, ret, f) };
-        if (b.term.value >= 0) { e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) }; }
+        // The unreachable end aborts as a failed bounds check does, then
+        // returns a zero the abort never lets the stack shape reach.
+        if (b.term.kind_tag == 4) {
+            e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
+            e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
+        }
+        if (b.term.kind_tag == 1 && b.term.value >= 0) { e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) }; }
         else { e = Emit { ...e, r: emit(e.r, ir.op_const_i32(0)) }; }
         return Emit { ...e, r: emit(e.r, ir.op_return()) };
     }

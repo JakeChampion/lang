@@ -210,7 +210,7 @@ Unsupported constructs refuse the whole function with a reason.
   (`semrecords.Enum`) is its union identity and every variant's field shape,
   entered into the function's schema table beside the record schemas. Arms
   are tested in declaration order and each test's false edge enters the next,
-  so an arm after a wildcard is unreachable and is not produced. A guard, a
+  so an arm after a wildcard is unreachable and is not produced. A
   qualified pattern (`Shape.Dot`), a nested, tuple, struct-field, literal or
   `@` pattern, and a non-enum scrutinee are refused.
 
@@ -224,6 +224,21 @@ Unsupported constructs refuse the whole function with a reason.
   variants. A value-returning body whose last statement is a total match
   therefore needs no `return` after it, which is what the AST lowering and
   every other Fern backend already assume.
+
+  A GUARDED arm is read after its payload bindings, in the arm's own block:
+  a true guard enters the body and a false one leaves for the next arm's
+  test, with the bindings released on that edge as on any other. A guarded
+  arm never counts towards totality, and a guarded wildcard does not close
+  the chain.
+
+  The parser desugars a nested, tuple, struct-field or literal arm pattern
+  into a done-flag chain of flat matches (`build_nested_arm_match` and its
+  siblings) that falls through by construction, and the checker's E052
+  reads every arm of the chain returning as a body that cannot reach its
+  end. That live end is the `unreachable` terminator here: it releases what
+  the frame still holds, as a return does, and aborts. It is the one
+  terminator the plan and the verifier admit with no value, and it is only
+  sound because the module was checked.
 
   `ssasem.analyze` carries the matching rule, because the closing arm
   projects its payload with no test above it. A variant projection is
@@ -520,10 +535,9 @@ Unsupported constructs refuse the whole function with a reason.
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
 unsigned negation, generic records, the struct,
-nested and `@`-bound destructuring forms, labelled loops, match guards and
-the pattern shapes above,
-`defer`, receiver methods, generic methods, external and async functions,
-and a value-returning body that falls through.
+nested and `@`-bound destructuring forms, labelled loops, the pattern
+shapes above, `defer`, receiver methods, generic methods, external and
+async functions.
 
 ## Calls
 

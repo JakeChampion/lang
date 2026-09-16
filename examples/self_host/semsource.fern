@@ -128,6 +128,7 @@ function t_ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, cond: 0,
 function t_br(target: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 }; }
 function t_brif(cond: i32, t: i32, f: i32): ssa.STerm { return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 }; }
 function t_none(): ssa.STerm { return ssa.STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
+function t_unreachable(): ssa.STerm { return ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
 
 // ---- graph construction ---------------------------------------------------
 
@@ -1836,7 +1837,7 @@ function pattern_shape_error(pv: ast.PatVariant): string {
 }
 
 function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, layout: i32): string {
-    if (a.has_guard || a.alt_cont) { return "unsupported match guard"; }
+    if (a.alt_cont) { return "unsupported match guard"; }
     var why: string = pattern_shape_error(pv);
     if (why != "") { return why; }
     if (!shape.found) { return "unknown variant"; }
@@ -1879,6 +1880,29 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     return s;
 }
 
+// A guard is read in the arm's block, after the payload bindings it may
+// name, and a false guard leaves for the next arm's test; the bindings die
+// on that edge as on any other. The arm's body then opens a block of its
+// own.
+function guard_gate(a: ast.MatchArm, s: State, next: i32): State {
+    if (!a.has_guard) { return s; }
+    var g: Value = expr(a.guard, s, t_bool());
+    s = g.s;
+    if (!s.ok) { return s; }
+    if (!is_bool(s.values[g.id])) { return fail(s, "match guard type"); }
+    var pred: i32 = s.cur.id;
+    var body: i32 = s.next_block;
+    s = terminate(State { ...s, next_block: body + 1 }, t_brif(g.id, body, next));
+    return open(s, body, [pred]);
+}
+
+// The predecessors of the next arm's test: the failed test, and the failed
+// guard when the arm has one.
+function next_preds(a: ast.MatchArm, pred: i32, id: i32): i32[] {
+    if (a.has_guard) { return [pred, id]; }
+    return [pred];
+}
+
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
     var layout: i32 = union_layout(s, owner);
@@ -1894,8 +1918,10 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
     s = terminate(test.s, t_brif(test.id, id, next));
     var opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
     opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
+    opened = guard_gate(a, opened, next);
+    if (!opened.ok) { return Arms { ...arms, s: opened }; }
     var done: Arm = arm_body(a.body, opened, join, count, scope, ty);
-    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [pred]) };
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(a, pred, id)) };
     return collect(arms, done);
 }
 
@@ -1915,12 +1941,24 @@ function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Pay
     return collect(arms, arm_body(a.body, opened, join, count, scope, ty));
 }
 
+// A wildcard closes the chain, so the arms after it are not produced; a
+// GUARDED wildcard does not, and its failed guard leaves for the next arm's
+// test as a variant arm's does.
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
     var s: State = arms.s;
     var pred: i32 = s.cur.id;
     var id: i32 = s.next_block;
-    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
-    return collect(arms, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
+    if (!a.has_guard) {
+        s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+        return collect(arms, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
+    }
+    var next: i32 = id + 1;
+    s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
+    var opened: State = guard_gate(a, open(State { ...s, vals: entry }, id, [pred]), next);
+    if (!opened.ok) { return Arms { ...arms, s: opened }; }
+    var done: Arm = arm_body(a.body, opened, join, count, scope, ty);
+    done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [id]) };
+    return collect(arms, done);
 }
 
 function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
@@ -2583,9 +2621,14 @@ function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
     return out;
 }
 
+// A value-returning body whose end is still live is one the checker proved
+// never reaches it (E052): the done-flag chain a nested, tuple, struct or
+// literal pattern match desugars to reads as falling through here while
+// every arm of it returns. That end aborts rather than returning a value it
+// does not have.
 function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     if (!s.ok) { return refuse(s.why); }
-    if (s.live && !is_void(s.result)) { return refuse("value-returning body falls through"); }
+    if (s.live && !is_void(s.result)) { s = terminate(s, t_unreachable()); }
     s = terminate(s, t_ret(0 - 1));
     var map: i32[] = trivial_phis(s.blocks, s.values.len());
     var f: ssasem.Func = renumber(s.blocks, map, s.values);
