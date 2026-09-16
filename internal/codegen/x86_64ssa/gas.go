@@ -190,6 +190,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	emitRuntimeHelpers(w, helpers)
+	if usesTranscendentals(helpers) {
+		emitTranscendentals(w)
+	}
 	if usesBcopy(helpers) {
 		emitBcopy(w)
 	}
@@ -2134,6 +2137,18 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"args":                          emitArgsHelper,
 	"env":                           emitEnvHelper,
 	"stat":                          emitStatHelper,
+	"__memcpy":                      emitMemcpyHelper,
+	"__abs_f64":                     emitAbsF64Helper,
+	"__sqrt_f64":                    emitF64UnaryHelper("__sqrt_f64", "sqrtsd xmm0, xmm0"),
+	"__floor_f64":                   emitF64UnaryHelper("__floor_f64", "roundsd xmm0, xmm0, 1"),
+	"__ceil_f64":                    emitF64UnaryHelper("__ceil_f64", "roundsd xmm0, xmm0, 2"),
+	"__trunc_f64":                   emitF64UnaryHelper("__trunc_f64", "roundsd xmm0, xmm0, 3"),
+	"__round_f64":                   emitRoundF64Helper,
+	"__sin_f64":                     emitTranscendentalHelper("__sin_f64"),
+	"__cos_f64":                     emitTranscendentalHelper("__cos_f64"),
+	"__exp_f64":                     emitTranscendentalHelper("__exp_f64"),
+	"__log_f64":                     emitTranscendentalHelper("__log_f64"),
+	"__pow_f64":                     emitTranscendentalHelper("__pow_f64"),
 }
 
 // heapUsingHelpers are runtime helpers that allocate on the SSA bump heap, so
@@ -2560,6 +2575,7 @@ var bcopyUsingHelpers = map[string]bool{
 	"__fern_buf_reserve":          true,
 	"buf_push":                    true,
 	"buf_push_range":              true,
+	"__memcpy":                    true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
@@ -2570,6 +2586,18 @@ func usesBcopy(helpers []string) bool {
 		}
 	}
 	return false
+}
+
+// emitMemcpyHelper writes __memcpy(dst, src, n) -> dst through __ssa_bcopy.
+// std/string.fern's bytes() and core/map.fern's buffer moves call it; n is a
+// non-negative i32.
+func emitMemcpyHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__memcpy"))
+	w("\tmov rax, rdi")
+	w("\tmov edx, edx")
+	emitBcopyCall(w, "rdi", "rsi", "rdx")
+	w("\tret")
 }
 
 // emitAllocU8Helper writes __alloc_u8(n) -> data: a fresh length-prefixed u8[]
