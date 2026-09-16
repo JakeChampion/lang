@@ -164,7 +164,8 @@ Unsupported constructs refuse the whole function with a reason.
   of its own that only wasm spells
   out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
   literal is an f64 — the checker types it polymorphic and settles it where it
-  lands, so a `f32` suffix or an f32 destination makes it an f32 — and it
+  lands, so a `f32` suffix or an f32 destination makes it an f32, and a
+  binding with no annotation settles it at the f64 it is — and it
   carries its source text the way a wide integer does, for the backends to
   splice. The four arithmetic operators are the stack IR's own float opcodes
   and never wrap, a comparison is a boolean, negation is the sign flip; `%`
