@@ -76,7 +76,9 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"semantic26=map_insert\n" +
 		"semantic27=map_has\n" +
 		"semantic28=map_get_or\n" +
-		"semantic_count=28\n"
+		"semantic29=map_len\n" +
+		"semantic30=map_get\n" +
+		"semantic_count=30\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
