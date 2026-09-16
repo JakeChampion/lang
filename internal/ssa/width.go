@@ -302,7 +302,7 @@ func (r *widthResolver) settleLocally(f *Func) bool {
 
 // settleCalls carries address-ness across the calls f makes, in both
 // directions: into a callee through the arguments f passes, which puts the
-// callee back on the queue when a parameter is news (mark tells its other
+// callee back on the queue when a parameter is new (mark tells its other
 // callers), and out of a callee through the value it returns and the parameters it is
 // already known to take addresses in. Reports whether f itself learned
 // anything, which settleLocally then carries on.
