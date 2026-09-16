@@ -89,6 +89,15 @@ function representative(l: Loops, region: boolean[], root: i32, x: i32): i32 {
     return x;
 }
 
+// The representative of every position, once per region: the ordering below
+// asks for it once per edge per round.
+function representatives(l: Loops, region: boolean[], root: i32): i32[] {
+    var out: i32[] = [];
+    var x: i32 = 0;
+    while (x < l.n) { out = out.append(representative(l, region, root, x)); x = x + 1; }
+    return out;
+}
+
 function outermost(l: Loops, region: boolean[], root: i32, h: i32): boolean {
     var other: i32 = 0;
     while (other < l.n) {
@@ -98,17 +107,17 @@ function outermost(l: Loops, region: boolean[], root: i32, h: i32): boolean {
     return true;
 }
 
-function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32): i32[] {
+function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, reps: i32[]): i32[] {
     var pending: i32[] = [];
     var i: i32 = 0;
     while (i < l.n) { pending = pending.append(0); i = i + 1; }
     var x: i32 = 0;
     while (x < l.n) {
         if (region[x]) {
-            var rx: i32 = representative(l, region, root, x);
+            var rx: i32 = reps[x];
             for y in successors(f, x) {
                 if (!region[y] || y == root) { continue; }
-                var ry: i32 = representative(l, region, root, y);
+                var ry: i32 = reps[y];
                 if (rx != ry) { pending = pending.with(ry, pending[ry] + 1); }
             }
         }
@@ -117,13 +126,13 @@ function pending_edges(f: ssa.SFunc, l: Loops, region: boolean[], root: i32): i3
     return pending;
 }
 
-function release(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, chosen: i32, pending: i32[]): i32[] {
+function release(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, chosen: i32, pending: i32[], reps: i32[]): i32[] {
     var x: i32 = 0;
     while (x < l.n) {
-        if (region[x] && representative(l, region, root, x) == chosen) {
+        if (region[x] && reps[x] == chosen) {
             for y in successors(f, x) {
                 if (!region[y] || y == root) { continue; }
-                var ry: i32 = representative(l, region, root, y);
+                var ry: i32 = reps[y];
                 if (ry != chosen) { pending = pending.with(ry, pending[ry] - 1); }
             }
         }
@@ -132,10 +141,10 @@ function release(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, chosen: i
     return pending;
 }
 
-function next_ready(l: Loops, region: boolean[], root: i32, pending: i32[], done: boolean[]): i32 {
+function next_ready(l: Loops, region: boolean[], pending: i32[], done: boolean[], reps: i32[]): i32 {
     var x: i32 = 0;
     while (x < l.n) {
-        if (region[x] && !done[x] && representative(l, region, root, x) == x && pending[x] == 0) { return x; }
+        if (region[x] && !done[x] && reps[x] == x && pending[x] == 0) { return x; }
         x = x + 1;
     }
     return 0 - 1;
@@ -150,10 +159,10 @@ function row(l: Loops, h: i32): boolean[] {
 
 function irreducible(): Layout { return Layout { ok: false, order: [], loop_end: [] }; }
 
-function complete(l: Loops, region: boolean[], root: i32, done: boolean[]): boolean {
+function complete(l: Loops, region: boolean[], done: boolean[], reps: i32[]): boolean {
     var x: i32 = 0;
     while (x < l.n) {
-        if (region[x] && !done[representative(l, region, root, x)]) { return false; }
+        if (region[x] && !done[reps[x]]) { return false; }
         x = x + 1;
     }
     return true;
@@ -161,7 +170,8 @@ function complete(l: Loops, region: boolean[], root: i32, done: boolean[]): bool
 
 function region_order(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, out: Layout): Layout {
     var start: i32 = out.order.len();
-    var pending: i32[] = pending_edges(f, l, region, root);
+    var reps: i32[] = representatives(l, region, root);
+    var pending: i32[] = pending_edges(f, l, region, root, reps);
     var done: boolean[] = flags(l.n, false);
     var chosen: i32 = root;
     while (chosen >= 0) {
@@ -172,10 +182,10 @@ function region_order(f: ssa.SFunc, l: Loops, region: boolean[], root: i32, out:
         } else {
             out = Layout { ok: true, order: out.order.append(chosen), loop_end: out.loop_end.append(0 - 1) };
         }
-        pending = release(f, l, region, root, chosen, pending);
-        chosen = next_ready(l, region, root, pending, done);
+        pending = release(f, l, region, root, chosen, pending, reps);
+        chosen = next_ready(l, region, pending, done, reps);
     }
-    if (!complete(l, region, root, done)) { return irreducible(); }
+    if (!complete(l, region, done, reps)) { return irreducible(); }
     if (l.header[root]) { out = Layout { ...out, loop_end: out.loop_end.with(start, out.order.len() - 1) }; }
     return out;
 }
