@@ -24,10 +24,6 @@ func TestCalleeSavedInTokenisesRegisterNames(t *testing.T) {
 	if got := calleeSavedIn("", len(armX)); len(got) != 0 {
 		t.Fatalf("calleeSavedIn(empty) = %v, want none", got)
 	}
-	// The marker the body carries is not a register mention.
-	if got := calleeSavedIn(teardownMarker+"\n", len(armX)); len(got) != 0 {
-		t.Fatalf("calleeSavedIn(marker) = %v, want none", got)
-	}
 }
 
 // A parameter homed in a callee-saved register is a use even when no block
@@ -71,16 +67,16 @@ func TestParamMoveRegistersDoNotMoveWithTheFrame(t *testing.T) {
 	}
 }
 
-// writeBody hands the blocks to the writer a line at a time and replaces every
-// marker with the teardown. Blank lines survive.
-func TestWriteBodyReplacesMarkersWithTeardown(t *testing.T) {
-	body := "\tmov x0, x1\n" + teardownMarker + "\n\tret\n\n\tmov x2, #1\n" + teardownMarker + "\n\tret\n"
+// copyLines hands the blocks to the writer a line at a time, so a multi-line
+// string the emitter wrote as a unit does not reach the writer whole. Blank
+// lines survive.
+func TestCopyLinesFeedsTheWriterOneLineAtATime(t *testing.T) {
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...); b.WriteByte('\n') }
-	writeBody(w, body, []string{"ldr x30, [sp, #16]", "add sp, sp, #32"})
-	want := "\tmov x0, x1\n\tldr x30, [sp, #16]\n\tadd sp, sp, #32\n\tret\n\n\tmov x2, #1\n\tldr x30, [sp, #16]\n\tadd sp, sp, #32\n\tret\n"
-	if got := b.String(); got != want {
-		t.Fatalf("writeBody =\n%q\nwant\n%q", got, want)
+	body := "\tmov x0, x1\n\tb .Lfn_f_epi\n\n\tmov x2, #1\n\tret\n"
+	copyLines(w, body)
+	if got := b.String(); got != body {
+		t.Fatalf("copyLines =\n%q\nwant\n%q", got, body)
 	}
 }
 

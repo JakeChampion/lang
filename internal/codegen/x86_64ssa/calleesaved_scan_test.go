@@ -25,9 +25,9 @@ func TestCalleeSavedInTokenisesRegisterNames(t *testing.T) {
 	}
 }
 
-// The restore marker the body is emitted with never reaches the output: every
-// return carries the pops instead, in reverse push order.
-func TestRestoreMarkerIsReplacedByPops(t *testing.T) {
+// The epilogue pops exactly what the prologue pushed, in reverse push order:
+// a register saved and not restored is handed back to the caller clobbered.
+func TestEpiloguePopsWhatTheProloguePushed(t *testing.T) {
 	g := ssa.NewFunc("g")
 	gx := g.AddParam()
 	ge := g.NewBlock()
@@ -45,9 +45,6 @@ func TestRestoreMarkerIsReplacedByPops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
 	}
-	if strings.Contains(asm, restoreMarker) {
-		t.Fatalf("restore marker survived into the output:\n%s", asm)
-	}
 	body := asm[strings.Index(asm, fnLabel("h")+":"):]
 	if i := strings.Index(body, "\n"+fnLabel("g")+":"); i >= 0 {
 		body = body[:i]
@@ -59,19 +56,15 @@ func TestRestoreMarkerIsReplacedByPops(t *testing.T) {
 	}
 }
 
-// writeBody hands the body to the writer a line at a time, so the writer's
-// self-move filter still sees each line, and replaces every marker with the
-// pops in reverse push order. Blank lines survive.
-func TestWriteBodyReplacesMarkersLineByLine(t *testing.T) {
-	body := "\tmov rax, rbx\n\tmov rax, rax\n" + restoreMarker + "\n\tret\n\n\tmov rcx, 1\n" + restoreMarker + "\n\tret\n"
+// copyLines hands the body to the writer a line at a time, so the writer's
+// self-move filter still sees each line even when the emitter wrote several
+// of them as one string. Blank lines survive.
+func TestCopyLinesFeedsTheWriterOneLineAtATime(t *testing.T) {
 	var b strings.Builder
-	writeBody(lineWriter(&b), body, []int{gpIndex("rbx"), gpIndex("r12")})
-	// Each teardown is preceded by the rule that brackets it: the frame's
-	// state is remembered here and restored after the return, so a rule meant
-	// for one epilogue does not describe the block the layout puts next.
-	want := "\tmov rax, rbx\n\t.cfi_remember_state\n\tpop r12\n\tpop rbx\n\tret\n\n\tmov rcx, 1\n\t.cfi_remember_state\n\tpop r12\n\tpop rbx\n\tret\n"
+	copyLines(lineWriter(&b), "\tmov rax, rbx\n\tmov rax, rax\n\tret\n\n\tmov rcx, 1\n\tret\n")
+	want := "\tmov rax, rbx\n\tret\n\n\tmov rcx, 1\n\tret\n"
 	if got := b.String(); got != want {
-		t.Fatalf("writeBody =\n%q\nwant\n%q", got, want)
+		t.Fatalf("copyLines =\n%q\nwant\n%q", got, want)
 	}
 }
 

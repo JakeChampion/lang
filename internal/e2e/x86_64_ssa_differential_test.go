@@ -97,7 +97,7 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 			src := langSrcAbs(t, rel)
 
 			baseBin := filepath.Join(dir, "base")
-			if out, err := exec.Command(fern, "-target", "x86-64-linux", "-o", baseBin, src).CombinedOutput(); err != nil {
+			if out, err := exec.Command(fern, "-target", "x86-64-linux", "-backend", "flat", "-o", baseBin, src).CombinedOutput(); err != nil {
 				atomic.AddInt64(&baselineRejected, 1)
 				t.Logf("baseline-rejected: %v\n%s", err, firstLines(string(out), 3))
 				if isKnown {
