@@ -39,11 +39,11 @@ func CmpFlip(f *Func) {
 	if f == nil {
 		return
 	}
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -55,8 +55,8 @@ func CmpFlip(f *Func) {
 				if len(op.Args) != 1 {
 					continue
 				}
-				def, ok := defs[op.Args[0].ID]
-				if !ok {
+				def := defs.get(op.Args[0])
+				if def == nil {
 					continue
 				}
 				flipped, ok := flippedCmp(def.Kind)
@@ -73,8 +73,8 @@ func CmpFlip(f *Func) {
 				if len(op.Args) != 3 {
 					continue
 				}
-				def, ok := defs[op.Args[0].ID]
-				if !ok || def.Kind != OpNot || len(def.Args) != 1 {
+				def := defs.get(op.Args[0])
+				if def == nil || def.Kind != OpNot || len(def.Args) != 1 {
 					continue
 				}
 				op.Args[0] = def.Args[0]

@@ -64,11 +64,11 @@ func StrengthReduce(f *Func) {
 	if f == nil {
 		return
 	}
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -193,12 +193,12 @@ func StrengthReduce(f *Func) {
 // isNegOf reports whether `maybeNeg` is defined by `OpNeg`
 // whose single arg equals `x`. Used to recognise the
 // `x + (-x)` shape regardless of operand order.
-func isNegOf(maybeNeg, x Value, defs map[int32]*Op) bool {
+func isNegOf(maybeNeg, x Value, defs idTable[*Op]) bool {
 	if !maybeNeg.IsValid() || !x.IsValid() {
 		return false
 	}
-	def, ok := defs[maybeNeg.ID]
-	if !ok || def.Kind != OpNeg || len(def.Args) != 1 {
+	def := defs.get(maybeNeg)
+	if def == nil || def.Kind != OpNeg || len(def.Args) != 1 {
 		return false
 	}
 	return def.Args[0] == x
@@ -207,12 +207,12 @@ func isNegOf(maybeNeg, x Value, defs map[int32]*Op) bool {
 // negArg returns the inner Value when `v` is defined by an
 // OpNeg, or `Value{}, false` otherwise. Used by the
 // add-of-neg → sub rewrite.
-func negArg(v Value, defs map[int32]*Op) (Value, bool) {
+func negArg(v Value, defs idTable[*Op]) (Value, bool) {
 	if !v.IsValid() {
 		return Value{}, false
 	}
-	def, ok := defs[v.ID]
-	if !ok || def.Kind != OpNeg || len(def.Args) != 1 {
+	def := defs.get(v)
+	if def == nil || def.Kind != OpNeg || len(def.Args) != 1 {
 		return Value{}, false
 	}
 	return def.Args[0], true

@@ -42,11 +42,11 @@ func Canonicalize(f *Func) {
 	if f == nil {
 		return
 	}
-	defs := map[int32]*Op{}
+	defs := newIDTable[*Op](f)
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
 			if op.Result.IsValid() {
-				defs[op.Result.ID] = op
+				defs.set(op.Result, op)
 			}
 		}
 	}
@@ -110,12 +110,12 @@ func flipDirectionalCmp(k OpKind) (OpKind, bool) {
 }
 
 // isConstOp reports whether `v` is defined by a const op.
-func isConstOp(v Value, defs map[int32]*Op) bool {
+func isConstOp(v Value, defs idTable[*Op]) bool {
 	if !v.IsValid() {
 		return false
 	}
-	def, ok := defs[v.ID]
-	if !ok {
+	def := defs.get(v)
+	if def == nil {
 		return false
 	}
 	return IsConst(def.Kind)
