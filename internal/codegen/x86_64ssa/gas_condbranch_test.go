@@ -109,11 +109,13 @@ func emitOne(t *testing.T, f *ssa.Func) string {
 // the branch used to test, the widening that followed it, and the copy that
 // only existed to give the comparison a left operand are all gone. The layout
 // puts the false arm next, so the branch is the predicate itself to the true
-// arm and the false arm is reached by falling through: one jcc and no jmp at
-// all.
+// arm and the false arm is reached by falling through: one jcc and no jump
+// between blocks at all. The arm that does not sit next to the epilogue
+// reaches it by a `jmp`, which is what one epilogue per function means and
+// not a branch the fusion left behind.
 func TestFusedBranchIsCmpAndJccAlone(t *testing.T) {
 	body := emitOne(t, cmpBranchOnly(ssa.OpLt))
-	for _, gone := range []string{"setl", "movzx", "test ", "jmp "} {
+	for _, gone := range []string{"setl", "movzx", "test ", "jmp .L_fn_f_b"} {
 		if strings.Contains(body, gone) {
 			t.Errorf("fused branch still emits %q:\n%s", gone, body)
 		}
