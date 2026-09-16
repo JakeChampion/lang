@@ -3520,7 +3520,14 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // unbound the result still contains unknown, and falling through preserves
   // exactly what the caller saw before — so this can add type information but
   // never change an answer that was already complete.
-  if (sig.type_param_count > 0 && type_contains_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
+  //
+  // A DECLARED type parameter is not the precondition: a spelling that resolves
+  // to nothing is. `clone_bg` substitutes only the BOUNDED parameters, so the
+  // instance of `filter[T, I: Iterator[T]]` at `I = ArrayIter[i32]` declares
+  // none and still returns `T[]` — that `T` is erased in the callee and must
+  // still be concrete at the call site. A spelling that DOES resolve never
+  // binds, so a call with no variable in it reaches the fallthrough as before.
+  if (type_contains_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
     var bn: string[] = [];
     var bt: typeinfo.Type[] = [];
     var bpi: i32 = 0;
@@ -4478,9 +4485,9 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
       pts = pts.append(fpt);
       powns = powns.append(param.own);
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
-      ptn = ptn.append(param.type_name);
+      ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -4890,10 +4897,12 @@ function gc_is_typevar_name(n: string, tparams: string[], struct_names: string[]
 // gc_bind_param collects type-parameter bindings by unifying a parameter's
 // declared type SPELLING against the ARGUMENT's actual type, structurally:
 // `T[]` against an `f64[]` argument binds `T` to f64, a bare `T` binds
-// directly, and a tuple spelling descends element-wise. It is the inference the
-// exact-match rule at the call site (#4346 piece 2) explicitly left open — its
-// own comment names "a return type param that appears only nested" as a further
-// slice, and `enum2[T](xs: T[]): (i32, T)[]` is exactly that shape.
+// directly, and a tuple or callable spelling descends element-wise — the only
+// `T` in `filter[T, I](it: I, keep: (T) => boolean): T[]` is the lambda
+// argument's parameter. It is the inference the exact-match rule at the call
+// site (#4346 piece 2) explicitly left open — its own comment names "a return
+// type param that appears only nested" as a further slice, and
+// `enum2[T](xs: T[]): (i32, T)[]` is exactly that shape.
 //
 // First binding wins; a shape that does not line up contributes nothing rather
 // than guessing, so an unbindable variable simply leaves the return type
@@ -4918,6 +4927,26 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
         return (ns, ts);
       }
     }
+  }
+  if (parser.ref_is_fn_value(r)) {
+    // An argument whose parameter list was never recorded is not an arity, so
+    // it lines up with nothing — as does an argument that is no callable.
+    if let typeinfo.TypeFunc(f) = at {
+      var fr: parser.TypeRef = parser.ref_ungroup(r);
+      if (f.params_known && f.param_types.len() + 1 == fr.args.len()) {
+        var fi: i32 = 0;
+        while (fi < f.param_types.len()) {
+          let (fn2, ft2) = gc_bind_param(parser.ref_without_own(fr.args[fi]), f.param_types[fi], tparams, struct_names, union_names, ns, ts);
+          ns = fn2;
+          ts = ft2;
+          fi = fi + 1;
+        }
+        let (rn2, rt2) = gc_bind_param(parser.ref_fn_result(r), f.ret_type, tparams, struct_names, union_names, ns, ts);
+        ns = rn2;
+        ts = rt2;
+      }
+    }
+    return (ns, ts);
   }
   if (r.is_tuple && r.args.len() >= 2) {
     match (at) {

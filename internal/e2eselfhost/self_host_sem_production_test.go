@@ -745,6 +745,21 @@ function main(): i32 {
     return r & 255;
 }
 `},
+	{name: "type-param-only-in-a-lambda-parameter", atLeast: 10, src: `
+import "core/iter" as iter;
+
+function kept(xs: i32[]): i32 {
+    var big = iter.filter(iter.of(xs), (x: i32): boolean => { return x > 3; });
+    return big.len() * 10 + big[0] + big[1];
+}
+
+function doubled(xs: i32[]): i32 {
+    var all = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
+    return all.len() + all[2];
+}
+
+function main(): i32 { return kept([5, 2, 8, 1, 4]) + doubled([1, 2, 3]); }
+`},
 	{name: "str-binding-beside-a-generic-struct", atLeast: 2, src: `
 struct Box[T] { v: T }
 function head(s: string): i32 {

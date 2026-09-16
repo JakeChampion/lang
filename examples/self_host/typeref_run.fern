@@ -141,6 +141,24 @@ function main(): i32 {
     if (!parser.ref_is_fn_value(element_fn)) { bad = bad + 1; }
     if (parser.ref_fn_result(element_fn).array_depth != 1) { bad = bad + 1; }
 
+    // The coarse "fn" / "fn[]" declaration tag and its sidecars rebuild the
+    // spelling they were split from, so a reader that wants the declared SHAPE
+    // gets a TypeRef rather than an opaque name. A tag with no recorded result
+    // has no signature to rebuild and stays itself.
+    out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", "T") + "\n";
+    out = out + "tag fn0=" + parser.fn_tag_spelling("fn", "U", "") + "\n";
+    out = out + "tag fn2=" + parser.fn_tag_spelling("fn", "(string, i32)", "T,Map[string, U]") + "\n";
+    out = out + "tag fnarr=" + parser.fn_tag_spelling("fn[]", "U", "T") + "\n";
+    out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", "") + "\n";
+    out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", "") + "\n";
+    // Rebuilt spellings decode as function values, so `(T) => boolean` reaches
+    // a structural reader as a parameter T rather than the name "fn".
+    var tagged: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
+    if (!parser.ref_is_fn_value(tagged) || parser.ref_ungroup(tagged).args[0].base != "T") { bad = bad + 1; }
+    var tagarr: parser.TypeRef = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", "T"));
+    if (parser.ref_is_fn_value(tagarr) || tagarr.array_depth != 1) { bad = bad + 1; }
+    if (!parser.ref_is_fn_value(parser.elem_type_ref(tagarr))) { bad = bad + 1; }
+
     out = out + "round_trip_failures=" + util.i32_to_string(bad) + "\n";
     write(out);
 
