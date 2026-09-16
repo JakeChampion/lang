@@ -42,7 +42,11 @@ as before. Nothing about the module changes for it. `FERN_SSA_REPORT=1`
 prints one line per declined function on stderr, `FERN_SSA: <name>: <op>`,
 and a module tally, `FERN_SSA: module: N of M functions through the SSA
 backend, K declined`. The op name is the IR kind that stopped the lift, so
-the report's histogram is the coverage checklist.
+the report's histogram is the coverage checklist. `FERN_SSA_ONLY` and
+`FERN_SSA_SKIP` are comma-separated name prefixes: ONLY admits the functions
+one of them matches, SKIP excludes them, and a declined function keeps the
+stack machine, so a wrong answer or a slow compile on a whole program is
+walked in on by halving the emitted set.
 
 ## Why per function, and why the stack ABI
 
