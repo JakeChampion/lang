@@ -2297,10 +2297,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		if err != nil {
 			return fmt.Errorf("native linker: %w", err)
 		}
-		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-			return err
-		}
-		return os.Chmod(outPath, 0o755)
+		return writeExecutable(outPath, bin)
 	}
 	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
@@ -2311,15 +2308,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		return err
 	}
 	bin := nativeelf.StaticExecutableDataWXEhFrame(text, u, rodata)
-	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-		return err
-	}
-	// WriteFile keeps existing permissions, and --run's temp binary is
-	// pre-created by CreateTemp at 0600 — chmod so it's executable.
-	if err := os.Chmod(outPath, 0o755); err != nil {
-		return err
-	}
-	return nil
+	return writeExecutable(outPath, bin)
 }
 
 // unwindLayout is the assembler surface the W^X-with-unwind layout needs.
@@ -2403,6 +2392,20 @@ func linkNativePIE(asm, outPath string) error {
 		elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
 	}
 	bin := nativeelf.StaticPieExecutable(text, rodata, elfRelocs)
+	return writeExecutable(outPath, bin)
+}
+
+// writeExecutable replaces outPath with bin, executable. It unlinks first
+// rather than truncating in place: macOS caches a binary's code-signature
+// verdict by inode, so rewriting a signed executable through its existing
+// inode leaves the kernel holding the old verdict and kills the new program at
+// exec (SIGKILL, "Code Signature Invalid") although the file's own signature
+// is valid. A fresh inode carries no verdict. The chmod keeps the mode explicit
+// under any umask, and for --run's temp binary CreateTemp made at 0600.
+func writeExecutable(outPath string, bin []byte) error {
+	if err := os.Remove(outPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
@@ -2440,10 +2443,7 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 		}
 		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, asmNames, ev), soname)
 	}
-	if err := os.WriteFile(outPath, so, 0o755); err != nil {
-		return err
-	}
-	return os.Chmod(outPath, 0o755)
+	return writeExecutable(outPath, so)
 }
 
 // sharedExports pairs each export's Fern name with the vaddr the assembler
@@ -2667,10 +2667,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		if err != nil {
 			return fmt.Errorf("native linker: %w", err)
 		}
-		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-			return err
-		}
-		return os.Chmod(outPath, 0o755)
+		return writeExecutable(outPath, bin)
 	}
 	a, err := nativex86.ParseProgram(asm)
 	if err != nil {
@@ -2682,13 +2679,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		return err
 	}
 	bin := nativeelf.StaticExecutableDataX86WXEhFrame(text, u, rodata)
-	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-		return err
-	}
-	if err := os.Chmod(outPath, 0o755); err != nil {
-		return err
-	}
-	return nil
+	return writeExecutable(outPath, bin)
 }
 
 // linkNativeDarwin assembles arm64 asm and wraps it in a static, ad-hoc-
@@ -2716,10 +2707,7 @@ func linkNativeDarwin(asm, outPath string) error {
 	} else {
 		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
 	}
-	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-		return err
-	}
-	return os.Chmod(outPath, 0o755)
+	return writeExecutable(outPath, bin)
 }
 
 // layoutMachO is the Mach-O counterpart of layoutWithUnwind: the code size

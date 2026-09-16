@@ -1798,6 +1798,21 @@ function value_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
     if (ins.str == "__rc_underflow_count") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) }; }
     if (ins.str == "__arr_push_shared_count") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) }; }
     if (ins.str == "__arr_push_shared_bytes") { return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_bytes()) }; }
+    return host_builtin_site(r, ins);
+}
+
+// The host itself: three clocks, the kernel's randomness, and the two sleeps.
+// Each is an op of its own rather than a call, the way the AST lowering emits
+// it — a contract alone would reach the backends as a call to a symbol no
+// runtime defines.
+function host_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+    if (ins.str == "random_bytes") { return Lowered { found: true, r: emit(r, ir.op_random_bytes()) }; }
+    if (ins.str == "random_i32") { return Lowered { found: true, r: emit(r, ir.op_random_i32()) }; }
+    if (ins.str == "monotonic_ns") { return Lowered { found: true, r: emit(r, ir.op_monotonic_ns()) }; }
+    if (ins.str == "now_unix_ms") { return Lowered { found: true, r: emit(r, ir.op_now_unix_ms()) }; }
+    if (ins.str == "now_ns") { return Lowered { found: true, r: emit(r, ir.op_now_ns()) }; }
+    if (ins.str == "sleep_ms") { return Lowered { found: true, r: emit(r, ir.op_sleep_ms()) }; }
+    if (ins.str == "sleep_ns") { return Lowered { found: true, r: emit(r, ir.op_sleep_ns()) }; }
     return builder_builtin_site(r, ins);
 }
 

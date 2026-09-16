@@ -8,6 +8,16 @@ production lowering path for the self-hosted compiler. The SSA
 **Owner:** compiler / self-host.
 **Resolves:** #4391.
 
+**The emit half changed on 2026-09-16.** The stack IR is still the single
+production lowering, and the retirement of `build_func` below still stands.
+What no longer holds is that the SSA layer is analysis only: `-backend ssa`
+emits a function from SSA form inside the arm64 flat backend, fed by the
+production lift over the same stack IR, on the same runtime and calling
+convention. `docs/SELFHOST-SSA-BACKEND.md` is that track's plan, and it is
+where the retirement now happens: the backend takes its runtime helpers from
+the production runtime, which removes the blocker the scope correction below
+names.
+
 ## The question
 
 The self-host backend was advancing **two mutually-exclusive futures**,

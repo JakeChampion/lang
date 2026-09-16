@@ -399,7 +399,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-backend ssa] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
     eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
@@ -627,8 +627,17 @@ function target_writes_binary(t: string, emit: string): boolean {
 // write_output writes the compiler's output, executable when the target
 // produced one. Both emit paths (the SSA one and the AST shell) go through it
 // so the mode rule cannot be applied at one and forgotten at the other.
+//
+// An executable replaces the file rather than overwriting it in place: macOS
+// caches a binary's code-signature verdict by inode, so rewriting a signed
+// executable through its existing inode leaves the kernel holding the old
+// verdict and it kills the new program at exec (SIGKILL, "Code Signature
+// Invalid") although the file's own signature is valid.
 function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
-    if (target_writes_binary(t, emit)) { return write_file_exec(out_path, data); }
+    if (target_writes_binary(t, emit)) {
+        match (remove_file(out_path)) { Ok(_) => {}, Err(_) => {} }
+        return write_file_exec(out_path, data);
+    }
     return write_file(out_path, data);
 }
 
@@ -2064,6 +2073,10 @@ function run(): i32 {
     // (entry, stdlib root); `-add` takes three of its own.
     var pos: string[] = [];
     var use_ssa: boolean = false;
+    // -backend ssa: the register-allocating SSA emit for every function it
+    // admits, beside the stack machine for the rest (docs/SELFHOST-SSA-BACKEND.md).
+    // Empty is the target's default emitter.
+    var backend: string = "";
     var mode_scan: boolean = false;
     // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
     // against. Empty means the flag was not passed, which makes any use of
@@ -2094,6 +2107,10 @@ function run(): i32 {
             fmt_write = true;
         } else if (a == "-d") {
             fmt_diff = true;
+        } else if (a == "-backend") {
+            i = i + 1;
+            if (i >= av.len()) { return usage(); }
+            backend = av[i];
         } else if (a == "-ssa") {
             // Opt into the experimental SSA lowering pipeline (build_func →
             // optimise → regalloc → emit) for x86-64 / arm64 / a wasm subset.
@@ -2239,6 +2256,14 @@ function run(): i32 {
     }
     if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
         eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit\n");
+        return 2;
+    }
+    if (backend != "" && backend != "ssa") {
+        eprint("fern: unknown -backend: " + backend + " (want ssa, or omit it for the target's default emitter)\n");
+        return 2;
+    }
+    if (backend == "ssa" && platforms.for_target(target).isa != "arm64") {
+        eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android)\n");
         return 2;
     }
 
@@ -2540,7 +2565,7 @@ function run(): i32 {
         // The default form is the in-process ELF (arm64_native + elf.fern) —
         // no `.s` + gcc/ld. Both run the IR path; -ssa opts into the SSA
         // pipeline above instead.
-        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
+        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, backend == "ssa");
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
             out_asm = arm64_elf_binary(out_asm, emit_syms);
@@ -2553,7 +2578,7 @@ function run(): i32 {
         // the one construct that cares — the startup self-relocation loop — is
         // emitted on both, where ET_EXEC simply computes a zero slide and skips
         // it (#7112).
-        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
+        out_asm = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, backend == "ssa");
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
             out_asm = arm64_elf_binary_pie(out_asm);
@@ -2577,7 +2602,7 @@ function run(): i32 {
         // `-emit asm` stops at the darwinized text: it is the only way to hand
         // the emitter's output to clang, which decides whether a misbehaving
         // binary is the emitter's fault or arm64_gas_program's.
-        out_asm = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub));
+        out_asm = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub, backend == "ssa"));
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
             var prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
