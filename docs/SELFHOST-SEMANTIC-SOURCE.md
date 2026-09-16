@@ -1732,10 +1732,18 @@ is the goal-2 gap (`make distcheck` OOM-killed at 13.9 GB, `docs/BOOTSTRAP.md`)
 closed from the other side — not by porting the AST lowering's ownership
 analysis, but by the lowering that replaces it.
 
-What the substitution still costs is the BUILD: the semantic self-build runs
-9.5 minutes at 8.4 GB where the AST self-build runs 59 s at 5.5 GB. That is
-`semsource` + `ssaunits` + `ssarc` running once per declaration on top of the
-AST lowering that still runs for the eligibility verdict.
+What the substitution still costs is the BUILD: the semantic self-build ran
+9.5 minutes at 8.4 GB where the AST self-build runs 59 s at 5.5 GB. callgrind
+on the semantic build of `checker.fern` put 56.6% of every instruction in
+`ssadeps.block_index` — the linear search for a block by id, called once per
+predecessor per block pair per round of the dominator solver — and another
+6% in `ssalayout.representative`, recomputed per edge per round of the
+region ordering. Predecessor positions resolved once per solve and a
+representatives table once per region take the self-build to **3m31s** at
+the same peak; `checker.fern` goes 30 s to 12.7 s against 3.7 s for the AST
+lowering, with the output byte-identical. What remains is `semsource` +
+`ssaunits` + `ssarc` running once per declaration on top of the AST lowering
+that still runs for the eligibility verdict.
 
 **The fixpoint is not reached, and the reason is memory in the produced code
 of those same modules.** The produced compiler rebuilding itself through the

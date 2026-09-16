@@ -63,10 +63,23 @@ pub function reachable_blocks(f: ssa.SFunc): boolean[] {
     return reachable;
 }
 
+// Each block's predecessors by position, resolved once: the solver below
+// reads them once per block pair per round.
+function pred_positions(f: ssa.SFunc): i32[][] {
+    var out: i32[][] = [];
+    for b in f.blocks {
+        var ps: i32[] = [];
+        for pred in b.preds { ps = ps.append(block_index(f, pred)); }
+        out = out.append(ps);
+    }
+    return out;
+}
+
 function dominators(f: ssa.SFunc, reachable: boolean[]): boolean[] {
     var n: i32 = f.blocks.len();
     var dom: boolean[] = flags(n * n, false);
     var entry: i32 = block_index(f, f.entry);
+    var preds: i32[][] = pred_positions(f);
     var bi: i32 = 0;
     while (bi < n) {
         var di: i32 = 0;
@@ -87,8 +100,7 @@ function dominators(f: ssa.SFunc, reachable: boolean[]): boolean[] {
                 var di: i32 = 0;
                 while (di < n) {
                     var present: boolean = reachable[di];
-                    for pred in f.blocks[bi].preds {
-                        var pi: i32 = block_index(f, pred);
+                    for pi in preds[bi] {
                         if (reachable[pi] && !dom[pi * n + di]) { present = false; }
                     }
                     if (di == bi) { present = true; }
