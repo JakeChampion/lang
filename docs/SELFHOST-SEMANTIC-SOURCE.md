@@ -1642,6 +1642,15 @@ lets the caller hand the buffer on without a bracket (`ssaunits.hands`), with
 the rows closed transitively over every produced plan (`ssaunits.grow_table`).
 Mechanism and traps: `rc-log/2026-09-15-field-append-grows-in-place-on-the-semantic-path.md`.
 
+The same admission covers a `with` on the field — `a = X86Asm { ...a,
+lab_tail: a.lab_tail.with(b, at) }` — which writes the element into the
+record's own buffer when the record and the buffer are each sole-held and
+nulls the field, and into a copy otherwise (`ssarc.with_field`). Without it
+the assembler's label placement copied its three bucket arrays per label,
+and the exact-size copy left the next append no room to grow in place:
+7.3 GB of arena for the assembly of `parser.fern` where the native-built
+compiler takes 68 MB.
+
 The 40,000-push reproducer through a borrowed record: 11.1 s and 8.9 GB to
 60 ms, matching the AST lowering. The compiler built through the path,
 against the two compilers of the section above:

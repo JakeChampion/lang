@@ -511,6 +511,52 @@ function main(): i32 {
         if (ir.render_op(o) == "arr_push_owned") { sawReadOwnedPush = true; }
     }
     if (sawReadNull || !sawReadOwnedPush) { return 150; }
+    // A with on the same field takes the same admission: the plan names the
+    // record, the callee's row says the field may be written, and the lowering
+    // tests the record's and the buffer's counts rather than retaining the
+    // receiver, writes in place on the identity arm and nulls the field there,
+    // and copies through arr_slice on the other.
+    var withGraph = ssa.SFunc { ...growGraph, name: "set",
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { kind_tag: ssasem.with(), result: 3, args: [2, 1, 1], imm: 0, str: "" },
+            ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
+            inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
+    var withFunc = ssasem.Func { ...growFunc, graph: withGraph };
+    var withPlan = ssaunits.plan(withFunc, [2, 1]);
+    if (!withPlan.ok) { eprint(withPlan.why); return 160; }
+    if (withPlan.grows[3] != 0 || withPlan.grow_fields[3] != 0) { return 161; }
+    var withRows = ssaunits.grow_rows("set", withFunc, withPlan, []);
+    if (withRows.len() != 1 || withRows[0].param != 0 || withRows[0].field != 0) { return 162; }
+    var withLowered = ssarc.lower(withFunc, [2, 1], withPlan, irlower.struct_tab_empty(), []);
+    if (!withLowered.ok) { eprint(withLowered.why); return 163; }
+    var withUniques: i32 = 0;
+    var sawWithSet: boolean = false;
+    var sawWithNull: boolean = false;
+    var sawWithCopy: boolean = false;
+    var sawWithRetain: boolean = false;
+    for o in withLowered.ops {
+        if (o.str == "__fern_rc_is_unique") { withUniques = withUniques + 1; }
+        if (ir.render_op(o) == "arr_set") { sawWithSet = true; }
+        if (ir.render_op(o) == "struct_set 0") { sawWithNull = true; }
+        if (ir.render_op(o) == "arr_slice") { sawWithCopy = true; }
+        if (o.str == "__fern_rc_inc") { sawWithRetain = true; }
+    }
+    if (withUniques != 2 || !sawWithSet || !sawWithNull || !sawWithCopy || sawWithRetain) { return 164; }
+    // The same with on a borrowed ARRAY parameter has no field to null and no
+    // non-consuming helper to write through, so it keeps the retain and copies.
+    var setGraph = ssa.SFunc { ...appendGraph, name: "set_arr",
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
+            ssa.SInst { kind_tag: ssasem.with(), result: 2, args: [0, 1, 1], imm: 0, str: "" }], term: ret(2) }] };
+    var setFunc = ssasem.Func { ...appendFunc, graph: setGraph };
+    var setPlan = ssaunits.plan(setFunc, [2, 1]);
+    if (!setPlan.ok) { eprint(setPlan.why); return 165; }
+    if (ssaunits.grow_rows("set_arr", setFunc, setPlan, []).len() != 0) { return 166; }
+    var setLowered = ssarc.lower(setFunc, [2, 1], setPlan, irlower.struct_tab_empty(), []);
+    if (!setLowered.ok) { eprint(setLowered.why); return 167; }
+    var sawSetRetain: boolean = false;
+    for o in setLowered.ops { if (o.str == "__fern_rc_inc") { sawSetRetain = true; } }
+    if (!sawSetRetain) { return 168; }
     // A caller that still reads a record it lends to grow holds a count on
     // the field the callee may grow, and on that field alone: the bracket
     // reads the callee's row, captures the buffer, and releases the capture.

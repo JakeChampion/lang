@@ -211,6 +211,38 @@ With the buffers owned, the produced compiler's `-o lexer.fern` shows 8,743
 appends copying 2.3 MB, the assembler adding 155 MB to the arena, 1.5 s and
 138 MB resident.
 
+## The label tables' `with` copied per label
+
+With the byte emitters fixed, `-o parser.fern` from the produced compiler
+still grew the arena by 7.3 GB across the assembler alone, against 68 MB
+for the native-built compiler, and the shared-append counter did not move:
+the growth was fresh allocation, not un-share copies. A watchpoint on the
+allocator's bump pointer, armed at `x86_gas_assemble`, put 5 GB under
+`__fern_arr_push` and 1.4 GB under `__fern_arr_slice`, both called from
+`x86_add_label`.
+
+`x86_add_label` places a label with four appends and three `with`s on
+fields of its owned `X86Asm`: `lab_next.with(prev, at)` over an array as
+long as the label list, `lab_head.with(b, at)` and `lab_tail.with(b, at)`
+over the 4,093-bucket index. The plan admitted an append on a field of a
+record read no further through it (`field_grow_root`) and grew it in
+place, but a `with` on the same shape went through `with_update`'s
+sole-owned base: the projected field was retained, the count test found it
+shared, and `arr_slice` copied the whole array per label. The slice is
+exact-size, so the next label's `lab_next.append` had no spare capacity and
+`__fern_arr_push` reallocated the whole buffer again: two copies of an
+n-entry array per label, quadratic in the label count.
+
+The admission now covers a `with`: `field_grow_root` names the record at a
+with's result as at an append's, `deferred_retain` holds the receiver's
+retain back where the plan admitted the field, and `ssarc.with_field`
+tests the record's count and the buffer's count in turn, writing in place
+and nulling the field when both are sole-held, and writing into an
+`arr_slice` copy with its elements retained otherwise, so a second holder
+of the buffer keeps its value. A with on a borrowed array parameter has no
+field to null and no non-consuming helper to write through, so it keeps
+the retain-then-copy form and contributes no grow row.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The
