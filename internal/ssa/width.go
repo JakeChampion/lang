@@ -1,6 +1,10 @@
 package ssa
 
-import "github.com/jakechampion/lang/internal/ir"
+import (
+	"sort"
+
+	"github.com/jakechampion/lang/internal/ir"
+)
 
 // Width resolution: deciding, for every op in a module, whether its result
 // occupies a full 64-bit machine register or only the low 32 bits.
@@ -34,14 +38,47 @@ import "github.com/jakechampion/lang/internal/ir"
 func ResolveWidths(funcs map[string]*Func) {
 	r := &widthResolver{
 		funcs:    funcs,
-		addr:     map[*Func]map[int32]bool{},
-		def:      map[*Func]map[int32]*Op{},
+		addr:     map[*Func][]bool{},
+		def:      map[*Func][]*Op{},
 		paramIdx: map[*Func]map[int32]int{},
+		callers:  map[*Func][]*Func{},
+		queued:   map[*Func]bool{},
 	}
-	for _, f := range funcs {
-		r.seed(f)
+	names := make([]string, 0, len(funcs))
+	for name := range funcs {
+		names = append(names, name)
 	}
-	for r.step() {
+	sort.Strings(names)
+	for _, name := range names {
+		r.seed(funcs[name])
+	}
+	for _, name := range names {
+		f := funcs[name]
+		seen := map[*Func]bool{}
+		for _, b := range f.Blocks {
+			for _, op := range b.Ops {
+				if op.Kind != OpCall && op.Kind != OpCallPair {
+					continue
+				}
+				if callee, ok := r.callee(op); ok && !seen[callee] {
+					seen[callee] = true
+					r.callers[callee] = append(r.callers[callee], f)
+				}
+			}
+		}
+	}
+	// Every function settles once; a change to what a function takes or
+	// returns puts the functions that depend on it back on the queue, so the
+	// fixpoint is reached without re-walking the whole module per round.
+	for _, name := range names {
+		r.enqueue(funcs[name])
+	}
+	for len(r.queue) > 0 {
+		f := r.queue[0]
+		r.queue = r.queue[1:]
+		r.queued[f] = false
+		for r.settleLocally(f) || r.settleCalls(f) {
+		}
 	}
 	for _, f := range funcs {
 		for _, b := range f.Blocks {
@@ -56,11 +93,16 @@ func ResolveWidths(funcs map[string]*Func) {
 
 type widthResolver struct {
 	funcs map[string]*Func
+	// callers lists the functions that call each function, once each; queue
+	// holds the functions still to settle and queued which of them are on it.
+	callers map[*Func][]*Func
+	queue   []*Func
+	queued  map[*Func]bool
 	// addr, def and paramIdx are per-function views of one Func: which Values
 	// hold a machine address, which Op defines each Value (nil for a param),
 	// and which parameter position a param Value occupies.
-	addr     map[*Func]map[int32]bool
-	def      map[*Func]map[int32]*Op
+	addr     map[*Func][]bool
+	def      map[*Func][]*Op
 	paramIdx map[*Func]map[int32]int
 }
 
@@ -68,8 +110,8 @@ type widthResolver struct {
 // always produce a heap pointer, the declared type behind a parameter, and
 // what a call's callee returns.
 func (r *widthResolver) seed(f *Func) {
-	set := map[int32]bool{}
-	def := map[int32]*Op{}
+	set := make([]bool, f.nextValueID+1) // value IDs are dense from 1
+	def := make([]*Op, f.nextValueID+1)
 	idx := map[int32]int{}
 	r.addr[f], r.def[f], r.paramIdx[f] = set, def, idx
 	for i, p := range f.Params {
@@ -167,6 +209,10 @@ func (r *widthResolver) mark(f *Func, v Value) bool {
 			f.ParamAddrs = append(f.ParamAddrs, false)
 		}
 		f.ParamAddrs[i] = true
+		// Every caller's argument in this position is an address too.
+		for _, c := range r.callers[f] {
+			r.enqueue(c)
+		}
 	}
 	return true
 }
@@ -180,88 +226,110 @@ func isNarrowLoad(k OpKind) bool {
 	return false
 }
 
-// step advances the whole-module fixpoint by one round and reports whether it
-// learned anything. Four propagations run together because each feeds the
-// others:
+// enqueue puts f on the queue unless it is already there.
+func (r *widthResolver) enqueue(f *Func) {
+	if !r.queued[f] {
+		r.queued[f] = true
+		r.queue = append(r.queue, f)
+	}
+}
+
+// settleLocally runs the propagation within one function to a fixpoint and
+// reports whether it learned anything. Two propagations run together because
+// each feeds the other:
 //
 //   - forwards, from a value that holds an address to the arithmetic that
 //     offsets it and the phis that merge it;
 //   - backwards, from the address operand of a load or store — whatever a
 //     memory op dereferences IS an address, whether or not anything upstream
-//     said so;
-//   - into a callee, through the arguments a call passes, and back out through
-//     the value it returns;
-//   - out of a callee, to the arguments its callers pass in that position.
+//     said so.
 //
-// The backwards and out-of-callee halves are what cover a pointer with no
-// declared type behind it. A closure's env block arrives in a synthesised
-// parameter whose IR type is a plain integer, and it reaches its captures only
-// through an offset load — so the load is the only place in the program that
-// says the value is an address.
-func (r *widthResolver) step() bool {
+// The backwards half is what covers a pointer with no declared type behind
+// it. A closure's env block arrives in a synthesised parameter whose IR type
+// is a plain integer, and it reaches its captures only through an offset
+// load — so the load is the only place in the program that says the value is
+// an address. A returned address is recorded on the function, and its callers
+// go back on the queue to learn it.
+func (r *widthResolver) settleLocally(f *Func) bool {
+	set := r.addr[f]
 	changed := false
-	for _, f := range r.funcs {
-		set := r.addr[f]
+	for {
+		round := false
 		for _, b := range f.Blocks {
 			for _, op := range b.Ops {
 				switch op.Kind {
 				case OpAdd:
 					if anyAddr(set, op.Args) {
-						changed = r.mark(f, op.Result) || changed
+						round = r.mark(f, op.Result) || round
 					}
 				case OpSub:
 					// base - offset stays an address. offset - base and the
 					// difference of two addresses are integers, and both keep
 					// Args[0] as the value the result is measured from.
-					if len(op.Args) > 0 && set[op.Args[0].ID] {
-						changed = r.mark(f, op.Result) || changed
+					if len(op.Args) > 0 && isAddr(set, op.Args[0]) {
+						round = r.mark(f, op.Result) || round
 					}
 				case OpPhi:
 					if anyAddr(set, op.Args) {
-						changed = r.mark(f, op.Result) || changed
+						round = r.mark(f, op.Result) || round
 					}
 				case OpSelect:
-					if len(op.Args) == 3 && (set[op.Args[1].ID] || set[op.Args[2].ID]) {
-						changed = r.mark(f, op.Result) || changed
+					if len(op.Args) == 3 && (isAddr(set, op.Args[1]) || isAddr(set, op.Args[2])) {
+						round = r.mark(f, op.Result) || round
 					}
 				case OpLoad, OpLoad8S, OpLoad8U, OpLoad16S, OpLoad16U, OpLoad32U,
 					OpLoadF, OpStore, OpStore8, OpStore16, OpStore32, OpStoreF:
 					if len(op.Args) > 0 {
-						changed = r.mark(f, op.Args[0]) || changed
+						round = r.mark(f, op.Args[0]) || round
 					}
 				}
 			}
 			if (b.Term.Kind == TermRet || b.Term.Kind == TermRetPair) &&
-				b.Term.Value.IsValid() && set[b.Term.Value.ID] && !f.ReturnAddr {
+				b.Term.Value.IsValid() && isAddr(set, b.Term.Value) && !f.ReturnAddr {
 				f.ReturnAddr = true
-				changed = true
+				round = true
+				for _, c := range r.callers[f] {
+					r.enqueue(c)
+				}
 			}
 		}
+		if !round {
+			return changed
+		}
+		changed = true
 	}
-	for _, f := range r.funcs {
-		set := r.addr[f]
-		for _, b := range f.Blocks {
-			for _, op := range b.Ops {
-				if op.Kind != OpCall && op.Kind != OpCallPair {
-					continue
+}
+
+// settleCalls carries address-ness across the calls f makes, in both
+// directions: into a callee through the arguments f passes, which puts the
+// callee back on the queue when a parameter is new (mark tells its other
+// callers), and out of a callee through the value it returns and the parameters it is
+// already known to take addresses in. Reports whether f itself learned
+// anything, which settleLocally then carries on.
+func (r *widthResolver) settleCalls(f *Func) bool {
+	set := r.addr[f]
+	changed := false
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind != OpCall && op.Kind != OpCallPair {
+				continue
+			}
+			callee, ok := r.callee(op)
+			if !ok {
+				continue
+			}
+			if op.Kind == OpCall && callee.ReturnAddr {
+				changed = r.mark(f, op.Result) || changed
+			}
+			if len(op.Args) != len(callee.Params) {
+				continue
+			}
+			for i, a := range op.Args {
+				if isAddr(set, a) && r.mark(callee, callee.Params[i]) {
+					r.enqueue(callee)
 				}
-				callee, ok := r.callee(op)
-				if !ok {
-					continue
-				}
-				if op.Kind == OpCall && callee.ReturnAddr {
-					changed = r.mark(f, op.Result) || changed
-				}
-				if len(op.Args) != len(callee.Params) {
-					continue
-				}
-				for i, a := range op.Args {
-					if set[a.ID] {
-						changed = r.mark(callee, callee.Params[i]) || changed
-					}
-					if i < len(callee.ParamAddrs) && callee.ParamAddrs[i] {
-						changed = r.mark(f, a) || changed
-					}
+				if i < len(callee.ParamAddrs) && callee.ParamAddrs[i] {
+					changed = r.mark(f, a) || changed
 				}
 			}
 		}
@@ -286,11 +354,15 @@ func isIntConst(k OpKind) bool {
 	return k == OpConstInt || k == OpConstBool
 }
 
-func anyAddr(addr map[int32]bool, args []Value) bool {
+func anyAddr(addr []bool, args []Value) bool {
 	for _, a := range args {
-		if addr[a.ID] {
+		if isAddr(addr, a) {
 			return true
 		}
 	}
 	return false
+}
+
+func isAddr(addr []bool, v Value) bool {
+	return v.ID >= 0 && int(v.ID) < len(addr) && addr[v.ID]
 }
