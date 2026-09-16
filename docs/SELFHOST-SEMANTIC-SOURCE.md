@@ -1748,16 +1748,20 @@ that still runs for the eligibility verdict.
 **The fixpoint is not reached, and the reason is memory in the produced code
 of those same modules.** The produced compiler rebuilding itself through the
 semantic path prints the same tally and then exhausts the 16 GiB arena
-(exit 125) 19 minutes in, at 13.5 GB RSS, where the native-built compiler
-does the identical job in 8.4 GB. The two runs execute the same algorithm on
-the same input; what differs is the memory management of the compiler
-running it, so the excess is the produced lowering's own on `semsource`,
-`ssaunits`, `ssarc`, `semlower` and their neighbours — the modules a build
-with `FERN_SEM_IR` unset never executes, which is why the whole-tree run
-above is twelve times leaner and this one is not. A `FERN_LEAKCHECK`
-build of the produced compiler on a mid-sized input with the flag on is the
-instrument. `TestSelfHostSemanticWholeCompilerX86_64` pins the tally and the
-byte-identity; the fixpoint joins it when it holds.
+(exit 125) at 13.5 GB RSS — 19 minutes in before the copies were chased,
+10m25s in after (`docs/rc-log/2026-09-16-a-record-lent-on-through-a-wrapper-grows-under-its-own-count.md`)
+— where the native-built compiler does the identical job in 8.4 GB. The two
+runs execute the same algorithm on the same input; what differs is the
+memory management of the compiler running it, so the excess is the produced
+lowering's own on `semsource`, `ssaunits`, `ssarc`, `semlower` and their
+neighbours — the modules a build with `FERN_SEM_IR` unset never executes,
+which is why the whole-tree run above is twelve times leaner and this one
+is not. The shared-append copies were not it: with them cut from 5.8 GB to
+577 MB on `asm_modload_run`, the arena's high-water mark on that input did
+not move, because a copied buffer returns to the exact-size freelist. A
+`FERN_LEAKCHECK` build of the produced compiler on a mid-sized input with
+the flag on is the instrument. `TestSelfHostSemanticWholeCompilerX86_64`
+pins the tally and the byte-identity; the fixpoint joins it when it holds.
 
 Read these the way this file reads every leaf: probe the refused functions by
 name before building, because the histogram has repeatedly ranked the work
