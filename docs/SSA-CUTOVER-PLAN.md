@@ -100,7 +100,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 317/348 compared, 0 divergences; 11 refused — the socket family and five singletons |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 327/348 compared, 0 refused; 1 known divergence, the reclamation probe (#9423) — the 20 others are programs the flat backend cannot build either |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -315,6 +315,25 @@ Two concrete blockers, and only two:
    `__fern_rc_underflow_count`. Of the 348, 20 are baseline-rejected (the
    flat backend cannot build them either), so 317 of the 328 buildable
    programs now run under both backends and agree.
+
+   **2026-09-16, the socket family and the last singletons — no refusals
+   left.** `tcp_listen`, `tcp_connect`, `tcp_accept`, `tcp_send`, `tcp_recv`,
+   `tcp_close`, `tcp_pollable`, `poll` (through poll(2), which takes the
+   millisecond timeout directly) and the wasm pollable stand-ins, plus
+   `isatty` and its handle forms, `hostname`, `putchar`, `create_dir_all`
+   and `__fern_rc_underflow_count` (with `__fern_rc_dec` now counting an
+   over-release instead of wrapping the count into the static sentinel) got
+   emitters. Every one of the 328 programs the flat backend can build now
+   builds under `-backend ssa` too: **327 agree, 0 refused, 1 known
+   divergence**. The one is `examples/ownership/borrowed_forward_lifetime.fern`,
+   a reclamation probe: it prints `__heap_bump_bytes` growth across a churn
+   loop, which the flat backend's freelist absorbs and this backend's bump
+   heap does not. That is the backend's one remaining runtime gap — it never
+   frees — and the leg now carries the arm64 leg's exact-in-both-directions
+   known-divergences list (`testdata/x86-ssa-diff-known-divergences.txt`)
+   with that row, which fails the leg again the moment the freelist port
+   (#9423) lands. A new refusal from here on is a regression, and the floor
+   is the whole buildable corpus.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than

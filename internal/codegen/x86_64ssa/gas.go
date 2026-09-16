@@ -2155,6 +2155,23 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
 	"__method_Reader_read_line":     emitReaderReadLineHelper,
 	"read_dir":                      emitReadDirHelper,
+	"tcp_listen":                    emitTcpListenHelper,
+	"tcp_connect":                   emitTcpConnectHelper,
+	"tcp_accept":                    emitTcpAcceptHelper,
+	"tcp_recv":                      emitTcpRecvHelper,
+	"tcp_send":                      emitTcpSendHelper,
+	"tcp_close":                     emitTcpCloseHelper,
+	"tcp_pollable":                  emitIdentityHelper("tcp_pollable"),
+	"wasm_timer_pollable":           emitConstHelper("wasm_timer_pollable", -1),
+	"wasm_pollable_drop":            emitConstHelper("wasm_pollable_drop", 0),
+	"poll":                          emitPollHelper,
+	"isatty":                        emitIsattyHelper,
+	"__method_Reader_isatty":        emitHandleIsattyHelper("__method_Reader_isatty"),
+	"__method_Writer_isatty":        emitHandleIsattyHelper("__method_Writer_isatty"),
+	"hostname":                      emitHostnameHelper,
+	"putchar":                       emitPutcharHelper,
+	"create_dir_all":                emitCreateDirAllHelper,
+	"__fern_rc_underflow_count":     emitRcUnderflowCountHelper,
 	"buf_new":                       emitBufNewHelper,
 	"__fern_buf_reserve":            emitBufReserveHelper,
 	"buf_push":                      emitBufPushHelper,
@@ -2233,6 +2250,10 @@ var heapUsingHelpers = map[string]bool{
 	"__alloc":                    true,
 	"__method_Reader_read_line":  true,
 	"read_dir":                   true,
+	"tcp_recv":                   true,
+	"poll":                       true,
+	"hostname":                   true,
+	"create_dir_all":             true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -2266,6 +2287,10 @@ var runtimeHelperDeps = map[string][]string{
 	"temp_dir":                      {"__fern_io_error"},
 	"random_bytes":                  {"__alloc_u8"},
 	"read_dir":                      {"__fern_io_error"},
+	"tcp_recv":                      {"__alloc_u8"},
+	"__method_Reader_isatty":        {"isatty"},
+	"__method_Writer_isatty":        {"isatty"},
+	"create_dir_all":                {"__fern_io_error"},
 	"__fern_buf_reserve":            {"__fern_box_free"},
 	"buf_push":                      {"__fern_buf_reserve"},
 	"buf_push_range":                {"__fern_buf_reserve"},
@@ -2437,9 +2462,16 @@ func emitRcDecHelper(w func(string, ...any)) {
 	w("\tmov eax, %s", memRef("rdi", -8))
 	w("\ttest eax, eax")
 	w("\tjs .Lssa_rcdec_ret") // static sentinel
+	w("\tjz .Lssa_rcdec_underflow")
 	w("\tsub eax, 1")
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_rcdec_ret:")
+	rcPassThroughRet(w)
+	// Releasing an already-zero count is an over-release. Count it and leave
+	// the count alone rather than wrapping it to the static sentinel, which
+	// would turn one bug into an immortal object.
+	w(".Lssa_rcdec_underflow:")
+	w("\tadd dword ptr [rip + %s], 1", rcUnderflowSym)
 	rcPassThroughRet(w)
 }
 
@@ -2687,6 +2719,7 @@ var bcopyUsingHelpers = map[string]bool{
 	"temp_dir":                    true,
 	"__method_Reader_read_line":   true,
 	"read_dir":                    true,
+	"hostname":                    true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.

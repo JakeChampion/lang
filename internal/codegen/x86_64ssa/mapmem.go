@@ -68,7 +68,8 @@ func emitMapHashSeedHelper(w func(string, ...any)) {
 }
 
 // emitHelperBss writes the .bss words and buffers the referenced helpers
-// read: the map seed and Reader.read_line's line buffer.
+// read: the map seed, Reader.read_line's line buffer, and the over-release
+// counter __fern_rc_dec bumps.
 func emitHelperBss(w func(string, ...any), helpers []string) {
 	if referencesHelper(helpers, "__fern_map_hash_seed") {
 		w(".section .bss")
@@ -81,5 +82,11 @@ func emitHelperBss(w func(string, ...any), helpers []string) {
 		w(".align 8")
 		w("%s:", readlineBufSym)
 		w("\t.space %d", readlineBytes)
+	}
+	if referencesHelper(helpers, "__fern_rc_dec") || referencesHelper(helpers, "__fern_rc_underflow_count") {
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", rcUnderflowSym)
+		w("\t.quad 0")
 	}
 }
