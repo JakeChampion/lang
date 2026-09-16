@@ -10427,6 +10427,11 @@ function subst_ty_list(list: string, tparams: string[], cts: string[]): string {
 function subst_ty(name: string, tparams: string[], cts: string[]): string {
     var k: i32 = tp_index(name, tparams);
     if (k >= 0) { return cts[k]; }
+    // A function type's parameter list spells a consuming slot `own T`, and
+    // the variable sits behind the mode.
+    if (name.len() > 4 && slice_unchecked(name, 0, 4) == "own ") {
+        return "own " + subst_ty(slice_unchecked(name, 4, name.len()) + "", tparams, cts);
+    }
     if (type_ends_arr(name)) {
         return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
     }
@@ -10700,6 +10705,8 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     // concrete type, so it has no type params — and bound_traits, which runs
     // parallel to them, goes too. Keeping the generic's bounds here left the
     // clone declaring bounds indexed against parameters it no longer has.
+    // The count goes with them: a reader asks either field whether a
+    // declaration is a template (semsource.generic_decl).
     var notp: string[] = [];
     return FuncDecl {
         ...fd,
@@ -10707,6 +10714,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
         receiver_name: "",
         receiver_type: "",
         type_params: notp,
+        type_param_count: 0,
         bound_traits: notp,
         params: nparams,
         ret_type: subst_ty(fd.ret_type, tparams, cts),

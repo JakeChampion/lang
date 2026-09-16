@@ -61,6 +61,20 @@ the production suite drew on the first run:
   the trampoline on the AST side, `visit` is reached by a direct call the
   existing contracts cover (`irlower.consume_sigs`).
 
+- The mirror's cone: what an AST-lowered hoisted body reaches by direct
+  call, through any AST-lowered body on the way, keeps the AST lowering too
+  (`ast_indirect_cone`). The mirror alone left `own-forwarded-into-produced`'s
+  skip leg faulting on the sanitize and wasm legs: the trampoline was AST,
+  and called produced `visit` directly with the `own` array, a transfer
+  `irlower.consume_sigs` covers — but the AST `apply` above it reaches the
+  trampoline through the box, and the AST lowering's ownership analysis
+  cannot see through an indirect call, so AST `forward` released the array
+  `visit` had already consumed. A plain AST caller of `visit` is fine (the
+  same program with the value replaced by a direct call answers 62 in every
+  mix); it is the indirect call above the transfer that the analysis is
+  blind to, so everything below such a call keeps the convention its caller
+  assumes.
+
 `TestSelfHostSemanticProduction` gains `ast-value-into-produced`, whose skip
 leg keeps the callback on the AST lowering and asserts the report turns the
 produced consumer off by the value's type.
@@ -70,9 +84,42 @@ produced consumer off by the value's type.
 On the production test's program with the callback on the AST lowering, the
 report reads, in this order: the trampoline turned off for calling the
 callback directly, the consumer for calling a value of the callback's type,
-then the caller of both. On the compiler itself: the count of produced
-bodies before and after, and the produced compiler on `checker.fern` and the
-whole tree, are recorded once the self-build with the rule reports.
+then the caller of both.
+
+On the compiler itself the rule alone went the wrong way, and that is the
+finding. Self-build, 4-core x86-64 container:
+
+| build | produced | produced compiler on `lexer.fern` |
+|---|---|---|
+| before the rule | 7,568 of 8,294 declarations, 64 of 64 instances | byte-identical; faults on `checker.fern` (#9414) |
+| the rule | 7,036 of 8,307, 2 of 64 (6m04s, 7,647 MB) | faults 0.5 s in |
+| the rule + the clone fix below | **8,307 of 8,307, 0 of 0** (9m26s, 8,396 MB) | byte-identical, and so are `parser.fern`, `checker.fern` and the whole tree; rebuilding itself through the path exhausts the arena 19 minutes in (exit 125) |
+
+The second row's fault, under the sanitized build, is a use-after-free in
+`flatten.collect_local_names`, with `rewrite_module_bodies`,
+`flatten_qualified`, `bundle` and `load_bundle` above it — every frame
+AST-lowered, and the block they touch a `FuncDecl` the produced parser built.
+That is the mixed module's contract mismatch reached through a DATA
+STRUCTURE rather than a call: a record built under one lowering's array
+convention released under the other's, which no call-site rule can see. The
+rule is still right for the direction it covers; what it cannot do is make
+a mixed module sound, and each round of over-refusal here changed which
+mixed shape faulted rather than removing one.
+
+What made the module whole was upstream of this boundary.
+`parser.monomorphize_module` clones a generic into `fold_expr_pruned__boolean`
+with its `type_params` emptied and its `type_param_count` copied from the
+template, and `semsource.generic_decl` reads either field, so every clone
+was a template with nothing to bind — refused silently as a template, and
+every caller of one refused as `call target was refused: uninstantiated
+generic`. Tracing every refusal in the second row's report to its root:
+637 are that cascade, 66 are this rule's mirror on trampolines whose
+creator was such a clone, and the rest are the arity-matched function-value
+rule over values those clones built. `clone_bg` now zeroes the count, and
+`subst_ty` substitutes behind a function type's `own T` slot (the second
+bug the first was hiding: a fold's callback still spelled `own T` in the
+clone). With both, nothing in the compiler is refused, so nothing is mixed,
+and the crash #9414 describes cannot arise: `ident_of` is produced.
 
 ## Traps
 

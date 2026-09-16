@@ -182,7 +182,7 @@ env:
   # same regex as the two lists above, and each has a matching job below.
   # (Distinct from ISOLATED_DRIVER_TESTS, which is about *where fern.fern gets
   # cold-built*, not about run length.)
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only. EMPTY means nothing is
   # quarantined — the #4801 quarantine is fully retired.
@@ -724,6 +724,48 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostModloadPerModuleWholeCompilerArm64$' -test.v -test.timeout 33m
+
+  # THE SEMANTIC-LOWERING WHOLE-COMPILER GATE (#9415). Builds the compiler
+  # THROUGH the semantic path (FERN_SEM_IR=1), checks that every declaration
+  # produced and that the result compiles lexer / parser / checker / the whole
+  # tree byte-identically to the AST-lowered driver. Before this job nothing
+  # in CI built the produced compiler: the fixtures and the mixed-configuration
+  # suites cover programs, and every boundary crash on this path was found by
+  # someone running the compiler.
+  #
+  # Its own job because of its weight, not its toolchain: measured 2026-09-16
+  # on a 4-core container, the semantic self-build takes 9.5 minutes at 8.4 GB
+  # and the four diffs about 2.5 minutes more, so it would hold whichever shard
+  # it landed in for the shard's whole budget. Native x86-64 only (the driver
+  # takes host paths as argv).
+  semantic-wholecompiler:
+    needs: warm
+    name: semantic-wholecompiler-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/build-e2e-binaries
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: warm-x86_64-*
+          path: ${{ runner.temp }}/warm
+      - name: semantic self-build and per-module diff
+        run: |
+          set -euo pipefail
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          CACHE="$RUNNER_TEMP/uc-local"
+          mkdir -p "$CACHE"
+          for d in "$RUNNER_TEMP"/warm/*/; do
+            if [ -d "$d" ]; then CACHE="$CACHE:${d%/}"; fi
+          done
+          export FERN_SELFHOST_BUILD_CACHE="$CACHE"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostSemanticWholeCompilerX86_64$' -test.v -test.timeout 43m
 
   # The fixture corpus, run through the SELF-HOST compiler, once per target it
   # emits. Nothing else does: all four of TestFernFixtures' backends are the
