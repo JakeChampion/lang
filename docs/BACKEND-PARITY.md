@@ -375,12 +375,16 @@ stub onto the helper, so there is nothing for a stub to jump to.
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
 and every source-level conditional with counters and dumps the table at exit. The instrumentation is an IR pass,
 but each backend still has to emit the counter array, the report table, and
-the exit-seam call — only x86-64 and arm64 do, matching `-sanitize`'s reach.
+the exit-seam call — only the x86-64 and arm64 stack-machine emitters do,
+matching `-sanitize`'s reach. The SSA emitters on those same targets do not,
+so the reach is per-backend and not per-target.
 
 `ir.LowerWith` **errors** when `ast.CoverEnabled` is set and the caller did not
 pass `CoverPoints()`, so a wasm build under `-cover` refuses rather than
 producing an uninstrumented binary. A coverage run that silently measures zero
-is the failure mode that gate exists to prevent.
+is the failure mode that gate exists to prevent. That gate knows targets and
+not backends, so `-backend ssa -cover` is refused earlier, in the driver,
+where the message can name the backend.
 
 Fix plan for wasm: a linear-memory counter region plus a report loop over it,
 written out through the same `fd_write` the string printers use. Scope: the

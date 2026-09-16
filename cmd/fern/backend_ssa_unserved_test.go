@@ -17,6 +17,10 @@ import (
 //   - -g emitted .debug_info with no .debug_line, so a debugger had symbol
 //     names and no way to map an address back to a source line.
 //
+// -cover was refused already, but by the lowering, which knows targets and not
+// backends: it told a build that had just asked for x86-64-linux to build for
+// x86-64-linux. The refusal belongs where the backend is known.
+//
 // A build that cannot do what the flags ask has to say so. These are gaps to
 // close, not decisions, and the message points at the build that serves them.
 func TestSSABackendRefusesFlagsItCannotServe(t *testing.T) {
@@ -29,6 +33,7 @@ func TestSSABackendRefusesFlagsItCannotServe(t *testing.T) {
 	}{
 		{"-shared", []string{"-shared", "shared-object", "executable"}},
 		{"-g", []string{"-g", "line table", ".debug_line"}},
+		{"-cover", []string{"-cover", "instrumentation", "build without -backend ssa"}},
 	} {
 		for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 			t.Run(tc.flag+"_"+target, func(t *testing.T) {
