@@ -243,6 +243,14 @@ of the buffer keeps its value. A with on a borrowed array parameter has no
 field to null and no non-consuming helper to write through, so it keeps
 the retain-then-copy form and contributes no grow row.
 
+With both fixes the produced compiler's `-o parser.fern` takes 1.10 GB of
+arena at `x86:assembled` and 11.6 s (from 7.64 GB and 25 s), its `-o
+checker.fern` 2.67 GB and 27 s where it was killed at 13.4 GB, and the
+binaries it emits for `lexer.fern`, `parser.fern` and `checker.fern` are
+byte-identical to the native-built compiler's. The assembler phase still
+adds 1.7 GB on `checker.fern` where the native-built compiler's adds
+136 MB, so a site remains.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The
