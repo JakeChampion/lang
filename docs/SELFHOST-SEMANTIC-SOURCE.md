@@ -199,7 +199,7 @@ Unsupported constructs refuse the whole function with a reason.
   and the u32) carries its source text instead, which the backends splice.
 - `&&` and `||` as control flow: the right operand runs on its own edge and the
   result is a boolean phi.
-- `if` / `else` with binding joins, `while` and `loop` with unlabelled `break`
+- `if` / `else` with binding joins, `while` and `loop` with labelled or unlabelled `break`
   and `continue`, `return`. Loop headers get one phi per visible binding
   before the body is known; trivial phis are removed and values renumbered
   densely afterwards, parameters keeping their declared positions.
@@ -551,7 +551,7 @@ Unsupported constructs refuse the whole function with a reason.
 
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
-unsigned negation, generic records, labelled loops, the pattern shapes
+unsigned negation, generic records, the pattern shapes
 above, `defer`, receiver methods, external and async
 functions.
 
