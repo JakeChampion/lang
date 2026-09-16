@@ -217,22 +217,22 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
 // instantiation the body is produced under.
 function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
     if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return true; }
-    if (bare_typevar(fd.ret_type, scope)) { return true; }
-    for p in fd.params { if (bare_typevar(p.type_name, scope)) { return true; } }
-    return receiver_typevar(fd.receiver_type, scope);
+    if (spelled_typevar(fd.ret_type, scope)) { return true; }
+    for p in fd.params { if (spelled_typevar(p.type_name, scope)) { return true; } }
+    return spelled_typevar(fd.receiver_type, scope);
 }
 
-// A method on a generic receiver — `(o: Option[T]) is_some()` — declares no
-// type parameter of its own: its variables are the names its receiver's
-// arguments spell.
-function receiver_typevar(recv: string, scope: checker.Scope): boolean {
-    var open: i32 = util.index_of_sub(recv, "[");
-    if (open < 0) { return false; }
-    var i: i32 = open + 1;
-    while (i < recv.len()) {
+// A type variable anywhere in a spelling — bare, an array's element, a
+// function type's slot, a receiver's argument — marks the declaration a
+// template: a method on `Option[T]` declares no type parameter of its own,
+// and the parser's instance of `map[T, U]` at `T = i32` keeps `U` in its
+// result for the function argument to bind.
+function spelled_typevar(spelling: string, scope: checker.Scope): boolean {
+    var i: i32 = 0;
+    while (i < spelling.len()) {
         var start: i32 = i;
-        while (i < recv.len() && ((recv[i] >= b'A' && recv[i] <= b'Z') || (recv[i] >= b'a' && recv[i] <= b'z') || (recv[i] >= b'0' && recv[i] <= b'9') || recv[i] == b'_')) { i = i + 1; }
-        if (i > start && bare_typevar(slice_unchecked(recv, start, i) + "", scope)) { return true; }
+        while (i < spelling.len() && ((spelling[i] >= b'A' && spelling[i] <= b'Z') || (spelling[i] >= b'a' && spelling[i] <= b'z') || (spelling[i] >= b'0' && spelling[i] <= b'9') || spelling[i] == b'_')) { i = i + 1; }
+        if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) { return true; }
         if (i == start) { i = i + 1; }
     }
     return false;

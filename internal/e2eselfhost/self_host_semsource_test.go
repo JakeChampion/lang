@@ -750,6 +750,11 @@ function map_get_line(m: Map[i32, i32], k: i32): i32 { match (m.get(k)) { Some(v
 // A literal's map_new(n).insert(k, v) chain takes the destination's shape
 // through the chain, since an insert hands its receiver back.
 function map_lit(n: i32): i32 { var m: Map[i32, i32] = Map { 1: n, 2: n + 1 }; return m.get_or(2, 0); }
+// A generic array method with a variable of its own: the parser's instance
+// at the element keeps U for the lambda argument to bind.
+function map_to[T, U](xs: T[], f: (T) => U): U[] { var out: U[] = []; for x in xs { out = out.append(f(x)); } return out; }
+function (xs: T[]) map_to[U](f: (T) => U): U[] { return map_to(xs, f); }
+function mapped_to(xs: i32[]): i32 { var ws: string[] = xs.map_to((x: i32): string => "s"); return ws.len(); }
 // A value block is typed by its destination: the checker reads the type the
 // desugar guessed from the arms' syntax, which calls an empty array arm an
 // i32. A match on a Some the destination does not name is typed from its

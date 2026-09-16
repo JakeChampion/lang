@@ -527,7 +527,11 @@ Unsupported constructs refuse the whole function with a reason.
   makes or reads one.
 
 - A GENERIC declaration, as a TEMPLATE produced once per instantiation
-  (`docs/SEMANTIC-GENERICS.md`). Its contract keeps each type variable as
+  (`docs/SEMANTIC-GENERICS.md`). A declaration is generic when it declares
+  type parameters or when a type variable appears anywhere in a spelling of
+  its result, its parameters or its receiver — the parser's instance of
+  `map[T, U]` at `T = i32` keeps `U[]` for the function argument to bind.
+  Its contract keeps each type variable as
   `typeinfo.TypeErased`, a type of its own distinct from the unknown a checker
   failure produces, and a call site binds the variables structurally and left
   to right, one type per variable — a variable inside a function type, an
