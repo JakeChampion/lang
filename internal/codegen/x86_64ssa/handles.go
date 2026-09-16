@@ -108,8 +108,7 @@ func emitHandleCloseHelper(name, tag string) func(w func(string, ...any)) {
 		retL := ".Lssa_" + tag + "_ret"
 		w("")
 		w("%s:", fnLabel(name))
-		w("\tpush rbx")
-		w("\tsub rsp, 8") // rbx + return address leave rsp aligned here
+		w("\tpush rbx") // one push past the return address: 16-aligned for the calls
 		w("\tmov edi, dword ptr [rdi + 8]")
 		w("\tmov eax, 3") // close
 		w("\tsyscall")
@@ -126,7 +125,6 @@ func emitHandleCloseHelper(name, tag string) func(w func(string, ...any)) {
 		w("\tmov rbx, rax") // IoError box
 		ssaOptionBox(w, 0, "rbx")
 		w("%s:", retL)
-		w("\tadd rsp, 8")
 		w("\tpop rbx")
 		w("\tret")
 	}
@@ -290,7 +288,7 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tpush r12")
 	w("\tpush r13")
 	w("\tpush r14")
-	// Four pushes past the return address leave rsp 16-aligned.
+	w("\tsub rsp, 8")                   // five slots past the return address: 16-aligned for the calls
 	w("\tmov ebx, dword ptr [rdi + 8]") // fd
 	w("\tmov r12, rsi")                 // data
 	w("\tmov r13d, %s", memRef("rsi", -4))
@@ -320,6 +318,7 @@ func emitWriterWriteHelper(w func(string, ...any)) {
 	w("\tmov rbx, rax")
 	ssaOptionBox(w, 0, "rbx")
 	w(".Lssa_wrw_ret:")
+	w("\tadd rsp, 8")
 	w("\tpop r14")
 	w("\tpop r13")
 	w("\tpop r12")

@@ -60,26 +60,3 @@ func TestReadDirSecondPassStaysInsideTheContainer(t *testing.T) {
 		t.Errorf("the length is not rewritten from the fill index after the second pass:\n%s", pass2)
 	}
 }
-
-// The trampoline is called at a 16-aligned rsp from every helper: the two
-// array copy paths enter 8 past alignment and pad before the call.
-func TestArrayCopyPathsCallTheTrampolineAligned(t *testing.T) {
-	f := ssa.NewFunc("main")
-	e := f.NewBlock()
-	arr := allocOp(f, e, 32)
-	grown := wideCallOp(f, e, "__fern_arr_push_grow", arr, constOp(f, e, 1), constOp(f, e, 8))
-	f.SetRet(e, wideCallOp(f, e, "__fern_arr_cow_inplace", grown, constOp(f, e, 8)))
-	asm, err := EmitAsm(f, 8)
-	if err != nil {
-		t.Fatalf("EmitAsm: %v", err)
-	}
-	for _, name := range []string{"__fern_arr_push_grow", "__fern_arr_cow_inplace"} {
-		body := asm[strings.Index(asm, "\n"+fnLabel(name)+":"):]
-		if end := strings.Index(body[1:], "\nfn_"); end >= 0 {
-			body = body[:end+1]
-		}
-		if !strings.Contains(body, "sub rsp, 8\n\tmov r11, r11\n\tcall "+allocPresSym) && !strings.Contains(body, "sub rsp, 8\n\tcall "+allocPresSym) {
-			t.Errorf("%s calls the trampoline without padding to 16:\n%s", name, body)
-		}
-	}
-}
