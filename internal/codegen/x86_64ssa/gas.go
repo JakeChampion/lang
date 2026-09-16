@@ -319,7 +319,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		emitFreelistBss(w)
 	}
 	emitProcBss(w, withArgs, withEnv)
-	emitHelperBss(w, helpers)
+	emitHelperBss(w, helpers, strings.Contains(b.String(), rcUnderflowSym))
 	w(".section .note.GNU-stack,\"\",@progbits")
 	asm := b.String()
 	if err := checkNoDanglingCalls(asm); err != nil {
@@ -407,6 +407,16 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			if lines, ok := inlinePokeLines(in, numAlloc); ok {
 				for _, l := range lines {
 					w("\t%s", l)
+				}
+				continue
+			}
+			if lines, ok := inlineRcLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
 				}
 				continue
 			}
@@ -2349,7 +2359,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if in.Op == Call || in.Op == CallPair {
+				if (in.Op == Call || in.Op == CallPair) && !(in.Op == Call && rcInline[in.Callee]) {
 					add(in.Callee)
 				}
 			}

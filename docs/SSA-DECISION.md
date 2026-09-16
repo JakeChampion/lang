@@ -274,6 +274,43 @@ instructions and the crossover from slower than flat to faster. The coverage tha
 corpus wants `__memcpy`, `__alloc` and the Map family) still widens the
 differential, but it is not what makes `sort` faster.
 
+### Measured 2026-09-16: the rc primitives inlined on x86-64
+
+callgrind on `examples/bench/ordmap_insert.fern` under x86-64 SSA, once the
+freelist and string reclaim were in, put 24% of the run's instructions inside
+`__fern_rc_is_unique`, `__fern_rc_dec` and `__fern_rc_inc` — six-instruction
+guard chains reached by a call each, with the caller-saves the allocator
+plants around a call whose callee it knows nothing about. The arm64 plan
+declined to inline them for size and took call-clobber-aware saves instead,
+and its persistent-collection rows stayed at 1.9-2.3x. The x86-64 renderer
+now renders the three at their call sites (`rcinline.go`), exactly as the
+helper bodies read, and the trade measured on this machine, best of five,
+ratio to the flat backend:
+
+| bench | before | after | static instructions |
+| --- | --- | --- | --- |
+| `ordmap_insert` | 1.80x | **1.23x** | +13.4% |
+| `pvec_with` | 2.04x | **1.32x** | +4.4% |
+| `pmap_insert` | 1.76x | **1.28x** | +4.8% |
+| `map_int` | 1.22x | 1.22x | 0% |
+| `map_probe_chain` | 1.16x | 1.15x | |
+| `sort_ints` | 0.91x | 0.82x | |
+| `coreutils/sort.fern` | | | +2.3% |
+
+`ordmap_insert`: 7.41e8 instructions before, 5.64e8 after, flat 4.90e8. The
+size cost lands where the sites are — a program with 165 to 200 of them
+grows by the guard chain at each — and is the same cost the flat backend
+carries; the epic's size goal is measured against the flat backend, and the
+module is still smaller than its flat twin. arm64ssa still calls the helpers;
+whether it takes the same trade is its own measurement.
+
+What the same profile names next: `enum_match` runs 3.3x the flat build's
+time on 1.34x its instructions, and the profile is `make` / the enum drop
+with `__ssa_alloc_pres`, `__alloc`, `__free` and `__fern_box_free` per node —
+the allocation trampoline (nine pushes and a `pushfq` around every
+allocation) is the cost, and a constant-size `OpAlloc` knows its class at
+compile time.
+
 ### Per-backend disposition
 
 | backend | disposition |

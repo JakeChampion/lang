@@ -1099,8 +1099,11 @@ around a function that did nothing. It has had a real body since #8069
 ### A call saves what its callee can disturb, not what is live
 
 Inlining the rc primitives, the way the flat backend does, was the obvious
-answer and it is not the one taken: it trades code size for the win, and the
-epic is about code size. The cost is not in the helper bodies — six instructions
+answer and it is not the one taken here: it trades code size for the win, and
+the epic is about code size. (x86-64 SSA later measured that trade and took
+it — `docs/SSA-DECISION.md`, "the rc primitives inlined on x86-64": +4-13%
+static on the persistent-collection programs for 1.8-2.0x down to 1.2-1.3x.
+This backend still calls them.) The cost is not in the helper bodies — six instructions
 each — it is in the caller-saves the allocator plants around a call whose callee
 it knows nothing about.
 
