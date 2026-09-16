@@ -155,17 +155,21 @@ func TestAsmRunCountByte(t *testing.T) {
 // Requiring MORE is merely slower — the scalar tail picks the rest up. So the
 // two constants are checked against each other rather than against a run.
 func TestCountByteVectorGuardMatchesStride(t *testing.T) {
-	body := emittedBetween(t, ".Lssa_count_vec:", ".Lssa_count_loop:",
-		"__fern_count_byte", "banana", 'a')
-	if !strings.Contains(body, "movdqu") {
-		t.Fatal("the vector body has no 16-byte load, so this test checked nothing")
-	}
-	guard := operandAfter(t, body, "cmp r9d, ")
-	stride := operandAfter(t, body, "add edx, ")
-	if guard != stride {
-		t.Errorf("__fern_count_byte requires %s bytes before a block but advances %s: "+
-			"requiring fewer than it consumes reads past the end of the string\n%s",
-			guard, stride, body)
+	for _, c := range []struct{ start, end, load string }{
+		{".Lssa_count_avx:", ".Lssa_count_avx_done:", "vmovdqu"},
+		{".Lssa_count_vec:", ".Lssa_count_loop:", "movdqu"},
+	} {
+		body := emittedBetween(t, c.start, c.end, "__fern_count_byte", "banana", 'a')
+		if !strings.Contains(body, c.load) {
+			t.Fatalf("the vector body after %s has no %s load, so this test checked nothing", c.start, c.load)
+		}
+		guard := operandAfter(t, body, "cmp r9d, ")
+		stride := operandAfter(t, body, "add edx, ")
+		if guard != stride {
+			t.Errorf("__fern_count_byte requires %s bytes before a block but advances %s: "+
+				"requiring fewer than it consumes reads past the end of the string\n%s",
+				guard, stride, body)
+		}
 	}
 }
 
