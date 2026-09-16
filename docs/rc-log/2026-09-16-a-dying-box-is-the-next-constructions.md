@@ -65,16 +65,31 @@ the on/off comparison was passing because both sides were the same build.
 
 ## Pinned
 
-`TestSelfHostSemanticSourceRC` is the gate that carries the signal here:
-allocations equal frees on all four targets, so a token handed to a
-construction that was not entitled to it shows as a double free rather than as
-a wrong answer. It gains `reuse_loop`, a record owning a string and an array
-rebuilt from its own fields each iteration, and `reuse_shared`, where an array
-holds a second count on the donor so the pairing is static but the count test
-fails and the fresh arm runs — the path where a missing shape word corrupts the
-box. Both were confirmed to fire before being pinned; a fixture that pins a
-construction the pairing declines proves nothing.
+`TestSelfHostSemanticReuseDifferentialX86_64` is the gate for this layer, and
+it is new because none existed. `TestSelfHostReuseDifferentialX86_64` does not
+reach here: its driver is `asm_run.fern`, which runs lexer → parser → `asm_ir`
+→ `irlower` and never touches `semlower`, so neither of its arms sees `ssarc`.
+`fern.fern` is the only driver that routes through the semantic path, so the
+new suite builds the whole CLI. Each case asserts the firing count on the typed
+path, zero under `FERN_SELFHOST_NO_REUSE=1`, the AST lowering's own count for
+the same source, and the two builds' answers against each other.
 
-`TestSelfHostReuseDifferentialX86_64` holds the other half — the program's
-observable behaviour is identical with `FERN_SELFHOST_NO_REUSE=1` and without —
-which is what says a reuse that fires changed only where the storage came from.
+Two of its three cases are shapes the AST lowering does not pair at all
+(`astPath: 0`), so their counts cannot be satisfied by `irlower` and they
+witness this layer alone. Each case must also report producing WHOLE on the
+typed path, because production is all-or-nothing per module: one refused
+declaration sends every function to the AST lowering, and the counts would then
+be measuring `irlower`. That check is not hypothetical — the first draft of
+these cases guarded with `__rc_underflow()`, the self-host-only alias, which has
+no semantic contract and refused the module, and every count in it was the AST
+path's.
+
+`TestSelfHostSemanticSourceRC` holds the other half: allocations equal frees on
+all four targets, so a token handed to a construction that was not entitled to
+it shows as a double free rather than as a wrong answer. It gains `reuse_loop`,
+a record owning a string and an array rebuilt from its own fields each
+iteration, and `reuse_shared`, where an array holds a second count on the donor
+so the pairing is static but the count test fails and the fresh arm runs — the
+path where a missing shape word corrupts the box. Both were confirmed to fire
+before being pinned; a fixture that pins a construction the pairing declines
+proves nothing.
