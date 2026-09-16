@@ -613,4 +613,22 @@ function main(): i32 {
     return r.ops.len() % 100 + r.name.len();
 }
 `},
+	// A `str` binding in a module that declares a generic struct. The parser
+	// erases `str` to `string` at parse time and records the view-ness on the
+	// declaration's `is_str`; the struct monomorphiser rewrote every `var`
+	// annotation in every body and dropped that flag, so the checker typed
+	// the binding `string` against a `str` value and every function holding
+	// one refused. Produces 0 of 2 with the flag dropped.
+	{name: "str-binding-beside-a-generic-struct", atLeast: 2, src: `
+struct Box[T] { v: T }
+function head(s: string): i32 {
+    var v: str = slice_unchecked(s, 0, 3);
+    var w: str = slice_unchecked(v, 1, 3);
+    return v.len() * 10 + w.len();
+}
+function main(): i32 {
+    var b: Box[i32] = Box { v: head("hello" + "") };
+    return b.v;
+}
+`},
 }
