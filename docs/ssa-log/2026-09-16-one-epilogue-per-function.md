@@ -68,6 +68,12 @@ is the next thing to look at there.
   two-return function has exactly one `ret` with one jump to it.
 - `TestEveryFunctionCarriesBalancedCFI` on both backends now requires ZERO
   remember/restore, which is the property that pays for the change.
+- `TestPrologueCFIDescribesTheFrame` on arm64 took the frame size from the
+  `.cfi_def_cfa_offset` directive it was checking, so an emitter whose `sub sp`
+  and CFA offset disagreed passed it: the CFI described a frame sp never drops
+  by. It reads the `sub sp` operands instead now — summed, since a frame past
+  4095 bytes is split across two instructions — and requires the epilogue to
+  give back exactly what the prologue took.
 - `TestCopyLinesFeedsTheWriterOneLineAtATime` replaces the marker-splicing
   tests on both backends, keeping the one property those guarded that still
   applies.

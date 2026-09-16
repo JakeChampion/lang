@@ -124,13 +124,46 @@ func TestPrologueCFIDescribesTheFrame(t *testing.T) {
 		}
 		at += i + len(want)
 	}
+	// The rule has to describe the stack the instructions actually build, so
+	// the frame size comes from the `sub sp` operands and not from the
+	// directive being checked. Reading it back out of `.cfi_def_cfa_offset`
+	// would let an emitter whose subtraction and CFA offset disagree pass:
+	// the CFI would describe a frame sp never drops by, and every unwind past
+	// it would read whatever is really there.
+	frame := spAdjustTotal(t, body, "sub", body[:strings.Index(body, "\t.cfi_def_cfa_offset ")])
+	if got := intAfter(t, body, ".cfi_def_cfa_offset "); got != frame {
+		t.Errorf(".cfi_def_cfa_offset %d, but the prologue subtracts %d from sp:\n%s", got, frame, body)
+	}
+	// The epilogue has to give back exactly what the prologue took, or the
+	// CFA is wrong for the caller's frame rather than this one.
+	if got := spAdjustTotal(t, body, "add", body); got != frame {
+		t.Errorf("the epilogue adds %d back to sp against the prologue's %d:\n%s", got, frame, body)
+	}
 	// The rule for x30 has to name where it actually went: the slot's offset
 	// from the entry sp, which is the frame size less the slot's own offset.
-	frame := intAfter(t, body, ".cfi_def_cfa_offset ")
 	slot := intAfter(t, body, "\tstr x30, [sp, #")
 	if got, want := intAfter(t, body, ".cfi_offset x30, "), slot-frame; got != want {
 		t.Errorf(".cfi_offset x30, %d; the slot is at sp+%d in a %d-byte frame, so it is %d from the CFA", got, slot, frame, want)
 	}
+}
+
+// spAdjustTotal sums every `<op> sp, sp, #N` in text. A frame past 4095 bytes
+// is split across two instructions (spAdjustLines), so one line is not enough
+// to read the size off.
+func spAdjustTotal(t *testing.T, whole, op, text string) int {
+	t.Helper()
+	total, found := 0, false
+	for _, l := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(l, "\t"+op+" sp, sp, #") {
+			continue
+		}
+		found = true
+		total += intAfter(t, l, "#")
+	}
+	if !found {
+		t.Fatalf("no `%s sp, sp, #` in:\n%s", op, whole)
+	}
+	return total
 }
 
 // A function that neither spills nor calls builds no frame, so it changes no
