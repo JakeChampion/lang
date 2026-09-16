@@ -1395,6 +1395,8 @@ func ssaUnservedFlag(backend string, shared bool) error {
 		return fmt.Errorf("-backend %s: -shared has no shared-object output on this backend — it would link an ordinary executable; build without -backend %s, or drop -shared", backend, backend)
 	case emitDebugSyms:
 		return fmt.Errorf("-backend %s: -g has no line table on this backend — it emits .debug_info without .debug_line, so a debugger cannot map an address to a source line; build without -backend %s, or drop -g", backend, backend)
+	case ast.CoverEnabled:
+		return fmt.Errorf("-backend %s: -cover has no instrumentation on this backend — only the default emitters for x86-64-linux and arm64-linux instrument; build without -backend %s, or drop -cover", backend, backend)
 	}
 	return nil
 }
@@ -1500,11 +1502,11 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 
 	// The SSA backends link their own output and return before the flag
 	// handling further down, so a flag served only down there does not reach
-	// them. Saying so is the whole of this check: -cover already refuses
-	// inside the lowering, and these two used to pass silently — -shared
-	// produced an ordinary executable rather than a shared object, and -g
-	// produced DWARF with no .debug_line, so a debugger had symbol names and
-	// no way to map an address to a source line.
+	// them. Saying so is the whole of this check: -shared used to produce an
+	// ordinary executable rather than a shared object, -g DWARF with no
+	// .debug_line, and -cover reached the lowering's own refusal, whose
+	// remedy names the targets that instrument and so read as "build for the
+	// target you already built for".
 	if backend == "ssa" || backend == "typed-ssa" {
 		if err := ssaUnservedFlag(backend, shared); err != nil {
 			return 1, err
