@@ -436,7 +436,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", envpSym)
 		w("\t.quad 0")
 	}
-	if withRcUnderflow {
+	if withRcUnderflow || strings.Contains(b.String(), rcUnderflowSym) {
+		// The helper list names the counter's readers; an inline rc_dec
+		// names it in the text alone.
 		w(".section .bss")
 		w(".align 8")
 		w("%s:", rcUnderflowSym)
@@ -4106,7 +4108,7 @@ func referencedRuntimeHelpers(progs map[string]*x86.Program) (asm, fern []string
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if in.Op == x86.Call {
+				if in.Op == x86.Call && !inlinedCall(in) {
 					add(in.Callee)
 				}
 			}
@@ -9461,6 +9463,26 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 			if left < 0 {
 				left = in.Dst
 			}
+			if lines, ok := inlineAllocLines(in, fr, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
+				}
+				continue
+			}
+			if lines, ok := inlineRcLines(in, fr, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
+				}
+				continue
+			}
 			if in.Op == x86.Call || in.Op == x86.CallPair {
 				// An array index is address arithmetic, not a call: inline it
 				// rather than making the allocator spill around it. The seed
@@ -10661,6 +10683,11 @@ func divShiftSeq(in x86.Inst, left, scratch int) []string {
 	// count, and a sign-extended operand divides correctly at either width.
 	width32 := in.W != 64
 	dw, sw := wreg(in.Dst), wreg(in.Src)
+	if in.SrcImm {
+		// A constant shift count is the instruction's own immediate, masked
+		// as the register form's would be. Only shifts carry one here.
+		s, sw = fmt.Sprintf("#%d", in.Imm&63), fmt.Sprintf("#%d", in.Imm&31)
+	}
 	var out []string
 	switch in.K {
 	case ssa.OpShl:

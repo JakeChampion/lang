@@ -17,6 +17,7 @@ package x86_64ssa
 
 import (
 	"fmt"
+	"math/bits"
 	"sort"
 
 	"github.com/jakechampion/lang/internal/ssa"
@@ -674,7 +675,7 @@ func foldableConsts(f *ssa.Func) map[int32]int64 {
 			}
 			ok := true
 			for _, u := range sites {
-				if u.Op == nil || u.Index != 1 || !immediateRightKind(u.Op.Kind) {
+				if u.Op == nil || u.Index != 1 || !foldableRightUse(u.Op, op.Imm) {
 					ok = false
 					break
 				}
@@ -685,6 +686,44 @@ func foldableConsts(f *ssa.Func) map[int32]int64 {
 		}
 	}
 	return out
+}
+
+// foldableRightUse reports whether a reader takes the constant imm as its right
+// operand without a register behind it: the immediate-form ops, a shift
+// (whose count is an imm8, masked to the width as a register count would
+// be), and a division or remainder by a power of two, which lowers to shifts
+// (emitPow2DivRem).
+func foldableRightUse(reader *ssa.Op, imm int64) bool {
+	if immediateRightKind(reader.Kind) {
+		return true
+	}
+	switch reader.Kind {
+	case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr:
+		return true
+	case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+		_, ok := powerOfTwoDivisor(imm, reader.Width)
+		return ok
+	}
+	return false
+}
+
+// powerOfTwoDivisor is the shift a division or remainder by the constant n
+// reduces to: n = 1 << sh with sh between 1 and width-2. sh = 0 is the
+// identity StrengthReduce already removes, and 1 << (width-1) is the sign bit,
+// whose signed quotient the bias below would not reach.
+func powerOfTwoDivisor(n int64, w int8) (int64, bool) {
+	width := int64(32)
+	if w == 64 {
+		width = 64
+	}
+	if n <= 1 || n&(n-1) != 0 {
+		return 0, false
+	}
+	sh := int64(bits.TrailingZeros64(uint64(n)))
+	if sh > width-2 {
+		return 0, false
+	}
+	return sh, true
 }
 
 // immediateRightKind is the set of ops whose right operand may be an imm32:
@@ -715,6 +754,14 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 	case ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpAnd, ssa.OpOr, ssa.OpXor,
 		ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpRotr,
 		ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+		switch op.Kind {
+		case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+			if n, ok := e.consts[op.Args[1].ID]; ok {
+				if sh, ok := powerOfTwoDivisor(n, op.Width); ok {
+					return e.emitPow2DivRem(op, sh)
+				}
+			}
+		}
 		if imm, ok := e.immediateRight(op); ok {
 			ra, err := e.materialize(op.Args[0], e.s0)
 			if err != nil {
@@ -1167,4 +1214,60 @@ func maxPhiCount(f *ssa.Func) int {
 		}
 	}
 	return max
+}
+
+// emitPow2DivRem lowers a division or remainder by 2^sh to shifts. Unsigned
+// is exact: a logical shift, or a mask of the low bits. Signed rounds toward
+// zero where an arithmetic shift rounds toward negative infinity, so the
+// dividend is biased by 2^sh-1 when it is negative — the sar/shr pair
+// computes that without a branch — before the shift; the remainder is the
+// dividend less the quotient shifted back up. Mirrors the flat backends'
+// emitConstDivRem.
+func (e *emitter) emitPow2DivRem(op *ssa.Op, sh int64) error {
+	ra, err := e.materialize(op.Args[0], e.s0)
+	if err != nil {
+		return err
+	}
+	w := op.Width
+	bits := int64(32)
+	if w == 64 {
+		bits = 64
+	}
+	rem := op.Kind == ssa.OpRem || op.Kind == ssa.OpRemU
+	shift := func(dst int, k ssa.OpKind, n int64) {
+		e.push(Inst{Op: BinOp, Dst: dst, K: k, Imm: n, SrcImm: true, W: w})
+	}
+	dst := e.coalesceDst(op.Result, -1)
+	if op.Kind == ssa.OpDivU || op.Kind == ssa.OpRemU {
+		e.movReg(dst, ra)
+		switch {
+		case !rem:
+			shift(dst, ssa.OpShrU, sh)
+		case sh <= 31:
+			e.push(Inst{Op: BinOp, Dst: dst, K: ssa.OpAnd, Imm: int64(1)<<sh - 1, SrcImm: true, W: w})
+		default:
+			// The mask is not an imm32: clear the high bits with a shift pair.
+			shift(dst, ssa.OpShl, bits-sh)
+			shift(dst, ssa.OpShrU, bits-sh)
+		}
+	} else {
+		bias := e.s1
+		e.movReg(bias, ra)
+		shift(bias, ssa.OpShr, bits-1)   // all ones iff negative
+		shift(bias, ssa.OpShrU, bits-sh) // 2^sh-1 iff negative
+		e.push(Inst{Op: BinOp, Dst: bias, Src: ra, K: ssa.OpAdd, W: w})
+		if rem {
+			shift(bias, ssa.OpShr, sh) // the quotient
+			shift(bias, ssa.OpShl, sh) // times the divisor
+			e.movReg(dst, ra)
+			e.push(Inst{Op: BinOp, Dst: dst, Src: bias, K: ssa.OpSub, W: w})
+		} else {
+			e.movReg(dst, bias)
+			shift(dst, ssa.OpShr, sh)
+		}
+	}
+	if dst == e.s2 {
+		e.place(op.Result, e.s2)
+	}
+	return nil
 }

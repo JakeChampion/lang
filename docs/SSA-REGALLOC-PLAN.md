@@ -1100,10 +1100,10 @@ around a function that did nothing. It has had a real body since #8069
 
 Inlining the rc primitives, the way the flat backend does, was the obvious
 answer and it is not the one taken here: it trades code size for the win, and
-the epic is about code size. (x86-64 SSA later measured that trade and took
-it — `docs/SSA-DECISION.md`, "the rc primitives inlined on x86-64": +4-13%
-static on the persistent-collection programs for 1.8-2.0x down to 1.2-1.3x.
-This backend still calls them.) The cost is not in the helper bodies — six instructions
+the epic is about code size. (Both SSA backends later measured that trade and
+took it — `docs/SSA-DECISION.md`, "the rc primitives inlined on x86-64" and
+"arm64 takes the same two": on arm64 the persistent-collection rows went from
+2.2-2.5x to 0.9-1.1x for +34-38% static instructions on those programs.) The cost is not in the helper bodies — six instructions
 each — it is in the caller-saves the allocator plants around a call whose callee
 it knows nothing about.
 

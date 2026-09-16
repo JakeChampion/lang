@@ -333,12 +333,48 @@ five, ratio to the flat backend:
 | `pmap_insert` | 1.28x | **1.12x** | +4.9% |
 | `pvec_with` | 1.32x | **1.12x** | +4.9% |
 | `enum_match` | 3.25x | **2.33x** | +3.4% |
-| `struct_drop` | 2.03x | 1.82x | +0.7% |
+| `struct_drop` | 2.03x | 1.61x | +0.7% |
 | `map_int`, `array_append`, `string_build` | | unchanged | 0% |
 
 `enum_match` and `struct_drop` still pay the drop side: the per-type drop
 helpers call `__fern_str_dec` and `__fern_box_free`, which call `__free`,
 which computes the class again for a size it was handed in a register.
+
+**Constant shift counts and power-of-two divisors, the same day.** With the
+allocator out of the way `enum_match` ran 1.33e8 instructions to the flat
+build's 1.30e8 and still took 2.33x the time: three `idiv` per iteration for
+`k % 4`. `internal/ir`'s strength reduction deliberately leaves signed
+division by a power of two alone (an arithmetic shift rounds the wrong way),
+and the flat backends lower it themselves with a sign bias; the shared SSA
+emitter now does the same (`emitPow2DivRem`), for both SSA backends, and a
+constant shift count is the instruction's own immediate rather than a
+register copied into `cl` (or an AArch64 register) — the foldable set
+admits shifts and power-of-two divisors. `enum_match` 2.33x → **1.00x**;
+`map_int` 190 static instructions fewer; `coreutils/sort.fern` 15 `idiv` →
+2 and 668 `push rcx` → 487. `struct_drop` (1.61x before and after, best of
+five re-measured on both builds) is unmoved: its cost is the drop side above.
+
+**arm64 takes the same two, the same day.** The rc primitives inline and the
+constant-size pop and push are one renderer file each on arm64ssa
+(`inline_rc_alloc.go`), reading the same emitter annotations; under the leak
+census the allocation fast paths stay calls, since `__alloc` and `__free` are
+where it counts. Best of five under qemu-aarch64, ratio to the flat build:
+
+| bench | before | after | static |
+| --- | --- | --- | --- |
+| `ordmap_insert` | 2.50x | **0.87x** | +37% |
+| `pvec_with` | 2.46x | **1.14x** | +38% |
+| `pmap_insert` | 2.15x | **1.07x** | +34% |
+| `enum_match` | 1.28x | **0.67x** | -6% |
+| `struct_drop` | 1.13x | **0.95x** | +2% |
+| `map_int` | 2.20x | 2.27x | +1% |
+
+The persistent-collection rows the arm64 plan named as the default flip's
+blocker are at or under the flat build. The static cost is larger than on
+x86-64 — a guard chain is more instructions on a load/store ISA and the
+freelist heads want an `adrp`/`add` pair per site — and it is the trade the
+plan declined; measured, it is the right one. `map_int` pays something
+else, still to be profiled.
 
 ### Per-backend disposition
 
