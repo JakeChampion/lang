@@ -59,6 +59,9 @@ Driver compile, alternating runs on the same machine:
 | main | 31.0 s, 31.8 s |
 | this branch | 28.1 s, 28.3 s |
 
+Repeated after the last table was converted, on a busier machine: 33.9 s and
+32.5 s against 29.7 s and 28.5 s.
+
 The emitted assembly is byte-identical to main's, so every pass reaches the
 same fixpoint on the same functions.
 
