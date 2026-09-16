@@ -1,0 +1,34 @@
+// Pins E079: `?` inside a `defer` action.
+//
+// The shape is circular by construction. `?` leaves by the failure edge,
+// and that edge replays the function's deferred actions — one of which is
+// this one, carrying a `?` whose failure edge replays them again. Both
+// compilers recursed until they died rather than lowering it (#9470):
+// native with a Go stack overflow through callBody, the self-host with a
+// SIGSEGV.
+//
+// It is refused rather than given a meaning. `?` propagates a failure to
+// the caller, and a deferred action has no caller to propagate to. The
+// interpreter reached this shape first and silently discarded the failure,
+// which contradicts what the operator says and loses an error with nothing
+// to notice — so the answer is a diagnostic, not a lowering.
+//
+// A `?` in a lambda inside the action is NOT this error: it leaves the
+// lambda, not the enclosing function.
+function g(v: i32): Option[i32] {
+    if (v < 100) { return Some(v + 1); }
+    return None;
+}
+
+function build(out: Cell[i32]): Option[i32] {
+    var n: i32 = 0;
+    defer n = g(n)?;
+    out.set(n);
+    return Some(n);
+}
+
+function main(): i32 {
+    var c: Cell[i32] = cell_new(0);
+    build(c);
+    return c.get();
+}
