@@ -10643,8 +10643,16 @@ pub function array_field_elem_is_ptr(ft: string, structs: irlower.StructTab, mr_
 // struct_make / struct_get / struct_set), NOT the AST `struct_field_off`
 // (`4 + i*4`): this body runs on the IR path, where the box is laid out by the
 // IR emitter. A pointer field is stored as i32 in the low 4 bytes of its 8-byte
-// slot, so an `i32.load` at the slot offset recovers it. Every helper rc-,
-// null- and literal-guards internally. Returns box (the call site drops it).
+// slot, so an `i32.load` at the slot offset recovers it. The helpers each
+// rc-, null- and literal-guard their own argument, but that argument is a
+// FIELD already read out of the box, so the box itself is guarded here (`box`
+// below heap_base skips the field loop), exactly as the register bodies'
+// `cmpq $0x10000` / `cmp x10, #16, lsl #12` does. A null box reaches this
+// helper by contract — an eager release at a local's last use zeroes the slot
+// and the exit sweep still releases it, and a reuse donation zeroes it the
+// same way — and without the guard the field read lands in the low WASI/clock/
+// random scratch, handing whatever a host builtin last left there to
+// $__fern_arr_dec as a pointer (#9481). Returns box (the call site drops it).
 // emit_ir_rc_bodies returns the per-type $__field_reclaim_<T> + $__struct_drop_<T>
 // helper-function definitions for the IR path (#3457, Perceus slices 1c/1d):
 // field_reclaim frees a superseded rc-array field buffer on a consume-rebind and
@@ -10711,7 +10719,7 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
     }
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
-        parts = parts.append(emit_wasm_struct_drop_body(sdt[sdti], ds));
+        parts = parts.append(emit_wasm_struct_drop_body(sdt[sdti], ds, heap_base));
         sdti = sdti + 1;
     }
     // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
@@ -10845,11 +10853,13 @@ pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: irlower.St
     return o;
 }
 
-pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState): string {
+pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState, hb: i32): string {
     var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
     // Which arm each field takes is asmcore.struct_drop_field_ops' call (#7736);
     // this loop is only the wasm selection for each directive it hands back.
     var ops: asmcore.RcOp[] = asmcore.struct_drop_field_ops(s, t);
+    if (ops.len() == 0) { return o + "    (local.get $box))\n"; }
+    o = o + "    (if (i32.ge_u (local.get $box) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
     var oi: i32 = 0;
     while (oi < ops.len()) {
         var op: asmcore.RcOp = ops[oi];
@@ -10875,6 +10885,7 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState): string
         }
         oi = oi + 1;
     }
+    o = o + "    ))\n";
     o = o + "    (local.get $box))\n";
     return o;
 }
