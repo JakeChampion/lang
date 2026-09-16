@@ -232,22 +232,44 @@ function f(): i32 {
 // declaration it happens to share a name with — the stdlib's
 // `filter(xs, keep)` was being checked against a user's `keep(own …)` and
 // refusing to compile (#9532).
+// Every argument here is a POINTER, deliberately: a scalar argument is excused
+// by `scalarArgs` regardless of the callee, so a scalar case passes whether or
+// not the shadowing rule works and proves nothing.
 func TestOwnGuardIgnoresShadowingParameter(t *testing.T) {
 	wantOK(t, "shadowing-param", ownConsumer+`
-function filterish(xs: i32[], consume: (i32) => boolean): i32 {
+function filterish(rows: i32[][], consume: (i32[]) => i32): i32 {
     var n: i32 = 0;
-    for x in xs { if (consume(x)) { n = n + 1; } }
+    for r in rows { n = n + consume(r); }
     return n;
 }
-function main(): i32 { return filterish([1, 2], (v: i32) => v > 1); }`)
+function main(): i32 { return filterish([[1, 2]], (v: i32[]) => v[0]); }`)
 }
 
 func TestOwnGuardIgnoresShadowingLocal(t *testing.T) {
 	wantOK(t, "shadowing-local", ownConsumer+`
-function f(): i32 {
-    var consume: (i32) => boolean = (v: i32) => v > 1;
-    if (consume(3)) { return 1; }
-    return 0;
+function f(xs: i32[]): i32 {
+    var consume: (i32[]) => i32 = (v: i32[]) => v[0];
+    return consume(xs);
+}`)
+}
+
+func TestOwnGuardIgnoresShadowingLambdaParameter(t *testing.T) {
+	wantOK(t, "shadowing-lambda-param", ownConsumer+`
+function f(xs: i32[]): i32 {
+    var run: ((i32[]) => i32) = (consume: i32[]) => consume.len();
+    return run(xs);
+}`)
+}
+
+// The consume classifier reads the same table, so a shadowed callee must not
+// mark its argument MOVED either — `xs` is still live on the next line. This is
+// the E050 half of the same bug, and it fires on the exact #9532 shape once the
+// argument is an owned name rather than a scalar.
+func TestOwnGuardShadowedCalleeDoesNotConsume(t *testing.T) {
+	wantOK(t, "shadowing-param-no-consume", ownConsumer+`
+function f(own xs: i32[], consume: (i32[]) => i32): i32 {
+    var r: i32 = consume(xs);
+    return r + xs.len();
 }`)
 }
 

@@ -14,21 +14,40 @@
     return [k];
 }
 
-@noinline function count_matching(xs: i32[], keep: (i32) => boolean): i32 {
+// The argument through the shadowed callee is a POINTER on purpose: a scalar is
+// excused as trivially owned whatever the callee is, so a scalar-only case
+// passes whether or not the shadowing rule works.
+@noinline function count_matching(rows: i32[][], keep: (i32[]) => boolean): i32 {
     var n: i32 = 0;
-    for x in xs {
-        if (keep(x)) { n = n + 1; }
+    for r in rows {
+        if (keep(r)) { n = n + 1; }
     }
     return n;
 }
 
-// A lambda parameter shadows the same way.
-@noinline function via_lambda(xs: i32[]): i32 {
-    var f: (((i32) => boolean)) => i32 = (keep: (i32) => boolean) => count_matching(xs, keep);
-    return f((v: i32) => v > 2);
+// The consume classifier reads the same table: a shadowed callee must not mark
+// its argument moved either, or `xs` here is a use-after-move. This is the E050
+// half of the same bug.
+//
+// This call is also the whole of the fixture's census row of 1: one array
+// handed to an `own` parameter and not reclaimed, which is the RECLAIM side
+// the port has not reached yet. The row was 0 before this function existed.
+@noinline function not_consumed(own xs: i32[], keep: (i32[]) => boolean): i32 {
+    var hit: i32 = 0;
+    if (keep(xs)) { hit = 1; }
+    return hit + xs.len();
+}
+
+// A local binding shadows the same way, and so does a lambda parameter.
+@noinline function via_local(rows: i32[][]): i32 {
+    var keep: (i32[]) => i32 = (v: i32[]) => v.len();
+    return keep(rows[0]);
 }
 
 function main(): i32 {
     var kept: i32[] = keep([1, 2, 3], 1);
-    return count_matching(kept, (v: i32) => v > 1) + kept.len() + via_lambda(kept);
+    var rows: i32[][] = [kept, [4], [5, 6, 7]];
+    return count_matching(rows, (v: i32[]) => v.len() > 1)
+        + not_consumed([8, 9], (v: i32[]) => v.len() > 1)
+        + via_local(rows);
 }

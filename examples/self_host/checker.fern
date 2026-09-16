@@ -10992,7 +10992,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // keys admitted while walking `base = S { ...base, f: g(.., base.f, ..) }`
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], bound: string[] }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
@@ -11066,7 +11066,7 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
       }
     }
   }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh };
+  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, bound: ctx.bound };
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -11106,6 +11106,34 @@ function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
     }
   }
   return false;
+}
+
+// Every name a function BINDS: its parameters, its locals, and the parameters
+// of any lambda inside it. A call through one of these is a call through a
+// VALUE, so the own-func table — which is keyed by name and knows nothing of
+// scope — must not answer for it, neither for the call-site guard nor for the
+// consume classifier (#9532).
+function ow_bind_stmt(st: ast.Stmt, own acc: string[]): string[] {
+  if let ast.StmtVar(v) = st { return acc.append(v.name); }
+  return acc;
+}
+
+function ow_bind_expr(e: ast.Expr, own acc: string[]): string[] {
+  if let ast.ExprLambda(lm) = e {
+    for p in lm.params { acc = acc.append(p.name); }
+  }
+  return acc;
+}
+
+function ow_bind_descend(e: ast.Expr): boolean { return true; }
+
+function ow_bound_names(fn: parser.FuncDecl): string[] {
+  var out: string[] = [];
+  for p in fn.params { out = out.append(p.name); }
+  for st in fn.body {
+    out = astwalk.fold_stmt_nodes(st, out, ow_bind_stmt, ow_bind_expr, ow_bind_descend);
+  }
+  return out;
 }
 
 // ow_variant_known reports whether `name` is a declared VARIANT, optionally of
@@ -11366,13 +11394,7 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   var out: util.Diag[] = [];
   match (c.callee) {
     ast.ExprIdent(id) => {
-      // A parameter shadowing a global function's name is a function VALUE,
-      // and its consuming positions come from its own type — not from the
-      // declaration it happens to share a name with. `filter(xs, keep)`
-      // calling its own `keep` parameter was read against a user's
-      // `keep(own …)` declared elsewhere, so importing std/string stopped
-      // compiling as soon as a program declared one (#9532).
-      if (util.has_str(ctx.owned, id.name) || util.has_str(ctx.borrowed, id.name)) {
+      if (util.has_str(ctx.bound, id.name)) {
         return out;
       }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
@@ -11399,6 +11421,9 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
+      if (util.has_str(ctx.bound, id.name)) {
+        return [];
+      }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
         return ow_func_flags(ctx.ofuncs, id.name);
       }
@@ -11862,7 +11887,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, bound: ow_bound_names(fn) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);

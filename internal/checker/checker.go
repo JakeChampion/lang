@@ -12303,22 +12303,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// passed to an `own` parameter of a (plain, same-module) callee must be an
 	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
 	// callees are conservatively skipped here — a later slice widens the guard.
-	// Parameters shadowing a global function name: a call through one is a
-	// call through a VALUE, whose own positions come from its type and are
-	// recorded per call node, so the by-name fallback below must not claim it
-	// (#9532). Locals are covered at the recording site, which has a scope.
-	shadowed := map[string]bool{}
-	for _, p := range fn.Params {
-		shadowed[p.Name] = true
-	}
 	guardCallArgs := func(x *ast.Call) {
 		flags, isOwn := c.callOwnFlags[x]
 		if !isOwn {
 			id, idOK := x.Callee.(*ast.Ident)
 			if !idOK {
-				return
-			}
-			if shadowed[id.Name] {
 				return
 			}
 			if flags, isOwn = c.ownFuncs[id.Name]; !isOwn {
@@ -16722,13 +16711,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// not a named function or declares none) — an `own` param consumes
 		// its argument, which disables argAssignable's str-view borrow.
 		var calleeOwnFlags []bool
+		// A callee that resolves to a parameter, local or capture is a function
+		// VALUE: its consuming positions come from its TYPE, never from the
+		// global function whose name it shadows (#9532). This is the only place
+		// with a scope to tell the two apart, so the verdict is recorded below
+		// even when it is "no own positions" — the consumers must not re-derive
+		// it by name, having no scope of their own.
+		calleeIsValue := false
 		if cid, ok := n.Callee.(*ast.Ident); ok {
-			// Only when the name is the global function. A parameter or local
-			// that shadows it is a function VALUE, and its own positions come
-			// from its TYPE below — `filter(xs, keep)` calling its own `keep`
-			// parameter must not be read against a `keep(own …)` declared
-			// elsewhere in the program (#9532).
-			if _, isValue := c.identValueBinding(cid.Name, s); !isValue {
+			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
+				calleeIsValue = true
+			} else {
 				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
 			}
 		}
@@ -16741,7 +16734,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// the body is checked and has no callee type of its own. A
 		// dispatch-rewritten method call is excluded: its receiver is held in
 		// Args[0] and the guard has never covered that shape.
-		if len(calleeOwnFlags) > 0 && !recvIsArg0 && n.Method == nil {
+		if (len(calleeOwnFlags) > 0 || calleeIsValue) && !recvIsArg0 && n.Method == nil {
 			if c.callOwnFlags == nil {
 				c.callOwnFlags = map[*ast.Call][]bool{}
 			}
