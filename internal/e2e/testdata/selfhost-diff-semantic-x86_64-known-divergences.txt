@@ -1,0 +1,14 @@
+# Seeds whose SELF-HOST x86-64 result through the SEMANTIC lowering
+# (FERN_SEM_IR=1) disagrees with the interpreter's, for
+# TestDifferential_SelfHostSemanticX86_64 (internal/e2e/diff_oracle_selfhost_test.go).
+#
+# Format: <seed> <reason + issue>. Blank lines and # comments ignored.
+#
+# Same contract as selfhost-diff-x86_64-known-divergences.txt beside it: a
+# row is a known bug being tolerated so the rest of the corpus keeps running,
+# the leg fails on a new divergence and on a listed seed that starts agreeing.
+# A seed that diverges here and agrees on the AST leg is the semantic
+# lowering's, or the mixed module's; one that diverges on both belongs in the
+# other file.
+#
+# THE LIST IS EMPTY.

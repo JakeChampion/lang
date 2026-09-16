@@ -183,6 +183,30 @@ jobs:
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/
 
+  # The moving window through the SEMANTIC lowering (#9415): the same seeds
+  # as the leg above, compiled with FERN_SEM_IR=1, against the same oracle.
+  differential-selfhost-semantic:
+    needs: window
+    name: nightly-differential-selfhost-semantic-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: go test (self-host semantic, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+          SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run '^TestDifferential_SelfHostSemanticX86_64$' ./internal/e2e/
+
   # The moving window through the self-host ARM64 emitter (#7967).
   #
   # Its own job rather than a leg of the one above: it needs the qemu step,

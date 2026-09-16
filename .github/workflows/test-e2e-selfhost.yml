@@ -863,6 +863,29 @@ jobs:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
 
+  # The same corpus through the SEMANTIC lowering (FERN_SEM_IR=1, #9415): the
+  # fuzz leg for the produced lowering and for the mixed module a refusal
+  # makes. Same driver, same seeds, same oracle; its own known-divergences
+  # file, and a floor on the fraction of seeds whose module produces whole.
+  # One shard like the leg above: measured 2026-09-16, 64 seeds in 38 s.
+  diff-selfhost-semantic:
+    name: diff-selfhost-semantic-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nshard: 1, shard: 0 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: run the fernsmith corpus through the semantic lowering
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
+        run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticX86_64$' -v -timeout 43m
+
   # The same corpus through the self-host ARM64 emitter (#7967).
   #
   # Until this the generated corpus only ever reached the self-host through its
