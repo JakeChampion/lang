@@ -119,14 +119,28 @@ pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string }
 
 // ---- small array helpers (value-semantics, no slice syntax) -------------
 
+// vset replaces one element. `.with` writes in place when the array is
+// uniquely owned, which the lift's slot vector always is; rebuilding the
+// vector per store made the lift quadratic on the compiler's largest
+// functions.
 function vset(a: i32[], idx: i32, val: i32): i32[] {
-    var out: i32[] = [];
+    return a.with(idx, val);
+}
+
+// row_set writes row `d` of a stride-nslots scope stack: `vals[i]` when
+// from_vals, else 0. The row stacks never shrink; a scope exit leaves its
+// row behind and the next entry at that depth overwrites it, so a scope
+// costs O(nslots) rather than a copy of every row above it.
+function row_set(rows: i32[], d: i32, nslots: i32, vals: i32[], from_vals: boolean): i32[] {
     var i: i32 = 0;
-    while (i < a.len()) {
-        if (i == idx) { out = out.append(val); } else { out = out.append(a[i]); }
+    while (i < nslots) {
+        var v: i32 = 0;
+        if (from_vals) { v = vals[i]; }
+        var at: i32 = d * nslots + i;
+        if (at < rows.len()) { rows = rows.with(at, v); } else { rows = rows.append(v); }
         i = i + 1;
     }
-    return out;
+    return rows;
 }
 // buf_lift_tag maps one of the string builder's IR op tags (#8773) to its SSA
 // kind, or 0 when the op is not one of them; buf_lift_pops is that op's operand
@@ -1085,8 +1099,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_then_blk = sc_then_blk.append(0 - 1);
                 sc_then_reaches = sc_then_reaches.append(0);
                 sc_parent = sc_parent.append(parent_id);
-                var sn: i32 = 0;
-                while (sn < nslots) { sc_snap = sc_snap.append(slots[sn]); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(0); sn = sn + 1; }
+                var rd_if: i32 = sc_kind.len() - 1;
+                sc_snap = row_set(sc_snap, rd_if, nslots, slots, true);
+                sc_then_slots = row_set(sc_then_slots, rd_if, nslots, slots, false);
+                sc_header_phis = row_set(sc_header_phis, rd_if, nslots, slots, false);
                 cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none(); cur_dead = false;
             }
         } else if (k == "else") {
@@ -1121,8 +1137,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             sc_then_blk = sc_then_blk.append(0);
             sc_then_reaches = sc_then_reaches.append(0);
             sc_parent = sc_parent.append(0);
-            var bsn: i32 = 0;
-            while (bsn < nslots) { sc_snap = sc_snap.append(0); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(0); bsn = bsn + 1; }
+            var rd_blk: i32 = sc_kind.len() - 1;
+            sc_snap = row_set(sc_snap, rd_blk, nslots, slots, false);
+            sc_then_slots = row_set(sc_then_slots, rd_blk, nslots, slots, false);
+            sc_header_phis = row_set(sc_header_phis, rd_blk, nslots, slots, false);
         } else if (k == "loop") {
             var hdr_id: i32 = next_blk; next_blk = next_blk + 1;
             var entry_blk: i32 = cur_id;
@@ -1152,8 +1170,10 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
             sc_then_blk = sc_then_blk.append(0);
             sc_then_reaches = sc_then_reaches.append(0);
             sc_parent = sc_parent.append(entry_blk);
-            var ls: i32 = 0;
-            while (ls < nslots) { sc_snap = sc_snap.append(0); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(hp_row[ls]); ls = ls + 1; }
+            var rd_loop: i32 = sc_kind.len() - 1;
+            sc_snap = row_set(sc_snap, rd_loop, nslots, slots, false);
+            sc_then_slots = row_set(sc_then_slots, rd_loop, nslots, slots, false);
+            sc_header_phis = row_set(sc_header_phis, rd_loop, nslots, hp_row, true);
             cur_id = hdr_id; cur_insts = hdr_insts; cur_preds = [entry_blk]; cur_term = STerm_none(); cur_dead = false;
         } else if (k == "br" || k == "brif") {
             var depth: i32 = op.i32_imm;
@@ -1249,7 +1269,6 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
                 sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
-                sc_snap = drop_n(sc_snap, nslots); sc_then_slots = drop_n(sc_then_slots, nslots); sc_header_phis = drop_n(sc_header_phis, nslots);
             } else if (sc_kind[t2] == "loop") {
                 var luid2: i32 = sc_uid[t2];
                 var hid: i32 = sc_target[t2];
@@ -1292,7 +1311,6 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
                 sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
-                sc_snap = drop_n(sc_snap, nslots); sc_then_slots = drop_n(sc_then_slots, nslots); sc_header_phis = drop_n(sc_header_phis, nslots);
             } else {
                 // block: open the exit, merging all br/brif-out edges (+ a
                 // fall-through edge if the current block reaches `end` live).
@@ -1346,7 +1364,6 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[], struct
                 sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
                 sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
                 sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
-                sc_snap = drop_n(sc_snap, nslots); sc_then_slots = drop_n(sc_then_slots, nslots); sc_header_phis = drop_n(sc_header_phis, nslots);
             }
         } else {
             ok = false;   // outside the slice — caller falls back.
