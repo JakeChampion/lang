@@ -328,7 +328,23 @@ function prod_mem_kind(k: string): boolean {
         "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is",
         "struct_make", "arr_make", "tuple_make", "opt_make", "opt_none"];
     for x in mem { if (x == k) { return true; } }
-    return false;
+    return prod_call_argc(k) > 0;
+}
+
+// prod_call_argc is the operand count of an op the stack machine emits as a
+// call into the runtime, 0 for any other op. str_call (49) reaches a
+// Fern-compiled helper on the stack ABI with the arguments in order;
+// rt_call (50) a routine on the register ABI.
+function prod_call_argc(k: string): i32 {
+    if (k == "str_concat" || k == "str_eq" || k == "str_cmp") { return 2; }
+    if (k == "arr_slice") { return 3; }
+    if (k == "str_from_bytes" || k == "alloc" || k == "alloc_u8") { return 1; }
+    if (k == "arr_push" || k == "arr_push_owned" || k == "arr_push_i64" || k == "arr_push_f64") { return 2; }
+    return 0;
+}
+function prod_call_kind(k: string): i32 {
+    if (k == "alloc" || k == "alloc_u8" || util.str_has_prefix(k, "arr_push")) { return 50; }
+    return 49;
 }
 
 // ld_off is the byte offset a single-load op reads at, or -1 when `k` is
@@ -356,6 +372,7 @@ function lift_prod_mem(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts
     if (k == "tuple_make") { return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv); }
     if (k == "opt_make") { return lift_opt_make_prod(op.i32_imm, true, lv); }
     if (k == "opt_none") { return lift_opt_make_prod(1, false, lv); }
+    if (prod_call_argc(k) > 0) { return lift_pop_push(lv, prod_call_argc(k), prod_call_kind(k), 0, k); }
     return lift_prod_read(k, op, lv);
 }
 
