@@ -113,6 +113,49 @@ against the native-built compiler's 2.45 GB at a lower high-water mark
 of the MODULE, not the function — a whole-module structure appended to
 under a count of 2 — and the next sample is on that input.
 
+## The field moved into a counted slot
+
+The byte sample on `asm_modload_run` (the watchpoint reading the copied
+length at each hit) put 5.3 GB of the 5.8 GB on one shape:
+
+```fern
+function step(own e: Emit, op: ir.Op): Emit {
+    return Emit { ...e, r: emit(e.r, op) };
+}
+```
+
+`emit` takes its accumulator by `own`. The record `e` is owned here, and
+`e.r` is a projection of it, so the supply for the call was RETAIN: the
+callee got a unit of the field and the record kept its own, `emit`'s
+append found the buffer under two counts, and copied it. Every op the
+ssarc chain emits through an `Emit` record paid the whole `ops` buffer.
+
+`ssaunits` has a third supply mode beside retain and move now:
+`steal_unit`. A retained projection whose root the frame owns, and whose
+value the instruction names once, is stolen: `ssarc.steal` tests the
+record's count with `__fern_rc_is_unique`, clears the field in place when
+the record is the only holder — the callee then owns the unit the record
+held — and retains as before when it is not, because a second holder of
+the record still reads the field. The projection stays a plain read; what
+changes is which unit the callee is handed.
+
+Measured, produced compiler, semantic build:
+
+| input | compiler | shared appends | bytes copied | `__heap_bump_bytes` |
+|---|---|---|---|---|
+| `checker.fern` | native-built | 809,126 | 251 MB | 1,007 MB |
+| `checker.fern` | produced, accumulator `own` | 376,181 | 950 MB | 976 MB |
+| `checker.fern` | produced, field stolen | 263,057 | 76 MB | 976 MB |
+| `asm_modload_run` | native-built | 3,974,650 | 2.45 GB | 6.69 GB |
+| `asm_modload_run` | produced, accumulator `own` | 1,705,652 | 5.80 GB | 3.76 GB |
+| `asm_modload_run` | produced, field stolen | 1,162,833 | 577 MB | 3.76 GB |
+
+The output is byte-identical to the AST build on both inputs. The RC
+fixture's `thread_run` threads a record through such a call seven times
+and reads the shared-append counter: 210 with the steal, 214 without;
+`thread_shared` keeps a second holder of the record and reads both
+holders' fields after the call.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The
