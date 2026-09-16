@@ -217,22 +217,22 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
 // instantiation the body is produced under.
 function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
     if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return true; }
-    if (bare_typevar(fd.ret_type, scope)) { return true; }
-    for p in fd.params { if (bare_typevar(p.type_name, scope)) { return true; } }
-    return receiver_typevar(fd.receiver_type, scope);
+    if (spelled_typevar(fd.ret_type, scope)) { return true; }
+    for p in fd.params { if (spelled_typevar(p.type_name, scope)) { return true; } }
+    return spelled_typevar(fd.receiver_type, scope);
 }
 
-// A method on a generic receiver — `(o: Option[T]) is_some()` — declares no
-// type parameter of its own: its variables are the names its receiver's
-// arguments spell.
-function receiver_typevar(recv: string, scope: checker.Scope): boolean {
-    var open: i32 = util.index_of_sub(recv, "[");
-    if (open < 0) { return false; }
-    var i: i32 = open + 1;
-    while (i < recv.len()) {
+// A type variable anywhere in a spelling — bare, an array's element, a
+// function type's slot, a receiver's argument — marks the declaration a
+// template: a method on `Option[T]` declares no type parameter of its own,
+// and the parser's instance of `map[T, U]` at `T = i32` keeps `U` in its
+// result for the function argument to bind.
+function spelled_typevar(spelling: string, scope: checker.Scope): boolean {
+    var i: i32 = 0;
+    while (i < spelling.len()) {
         var start: i32 = i;
-        while (i < recv.len() && ((recv[i] >= b'A' && recv[i] <= b'Z') || (recv[i] >= b'a' && recv[i] <= b'z') || (recv[i] >= b'0' && recv[i] <= b'9') || recv[i] == b'_')) { i = i + 1; }
-        if (i > start && bare_typevar(slice_unchecked(recv, start, i) + "", scope)) { return true; }
+        while (i < spelling.len() && ((spelling[i] >= b'A' && spelling[i] <= b'Z') || (spelling[i] >= b'a' && spelling[i] <= b'z') || (spelling[i] >= b'0' && spelling[i] <= b'9') || spelling[i] == b'_')) { i = i + 1; }
+        if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) { return true; }
         if (i == start) { i = i + 1; }
     }
     return false;
@@ -1134,8 +1134,13 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
 // the way the declaration keyed its contract, and the way every backend labels
 // the body: <Type>.<method>. The receiver is argument 0, because the callee
 // declared it as parameter 0.
-function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, statement: boolean): Value {
-    var recv: Value = expr(fa.obj, s, typeinfo.unchecked());
+function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, statement: boolean, expected: typeinfo.Type): Value {
+    // An insert hands its receiver back, so the receiver's shape is the
+    // call's: the head of a literal's `map_new(n).insert(k, v)` chain names no
+    // shape of its own and takes the destination's through the chain.
+    var want: typeinfo.Type = typeinfo.unchecked();
+    if ((fa.field == "insert" || fa.field == "set") && ssasem.is_map(expected)) { want = expected; }
+    var recv: Value = expr(fa.obj, s, want);
     s = recv.s;
     if (!s.ok) { return recv; }
     var owner: string = struct_name(s.values[recv.id]);
@@ -1200,9 +1205,14 @@ function cell_construction(c: ast.ExprCall, s: State, expected: typeinfo.Type): 
 // carries no element the call names, so the shape is the destination's — the
 // only place it is written — and a call with none is refused rather than
 // guessed at.
-function map_construction(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+// A map names no element in its construction, so its shape is the
+// destination's; a construction with none, the head of a literal's
+// `map_new(n).insert(k, v)` chain, takes the checker's.
+function map_construction(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+    if (!ssasem.is_map(expected)) { expected = checked(e, s); }
     if (!ssasem.is_supported_map(expected)) {
         if (!ssasem.is_map(expected)) { return refused(s, "unsupported map shape: no destination names one"); }
+        if (typeinfo.spelling(expected).len() == 0) { return refused(s, "unsupported map shape: columns unresolved"); }
         return refused(s, "unsupported map shape: " + typeinfo.spelling(expected));
     }
     var cap: Value = expr(c.args[0], s, t_i32());
@@ -1534,7 +1544,7 @@ function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expect
     if let ast.ExprFieldAccess(mfa) = c.callee {
         var head: string = type_head(mfa.obj, s);
         if (head.len() > 0) { return qualified_call(e, head, mfa.field, c, s, statement, expected); }
-        return method_call(c, mfa, s, statement);
+        return method_call(c, mfa, s, statement, expected);
     }
     var name: string = "";
     if let ast.ExprIdent(id) = c.callee { name = id.name; }
@@ -1576,7 +1586,7 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (is_slice_call(name, c)) { return string_slice(c, s); }
     if (name == "cell_new" && c.args.len() == 1) { return cell_construction(c, s, expected); }
-    if (name == "map_new" && c.args.len() == 1) { return map_construction(c, s, expected); }
+    if ((name == "map_new" || name == "map_new_i32") && c.args.len() == 1) { return map_construction(e, c, s, expected); }
     // The lambda lift's closure constructor names no declaration of its own:
     // it is the marker left where a capturing inline lambda — or a bare
     // function name at a function-typed argument — was written, carrying the

@@ -508,7 +508,9 @@ Unsupported constructs refuse the whole function with a reason.
   A map names no element in its construction, so the DESTINATION is the only
   place its shape is written: `map_new(2)` at an annotated binding or a
   contract's parameter produces, and one reaching a slot that spells no shape
-  is refused.
+  is refused. A literal desugars to a `map_new(n).insert(k, v)` chain, and
+  an insert hands its receiver back, so the chain's head takes the
+  destination's shape through the inserts.
 
 - `Cell[T]`, the language's one mutable slot, as a VALUE and a declared field.
   It is a nominal name over a one-element box rather than a declared record —
@@ -525,7 +527,11 @@ Unsupported constructs refuse the whole function with a reason.
   makes or reads one.
 
 - A GENERIC declaration, as a TEMPLATE produced once per instantiation
-  (`docs/SEMANTIC-GENERICS.md`). Its contract keeps each type variable as
+  (`docs/SEMANTIC-GENERICS.md`). A declaration is generic when it declares
+  type parameters or when a type variable appears anywhere in a spelling of
+  its result, its parameters or its receiver — the parser's instance of
+  `map[T, U]` at `T = i32` keeps `U[]` for the function argument to bind.
+  Its contract keeps each type variable as
   `typeinfo.TypeErased`, a type of its own distinct from the unknown a checker
   failure produces, and a call site binds the variables structurally and left
   to right, one type per variable — a variable inside a function type, an
