@@ -645,6 +645,118 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return define(s, ssasem.array_get(), [container.id, at.id], 0, "", elem);
 }
 
+// A checked slice's decision tree as it is built: the state, and the blocks
+// that have branched away to the `None` sink so far — that sink's predecessor
+// list, which it is opened with once the tree is complete.
+struct SliceTree { s: State, preds: i32[] }
+
+// Both ends of a checked slice must fall on a codepoint boundary. An end at
+// the very start, or at or past the length, is one by construction; anywhere
+// else the byte there must not be a continuation byte. The four ways of being
+// a boundary converge on the block this returns opened, and the one way of
+// not being one leaves for the sink.
+function slice_probe(t: SliceTree, src: i32, at: i32, len: i32, sink: i32): SliceTree {
+    var s: State = t.s;
+    var preds: i32[] = t.preds;
+    var interior: i32 = s.cur.id;
+    var below: i32 = s.next_block;
+    var byte: i32 = below + 1;
+    var lead: i32 = byte + 1;
+    var ok: i32 = lead + 1;
+    s = State { ...s, next_block: ok + 1 };
+
+    var zero: Value = define(s, 1, [], 0, "", t_i32());
+    var after_start: Value = define(zero.s, 9, [at, zero.id], 0, ">", t_bool());
+    s = terminate(after_start.s, t_brif(after_start.id, below, ok));
+
+    var inside: Value = define(open(s, below, [interior]), 9, [at, len], 0, "<", t_bool());
+    s = terminate(inside.s, t_brif(inside.id, byte, ok));
+
+    var b: Value = define(open(s, byte, [below]), ssasem.str_index(), [src, at], 0, "", t_u8());
+    var low: Value = define(b.s, 1, [], 128, "", t_u8());
+    var ascii: Value = define(low.s, 9, [b.id, low.id], 0, "<", t_bool());
+    s = terminate(ascii.s, t_brif(ascii.id, ok, lead));
+
+    var first: Value = define(open(s, lead, [byte]), 1, [], 192, "", t_u8());
+    var starts: Value = define(first.s, 9, [b.id, first.id], 0, ">=", t_bool());
+    s = terminate(starts.s, t_brif(starts.id, ok, sink));
+
+    return SliceTree { s: open(s, ok, [interior, below, byte, lead]), preds: preds.append(lead) };
+}
+
+// One bound test: the tree continues into a fresh block when the predicate
+// holds and leaves for the sink when it does not.
+function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32): SliceTree {
+    var s: State = t.s;
+    var preds: i32[] = t.preds;
+    var from: i32 = s.cur.id;
+    var next: i32 = s.next_block;
+    s = State { ...s, next_block: next + 1 };
+    var held: Value = define(s, 9, [left, right], 0, op, t_bool());
+    s = terminate(held.s, t_brif(held.id, next, sink));
+    return SliceTree { s: open(s, next, [from]), preds: preds.append(from) };
+}
+
+// `s[lo:hi]` answers a view of the source's bytes when the window is in
+// bounds and both ends fall on a codepoint boundary, and `None` when it does
+// not. Every failing test leaves for one `None` block, so the whole check is
+// a decision tree with two sinks and the result joins as a single phi. The
+// length is read once and each bound evaluated once, before any test runs.
+function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
+    var src: Value = expr(sl.array, s, typeinfo.unchecked());
+    s = src.s;
+    if (!s.ok) { return src; }
+    // An array's slice is a bare view rather than an Option, and the window it
+    // hands back is a second reference to the source's buffer, which is a kind
+    // this vocabulary does not have.
+    if (!ssasem.is_text(s.values[src.id])) { return refused(s, "unsupported slice source"); }
+    var whole: typeinfo.Type = checked(e, s);
+    var layout: i32 = union_layout(s, union_name(whole));
+    if (layout != semrecords.layout_option()) { return refused(s, "unsupported slice result"); }
+    var shape: Payloads = literal_payloads(s, whole, "Some", layout);
+    if (!shape.found || shape.types.len() != 1 || !semtypes.equal(shape.types[0], t_str())) {
+        return refused(s, "unsupported slice result");
+    }
+    var len: Value = define(s, ssasem.length(), [src.id], 0, "", t_i32());
+    s = len.s;
+    var lo: Value = expr(sl.start, s, t_i32());
+    s = lo.s;
+    if (!s.ok) { return lo; }
+    var hi: i32 = len.id;
+    if (!sl.open_end) {
+        var end: Value = expr(sl.end, s, t_i32());
+        s = end.s;
+        if (!s.ok) { return end; }
+        hi = end.id;
+    }
+    if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi])) { return refused(s, "slice bound type"); }
+
+    var sink: i32 = s.next_block;
+    var join: i32 = sink + 1;
+    s = State { ...s, next_block: join + 1 };
+    var floor: Value = define(s, 1, [], 0, "", t_i32());
+    s = floor.s;
+
+    var t: SliceTree = SliceTree { s: s, preds: [] };
+    t = slice_bound(t, floor.id, "<=", lo.id, sink);
+    t = slice_bound(t, lo.id, "<=", hi, sink);
+    t = slice_bound(t, hi, "<=", len.id, sink);
+    t = slice_probe(t, src.id, lo.id, len.id, sink);
+    t = slice_probe(t, src.id, hi, len.id, sink);
+    s = t.s;
+    var sink_preds: i32[] = t.preds;
+
+    var view: Value = define(s, ssasem.slice(), [src.id, lo.id, hi], 0, "", t_str());
+    var some: Value = define(view.s, ssasem.variant_new(), [view.id], 0, "Some", whole);
+    var from_some: i32 = some.s.cur.id;
+    s = terminate(some.s, t_br(join));
+
+    var none: Value = define(open(s, sink, sink_preds), ssasem.variant_new(), [], 0, "None", whole);
+    s = terminate(none.s, t_br(join));
+
+    return define(open(s, join, [from_some, sink]), 8, [some.id, none.id], 0, "", whole);
+}
+
 function field(e: ast.Expr, fa: ast.ExprFieldAccess, s: State, expected: typeinfo.Type): Value {
     var head: string = type_head(fa.obj, s);
     if (head.len() > 0) { return qualified_variant(e, head, fa.field, [], s, expected); }
@@ -1692,6 +1804,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
         ast.ExprArray(a) => { return array(e, a, s, expected); },
         ast.ExprTuple(t) => { return tuple(e, t, s, expected); },
         ast.ExprIndex(ix) => { return index(ix, s); },
+        ast.ExprSlice(sl) => { return slice_expr(e, sl, s); },
         ast.ExprFieldAccess(fa) => { return field(e, fa, s, expected); },
         ast.ExprBinary(b) => { return binary(e, b, s, expected); },
         ast.ExprUnary(u) => { return unary(e, u, s, expected); },
