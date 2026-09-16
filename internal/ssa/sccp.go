@@ -201,19 +201,23 @@ const (
 )
 
 // latticeVal is the per-Value SCCP state. tag selects the
-// variant; for Const, kind + imm/f64/str carry the constant.
+// variant; for Const, kind + imm/f64/str carry the constant, and width
+// the integer width the value was produced at, so a proven i64 leaves
+// as an i64 const: the backends materialise a const by its Width, and a
+// wide value with no width is sign-extended from its low 32 bits.
 type latticeVal struct {
-	tag  int
-	kind OpKind // OpConstInt / OpConstBool / OpConstFloat / OpConstString
-	imm  int64
-	f64  float64
-	str  string
+	tag   int
+	kind  OpKind // OpConstInt / OpConstBool / OpConstFloat / OpConstString
+	imm   int64
+	f64   float64
+	str   string
+	width int8
 }
 
 func latticeTop() latticeVal    { return latticeVal{tag: latticeTagTop} }
 func latticeBottom() latticeVal { return latticeVal{tag: latticeTagBottom} }
-func latticeConstInt(v int64) latticeVal {
-	return latticeVal{tag: latticeTagConst, kind: OpConstInt, imm: v}
+func latticeConstInt(v int64, width int8) latticeVal {
+	return latticeVal{tag: latticeTagConst, kind: OpConstInt, imm: v, width: width}
 }
 func latticeConstBool(v bool) latticeVal {
 	lv := latticeVal{tag: latticeTagConst, kind: OpConstBool}
@@ -285,7 +289,7 @@ func latticeOf(v Value, val map[int32]latticeVal, defs map[int32]*Op) latticeVal
 	if def, ok := defs[v.ID]; ok {
 		switch def.Kind {
 		case OpConstInt:
-			return latticeConstInt(def.Imm)
+			return latticeConstInt(def.Imm, def.Width)
 		case OpConstBool:
 			return latticeConstBool(def.Imm != 0)
 		case OpConstFloat:
@@ -312,7 +316,7 @@ func reevalOp(op *Op, b *Block, val map[int32]latticeVal, defs map[int32]*Op, re
 	case IsConst(op.Kind):
 		switch op.Kind {
 		case OpConstInt:
-			newVal = latticeConstInt(op.Imm)
+			newVal = latticeConstInt(op.Imm, op.Width)
 		case OpConstBool:
 			newVal = latticeConstBool(op.Imm != 0)
 		case OpConstFloat:
@@ -394,7 +398,7 @@ func foldOp(k OpKind, width int8, args []latticeVal) latticeVal {
 	switch k {
 	case OpNeg:
 		if len(args) == 1 && args[0].kind == OpConstInt {
-			return latticeConstInt(negAtWidth(w64, args[0].imm))
+			return latticeConstInt(negAtWidth(w64, args[0].imm), width)
 		}
 	case OpNot:
 		if len(args) == 1 && args[0].kind == OpConstBool {
@@ -423,7 +427,7 @@ func foldOp(k OpKind, width int8, args []latticeVal) latticeVal {
 		if isBool {
 			return latticeConstBool(boolRes)
 		}
-		return latticeConstInt(res)
+		return latticeConstInt(res, width)
 	}
 	if args[0].kind == OpConstBool && args[1].kind == OpConstBool {
 		return foldBoolBinary(k, args[0].imm != 0, args[1].imm != 0)
@@ -547,7 +551,12 @@ func rewriteConst(op *Op, lv latticeVal) {
 	op.Kind = lv.kind
 	op.Args = nil
 	switch lv.kind {
-	case OpConstInt, OpConstBool:
+	case OpConstInt:
+		op.Imm = lv.imm
+		op.Width = lv.width
+		op.F64 = 0
+		op.Str = ""
+	case OpConstBool:
 		op.Imm = lv.imm
 		op.F64 = 0
 		op.Str = ""
