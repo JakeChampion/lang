@@ -100,7 +100,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 327/348 compared, 0 refused; 1 known divergence, the reclamation probe (#9423) — the 20 others are programs the flat backend cannot build either |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 328/348 compared, 0 refused, 0 divergences — the 20 others are programs the flat backend cannot build either |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -328,12 +328,21 @@ Two concrete blockers, and only two:
    divergence**. The one is `examples/ownership/borrowed_forward_lifetime.fern`,
    a reclamation probe: it prints `__heap_bump_bytes` growth across a churn
    loop, which the flat backend's freelist absorbs and this backend's bump
-   heap does not. That is the backend's one remaining runtime gap — it never
-   frees — and the leg now carries the arm64 leg's exact-in-both-directions
-   known-divergences list (`testdata/x86-ssa-diff-known-divergences.txt`)
-   with that row, which fails the leg again the moment the freelist port
-   (#9423) lands. A new refusal from here on is a regression, and the floor
-   is the whole buildable corpus.
+   heap did not. The leg carries the arm64 leg's exact-in-both-directions
+   known-divergences list (`testdata/x86-ssa-diff-known-divergences.txt`),
+   and that row was its only entry until the freelist port landed the same
+   day (#9423, below). A new refusal from here on is a regression, and the
+   floor is the whole buildable corpus.
+
+   **2026-09-16, the freelist.** `x86_64ssa` now reclaims through the same
+   size-class freelist as arm64ssa and the flat backend
+   (`docs/SSA-RC-RUNTIME.md`): every block that can be released comes out of
+   `__alloc`, compiled code reaches it through a register-preserving
+   trampoline, and boxes, arrays, closures, maps and mispaired reuse tokens
+   go back through `__free`. The reclamation probe agrees, so the corpus is
+   **328 compared, 0 refused, 0 divergences** and the known-divergences file
+   is empty. Strings are still the gap the arm64 leg has: `__fern_str_dec`
+   leaks at rc == 1.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than

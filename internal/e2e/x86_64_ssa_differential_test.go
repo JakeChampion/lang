@@ -55,17 +55,18 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 327 as measured 2026-09-16, once the socket family and the last
-	// singletons had emitters, which left NO program refused: 194 came from
-	// #8570's `remove_dir_all` slice, 215 from the four float reinterprets,
-	// the last refusal that was not a missing runtime helper, 219 from the
-	// string builder, 223 from `args`, `env` and `stat`, 253 from `__memcpy`
-	// and the f64 math family, 282 from the file, clock and random helpers,
-	// 301 from the Map family, 317 from `write`, `read_dir`, `read_line` and
-	// the heap probe. The 348-program corpus is 20 the flat backend cannot
-	// build, 327 compared, and one known divergence (x86SSADiffKnownFile).
-	// A new refusal is now a regression, not a coverage gap.
-	x86SSADiffMinCompared = 327
+	// 328 as measured 2026-09-16, once the freelist port (#9423) made the
+	// reclamation probe agree: 194 came from #8570's `remove_dir_all` slice,
+	// 215 from the four float reinterprets, the last refusal that was not a
+	// missing runtime helper, 219 from the string builder, 223 from `args`,
+	// `env` and `stat`, 253 from `__memcpy` and the f64 math family, 282
+	// from the file, clock and random helpers, 301 from the Map family, 317
+	// from `write`, `read_dir`, `read_line` and the heap probe, 327 from the
+	// socket family and the last singletons, which left NO program refused.
+	// The 348-program corpus is 20 the flat backend cannot build and 328
+	// compared, with no known divergence (x86SSADiffKnownFile is empty). A
+	// new refusal is now a regression, not a coverage gap.
+	x86SSADiffMinCompared = 328
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {

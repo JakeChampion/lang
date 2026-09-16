@@ -84,7 +84,8 @@ func TestAsmRunPrintReturnsItsArgument(t *testing.T) {
 
 // __alloc_reuse hands the token back when the size classes match: that is the
 // whole point of the primitive, and a fresh block instead would be correct but
-// would silently retire the optimisation.
+// would silently retire the optimisation. The token is a block BASE and both
+// sizes count the rc header, as the IR passes them.
 func TestAsmRunAllocReuseInPlace(t *testing.T) {
 	// tokenSize and size in the same 16-byte class -> ret == token.
 	sameBlock := func(tokenSize, size int64) int {
@@ -107,31 +108,36 @@ func TestAsmRunAllocReuseInPlace(t *testing.T) {
 	}
 }
 
-// The fresh path is a real allocation: rc == 1 at [data-8], like MemAlloc, and
-// the block does not overlap the token it declined to reuse.
+// The fresh path is a real allocation: a 16-aligned base the IR lays its rc
+// header on, like OpAlloc's, and the block does not overlap the token it
+// declined to reuse — which it released, so the next request of the token's
+// class gets it back.
 func TestAsmRunAllocReuseFreshBlock(t *testing.T) {
-	rcOf := func() int {
+	aligned := func() int {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
 		fresh := callPtrOp(f, e, "__alloc_reuse", constOp(f, e, 0), constOp(f, e, 0), constOp(f, e, 24))
-		f.SetRet(e, loadMem(f, e, fresh, -8, ssa.OpLoad32U))
+		f.SetRet(e, f.AddOp(e, ssa.OpAnd, fresh, constOp(f, e, 15)))
 		return assembleRunModule(t, map[string]*ssa.Func{"main": f}, "main", 8, nil)
 	}
-	if got := rcOf(); got != 1 {
-		t.Errorf("fresh block's rc = %d, want 1", got)
+	if got := aligned(); got != 0 {
+		t.Errorf("fresh block's low address bits = %d, want a 16-aligned base", got)
 	}
 
-	// A null token allocates; the token's own bytes must survive a mismatched
-	// reuse, since the block is still live for its owner.
+	// The token's own bytes must survive a mismatched reuse: the fresh block
+	// is elsewhere, and the released token comes back for its own class.
 	f := ssa.NewFunc("main")
 	e := f.NewBlock()
 	tok := allocOp(f, e, 24)
-	storeMem(f, e, tok, 0, constOp(f, e, 0x5a), ssa.OpStore)
+	storeMem(f, e, tok, 8, constOp(f, e, 0x5a), ssa.OpStore)
 	fresh := callPtrOp(f, e, "__alloc_reuse", tok, constOp(f, e, 24), constOp(f, e, 64))
-	storeMem(f, e, fresh, 0, constOp(f, e, 0x17), ssa.OpStore)
-	f.SetRet(e, loadMem(f, e, tok, 0, ssa.OpLoad))
-	if got := assembleRunModule(t, map[string]*ssa.Func{"main": f}, "main", 8, nil); got != 0x5a {
-		t.Errorf("token's word = %#x after a mismatched reuse wrote to the fresh block, want 0x5a — the blocks overlap", got)
+	storeMem(f, e, fresh, 8, constOp(f, e, 0x17), ssa.OpStore)
+	kept := loadMem(f, e, tok, 8, ssa.OpLoad)
+	again := callPtrOp(f, e, "__alloc_reuse", constOp(f, e, 0), constOp(f, e, 0), constOp(f, e, 24))
+	sameAsToken := f.AddOp(e, ssa.OpEq, again, tok)
+	f.SetRet(e, f.AddOp(e, ssa.OpAdd, kept, sameAsToken))
+	if got := assembleRunModule(t, map[string]*ssa.Func{"main": f}, "main", 8, nil); got != 0x5b {
+		t.Errorf("token word + reuse-of-token = %#x, want 0x5b (0x5a intact, and the released token handed back)", got)
 	}
 }
 

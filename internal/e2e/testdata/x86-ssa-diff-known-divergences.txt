@@ -15,5 +15,3 @@
 # the documented coverage endpoint and the test counts it separately. Adding a
 # row is admitting a wrong answer, so it needs a reason a reader can act on and
 # an issue behind it, not just a path.
-
-examples/ownership/borrowed_forward_lifetime.fern  prints __heap_bump_bytes growth across a churn loop, which the flat backend's freelist absorbs (0) and this backend's bump heap with no reclamation does not (576); the freelist port (#9423) is the fix, not this row

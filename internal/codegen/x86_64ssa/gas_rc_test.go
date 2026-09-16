@@ -94,7 +94,16 @@ func TestAsmRunRcHelpersReturnTheirPointer(t *testing.T) {
 	through := func(helper string, extra ...int64) int {
 		f := ssa.NewFunc("main")
 		e := f.NewBlock()
-		args := []ssa.Value{makeEnvOp(f, e, constOp(f, e, 9))} // rc=1 cell, 9 at [c+0]
+		var cell ssa.Value
+		if helper == "__fern_arr_dec" {
+			// An array's drop reads its cap and frees from data-16, so it
+			// needs a real array header, not the 8-byte env one.
+			cell = callPtrOp(f, e, "__alloc_u8", constOp(f, e, 8))
+			storeMem(f, e, cell, 0, constOp(f, e, 9), ssa.OpStore8)
+		} else {
+			cell = makeEnvOp(f, e, constOp(f, e, 9)) // rc=1 cell, 9 at [c+0]
+		}
+		args := []ssa.Value{cell}
 		for _, a := range extra {
 			args = append(args, constOp(f, e, a))
 		}

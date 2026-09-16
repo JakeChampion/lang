@@ -159,8 +159,8 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	// Header + n + trailing NUL.
 	w("\tmov rax, r12")
 	w("\tadd rax, 9")
-	ssaBumpAlloc(w, "rcx", "rax")
-	w("\tmov dword ptr [rcx], 1") // rc = 1
+	ssaInlineBump(w, "rcx", "rax") // a raw bump: the rewind below lowers the cursor
+	w("\tmov dword ptr [rcx], 1")  // rc = 1
 	w("\tadd rcx, 8")
 	w("\tmov rax, r12") // n, before rcx moves into the arg register
 	w("\tmov r12, rcx") // data pointer

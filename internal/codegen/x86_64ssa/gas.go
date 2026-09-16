@@ -5,6 +5,7 @@ import (
 	"github.com/jakechampion/lang/internal/strerror"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -154,6 +155,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			break
 		}
 	}
+
 	strLabels, strOrder := collectStrings(progs, names)
 	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
@@ -208,6 +210,17 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	emitRuntimeHelpers(w, helpers)
+	// The allocator and its trampoline go in when the text so far reaches
+	// them — a compiled OpAlloc, a closure cell, or a helper's allocation — so
+	// a module that never allocates carries neither.
+	if strings.Contains(b.String(), "call "+allocPresSym) {
+		emitAllocPres(w)
+		if !slices.Contains(helpers, "__alloc") {
+			helpers = append(helpers, "__alloc")
+			w(".p2align 4")
+			emitAllocHelper(w)
+		}
+	}
 	if usesTranscendentals(helpers) {
 		emitTranscendentals(w)
 	}
@@ -301,6 +314,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.quad 0")
 		w("%s:", heapBaseSym)
 		w("\t.quad 0")
+	}
+	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") {
+		emitFreelistBss(w)
 	}
 	emitProcBss(w, withArgs, withEnv)
 	emitHelperBss(w, helpers)
@@ -1216,23 +1232,10 @@ func asmInst(in Inst, scratch int) (string, error) {
 		return fmt.Sprintf("cmp %s, %s\n\t%s %s\n\tmovzx %s, %s",
 			reg(in.Dst), rightOperandText(in), cc, reg8n(in.Dst), reg(in.Dst), reg8n(in.Dst)), nil
 	case MemAlloc:
-		// Bump allocator with an 8-byte rc header (rc=1 at base+0), mirroring the
-		// native __fern_alloc_rc1 layout so __fern_rc_is_unique / the drop helpers
-		// find a valid reference count at [data-8]. base = align8(cursor); the
-		// returned data pointer is base+8; the cursor advances past header+size.
-		// See docs/SSA-RC-RUNTIME.md.
-		return strings.Join([]string{
-			fmt.Sprintf("mov %s, [rip + %s]", reg(in.Dst), heapPtrSym),
-			fmt.Sprintf("add %s, 7", reg(in.Dst)),
-			fmt.Sprintf("and %s, -8", reg(in.Dst)),                     // Dst = base (8-aligned)
-			fmt.Sprintf("mov dword ptr %s, 1", memRef(reg(in.Dst), 0)), // rc = 1
-			fmt.Sprintf("mov %s, %s", reg(scratch), reg(in.Dst)),
-			fmt.Sprintf("add %s, %s", reg(scratch), reg(in.Src)),
-			fmt.Sprintf("add %s, 8", reg(scratch)), // header bytes
-			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
-			heapGuardCall,
-			fmt.Sprintf("add %s, 8", reg(in.Dst)), // return data = base + 8
-		}, "\n\t"), nil
+		// A bare 16-aligned block of Src bytes through __alloc, exactly what
+		// the IR expects: it writes rc = 1 at base+0 itself and uses base+8
+		// as the data pointer. See docs/SSA-RC-RUNTIME.md.
+		return strings.Join(allocPresLines(reg(in.Dst), reg(in.Src)), "\n\t"), nil
 	case MemLoad:
 		mem := memRef(reg(in.Src), in.Imm)
 		if in.Bytes == 8 {
@@ -1636,26 +1639,17 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 	envReg := numAlloc      // s0 — unused by the MakeEnv/MakeClosure inst itself
 	var out []string
 	alloc := func(dst int, bytes int64) {
-		// Same rc-headed bump as MemAlloc (see asmInst): rc=1 at base+0, data at
-		// base+8, cursor past header+bytes. Keeps env blocks and closure cells
-		// droppable through __fern_rc_is_unique / the drop helpers.
-		//
-		// A zero-byte payload would return data == the bumped cursor, so the next
-		// block's rc header lands on this block's first byte. Give every block at
-		// least one 8-byte slot of its own.
+		// An rc-headed block through __alloc: rc = 1 at base+0, the payload
+		// size at base+4 (what __fern_closure_drop hands __fern_box_free),
+		// data at base+8. A zero-byte payload still gets a slot of its own.
 		if bytes == 0 {
 			bytes = 8
 		}
+		out = append(out, allocPresLines(reg(dst), fmt.Sprintf("%d", bytes+8))...)
 		out = append(out,
-			fmt.Sprintf("mov %s, [rip + %s]", reg(dst), heapPtrSym),
-			fmt.Sprintf("add %s, 7", reg(dst)),
-			fmt.Sprintf("and %s, -8", reg(dst)),
-			fmt.Sprintf("mov dword ptr %s, 1", memRef(reg(dst), 0)), // rc = 1
-			fmt.Sprintf("mov %s, %s", reg(scratch), reg(dst)),
-			fmt.Sprintf("add %s, %d", reg(scratch), bytes+8),
-			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
-			heapGuardCall,
-			fmt.Sprintf("add %s, 8", reg(dst)), // return data = base + 8
+			fmt.Sprintf("mov dword ptr %s, 1", memRef(reg(dst), 0)),         // rc = 1
+			fmt.Sprintf("mov dword ptr %s, %d", memRef(reg(dst), 4), bytes), // payload size
+			fmt.Sprintf("add %s, 8", reg(dst)),                              // data = base + 8
 		)
 	}
 	offs, sizes, envBytes := captureEnvLayout(in)
@@ -2133,10 +2127,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
 	"__str_slice":                   emitStrSliceHelper,
 	"__fern_arr_push_grow":          emitArrPushGrowHelper,
-	"__fern_arr_push_grow_ptr":      emitAliasHelper("__fern_arr_push_grow_ptr", "__fern_arr_push_grow"),
-	"__fern_arr_push_grow_str":      emitAliasHelper("__fern_arr_push_grow_str", "__fern_arr_push_grow"),
-	"__fern_arr_push_grow_move_ptr": emitAliasHelper("__fern_arr_push_grow_move_ptr", "__fern_arr_push_grow"),
-	"__fern_arr_push_grow_move_str": emitAliasHelper("__fern_arr_push_grow_move_str", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_ptr":      emitArrPushGrowElemHelper("__fern_arr_push_grow_ptr", "apgp", false),
+	"__fern_arr_push_grow_str":      emitArrPushGrowElemHelper("__fern_arr_push_grow_str", "apgs", false),
+	"__fern_arr_push_grow_move_ptr": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_ptr", "apgmp", true),
+	"__fern_arr_push_grow_move_str": emitArrPushGrowElemHelper("__fern_arr_push_grow_move_str", "apgms", true),
 	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
 	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
 	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
@@ -2146,7 +2140,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_str_dec":                emitStrDecHelper,
 	"__fern_drop_arr_str":           emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "dropstr"),
 	"__fern_drop_arr_ptr":           emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dropptr"),
-	"__fern_map_drop":               emitAliasHelper("__fern_map_drop", "__fern_arr_dec"),
+	"__fern_map_drop":               emitMapDropHelper,
 	"__fern_map_hash_seed":          emitMapHashSeedHelper,
 	"__alloc":                       emitAllocHelper,
 	"__free":                        emitFreeHelper,
@@ -2262,15 +2256,19 @@ var heapUsingHelpers = map[string]bool{
 var runtimeHelperDeps = map[string][]string{
 	"__method_string_as_bytes":      {"__slice_make"},
 	"__fern_closure_drop":           {"__fern_box_free", "__fern_rc_dec"},
-	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow"},
-	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
-	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
-	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
+	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow", "__fern_rc_inc"},
+	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow", "__fern_rc_inc"},
+	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow", "__fern_rc_inc"},
+	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
 	"__fern_drop_arr_ptr":           {"__fern_rc_dec", "__fern_arr_dec"},
-	"__fern_map_drop":               {"__fern_arr_dec"},
+	"__fern_map_drop":               {"__free"},
+	"__fern_box_free":               {"__free"},
+	"__fern_arr_dec":                {"__free"},
+	"__alloc_reuse":                 {"__free", "__alloc"},
+	"__alloc_u8":                    {"__alloc"},
 	"__fern_map_hash_seed":          {"random_i32"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"__method_Reader_close":         {"__fern_io_error"},
@@ -2499,18 +2497,6 @@ func emitClosureDropHelper(w func(string, ...any)) {
 	rcPassThroughRet(w)
 }
 
-// emitBoxFreeHelper writes __fern_box_free(data, size) -> data: release an
-// rc-headed heap block. This emitter's heap has no freelist yet (the arm64 SSA
-// emitter's does, docs/SSA-RC-RUNTIME.md), so this is a no-op that returns the
-// data pointer. A real freelist return is the follow-up that makes the size arg
-// live.
-func emitBoxFreeHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__fern_box_free"))
-	w("\tmov rax, rdi") // return data unchanged; free is a no-op for now
-	w("\tret")
-}
-
 // emitStrLenHelper writes __str_len(ptr) -> i32: the byte length of a
 // single-word string, stored as a 4-byte field immediately before the data
 // (the layout ConstStr emits and the native backends use — length at [ptr-4]).
@@ -2522,28 +2508,44 @@ func emitStrLenHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitArrDecHelper writes __fern_arr_dec(data, stride): the array-drop the IR
-// inserts at scope exit. The array element pointer carries a 16-byte header with
-// its reference count at [data-8] (ArrayLit builds it: cap@-12, rc@-8, len@-4).
-// Guarded (null / low-address / static sentinel); if the array is uniquely held
-// (rc == 1) the buffer would be freed, a no-op while this emitter's heap has
-// no freelist (the arm64 SSA emitter's does), so we just return; otherwise it
-// drops a shared reference. The stride arg is unused until real reclamation
-// lands. Leaf.
+// emitArrDecHelper writes __fern_arr_dec(data, stride) -> data: the array
+// drop the IR inserts at scope exit. The data pointer sits past a header of
+// max(16, stride) bytes with cap@-12, rc@-8 and len@-4. Guarded (null,
+// low address, static sentinel); on the last reference (rc == 1) the buffer
+// goes back to the freelist (base = data - headerBytes, headerBytes +
+// cap*stride bytes) — the elements are not walked, the __fern_drop_arr_*
+// wrappers do that first; rc > 1 drops a shared reference. rbx = data across
+// the free.
 func emitArrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_arr_dec"))
+	w("\tmov rax, rdi")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_arrdec_ret")
-	w("\tmov eax, %s", memRef("rdi", -8)) // rc
-	w("\ttest eax, eax")
-	w("\tjs .Lssa_arrdec_ret") // static sentinel
-	w("\tcmp eax, 1")
-	w("\tjle .Lssa_arrdec_ret") // rc<=1: unique (leak, no free) or already dropped
-	w("\tsub eax, 1")
-	w("\tmov %s, eax", memRef("rdi", -8))
+	w("\tmov ecx, %s", memRef("rdi", -8)) // rc
+	w("\ttest ecx, ecx")
+	w("\tjle .Lssa_arrdec_ret") // static sentinel, or already dropped
+	w("\tcmp ecx, 1")
+	w("\tje .Lssa_arrdec_free")
+	w("\tsub ecx, 1")
+	w("\tmov %s, ecx", memRef("rdi", -8))
 	w(".Lssa_arrdec_ret:")
-	rcPassThroughRet(w)
+	w("\tret")
+	w(".Lssa_arrdec_free:")
+	w("\tpush rbx") // one push past the return address: 16-aligned for the call
+	w("\tmov rbx, rdi")
+	w("\tmov esi, esi")
+	w("\tmov ecx, 16")
+	w("\tcmp rsi, 16")
+	w("\tcmova rcx, rsi")                  // headerBytes = max(16, stride)
+	w("\tmov edx, %s", memRef("rdi", -12)) // cap
+	w("\timul rsi, rdx")
+	w("\tadd rsi, rcx") // size = cap*stride + headerBytes
+	w("\tsub rdi, rcx") // base = data - headerBytes
+	w("\tcall %s", fnLabel("__free"))
+	w("\tmov rax, rbx")
+	w("\tpop rbx")
+	w("\tret")
 }
 
 // emitArrIdxHelperN writes an indexing helper `<name>(base, idx) -> elem
@@ -2764,28 +2766,25 @@ func emitAllocU8Helper(w func(string, ...any)) {
 	// the zero-fill below then writes the unwrapped count past it.
 	w("\ttest edi, edi")
 	w("\tjs .Lssa_allocu8_len_overflow")
-	w("\tmov esi, edi")        // n, preserved across the bump
-	w("\tlea rdx, [rsi + 16]") // allocSize = n + header
-	w("\tmov r8, [rip + %s]", heapPtrSym)
-	w("\tadd r8, 7")
-	w("\tand r8, -8") // base, 8-aligned
-	w("\tmov r9, r8")
-	w("\tadd r9, rdx")
-	w("\tmov [rip + %s], r9", heapPtrSym)
-	w("\t%s", heapGuardCall)
-	w("\tlea rax, [r8 + 16]")            // data
-	w("\tmov dword ptr [rax - 12], esi") // cap = n
+	w("\tpush rbx")            // one push past the return address: 16-aligned for the call
+	w("\tmov ebx, edi")        // n
+	w("\tlea edi, [rbx + 16]") // allocSize = n + header
+	w("\tcall %s", fnLabel("__alloc"))
+	w("\tadd rax, 16")                   // data
+	w("\tmov dword ptr [rax - 12], ebx") // cap = n
 	w("\tmov dword ptr [rax - 8], 1")    // rc = 1
-	w("\tmov dword ptr [rax - 4], esi")  // len = n
-	// Zero the payload. rep stosb writes through rdi and consumes rcx, so the
-	// return value is parked in r10 for the duration.
+	w("\tmov dword ptr [rax - 4], ebx")  // len = n
+	// Zero the payload — a popped block carries its last contents. rep stosb
+	// writes through rdi and consumes rcx, so the return value is parked in
+	// r10 for the duration.
 	w("\tmov r10, rax")
 	w("\tmov rdi, rax")
-	w("\tmov ecx, esi")
+	w("\tmov ecx, ebx")
 	w("\txor eax, eax")
 	w("\tcld")
 	w("\trep stosb")
 	w("\tmov rax, r10")
+	w("\tpop rbx")
 	w("\tret")
 	emitLenOverflowAbort(w, ".Lssa_allocu8_len_overflow", "__ssa_msg_alloc_size", msgAllocSizeOutOfRange)
 }
@@ -2925,13 +2924,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tadd r11, r10") // allocSize = headerBytes + newCap*stride
 	w("\tcmp r11, 2147483647")
 	w("\tja .Lssa_apg_sizebad")
-	w("\tmov rax, [rip + %s]", heapPtrSym)
-	w("\tadd rax, 7")
-	w("\tand rax, -8") // base (8-aligned)
-	w("\tmov rcx, rax")
-	w("\tadd rcx, r11")
-	w("\tmov [rip + %s], rcx", heapPtrSym)
-	w("\t%s", heapGuardCall) // preserves rax and rcx, so base survives
+	ssaBumpAlloc(w, "rax", "r11") // base; every other register survives
 	w("\tmov r11, rax")
 	w("\tadd r11, r10")               // new_data = base + headerBytes
 	w("\tmov [r11 - 12], r9d")        // cap = newCap
@@ -2946,6 +2939,64 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov edi, 134")
 	w("\tmov eax, 231") // exit_group
 	w("\tsyscall")
+}
+
+// emitArrPushGrowElemHelper returns the emitter for the element-retaining
+// siblings of __fern_arr_push_grow, for arrays of rc-tracked pointers
+// (single-word strings included, which is why the _str spellings share it):
+// the same grow, then on the copy path a __fern_rc_inc over the oldLen copied
+// elements, so the fresh buffer owns a reference to every element it shares
+// with the old one. Without it the copy leaves the elements at unchanged
+// count, and the old buffer's release then drops what the new one still
+// holds — invisible until the freelist hands the element's block out again.
+//
+// moveForm is the self-append `a = a.append(v)` contract: the old buffer is
+// about to be released without an element walk, so at rc == 1 the copy
+// inherits its references and retaining would leak one per element per
+// grow; the retain happens only when rc != 1, when an alias keeps the old
+// buffer alive. Mirrors the flat backend's helpers. rbx = arr then the index,
+// r12 = oldLen, r13 = stride, r14 = the rc before the grow, r15 = new_data.
+func emitArrPushGrowElemHelper(name, tag string, moveForm bool) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		lbl := func(suffix string) string { return ".Lssa_" + tag + "_" + suffix }
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tpush rbx")
+		w("\tpush r12")
+		w("\tpush r13")
+		w("\tpush r14")
+		w("\tpush r15") // five pushes past the return address: 16-aligned for the calls
+		w("\tmov rbx, rdi")
+		w("\tmov r12d, esi")
+		w("\tmov r13d, edx")
+		w("\tmov r14d, %s", memRef("rdi", -8)) // rc before the grow
+		w("\tcall %s", fnLabel("__fern_arr_push_grow"))
+		w("\tmov r15, rax")
+		w("\tcmp r15, rbx")
+		w("\tje %s", lbl("done")) // grown in place: no copy, nothing to retain
+		if moveForm {
+			w("\tcmp r14d, 1")
+			w("\tje %s", lbl("done")) // the copy inherits a sole owner's references
+		}
+		w("\txor ebx, ebx")
+		w("%s:", lbl("loop"))
+		w("\tcmp ebx, r12d")
+		w("\tjge %s", lbl("done"))
+		w("\tmov rax, rbx")
+		w("\timul rax, r13")
+		w("\tmov rdi, [r15 + rax]") // element i
+		w("\tcall %s", fnLabel("__fern_rc_inc"))
+		w("\tadd ebx, 1")
+		w("\tjmp %s", lbl("loop"))
+		w("%s:", lbl("done"))
+		w("\tmov rax, r15")
+		w("\tpop r15")
+		w("\tpop r14")
+		w("\tpop r13")
+		w("\tpop r12")
+		w("\tpop rbx")
+		w("\tret")
+	}
 }
 
 // emitArrCowInplaceHelper writes __fern_arr_cow_inplace(arr, stride) -> buf, the
@@ -2984,14 +3035,8 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w(".Lssa_cow_hdr_ok:")
 	w("\tmov r11d, r9d")
 	w("\timul r11d, esi")
-	w("\tadd r11d, r10d") // allocSize = headerBytes + cap*stride
-	w("\tmov rax, [rip + %s]", heapPtrSym)
-	w("\tadd rax, 7")
-	w("\tand rax, -8")
-	w("\tmov rcx, rax")
-	w("\tadd rcx, r11")
-	w("\tmov [rip + %s], rcx", heapPtrSym)
-	w("\t%s", heapGuardCall)
+	w("\tadd r11d, r10d")         // allocSize = headerBytes + cap*stride
+	ssaBumpAlloc(w, "rax", "r11") // base; every other register survives
 	w("\tmov r11, rax")
 	w("\tadd r11, r10")               // new_data = base + headerBytes
 	w("\tmov [r11 - 12], r9d")        // cap
@@ -3992,50 +4037,44 @@ func emitPrintHelper(name string, fd int) func(w func(string, ...any)) {
 	}
 }
 
-// emitAllocReuseHelper writes __alloc_reuse(token, tokenSize, size) -> data —
-// the drop-reuse (FBIP) primitive. A live token whose 16-byte size class matches
-// the request's is handed straight back, so the constructor writes its fields
-// into the block the drop just released; anything else allocates fresh.
-//
-// The class arithmetic is the stack-machine backend's, ((sz+15)&-16), because a
-// match has to mean the same thing on both sides of the differential: the
-// reused block must be wide enough for the new value.
-//
-// Where this backend differs is the mismatch path. The native helper FREES the
-// dropped block before allocating, which it can do because it has a freelist;
-// this heap is a bump cursor with no reclamation (see emitArrPushGrowHelper),
-// so the block is simply left behind. A leak, not a miscompile — the same
-// trade every allocating helper here already makes.
-//
-// The fresh path is MemAlloc's sequence: rc=1 at base+0, data at base+8, cursor
-// past header+size. __ssa_heap_guard preserves rax, rcx and the flags, so the
-// data pointer survives the guard call in rax.
+// emitAllocReuseHelper writes __alloc_reuse(token, tokenSize, size) -> base —
+// the drop-reuse (FBIP) primitive. The token is the dropped value's block
+// BASE (the IR subtracts the rc header before the call), both sizes count
+// that header, and the result is a base the IR lays its own rc header on,
+// exactly as with OpAlloc. A live token whose exact 16-byte class matches
+// the request's is handed straight back, so the constructor writes its
+// fields over the dropped value's with no allocation at all — the point of
+// reuse. A null token allocates fresh; a mismatch releases the token and
+// then allocates, so a mispaired reuse is slow, not wrong. Only the small
+// tier is reused in place: a large class is 3-significant-bit, which the
+// 16-byte compare does not decide, and the free-then-allocate path is right
+// for it. rbx = the request across the calls.
 func emitAllocReuseHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__alloc_reuse"))
+	w("\tpush rbx")     // one push past the return address: 16-aligned for the calls
+	w("\tmov ebx, edx") // size
 	w("\ttest rdi, rdi")
 	w("\tjz .Lssa_reuse_fresh") // null token: nothing to reuse
-	w("\tmov rax, rsi")
+	w("\tmov eax, esi")
 	w("\tadd rax, 15")
 	w("\tand rax, -16") // class(tokenSize)
-	w("\tmov rcx, rdx")
-	w("\tadd rcx, 15")
+	w("\tlea rcx, [rbx + 15]")
 	w("\tand rcx, -16") // class(size)
 	w("\tcmp rax, rcx")
-	w("\tjne .Lssa_reuse_fresh")
+	w("\tjne .Lssa_reuse_mismatch")
+	w("\tcmp rax, 2048")
+	w("\tja .Lssa_reuse_mismatch")
 	w("\tmov rax, rdi") // in place: the token IS the block
-	w("\tret")
+	w("\tjmp .Lssa_reuse_ret")
+	w(".Lssa_reuse_mismatch:")
+	w("\tmov esi, esi")
+	w("\tcall %s", fnLabel("__free"))
 	w(".Lssa_reuse_fresh:")
-	w("\tmov rax, [rip + %s]", heapPtrSym)
-	w("\tadd rax, 7")
-	w("\tand rax, -8")            // base, 8-aligned
-	w("\tmov dword ptr [rax], 1") // rc = 1
-	w("\tmov rcx, rax")
-	w("\tadd rcx, rdx")
-	w("\tadd rcx, 8") // header
-	w("\tmov [rip + %s], rcx", heapPtrSym)
-	w("\t%s", heapGuardCall)
-	w("\tadd rax, 8") // data = base + 8
+	w("\tmov edi, ebx")
+	w("\tcall %s", fnLabel("__alloc"))
+	w(".Lssa_reuse_ret:")
+	w("\tpop rbx")
 	w("\tret")
 }
 
@@ -4099,21 +4138,6 @@ func emitDropArrElemBody(w func(string, ...any), name, elemDrop, lbl string) {
 	w("\tpop rbx")
 	w("\tpop rbp")
 	w("\tret")
-}
-
-// ssaBumpAlloc emits the bump-heap allocation every helper here opens with:
-// `dst` = the 16-aligned cursor, the cursor moves past `size` bytes, and the
-// guard checks the reservation. `size` is an immediate or a register name.
-// __ssa_heap_guard preserves rax, rcx and the flags, so a caller may hold the
-// block pointer in either across the call — anything else it must place after.
-func ssaBumpAlloc(w func(string, ...any), dst, size string) {
-	w("\tmov %s, [rip + %s]", dst, heapPtrSym)
-	w("\tadd %s, 15", dst)
-	w("\tand %s, -16", dst)
-	w("\tmov r11, %s", dst)
-	w("\tadd r11, %s", size)
-	w("\tmov [rip + %s], r11", heapPtrSym)
-	w("\t%s", heapGuardCall)
 }
 
 // emitIoErrorHelper writes __fern_io_error(errno, path) -> IoError box: the
