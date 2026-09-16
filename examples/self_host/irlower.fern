@@ -8404,6 +8404,9 @@ pub function is_sat_op(op: string): boolean {
 // Branches are the self-host's void-`if` + store-to-temp shape (lower_value_if),
 // not typed block results, so every backend lowers it unchanged. Mirrors
 // `internal/ir.(*builder).satBinary` — keep the two in step.
+// The op sequence itself is `sat_binary_ops`, over the slots this function
+// spills into, so the semantic lowering (ssarc) emits the same shape over its
+// own slots.
 function lower_sat_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerState {
     var wide: boolean = infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64;
     var kind: string = "i32";
@@ -8415,8 +8418,6 @@ function lower_sat_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerS
         kind = "u8";
     }
     var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
-    var w: i32 = 0;
-    if (wide) { w = 64; }
 
     // Spill both operands: every shape below reads each of them twice or more.
     var p: LowerState = s;
@@ -8438,102 +8439,137 @@ function lower_sat_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerS
     p = p.add_local(oname);
     var oslot: i32 = p.slot_of(oname);
     if (wide) { p = p.mark_i64(oslot, true); }
-
+    var hslot: i32 = 0 - 1;
     if (b.op == "<<|") {
         var hname: string = "$sats" + util.i32_to_string(p.locals.len());
         p = p.add_local(hname);
-        var hslot: i32 = p.slot_of(hname);
+        hslot = p.slot_of(hname);
         if (wide) { p = p.mark_i64(hslot, true); }
+    }
+    var sslot: i32 = 0 - 1;
+    if (!uns && b.op == "*|") {
+        var sname: string = "$satp" + util.i32_to_string(p.locals.len());
+        p = p.add_local(sname);
+        sslot = p.slot_of(sname);
+        if (wide) { p = p.mark_i64(sslot, true); }
+    }
+    return emit_ops(p, sat_binary_ops(b.op, kind, wide, lslot, rslot, oslot, hslot, sslot));
+}
+
+function emit_ops(s: LowerState, ops: ir.Op[]): LowerState {
+    for op in ops { s = s.emit(op); }
+    return s;
+}
+
+// sat_binary_ops is the saturating shape over SLOTS: the two operands already
+// stored in `lslot` / `rslot`, the result left in `oslot` and loaded last,
+// `hslot` the shifted value `<<|` rounds back through and `sslot` the wrapped
+// product signed `*|` divides back, -1 where the operator needs neither.
+// `kind` names the operand width and signedness (i32 / u32 / u8 / i64 / u64).
+pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32, hslot: i32, sslot: i32): ir.Op[] {
+    var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+    var w: i32 = 0;
+    if (wide) { w = 64; }
+    var ops: ir.Op[] = [];
+
+    if (op == "<<|") {
         var back: string = "shr_s";
         if (uns) { back = "shr_u"; }
-        p = sat_load(lslot, p);
-        p = sat_load(rslot, p);
-        p = sat_arith("shl", kind, w, p);
-        p = p.emit(ir.op_store_local(hslot));
-        p = sat_load(hslot, p);
-        p = sat_load(rslot, p);
-        p = p.emit(ir.op_bin(back, w, false));
-        p = sat_load(lslot, p);
-        p = p.emit(ir.op_bin("eq", w, false));
-        p = p.emit(ir.op_if(0));
-        p = sat_load(hslot, p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_else());
-        if (uns) {
-            p = sat_const(kind, "max", p);
-            p = p.emit(ir.op_store_local(oslot));
-            p = p.emit(ir.op_end());
-            return sat_load(oslot, p);
+        if (hslot >= 0) {
+            ops = sat_load(lslot, ops);
+            ops = sat_load(rslot, ops);
+            ops = sat_arith("shl", kind, w, ops);
+            ops = ops.append(ir.op_store_local(hslot));
         }
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin("lt_s", w, false));
-        p = p.emit(ir.op_if(0));
-        p = sat_const(kind, "min", p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_else());
-        p = sat_const(kind, "max", p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_end());
-        p = p.emit(ir.op_end());
-        return sat_load(oslot, p);
+        ops = sat_temp(hslot, "shl", false, kind, w, lslot, rslot, ops);
+        ops = sat_load(rslot, ops);
+        ops = ops.append(ir.op_bin(back, w, false));
+        ops = sat_load(lslot, ops);
+        ops = ops.append(ir.op_bin("eq", w, false));
+        ops = ops.append(ir.op_if(0));
+        ops = sat_temp(hslot, "shl", false, kind, w, lslot, rslot, ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_else());
+        if (uns) {
+            ops = sat_const(kind, "max", ops);
+            ops = ops.append(ir.op_store_local(oslot));
+            ops = ops.append(ir.op_end());
+            ops = sat_load(oslot, ops);
+        return ops;
+        }
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin("lt_s", w, false));
+        ops = ops.append(ir.op_if(0));
+        ops = sat_const(kind, "min", ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_else());
+        ops = sat_const(kind, "max", ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_end());
+        ops = ops.append(ir.op_end());
+        ops = sat_load(oslot, ops);
+        return ops;
     }
 
     if (uns) {
-        if (b.op == "+|") {
-            p = sat_load(lslot, p);
-            p = sat_const(kind, "max", p);
-            p = sat_load(rslot, p);
-            p = sat_arith("sub", kind, w, p);
-            p = p.emit(ir.op_bin("gt_u", w, false));
-            p = p.emit(ir.op_if(0));
-            p = sat_const(kind, "max", p);
-            p = p.emit(ir.op_store_local(oslot));
-            p = p.emit(ir.op_else());
-            p = sat_load(lslot, p);
-            p = sat_load(rslot, p);
-            p = sat_arith("add", kind, w, p);
-            p = p.emit(ir.op_store_local(oslot));
-            p = p.emit(ir.op_end());
-            return sat_load(oslot, p);
+        if (op == "+|") {
+            ops = sat_load(lslot, ops);
+            ops = sat_const(kind, "max", ops);
+            ops = sat_load(rslot, ops);
+            ops = sat_arith("sub", kind, w, ops);
+            ops = ops.append(ir.op_bin("gt_u", w, false));
+            ops = ops.append(ir.op_if(0));
+            ops = sat_const(kind, "max", ops);
+            ops = ops.append(ir.op_store_local(oslot));
+            ops = ops.append(ir.op_else());
+            ops = sat_load(lslot, ops);
+            ops = sat_load(rslot, ops);
+            ops = sat_arith("add", kind, w, ops);
+            ops = ops.append(ir.op_store_local(oslot));
+            ops = ops.append(ir.op_end());
+            ops = sat_load(oslot, ops);
+        return ops;
         }
-        if (b.op == "-|") {
-            p = sat_load(lslot, p);
-            p = sat_load(rslot, p);
-            p = p.emit(ir.op_bin("lt_u", w, false));
-            p = p.emit(ir.op_if(0));
-            p = sat_const(kind, "zero", p);
-            p = p.emit(ir.op_store_local(oslot));
-            p = p.emit(ir.op_else());
-            p = sat_load(lslot, p);
-            p = sat_load(rslot, p);
-            p = sat_arith("sub", kind, w, p);
-            p = p.emit(ir.op_store_local(oslot));
-            p = p.emit(ir.op_end());
-            return sat_load(oslot, p);
+        if (op == "-|") {
+            ops = sat_load(lslot, ops);
+            ops = sat_load(rslot, ops);
+            ops = ops.append(ir.op_bin("lt_u", w, false));
+            ops = ops.append(ir.op_if(0));
+            ops = sat_const(kind, "zero", ops);
+            ops = ops.append(ir.op_store_local(oslot));
+            ops = ops.append(ir.op_else());
+            ops = sat_load(lslot, ops);
+            ops = sat_load(rslot, ops);
+            ops = sat_arith("sub", kind, w, ops);
+            ops = ops.append(ir.op_store_local(oslot));
+            ops = ops.append(ir.op_end());
+            ops = sat_load(oslot, ops);
+        return ops;
         }
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin("ne", w, false));
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "max", p);
-        p = sat_load(lslot, p);
-        p = sat_arith("div_u", kind, w, p);
-        p = p.emit(ir.op_bin("gt_u", w, false));
-        p = p.emit(ir.op_bin("and", 0, false));
-        p = p.emit(ir.op_if(0));
-        p = sat_const(kind, "max", p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_else());
-        p = sat_load(lslot, p);
-        p = sat_load(rslot, p);
-        p = sat_arith("mul", kind, w, p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_end());
-        return sat_load(oslot, p);
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin("ne", w, false));
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "max", ops);
+        ops = sat_load(lslot, ops);
+        ops = sat_arith("div_u", kind, w, ops);
+        ops = ops.append(ir.op_bin("gt_u", w, false));
+        ops = ops.append(ir.op_bin("and", 0, false));
+        ops = ops.append(ir.op_if(0));
+        ops = sat_const(kind, "max", ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_else());
+        ops = sat_load(lslot, ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith("mul", kind, w, ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_end());
+        ops = sat_load(oslot, ops);
+        return ops;
     }
 
-    if (b.op == "+|" || b.op == "-|") {
+    if (op == "+|" || op == "-|") {
         // `adj` reaches the guard bound (MAX ∓ b) — the inverse of the
         // arithmetic; `act` is the arithmetic itself. The sign test on b
         // that selects the clamp direction flips with the operator too.
@@ -8541,93 +8577,93 @@ function lower_sat_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerS
         var adj: string = "sub";
         var hicmp: string = "gt_s";
         var locmp: string = "lt_s";
-        if (b.op == "-|") {
+        if (op == "-|") {
             act = "sub";
             adj = "add";
             hicmp = "lt_s";
             locmp = "gt_s";
         }
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin(hicmp, w, false));
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "max", p);
-        p = sat_load(rslot, p);
-        p = sat_arith(adj, kind, w, p);
-        p = p.emit(ir.op_bin("gt_s", w, false));
-        p = p.emit(ir.op_bin("and", 0, false));
-        p = p.emit(ir.op_if(0));
-        p = sat_const(kind, "max", p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_else());
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin(locmp, w, false));
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "min", p);
-        p = sat_load(rslot, p);
-        p = sat_arith(adj, kind, w, p);
-        p = p.emit(ir.op_bin("lt_s", w, false));
-        p = p.emit(ir.op_bin("and", 0, false));
-        p = p.emit(ir.op_if(0));
-        p = sat_const(kind, "min", p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_else());
-        p = sat_load(lslot, p);
-        p = sat_load(rslot, p);
-        p = sat_arith(act, kind, w, p);
-        p = p.emit(ir.op_store_local(oslot));
-        p = p.emit(ir.op_end());
-        p = p.emit(ir.op_end());
-        return sat_load(oslot, p);
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin(hicmp, w, false));
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "max", ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(adj, kind, w, ops);
+        ops = ops.append(ir.op_bin("gt_s", w, false));
+        ops = ops.append(ir.op_bin("and", 0, false));
+        ops = ops.append(ir.op_if(0));
+        ops = sat_const(kind, "max", ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_else());
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin(locmp, w, false));
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "min", ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(adj, kind, w, ops);
+        ops = ops.append(ir.op_bin("lt_s", w, false));
+        ops = ops.append(ir.op_bin("and", 0, false));
+        ops = ops.append(ir.op_if(0));
+        ops = sat_const(kind, "min", ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_else());
+        ops = sat_load(lslot, ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(act, kind, w, ops);
+        ops = ops.append(ir.op_store_local(oslot));
+        ops = ops.append(ir.op_end());
+        ops = ops.append(ir.op_end());
+        ops = sat_load(oslot, ops);
+        return ops;
     }
 
     // Signed `*|`: stash the wrapped product, then the division round-trip.
-    var sname: string = "$satp" + util.i32_to_string(p.locals.len());
-    p = p.add_local(sname);
-    var sslot: i32 = p.slot_of(sname);
-    if (wide) { p = p.mark_i64(sslot, true); }
-    p = sat_load(lslot, p);
-    p = sat_load(rslot, p);
-    p = sat_arith("mul", kind, w, p);
-    p = p.emit(ir.op_store_local(sslot));
-    p = sat_load(lslot, p);
-    p = sat_const(kind, "zero", p);
-    p = p.emit(ir.op_bin("ne", w, false));
-    p = sat_load(sslot, p);
-    p = sat_load(lslot, p);
-    p = sat_arith("div_s", kind, w, p);
-    p = sat_load(rslot, p);
-    p = p.emit(ir.op_bin("ne", w, false));
-    p = sat_load(lslot, p);
-    p = sat_const(kind, "negone", p);
-    p = p.emit(ir.op_bin("eq", w, false));
-    p = sat_load(rslot, p);
-    p = sat_const(kind, "min", p);
-    p = p.emit(ir.op_bin("eq", w, false));
-    p = p.emit(ir.op_bin("and", 0, false));
-    p = p.emit(ir.op_bin("or", 0, false));
-    p = p.emit(ir.op_bin("and", 0, false));
-    p = p.emit(ir.op_if(0));
-    p = sat_load(lslot, p);
-    p = sat_const(kind, "zero", p);
-    p = p.emit(ir.op_bin("lt_s", w, false));
-    p = sat_load(rslot, p);
-    p = sat_const(kind, "zero", p);
-    p = p.emit(ir.op_bin("lt_s", w, false));
-    p = p.emit(ir.op_bin("xor", 0, false));
-    p = p.emit(ir.op_if(0));
-    p = sat_const(kind, "min", p);
-    p = p.emit(ir.op_store_local(oslot));
-    p = p.emit(ir.op_else());
-    p = sat_const(kind, "max", p);
-    p = p.emit(ir.op_store_local(oslot));
-    p = p.emit(ir.op_end());
-    p = p.emit(ir.op_else());
-    p = sat_load(sslot, p);
-    p = p.emit(ir.op_store_local(oslot));
-    p = p.emit(ir.op_end());
-    return sat_load(oslot, p);
+    if (sslot >= 0) {
+        ops = sat_load(lslot, ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith("mul", kind, w, ops);
+        ops = ops.append(ir.op_store_local(sslot));
+    }
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("ne", w, false));
+    ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+    ops = sat_load(lslot, ops);
+    ops = sat_arith("div_s", kind, w, ops);
+    ops = sat_load(rslot, ops);
+    ops = ops.append(ir.op_bin("ne", w, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "negone", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "min", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    ops = ops.append(ir.op_bin("or", 0, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("lt_s", w, false));
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("lt_s", w, false));
+    ops = ops.append(ir.op_bin("xor", 0, false));
+    ops = ops.append(ir.op_if(0));
+    ops = sat_const(kind, "min", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
+    ops = sat_const(kind, "max", ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_end());
+    ops = ops.append(ir.op_else());
+    ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_end());
+    ops = sat_load(oslot, ops);
+        return ops;
 }
 
 // sat_load / sat_const / sat_arith are the width-aware emit primitives the
@@ -8646,10 +8682,22 @@ function lower_sat_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerS
 // applies after add/sub/mul/shl: the register backends hold a u32 zero-extended and
 // an i32 sign-extended in a 64-bit register, so a 32-bit product must be
 // narrowed before the signed `*|` division round-trip can detect its overflow.
-function sat_load(slot: i32, s: LowerState): LowerState {
-    return s.emit(ir.op_load_local(slot));
+function sat_load(slot: i32, own ops: ir.Op[]): ir.Op[] {
+    return ops.append(ir.op_load_local(slot));
 }
-function sat_const(kind: string, which: string, s: LowerState): LowerState {
+// An intermediate the shape reads more than once: loaded from `slot` where
+// the caller spilled it (the AST lowering, a fresh local per intermediate),
+// recomputed from the operands where it did not (`slot` -1: the semantic
+// lowering, whose slots are its values and which spills nothing).
+function sat_temp(slot: i32, k: string, norm: boolean, kind: string, w: i32, lslot: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
+    if (slot >= 0) { return sat_load(slot, ops); }
+    ops = sat_load(lslot, ops);
+    ops = sat_load(rslot, ops);
+    ops = sat_arith(k, kind, w, ops);
+    if (norm) { return chk_norm(kind, ops); }
+    return ops;
+}
+function sat_const(kind: string, which: string, own ops: ir.Op[]): ir.Op[] {
     if (kind == "i64" || kind == "u64") {
         var t: string = "0";
         if (which == "negone") { t = "-1"; }
@@ -8657,7 +8705,7 @@ function sat_const(kind: string, which: string, s: LowerState): LowerState {
             if (kind == "u64") { t = "-1"; } else { t = "9223372036854775807"; }
         }
         if (which == "min" && kind == "i64") { t = "-9223372036854775808"; }
-        return s.emit(ir.op_const_i64_text(t));
+        return ops.append(ir.op_const_i64_text(t));
     }
     var v: i32 = 0;
     if (which == "negone") { v = 0 - 1; }
@@ -8665,17 +8713,17 @@ function sat_const(kind: string, which: string, s: LowerState): LowerState {
         if (kind == "u8") { v = 255; } else if (kind == "u32") { v = 0 - 1; } else { v = 2147483647; }
     }
     if (which == "min" && kind == "i32") { v = 0 - 2147483647 - 1; }
-    var p: LowerState = s.emit(ir.op_const_i32(v));
-    if (kind == "u32") { return p.emit(ir.op_u32_wrap()); }
-    return p;
+    ops = ops.append(ir.op_const_i32(v));
+    if (kind == "u32") { return ops.append(ir.op_u32_wrap()); }
+    return ops;
 }
-function sat_arith(k: string, kind: string, w: i32, s: LowerState): LowerState {
-    var p: LowerState = s.emit(ir.op_bin(k, w, false));
-    if (k != "add" && k != "sub" && k != "mul" && k != "shl") { return p; }
-    if (kind == "u32") { return p.emit(ir.op_u32_wrap()); }
-    if (kind == "i32") { return p.emit(ir.op_int_cast("i32")); }
-    if (kind == "u8") { return p.emit(ir.op_int_cast("u8")); }
-    return p;
+function sat_arith(k: string, kind: string, w: i32, own ops: ir.Op[]): ir.Op[] {
+    ops = ops.append(ir.op_bin(k, w, false));
+    if (k != "add" && k != "sub" && k != "mul" && k != "shl") { return ops; }
+    if (kind == "u32") { return ops.append(ir.op_u32_wrap()); }
+    if (kind == "i32") { return ops.append(ir.op_int_cast("i32")); }
+    if (kind == "u8") { return ops.append(ir.op_int_cast("u8")); }
+    return ops;
 }
 
 // is_chk_op reports whether `op` is a checked arithmetic operator (`+?` /
@@ -8718,69 +8766,68 @@ pub function chk_opt_type_tag(b: ast.ExprBinary, s: LowerState): string {
 // chk_norm masks a value to the operand width — the same normalisation
 // sat_arith applies after add/sub/mul, reused for the `<<?` result (which
 // sat_arith leaves un-masked).
-function chk_norm(kind: string, s: LowerState): LowerState {
-    if (kind == "u32") { return s.emit(ir.op_u32_wrap()); }
-    if (kind == "i32") { return s.emit(ir.op_int_cast("i32")); }
-    if (kind == "u8") { return s.emit(ir.op_int_cast("u8")); }
-    return s;
+function chk_norm(kind: string, own ops: ir.Op[]): ir.Op[] {
+    if (kind == "u32") { return ops.append(ir.op_u32_wrap()); }
+    if (kind == "i32") { return ops.append(ir.op_int_cast("i32")); }
+    if (kind == "u8") { return ops.append(ir.op_int_cast("u8")); }
+    return ops;
 }
 
-function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, s: LowerState): LowerState {
-    var p: LowerState = s;
+function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, own ops: ir.Op[]): ir.Op[] {
     // Checked shift: fail on an out-of-range count — `>= width` (spelled
     // `> width-1` so gt_u / gt_s suffice) and, for signed operands, `< 0`.
     if (op == "<<?" || op == ">>?") {
         var wm1: i32 = 31;
         if (kind == "u8") { wm1 = 7; } else if (w == 64) { wm1 = 63; }
-        p = sat_load(rslot, p);
-        if (w == 64) { p = p.emit(ir.op_const_i64_text("63")); } else { p = p.emit(ir.op_const_i32(wm1)); }
-        if (uns) { return p.emit(ir.op_bin("gt_u", w, false)); }
-        p = p.emit(ir.op_bin("gt_s", w, false));   // r > width-1
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin("lt_s", w, false));    // r < 0
-        return p.emit(ir.op_bin("or", 0, false));
+        ops = sat_load(rslot, ops);
+        if (w == 64) { ops = ops.append(ir.op_const_i64_text("63")); } else { ops = ops.append(ir.op_const_i32(wm1)); }
+        if (uns) { return ops.append(ir.op_bin("gt_u", w, false)); }
+        ops = ops.append(ir.op_bin("gt_s", w, false));   // r > width-1
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin("lt_s", w, false));    // r < 0
+        return ops.append(ir.op_bin("or", 0, false));
     }
     // Checked divide / remainder: fail on a zero divisor, and for signed
     // operands also on `MIN / -1` (the one overflowing division). Same
     // condition for `/?` and `%?`.
     if (op == "/?" || op == "%?") {
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin("eq", w, false));   // r == 0
-        if (uns) { return p; }
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "min", p);
-        p = p.emit(ir.op_bin("eq", w, false));    // l == MIN
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "negone", p);
-        p = p.emit(ir.op_bin("eq", w, false));    // r == -1
-        p = p.emit(ir.op_bin("and", 0, false));
-        return p.emit(ir.op_bin("or", 0, false)); // (r==0) || (l==MIN && r==-1)
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin("eq", w, false));   // r == 0
+        if (uns) { return ops; }
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "min", ops);
+        ops = ops.append(ir.op_bin("eq", w, false));    // l == MIN
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "negone", ops);
+        ops = ops.append(ir.op_bin("eq", w, false));    // r == -1
+        ops = ops.append(ir.op_bin("and", 0, false));
+        return ops.append(ir.op_bin("or", 0, false)); // (r==0) || (l==MIN && r==-1)
     }
     if (uns) {
         if (op == "+?") {
-            p = sat_load(lslot, p);
-            p = sat_const(kind, "max", p);
-            p = sat_load(rslot, p);
-            p = sat_arith("sub", kind, w, p);
-            return p.emit(ir.op_bin("gt_u", w, false));
+            ops = sat_load(lslot, ops);
+            ops = sat_const(kind, "max", ops);
+            ops = sat_load(rslot, ops);
+            ops = sat_arith("sub", kind, w, ops);
+            return ops.append(ir.op_bin("gt_u", w, false));
         }
         if (op == "-?") {
-            p = sat_load(lslot, p);
-            p = sat_load(rslot, p);
-            return p.emit(ir.op_bin("lt_u", w, false));
+            ops = sat_load(lslot, ops);
+            ops = sat_load(rslot, ops);
+            return ops.append(ir.op_bin("lt_u", w, false));
         }
         // *?  l != 0 && r > MAX / l
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin("ne", w, false));
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "max", p);
-        p = sat_load(lslot, p);
-        p = sat_arith("div_u", kind, w, p);
-        p = p.emit(ir.op_bin("gt_u", w, false));
-        return p.emit(ir.op_bin("and", 0, false));
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin("ne", w, false));
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "max", ops);
+        ops = sat_load(lslot, ops);
+        ops = sat_arith("div_u", kind, w, ops);
+        ops = ops.append(ir.op_bin("gt_u", w, false));
+        return ops.append(ir.op_bin("and", 0, false));
     }
     if (op == "+?" || op == "-?") {
         var rsign_hi: string = "gt_s";
@@ -8792,45 +8839,45 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
             adj = "add";
         }
         // hi = (r <rsign_hi> 0) && (l > MAX <adj> r)
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin(rsign_hi, w, false));
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "max", p);
-        p = sat_load(rslot, p);
-        p = sat_arith(adj, kind, w, p);
-        p = p.emit(ir.op_bin("gt_s", w, false));
-        p = p.emit(ir.op_bin("and", 0, false));
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin(rsign_hi, w, false));
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "max", ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(adj, kind, w, ops);
+        ops = ops.append(ir.op_bin("gt_s", w, false));
+        ops = ops.append(ir.op_bin("and", 0, false));
         // lo = (r <rsign_lo> 0) && (l < MIN <adj> r)
-        p = sat_load(rslot, p);
-        p = sat_const(kind, "zero", p);
-        p = p.emit(ir.op_bin(rsign_lo, w, false));
-        p = sat_load(lslot, p);
-        p = sat_const(kind, "min", p);
-        p = sat_load(rslot, p);
-        p = sat_arith(adj, kind, w, p);
-        p = p.emit(ir.op_bin("lt_s", w, false));
-        p = p.emit(ir.op_bin("and", 0, false));
-        return p.emit(ir.op_bin("or", 0, false));
+        ops = sat_load(rslot, ops);
+        ops = sat_const(kind, "zero", ops);
+        ops = ops.append(ir.op_bin(rsign_lo, w, false));
+        ops = sat_load(lslot, ops);
+        ops = sat_const(kind, "min", ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(adj, kind, w, ops);
+        ops = ops.append(ir.op_bin("lt_s", w, false));
+        ops = ops.append(ir.op_bin("and", 0, false));
+        return ops.append(ir.op_bin("or", 0, false));
     }
     // signed *?  l != 0 && (s / l != r || (l == -1 && r == MIN))
-    p = sat_load(lslot, p);
-    p = sat_const(kind, "zero", p);
-    p = p.emit(ir.op_bin("ne", w, false));
-    p = sat_load(sslot, p);
-    p = sat_load(lslot, p);
-    p = sat_arith("div_s", kind, w, p);
-    p = sat_load(rslot, p);
-    p = p.emit(ir.op_bin("ne", w, false));
-    p = sat_load(lslot, p);
-    p = sat_const(kind, "negone", p);
-    p = p.emit(ir.op_bin("eq", w, false));
-    p = sat_load(rslot, p);
-    p = sat_const(kind, "min", p);
-    p = p.emit(ir.op_bin("eq", w, false));
-    p = p.emit(ir.op_bin("and", 0, false));
-    p = p.emit(ir.op_bin("or", 0, false));
-    return p.emit(ir.op_bin("and", 0, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
+    ops = ops.append(ir.op_bin("ne", w, false));
+    ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+    ops = sat_load(lslot, ops);
+    ops = sat_arith("div_s", kind, w, ops);
+    ops = sat_load(rslot, ops);
+    ops = ops.append(ir.op_bin("ne", w, false));
+    ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "negone", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));
+    ops = sat_load(rslot, ops);
+    ops = sat_const(kind, "min", ops);
+    ops = ops.append(ir.op_bin("eq", w, false));
+    ops = ops.append(ir.op_bin("and", 0, false));
+    ops = ops.append(ir.op_bin("or", 0, false));
+    return ops.append(ir.op_bin("and", 0, false));
 }
 
 // lower_checked_binary lowers a checked integer binary (`+?` / `-?` / `*?`,
@@ -8842,7 +8889,7 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
 // void-`if` + store-to-temp (the Option value occupies oslot, a default,
 // un-i64-marked slot: a pointer, i32 on wasm and 64-bit on the register
 // backends). Mirrors the native desugar Binary.CheckedLowered — keep the
-// two in step.
+// two in step. The op sequence is `chk_binary_ops`, shared with ssarc.
 function lower_checked_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): LowerState {
     var wide: boolean = infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64;
     var kind: string = "i32";
@@ -8853,10 +8900,6 @@ function lower_checked_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lo
     } else if (expr_subword_kind(e, s) == "u8") {
         kind = "u8";
     }
-    var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
-    var w: i32 = 0;
-    if (wide) { w = 64; }
-
     var p: LowerState = s;
     var lname: string = "$chkl" + util.i32_to_string(p.locals.len());
     p = p.add_local(lname);
@@ -8872,56 +8915,68 @@ function lower_checked_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lo
     if (wide) { p = lower_i64(b.right, p); } else { p = lower_expr(b.right, p); }
     if (!p.ok) { return p; }
     p = p.emit(ir.op_store_local(rslot));
+    var sname: string = "$chks" + util.i32_to_string(p.locals.len());
+    p = p.add_local(sname);
+    var sslot: i32 = p.slot_of(sname);
+    if (wide) { p = p.mark_i64(sslot, true); }
+    // The Option result occupies a default (un-i64-marked) pointer slot.
+    var oname: string = "$chko" + util.i32_to_string(p.locals.len());
+    p = p.add_local(oname);
+    var oslot: i32 = p.slot_of(oname);
+    return emit_ops(p, chk_binary_ops(b.op, kind, wide, lslot, rslot, sslot, oslot));
+}
+
+// chk_binary_ops is the checked shape over SLOTS: operands in `lslot` /
+// `rslot`, the wrapped result in `sslot` (a width-marked slot), the Option in
+// `oslot` (a pointer slot) and loaded last.
+pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, sslot: i32, oslot: i32): ir.Op[] {
+    var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+    var w: i32 = 0;
+    if (wide) { w = 64; }
+    var ops: ir.Op[] = [];
+
     var basek: string = "add";
-    if (b.op == "-?") { basek = "sub"; }
-    if (b.op == "*?") { basek = "mul"; }
-    if (b.op == "/?") { if (uns) { basek = "div_u"; } else { basek = "div_s"; } }
-    if (b.op == "%?") { if (uns) { basek = "rem_u"; } else { basek = "rem_s"; } }
-    if (b.op == "<<?") { basek = "shl"; }
-    if (b.op == ">>?") { if (uns) { basek = "shr_u"; } else { basek = "shr_s"; } }
+    if (op == "-?") { basek = "sub"; }
+    if (op == "*?") { basek = "mul"; }
+    if (op == "/?") { if (uns) { basek = "div_u"; } else { basek = "div_s"; } }
+    if (op == "%?") { if (uns) { basek = "rem_u"; } else { basek = "rem_s"; } }
+    if (op == "<<?") { basek = "shl"; }
+    if (op == ">>?") { if (uns) { basek = "shr_u"; } else { basek = "shr_s"; } }
     // The wrapped result `s`. `+?` / `-?` / `*?` compute it UP FRONT — signed
     // `*?`'s overflow check divides it back. `/?` / `%?` must NOT: a `84 /? 0`
     // would divide by zero here, which traps on the wasm IR path (op_bin div is
     // the raw, un-guarded division). Their overflow check needs only l / r, so
     // the division is deferred into the Some branch below, where the divisor is
     // provably non-zero (and not the signed `MIN / -1`) and so can't trap.
-    var is_divrem: boolean = b.op == "/?" || b.op == "%?";
-    var sname: string = "$chks" + util.i32_to_string(p.locals.len());
-    p = p.add_local(sname);
-    var sslot: i32 = p.slot_of(sname);
-    if (wide) { p = p.mark_i64(sslot, true); }
-    if (!is_divrem) {
-        p = sat_load(lslot, p);
-        p = sat_load(rslot, p);
-        p = sat_arith(basek, kind, w, p);
+    var is_divrem: boolean = op == "/?" || op == "%?";
+    if (!is_divrem && sslot >= 0) {
+        ops = sat_load(lslot, ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(basek, kind, w, ops);
         // `<<?`'s value can exceed the type width (`255u8 <<? 1 == 254`);
         // sat_arith doesn't mask a `shl` result (only add/sub/mul), so wrap
         // it to the operand width here — matching Fern's ordinary `<<` and
         // the native desugar. `>>?` never grows the value, so it needs none.
-        if (b.op == "<<?") { p = chk_norm(kind, p); }
-        p = p.emit(ir.op_store_local(sslot));
+        if (op == "<<?") { ops = chk_norm(kind, ops); }
+        ops = ops.append(ir.op_store_local(sslot));
     }
-    // The Option result occupies a default (un-i64-marked) pointer slot.
-    var oname: string = "$chko" + util.i32_to_string(p.locals.len());
-    p = p.add_local(oname);
-    var oslot: i32 = p.slot_of(oname);
-
-    p = chk_overflow(b.op, kind, uns, w, lslot, rslot, sslot, p);
-    p = p.emit(ir.op_if(0));
-    p = p.emit(ir.op_opt_none());
-    p = p.emit(ir.op_store_local(oslot));
-    p = p.emit(ir.op_else());
+    ops = chk_overflow(op, kind, uns, w, lslot, rslot, sslot, ops);
+    ops = ops.append(ir.op_if(0));
+    ops = ops.append(ir.op_opt_none());
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_else());
     if (is_divrem) {
-        p = sat_load(lslot, p);
-        p = sat_load(rslot, p);
-        p = sat_arith(basek, kind, w, p);
+        ops = sat_load(lslot, ops);
+        ops = sat_load(rslot, ops);
+        ops = sat_arith(basek, kind, w, ops);
     } else {
-        p = sat_load(sslot, p);
+        ops = sat_temp(sslot, basek, op == "<<?", kind, w, lslot, rslot, ops);
     }
-    if (wide) { p = p.emit(ir.op_opt_make_w(0, 64, true)); } else { p = p.emit(ir.op_opt_make(0)); }
-    p = p.emit(ir.op_store_local(oslot));
-    p = p.emit(ir.op_end());
-    return sat_load(oslot, p);
+    if (wide) { ops = ops.append(ir.op_opt_make_w(0, 64, true)); } else { ops = ops.append(ir.op_opt_make(0)); }
+    ops = ops.append(ir.op_store_local(oslot));
+    ops = ops.append(ir.op_end());
+    ops = sat_load(oslot, ops);
+        return ops;
 }
 
 // emit_str_concat_reclaim lowers a string concat `b.left + b.right`, and frees any

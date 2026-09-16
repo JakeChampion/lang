@@ -1076,14 +1076,27 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
 // comparison on the whole register too. The shifts mask their count to the
 // operand width and div/rem select their register pair from it, so at the
 // narrow width both would truncate an address — those stay refused until a
-// pointer-width binary exists for the backends to resolve.
+// pointer-width binary exists for the backends to resolve. The saturating and
+// checked operators clamp at a width the type names, which the native checker
+// refuses for an address (E009) and this boundary refuses with it.
 function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
     if (op == "/" || op == "%" || op == "<<" || op == ">>") { return typeinfo.unchecked(); }
+    if (saturating(op) || checked_arith(op)) { return typeinfo.unchecked(); }
     return integer_result(op, t);
 }
 
+// A saturating operator clamps to its operand type and a checked one answers
+// an Option of it; both are integer-only (checker E009).
+pub function saturating(op: string): boolean {
+    return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
+}
+pub function checked_arith(op: string): boolean {
+    return op == "+?" || op == "-?" || op == "*?" || op == "/?" || op == "%?" || op == "<<?" || op == ">>?";
+}
+
 function integer_result(op: string, t: typeinfo.Type): typeinfo.Type {
-    if (integer_op(op)) { return t; }
+    if (integer_op(op) || saturating(op)) { return t; }
+    if (checked_arith(op)) { return typeinfo.TypeUnion { name: "Option", args: [t] }; }
     if (comparison(op)) { return typeinfo.TypeBool { tag: 0 }; }
     return typeinfo.unchecked();
 }

@@ -26,15 +26,16 @@ import (
 //     whole tree byte-identically to the driver, whose lowering of the same
 //     inputs is the AST one. This is the primary gate: a fixpoint is blind to
 //     a stable miscompile, this is not.
+//   - The fixpoint. gen1 compiles the whole tree THROUGH the semantic path
+//     byte-identically to the driver doing the same, which is gen1's own
+//     text: the compiler the path builds reproduces itself. Secondary, for
+//     the reason above, and the gate on the produced code of the semantic
+//     modules themselves, which only this run executes.
 //
-// The fixpoint — gen1 rebuilding itself through the same path — is not here
-// yet: measured 2026-09-16 it exhausts the arena 19 minutes in (exit 125),
-// a memory defect in the produced code of the semantic modules that the doc
-// records. It joins this test when it holds.
-//
-// Measured 2026-09-16 on a 4-core x86-64 container: gen1 9m26s at 8.4 GB,
-// then about 2.5 minutes for the four emits by both compilers. It runs in a
-// job of its own (OWN_JOB_TESTS), not in a shard.
+// Measured 2026-09-16 on a 4-core x86-64 container: gen1 3m at 6.5 GB, the
+// four AST emits by both compilers about 2.5 minutes, the semantic emit of
+// the whole tree 2m47s by the driver and 4m34s at 4.4 GB by gen1. It runs in
+// a job of its own (OWN_JOB_TESTS), not in a shard.
 func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -64,11 +65,17 @@ func TestSelfHostSemanticWholeCompilerX86_64(t *testing.T) {
 
 	for _, m := range []string{"lexer", "parser", "checker", "fern"} {
 		src := filepath.Join(tree, m+".fern")
-		want := emitAsm(t, driver, src, stdlibRoot, filepath.Join(work, m+"-driver.s"))
-		got := emitAsm(t, gen1, src, stdlibRoot, filepath.Join(work, m+"-gen1.s"))
+		want := emitAsm(t, driver, src, stdlibRoot, filepath.Join(work, m+"-driver.s"), false)
+		got := emitAsm(t, gen1, src, stdlibRoot, filepath.Join(work, m+"-gen1.s"), false)
 		if !bytes.Equal(got, want) {
 			t.Fatalf("gen1 compiles %s.fern differently from the AST-lowered driver (%d bytes against %d)", m, len(got), len(want))
 		}
+	}
+
+	want := emitAsm(t, driver, entry, stdlibRoot, filepath.Join(work, "fern-driver-sem.s"), true)
+	got := emitAsm(t, gen1, entry, stdlibRoot, filepath.Join(work, "fern-gen1-sem.s"), true)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("gen1 compiles the whole tree through the semantic path differently from the driver (%d bytes against %d): the fixpoint does not hold", len(got), len(want))
 	}
 }
 
@@ -108,11 +115,15 @@ func semTally(t *testing.T, report string) (int, int) {
 }
 
 // emitAsm compiles src to x86-64 assembly text with the semantic lowering
-// OFF, so the two compilers are compared on the lowering they both carry.
-func emitAsm(t *testing.T, compiler, src, stdlibRoot, out string) []byte {
+// off (the two compilers compared on the lowering they both carry) or on
+// (the fixpoint).
+func emitAsm(t *testing.T, compiler, src, stdlibRoot, out string, semantic bool) []byte {
 	t.Helper()
 	cmd := exec.Command(compiler, "-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", out)
 	cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
+	if semantic {
+		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
+	}
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%s on %s: %v\n%s", filepath.Base(compiler), filepath.Base(src), err, msg)
 	}
