@@ -340,6 +340,37 @@ five, ratio to the flat backend:
 helpers call `__fern_str_dec` and `__fern_box_free`, which call `__free`,
 which computes the class again for a size it was handed in a register.
 
+### Measured 2026-09-16: the SSA paths never ran the IR battery
+
+Both SSA build paths lowered with `ir.LowerWith` and then called
+`ir.ElideClosurePair` alone, where the flat backends call
+`ir.OptimizeProgram` before their emitters: tail-call optimisation,
+`Inline` twice around `Defunctionalise` + `ElideClosurePair` +
+`InlineZeroCaptureClosures`, then the per-function tail. So every SSA build
+compiled the un-inlined, un-defunctionalised program — `core/map` passing
+its hash and eq functions as values into `__map_lookup_keyed`, an indirect
+call per probe that the flat backends had turned into direct, inlined code
+all along. That was `map_int`'s 1.6x instruction count against the flat
+build, and much of "codegen quality in loop bodies". The SSA paths now run
+the same battery. Best of five, ratio to the flat build; x86-64 native,
+arm64 under qemu on main before #9433's inlining:
+
+| bench | x86-64 before | x86-64 after | arm64 before | arm64 after |
+| --- | --- | --- | --- | --- |
+| `map_int` | 1.22x | **0.89x** | 1.81x | **0.90x** |
+| `map_probe_chain` | 1.17x | **0.89x** | 1.76x | **0.86x** |
+| `map_string` | 1.00x | 0.88x | 0.77x | **0.49x** |
+| `call_overhead` | 1.00x | **0.50x** | 1.35x | **0.76x** |
+| `tokenize` | 1.00x | 0.86x | 0.80x | 0.60x |
+| `ordmap_insert` | 0.91x | 0.82x | 2.49x | 2.02x |
+| `pvec_with` | | | 2.44x | 1.48x |
+
+Outputs identical on every row. Static instructions move both ways: the
+inlined callees are culled (`ordmap_insert` 6,493 → 3,048, `coreutils/sort.fern`
+62,249 → 58,962) where the map programs grow 3-4% with the inlined bodies.
+`coreutils/sort.fern` on 2M lines: `sort` 2.73 s → 2.68 s, `sort -n`
+6.25 s → 6.16 s.
+
 ### Per-backend disposition
 
 | backend | disposition |
