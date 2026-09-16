@@ -141,3 +141,64 @@ func TestFramelessFunctionCarriesNoFrameRules(t *testing.T) {
 		t.Errorf("frameless function carries no FDE at all:\n%s", body)
 	}
 }
+
+// Balanced counts would pass a rule sitting at the wrong instruction. A
+// `.cfi_def_cfa_offset 0` before the `add sp, sp, #N` says the frame is gone
+// while it is still there, and a `.cfi_restore_state` before the `ret` hands
+// the prologue's state to the one instruction an unwinder most wants to read
+// — and both balance. So pin where each rule sits.
+func TestTeardownRulesSitAtTheirInstructions(t *testing.T) {
+	f := ssa.NewFunc("f")
+	x := f.AddParam()
+	entry := f.NewBlock()
+	small := f.NewBlock()
+	big := f.NewBlock()
+	f.SetBrIf(entry, f.AddOp(entry, ssa.OpLt, x, constOp(f, entry, 10)), small, big)
+	f.SetRet(small, callOp(f, small, "leaf", x))
+	f.SetRet(big, f.AddOp(big, ssa.OpMul, x, x))
+
+	leaf := ssa.NewFunc("leaf")
+	lp := leaf.AddParam()
+	lb := leaf.NewBlock()
+	leaf.SetRet(lb, leaf.AddOp(lb, ssa.OpAdd, lp, constOp(leaf, lb, 1)))
+
+	asm, err := arm64ssa.EmitAsmModule(map[string]*ssa.Func{"f": f, "leaf": leaf}, "f", 8, []int64{3})
+	if err != nil {
+		t.Fatalf("EmitAsmModule: %v", err)
+	}
+	lines := strings.Split(funcText(t, asm, "f"), "\n")
+	at := func(i int) string {
+		if i < 0 || i >= len(lines) {
+			return "(past the end of the function)"
+		}
+		return lines[i]
+	}
+	teardowns := 0
+	for i, l := range lines {
+		if l != "\t.cfi_remember_state" {
+			continue
+		}
+		teardowns++
+		// The restores between the two are a variable number of loads, so
+		// find the next rule rather than counting instructions.
+		j := i + 1
+		for j < len(lines) && !strings.HasPrefix(lines[j], "\t.cfi_") {
+			j++
+		}
+		if got := at(j); got != "\t.cfi_def_cfa_offset 0" {
+			t.Errorf("teardown remembered at line %d: want %q to close it, got %q\n%s", i, "\t.cfi_def_cfa_offset 0", got, strings.Join(lines[i:min(len(lines), j+4)], "\n"))
+			continue
+		}
+		if got := at(j - 1); !strings.HasPrefix(got, "\tadd sp, sp, #") {
+			t.Errorf("teardown at line %d releases the frame with %q, so the rule above does not describe an `add sp`", i, got)
+		}
+		for off, want := range map[int]string{1: "\tret", 2: "\t.cfi_restore_state"} {
+			if got := at(j + off); got != want {
+				t.Errorf("teardown at line %d: want %q at +%d past the rule, got %q\n%s", i, want, off, got, strings.Join(lines[i:min(len(lines), j+4)], "\n"))
+			}
+		}
+	}
+	if teardowns != 2 {
+		t.Errorf("walked %d teardowns, want the 2 returns the function has", teardowns)
+	}
+}
