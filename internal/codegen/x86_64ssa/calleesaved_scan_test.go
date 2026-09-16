@@ -66,7 +66,10 @@ func TestWriteBodyReplacesMarkersLineByLine(t *testing.T) {
 	body := "\tmov rax, rbx\n\tmov rax, rax\n" + restoreMarker + "\n\tret\n\n\tmov rcx, 1\n" + restoreMarker + "\n\tret\n"
 	var b strings.Builder
 	writeBody(lineWriter(&b), body, []int{gpIndex("rbx"), gpIndex("r12")})
-	want := "\tmov rax, rbx\n\tpop r12\n\tpop rbx\n\tret\n\n\tmov rcx, 1\n\tpop r12\n\tpop rbx\n\tret\n"
+	// Each teardown is preceded by the rule that brackets it: the frame's
+	// state is remembered here and restored after the return, so a rule meant
+	// for one epilogue does not describe the block the layout puts next.
+	want := "\tmov rax, rbx\n\t.cfi_remember_state\n\tpop r12\n\tpop rbx\n\tret\n\n\tmov rcx, 1\n\t.cfi_remember_state\n\tpop r12\n\tpop rbx\n\tret\n"
 	if got := b.String(); got != want {
 		t.Fatalf("writeBody =\n%q\nwant\n%q", got, want)
 	}
