@@ -254,10 +254,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// leaves the lambda — belongs here too, and both compilers do prune for
 		// it (neither reports E079). It is absent because the self-host reports
 		// NOTHING for that program where the Go checker reports E038 and E042
-		// (#9518), and this gate compares the full code set. A row in
-		// lambdaBodyDivergences would make it pass without the self-host having
-		// the rule, which is the workaround CLAUDE.md names; #9518 carries the
-		// row to add once it is fixed. Native's half is pinned by
+		// (#9518), and the differential below compares the full code set with no
+		// listing escape — lambdaBodyDivergences gates only the in-lambda sweep,
+		// so there is no way to land the row before #9518 is fixed. #9518 carries
+		// the row to add once it is. Native's half is pinned by
 		// TestDeferTryOpRefused, which fails if the prune is removed.
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
