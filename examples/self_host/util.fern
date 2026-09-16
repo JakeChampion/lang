@@ -377,8 +377,14 @@ pub function str_has_prefix(s: string, prefix: string): boolean {
 // is a standalone module not staged through util. Byte-wise compare at
 // each offset, for the same reason as str_has_prefix.
 pub function contains(haystack: string, needle: string): boolean {
-    if (needle.len() == 0) { return true; }
-    if (haystack.len() < needle.len()) { return false; }
+    return index_of_sub(haystack, needle) >= 0;
+}
+
+// index_of_sub is the offset of the first occurrence of `needle` in
+// `haystack`, or -1; an empty needle is found at 0.
+pub function index_of_sub(haystack: string, needle: string): i32 {
+    if (needle.len() == 0) { return 0; }
+    if (haystack.len() < needle.len()) { return 0 - 1; }
     var i: i32 = 0;
     while (i <= haystack.len() - needle.len()) {
         var j: i32 = 0;
@@ -387,10 +393,10 @@ pub function contains(haystack: string, needle: string): boolean {
             if (haystack[i + j] != needle[j]) { hit = false; }
             j = j + 1;
         }
-        if (hit) { return true; }
+        if (hit) { return i; }
         i = i + 1;
     }
-    return false;
+    return 0 - 1;
 }
 
 // parse_f64_bits converts a decimal float spelling to the i64 IEEE-754
