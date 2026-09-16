@@ -1029,8 +1029,6 @@ func selectLines(in Inst) []string {
 	return out
 }
 
-// gpRegs is the allocatable+scratch register pool (rsp/rbp reserved for the
-// frame). reg8 is the parallel 8-bit subregister used by setcc.
 // lineWriter returns the emitter's line writer over b: one formatted line per
 // call, dropping the dead self-moves register allocation leaves behind.
 func lineWriter(b *strings.Builder) func(string, ...any) {
