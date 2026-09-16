@@ -46,7 +46,20 @@ the AST lowering builds in the next. The builder exports its contract table
 The match is by type, not by flow: a data-flow answer would say which values
 reach which parameter, and this says which could. Over-refusal is the safe
 direction, and a body it refuses falls back to the AST lowering, where the
-whole chain is AST and its leak keeps the elements alive.
+whole chain is AST and its leak keeps the elements alive. Two edges of it
+the production suite drew on the first run:
+
+- A function type with no reference in it — `(i32) => i32` — is left alone.
+  Nothing in a scalar callback is released by either side, so the two
+  lowerings agree on it whichever built the value (`capture-write`, whose
+  closure is AST-lowered for its write back, keeps its produced `apply`).
+- The mirror: a produced hoisted body whose CREATOR is AST-lowered keeps the
+  AST lowering (`ast_built_value`). The box that names it is built in the
+  creator, so an AST caller calls it under the AST convention, and on the
+  `own-forwarded-into-produced` skip leg that was a produced `visit`
+  consuming the `own` array an AST `fold` released after — 124 for 62. With
+  the trampoline on the AST side, `visit` is reached by a direct call the
+  existing contracts cover (`irlower.consume_sigs`).
 
 `TestSelfHostSemanticProduction` gains `ast-value-into-produced`, whose skip
 leg keeps the callback on the AST lowering and asserts the report turns the

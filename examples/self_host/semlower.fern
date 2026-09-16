@@ -257,10 +257,19 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
     return out;
 }
 
+// Whether a function type carries a reference: a parameter or the result
+// whose value is a box. A scalar-only callback has nothing either side could
+// release, so the two lowerings agree on it whichever built the value.
+function carries_reference(t: typeinfo.Type): boolean {
+    for p in ssasem.func_params(t) { if (ssasem.reference(p)) { return true; } }
+    return ssasem.reference(ssasem.func_result(t));
+}
+
 // Whether a value of type `t` may be one the AST lowering built: the same
 // type, or the same arity where either side's type is not in hand.
 function ast_value_call(called: typeinfo.Type[], values: AstValue[]): string {
     for t in called {
+        if (!carries_reference(t)) { continue; }
         var arity: i32 = ssasem.func_params(t).len();
         for v in values {
             if (v.arity != arity) { continue; }
@@ -269,6 +278,33 @@ function ast_value_call(called: typeinfo.Type[], values: AstValue[]): string {
         }
     }
     return "";
+}
+
+// The declaration a hoisted body was lifted out of: the name before the
+// marker. The lift names the box `__mkclo$<creator>$wrapN`, built in the
+// creator's body, so the creator is the one that hands the value out.
+function creator_of(name: string): string {
+    var markers: string[] = ["$wrap", "$clo", "$iife"];
+    for m in markers {
+        var at: i32 = util.index_of_sub(name, m);
+        if (at >= 0) { return slice_unchecked(name, 0, at) + ""; }
+    }
+    return "";
+}
+
+// A produced hoisted body whose value an AST-lowered creator builds is
+// called by the AST lowering through that box, under the AST convention:
+// the mirror of `ast_value_call`. Such a body keeps the AST lowering, and
+// what it calls directly is reached through the direct-call contracts
+// (ssarc.caller_sigs, irlower.consume_sigs) instead. A creator no row
+// names is read as AST-lowered.
+function ast_built_value(r: Rows, i: i32): string {
+    var creator: string = creator_of(r.n1[i]);
+    if (creator.len() == 0) { return ""; }
+    var at: i32 = util.index_of_str(r.n1, creator);
+    if (at < 0) { at = util.index_of_str(r.n2, creator); }
+    if (at >= 0 && r.keep[at]) { return ""; }
+    return "is a function value " + creator + " builds, which the AST lowering defines";
 }
 
 // prune turns off every produced body that calls one this boundary is not
@@ -289,6 +325,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
                 var bad: string = escaping_callee(r.body[i], reg);
                 if (bad.len() > 0) { bad = "calls " + bad + ", which the AST lowering defines"; }
                 else { bad = ast_value_call(r.called[i], values); }
+                if (bad.len() == 0) { bad = ast_built_value(r, i); }
                 if (bad.len() > 0) {
                     report(r.n1[i], bad);
                     r = Rows { ...r, keep: r.keep.with(i, false) };
