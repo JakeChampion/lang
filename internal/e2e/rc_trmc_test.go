@@ -3,6 +3,8 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
+	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -122,11 +124,27 @@ function main(): i32 {
 // TRMC-off leg's inc_all recursion needs ~24 MB. A host soft limit of 8 MB
 // fails the "on" leg, unlimited passes the "off" leg — so pin 16 MB instead
 // of inheriting whatever the host happens to use.
-func runWithStackLimit(t *testing.T, kib int, bin string) int {
+func runWithStackLimit(t *testing.T, kib int, bin string, expectOverflow bool) int {
 	t.Helper()
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib), "--", bin)
-	if out, err := cmd.CombinedOutput(); err != nil && cmd.ProcessState == nil {
+	script := fmt.Sprintf("ulimit -S -s %d && exec \"$1\"", kib)
+	if expectOverflow && runtime.GOOS == "linux" {
+		// Piped core handlers ignore RLIMIT_CORE. Omit memory mappings from
+		// this expected crash's dump before exec; the filter survives exec.
+		// Keep the parent's filter and unexpected-crash diagnostics intact.
+		script = "printf '0\\n' > /proc/self/coredump_filter && " + script
+	}
+	cmd := exec.Command("bash", "-c", script, "--", bin)
+	out, err := cmd.CombinedOutput()
+	if err != nil && cmd.ProcessState == nil {
 		t.Fatalf("run %s: %v\n%s", bin, err, out)
+	}
+	if expectOverflow {
+		// A failed shell setup or ordinary nonzero exit is not a stack
+		// overflow. Require the actual signal, including after filtering.
+		status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+		if !ok || !status.Signaled() || status.Signal() != syscall.SIGSEGV {
+			t.Fatalf("run %s: want stack-overflow SIGSEGV, got %v\n%s", bin, cmd.ProcessState, out)
+		}
 	}
 	return cmd.ProcessState.ExitCode()
 }
@@ -135,11 +153,11 @@ func TestX86_64TrmcDeepStack(t *testing.T) {
 	var on, off int
 	withTrmc(true, func() {
 		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
-		on = runWithStackLimit(t, 16*1024, bin)
+		on = runWithStackLimit(t, 16*1024, bin, false)
 	})
 	withTrmc(false, func() {
 		bin, _ := compileX86_64FreeOn(t, trmcDeepSrc)
-		off = runWithStackLimit(t, 16*1024, bin)
+		off = runWithStackLimit(t, 16*1024, bin, true)
 	})
 	if on != 0 {
 		t.Errorf("TRMC on: deep map should succeed, got %d", on)
