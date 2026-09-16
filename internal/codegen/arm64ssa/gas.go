@@ -1315,6 +1315,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"read_dir_all":                  emitReadDirAllHelper,
 	"__fern_io_error":               emitIoErrorHelper,
 	"tcp_listen":                    emitTcpListenHelper,
+	"tcp_connect":                   emitTcpConnectHelper,
 	"tcp_accept":                    emitTcpAcceptHelper,
 	"tcp_recv":                      emitTcpRecvHelper,
 	"tcp_send":                      emitTcpSendHelper,
@@ -2796,6 +2797,53 @@ func emitTcpListenHelper(w func(string, ...any)) {
 	// x0 holds -errno from the failed syscall.
 	w(".Lssa_tcpl_ret:")
 	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitTcpConnectHelper writes tcp_connect(host_be, port) → i32: an AF_INET TCP
+// socket connected to host_be:port and its fd, or -errno from whichever syscall
+// failed. host_be is the IPv4 address already in network byte order, so it goes
+// into sin_addr as it arrives; the port is byte-swapped with rev16.
+//
+// The 16-byte sockaddr_in is built from the incoming arguments before socket(2)
+// runs, which is what lets this keep one callee-saved register (x19 = fd) where
+// tcp_listen needs two. The stack pointer moves back before either branch to
+// the exit, so both paths leave the frame as they found it.
+func emitTcpConnectHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_connect"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	// sockaddr_in { family=AF_INET, port=htons(port), addr=host_be } on the stack.
+	w("\tsub sp, sp, #16")
+	w("\tmov w2, #2")
+	w("\tstrh w2, [sp]") // sin_family
+	w("\trev16 w2, w1")  // htons(port)
+	w("\tstrh w2, [sp, #2]")
+	w("\tstr w0, [sp, #4]")  // sin_addr, already network order
+	w("\tstr xzr, [sp, #8]") // sin_zero
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	w("\tmov x0, #2")
+	w("\tmov x1, #1")
+	w("\tmov x2, #0")
+	w("\tmov x8, #198") // socket
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_tcpc_ret")
+	w("\tmov x19, x0") // fd
+	// connect(fd, sa, 16)
+	w("\tmov x0, x19")
+	w("\tmov x1, sp")
+	w("\tmov x2, #16")
+	w("\tmov x8, #203") // connect
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_tcpc_ret")
+	w("\tmov x0, x19") // return fd
+	w(".Lssa_tcpc_ret:")
+	// x0 is the fd, or -errno from the failed syscall.
+	w("\tadd sp, sp, #16")
+	w("\tldr x19, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
