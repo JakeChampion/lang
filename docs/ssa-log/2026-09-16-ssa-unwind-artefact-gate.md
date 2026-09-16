@@ -32,7 +32,8 @@ symbol table:
 - `PT_GNU_EH_FRAME` exists and opens `01 1b 03 3b`, because that header is the
   only way a running program reaches `.eh_frame`;
 - its search table is sized for the FDEs it claims, and every row names a
-  function inside the R+X segment and an FDE at or after the CIE.
+  function inside the R+X segment and an FDE inside `.eh_frame` itself, whose
+  extent comes from walking the entry lengths to the zero terminator.
 
 It does not check that each FDE's range matches its function, which is what
 `TestEveryUserFunctionHasAnFDE` uses the symbol table for. That stays out of
