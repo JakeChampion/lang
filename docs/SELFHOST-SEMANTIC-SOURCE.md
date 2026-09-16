@@ -545,7 +545,7 @@ Unsupported constructs refuse the whole function with a reason.
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
 unsigned negation, generic records, labelled loops, the pattern shapes
-above, `defer`, receiver methods, generic methods, external and async
+above, `defer`, receiver methods, external and async
 functions.
 
 ## Calls
@@ -732,9 +732,12 @@ caller hands over, which is the row-less reading already.
 
 ## Remaining
 
-The producer does not yet admit a generic method, so no production consumer
-is switched and no AST ownership analysis is deleted. The form appears
-nowhere in the self-hosted compiler, so nothing in it refuses for want of it.
+A method on a generic receiver — `(o: Option[T]) is_some()` — is a template
+whose variables are the names its receiver's arguments spell, and a call
+through its `Type.method` contract instantiates it the way a folded array
+or map method is instantiated: the receiver binds the variables and the
+call names the instance. A method with type variables of its own on a
+generic-struct receiver (`(h: Holder[T]) tagged[U](u: U)`) stays refused.
 
 Records, strings, enums and struct-unions cross the boundary (`make`, `wrap`,
 `unwrap`, `tally`, `greet`, `shape`, `measure`, `sum_shapes`, `consume`,
@@ -1790,7 +1793,12 @@ tally as `produced 0 of N declarations … K refused, the AST lowering stands`
 and hands the emit `no_sub()`. A produced body beside an AST-lowered one is
 two memory conventions on one module — every crash this path has had was a
 mixed module — and the contracts `prune` reads cover the crossings it can
-see, not every data structure that crosses. The bisect knobs
+see, not every data structure that crosses. A TEMPLATE's row is no body of
+the module's — its produced instances stand for it, and one nothing
+instantiates is called by nobody — so a template with produced instances,
+or an uninstantiated one, is accounted as kept without a body; only a
+template with a refused instance is a refusal, reported under the
+template's name. The bisect knobs
 (`FERN_SEM_IR_ONLY` / `FERN_SEM_IR_SKIP`) keep the mixed module, which is
 what they exist to halve, and the production suite's skip legs run under
 them. The other half of the same decision: a declaration the substitution
