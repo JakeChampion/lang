@@ -10030,7 +10030,7 @@ func inlinePokeLines(in x86.Inst, fr frameLayout, numAlloc int) ([]string, bool)
 			out = append(out, fmt.Sprintf("%s %s, [%s]", form.mnem, operand(in.Dst), xreg(addr)))
 		}
 	}
-	return append(out, maskFix(in.Dst, in.W)...), true
+	return append(out, maskFix(in.Dst, in.W, in.Narrow)...), true
 }
 
 // inlineArrIdxLines renders an array-index call as the address compute it is,
@@ -10092,7 +10092,7 @@ func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) (
 	} else {
 		out = append(out, fmt.Sprintf("add %s, %s, %s, lsl #%d", xreg(in.Dst), xreg(base), xreg(idx), form.shift))
 	}
-	return append(out, maskFix(in.Dst, in.W)...), true
+	return append(out, maskFix(in.Dst, in.W, in.Narrow)...), true
 }
 
 // helperClobbers is, per runtime helper this file emits, the caller-saved
@@ -10274,7 +10274,7 @@ func callLines(in x86.Inst, numAlloc, scratch int, fr frameLayout) ([]string, er
 		}
 		out = append(out, resolveRegMoves(moves)...)
 		restore()
-		out = append(out, maskFix(in.Dst, in.W)...)
+		out = append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 		return out, nil
 	}
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(scratch))) // capture tag / result
@@ -10283,7 +10283,7 @@ func callLines(in x86.Inst, numAlloc, scratch int, fr frameLayout) ([]string, er
 	}
 	restore()
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(scratch))) // place tag / result
-	out = append(out, maskFix(in.Dst, in.W)...)
+	out = append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 	if in.Op == x86.CallPair {
 		// Placed after the tag (whose home may be the payload's capture reg s3) so
 		// the tag is out of s3 before Dst2 (typically s3) is written.
@@ -10531,7 +10531,7 @@ func callIndirectLines(in x86.Inst, numAlloc int, fr frameLayout) ([]string, err
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
 	out = append(out, slotRestoreLines(saved, fr.callSaveBase)...)
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
-	out = append(out, maskFix(in.Dst, in.W)...)
+	out = append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 	return out, nil
 }
 
@@ -10615,7 +10615,7 @@ func callDynLines(in x86.Inst, numAlloc int, fr frameLayout) ([]string, error) {
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
 	out = append(out, slotRestoreLines(saved, fr.callSaveBase)...)
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
-	out = append(out, maskFix(in.Dst, in.W)...)
+	out = append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 	return out, nil
 }
 
@@ -10820,7 +10820,7 @@ func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 		// name the accumulator twice, but AArch64 can read it from anywhere.
 		out, right := rightOperand(in, scratch, in.K == ssa.OpAdd || in.K == ssa.OpSub)
 		out = append(out, fmt.Sprintf("%s %s, %s, %s", mnem, xreg(in.Dst), xreg(left), right))
-		out = append(out, maskFix(in.Dst, in.W)...)
+		out = append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 		return out, nil
 	case x86.SetCmp:
 		return setCmpSeq(in, left, scratch)
@@ -10839,7 +10839,7 @@ func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 	case x86.FConv:
 		return fConvSeq(in)
 	case x86.UnNeg:
-		return append([]string{fmt.Sprintf("neg %s, %s", xreg(in.Dst), xreg(left))}, maskFix(in.Dst, in.W)...), nil
+		return append([]string{fmt.Sprintf("neg %s, %s", xreg(in.Dst), xreg(left))}, maskFix(in.Dst, in.W, in.Narrow)...), nil
 	case x86.UnOp:
 		return unOpSeq(in, left)
 	case x86.Select:
@@ -10938,7 +10938,7 @@ func divShiftSeq(in x86.Inst, left, scratch int) []string {
 			}
 		}
 	}
-	return append(out, maskFix(in.Dst, in.W)...)
+	return append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 }
 
 // memAllocSeq renders OpAlloc: a raw block of Src bytes through
@@ -10969,7 +10969,7 @@ func memLoadSeq(in x86.Inst) []string {
 	switch in.Bytes {
 	case 8:
 		load = fmt.Sprintf("ldr %s, %s", d, mem)
-		return append(append(pre, load), maskFix(in.Dst, in.W)...)
+		return append(append(pre, load), maskFix(in.Dst, in.W, in.Narrow)...)
 	case 4:
 		if narrow {
 			load = fmt.Sprintf("ldrsw %s, %s", d, mem)
@@ -11125,7 +11125,7 @@ func fConvSeq(in x86.Inst) ([]string, error) {
 		return append([]string{
 			fmt.Sprintf("fmov d0, %s", d),
 			fmt.Sprintf("%s %s, d0", mnem, dst),
-		}, maskFix(in.Dst, in.W)...), nil
+		}, maskFix(in.Dst, in.W, in.Narrow)...), nil
 	case ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
 		// Identity, for the same reason OpFPromote is: a float is HELD in a
 		// general register as its raw f64 bit pattern (that is what every
@@ -11143,7 +11143,7 @@ func fConvSeq(in x86.Inst) ([]string, error) {
 			fmt.Sprintf("fmov d0, %s", d),
 			"fcvt s0, d0",
 			fmt.Sprintf("fmov %s, s0", wreg(in.Dst)),
-		}, maskFix(in.Dst, 32)...), nil
+		}, maskFix(in.Dst, 32, in.Narrow)...), nil
 	case ssa.OpReinterpretI32ToF32:
 		// The inverse: read the low 32 bits as an f32 pattern, then widen to
 		// the f64 pattern the register convention stores.
@@ -11282,7 +11282,7 @@ func selectSeq(in x86.Inst) []string {
 		fmt.Sprintf("cmp %s, #0", xreg(in.Src)),
 		fmt.Sprintf("csel %s, %s, %s, ne", xreg(in.Dst), xreg(in.Src2), xreg(in.Src3)),
 	}
-	return append(out, maskFix(in.Dst, in.W)...)
+	return append(out, maskFix(in.Dst, in.W, in.Narrow)...)
 }
 
 // binMnemonic maps an SSA integer arithmetic/bitwise op to its AArch64 mnemonic.
@@ -11480,9 +11480,14 @@ func deadAccMoves(insts []x86.Inst) (skip []bool, left []int) {
 
 // maskFix mirrors the model's i32 sign-extension: for an i32-width result the low
 // 32 bits are sign-extended back into the full register (sxtw), so a value whose
-// high bits are later observed matches the model. 64-bit results need no fix.
-func maskFix(dst int, wdt int8) []string {
-	if wdt == 64 {
+// high bits are later observed matches the model.
+//
+// Nothing is emitted for a 64-bit result, nor for one `narrow` marks: there the
+// low 32 bits are all any use reads, and the high half can hold whatever the
+// arithmetic left. ssa.FindNarrowResults decides that, and says why it is a
+// whitelist rather than a blacklist.
+func maskFix(dst int, wdt int8, narrow bool) []string {
+	if wdt == 64 || narrow {
 		return nil
 	}
 	return []string{fmt.Sprintf("sxtw %s, %s", xreg(dst), wreg(dst))}
