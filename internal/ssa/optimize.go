@@ -1,8 +1,8 @@
 package ssa
 
 // Optimize runs the Phase 2 peephole passes in order,
-// iterating until the function's printed form stops changing.
-// Returns the iteration count.
+// iterating until an iteration leaves the function's
+// fingerprint unchanged. Returns the iteration count.
 //
 // The order matters:
 //  1. SCCP propagates constants + CFG reachability together,
