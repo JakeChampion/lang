@@ -9573,7 +9573,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 	g.line(".size __fern_str_append_range, .-__fern_str_append_range")
 }
 
-// emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
+// EmitFloatTranscendentals writes the f64 transcendental bundle —
 // __fern_{exp,log,sin,cos,pow}_f64 — plus the .rodata table of coefficients.
 // x86-64 has no usable hardware transcendental (the x87 fsin / fyl2x / f2xm1
 // these replace are microcoded legacy from before SSE), so each is an
@@ -9586,117 +9586,129 @@ func (g *generator) emitStrAppendRangeRuntime() {
 //
 // Convention: argument and result in xmm0 (pow also takes y in xmm1),
 // mirroring arm64's d0/d1. All scratch is caller-saved under SysV.
-func (g *generator) emitFloatTranscendentalsRuntime() {
-	ldc := func(reg, lbl string) { g.emit("movsd " + reg + ", [rip+" + lbl + "]") }
+//
+// Written through w, one line per call, with fresh naming a module-unique
+// label for a prefix: the SSA backend (internal/codegen/x86_64ssa) emits the
+// same bundle for its own f64 helpers.
+func EmitFloatTranscendentals(w func(string, ...any), fresh func(prefix string) string) {
+	emit := func(s string) { w("\t%s", s) }
+	label := func(name string) { w("%s:", name) }
+	line := func(s string) { w("%s", s) }
+	negate := func(reg string) {
+		emit("movabs rdx, 0x8000000000000000")
+		emit("movq xmm8, rdx")
+		emit("xorpd " + reg + ", xmm8")
+	}
+	ldc := func(reg, lbl string) { emit("movsd " + reg + ", [rip+" + lbl + "]") }
 	// mul by a coefficient, then add the next one down: one Horner step.
 	horner := func(acc, x, lbl string) {
-		g.emit("mulsd " + acc + ", " + x)
-		g.emit("addsd " + acc + ", [rip+" + lbl + "]")
+		emit("mulsd " + acc + ", " + x)
+		emit("addsd " + acc + ", [rip+" + lbl + "]")
 	}
 	fn := func(name string) {
-		g.line("")
-		g.line(".globl " + name)
-		g.line(".type " + name + ", @function")
-		g.label(name)
+		line("")
+		line(".globl " + name)
+		line(".type " + name + ", @function")
+		label(name)
 	}
 
-	g.line("")
-	g.line(".section .rodata")
-	g.line(".align 8")
+	line("")
+	line(".section .rodata")
+	line(".align 8")
 	for _, c := range fdlibm.Coeffs {
-		g.label(".Lfc_" + c.Name)
-		g.line("\t.double " + c.Text)
+		label(".Lfc_" + c.Name)
+		line("\t.double " + c.Text)
 	}
-	g.label(".Lfc_2opi_bits")
+	label(".Lfc_2opi_bits")
 	for _, w := range fdlibm.TwoOverPiBits {
-		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
+		line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
-	g.line(".text")
+	line(".text")
 
 	// retNaN / retInf / retZero leave the named value in xmm0 and return.
 	// Built from bit patterns rather than .rodata: an assembler `.double`
 	// has no spelling for infinity.
 	retBits := func(bits string) {
-		g.emit("movabs rax, " + bits)
-		g.emit("movq xmm0, rax")
-		g.emit("ret")
+		emit("movabs rax, " + bits)
+		emit("movq xmm0, rax")
+		emit("ret")
 	}
 	// nanGuard emits "if x is NaN, return it unchanged". NaN is the one
 	// value where a compare is UNORDERED, which x86 reports in the parity
 	// flag — ZF alone cannot distinguish it from equality.
 	nanGuard := func(lbl string) {
-		g.emit("ucomisd xmm0, xmm0")
-		g.emit("jp " + lbl)
+		emit("ucomisd xmm0, xmm0")
+		emit("jp " + lbl)
 	}
 	// trigGuard: NaN returns itself; ±Inf becomes NaN, matching the
 	// reference. There is no meaningful reduction of an infinite argument —
 	// x*2/pi is Inf, and the quadrant falls out as garbage.
 	trigGuard := func() {
-		ret, nan := g.freshLabel("trigRet"), g.freshLabel("trigNaN")
+		ret, nan := fresh("trigRet"), fresh("trigNaN")
 		nanGuard(ret)
-		g.emit("movq rax, xmm0")
-		g.emit("movabs rcx, 0x7fffffffffffffff")
-		g.emit("and rax, rcx")
-		g.emit("movabs rcx, 0x7ff0000000000000")
-		g.emit("cmp rax, rcx")
-		g.emit("jae " + nan) // exponent all ones, mantissa 0 → ±Inf
-		done := g.freshLabel("trigOk")
-		g.emit("jmp " + done)
-		g.label(ret)
-		g.emit("ret")
-		g.label(nan)
+		emit("movq rax, xmm0")
+		emit("movabs rcx, 0x7fffffffffffffff")
+		emit("and rax, rcx")
+		emit("movabs rcx, 0x7ff0000000000000")
+		emit("cmp rax, rcx")
+		emit("jae " + nan) // exponent all ones, mantissa 0 → ±Inf
+		done := fresh("trigOk")
+		emit("jmp " + done)
+		label(ret)
+		emit("ret")
+		label(nan)
 		retBits("0x7ff8000000000000")
-		g.label(done)
+		label(done)
 	}
 
 	// __fern_ksin(xmm0=r, |r| <= pi/4) → sin r. Internal, not exported:
 	// sin and cos both reach it after reduction, so the kernel exists
 	// once rather than once per quadrant arm.
 	//   z = r*r; v = z*r; sin = r + v*(S1 + z*(S2+z*(S3+z*(S4+z*(S5+z*S6)))))
-	g.line("")
-	g.label("__fern_ksin")
-	g.emit("movsd xmm1, xmm0")
-	g.emit("mulsd xmm1, xmm0") // z
-	g.emit("movsd xmm2, xmm1")
-	g.emit("mulsd xmm2, xmm0") // v = z*r
+	line("")
+	label("__fern_ksin")
+	emit("movsd xmm1, xmm0")
+	emit("mulsd xmm1, xmm0") // z
+	emit("movsd xmm2, xmm1")
+	emit("mulsd xmm2, xmm0") // v = z*r
 	ldc("xmm3", ".Lfc_s6")
 	horner("xmm3", "xmm1", ".Lfc_s5")
 	horner("xmm3", "xmm1", ".Lfc_s4")
 	horner("xmm3", "xmm1", ".Lfc_s3")
 	horner("xmm3", "xmm1", ".Lfc_s2")
 	horner("xmm3", "xmm1", ".Lfc_s1")
-	g.emit("mulsd xmm3, xmm2")
-	g.emit("addsd xmm0, xmm3")
-	g.emit("ret")
+	emit("mulsd xmm3, xmm2")
+	emit("addsd xmm0, xmm3")
+	emit("ret")
 
 	// __fern_kcos(xmm0=r, |r| <= pi/4) → cos r.
 	//   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
 	//   cos = w + (((1-w) - hz) + z*(z*p))
 	// The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
 	// 1 - hz + z*z*p directly loses them and costs ~2 ulp.
-	g.line("")
-	g.label("__fern_kcos")
-	g.emit("movsd xmm1, xmm0")
-	g.emit("mulsd xmm1, xmm0") // z
+	line("")
+	label("__fern_kcos")
+	emit("movsd xmm1, xmm0")
+	emit("mulsd xmm1, xmm0") // z
 	ldc("xmm3", ".Lfc_c6")
 	horner("xmm3", "xmm1", ".Lfc_c5")
 	horner("xmm3", "xmm1", ".Lfc_c4")
 	horner("xmm3", "xmm1", ".Lfc_c3")
 	horner("xmm3", "xmm1", ".Lfc_c2")
 	horner("xmm3", "xmm1", ".Lfc_c1")
-	g.emit("mulsd xmm3, xmm1") // z*p
-	g.emit("mulsd xmm3, xmm1") // z*(z*p)
-	g.emit("movsd xmm4, xmm1")
-	g.emit("mulsd xmm4, [rip+.Lfc_half]") // hz
+	emit("mulsd xmm3, xmm1") // z*p
+	emit("mulsd xmm3, xmm1") // z*(z*p)
+	emit("movsd xmm4, xmm1")
+	emit("mulsd xmm4, [rip+.Lfc_half]") // hz
 	ldc("xmm5", ".Lfc_one")
-	g.emit("subsd xmm5, xmm4") // w = 1-hz
+	emit("subsd xmm5, xmm4") // w = 1-hz
 	ldc("xmm6", ".Lfc_one")
-	g.emit("subsd xmm6, xmm5") // 1-w
-	g.emit("subsd xmm6, xmm4") // (1-w)-hz
-	g.emit("addsd xmm6, xmm3") // + z*z*p
-	g.emit("movsd xmm0, xmm5")
-	g.emit("addsd xmm0, xmm6")
-	g.emit("ret")
+	emit("subsd xmm6, xmm5") // 1-w
+	emit("subsd xmm6, xmm4") // (1-w)-hz
+	emit("addsd xmm6, xmm3") // + z*z*p
+	emit("movsd xmm0, xmm5")
+	emit("addsd xmm0, xmm6")
+	emit("ret")
 
 	// __fern_rem_pio2_large(xmm0=x, |x| >= 2^20 and finite) → rax = k,
 	// xmm0 = r. Payne-Hanek: multiply the significand by the window of 2/pi
@@ -9705,118 +9717,118 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// fraction of x/(pi/2), which stays fully accurate however large x is —
 	// where Cody-Waite's `x - k*pio2h` needs k to fit in pio2h's 22 zeroed
 	// mantissa bits and returns noise beyond it.
-	g.line("")
-	g.label("__fern_rem_pio2_large")
-	g.emit("movq rdx, xmm0")
-	g.emit("mov r8, rdx")
-	g.emit("shr r8, 63") // sign of x
-	g.emit("mov rcx, rdx")
-	g.emit("shr rcx, 52")
-	g.emit("and ecx, 0x7ff")
-	g.emit("movabs rax, 0x000fffffffffffff")
-	g.emit("and rdx, rax")
-	g.emit("movabs rax, 0x0010000000000000")
-	g.emit("or rdx, rax") // m, the 53-bit significand
+	line("")
+	label("__fern_rem_pio2_large")
+	emit("movq rdx, xmm0")
+	emit("mov r8, rdx")
+	emit("shr r8, 63") // sign of x
+	emit("mov rcx, rdx")
+	emit("shr rcx, 52")
+	emit("and ecx, 0x7ff")
+	emit("movabs rax, 0x000fffffffffffff")
+	emit("and rdx, rax")
+	emit("movabs rax, 0x0010000000000000")
+	emit("or rdx, rax") // m, the 53-bit significand
 	// x = m*2^(e-1075), and the fraction of x*(2/pi) starts at bit
 	// (e-1075)+62 of the table once the product is read as a Q126.
-	g.emit("sub rcx, 1013")
-	g.emit("mov r9, rcx")
-	g.emit("and r9d, 63") // bit offset within the limb
-	g.emit("shr rcx, 6")  // limb index
-	g.emit("lea r10, [rip+.Lfc_2opi_bits]")
-	g.emit("lea r10, [r10+rcx*8]")
-	g.emit("mov rsi, [r10]")
-	g.emit("mov rdi, [r10+8]")
-	g.emit("mov r11, [r10+16]")
-	g.emit("mov rax, [r10+24]")
-	g.emit("mov ecx, r9d")
-	g.emit("shld rsi, rdi, cl") // w0
-	g.emit("shld rdi, r11, cl") // w1
-	g.emit("shld r11, rax, cl") // w2
-	g.emit("mov r9, rdx")
-	g.emit("mov rax, r9")
-	g.emit("mul rsi")
-	g.emit("mov rsi, rax") // low(m*w0)
-	g.emit("mov rax, r9")
-	g.emit("mul rdi")
-	g.emit("mov rdi, rax") // low(m*w1)
-	g.emit("mov r10, rdx") // high(m*w1)
-	g.emit("mov rax, r9")
-	g.emit("mul r11")      // high(m*w2) in rdx
-	g.emit("add rdi, rdx") // fraction, low 64
-	g.emit("adc rsi, r10") // fraction, high 64
-	g.emit("mov rax, rsi")
-	g.emit("shr rax, 62") // k
-	g.emit("movabs rcx, 0x3fffffffffffffff")
-	g.emit("and rsi, rcx")
-	g.emit("xorpd xmm3, xmm3")
+	emit("sub rcx, 1013")
+	emit("mov r9, rcx")
+	emit("and r9d, 63") // bit offset within the limb
+	emit("shr rcx, 6")  // limb index
+	emit("lea r10, [rip+.Lfc_2opi_bits]")
+	emit("lea r10, [r10+rcx*8]")
+	emit("mov rsi, [r10]")
+	emit("mov rdi, [r10+8]")
+	emit("mov r11, [r10+16]")
+	emit("mov rax, [r10+24]")
+	emit("mov ecx, r9d")
+	emit("shld rsi, rdi, cl") // w0
+	emit("shld rdi, r11, cl") // w1
+	emit("shld r11, rax, cl") // w2
+	emit("mov r9, rdx")
+	emit("mov rax, r9")
+	emit("mul rsi")
+	emit("mov rsi, rax") // low(m*w0)
+	emit("mov rax, r9")
+	emit("mul rdi")
+	emit("mov rdi, rax") // low(m*w1)
+	emit("mov r10, rdx") // high(m*w1)
+	emit("mov rax, r9")
+	emit("mul r11")      // high(m*w2) in rdx
+	emit("add rdi, rdx") // fraction, low 64
+	emit("adc rsi, r10") // fraction, high 64
+	emit("mov rax, rsi")
+	emit("shr rax, 62") // k
+	emit("movabs rcx, 0x3fffffffffffffff")
+	emit("and rsi, rcx")
+	emit("xorpd xmm3, xmm3")
 	// A fraction past 1/2 belongs to the next quadrant, as 1 minus itself.
-	phPos := g.freshLabel("phPos")
-	g.emit("movabs r10, 0x2000000000000000")
-	g.emit("cmp rsi, r10")
-	g.emit("jb " + phPos)
-	g.emit("inc rax")
-	g.emit("mov r11, rsi")
-	g.emit("mov rcx, rdi")
-	g.emit("xor rdi, rdi")
-	g.emit("sub rdi, rcx")
+	phPos := fresh("phPos")
+	emit("movabs r10, 0x2000000000000000")
+	emit("cmp rsi, r10")
+	emit("jb " + phPos)
+	emit("inc rax")
+	emit("mov r11, rsi")
+	emit("mov rcx, rdi")
+	emit("xor rdi, rdi")
+	emit("sub rdi, rcx")
 	// movabs, not `mov 1` + `shl 62`: a shift writes CF, and the borrow
 	// from the sub above has to survive to the sbb below.
-	g.emit("movabs rsi, 0x4000000000000000")
-	g.emit("sbb rsi, r11")
-	g.emit("movabs rcx, 0x8000000000000000")
-	g.emit("movq xmm3, rcx")
-	g.label(phPos)
+	emit("movabs rsi, 0x4000000000000000")
+	emit("sbb rsi, r11")
+	emit("movabs rcx, 0x8000000000000000")
+	emit("movq xmm3, rcx")
+	label(phPos)
 	// The low half only contributes below 2^-64, so 11 of its bits fall off
 	// the end of the double anyway; dropping them keeps the conversion
 	// inside the signed range cvtsi2sd works in.
-	g.emit("shr rdi, 11")
-	g.emit("cvtsi2sd xmm1, rsi")
-	g.emit("mulsd xmm1, [rip+.Lfc_2m62]")
-	g.emit("cvtsi2sd xmm2, rdi")
-	g.emit("mulsd xmm2, [rip+.Lfc_2m115]")
-	g.emit("addsd xmm1, xmm2")
-	g.emit("xorpd xmm1, xmm3")
-	phNonNeg := g.freshLabel("phNonNeg")
-	g.emit("test r8, r8")
-	g.emit("jz " + phNonNeg)
-	g.emitF64Negate("xmm1")
-	g.emit("neg rax")
-	g.label(phNonNeg)
-	g.emit("and rax, 3")
-	g.emit("movsd xmm0, xmm1")
-	g.emit("mulsd xmm0, [rip+.Lfc_pio2hi]")
-	g.emit("mulsd xmm1, [rip+.Lfc_pio2lo]")
-	g.emit("addsd xmm0, xmm1")
-	g.emit("ret")
+	emit("shr rdi, 11")
+	emit("cvtsi2sd xmm1, rsi")
+	emit("mulsd xmm1, [rip+.Lfc_2m62]")
+	emit("cvtsi2sd xmm2, rdi")
+	emit("mulsd xmm2, [rip+.Lfc_2m115]")
+	emit("addsd xmm1, xmm2")
+	emit("xorpd xmm1, xmm3")
+	phNonNeg := fresh("phNonNeg")
+	emit("test r8, r8")
+	emit("jz " + phNonNeg)
+	negate("xmm1")
+	emit("neg rax")
+	label(phNonNeg)
+	emit("and rax, 3")
+	emit("movsd xmm0, xmm1")
+	emit("mulsd xmm0, [rip+.Lfc_pio2hi]")
+	emit("mulsd xmm1, [rip+.Lfc_pio2lo]")
+	emit("addsd xmm0, xmm1")
+	emit("ret")
 
 	// emitPio2Reduce: xmm0 = x → rax = quadrant (k&3), xmm0 = r.
 	pio2Reduce := func() {
 		// |x| >= 2^20 puts k past pio2h's 22 exact bits, so the Cody-Waite
 		// chain below reduces against noise there and needs Payne-Hanek.
-		small, done := g.freshLabel("pio2Small"), g.freshLabel("pio2Done")
-		g.emit("movq rax, xmm0")
-		g.emit("shr rax, 52")
-		g.emit("and eax, 0x7ff")
-		g.emit("cmp eax, 1043")
-		g.emit("jb " + small)
-		g.emit("call __fern_rem_pio2_large")
-		g.emit("jmp " + done)
-		g.label(small)
+		small, done := fresh("pio2Small"), fresh("pio2Done")
+		emit("movq rax, xmm0")
+		emit("shr rax, 52")
+		emit("and eax, 0x7ff")
+		emit("cmp eax, 1043")
+		emit("jb " + small)
+		emit("call __fern_rem_pio2_large")
+		emit("jmp " + done)
+		label(small)
 		ldc("xmm1", ".Lfc_2opi")
-		g.emit("mulsd xmm1, xmm0")
-		g.emit("roundsd xmm1, xmm1, 0") // k, to nearest
-		g.emit("cvttsd2si rax, xmm1")
-		g.emit("movsd xmm2, xmm1")
-		g.emit("mulsd xmm2, [rip+.Lfc_pio2h]")
-		g.emit("subsd xmm0, xmm2") // exact
-		g.emit("movsd xmm2, xmm1")
-		g.emit("mulsd xmm2, [rip+.Lfc_pio2m]")
-		g.emit("subsd xmm0, xmm2")
-		g.emit("mulsd xmm1, [rip+.Lfc_pio2l]")
-		g.emit("subsd xmm0, xmm1") // r
-		g.emit("and rax, 3")
-		g.label(done)
+		emit("mulsd xmm1, xmm0")
+		emit("roundsd xmm1, xmm1, 0") // k, to nearest
+		emit("cvttsd2si rax, xmm1")
+		emit("movsd xmm2, xmm1")
+		emit("mulsd xmm2, [rip+.Lfc_pio2h]")
+		emit("subsd xmm0, xmm2") // exact
+		emit("movsd xmm2, xmm1")
+		emit("mulsd xmm2, [rip+.Lfc_pio2m]")
+		emit("subsd xmm0, xmm2")
+		emit("mulsd xmm1, [rip+.Lfc_pio2l]")
+		emit("subsd xmm0, xmm1") // r
+		emit("and rax, 3")
+		label(done)
 	}
 
 	// __fern_sin_f64: quadrant 0..3 → sin r, cos r, −sin r, −cos r.
@@ -9826,116 +9838,116 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_sin_f64")
 	trigGuard()
 	pio2Reduce()
-	sinCos, sinNeg := g.freshLabel("sinUseCos"), g.freshLabel("sinNeg")
-	g.emit("test rax, 1")
-	g.emit("jnz " + sinCos)
-	g.emit("call __fern_ksin")
-	g.emit("jmp " + sinNeg)
-	g.label(sinCos)
-	g.emit("call __fern_kcos")
-	g.label(sinNeg)
-	sinDone := g.freshLabel("sinDone")
-	g.emit("cmp rax, 2")
-	g.emit("jb " + sinDone)
-	g.emitF64Negate("xmm0")
-	g.label(sinDone)
-	g.emit("ret")
-	g.line(".size __fern_sin_f64, .-__fern_sin_f64")
+	sinCos, sinNeg := fresh("sinUseCos"), fresh("sinNeg")
+	emit("test rax, 1")
+	emit("jnz " + sinCos)
+	emit("call __fern_ksin")
+	emit("jmp " + sinNeg)
+	label(sinCos)
+	emit("call __fern_kcos")
+	label(sinNeg)
+	sinDone := fresh("sinDone")
+	emit("cmp rax, 2")
+	emit("jb " + sinDone)
+	negate("xmm0")
+	label(sinDone)
+	emit("ret")
+	line(".size __fern_sin_f64, .-__fern_sin_f64")
 
 	// __fern_cos_f64: quadrant 0..3 → cos r, −sin r, −cos r, sin r.
 	// Even quadrant picks the cos kernel; quadrants 1 and 2 flip sign.
 	fn("__fern_cos_f64")
 	trigGuard()
 	pio2Reduce()
-	cosSin, cosChk := g.freshLabel("cosUseSin"), g.freshLabel("cosChk")
-	g.emit("test rax, 1")
-	g.emit("jnz " + cosSin)
-	g.emit("call __fern_kcos")
-	g.emit("jmp " + cosChk)
-	g.label(cosSin)
-	g.emit("call __fern_ksin")
-	g.label(cosChk)
-	cosDone := g.freshLabel("cosDone")
-	g.emit("cmp rax, 1")
-	g.emit("jb " + cosDone) // q0 → +cos
-	g.emit("cmp rax, 2")
-	g.emit("ja " + cosDone) // q3 → +sin
-	g.emitF64Negate("xmm0")
-	g.label(cosDone)
-	g.emit("ret")
-	g.line(".size __fern_cos_f64, .-__fern_cos_f64")
+	cosSin, cosChk := fresh("cosUseSin"), fresh("cosChk")
+	emit("test rax, 1")
+	emit("jnz " + cosSin)
+	emit("call __fern_kcos")
+	emit("jmp " + cosChk)
+	label(cosSin)
+	emit("call __fern_ksin")
+	label(cosChk)
+	cosDone := fresh("cosDone")
+	emit("cmp rax, 1")
+	emit("jb " + cosDone) // q0 → +cos
+	emit("cmp rax, 2")
+	emit("ja " + cosDone) // q3 → +sin
+	negate("xmm0")
+	label(cosDone)
+	emit("ret")
+	line(".size __fern_cos_f64, .-__fern_cos_f64")
 
 	// __fern_exp_f64(xmm0=x) → e^x.
 	//   k = round(x/ln2); hi = x - k*ln2_hi; lo = k*ln2_lo; r = hi - lo
 	//   c = r - t*(P1+t*(P2+…)), t = r*r
 	//   e^r = 1 - ((lo - (r*c)/(2-c)) - hi);  e^x = e^r * 2^k
 	fn("__fern_exp_f64")
-	expRet, expInf, expZero := g.freshLabel("expRet"), g.freshLabel("expInf"), g.freshLabel("expZero")
+	expRet, expInf, expZero := fresh("expRet"), fresh("expInf"), fresh("expZero")
 	// Domain guards: above expovf e^x is not representable, below expunf it
 	// rounds to zero, and exp(±Inf) would otherwise fall through the
 	// polynomial as NaN. +Inf trips the overflow branch and -Inf the
 	// underflow one, so only NaN needs testing separately.
 	nanGuard(expRet)
-	g.emit("ucomisd xmm0, [rip+.Lfc_expovf]")
-	g.emit("ja " + expInf)
-	g.emit("ucomisd xmm0, [rip+.Lfc_expunf]")
-	g.emit("jb " + expZero)
+	emit("ucomisd xmm0, [rip+.Lfc_expovf]")
+	emit("ja " + expInf)
+	emit("ucomisd xmm0, [rip+.Lfc_expunf]")
+	emit("jb " + expZero)
 	ldc("xmm1", ".Lfc_invln2")
-	g.emit("mulsd xmm1, xmm0")
-	g.emit("roundsd xmm1, xmm1, 0")
-	g.emit("cvttsd2si rax, xmm1") // k
-	g.emit("movsd xmm2, xmm1")
-	g.emit("mulsd xmm2, [rip+.Lfc_ln2hi]")
-	g.emit("movsd xmm3, xmm0")
-	g.emit("subsd xmm3, xmm2")             // hi
-	g.emit("mulsd xmm1, [rip+.Lfc_ln2lo]") // lo
-	g.emit("movsd xmm0, xmm3")
-	g.emit("subsd xmm0, xmm1") // r
-	g.emit("movsd xmm4, xmm0")
-	g.emit("mulsd xmm4, xmm0") // t
+	emit("mulsd xmm1, xmm0")
+	emit("roundsd xmm1, xmm1, 0")
+	emit("cvttsd2si rax, xmm1") // k
+	emit("movsd xmm2, xmm1")
+	emit("mulsd xmm2, [rip+.Lfc_ln2hi]")
+	emit("movsd xmm3, xmm0")
+	emit("subsd xmm3, xmm2")             // hi
+	emit("mulsd xmm1, [rip+.Lfc_ln2lo]") // lo
+	emit("movsd xmm0, xmm3")
+	emit("subsd xmm0, xmm1") // r
+	emit("movsd xmm4, xmm0")
+	emit("mulsd xmm4, xmm0") // t
 	ldc("xmm5", ".Lfc_p5")
 	horner("xmm5", "xmm4", ".Lfc_p4")
 	horner("xmm5", "xmm4", ".Lfc_p3")
 	horner("xmm5", "xmm4", ".Lfc_p2")
 	horner("xmm5", "xmm4", ".Lfc_p1")
-	g.emit("mulsd xmm5, xmm4") // t*(…)
-	g.emit("movsd xmm6, xmm0")
-	g.emit("subsd xmm6, xmm5") // c
-	g.emit("movsd xmm7, xmm0")
-	g.emit("mulsd xmm7, xmm6") // r*c
+	emit("mulsd xmm5, xmm4") // t*(…)
+	emit("movsd xmm6, xmm0")
+	emit("subsd xmm6, xmm5") // c
+	emit("movsd xmm7, xmm0")
+	emit("mulsd xmm7, xmm6") // r*c
 	ldc("xmm2", ".Lfc_two")
-	g.emit("subsd xmm2, xmm6") // 2-c
-	g.emit("divsd xmm7, xmm2")
-	g.emit("movsd xmm2, xmm1")
-	g.emit("subsd xmm2, xmm7") // lo - …
-	g.emit("subsd xmm2, xmm3") // - hi
+	emit("subsd xmm2, xmm6") // 2-c
+	emit("divsd xmm7, xmm2")
+	emit("movsd xmm2, xmm1")
+	emit("subsd xmm2, xmm7") // lo - …
+	emit("subsd xmm2, xmm3") // - hi
 	ldc("xmm0", ".Lfc_one")
-	g.emit("subsd xmm0, xmm2")
+	emit("subsd xmm0, xmm2")
 	// 2^k as two half-scales. Assembling one exponent field from k puts the
 	// subnormal band (k < -1022) outside the field's range, where the low
 	// bits land in the SIGN bit; halving keeps both fields normal. A
 	// multiply by a power of two is exact until the result itself is
 	// subnormal, so the normal band is unchanged and the subnormal one
 	// rounds once, in the hardware.
-	g.emit("mov rcx, rax")
-	g.emit("sar rcx, 1")   // k1
-	g.emit("sub rax, rcx") // k2 = k - k1
-	g.emit("add rcx, 1023")
-	g.emit("shl rcx, 52")
-	g.emit("movq xmm1, rcx")
-	g.emit("add rax, 1023")
-	g.emit("shl rax, 52")
-	g.emit("movq xmm2, rax")
-	g.emit("mulsd xmm0, xmm1")
-	g.emit("mulsd xmm0, xmm2")
-	g.label(expRet)
-	g.emit("ret")
-	g.label(expInf)
+	emit("mov rcx, rax")
+	emit("sar rcx, 1")   // k1
+	emit("sub rax, rcx") // k2 = k - k1
+	emit("add rcx, 1023")
+	emit("shl rcx, 52")
+	emit("movq xmm1, rcx")
+	emit("add rax, 1023")
+	emit("shl rax, 52")
+	emit("movq xmm2, rax")
+	emit("mulsd xmm0, xmm1")
+	emit("mulsd xmm0, xmm2")
+	label(expRet)
+	emit("ret")
+	label(expInf)
 	retBits("0x7ff0000000000000")
-	g.label(expZero)
-	g.emit("xorpd xmm0, xmm0")
-	g.emit("ret")
-	g.line(".size __fern_exp_f64, .-__fern_exp_f64")
+	label(expZero)
+	emit("xorpd xmm0, xmm0")
+	emit("ret")
+	line(".size __fern_exp_f64, .-__fern_exp_f64")
 
 	// __fern_log_f64(xmm0=x) → ln x (x>0). x = 2^k·m, m normalised to
 	// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
@@ -9943,100 +9955,100 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	//   issue in parallel instead of one 7-deep Horner.
 	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
 	fn("__fern_log_f64")
-	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
-	logNoScale := g.freshLabel("logNoScale")
+	logRet, logNaN, logNegInf := fresh("logRet"), fresh("logNaN"), fresh("logNegInf")
+	logNoScale := fresh("logNoScale")
 	// Domain guards. The bit-twiddling below extracts an exponent
 	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
 	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
 	// values call for. log(-0) == log(0) == -Inf, which the equality
 	// branch already covers.
 	nanGuard(logRet)
-	g.emit("xorpd xmm1, xmm1")
-	g.emit("ucomisd xmm0, xmm1")
-	g.emit("jb " + logNaN)    // x < 0
-	g.emit("je " + logNegInf) // x == ±0
-	g.emit("movabs rax, 0x7ff0000000000000")
-	g.emit("movq xmm1, rax")
-	g.emit("ucomisd xmm0, xmm1")
-	g.emit("je " + logRet) // x == +Inf → itself
+	emit("xorpd xmm1, xmm1")
+	emit("ucomisd xmm0, xmm1")
+	emit("jb " + logNaN)    // x < 0
+	emit("je " + logNegInf) // x == ±0
+	emit("movabs rax, 0x7ff0000000000000")
+	emit("movq xmm1, rax")
+	emit("ucomisd xmm0, xmm1")
+	emit("je " + logRet) // x == +Inf → itself
 	// A subnormal stores exponent 0 — its magnitude is in the mantissa's
 	// leading zeros — so the field below reports the smallest normal
 	// exponent for every one of them. Scale into the normal range and take
 	// the 54 back off k. rdx carries the adjustment; it is dead until the
 	// mantissa mask below.
-	g.emit("xor edx, edx")
+	emit("xor edx, edx")
 	ldc("xmm1", ".Lfc_minnorm")
-	g.emit("ucomisd xmm0, xmm1")
-	g.emit("jae " + logNoScale)
-	g.emit("mulsd xmm0, [rip+.Lfc_two54]")
-	g.emit("mov edx, 54")
-	g.label(logNoScale)
-	g.emit("movq rax, xmm0")
-	g.emit("mov rcx, rax")
-	g.emit("shr rcx, 52")
-	g.emit("and rcx, 0x7ff")
-	g.emit("sub rcx, 1023") // k
-	g.emit("sub rcx, rdx")
-	g.emit("movabs rdx, 0xfffffffffffff")
-	g.emit("and rax, rdx")
-	g.emit("movabs rdx, 0x3ff0000000000000")
-	g.emit("or rax, rdx")
-	g.emit("movq xmm1, rax") // m in [1,2)
-	noAdj := g.freshLabel("logNoAdj")
+	emit("ucomisd xmm0, xmm1")
+	emit("jae " + logNoScale)
+	emit("mulsd xmm0, [rip+.Lfc_two54]")
+	emit("mov edx, 54")
+	label(logNoScale)
+	emit("movq rax, xmm0")
+	emit("mov rcx, rax")
+	emit("shr rcx, 52")
+	emit("and rcx, 0x7ff")
+	emit("sub rcx, 1023") // k
+	emit("sub rcx, rdx")
+	emit("movabs rdx, 0xfffffffffffff")
+	emit("and rax, rdx")
+	emit("movabs rdx, 0x3ff0000000000000")
+	emit("or rax, rdx")
+	emit("movq xmm1, rax") // m in [1,2)
+	noAdj := fresh("logNoAdj")
 	ldc("xmm2", ".Lfc_sqrt2")
-	g.emit("comisd xmm1, xmm2")
-	g.emit("jb " + noAdj)
-	g.emit("mulsd xmm1, [rip+.Lfc_half]")
-	g.emit("add rcx, 1")
-	g.label(noAdj)
-	g.emit("subsd xmm1, [rip+.Lfc_one]") // f
+	emit("comisd xmm1, xmm2")
+	emit("jb " + noAdj)
+	emit("mulsd xmm1, [rip+.Lfc_half]")
+	emit("add rcx, 1")
+	label(noAdj)
+	emit("subsd xmm1, [rip+.Lfc_one]") // f
 	ldc("xmm2", ".Lfc_two")
-	g.emit("addsd xmm2, xmm1") // 2+f
-	g.emit("movsd xmm3, xmm1")
-	g.emit("divsd xmm3, xmm2") // s
-	g.emit("movsd xmm4, xmm3")
-	g.emit("mulsd xmm4, xmm3") // z
-	g.emit("movsd xmm5, xmm4")
-	g.emit("mulsd xmm5, xmm4") // w
+	emit("addsd xmm2, xmm1") // 2+f
+	emit("movsd xmm3, xmm1")
+	emit("divsd xmm3, xmm2") // s
+	emit("movsd xmm4, xmm3")
+	emit("mulsd xmm4, xmm3") // z
+	emit("movsd xmm5, xmm4")
+	emit("mulsd xmm5, xmm4") // w
 	ldc("xmm6", ".Lfc_lg6")
 	horner("xmm6", "xmm5", ".Lfc_lg4")
 	horner("xmm6", "xmm5", ".Lfc_lg2")
-	g.emit("mulsd xmm6, xmm5") // t1
+	emit("mulsd xmm6, xmm5") // t1
 	ldc("xmm7", ".Lfc_lg7")
 	horner("xmm7", "xmm5", ".Lfc_lg5")
 	horner("xmm7", "xmm5", ".Lfc_lg3")
 	horner("xmm7", "xmm5", ".Lfc_lg1")
-	g.emit("mulsd xmm7, xmm4") // t2
-	g.emit("addsd xmm6, xmm7") // R
-	g.emit("movsd xmm2, xmm1")
-	g.emit("mulsd xmm2, xmm1")
-	g.emit("mulsd xmm2, [rip+.Lfc_half]") // hfsq
-	g.emit("cvtsi2sd xmm0, rcx")          // kf
-	g.emit("movsd xmm5, xmm0")
-	g.emit("mulsd xmm5, [rip+.Lfc_ln2lo]") // k*ln2_lo
-	g.emit("addsd xmm6, xmm2")             // hfsq+R
-	g.emit("mulsd xmm6, xmm3")             // s*(hfsq+R)
-	g.emit("addsd xmm6, xmm5")
-	g.emit("subsd xmm2, xmm6") // hfsq - (…)
-	g.emit("subsd xmm2, xmm1") // - f
-	g.emit("mulsd xmm0, [rip+.Lfc_ln2hi]")
-	g.emit("subsd xmm0, xmm2")
-	g.label(logRet)
-	g.emit("ret")
-	g.label(logNaN)
+	emit("mulsd xmm7, xmm4") // t2
+	emit("addsd xmm6, xmm7") // R
+	emit("movsd xmm2, xmm1")
+	emit("mulsd xmm2, xmm1")
+	emit("mulsd xmm2, [rip+.Lfc_half]") // hfsq
+	emit("cvtsi2sd xmm0, rcx")          // kf
+	emit("movsd xmm5, xmm0")
+	emit("mulsd xmm5, [rip+.Lfc_ln2lo]") // k*ln2_lo
+	emit("addsd xmm6, xmm2")             // hfsq+R
+	emit("mulsd xmm6, xmm3")             // s*(hfsq+R)
+	emit("addsd xmm6, xmm5")
+	emit("subsd xmm2, xmm6") // hfsq - (…)
+	emit("subsd xmm2, xmm1") // - f
+	emit("mulsd xmm0, [rip+.Lfc_ln2hi]")
+	emit("subsd xmm0, xmm2")
+	label(logRet)
+	emit("ret")
+	label(logNaN)
 	retBits("0x7ff8000000000000")
-	g.label(logNegInf)
+	label(logNegInf)
 	retBits("0xfff0000000000000")
-	g.line(".size __fern_log_f64, .-__fern_log_f64")
+	line(".size __fern_log_f64, .-__fern_log_f64")
 
 	// __fern_pow_f64(xmm0=x, xmm1=y) → x^y = exp(y·ln x), x>0. The only
 	// non-leaf helper: SysV has no callee-saved xmm registers, so y is
 	// stashed on the stack across the log call, where arm64 can use
 	// callee-saved d8.
 	fn("__fern_pow_f64")
-	powGen, powLoop, powSkip, powDone := g.freshLabel("powGeneral"), g.freshLabel("powLoop"), g.freshLabel("powSkip"), g.freshLabel("powDone")
-	powMag, powParity, powSign, powNaN := g.freshLabel("powMag"), g.freshLabel("powParity"), g.freshLabel("powSign"), g.freshLabel("powNaN")
-	powRetry, powRecip := g.freshLabel("powRetry"), g.freshLabel("powRecip")
+	powGen, powLoop, powSkip, powDone := fresh("powGeneral"), fresh("powLoop"), fresh("powSkip"), fresh("powDone")
+	powMag, powParity, powSign, powNaN := fresh("powMag"), fresh("powParity"), fresh("powSign"), fresh("powNaN")
+	powRetry, powRecip := fresh("powRetry"), fresh("powRecip")
 	// Integer-exponent fast path. exp(y*ln x) CANNOT return exactly 9 for
 	// pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to
 	// ~4e-15 on a result of 9, so it lands just under and truncates to 8.
@@ -10046,34 +10058,34 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// Integrality is tested by an i64 round-trip rather than a compare
 	// against trunc(y), so a NaN or out-of-range y falls out as a huge |n|
 	// and is caught by the range check instead of needing a parity branch.
-	g.emit("cvttsd2si rax, xmm1")
-	g.emit("cvtsi2sd xmm2, rax")
-	g.emit("ucomisd xmm2, xmm1")
-	g.emit("jne " + powGen)
+	emit("cvttsd2si rax, xmm1")
+	emit("cvtsi2sd xmm2, rax")
+	emit("ucomisd xmm2, xmm1")
+	emit("jne " + powGen)
 	// |n|, branch-free: (n ^ (n>>63)) - (n>>63). Re-entered once with a
 	// reciprocated base and a negated n; see the overflow retry below.
-	g.label(powRetry)
-	g.emit("mov rcx, rax")
-	g.emit("mov rdx, rax")
-	g.emit("sar rdx, 63")
-	g.emit("xor rcx, rdx")
-	g.emit("sub rcx, rdx")
-	g.emit("cmp rcx, " + strconv.Itoa(fdlibm.PowIntMax))
-	g.emit("ja " + powGen)
+	label(powRetry)
+	emit("mov rcx, rax")
+	emit("mov rdx, rax")
+	emit("sar rdx, 63")
+	emit("xor rcx, rdx")
+	emit("sub rcx, rdx")
+	emit("cmp rcx, " + strconv.Itoa(fdlibm.PowIntMax))
+	emit("ja " + powGen)
 	ldc("xmm3", ".Lfc_one") // accumulator
-	g.emit("movsd xmm4, xmm0")
-	g.label(powLoop)
-	g.emit("test rcx, 1")
-	g.emit("jz " + powSkip)
-	g.emit("mulsd xmm3, xmm4")
-	g.label(powSkip)
-	g.emit("mulsd xmm4, xmm4")
-	g.emit("shr rcx, 1")
-	g.emit("jnz " + powLoop)
-	g.emit("test rax, rax")
-	g.emit("jns " + powDone)
+	emit("movsd xmm4, xmm0")
+	label(powLoop)
+	emit("test rcx, 1")
+	emit("jz " + powSkip)
+	emit("mulsd xmm3, xmm4")
+	label(powSkip)
+	emit("mulsd xmm4, xmm4")
+	emit("shr rcx, 1")
+	emit("jnz " + powLoop)
+	emit("test rax, rax")
+	emit("jns " + powDone)
 	ldc("xmm5", ".Lfc_one") // negative exponent: reciprocal
-	g.emit("divsd xmm5, xmm3")
+	emit("divsd xmm5, xmm3")
 	// 1/acc is zero only when acc reached an infinity, so the magnitude
 	// overflowed on the way to a result that may itself be representable:
 	// 2^-1074 accumulated 2^1074 and reciprocated it to 0. Redo the loop on
@@ -10081,20 +10093,20 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// return the accumulator directly instead of reciprocating twice, so the
 	// retry needs no flag and cannot be entered again. Unreachable while acc
 	// is finite, which is what keeps pow(3,-2) a single exact division.
-	g.emit("xorpd xmm6, xmm6")
-	g.emit("ucomisd xmm5, xmm6")
-	g.emit("jne " + powRecip)
-	g.emit("jp " + powRecip)
+	emit("xorpd xmm6, xmm6")
+	emit("ucomisd xmm5, xmm6")
+	emit("jne " + powRecip)
+	emit("jp " + powRecip)
 	ldc("xmm5", ".Lfc_one")
-	g.emit("divsd xmm5, xmm0")
-	g.emit("movsd xmm0, xmm5")
-	g.emit("neg rax")
-	g.emit("jmp " + powRetry)
-	g.label(powRecip)
-	g.emit("movsd xmm3, xmm5")
-	g.label(powDone)
-	g.emit("movsd xmm0, xmm3")
-	g.emit("ret")
+	emit("divsd xmm5, xmm0")
+	emit("movsd xmm0, xmm5")
+	emit("neg rax")
+	emit("jmp " + powRetry)
+	label(powRecip)
+	emit("movsd xmm3, xmm5")
+	label(powDone)
+	emit("movsd xmm0, xmm3")
+	emit("ret")
 	// General case: x^y = sign * exp(y*ln|x|). ln is defined only for
 	// x > 0, so a negative base is split into a sign and |x| first: for an
 	// integral y the sign is (-1)^y, and a non-integral y makes the result
@@ -10104,55 +10116,59 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// The only non-leaf helper: SysV has no callee-saved xmm registers, so
 	// y and the sign multiplier are stashed on the stack across the log
 	// call, where arm64 can use callee-saved d8.
-	g.label(powGen)
-	g.emit("sub rsp, 16")
-	g.emit("movsd [rsp], xmm1")
+	label(powGen)
+	emit("sub rsp, 16")
+	emit("movsd [rsp], xmm1")
 	ldc("xmm2", ".Lfc_one")
-	g.emit("movsd [rsp+8], xmm2") // sign of the result
-	g.emit("movq rax, xmm0")
-	g.emit("test rax, rax")
-	g.emit("jns " + powMag) // +0 or a positive base
-	g.emit("movabs rcx, 0x7fffffffffffffff")
-	g.emit("and rax, rcx")
-	g.emit("movq xmm0, rax") // |x|
-	g.emit("movq rdx, xmm1")
-	g.emit("and rdx, rcx") // |y|
-	g.emit("movabs rcx, 0x4340000000000000")
-	g.emit("cmp rdx, rcx")
-	g.emit("jb " + powParity)
-	g.emit("movabs rcx, 0x7ff0000000000000")
-	g.emit("cmp rdx, rcx")
-	g.emit("jbe " + powMag) // |y| >= 2^53, finite or +-Inf: an even integer
-	g.emit("jmp " + powNaN) // y is NaN
-	g.label(powParity)
-	g.emit("cvttsd2si rdx, xmm1")
-	g.emit("cvtsi2sd xmm2, rdx")
-	g.emit("ucomisd xmm2, xmm1")
-	g.emit("jne " + powNaN) // y is not an integer
-	g.emit("test rdx, 1")
-	g.emit("jz " + powMag) // even exponent
-	g.emit("movabs rcx, 0xbff0000000000000")
-	g.emit("movq xmm2, rcx")
-	g.emit("movsd [rsp+8], xmm2") // -1.0
-	g.label(powMag)
+	emit("movsd [rsp+8], xmm2") // sign of the result
+	emit("movq rax, xmm0")
+	emit("test rax, rax")
+	emit("jns " + powMag) // +0 or a positive base
+	emit("movabs rcx, 0x7fffffffffffffff")
+	emit("and rax, rcx")
+	emit("movq xmm0, rax") // |x|
+	emit("movq rdx, xmm1")
+	emit("and rdx, rcx") // |y|
+	emit("movabs rcx, 0x4340000000000000")
+	emit("cmp rdx, rcx")
+	emit("jb " + powParity)
+	emit("movabs rcx, 0x7ff0000000000000")
+	emit("cmp rdx, rcx")
+	emit("jbe " + powMag) // |y| >= 2^53, finite or +-Inf: an even integer
+	emit("jmp " + powNaN) // y is NaN
+	label(powParity)
+	emit("cvttsd2si rdx, xmm1")
+	emit("cvtsi2sd xmm2, rdx")
+	emit("ucomisd xmm2, xmm1")
+	emit("jne " + powNaN) // y is not an integer
+	emit("test rdx, 1")
+	emit("jz " + powMag) // even exponent
+	emit("movabs rcx, 0xbff0000000000000")
+	emit("movq xmm2, rcx")
+	emit("movsd [rsp+8], xmm2") // -1.0
+	label(powMag)
 	// |x| == 1 is 1 for every y, including the NaN and +-Inf that
 	// exp(y*ln|x|) would turn into NaN through y*0.
-	g.emit("movq rax, xmm0")
-	g.emit("movabs rcx, 0x3ff0000000000000")
-	g.emit("cmp rax, rcx")
-	g.emit("je " + powSign)
-	g.emit("call __fern_log_f64")
-	g.emit("movsd xmm1, [rsp]")
-	g.emit("mulsd xmm0, xmm1")
-	g.emit("call __fern_exp_f64")
-	g.label(powSign)
-	g.emit("mulsd xmm0, [rsp+8]")
-	g.emit("add rsp, 16")
-	g.emit("ret")
-	g.label(powNaN)
-	g.emit("add rsp, 16")
+	emit("movq rax, xmm0")
+	emit("movabs rcx, 0x3ff0000000000000")
+	emit("cmp rax, rcx")
+	emit("je " + powSign)
+	emit("call __fern_log_f64")
+	emit("movsd xmm1, [rsp]")
+	emit("mulsd xmm0, xmm1")
+	emit("call __fern_exp_f64")
+	label(powSign)
+	emit("mulsd xmm0, [rsp+8]")
+	emit("add rsp, 16")
+	emit("ret")
+	label(powNaN)
+	emit("add rsp, 16")
 	retBits("0x7ff8000000000000")
-	g.line(".size __fern_pow_f64, .-__fern_pow_f64")
+	line(".size __fern_pow_f64, .-__fern_pow_f64")
+}
+
+func (g *generator) emitFloatTranscendentalsRuntime() {
+	EmitFloatTranscendentals(func(format string, args ...any) { g.put(fmt.Sprintf(format, args...)) }, g.freshLabel)
 }
 
 // emitF64Negate flips the sign bit of an xmm register's low double.

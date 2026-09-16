@@ -100,7 +100,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 223/348 compared, 0 divergences; 105 refused — every one for the runtime-helper table, in groups rather than one symbol |
+| `x86_64ssa` | **yes, since 2026-09-01** | **yes, since 2026-09-02** | 253/348 compared, 0 divergences; 75 refused — every one for the runtime-helper table, in groups rather than one symbol |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compares three fifths of the corpus and agrees on all of it, and one cannot
@@ -229,6 +229,29 @@ Two concrete blockers, and only two:
    wall expiring on one side its own outcome; and the lane completes in
    under three minutes on a 4-core container. The leg is at **223 of 348
    comparable, 0 divergences; 105 refused**.
+
+   **2026-09-16, later: `__memcpy` and the f64 math family** (`__abs_f64`,
+   `__sqrt_f64`, the three `roundsd` forms, `__round_f64`, and the five
+   transcendentals through the flat backend's kernel bundle, which now
+   writes through a caller-supplied line writer so both backends carry the
+   same bytes) got emitters. Tallied by the exact name the refusal prints
+   rather than by prefix, `__memcpy` alone blocked 16 programs and the two
+   families together 31; the run unlocked 30. The leg is at **253 of 348
+   comparable, 0 divergences; 75 refused**. Of the 75, the median is
+   missing 3 helpers and 35 are missing one or two:
+
+   | | refused for it | refused for it ALONE |
+   |---|---|---|
+   | `read_file` | 25 | 14 |
+   | the Map family (`map_new`, `__method_Map_set` … `__method_MapIter_*`, `__fern_map_hash_seed`, `__fern_map_drop`) and the memory trio (`__alloc`, `__free`, `__memset`, `__fern_drop_arr_ptr`) | 24 | 0 |
+   | `write_file` | 13 | 0 |
+   | `temp_dir` | 11 | 0 |
+   | `monotonic_ns` | 10 | 3 |
+   | `random_bytes` | 7 | 5 |
+   | the socket family (`tcp_*`, `poll`, the pollables) | 6 | 0 |
+
+   So the next slice is the file helpers — `read_file` with `write_file`
+   and `temp_dir` — and the one after it the Map family with the trio.
 
    **Where the wall was on 2026-09-06**, over the 105 then refused: every one
    names a helper with no emitter, and no single symbol unlocks more than
