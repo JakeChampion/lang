@@ -20,7 +20,7 @@ func TestAllocDisjointNoSpill(t *testing.T) {
 		Interval{Value: 2, Start: 2, End: 3},
 		Interval{Value: 3, Start: 4, End: 5},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2}, nil)
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil)
 	if a.NumSlots != 0 {
 		t.Errorf("NumSlots = %d, want 0 (disjoint intervals fit in registers)", a.NumSlots)
 	}
@@ -37,7 +37,7 @@ func TestAllocOverlapSpillsFurthestEnd(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 11},
 		Interval{Value: 3, Start: 2, End: 12}, // ends last → spilled
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2}, nil)
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -57,7 +57,7 @@ func TestAllocSpillStealsFromLongerLived(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 11},
 		Interval{Value: 3, Start: 2, End: 10},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2}, nil)
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -80,7 +80,7 @@ func TestAllocSingleRegister(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 6},
 		Interval{Value: 3, Start: 2, End: 7},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 1}, nil)
+	a := allocateLinear(iv, Target{NumRegs: 1}, nil, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
