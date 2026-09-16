@@ -1,0 +1,17 @@
+import "core/map";
+
+// A module that READS a map without ever constructing one. The lifted local
+// below is emitted whether or not anything calls it, and its `has` is the
+// module's only map op — no `map_new`, no insert.
+//
+// On wasm that combination used to emit `call $__fern_map_has` against a
+// runtime bundle the module never carried, because the bundle was gated on the
+// ops that BUILD a map. wasmtime rejected the artifact outright, so the answer
+// below was not wrong, it was unreachable. The map runtime also calls the heap
+// allocator, which construction used to be the only thing pulling in.
+function main(): i32 {
+    function seen(m: Map[i32, i32], k: i32): boolean {
+        return m.has(k);
+    }
+    return 7;
+}

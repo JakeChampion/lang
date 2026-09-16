@@ -1,0 +1,17 @@
+# Seeds whose SELF-HOST wasm result through the SEMANTIC lowering (FERN_SEM_IR=1)
+# disagrees with the interpreter's, for TestDifferential_SelfHostSemanticWasm
+# (internal/e2e/diff_oracle_selfhost_wasm_leg_test.go).
+#
+# Format: <seed> <reason + issue>. Blank lines and # comments ignored.
+#
+# Same contract as the four files beside it: a row is a known bug being
+# tolerated so the rest of the corpus keeps running, and the leg fails on a new
+# divergence and on a listed seed that starts agreeing.
+#
+# A seed whose oracle byte is 126 or more never reaches this file. WASI refuses
+# an exit status outside [0..126), so the leg cannot read that program's answer
+# at all and does not compare it — it asserts only that the module neither
+# traps nor is rejected. A row here would be claiming a wrong answer nobody
+# measured.
+
+31 __lam_1 emits an i64 where the module type says i32, so wasm-tools reports "type mismatch: expected i32, found i64" and wasmtime refuses the artifact — #9468. Both lowerings, wasm only; the x86-64 and arm64 legs agree with the interpreter on this seed.

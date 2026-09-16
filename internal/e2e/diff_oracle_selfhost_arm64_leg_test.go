@@ -17,6 +17,18 @@ import (
 // a listed seed that starts passing fails too.
 const selfHostArm64DiffKnownFile = "selfhost-diff-arm64-known-divergences.txt"
 
+// selfHostSemArm64DiffKnownFile is the semantic leg's own list, the arm64
+// sibling of selfHostSemDiffKnownFile: a seed the AST lowering gets right on
+// this target and the semantic one does not belongs here and nowhere else.
+const selfHostSemArm64DiffKnownFile = "selfhost-diff-semantic-arm64-known-divergences.txt"
+
+// selfHostSemArm64DiffMinWholeRatio is the floor on seeds whose module
+// produced every declaration, the arm64 twin of selfHostSemDiffMinWholeRatio
+// and a ratchet in the same way. It is read off the same generator and the
+// same lowering, so the two track each other; the target only decides which
+// backend emits what the lowering produced.
+const selfHostSemArm64DiffMinWholeRatio = 0.10
+
 // TestDifferential_SelfHostArm64 is the x86-64 oracle's sibling against the
 // self-host ARM64 backend (#7967).
 //
@@ -41,6 +53,28 @@ const selfHostArm64DiffKnownFile = "selfhost-diff-arm64-known-divergences.txt"
 // and it means an in-process-assembler gap arrives as a compile failure naming
 // the mnemonic rather than as a link error.
 func TestDifferential_SelfHostArm64(t *testing.T) {
+	testDifferentialSelfHostArm64(t, false)
+}
+
+// TestDifferential_SelfHostSemanticArm64 is the same corpus through the same
+// backend with the SEMANTIC lowering, the arm64 sibling of
+// TestDifferential_SelfHostSemanticX86_64.
+//
+// It exists because the semantic lowering emits target-specific runtime of its
+// own — a map column of boxes reaches __fern_map_free_vf through a register
+// here and a table slot on wasm — so "the semantic lowering is fuzzed" was
+// only ever true of one backend.
+//
+// Until this split the leg above pinned NEITHER path: it inherited the
+// environment, so when the semantic lowering became the default it silently
+// stopped testing the AST one, and its known-divergence list went on being
+// read as the AST leg's. Both legs now spell the flag, for the reason the
+// x86-64 pair's compile step gives.
+func TestDifferential_SelfHostSemanticArm64(t *testing.T) {
+	testDifferentialSelfHostArm64(t, true)
+}
+
+func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -59,9 +93,13 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	known := loadKnownDivergences(t, selfHostArm64DiffKnownFile)
+	knownFile := selfHostArm64DiffKnownFile
+	if semantic {
+		knownFile = selfHostSemArm64DiffKnownFile
+	}
+	known := loadKnownDivergences(t, knownFile)
 
-	var sampled, ran int64
+	var sampled, ran, whole int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
 		seed := seed
 		sampled++
@@ -82,7 +120,10 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 				t.Errorf(format, args...)
 			}
 
-			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src)
+			r, gap, report := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, semantic)
+			if semantic && semReportWhole(report) {
+				atomic.AddInt64(&whole, 1)
+			}
 			if gap != "" {
 				// Same contract as the x86-64 leg: a compile bail is a
 				// documented endpoint for an unlisted seed, but a LISTED one
@@ -93,7 +134,7 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 				}
 				t.Errorf("seed %d is listed in testdata/%s (%s) but it no longer COMPILES, so the row "+
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
-					seed, selfHostArm64DiffKnownFile, reason, gap)
+					seed, knownFile, reason, gap)
 				return
 			}
 			if r != nil {
@@ -102,7 +143,7 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 			}
 			if isKnown && !diverged {
 				t.Errorf("seed %d is listed in testdata/%s (%s) but it AGREES now — delete the entry",
-					seed, selfHostArm64DiffKnownFile, reason)
+					seed, knownFile, reason)
 			}
 		})
 	}
@@ -117,17 +158,27 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 				"Compile gaps are a documented endpoint, but at this rate the leg is not testing the compiler",
 				got, sampled, ratio, selfHostDiffMinRunRatio)
 		}
+		if !semantic {
+			return
+		}
+		w := atomic.LoadInt64(&whole)
+		if ratio := float64(w) / float64(sampled); ratio < selfHostSemArm64DiffMinWholeRatio {
+			t.Errorf("only %d of %d sampled seeds produced WHOLE (%.2f) — below the %.2f floor. "+
+				"A refused declaration keeps the AST lowering for the module, which is the mixed shape this "+
+				"leg exists to keep rare", w, sampled, ratio, selfHostSemArm64DiffMinWholeRatio)
+		}
 	})
 }
 
 // runSelfHostArm64Seed compiles src for arm64-linux with the self-host CLI and
-// runs the binary it produces. Returns (run, "") when it ran and (nil, gap)
-// when the compiler bailed.
+// runs the binary it produces. Returns (run, "", report) when it ran and
+// (nil, gap, report) when the compiler bailed; the report is the compiler's
+// stderr, which carries the production tally the semantic leg reads.
 //
 // No link step and so no link failure to report: the self-host assembles and
 // links this target itself, which folds what would be the x86-64 leg's link
 // error into the compile failure, naming the unsupported mnemonic.
-func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (*selfHostRun, string) {
+func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, semantic bool) (*selfHostRun, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -135,10 +186,20 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (
 		t.Fatalf("write src: %v", err)
 	}
 	binPath := filepath.Join(dir, "prog")
-	out, err := exec.Command(fernBin, "-target", "arm64-linux", srcPath, stdlibRoot, "-o", binPath).CombinedOutput()
+	compile := exec.Command(fernBin, "-target", "arm64-linux", srcPath, stdlibRoot, "-o", binPath)
+	// Spelled EMPTY on the control leg rather than left unset, for the reason
+	// the x86-64 pair gives: empty is off, and writing it is what stops an
+	// ambient FERN_SEM_IR in the environment turning both legs into the
+	// semantic one.
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_REPORT=1")
+	if semantic {
+		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
+	}
+	out, err := compile.CombinedOutput()
+	report := string(out)
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "arm64-linux", nil, srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "arm64-linux", nil, srcPath, stdlibRoot, out)), report
 	}
 	// write_file does not set the exec bit (the Makefile chmods
 	// bin/fern-selfhost for the same reason).
@@ -146,5 +207,5 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (
 		t.Fatalf("chmod: %v", err)
 	}
 	r := runSelfHostBin(runArm64Bin(qemu, binPath), "")
-	return &r, ""
+	return &r, "", report
 }

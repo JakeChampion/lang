@@ -1,0 +1,18 @@
+# Seeds whose SELF-HOST arm64 result through the SEMANTIC lowering
+# (FERN_SEM_IR=1) disagrees with the interpreter's, for
+# TestDifferential_SelfHostSemanticArm64
+# (internal/e2e/diff_oracle_selfhost_arm64_leg_test.go).
+#
+# Format: <seed> <reason + issue>. Blank lines and # comments ignored.
+#
+# Same contract as the three files beside it: a row is a known bug being
+# tolerated so the rest of the corpus keeps running, and the leg fails on a new
+# divergence and on a listed seed that starts agreeing.
+#
+# Which file a seed belongs in is decided by the two axes the four legs cover.
+# One that diverges here and agrees on the arm64 AST leg is the semantic
+# lowering's, or the mixed module's, on this target; one that diverges on both
+# arm64 legs belongs in selfhost-diff-arm64-known-divergences.txt; one that
+# diverges on the semantic leg of both targets belongs in
+# selfhost-diff-semantic-x86_64-known-divergences.txt as well, and is the
+# lowering rather than either backend.

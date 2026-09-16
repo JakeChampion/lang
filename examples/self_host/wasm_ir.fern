@@ -683,12 +683,14 @@ pub function module_uses_str_cmp(cache: irlower.LowerResult[]): boolean {
 // module_uses_str_slice reports whether any function uses `s[start:end]` (the
 // str_slice op), gating emission of the $__fern_substr copy helper.
 pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
-    // map_keys / map_values call $__fern_map_keys / $__fern_map_values (the wasm
-    // snapshot helpers), so they need the map runtime even in a module that
-    // never constructs a map (e.g. a keys() read on a map param). #4353.
+    // EVERY map op needs the runtime, not only the ones that build a map: each
+    // reads or writes the box through a helper the bundle defines, so a module
+    // that only READS a map it was handed — a `has` or a `get` on a parameter,
+    // with no construction anywhere — calls into the bundle just as much as one
+    // that builds its own. It is `is_map_op_kind` plus the two ops that
+    // predicate leaves out for dispatch reasons, which is the whole vocabulary.
     function is_map_op(o: ir.Op): boolean {
-        return o.kind_tag == 124 || o.kind_tag == 125 || o.kind_tag == 126   // map_new, map_set, map_len
-            || o.kind_tag == 131 || o.kind_tag == 132;                        // map_keys, map_values
+        return is_map_op_kind(o.kind_tag) || o.kind_tag == 124 || o.kind_tag == 125;  // map_new, map_set
     }
     return any_op(cache, is_map_op);
 }
@@ -10228,7 +10230,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_maps") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "sleep_ns") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
