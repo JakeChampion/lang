@@ -83,7 +83,7 @@ name: Test e2e self-host
 # aarch64 runner skips the x86 self-host driver builds (and vice-versa),
 # so the x86 lane is the long pole; the aarch64 shards finish in well
 # under a minute — which is why the aarch64 lane runs 1 shard to the
-# x86 lane's 6 (its per-shard cost is dominated by job setup, so
+# x86 lane's 12 (its per-shard cost is dominated by job setup, so
 # near-empty shards are just wasted runner slots delaying the x86
 # fan-out under the account-wide concurrent-job cap).
 #
@@ -222,7 +222,7 @@ jobs:
   # and 67 MB after the three-driver ssa job, against ~21 GB free on the runner.
   # What one-per-driver did cost was real: each job pays ~28s of fixed setup
   # (checkout + setup-fern + the test-binary compile) to do ~22s of warming, and
-  # `needs: warm` gates all seven shards on the SLOWEST of them — where "slowest"
+  # `needs: warm` gates all shards on the SLOWEST of them - where "slowest"
   # under a saturated runner pool is decided by queue wait, not by work. On that
   # same run the twelve jobs did 9.4 min of warming spread across a 14.6-min
   # barrier, each waiting separately for a runner. Three jobs draw three queue
@@ -295,7 +295,7 @@ jobs:
       # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
       # so a partial warm still reports the sizes it did produce.
       #
-      # continue-on-error because all seven shards `needs: warm`: a measurement
+      # continue-on-error because all test shards `needs: warm`: a measurement
       # step must not be able to hold the lane. This slice stays advisory for
       # that reason — the enforcing copy is the leaf `driver-sizes` job below,
       # which gates nothing and so can fail. What this step is for is feedback
@@ -331,7 +331,7 @@ jobs:
   # it, in-process, reading the just-built driver from the LOCAL on-disk cache
   # (see the ISOLATED WHOLE-COMPILER DRIVER TESTS note above the env block).
   # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,
-  # and this ~4-min job would gate all seven of them on an artifact nobody
+  # and this ~4-min job would gate all test shards on an artifact nobody
   # downloads (no upload here — nothing consumes fern.fern outside this job).
   # The test step is STRICT. It used to carry continue-on-error so a flaky
   # qemu-aarch64 blip could not fail the lane, but that flag does not
@@ -435,7 +435,7 @@ jobs:
   #
   # Strict is affordable here and nowhere else in the lane: this is a leaf.
   # Nothing `needs:` it, so a red size gate blocks the merge and holds no other
-  # job — unlike the `warm` copy, whose nine dependent shards are why that one
+  # job - unlike the `warm` copy, whose dependent shards are why that one
   # stays advisory. The escalation #7519 asked for is these two variables plus
   # the absent continue-on-error; the baselines were refreshed to measured main
   # in the same issue, so drift here starts at zero and any finding is real.
@@ -865,74 +865,33 @@ jobs:
     strategy:
       fail-fast: false
       # Explicit include list instead of a host × shard cross-product: the
-      # aarch64 lane runs 1 shard to x86's 6 (see the matrix-per-arch note
+      # aarch64 lane runs 1 shard to x86's 12 (see the matrix-per-arch note
       # in the header). `nshard` rides along so the partition script agrees
       # with the number of jobs actually scheduled.
       #
-      # SHARD COUNTS ARE BOUNDED BY THE RUNNER POOL, NOT BY THE WORK. Measured
-      # on run 31819148053: the x86 lane's 20 shards did 109 min of work with a
-      # 13.0-min longest shard, and the aarch64 lane's 8 shards did 5.8 min in
-      # total — 43 s each, dominated by job setup. Below the heaviest single
-      # test a shard cannot get faster no matter how many buckets it is split
-      # into, so past that point extra shards only take slots from other lanes.
-      #
-      # WHEN ADMISSION IS THE CONSTRAINT, MORE SHARDS ARE SLOWER. The lane
-      # finishes when the LAST shard finishes, and under a saturated pool a
-      # shard's start time is set by its place in the admission queue, not by
-      # the work. Measured on run 33535490171: the x86 shards each did 6-11 min
-      # of work after waiting 13-37 min, and admitting 16 of them spread across
-      # 24 minutes. Halving the count roughly halves that tail while each shard
-      # only grows to the mean.
-      #
-      # Cutting x86 costs almost nothing at the long end, because the long end
-      # is not set by the partition. Running the LPT greedy over
-      # .github/selfhost-test-weights.txt (84 tests, 67.0 min of weighted mass)
-      # the longest bucket is 12.3 min at 16, 8, 7 and 6 buckets, then breaks
-      # upward: 13.4 at 5 and 16.8 at 4. Down to 6 that number is just the
-      # single heaviest test, TestSelfHostAssumeEligibleByteIdenticalX86_64 at
-      # 738 s (570 since it compares against emit-all), which no split can
-      # divide.
-      #
-      # THE REMAINDER IS MEASURED, AND IT IS 18.75 MIN. Two green runs at this
-      # mass (33858555395, 33866568910) put the shards' own test step at 85.62
-      # and 85.88 min of total mass — stable to 0.3% — against the 67.0 the
-      # weights file names, so the mass it does not name is 18.75 min. Per-shard
-      # mean 14.3 min, longest 15.95 and 18.60 min, on top of 0.85-2.72 min of
-      # per-job setup.
-      #
-      # Setup is why the earlier estimate read ~32 min: it came from a job
-      # wall-clock mean at 16 buckets, which folds each of the 16 jobs' setup
-      # into what looks like divisible mass. Setup does not divide — cutting a
-      # bucket removes one job's worth of it outright — so counting it as mass
-      # overstates the remainder in proportion to the bucket count.
-      #
-      # 6 IS THE CROSSOVER ON THE MEASURED MASS, NOT ONE ABOVE IT. #8183 moved
-      # the model's crossover from 6 to 5 (mean 11.2 at 6, 13.4 at 5, against
-      # the 12.3-min floor), which is what #8226 held open. Re-running the rule
-      # on the 85.75 min actually measured rather than the 67.0 modelled: the
-      # mean is 12.25 min at 7 — a hair under the floor — and 14.29 at 6, so
-      # the rule picks 6 and 5 is over-cutting. The projection was right about
-      # the model and wrong about the mass.
-      #
-      # At 5 the mean would be 17.15 min, and the worst longest/mean ratio seen
-      # across the two runs (1.30) puts the longest shard at ~22 min of test
-      # plus setup, ~24 against a 30-min timeout — on the lane that already
-      # needs continue-on-error for preemption, and whose heaviest single test
-      # has itself been measured at 482 s and 738 s on consecutive runs. That
-      # is not the headroom #8226 asked for, so 6 stays. #8226 closed measured.
-      #
-      # So the rule is that a shard should do more work than it spends queueing.
-      # aarch64 goes to 1 for the same reason from the other side — 2 was
-      # already past the floor, and on that run shard0 ran its tests in 44
-      # seconds having waited 9.8 minutes to do it.
+      # Earlier six-shard sizing reflected much slower individual tests and
+      # saturated runner admission. With current full-lifetime observations,
+      # replaying the frozen weights against run 35036653947 reduces the longest
+      # active-time sum from 743.02s at six shards to 411.89s at twelve. Every
+      # selected test remains assigned once; this does not model queue time,
+      # setup, or changed fixture reuse. Validate those costs in live CI.
+      # Per-runner CPU/memory limits are unchanged. The verifier below must
+      # require all twelve outcomes; source-policy tests enforce agreement.
+      # See docs/CI-SHARD-REBALANCE.md for the data and rollout gates.
       matrix:
         include:
-          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 0 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 1 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 2 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 3 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 4 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 5 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 0 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 1 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 2 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 3 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 4 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 5 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 6 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 7 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 8 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 9 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 10 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 11 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
@@ -1193,7 +1152,7 @@ jobs:
       # that unit test rather than silently narrowing what gets enforced.
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=6 aarch64=1
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=12 aarch64=1
       # The verifier can only see that a marker is ABSENT, so it names all three
       # causes at once ("runner reclaim, OOM-kill, or timeout"). They want
       # opposite responses, and #6038 has been read as the apt-stall for
