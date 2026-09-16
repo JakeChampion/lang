@@ -8,9 +8,11 @@ import "github.com/jakechampion/lang/internal/ast"
 // can be released comes out of __alloc, which rounds the request to its
 // class, so a block's physical extent always covers the class __free later
 // pushes it on. Compiled code and the helpers reach __alloc through
-// __ssa_alloc_pres, a trampoline that preserves every other register and the
-// flags, so an allocation can be spliced anywhere without knowing what is
-// live around it: the size goes in r11 and the block base comes back in it.
+// __ssa_alloc_pres, a trampoline that preserves every other register, so an
+// allocation can be spliced anywhere without knowing what is live around it:
+// the size goes in r11 and the block base comes back in it. The flags are not
+// kept: no site reads them across an allocation, and pushfq/popfq cost more
+// than the pushes.
 // r11 is never a home for a value — it is a per-instruction scratch at the
 // largest file and outside the file below it.
 
@@ -109,21 +111,21 @@ func emitFreeHelper(w func(string, ...any)) {
 }
 
 // emitAllocPres writes __ssa_alloc_pres: size in r11, block base back in r11,
-// every other caller-saved register and the flags exactly as they were. The
-// callee-saved ones __alloc preserves by convention. Nine pushes past the
-// return address leave rsp 16-aligned for the call, given a site that calls
-// at 16.
+// every other caller-saved register exactly as it was; the flags are
+// clobbered. The callee-saved ones __alloc preserves by convention. Eight
+// pushes past the return address leave rsp 8 past alignment, so one more
+// word pads it to 16 for the call, given a site that calls at 16.
 func emitAllocPres(w func(string, ...any)) {
 	w("")
 	w("%s:", allocPresSym)
 	for _, r := range []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10"} {
 		w("\tpush %s", r)
 	}
-	w("\tpushfq")
+	w("\tsub rsp, 8")
 	w("\tmov rdi, r11")
 	w("\tcall %s", fnLabel("__alloc"))
 	w("\tmov r11, rax")
-	w("\tpopfq")
+	w("\tadd rsp, 8")
 	for _, r := range []string{"r10", "r9", "r8", "rdi", "rsi", "rdx", "rcx", "rax"} {
 		w("\tpop %s", r)
 	}
@@ -147,8 +149,8 @@ func allocPresLines(dst, size string) []string {
 
 // ssaBumpAlloc allocates `size` bytes (an immediate or a register) through
 // __ssa_alloc_pres and leaves the block's 16-aligned base in dst. Every
-// register but r11 and dst survives, the flags too; the site must call at a
-// 16-aligned rsp.
+// register but r11 and dst survives; the flags do not. The site must call at
+// a 16-aligned rsp.
 func ssaBumpAlloc(w func(string, ...any), dst, size string) {
 	for _, l := range allocPresLines(dst, size) {
 		w("\t%s", l)

@@ -315,7 +315,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", heapBaseSym)
 		w("\t.quad 0")
 	}
-	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") {
+	if slices.Contains(helpers, "__alloc") || slices.Contains(helpers, "__free") || strings.Contains(b.String(), freelistSym) {
 		emitFreelistBss(w)
 	}
 	emitProcBss(w, withArgs, withEnv)
@@ -419,6 +419,16 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			if lines, ok := inlinePokeLines(in, numAlloc); ok {
 				for _, l := range lines {
 					w("\t%s", l)
+				}
+				continue
+			}
+			if lines, ok := inlineAllocLines(in, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
+				for _, l := range lines {
+					if strings.HasSuffix(l, ":") {
+						w("%s", l)
+					} else {
+						w("\t%s", l)
+					}
 				}
 				continue
 			}
@@ -2371,7 +2381,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if (in.Op == Call || in.Op == CallPair) && !(in.Op == Call && rcInline[in.Callee]) {
+				if (in.Op == Call || in.Op == CallPair) && !(in.Op == Call && (rcInline[in.Callee] || boxFreeInline(in))) {
 					add(in.Callee)
 				}
 			}
