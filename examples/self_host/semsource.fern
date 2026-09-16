@@ -410,7 +410,7 @@ function ident(e: ast.Expr, id: ast.ExprIdent, s: State, expected: typeinfo.Type
     var whole: typeinfo.Type = literal_union(e, s, expected);
     if (names_variant(s, whole, id.name)) { return variant(id.name, whole, [], s); }
     var at: i32 = ssasem.find_contract(s.contracts, id.name);
-    if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value"); }
+    if (at < 0 || s.contracts[at].params.len() != 0 || !semtypes.equal(s.contracts[at].result, ty)) { return refused(s, "unbound name is not a semantic value: " + id.name); }
     var contract: ssasem.Contract = s.contracts[at];
     if (ssasem.find_contract(s.calls, id.name) < 0) { s = State { ...s, calls: s.calls.append(contract) }; }
     return define(s, ssasem.call(), [], 0, id.name, contract.result);
