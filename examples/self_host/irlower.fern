@@ -1692,14 +1692,14 @@ function defer_replay_flag(cond: ast.Expr): string {
     return "";
 }
 
-// disarms_defer_flag: the assignment is a `__dfa<i> = 0` — the clear a loop
-// body's per-iteration cleanup writes after replaying its action, not an
-// arming `= 1`. It leaves nothing pending, so no block has to record slots
+// disarms_defer_flag: the assignment is a `__dfa<i> = false` — the clear a
+// loop body's per-iteration cleanup writes after replaying its action, not an
+// arming `= true`. It leaves nothing pending, so no block has to record slots
 // for it, and counting it would let a block holding only a `break` claim a
 // flag armed elsewhere.
 function disarms_defer_flag(v: ast.Expr): boolean {
     match (v) {
-        ast.ExprNumber(n) => { return n.text == "0"; },
+        ast.ExprBool(b) => { return !b.value; },
         _ => { return false; }
     }
     return false;

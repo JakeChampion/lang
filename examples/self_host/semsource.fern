@@ -1029,10 +1029,7 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
     if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) { return map_write(c, recv, s, t); }
     if (fa.field == "has" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_has(), t_bool()); }
     if (fa.field == "get_or" && c.args.len() == 2) { return map_read(c, recv, s, t, ssasem.map_get_or(), ssasem.map_value(t)); }
-    if (fa.field == "get" && c.args.len() == 1) {
-        if (!ssasem.narrow_map_value(ssasem.map_value(t))) { return refused(s, "map get of a counted value column"); }
-        return map_read(c, recv, s, t, ssasem.map_get(), ssasem.option_of(ssasem.map_value(t)));
-    }
+    if (fa.field == "get" && c.args.len() == 1) { return map_read(c, recv, s, t, ssasem.map_get(), ssasem.option_of(ssasem.map_value(t))); }
     return refused(s, "unsupported call target: " + typeinfo.spelling(t) + "." + fa.field);
 }
 
@@ -2722,6 +2719,11 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
         return out;
     }
     if (semtypes.is_cell(t)) { return schema_of(semtypes.cell_elem(t), s, out); }
+    if let typeinfo.TypeMap(m) = t {
+        out = schema_of(m.key, s, out);
+        if (!out.ok) { return out; }
+        return schema_of(m.value, s, out);
+    }
     if let typeinfo.TypeStruct(r) = t {
         if (semrecords.find(out.records, t) >= 0) { return out; }
         if (semtypes.is_env(t)) { return env_entry(t, out); }

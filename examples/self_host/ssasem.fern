@@ -259,14 +259,27 @@ pub function narrow_map_value(v: typeinfo.Type): boolean {
     return is_bool(v) || (is_integer(v) && !is_wide(v));
 }
 
-// A value column the map owns a unit of per entry, released with the map. The
-// shapes here are the ones the runtime already frees deeply — a string column
-// and a column of string arrays. A union column has no such helper yet, so it
-// stays refused rather than leaking every payload.
+// A value column the map owns a unit of per entry, released with the map: a
+// string column and a column of string arrays, which the runtime frees
+// deeply itself, and a column of boxes, which it releases by calling the
+// function the physical lowering names for the value type.
 pub function counted_map_value(v: typeinfo.Type): boolean {
-    if (is_string(v)) { return true; }
+    return is_string(v) || is_string_array(v) || boxed_map_value(v);
+}
+
+pub function is_string_array(v: typeinfo.Type): boolean {
     if let typeinfo.TypeArray(a) = v { return is_string(a.elem); }
     return false;
+}
+
+// A value column whose entries are boxes of a shape the runtime does not
+// know: a record, a union, an array of anything but strings, a tuple. A
+// function value is lent everywhere here and owned nowhere, so a column of
+// them has no unit to release; a map's box carries no count on the register
+// backends, so a read of a column of them has nothing to retain. Both stay
+// refused.
+pub function boxed_map_value(v: typeinfo.Type): boolean {
+    return reference(v) && !is_string(v) && !is_string_array(v) && !is_func(v) && !is_map(v);
 }
 
 pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
@@ -738,14 +751,12 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return map_get_or_error(ins, f, result);
 }
 
-// A get answers an Option of the value column in a box of its own; the
-// payload is a copy of the column's entry, so the column must be one the map
-// frees by freeing the buffer alone.
+// A get answers an Option of the value column in a box of its own, which
+// owns one unit of a counted payload.
 function map_get_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "map get arity"; }
     var m: typeinfo.Type = f.values[ins.args[0]];
     if (!is_supported_map(m)) { return "map get type"; }
-    if (!narrow_map_value(map_value(m))) { return "map get of a counted value column"; }
     if (!semtypes.equal(option_of(map_value(m)), result)) { return "map get result"; }
     return map_operand_error(m, f.values[ins.args[1]], map_value(m));
 }

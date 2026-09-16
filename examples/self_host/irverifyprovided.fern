@@ -83,6 +83,8 @@ pub function provided_names(): string[] {
         "__fern_map_free_kvs",
         "__fern_map_free_va",
         "__fern_map_free_ksva",
+        "__fern_map_free_vf",
+        "__fern_map_free_ksvf",
         "__fern_snapshot_dec",
         // FBIP reuse degrade
         "__fern_alloc_reuse",

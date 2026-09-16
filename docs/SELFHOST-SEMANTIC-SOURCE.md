@@ -476,12 +476,17 @@ Unsupported constructs refuse the whole function with a reason.
 
 - `Map[K, V]` at a string or narrow integer `K` and a `V` the runtime's free
   family releases: a NARROW SCALAR column freed whole, a string column or a
-  column of string arrays walked entry by entry. A string key column is walked
-  through the string dec (`__fern_map_free_ks` and its `_kvs` / `_ksvsa`
+  column of string arrays walked entry by entry, or a column of BOXES — a
+  record, a union, an array of anything but strings, a tuple — walked with
+  the value type's own release. A string key column is walked through
+  the string dec (`__fern_map_free_ks` and its `_kvs` / `_ksvsa` / `_ksvf`
   members); an integer one holds no unit and is freed whole (`__fern_map_free`,
-  `_vs`, `_vsa`). A key column of records, and a value column of records,
-  arrays of scalars or unions, have no release the runtime provides and stay
-  refused ("unsupported map shape").
+  `_vs`, `_vsa`, `_vf`). The `_vf` members take the release as a second
+  argument: `__sem_release_<T>`, a body the physical lowering emits beside the
+  drop helpers, which does for one value what the frame does for a unit of
+  its type. A key column of records, a value column of function values
+  (lent everywhere, owned nowhere) and one of maps (whose box a read could
+  not retain) stay refused ("unsupported map shape").
 
   A map's unit is LINEAR. Its box on the register backends is the raw
   `{keys, vals}` pair that helper frees, with no reference count in it, so a
@@ -494,12 +499,18 @@ Unsupported constructs refuse the whole function with a reason.
   unit and the KEY's, which the key column owns until the map is released;
   `kconsume` tells the runtime to hold that unit rather than retain it and to
   release the key an overwrite supersedes, and `owncols` makes the map the sole
-  owner of both column buffers so a grow frees the one it replaced. A lookup
-  borrows both operands and answers a scalar the map goes on owning. A `get`
-  answers an `Option` of the value in a box of the frame's own, released as
-  any Option is; the runtime copies the column's entry into it without a
-  retain, so a get over a COUNTED value column is refused ("map get of a
-  counted value column") until the payload is retained on a hit. The rest
+  owner of both column buffers so a grow frees the one it replaced. An insert
+  into a counted column takes the value's unit too, and the runtime releases
+  the value an overwrite supersedes through the column's kind: the string
+  dec, the string array's deep dec, or the release the op names (value kind
+  3, the `_vf` members' function, reached through a pointer on the register
+  backends and a table slot on wasm). A lookup borrows both operands and
+  answers a scalar the map goes on owning; over a counted column `get_or`
+  retains what it answers. A `get` answers an `Option` of the value in a box
+  of the frame's own, released as any Option is; the runtime copies the
+  column's entry into it without a retain, so over a counted column the
+  lowering retains the payload on a hit, and the box owns one unit of it as
+  any Option this frame drops does. The rest
   of the map surface — `op_map_delete`, `op_map_keys` / `op_map_values` and the
   `op_map_iter` cluster — is not ADMITTED here. Those ops exist and every
   backend lowers them; what this boundary lacks is a contract stating what each

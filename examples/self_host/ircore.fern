@@ -156,6 +156,11 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_map_free_ksva"
         || name == "__fern_map_free_vsa"
         || name == "__fern_map_free_ksvsa"
+        // The column-of-boxes pair (box, release): the runtime walks the value
+        // column calling the release the semantic lowering names for the
+        // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
+        || name == "__fern_map_free_vf"
+        || name == "__fern_map_free_ksvf"
         || name == "__fern_rc_is_unique"
         // element retain ahead of an un-share copy: one rc_inc per element of
         // a pointer-element array, so the copy and the original both hold a
@@ -922,7 +927,7 @@ pub function all_runtime_need_roots(): string[] {
         // helpers below, and the same reason nothing noticed — only a
         // library-only caller finds out, which is now a fixture
         // (TestSelfHostPerModuleArm64MapDeleteLinks).
-        "map_delete", "map_free_va", "map_free_vsa", "map_hash_seed", "map_vfree",
+        "map_delete", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
         "chdir", "signal_mask", "signal_disposition",
         "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
         "read_file_bytes",
