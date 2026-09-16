@@ -251,6 +251,39 @@ byte-identical to the native-built compiler's. The assembler phase still
 adds 1.7 GB on `checker.fern` where the native-built compiler's adds
 136 MB, so a site remains.
 
+## The unwind renderer's borrowed buffer
+
+The allocation sampler on `parser.fern` after the two fixes above put what
+was left of the assembler's growth, 700 MB of 725, under `cfi_le32` and
+`cfi_cat` in `cfi_eh_frame`, the .eh_frame renderer, half through
+`__fern_arr_push_owned` and half through `__fern_arr_slice`. The helpers
+took the buffer as a borrowed `b: i32[]` and appended to it four times:
+`b = b.append(v & 255); b = b.append((v >> 8) & 255); ...`. The first
+append is the non-consuming push on a borrowed parameter, which grows the
+caller's buffer in place and then retains the result for the unit this
+frame owes; the second append's receiver is that result, a local this
+frame owns one unit of while the caller owns the other, so the sole-owned
+base finds it shared and `arr_slice` copies the whole buffer before the
+push. Once per helper call, and the renderer calls the helper several
+times per FDE over a buffer that grows with the section: quadratic in the
+number of functions.
+
+The helpers in both native backends take the buffer by `own` now, which
+is what they do with it; the four callers that returned a local through
+one rebind it first. This is the same shape as the byte emitters' and the
+same cost the lowering leaves on any borrowed array a frame appends to
+more than once: the identity arm's retain makes the second append copy.
+The fix for that shape belongs in the lowering, as a deferred retain
+across a chain of appends on a borrowed receiver, and is not in this
+entry.
+
+With the buffer owned the assembler adds 42 MB to the arena on
+`parser.fern` (the native-built compiler's adds 68 MB) and 99 MB on
+`checker.fern` (136 MB), the binaries stay byte-identical to the
+native-built compiler's, and the produced compiler rebuilds itself to a
+byte-identical binary in 4m47s at 6.06 GB peak RSS, from 6m15s and
+11.9 GB with the label tables fixed alone.
+
 ## Traps
 
 **The watchpoint's ignore count is not honoured from a Python `stop`.** The

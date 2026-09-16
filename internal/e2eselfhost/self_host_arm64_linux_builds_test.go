@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"bytes"
 	"debug/elf"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,6 +131,12 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
   if (tcp_close(fd) < 0) { return 2; }
   return 42;
 }`, 42, ""},
+		// A frame past 64 KiB: the semantic lowering gives main one slot per
+		// value, so 8,400 bindings put the last slots' x29-relative offsets
+		// beyond what one movz materialises, and the in-process assembler
+		// refused the `mov x17, #imm` the emitter wrote for them (mov:imm16)
+		// until the high half went in through movk.
+		{"wide_frame", wideFrameSource(8400), 42, ""},
 	}
 
 	for _, c := range cases {
@@ -183,4 +190,16 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// wideFrameSource is a main with n integer bindings and a result read from
+// the last two of them, so every slot is live to the frame layout.
+func wideFrameSource(n int) string {
+	var b bytes.Buffer
+	b.WriteString("function main(): i32 {\n")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "    var v%d: i32 = %d;\n", i, i)
+	}
+	fmt.Fprintf(&b, "    return v%d - v%d;\n}\n", n-1, n-43)
+	return b.String()
 }
