@@ -330,6 +330,21 @@ Unsupported constructs refuse the whole function with a reason.
   replaces. A slice owns its box and borrows the source's bytes, so it is a
   projection anchored to its source and is released by the view helper
   rather than the ordinary string free.
+- The CHECKED slice, `s[a:b]`, which the checker types `Option[str]`. The
+  window is admitted when `0 <= a <= b <= len` and neither end lands inside a
+  codepoint, and the expression answers `None` when it is not. Every test that
+  fails branches to one `None` block, so the whole check is a decision tree
+  with two sinks, and the result joins as a single phi of the `Some` of the
+  view and that `None`. The length is read once and each bound evaluated once,
+  ahead of every test, so a bound with a side effect runs exactly as often as
+  it is written. The boundary test is interior-only, as the AST lowering's is:
+  an end at 0 or at the length is a boundary by construction, and anywhere
+  else the byte there must not be a continuation byte. An `Option` of a
+  reference is a nullable pointer, so the `Some` declares no unit of its own
+  and the slice's unit is what the frame releases — the payload IS the view.
+  Slicing an ARRAY is refused: it answers a bare view rather than an `Option`,
+  and the second reference to the source's buffer that it hands back is a kind
+  this vocabulary does not have.
 - Indexing a string, as one byte handed back in a u8 — the type the checker
   gives the expression, so a binding or an operator over it needs no
   reconciliation. The receiver is read the way a length's is and the result
