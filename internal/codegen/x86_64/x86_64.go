@@ -10171,14 +10171,6 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	EmitFloatTranscendentals(func(format string, args ...any) { g.put(fmt.Sprintf(format, args...)) }, g.freshLabel)
 }
 
-// emitF64Negate flips the sign bit of an xmm register's low double.
-// x86-64 has no scalar fneg, so it is an xor with the sign mask.
-func (g *generator) emitF64Negate(reg string) {
-	g.emit("movabs rdx, 0x8000000000000000")
-	g.emit("movq xmm8, rdx")
-	g.emit("xorpd " + reg + ", xmm8")
-}
-
 // emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
 // the first byte at or after `from` whose high bit is set, or len(s) if the
 // rest is ASCII.
